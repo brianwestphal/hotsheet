@@ -1,10 +1,9 @@
-import { api } from './api.js';
+import { duplicateTickets } from '../api/index.js';
 import { channelAutoTrigger } from './channelUI.js';
 import { byId } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG } from './icons.js';
 import { getPluginBatchMenuItems } from './pluginUI.js';
-import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { toggleReadState, toggleUpNext, trackedBatch } from './undo/actions.js';
@@ -120,10 +119,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
         action: () => {
           void (async () => {
             const ids = Array.from(state.selectedIds);
-            const created = await api<Ticket[]>('/tickets/duplicate', {
-              method: 'POST',
-              body: { ids },
-            });
+            const created = await duplicateTickets(ids);
             state.selectedIds.clear();
             for (const t of created) state.selectedIds.add(t.id);
             void loadTickets();

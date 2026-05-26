@@ -21,9 +21,12 @@ const mockOpenDetail = vi.fn<(id: number) => void>();
 const mockShowToast = vi.fn<(msg: string, opts?: unknown) => void>();
 const tickets: Ticket[] = [];
 
-vi.mock('./api.js', () => ({
-  api: (path: string): Promise<unknown> => mockApi(path),
-}));
+// HS-8629 — `openTicketRefDialog` now fetches via the typed `getTicketByNumber`
+// caller (`apiCall` → injected transport), set per-`fresh()` below since
+// `vi.resetModules()` gives a clean `_runner` each time. The transport wrapper
+// drops `opts` so `mockApi` still receives just the path (preserving the
+// single-arg call assertions); it returns the ticket body that `apiCall`
+// validates against `TicketSchema`.
 
 vi.mock('./detail.js', () => ({
   openDetail: (id: number): void => mockOpenDetail(id),
@@ -67,6 +70,8 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
 
 async function fresh(): Promise<typeof TicketRefDialogNS> {
   vi.resetModules();
+  const runner = await import('../api/_runner.js');
+  runner.setApiTransport((path: string) => mockApi(path));
   return await import('./ticketRefDialog.js');
 }
 

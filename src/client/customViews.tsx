@@ -1,3 +1,4 @@
+import { updateTicket } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
@@ -158,7 +159,7 @@ async function addTagToTickets(tag: string, ticketIds: number[]) {
     const current = parseTags(ticket.tags);
     if (hasTag(current, normalized)) continue;
     const updated = [...current, normalized];
-    await api(`/tickets/${id}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
+    await updateTicket(id, { tags: JSON.stringify(updated) });
     ticket.tags = JSON.stringify(updated);
   }
   if (!hasTag(allKnownTags, normalized)) allKnownTags.push(normalized);

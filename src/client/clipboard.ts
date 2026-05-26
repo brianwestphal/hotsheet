@@ -1,4 +1,9 @@
-import { api, apiWithSecret } from './api.js';
+import { putTicketNotesBulk, updateTicket } from '../api/index.js';
+// HS-8629 — create stays on raw `api()` for now: it passes a loose client
+// `Ticket` (state.tsx's `priority: string`) into the strict `CreateTicketReq`
+// defaults, which needs the client/schema `Ticket` reconciliation (separate
+// follow-up) before it can use the typed `createTicket`.
+import { api } from './api.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, signal } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -112,10 +117,7 @@ export async function pasteTickets(): Promise<void> {
 
     // Copy notes if the source had any
     if (source.notes && source.notes !== '' && source.notes !== '[]') {
-      await api(`/tickets/${created.id}/notes-bulk`, {
-        method: 'PUT',
-        body: { notes: source.notes },
-      });
+      await putTicketNotesBulk(created.id, source.notes);
     }
 
     createdIds.push(created.id);
@@ -128,9 +130,9 @@ export async function pasteTickets(): Promise<void> {
     // Delete via API with the source project's secret (works cross-project)
     for (const id of ids) {
       if (sourceSecret !== undefined && sourceSecret !== '') {
-        await apiWithSecret(`/tickets/${id}`, sourceSecret, { method: 'PATCH', body: { status: 'deleted' } });
+        await updateTicket(id, { status: 'deleted' }, { secret: sourceSecret });
       } else {
-        await api(`/tickets/${id}`, { method: 'PATCH', body: { status: 'deleted' } });
+        await updateTicket(id, { status: 'deleted' });
       }
     }
     clipboardSignal.value = null;

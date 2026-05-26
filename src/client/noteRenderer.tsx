@@ -2,6 +2,7 @@ import './markdownSetup.js';
 
 import { marked } from 'marked';
 
+import { deleteTicketNote, editTicketNote } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -298,7 +299,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
             const ticket = state.tickets.find(t => t.id === ticketId);
             const afterNotes = notes.map(n => n.id === note.id ? { ...n, text: newText } : n);
             if (ticket) pushNotesUndo(ticket, 'Edit note', JSON.stringify(afterNotes));
-            await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'PATCH', body: { text: newText } });
+            if (note.id !== undefined) await editTicketNote(ticketId, note.id, newText);
             note.text = newText;
             syncNotesToState(ticketId, notes);
           }
@@ -332,7 +333,7 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
           const ticket = state.tickets.find(t => t.id === ticketId);
           const afterNotes = notes.filter(n => n.id !== note.id);
           if (ticket) pushNotesUndo(ticket, 'Delete note', JSON.stringify(afterNotes));
-          await api(`/tickets/${ticketId}/notes/${note.id}`, { method: 'DELETE' });
+          if (note.id !== undefined) await deleteTicketNote(ticketId, note.id);
           const idx = notes.indexOf(note);
           if (idx >= 0) notes.splice(idx, 1);
           syncNotesToState(ticketId, notes);

@@ -18,12 +18,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import type { Ticket } from './state.js';
 
-const mockApi = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>();
-vi.mock('./api.js', () => ({
-  api: (path: string, opts?: unknown): Promise<unknown> => mockApi(path, opts),
-}));
+// HS-8629 — `debouncedSave` now goes through the typed `updateTicket` caller
+// (`apiCall` → injected transport). Drive the real path by installing a mock
+// transport rather than mocking `./api.js` (which `ticketRow.tsx` no longer
+// imports). The transport returns a valid ticket so `apiCall`'s response
+// validation passes.
+const mockTransport = vi.fn<ApiTransport>();
 
 function ticket(overrides: Partial<Ticket> = {}): Ticket {
   return {
@@ -48,11 +51,14 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
 }
 
 beforeEach(() => {
-  mockApi.mockReset();
+  mockTransport.mockReset();
+  mockTransport.mockImplementation(() => Promise.resolve(ticket()));
+  setApiTransport(mockTransport);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  setApiTransport(null as unknown as ApiTransport);
 });
 
 describe('hasPendingFeedback', () => {
@@ -158,9 +164,9 @@ describe('debouncedSave + cancelPendingSave', () => {
     vi.useFakeTimers();
     const { debouncedSave } = await import('./ticketRow.js');
     debouncedSave(7, { title: 'New' });
-    expect(mockApi).not.toHaveBeenCalled();
+    expect(mockTransport).not.toHaveBeenCalled();
     vi.advanceTimersByTime(300);
-    expect(mockApi).toHaveBeenCalledWith('/tickets/7', { method: 'PATCH', body: { title: 'New' } });
+    expect(mockTransport).toHaveBeenCalledWith('/tickets/7', expect.objectContaining({ method: 'PATCH', body: { title: 'New' } }));
   });
 
   it('coalesces rapid calls — only the last payload fires', async () => {
@@ -172,8 +178,8 @@ describe('debouncedSave + cancelPendingSave', () => {
     vi.advanceTimersByTime(100);
     debouncedSave(7, { title: 'C' });
     vi.advanceTimersByTime(300);
-    expect(mockApi).toHaveBeenCalledTimes(1);
-    expect(mockApi).toHaveBeenCalledWith('/tickets/7', { method: 'PATCH', body: { title: 'C' } });
+    expect(mockTransport).toHaveBeenCalledTimes(1);
+    expect(mockTransport).toHaveBeenCalledWith('/tickets/7', expect.objectContaining({ method: 'PATCH', body: { title: 'C' } }));
   });
 
   it('cancelPendingSave aborts a pending save before it fires', async () => {
@@ -182,7 +188,7 @@ describe('debouncedSave + cancelPendingSave', () => {
     debouncedSave(7, { title: 'Maybe' });
     cancelPendingSave();
     vi.advanceTimersByTime(500);
-    expect(mockApi).not.toHaveBeenCalled();
+    expect(mockTransport).not.toHaveBeenCalled();
   });
 
   it('cancelPendingSave is a no-op when nothing is pending', async () => {

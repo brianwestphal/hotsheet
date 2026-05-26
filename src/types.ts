@@ -17,24 +17,12 @@ export interface CategoryPreset {
   categories: CategoryDef[];
 }
 
-export interface Ticket {
-  id: number;
-  ticket_number: string;
-  title: string;
-  details: string;
-  category: TicketCategory;
-  priority: TicketPriority;
-  status: TicketStatus;
-  up_next: boolean;
-  created_at: string;
-  updated_at: string;
-  completed_at: string | null;
-  verified_at: string | null;
-  deleted_at: string | null;
-  notes: string;
-  tags: string;
-  last_read_at: string | null;
-}
+// HS-8629 — `Ticket` is inferred from `TicketSchema` (the SSOT in
+// `src/schemas.ts`) and re-exported here so the legacy `from '../types.js'`
+// import path keeps working for every existing consumer. The shape is
+// identical to the prior hand-written interface (`category` = string,
+// priority / status = the literal unions above).
+export type { Ticket } from './schemas.js';
 
 export interface Attachment {
   id: number;

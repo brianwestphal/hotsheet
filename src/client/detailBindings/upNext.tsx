@@ -4,7 +4,7 @@
  * starring a backlog / archive / completed / verified ticket so it
  * re-enters the user's active queue.
  */
-import { api } from '../api.js';
+import { toggleUpNext } from '../../api/index.js';
 import { channelAutoTrigger } from '../channelUI.js';
 import { openDetail } from '../detail.js';
 import { byId } from '../dom.js';
@@ -26,7 +26,7 @@ export function bindDetailUpNext(): void {
         await trackedPatch(ticket, { up_next: !ticket.up_next }, 'Toggle up next');
       }
     } else {
-      await api(`/tickets/${state.activeTicketId}/up-next`, { method: 'POST' });
+      await toggleUpNext(state.activeTicketId);
     }
     void loadTickets();
     channelAutoTrigger();

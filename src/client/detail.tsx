@@ -2,6 +2,7 @@ import './markdownSetup.js';
 
 import { marked } from 'marked';
 
+import { updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
@@ -367,7 +368,7 @@ async function loadDetail(id: number) {
     if (isUnread) {
       const readAt = new Date().toISOString();
       ticketsStore.actions.applyServerUpdate({ ...inMemory, last_read_at: readAt });
-      void api(`/tickets/${id}`, { method: 'PATCH', body: { last_read_at: readAt } }).catch(() => {});
+      void updateTicket(id, { last_read_at: readAt }).catch(() => {});
     }
   }
 

@@ -1,3 +1,4 @@
+import { duplicateTickets, updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
@@ -234,7 +235,7 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   // Duplicate
   addActionItem(menu, 'Duplicate', async () => {
     const ids = Array.from(state.selectedIds);
-    const created = await api<Ticket[]>('/tickets/duplicate', { method: 'POST', body: { ids } });
+    const created = await duplicateTickets(ids);
     state.selectedIds.clear();
     for (const t of created) state.selectedIds.add(t.id);
     void loadTickets();
@@ -565,10 +566,7 @@ function showNotWorkingDialog(ticket: Ticket) {
 
     try {
       // Add note
-      await api(`/tickets/${ticket.id}`, {
-        method: 'PATCH',
-        body: { notes: `Not working: ${text}`, status: 'not_started', up_next: true },
-      });
+      await updateTicket(ticket.id, { notes: `Not working: ${text}`, status: 'not_started', up_next: true });
 
       // Upload attachments
       for (const file of pendingFiles) {

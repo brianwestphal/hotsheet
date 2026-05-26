@@ -2,7 +2,7 @@
  * Tag autocomplete for the detail panel tag input.
  * Extracted from app.tsx for maintainability.
  */
-import { api } from './api.js';
+import { updateTicket } from '../api/index.js';
 import { displayTag,hasTag, normalizeTag, parseTags, renderDetailTags } from './detail.js';
 import { byId, toElement } from './dom.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
@@ -69,7 +69,7 @@ export function bindDetailTagInput(): void {
     ticketsStore.actions.optimisticUpdate(state.activeTicketId, { tags: updatedJson });
     ticket.tags = updatedJson;
     renderDetailTags(updated, false);
-    await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: updatedJson } });
+    await updateTicket(state.activeTicketId, { tags: updatedJson });
     if (!hasTag(allKnownTags, normalized)) allKnownTags.push(normalized);
   }
 

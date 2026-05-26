@@ -1,3 +1,4 @@
+import { updateTicket } from '../api/index.js';
 import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags, refreshDetail } from './detail.js';
 import { toElement } from './dom.js';
@@ -130,7 +131,7 @@ export async function showTagsDialog() {
         for (const tag of toAdd) { if (!hasTag(updated, tag)) updated.push(tag); }
         for (const tag of toRemove) { updated = updated.filter(t => normalizeTag(t) !== normalizeTag(tag)); }
         if (JSON.stringify(updated) !== JSON.stringify(current)) {
-          await api(`/tickets/${ticket.id}`, { method: 'PATCH', body: { tags: JSON.stringify(updated) } });
+          await updateTicket(ticket.id, { tags: JSON.stringify(updated) });
         }
       }
       void loadTickets();

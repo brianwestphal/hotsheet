@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 
+import { getTicketByNumber } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { openDetail } from './detail.js';
 import { toElement } from './dom.js';
 import { state, type Ticket } from './state.js';
@@ -59,7 +59,7 @@ export async function openTicketRefDialog(ticketNumber: string): Promise<void> {
     ticket = cached;
   } else {
     try {
-      ticket = await api<Ticket>(`/tickets/by-number/${encodeURIComponent(ticketNumber)}`);
+      ticket = await getTicketByNumber(ticketNumber);
     } catch {
       showToast(`Ticket ${ticketNumber} not found`, { variant: 'warning' });
       return;

@@ -1,8 +1,7 @@
-import { api } from './api.js';
+import { createTicket } from '../api/index.js';
 import { extractBracketTags, hasTag, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import type { Ticket } from './state.js';
 import { getCategoryColor, getCategoryLabel, state } from './state.js';
 import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
@@ -95,7 +94,7 @@ export function createDraftRow(): HTMLElement {
       if (tags.length > 0) {
         defaults.tags = JSON.stringify(tags);
       }
-      const created = await api<Ticket>('/tickets', { method: 'POST', body: { title: title || rawTitle, defaults } });
+      const created = await createTicket({ title: title || rawTitle, defaults });
       // Auto-select the newly created ticket (HS-202)
       state.selectedIds.clear();
       state.selectedIds.add(created.id);

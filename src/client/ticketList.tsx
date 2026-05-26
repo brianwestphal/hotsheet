@@ -1,3 +1,4 @@
+import { batchTickets, emptyTrash, getTicketSearchCounts, listTickets, queryTickets } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
 import { captureSnapshot, flipAnimate } from './animate.js';
 import { api } from './api.js';
@@ -636,10 +637,7 @@ function updateBatchToolbar() {
     if (!restoreBtn) {
       restoreBtn = toElement(<button id="batch-restore" className="btn btn-sm">Restore</button>) as HTMLButtonElement;
       restoreBtn.addEventListener('click', async () => {
-        await api('/tickets/batch', {
-          method: 'POST',
-          body: { ids: Array.from(state.selectedIds), action: 'restore' },
-        });
+        await batchTickets({ ids: Array.from(state.selectedIds), action: 'restore' });
         state.selectedIds.clear();
         void loadTickets();
       });
@@ -651,7 +649,7 @@ function updateBatchToolbar() {
     if (!emptyBtn) {
       emptyBtn = toElement(<button id="batch-empty-trash" className="btn btn-sm btn-danger">Empty Trash</button>) as HTMLButtonElement;
       emptyBtn.addEventListener('click', async () => {
-        await api('/trash/empty', { method: 'POST' });
+        await emptyTrash();
         state.selectedIds.clear();
         void loadTickets();
       });
@@ -737,16 +735,13 @@ export async function loadTickets() {
     const view = state.customViews.find(v => v.id === viewId);
     if (view) {
       const viewTag = view.tag;
-      setTicketsAnimated(await api<Ticket[]>('/tickets/query', {
-        method: 'POST',
-        body: {
-          logic: view.logic,
-          conditions: view.conditions,
-          sort_by: state.sortBy,
-          sort_dir: state.sortDir,
-          ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
-          ...(view.includeArchived === true ? { include_archived: true } : {}),
-        },
+      setTicketsAnimated(await queryTickets({
+        logic: view.logic,
+        conditions: view.conditions,
+        sort_by: state.sortBy,
+        sort_dir: state.sortDir === 'desc' ? 'desc' : 'asc',
+        ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
+        ...(view.includeArchived === true ? { include_archived: true } : {}),
       }));
     } else {
       setTicketsAnimated([]);
@@ -816,7 +811,7 @@ export async function loadTickets() {
   }
 
   const query = params.toString();
-  const rows = await api<Ticket[]>(`/tickets${query ? '?' + query : ''}`);
+  const rows = await listTickets(query);
   if (isListLayout && rows.length > state.listLimit) {
     state.hasMoreTickets = true;
     rows.length = state.listLimit;
@@ -853,7 +848,7 @@ export async function loadTickets() {
     state.searchExtraCounts = { backlog: 0, archive: 0 };
     renderSearchExtraRows(() => { void loadTickets(); });
   } else {
-    void api<{ backlog: number; archive: number }>(`/tickets/search-counts?search=${encodeURIComponent(state.search)}`)
+    void getTicketSearchCounts(state.search)
       .then(counts => {
         state.searchExtraCounts = counts;
         renderSearchExtraRows(() => { void loadTickets(); });

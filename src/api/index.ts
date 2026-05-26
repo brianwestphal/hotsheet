@@ -23,11 +23,14 @@
 // sub-tickets). Today: git.
 //
 import * as git from './git.js';
+import * as tickets from './tickets.js';
 
 export * from './git.js';
+export * from './tickets.js';
 
 /** Flat namespace combining every typed caller. Names are globally unique
  *  by convention. */
 export const apis = {
   ...git,
+  ...tickets,
 };

@@ -1,4 +1,5 @@
 import { setApiTransport } from '../api/_runner.js';
+import { createTicket } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
 import { api, apiUpload, apiWithSecret } from './api.js';
@@ -264,7 +265,7 @@ async function resolveDropTicketId(target: HTMLElement, findRowUnder: (el: HTMLE
   // Create a new ticket — use draft input text if available.
   const draftInput = document.querySelector<HTMLInputElement>('.draft-input');
   const title = draftInput?.value.trim() ?? '';
-  const res = await api<{ id: number }>('/tickets', { method: 'POST', body: { title: title || 'Attachment' } });
+  const res = await createTicket({ title: title || 'Attachment' });
   if (draftInput && title !== '') draftInput.value = '';
   void loadTickets();
   return res.id;

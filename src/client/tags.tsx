@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { updateTicket } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { state } from './state.js';
 import { ticketsStore } from './ticketsStore.js';
@@ -70,7 +70,7 @@ export function renderDetailTags(tags: string[], readOnly: boolean) {
         ticketsStore.actions.optimisticUpdate(state.activeTicketId, { tags: updatedJson });
         ticket.tags = updatedJson;
         renderDetailTags(updated, false);
-        await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { tags: updatedJson } });
+        await updateTicket(state.activeTicketId, { tags: updatedJson });
       });
     }
     container.appendChild(chip);

@@ -30,6 +30,38 @@ export const NotesArraySchema = z.array(NoteEntrySchema);
 export type NoteEntry = z.infer<typeof NoteEntrySchema>;
 
 // ---------------------------------------------------------------------------
+// Ticket — HS-8629 (HS-8522 typed-API layer). The single source of truth for
+// the core domain row shape, shared by the server (`src/types.ts` re-exports
+// `Ticket` from here) AND the client typed API callers (`src/api/tickets.ts`
+// builds its response schemas on this). The priority / status literals are
+// inlined (rather than imported from `src/types.ts` or `src/routes/
+// validation.ts`) so this module stays import-free beyond zod — `types.ts`
+// imports THIS, so importing types.ts back would cycle, and `routes/` is
+// server-only. `category` is a free string (user-defined categories).
+// ---------------------------------------------------------------------------
+
+export const TicketSchema = z.object({
+  id: z.number(),
+  ticket_number: z.string(),
+  title: z.string(),
+  details: z.string(),
+  category: z.string(),
+  priority: z.enum(['highest', 'high', 'default', 'low', 'lowest']),
+  status: z.enum(['not_started', 'started', 'completed', 'verified', 'backlog', 'archive', 'deleted']),
+  up_next: z.boolean(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  completed_at: z.string().nullable(),
+  verified_at: z.string().nullable(),
+  deleted_at: z.string().nullable(),
+  notes: z.string(),
+  tags: z.string(),
+  last_read_at: z.string().nullable(),
+});
+
+export type Ticket = z.infer<typeof TicketSchema>;
+
+// ---------------------------------------------------------------------------
 // Ticket tags — `tickets.tags` is a JSON-encoded string array.
 // ---------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
+import { deleteTicket, updateTicket,type UpdateTicketReq } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel } from './detail.js';
@@ -683,7 +683,7 @@ async function deleteTicketAndFocus(id: number) {
   if (ticket) {
     await trackedDelete(ticket);
   } else {
-    await api(`/tickets/${id}`, { method: 'DELETE' });
+    await deleteTicket(id);
   }
   // HS-8239 — use the typed `removeTicket` action instead of an
   // imperative `state.tickets = state.tickets.filter(...)`. Matches
@@ -702,10 +702,10 @@ async function deleteTicketAndFocus(id: number) {
   }
 }
 
-export function debouncedSave(id: number, updates: Record<string, unknown>) {
+export function debouncedSave(id: number, updates: UpdateTicketReq) {
   if (saveTimeout) clearTimeout(saveTimeout);
   setSaveTimeout(setTimeout(() => {
-    void api(`/tickets/${id}`, { method: 'PATCH', body: updates });
+    void updateTicket(id, updates);
   }, 300));
 }
 

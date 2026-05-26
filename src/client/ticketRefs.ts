@@ -12,7 +12,7 @@
  * answer.
  */
 
-import { api } from './api.js';
+import { getTicketPrefixes } from '../api/index.js';
 
 let cachedPrefixes: string[] | null = null;
 let cachedPrefixesPromise: Promise<string[]> | null = null;
@@ -28,11 +28,11 @@ let cachedPrefixesPromise: Promise<string[]> | null = null;
 export async function loadTicketPrefixes(): Promise<string[]> {
   if (cachedPrefixes !== null) return cachedPrefixes;
   if (cachedPrefixesPromise !== null) return cachedPrefixesPromise;
-  cachedPrefixesPromise = api<{ prefixes: string[] }>('/tickets/prefixes')
-    .then(r => {
-      cachedPrefixes = r.prefixes;
+  cachedPrefixesPromise = getTicketPrefixes()
+    .then(prefixes => {
+      cachedPrefixes = prefixes;
       cachedPrefixesPromise = null;
-      return r.prefixes;
+      return prefixes;
     })
     .catch(() => {
       cachedPrefixesPromise = null;

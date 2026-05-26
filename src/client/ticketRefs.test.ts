@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import {
   _resetPrefixesForTesting,
   buildTicketRefRegex,
@@ -13,13 +14,18 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
 }));
 
-vi.mock('./api.js', () => ({
-  api: (...args: unknown[]) => apiMock(...args),
-}));
+// HS-8629 — `loadTicketPrefixes` now goes through the typed `getTicketPrefixes`
+// caller (`apiCall` → injected transport), so drive the transport rather than
+// mocking `./api.js`. The transport returns the raw `{ prefixes }` body, which
+// `apiCall` validates against `PrefixesRespSchema` and unwraps to the array.
+beforeEach(() => {
+  setApiTransport(apiMock as unknown as ApiTransport);
+});
 
 afterEach(() => {
   _resetPrefixesForTesting();
   apiMock.mockReset();
+  setApiTransport(null as unknown as ApiTransport);
 });
 
 describe('buildTicketRefRegex (HS-8036)', () => {
