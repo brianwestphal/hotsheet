@@ -2,17 +2,16 @@ import './markdownSetup.js';
 
 import { marked } from 'marked';
 
-import { updateTicket } from '../api/index.js';
+import { getFeedbackDrafts, getTicketDetail, updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
-import { type FeedbackDraft, parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
+import { parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import { syncDetailReaderButton } from './readerOverlay.js';
-import type { Ticket } from './state.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
@@ -341,19 +340,10 @@ export function refreshDetail() {
   }
 }
 
-interface SyncInfoResponse {
-  pluginId: string;
-  pluginName: string;
-  pluginIcon: string | null;
-  remoteId: string;
-  remoteUrl: string | null;
-  syncStatus: string;
-}
-
 async function loadDetail(id: number) {
-  const ticket = await api<Ticket & { attachments: { id: number; original_filename: string; stored_path: string }[]; syncInfo?: SyncInfoResponse[] }>(
-    `/tickets/${id}`
-  );
+  // HS-8642 — typed detail payload (ticket + attachments + syncInfo) via the
+  // shared `TicketDetailSchema`; the wire shape is validated by `apiCall`.
+  const ticket = await getTicketDetail(id);
   if (state.activeTicketId !== id) return;
 
   // Mark ticket as read — only if it's currently unread (prevents unnecessary PATCHes on poll refresh).
@@ -441,7 +431,7 @@ async function loadDetail(id: number) {
     // HS-7599: load any feedback drafts for this ticket and re-render once
     // they arrive so saved drafts appear inline below their parent FEEDBACK
     // NEEDED note (or free-floating at the end if the parent's gone).
-    void api<FeedbackDraft[]>(`/tickets/${ticket.id}/feedback-drafts`).then((drafts) => {
+    void getFeedbackDrafts(ticket.id).then((drafts) => {
       const list = Array.isArray(drafts) ? drafts : [];
       setTicketDrafts(ticket.id, list);
       // Only re-render if the panel is still showing this ticket and no
@@ -489,7 +479,7 @@ async function loadDetail(id: number) {
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
     {ticket.completed_at !== null && ticket.completed_at !== '' ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
     {ticket.verified_at !== null && ticket.verified_at !== '' ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
-    {ticket.syncInfo && ticket.syncInfo.length > 0 ? <>
+    {ticket.syncInfo.length > 0 ? <>
       {ticket.syncInfo.map(s =>
         <div className="detail-sync-info">
           {s.pluginIcon != null && s.pluginIcon !== ''

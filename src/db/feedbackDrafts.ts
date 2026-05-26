@@ -1,6 +1,16 @@
 import { z } from 'zod';
 
+import type { FeedbackDraft, FeedbackDraftPartitions } from '../api/feedbackDrafts.js';
 import { getDb } from './connection.js';
+
+// HS-8642 — `FeedbackDraft` is now defined once as the wire SSOT in
+// `src/api/feedbackDrafts.ts` (inferred from `FeedbackDraftSchema`). The DB
+// layer returns that exact shape (minus the GET-only `attachments`, which the
+// route hydrates), so server + client can never drift. Re-exported so existing
+// `import { FeedbackDraft } from '../db/feedbackDrafts.js'` server consumers
+// keep working. `SavedPartitions` aliases the schema's partitions type.
+export type { FeedbackDraft };
+export type SavedPartitions = FeedbackDraftPartitions;
 
 /**
  * HS-7599 — Feedback drafts (per docs/21-feedback.md §21.2.3).
@@ -31,25 +41,6 @@ export interface FeedbackDraftRow {
   partitions_json: string;
   created_at: string;
   updated_at: string;
-}
-
-export interface FeedbackDraft {
-  id: string;
-  ticketId: number;
-  parentNoteId: string | null;
-  promptText: string;
-  partitions: SavedPartitions;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** The shape of the JSON stored in `partitions_json`. Keys mirror the
- *  feedback dialog's working state so a saved draft round-trips back to the
- *  exact same UI on re-open. */
-export interface SavedPartitions {
-  blocks: { markdown: string; html: string }[];
-  inlineResponses: { blockIndex: number; text: string }[];
-  catchAll: string;
 }
 
 function fromRow(row: FeedbackDraftRow): FeedbackDraft {

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { api } from './api.js';
+import { getFeedbackDrafts } from '../api/index.js';
 import {
   buildOverlay,
   openFeedbackDialogForNote,
@@ -14,9 +14,19 @@ import {
 import type { FeedbackDraft } from './noteRenderer.js';
 import { _resetPrefixesForTesting } from './ticketRefs.js';
 
-// HS-8603 — `openFeedbackDialogForNote` fetches the ticket's drafts via `api`.
-// Mock the network layer so the test controls what the drafts endpoint returns.
+// HS-8603 — `openFeedbackDialogForNote` fetches the ticket's drafts.
+// HS-8642 — that now routes through the typed `getFeedbackDrafts`; mock the
+// typed-API layer so the test controls what the drafts endpoint returns. The
+// other typed callers feedbackDialog imports are stubbed so the module loads.
 vi.mock('./api.js', () => ({ api: vi.fn(), apiUpload: vi.fn(), apiWithSecret: vi.fn() }));
+vi.mock('../api/index.js', () => ({
+  getFeedbackDrafts: vi.fn(),
+  createFeedbackDraft: vi.fn(),
+  updateFeedbackDraft: vi.fn(),
+  deleteFeedbackDraft: vi.fn(),
+  promoteFeedbackDraftAttachments: vi.fn(),
+  updateTicket: vi.fn(),
+}));
 
 /**
  * HS-7822 — pickDraftForFeedbackNote pure-helper tests. The helper drives
@@ -243,7 +253,7 @@ describe('toDraftSeed (HS-8603)', () => {
 describe('openFeedbackDialogForNote (HS-8603)', () => {
   beforeEach(() => {
     _resetPrefixesForTesting(['HS']);
-    vi.mocked(api).mockReset();
+    vi.mocked(getFeedbackDrafts).mockReset();
     document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
   });
   afterEach(() => {
@@ -264,15 +274,15 @@ describe('openFeedbackDialogForNote (HS-8603)', () => {
   }
 
   it('auto-loads the matching draft into the dialog when one exists', async () => {
-    vi.mocked(api).mockResolvedValue([draftRow()] as never);
+    vi.mocked(getFeedbackDrafts).mockResolvedValue([draftRow()]);
     await openFeedbackDialogForNote(5, 'HS-5', 'Q?', 'note-1');
-    expect(api).toHaveBeenCalledWith('/tickets/5/feedback-drafts');
+    expect(getFeedbackDrafts).toHaveBeenCalledWith(5);
     expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
     expect(catchAllValue()).toBe('my saved answer');
   });
 
   it('opens the bare prompt when the ticket has no matching draft', async () => {
-    vi.mocked(api).mockResolvedValue([] as never);
+    vi.mocked(getFeedbackDrafts).mockResolvedValue([]);
     await openFeedbackDialogForNote(5, 'HS-5', 'Q?', 'note-1');
     expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
     expect(catchAllValue()).toBe('');
@@ -280,13 +290,13 @@ describe('openFeedbackDialogForNote (HS-8603)', () => {
 
   it('does not fetch drafts (and opens bare) when there is no note id', async () => {
     await openFeedbackDialogForNote(5, 'HS-5', 'Q?', undefined);
-    expect(api).not.toHaveBeenCalled();
+    expect(getFeedbackDrafts).not.toHaveBeenCalled();
     expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
     expect(catchAllValue()).toBe('');
   });
 
   it('falls back to the bare prompt (no throw) when the drafts fetch fails', async () => {
-    vi.mocked(api).mockRejectedValue(new Error('network down'));
+    vi.mocked(getFeedbackDrafts).mockRejectedValue(new Error('network down'));
     await openFeedbackDialogForNote(5, 'HS-5', 'Q?', 'note-1');
     expect(document.querySelector('.feedback-dialog-overlay')).not.toBeNull();
     expect(catchAllValue()).toBe('');

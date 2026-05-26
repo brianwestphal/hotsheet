@@ -1,4 +1,5 @@
 import type { SafeHtml } from '../jsx-runtime.js';
+import type { TicketPriority, TicketStatus } from '../types.js';
 import { activeProjectSignal, projectsStore } from './projectsStore.js';
 import { ticketsStore } from './ticketsStore.js';
 
@@ -507,7 +508,11 @@ export function shouldResetStatusOnUpNext(status: string): boolean {
 
 // --- Canonical priority and status items (shared across batch, contextMenu, detail, ticketListState) ---
 
-export const PRIORITY_ITEMS: { key: string; value: string; label: string }[] = [
+// HS-8642 — `value` is typed as the priority / status literal union (not bare
+// `string`) so the detail-panel dropdowns can build a typed `UpdateTicketReq`
+// straight from `p.value` / `s.value` without a cast. Every consumer reads
+// these as strings, so the narrower type is a safe, no-ripple improvement.
+export const PRIORITY_ITEMS: { key: string; value: TicketPriority; label: string }[] = [
   { key: '1', value: 'highest', label: 'Highest' },
   { key: '2', value: 'high', label: 'High' },
   { key: '3', value: 'default', label: 'Default' },
@@ -515,7 +520,7 @@ export const PRIORITY_ITEMS: { key: string; value: string; label: string }[] = [
   { key: '5', value: 'lowest', label: 'Lowest' },
 ];
 
-export const STATUS_ITEMS: { key: string; value: string; label: string }[] = [
+export const STATUS_ITEMS: { key: string; value: TicketStatus; label: string }[] = [
   { key: 'n', value: 'not_started', label: 'Not Started' },
   { key: 's', value: 'started', label: 'Started' },
   { key: 'c', value: 'completed', label: 'Completed' },

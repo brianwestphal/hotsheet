@@ -7,7 +7,8 @@
  * regression-rationale comment. This file fills that gap.
  *
  * Mock surface:
- *   - `api` (so `trackedPatch` PATCHes are observable + faked out)
+ *   - the typed `updateTicket` (so `trackedPatch`'s PATCH is observable +
+ *     faked out — HS-8642 routed it through the typed API layer)
  *   - `ticketListState.registerCallbacks` is called with stub fns so
  *     the `callRenderTicketList` / `callLoadTickets` reaches inside
  *     the actions don't blow up with `null!` deref.
@@ -21,10 +22,23 @@ import { registerCallbacks } from './ticketListState.js';
 import { cycleStatus, toggleUpNext } from './ticketRow.js';
 import { _ticketsStoreForTesting, ticketsStore } from './ticketsStore.js';
 
-const mockApi = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>();
-vi.mock('./api.js', () => ({
-  api: (path: string, opts?: unknown): Promise<unknown> => mockApi(path, opts),
-}));
+// HS-8642 — `cycleStatus` / `toggleUpNext` route through `trackedPatch`, which
+// now calls the typed `updateTicket` (after `UpdateTicketSchema.parse`). Mock
+// the typed callers but keep the REAL request schemas so the `.parse()` inside
+// `trackedPatch` works.
+const mockUpdateTicket = vi.fn<(id: number, body: unknown) => Promise<unknown>>();
+vi.mock('../api/index.js', async () => {
+  const validation = await import('../routes/validation.js');
+  return {
+    BatchActionSchema: validation.BatchActionSchema,
+    UpdateTicketSchema: validation.UpdateTicketSchema,
+    updateTicket: (id: number, body: unknown): Promise<unknown> => mockUpdateTicket(id, body),
+    batchTickets: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
+    deleteTicket: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
+    restoreTicket: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
+    putTicketNotesBulk: vi.fn<() => Promise<unknown>>().mockResolvedValue(undefined),
+  };
+});
 
 const mockRenderTicketList = vi.fn<() => void>();
 const mockLoadTickets = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
@@ -56,7 +70,7 @@ function ticket(overrides: Partial<Ticket> = {}): Ticket {
 }
 
 beforeEach(() => {
-  mockApi.mockReset();
+  mockUpdateTicket.mockReset();
   mockRenderTicketList.mockReset();
   mockLoadTickets.mockReset().mockResolvedValue(undefined);
   _ticketsStoreForTesting.reset();
@@ -88,11 +102,11 @@ describe('cycleStatus — 6-status cycle', () => {
     it(`PATCHes ${from} → ${to}`, async () => {
       const t = ticket({ status: from });
       ticketsStore.actions.setTickets([t]);
-      mockApi.mockResolvedValue({ ...t, status: to });
+      mockUpdateTicket.mockResolvedValue({ ...t, status: to });
 
       await cycleStatus(t);
 
-      expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'PATCH', body: { status: to } });
+      expect(mockUpdateTicket).toHaveBeenCalledWith(1, { status: to });
       expect(mockRenderTicketList).toHaveBeenCalled();
     });
   }
@@ -100,7 +114,7 @@ describe('cycleStatus — 6-status cycle', () => {
   it('writes the updated status back to the closure ticket reference', async () => {
     const t = ticket({ status: 'not_started' });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, status: 'started' });
+    mockUpdateTicket.mockResolvedValue({ ...t, status: 'started' });
 
     await cycleStatus(t);
 
@@ -118,7 +132,7 @@ describe('cycleStatus — 6-status cycle', () => {
     const applySpy = vi.spyOn(ticketsStore.actions, 'applyServerUpdate').mockImplementation((u) => {
       storeObservedStatus = u.status;
     });
-    mockApi.mockResolvedValue({ ...t, status: 'started' });
+    mockUpdateTicket.mockResolvedValue({ ...t, status: 'started' });
 
     await cycleStatus(t);
 
@@ -132,24 +146,24 @@ describe('toggleUpNext — basic flip', () => {
   it('PATCHes up_next=true when starring an unstarred not_started ticket', async () => {
     const t = ticket({ up_next: false, status: 'not_started' });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     await toggleUpNext(t);
 
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'PATCH', body: { up_next: true } });
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, { up_next: true });
     expect(t.up_next).toBe(true);
   });
 
   it('PATCHes up_next=false when unstarring a starred ticket (no status reset)', async () => {
     const t = ticket({ up_next: true, status: 'completed' });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: false });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: false });
 
     await toggleUpNext(t);
 
     // Unstar path takes the simple `up_next: false` branch — no
     // status reset even though the ticket is completed.
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'PATCH', body: { up_next: false } });
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, { up_next: false });
   });
 });
 
@@ -160,38 +174,35 @@ describe('toggleUpNext — HS-7998 status reset on add', () => {
     it(`resets ${status} → not_started when starring`, async () => {
       const t = ticket({ status, up_next: false });
       ticketsStore.actions.setTickets([t]);
-      mockApi.mockResolvedValue({ ...t, status: 'not_started', up_next: true });
+      mockUpdateTicket.mockResolvedValue({ ...t, status: 'not_started', up_next: true });
 
       await toggleUpNext(t);
 
-      expect(mockApi).toHaveBeenCalledWith('/tickets/1', {
-        method: 'PATCH',
-        body: { status: 'not_started', up_next: true },
-      });
+      expect(mockUpdateTicket).toHaveBeenCalledWith(1, { status: 'not_started', up_next: true });
     });
   }
 
   it('does NOT reset status for `started` (already in flight)', async () => {
     const t = ticket({ status: 'started', up_next: false });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     await toggleUpNext(t);
 
     // `started` is not in the reset set — the call should be the
     // plain `up_next: true` shape, NOT the compound `status +
     // up_next` shape.
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'PATCH', body: { up_next: true } });
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, { up_next: true });
   });
 
   it('does NOT reset status for `not_started` either (already there)', async () => {
     const t = ticket({ status: 'not_started', up_next: false });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     await toggleUpNext(t);
 
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'PATCH', body: { up_next: true } });
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, { up_next: true });
   });
 });
 
@@ -199,7 +210,7 @@ describe('toggleUpNext — side effects', () => {
   it('dispatches the `hotsheet:upnext-changed` custom event', async () => {
     const t = ticket({ up_next: false });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     const handler = vi.fn();
     document.addEventListener('hotsheet:upnext-changed', handler);
@@ -212,7 +223,7 @@ describe('toggleUpNext — side effects', () => {
   it('reloads tickets via callLoadTickets', async () => {
     const t = ticket({ up_next: false });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     await toggleUpNext(t);
     // `void callLoadTickets()` — the action doesn't await the
@@ -226,7 +237,7 @@ describe('toggleUpNext — side effects', () => {
   it('writes the updated up_next back to the closure ticket reference', async () => {
     const t = ticket({ up_next: false });
     ticketsStore.actions.setTickets([t]);
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     await toggleUpNext(t);
 
@@ -240,7 +251,7 @@ describe('toggleUpNext — side effects', () => {
     const applySpy = vi.spyOn(ticketsStore.actions, 'applyServerUpdate').mockImplementation((u) => {
       storeObservedUpNext = u.up_next;
     });
-    mockApi.mockResolvedValue({ ...t, up_next: true });
+    mockUpdateTicket.mockResolvedValue({ ...t, up_next: true });
 
     await toggleUpNext(t);
 

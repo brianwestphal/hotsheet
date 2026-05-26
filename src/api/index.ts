@@ -20,11 +20,13 @@
 // lockstep with the client.
 //
 // Resource modules are added here as each domain is migrated (HS-8522
-// sub-tickets). Today: git.
+// sub-tickets). Today: git, tickets, feedbackDrafts.
 //
+import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
 import * as tickets from './tickets.js';
 
+export * from './feedbackDrafts.js';
 export * from './git.js';
 export * from './tickets.js';
 
@@ -33,4 +35,5 @@ export * from './tickets.js';
 export const apis = {
   ...git,
   ...tickets,
+  ...feedbackDrafts,
 };

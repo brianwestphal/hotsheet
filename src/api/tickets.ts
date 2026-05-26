@@ -10,23 +10,57 @@
  * (zod-only, so importing them client-side is safe) so there's a single
  * definition per wire body.
  *
- * NOT covered here (deliberately out of HS-8629's stated scope — tracked
- * separately): the `/tickets/:id/feedback-drafts*` endpoints (§21 feedback
- * domain) and the `GET /tickets/:id` detail response (Ticket + attachments +
- * syncInfo); those call sites stay on raw `api()` for now.
+ * HS-8642 finished the stragglers: the `GET /tickets/:id` detail response
+ * (`TicketDetailSchema` / `getTicketDetail` below — Ticket + attachments +
+ * syncInfo) and the `updateTicketField` helper for dynamic-key single-field
+ * updates (detail auto-save + dropdowns). The `/tickets/:id/feedback-drafts*`
+ * endpoints (§21) moved to their own module — see `src/api/feedbackDrafts.ts`.
  */
 import { z } from 'zod';
 
-import type {
-  BatchActionSchema, CreateTicketSchema,
-  NotesBulkSchema, QueryTicketsSchema, UpdateTicketSchema} from '../routes/validation.js';
+import {
+  BatchActionSchema, type CreateTicketSchema,
+  type NotesBulkSchema, type QueryTicketsSchema, UpdateTicketSchema} from '../routes/validation.js';
 import { NotesArraySchema, TicketSchema } from '../schemas.js';
 import { apiCall, type ApiCallOpts, OkResponseSchema, qs } from './_runner.js';
+
+// HS-8642 — re-export the request schemas (values) so client callers that need
+// to validate + narrow a loosely-typed body at the trust boundary (the undo
+// helpers, which still accept dynamic field bags from ticketRow / contextMenu)
+// import them from the typed-API layer rather than reaching into `routes/`.
+export { BatchActionSchema, UpdateTicketSchema };
 
 // --- Response schemas (built on the shared TicketSchema SSOT) ---
 const TicketListRespSchema = z.array(TicketSchema);
 const SearchCountsRespSchema = z.object({ backlog: z.number(), archive: z.number() });
 const PrefixesRespSchema = z.object({ prefixes: z.array(z.string()) });
+
+// --- Ticket detail (`GET /tickets/:id`) — HS-8642 ---
+// The detail response is the core ticket PLUS hydrated attachments + sync
+// metadata. `.loose()` on the attachment row tolerates the extra DB columns
+// the server's `SELECT *` returns (e.g. `draft_id`), which we don't surface.
+const TicketAttachmentSchema = z.object({
+  id: z.number(),
+  ticket_id: z.number(),
+  original_filename: z.string(),
+  stored_path: z.string(),
+  created_at: z.string(),
+}).loose();
+
+const TicketSyncInfoSchema = z.object({
+  pluginId: z.string(),
+  pluginName: z.string(),
+  pluginIcon: z.string().nullable(),
+  remoteId: z.string(),
+  remoteUrl: z.string().nullable(),
+  syncStatus: z.string(),
+});
+
+export const TicketDetailSchema = TicketSchema.extend({
+  attachments: z.array(TicketAttachmentSchema),
+  syncInfo: z.array(TicketSyncInfoSchema),
+});
+export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 
 // --- Request input types (inferred from the shared request schemas) ---
 export type CreateTicketReq = z.infer<typeof CreateTicketSchema>;
@@ -71,9 +105,33 @@ export async function getTicketByNumber(ticketNumber: string): Promise<z.infer<t
   return apiCall(TicketSchema, `/tickets/by-number/${encodeURIComponent(ticketNumber)}`);
 }
 
+/** GET `/tickets/:id` → the full detail payload (ticket + attachments + syncInfo). */
+export async function getTicketDetail(id: number): Promise<TicketDetail> {
+  return apiCall(TicketDetailSchema, `/tickets/${id}`);
+}
+
 /** PATCH `/tickets/:id` → update fields. `opts.secret` routes cross-project. */
 export async function updateTicket(id: number, body: UpdateTicketReq, opts: Pick<ApiCallOpts, 'secret'> = {}): Promise<z.infer<typeof TicketSchema>> {
   return apiCall(TicketSchema, `/tickets/${id}`, { method: 'PATCH', body, secret: opts.secret });
+}
+
+/** PATCH `/tickets/:id` with a single dynamically-keyed field. The detail
+ *  auto-save (title / details) and the category / priority / status dropdowns
+ *  build their update from a computed key; this narrows that `(field, value)`
+ *  pair to the matching `UpdateTicketReq` slot so those call sites no longer
+ *  fall back to raw `api()` (HS-8642 item 2). */
+export async function updateTicketField<K extends keyof UpdateTicketReq>(
+  id: number,
+  field: K,
+  value: UpdateTicketReq[K],
+  opts: Pick<ApiCallOpts, 'secret'> = {},
+): Promise<z.infer<typeof TicketSchema>> {
+  // `field` is constrained to `keyof UpdateTicketReq` and `value` to its
+  // matching value type, so this object IS a valid one-key UpdateTicketReq.
+  // The assertion only re-expresses that — TS widens a computed-key literal to
+  // `{ [k: string]: ... }` and can't infer the narrower partial on its own.
+  const body = { [field]: value } as UpdateTicketReq;
+  return updateTicket(id, body, opts);
 }
 
 /** DELETE `/tickets/:id` → soft-delete (move to trash). `opts.secret` routes cross-project. */

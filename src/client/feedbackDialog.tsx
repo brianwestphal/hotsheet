@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+import {
+  createFeedbackDraft, deleteFeedbackDraft, getFeedbackDrafts,
+  promoteFeedbackDraftAttachments, updateFeedbackDraft, updateTicket,
+} from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
@@ -186,7 +190,7 @@ export async function openFeedbackDialogForNote(
   let seed: FeedbackDraftSeed | undefined;
   if (noteId !== undefined && noteId !== '') {
     try {
-      const drafts = await api<FeedbackDraft[]>(`/tickets/${ticketId}/feedback-drafts`);
+      const drafts = await getFeedbackDrafts(ticketId);
       const list = Array.isArray(drafts) ? drafts : [];
       const picked = pickDraftForFeedbackNote(list, noteId);
       if (picked !== null) seed = toDraftSeed(picked);
@@ -401,7 +405,7 @@ export function showFeedbackDialog(
   const close = () => {
     if (!attachmentsCommitted && !draftPersistedToServer && pendingAttachments.length > 0) {
       // Fire-and-forget — overlay removal can race the response.
-      void api(`/tickets/${String(ticketId)}/feedback-drafts/${sessionDraftId}`, { method: 'DELETE' }).catch(() => { /* swallow */ });
+      void deleteFeedbackDraft(ticketId, sessionDraftId).catch(() => { /* swallow */ });
     }
     overlay.remove();
   };
@@ -425,9 +429,7 @@ export function showFeedbackDialog(
   noResponseBtn.addEventListener('click', async () => {
     noResponseBtn.disabled = true;
     try {
-      await api(`/tickets/${ticketId}`, {
-        method: 'PATCH', body: { notes: 'NO RESPONSE NEEDED' },
-      });
+      await updateTicket(ticketId, { notes: 'NO RESPONSE NEEDED' });
       close();
       void loadTickets();
     } catch {
@@ -461,22 +463,17 @@ export function showFeedbackDialog(
 
     try {
       if (draftPersistedToServer) {
-        await api(`/tickets/${ticketId}/feedback-drafts/${sessionDraftId}`, {
-          method: 'PATCH', body: { partitions },
-        });
+        await updateFeedbackDraft(ticketId, sessionDraftId, partitions);
       } else {
         // HS-8428 — use the pre-generated `sessionDraftId` (same id the
         // file-attach path already used for any uploads). The draft row
         // now anchors all the attachments that were uploaded earlier in
         // this session.
-        await api(`/tickets/${ticketId}/feedback-drafts`, {
-          method: 'POST',
-          body: {
-            id: sessionDraftId,
-            parent_note_id: effectiveParentNoteId,
-            prompt_text: effectivePrompt,
-            partitions,
-          },
+        await createFeedbackDraft(ticketId, {
+          id: sessionDraftId,
+          parent_note_id: effectiveParentNoteId,
+          prompt_text: effectivePrompt,
+          partitions,
         });
         draftPersistedToServer = true;
       }
@@ -512,15 +509,11 @@ export function showFeedbackDialog(
       // is a no-op when the draft has no attachments (the common case
       // for text-only submissions), so we can fire it unconditionally.
       if (pendingAttachments.length > 0) {
-        await api(`/tickets/${ticketId}/feedback-drafts/${sessionDraftId}/promote-attachments`, {
-          method: 'POST', body: {},
-        });
+        await promoteFeedbackDraftAttachments(ticketId, sessionDraftId);
       }
 
       if (text !== null && text !== '') {
-        await api(`/tickets/${ticketId}`, {
-          method: 'PATCH', body: { notes: text },
-        });
+        await updateTicket(ticketId, { notes: text });
       }
 
       // HS-7599 / HS-8428: clear the draft on successful submit so the
@@ -531,7 +524,7 @@ export function showFeedbackDialog(
       // only drops the draft row itself.
       if (draftPersistedToServer) {
         try {
-          await api(`/tickets/${ticketId}/feedback-drafts/${sessionDraftId}`, { method: 'DELETE' });
+          await deleteFeedbackDraft(ticketId, sessionDraftId);
         } catch { /* draft already gone — fine */ }
       }
 

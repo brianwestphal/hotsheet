@@ -5,7 +5,7 @@
  * markdown sibling in sync on every keystroke so the reader-mode button
  * never paints a stale render.
  */
-import { api } from '../api.js';
+import { updateTicketField } from '../../api/index.js';
 import { TIMERS } from '../constants/timers.js';
 import { renderDetailsMarkdown } from '../detail.js';
 import { byId } from '../dom.js';
@@ -16,14 +16,19 @@ import { loadTickets } from '../ticketList.js';
 import { recordTextChange } from '../undo/actions.js';
 
 export function bindDetailAutoSave(): void {
-  const fields = ['detail-title', 'detail-details'];
-  for (const fieldId of fields) {
+  // HS-8642 — the field key is paired with its element id up front (rather than
+  // string-sliced) so it carries the `'title' | 'details'` literal type the
+  // typed `updateTicketField` needs — no raw `api()` / dynamic-key fallback.
+  const fields: { fieldId: string; key: 'title' | 'details' }[] = [
+    { fieldId: 'detail-title', key: 'title' },
+    { fieldId: 'detail-details', key: 'details' },
+  ];
+  for (const { fieldId, key } of fields) {
     const el = byId<HTMLInputElement | HTMLTextAreaElement>(fieldId);
     el.addEventListener('input', () => {
       // Record text change for undo (coalesces rapid edits)
       const ticket = state.tickets.find(t => t.id === state.activeTicketId);
       if (ticket) {
-        const key = fieldId.replace('detail-', '');
         recordTextChange(ticket, key, el.value);
       }
       // HS-7957 — keep the Details reader-mode button disabled when the
@@ -42,11 +47,7 @@ export function bindDetailAutoSave(): void {
       if (currentTimeout) clearTimeout(currentTimeout);
       const newTimeout = setTimeout(() => {
         if (state.activeTicketId == null) return;
-        const key = fieldId.replace('detail-', '');
-        void api(`/tickets/${state.activeTicketId}`, {
-          method: 'PATCH',
-          body: { [key]: el.value },
-        }).then(() => void loadTickets());
+        void updateTicketField(state.activeTicketId, key, el.value).then(() => void loadTickets());
       }, TIMERS.DETAIL_SAVE_MS);
       setDetailSaveTimeout(newTimeout);
     });

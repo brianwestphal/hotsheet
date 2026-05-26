@@ -2,9 +2,14 @@ import './markdownSetup.js';
 
 import { marked } from 'marked';
 
-import { deleteTicketNote, editTicketNote } from '../api/index.js';
+// HS-8642 — `FeedbackDraft` + `FeedbackDraftAttachmentSummary` are now defined
+// once as the wire SSOT in `src/api/feedbackDrafts.ts` (inferred from
+// `FeedbackDraftSchema`). Imported for local use + re-exported (below) so the
+// many existing `import { FeedbackDraft } from './noteRenderer.js'` consumers
+// keep working without a churny path rewrite. See docs/21-feedback.md §21.2.3.
+import type { FeedbackDraft, FeedbackDraftAttachmentSummary } from '../api/feedbackDrafts.js';
+import { deleteFeedbackDraft, deleteTicketNote, editTicketNote } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { isChannelEnabled } from './experimentalSettings.js';
 import { openFeedbackDialogForNote, parseFeedbackPrefix, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
@@ -32,38 +37,9 @@ function isChannelFeatureEnabled(): boolean {
 
 export type NoteEntry = { id?: string; text: string; created_at: string };
 
-/** HS-7599 — feedback draft as returned by `/api/tickets/:id/feedback-drafts`.
- *  `partitions` mirrors the feedback dialog's working state so a saved draft
- *  round-trips back to the same UI on click-to-reopen, even after future
- *  changes to `parseFeedbackBlocks` heuristics.
- *
- *  HS-8428 — `attachments` carries every draft-scoped attachment hydrated
- *  server-side from the `attachments` table by `draft_id` so a click-to-
- *  reopen flow can pre-populate the dialog's file list without an extra
- *  round-trip. May be missing on payloads from older servers — handle
- *  defensively with `?? []`. */
-export interface FeedbackDraftAttachmentSummary {
-  id: number;
-  ticket_id: number;
-  draft_id: string | null;
-  original_filename: string;
-  stored_path: string;
-  created_at: string;
-}
-export interface FeedbackDraft {
-  id: string;
-  ticketId: number;
-  parentNoteId: string | null;
-  promptText: string;
-  partitions: {
-    blocks: { markdown: string; html: string }[];
-    inlineResponses: { blockIndex: number; text: string }[];
-    catchAll: string;
-  };
-  attachments?: FeedbackDraftAttachmentSummary[];
-  createdAt: string;
-  updatedAt: string;
-}
+// Re-exported (imported at the top of the module) so existing
+// `import { FeedbackDraft } from './noteRenderer.js'` consumers keep working.
+export type { FeedbackDraft, FeedbackDraftAttachmentSummary };
 
 /** Drafts loaded for the active ticket. The key is the ticket id; the value
  *  is whatever the server returned on the most recent /feedback-drafts call.
@@ -481,7 +457,7 @@ function buildDraftEntry(ticketId: number, draft: FeedbackDraft, notes: NoteEntr
     menu.querySelector('.context-menu-item')!.addEventListener('click', async (ev) => {
       ev.stopPropagation();
       menu.remove();
-      try { await api(`/tickets/${ticketId}/feedback-drafts/${draft.id}`, { method: 'DELETE' }); } catch { /* ignore */ }
+      try { await deleteFeedbackDraft(ticketId, draft.id); } catch { /* ignore */ }
       const drafts = ticketDraftsCache.get(ticketId) ?? [];
       ticketDraftsCache.set(ticketId, drafts.filter(d => d.id !== draft.id));
       renderNotes(ticketId, notes);

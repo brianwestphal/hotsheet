@@ -5,7 +5,7 @@
  * `applyDetailChange` helper which trackedPatches the ticket + reloads
  * the list + re-opens the detail.
  */
-import { api } from '../api.js';
+import { updateTicket,type UpdateTicketReq } from '../../api/index.js';
 import { openDetail, updateDetailCategory, updateDetailPriority, updateDetailStatus } from '../detail.js';
 import { byId } from '../dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from '../dropdown.js';
@@ -14,13 +14,17 @@ import { loadTickets } from '../ticketList.js';
 import { trackedPatch } from '../undo/actions.js';
 
 export function bindDetailDropdowns(): void {
-  async function applyDetailChange(key: string, value: string): Promise<void> {
+  // HS-8642 — takes a typed `UpdateTicketReq` body (the callers build it from
+  // already-typed `c.id` / `p.value` / `s.value`), so the trackedPatch + the
+  // not-in-state fallback both route through the typed layer — no dynamic-key
+  // raw `api()`.
+  async function applyDetailChange(body: UpdateTicketReq, label: string): Promise<void> {
     if (state.activeTicketId == null) return;
     const ticket = state.tickets.find(t => t.id === state.activeTicketId);
     if (ticket) {
-      await trackedPatch(ticket, { [key]: value }, `Change ${key}`);
+      await trackedPatch(ticket, body, label);
     } else {
-      await api(`/tickets/${state.activeTicketId}`, { method: 'PATCH', body: { [key]: value } });
+      await updateTicket(state.activeTicketId, body);
     }
     void loadTickets();
     openDetail(state.activeTicketId);
@@ -42,17 +46,17 @@ export function bindDetailDropdowns(): void {
 
   bindDropdown('detail-category', (current) => state.categories.map(c => ({
     label: c.label, key: c.shortcutKey, color: c.color, active: c.id === current,
-    action: () => { updateDetailCategory(c.id); void applyDetailChange('category', c.id); },
+    action: () => { updateDetailCategory(c.id); void applyDetailChange({ category: c.id }, 'Change category'); },
   })));
 
   bindDropdown('detail-priority', (current) => PRIORITY_ITEMS.map(p => ({
     label: p.label, key: p.key, icon: getPriorityIcon(p.value), iconColor: getPriorityColor(p.value),
     active: p.value === current,
-    action: () => { updateDetailPriority(p.value); void applyDetailChange('priority', p.value); },
+    action: () => { updateDetailPriority(p.value); void applyDetailChange({ priority: p.value }, 'Change priority'); },
   })));
 
   bindDropdown('detail-status', (current) => STATUS_ITEMS.map(s => ({
     label: s.label, key: s.key, icon: getStatusIcon(s.value), active: s.value === current,
-    action: () => { updateDetailStatus(s.value); void applyDetailChange('status', s.value); },
+    action: () => { updateDetailStatus(s.value); void applyDetailChange({ status: s.value }, 'Change status'); },
   })));
 }

@@ -9,9 +9,14 @@
  * `canUndo` / `canRedo` / `toggleUpNext` / `toggleReadState`) without
  * standing up a real backend.
  *
- * `api` from `../api.js` + the `ticketList` + `detail` re-render hooks
- * are mocked so the tests assert on the orchestration:
- *   - which API calls fired with what body
+ * HS-8642 — the actions now route through the typed API layer
+ * (`updateTicket` / `batchTickets` / `deleteTicket` / `restoreTicket` /
+ * `putTicketNotesBulk`), so those are mocked here instead of the old raw
+ * `api()`. The REAL `BatchActionSchema` / `UpdateTicketSchema` are supplied
+ * to the mock because `actions.ts` calls `.parse()` on the loose bodies
+ * before handing them to the typed callers. The `ticketList` + `detail`
+ * re-render hooks are mocked so the tests assert on the orchestration:
+ *   - which typed caller fired with what arguments
  *   - which undo entries got pushed (label + before/after shape)
  *   - whether the in-flight guard blocks re-entry
  */
@@ -21,15 +26,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Ticket } from '../state.js';
 import type * as ActionsNS from './actions.js';
 
-const mockApi = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>();
+const mockUpdateTicket = vi.fn<(id: number, body: unknown) => Promise<unknown>>();
+const mockBatchTickets = vi.fn<(req: { ids: number[]; action: string; value?: unknown }) => Promise<unknown>>();
+const mockDeleteTicket = vi.fn<(id: number) => Promise<unknown>>();
+const mockRestoreTicket = vi.fn<(id: number) => Promise<unknown>>();
+const mockPutNotesBulk = vi.fn<(id: number, notes: string) => Promise<unknown>>();
 const mockLoadTickets = vi.fn<() => Promise<void>>();
 const mockRenderTicketList = vi.fn<() => void>();
 const mockRefreshDetail = vi.fn<() => void>();
 const mockSetSuppressAutoRead = vi.fn<(v: boolean) => void>();
 
-vi.mock('../api.js', () => ({
-  api: (path: string, opts?: unknown): Promise<unknown> => mockApi(path, opts),
-}));
+// Mock the typed callers but keep the REAL request schemas — `actions.ts`
+// validates the loose bodies with `UpdateTicketSchema.parse` /
+// `BatchActionSchema.parse` before routing through the mocked callers.
+vi.mock('../../api/index.js', async () => {
+  const validation = await import('../../routes/validation.js');
+  return {
+    BatchActionSchema: validation.BatchActionSchema,
+    UpdateTicketSchema: validation.UpdateTicketSchema,
+    updateTicket: (id: number, body: unknown): Promise<unknown> => mockUpdateTicket(id, body),
+    batchTickets: (req: { ids: number[]; action: string; value?: unknown }): Promise<unknown> => mockBatchTickets(req),
+    deleteTicket: (id: number): Promise<unknown> => mockDeleteTicket(id),
+    restoreTicket: (id: number): Promise<unknown> => mockRestoreTicket(id),
+    putTicketNotesBulk: (id: number, notes: string): Promise<unknown> => mockPutNotesBulk(id, notes),
+  };
+});
 
 vi.mock('../detail.js', () => ({
   refreshDetail: (): void => mockRefreshDetail(),
@@ -84,7 +105,11 @@ async function freshActions(): Promise<typeof ActionsNS> {
 }
 
 beforeEach(() => {
-  mockApi.mockReset();
+  mockUpdateTicket.mockReset().mockResolvedValue(ticket());
+  mockBatchTickets.mockReset().mockResolvedValue(undefined);
+  mockDeleteTicket.mockReset().mockResolvedValue(undefined);
+  mockRestoreTicket.mockReset().mockResolvedValue(undefined);
+  mockPutNotesBulk.mockReset().mockResolvedValue(undefined);
   mockLoadTickets.mockReset();
   mockRenderTicketList.mockReset();
   mockRefreshDetail.mockReset();
@@ -118,9 +143,9 @@ describe('trackedPatch', () => {
   it('PATCHes the ticket + pushes an undo entry with before/after snapshots', async () => {
     const { trackedPatch, canUndo } = await freshActions();
     const t = ticket({ title: 'Old' });
-    mockApi.mockResolvedValue(ticket({ title: 'New' }));
+    mockUpdateTicket.mockResolvedValue(ticket({ title: 'New' }));
     const result = await trackedPatch(t, { title: 'New' }, 'Edit title');
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'PATCH', body: { title: 'New' } });
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, { title: 'New' });
     expect(result.title).toBe('New');
     expect(canUndo()).toBe(true);
   });
@@ -180,19 +205,17 @@ describe('recordTextChange — coalescing', () => {
 });
 
 describe('trackedBatch', () => {
-  it('issues one batch POST + records before/after snapshots per ticket', async () => {
+  it('issues one batch call + records before/after snapshots per ticket', async () => {
     const { trackedBatch, canUndo } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     const tickets = [ticket({ id: 1 }), ticket({ id: 2 })];
     await trackedBatch(tickets, { ids: [1, 2], action: 'category', value: 'bug' }, 'Set category');
-    expect(mockApi).toHaveBeenCalledTimes(1);
-    expect(mockApi).toHaveBeenCalledWith('/tickets/batch', { method: 'POST', body: { ids: [1, 2], action: 'category', value: 'bug' } });
+    expect(mockBatchTickets).toHaveBeenCalledTimes(1);
+    expect(mockBatchTickets).toHaveBeenCalledWith({ ids: [1, 2], action: 'category', value: 'bug' });
     expect(canUndo()).toBe(true);
   });
 
   it('constructs after-state per action — category', async () => {
     const { trackedBatch } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await trackedBatch([ticket()], { ids: [1], action: 'category', value: 'bug' }, 'Set category');
     const { undoStack } = await import('./stack.js');
     expect(undoStack.popUndo()!.after[0].category).toBe('bug');
@@ -200,7 +223,6 @@ describe('trackedBatch', () => {
 
   it('constructs after-state per action — priority / status / up_next / delete / mark_read / mark_unread', async () => {
     const { trackedBatch } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     const { undoStack } = await import('./stack.js');
 
     await trackedBatch([ticket()], { ids: [1], action: 'priority', value: 'high' }, 'P');
@@ -224,9 +246,8 @@ describe('trackedBatch', () => {
 });
 
 describe('trackedCompoundBatch', () => {
-  it('issues one POST per op + composes the after-state from the op chain', async () => {
+  it('issues one batch call per op + composes the after-state from the op chain', async () => {
     const { trackedCompoundBatch } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     const t = ticket({ id: 5, status: 'completed', up_next: false });
     await trackedCompoundBatch(
       [t],
@@ -236,7 +257,7 @@ describe('trackedCompoundBatch', () => {
       ],
       'Reopen + star',
     );
-    expect(mockApi).toHaveBeenCalledTimes(2);
+    expect(mockBatchTickets).toHaveBeenCalledTimes(2);
     const { undoStack } = await import('./stack.js');
     const after = undoStack.popUndo()!.after[0];
     expect(after.status).toBe('not_started');
@@ -245,7 +266,6 @@ describe('trackedCompoundBatch', () => {
 
   it('skips ops whose ids exclude the ticket (per-ticket filter)', async () => {
     const { trackedCompoundBatch } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     const t = ticket({ id: 1, status: 'completed', up_next: false });
     await trackedCompoundBatch(
       [t],
@@ -263,40 +283,38 @@ describe('trackedCompoundBatch', () => {
 });
 
 describe('trackedDelete + trackedRestore', () => {
-  it('trackedDelete fires DELETE + records "Delete ticket"', async () => {
+  it('trackedDelete fires deleteTicket + records "Delete ticket"', async () => {
     const { trackedDelete } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await trackedDelete(ticket());
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', { method: 'DELETE' });
+    expect(mockDeleteTicket).toHaveBeenCalledWith(1);
     const { undoStack } = await import('./stack.js');
     const entry = undoStack.popUndo()!;
     expect(entry.label).toBe('Delete ticket');
     expect(entry.after[0].status).toBe('deleted');
   });
 
-  it('trackedRestore fires POST /restore + sets after-status to not_started', async () => {
+  it('trackedRestore fires restoreTicket + sets after-status to not_started', async () => {
     const { trackedRestore } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await trackedRestore(ticket({ status: 'completed' }));
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1/restore', { method: 'POST' });
+    expect(mockRestoreTicket).toHaveBeenCalledWith(1);
     const { undoStack } = await import('./stack.js');
     expect(undoStack.popUndo()!.after[0].status).toBe('not_started');
   });
 });
 
 describe('performUndo / performRedo', () => {
-  it('performUndo replays the before-snapshot via PATCH + reloads + refreshes detail', async () => {
+  it('performUndo replays the before-snapshot via updateTicket + reloads + refreshes detail', async () => {
     vi.useFakeTimers();
     const { trackedPatch, performUndo } = await freshActions();
-    mockApi.mockResolvedValue(ticket({ title: 'New' }));
+    mockUpdateTicket.mockResolvedValue(ticket({ title: 'New' }));
     await trackedPatch(ticket({ title: 'Old' }), { title: 'New' }, 'Edit');
-    mockApi.mockReset().mockResolvedValue(undefined);
+    mockUpdateTicket.mockClear();
     mockLoadTickets.mockResolvedValue();
 
     const p = performUndo();
     await vi.runAllTimersAsync();
     await p;
-    expect(mockApi).toHaveBeenCalledWith('/tickets/1', expect.objectContaining({ method: 'PATCH' }));
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, expect.objectContaining({ title: 'Old' }));
     expect(mockLoadTickets).toHaveBeenCalled();
     expect(mockRefreshDetail).toHaveBeenCalled();
   });
@@ -304,53 +322,55 @@ describe('performUndo / performRedo', () => {
   it('performUndo is a no-op when the stack is empty', async () => {
     const { performUndo } = await freshActions();
     await performUndo();
-    expect(mockApi).not.toHaveBeenCalled();
+    expect(mockUpdateTicket).not.toHaveBeenCalled();
+    expect(mockDeleteTicket).not.toHaveBeenCalled();
   });
 
   it('performRedo replays the after-snapshot + reloads', async () => {
     vi.useFakeTimers();
     const { trackedPatch, performUndo, performRedo } = await freshActions();
-    mockApi.mockResolvedValue(ticket({ title: 'New' }));
+    mockUpdateTicket.mockResolvedValue(ticket({ title: 'New' }));
     await trackedPatch(ticket({ title: 'Old' }), { title: 'New' }, 'Edit');
-    mockApi.mockReset().mockResolvedValue(undefined);
     mockLoadTickets.mockResolvedValue();
 
     let p = performUndo();
     await vi.runAllTimersAsync();
     await p;
-    mockApi.mockReset().mockResolvedValue(undefined);
+    mockUpdateTicket.mockClear();
     p = performRedo();
     await vi.runAllTimersAsync();
     await p;
-    expect(mockApi).toHaveBeenCalled();
+    expect(mockUpdateTicket).toHaveBeenCalledWith(1, expect.objectContaining({ title: 'New' }));
   });
 
   it('performRedo is a no-op when the redo stack is empty', async () => {
     const { performRedo } = await freshActions();
     await performRedo();
-    expect(mockApi).not.toHaveBeenCalled();
+    expect(mockUpdateTicket).not.toHaveBeenCalled();
+    expect(mockDeleteTicket).not.toHaveBeenCalled();
   });
 
-  it('applies the soft-delete branch via DELETE when a snapshot has status=deleted', async () => {
+  it('applies the soft-delete branch via deleteTicket when a snapshot has status=deleted', async () => {
     vi.useFakeTimers();
     const { trackedDelete, performRedo, performUndo } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await trackedDelete(ticket({ status: 'not_started' }));
-    mockApi.mockReset().mockResolvedValue(undefined);
+    mockUpdateTicket.mockClear();
+    mockDeleteTicket.mockClear();
     mockLoadTickets.mockResolvedValue();
 
-    // undo brings it back to not_started → PATCH path
+    // undo brings it back to not_started → updateTicket path
     let p = performUndo();
     await vi.runAllTimersAsync();
     await p;
-    expect(mockApi.mock.calls.some(c => (c[1] as { method: string }).method === 'PATCH')).toBe(true);
+    expect(mockUpdateTicket).toHaveBeenCalled();
 
-    mockApi.mockReset().mockResolvedValue(undefined);
-    // redo replays the after (status=deleted) → DELETE path
+    mockUpdateTicket.mockClear();
+    mockDeleteTicket.mockClear();
+    // redo replays the after (status=deleted) → deleteTicket path
     p = performRedo();
     await vi.runAllTimersAsync();
     await p;
-    expect(mockApi.mock.calls.some(c => (c[1] as { method: string }).method === 'DELETE')).toBe(true);
+    expect(mockDeleteTicket).toHaveBeenCalled();
   });
 
   it('restores notes when the snapshot includes them', async () => {
@@ -358,14 +378,11 @@ describe('performUndo / performRedo', () => {
     const { pushNotesUndo, performUndo } = await freshActions();
     const t = ticket({ notes: 'before-notes' });
     pushNotesUndo(t, 'Edit notes', 'after-notes');
-    mockApi.mockReset().mockResolvedValue(undefined);
     mockLoadTickets.mockResolvedValue();
     const p = performUndo();
     await vi.runAllTimersAsync();
     await p;
-    const notesCall = mockApi.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('/notes-bulk'));
-    expect(notesCall).toBeDefined();
-    expect((notesCall![1] as { body: { notes: string } }).body.notes).toBe('before-notes');
+    expect(mockPutNotesBulk).toHaveBeenCalledWith(1, 'before-notes');
   });
 });
 
@@ -389,7 +406,6 @@ describe('canUndo / canRedo', () => {
 
   it('canUndo flips true after trackedPatch', async () => {
     const { trackedPatch, canUndo } = await freshActions();
-    mockApi.mockResolvedValue(ticket());
     await trackedPatch(ticket(), { title: 'X' }, 'Edit');
     expect(canUndo()).toBe(true);
   });
@@ -398,30 +414,26 @@ describe('canUndo / canRedo', () => {
 describe('toggleUpNext — HS-7998 status-reset path', () => {
   it('sets up_next true via single batch when no ticket needs status reset', async () => {
     const { toggleUpNext } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await toggleUpNext([ticket({ status: 'started', up_next: false })]);
     // One batch call (no compound) — up_next only.
-    expect(mockApi).toHaveBeenCalledTimes(1);
-    expect((mockApi.mock.calls[0][1] as { body: { action: string; value: unknown } }).body)
-      .toEqual({ ids: [1], action: 'up_next', value: true });
+    expect(mockBatchTickets).toHaveBeenCalledTimes(1);
+    expect(mockBatchTickets.mock.calls[0][0]).toEqual({ ids: [1], action: 'up_next', value: true });
   });
 
   it('reopens completed / verified / backlog / archive tickets when setting up_next', async () => {
     const { toggleUpNext } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await toggleUpNext([ticket({ status: 'completed', up_next: false })]);
     // Two batch calls (compound): status reset + up_next.
-    expect(mockApi).toHaveBeenCalledTimes(2);
-    expect((mockApi.mock.calls[0][1] as { body: { action: string } }).body.action).toBe('status');
-    expect((mockApi.mock.calls[1][1] as { body: { action: string } }).body.action).toBe('up_next');
+    expect(mockBatchTickets).toHaveBeenCalledTimes(2);
+    expect(mockBatchTickets.mock.calls[0][0].action).toBe('status');
+    expect(mockBatchTickets.mock.calls[1][0].action).toBe('up_next');
   });
 
   it('unstarring (all already up_next) takes the single-batch path with value=false', async () => {
     const { toggleUpNext } = await freshActions();
-    mockApi.mockResolvedValue(undefined);
     await toggleUpNext([ticket({ up_next: true }), ticket({ id: 2, up_next: true })]);
-    expect(mockApi).toHaveBeenCalledTimes(1);
-    expect((mockApi.mock.calls[0][1] as { body: { value: unknown } }).body.value).toBe(false);
+    expect(mockBatchTickets).toHaveBeenCalledTimes(1);
+    expect(mockBatchTickets.mock.calls[0][0].value).toBe(false);
   });
 });
 
@@ -437,10 +449,9 @@ describe('toggleReadState', () => {
     (state2 as { tickets: Ticket[] }).tickets = [
       ticket({ id: 1, last_read_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' }),
     ];
-    mockApi.mockResolvedValue(undefined);
     await toggleReadState([1]);
     expect(mockSetSuppressAutoRead).toHaveBeenCalledWith(false);
-    expect((mockApi.mock.calls[0][1] as { body: { action: string } }).body.action).toBe('mark_read');
+    expect(mockBatchTickets.mock.calls[0][0].action).toBe('mark_read');
     expect(mockRenderTicketList).toHaveBeenCalled();
   });
 
@@ -450,10 +461,9 @@ describe('toggleReadState', () => {
     (state as { tickets: Ticket[] }).tickets = [
       ticket({ id: 1, last_read_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }), // read
     ];
-    mockApi.mockResolvedValue(undefined);
     await toggleReadState([1]);
     expect(mockSetSuppressAutoRead).toHaveBeenCalledWith(true);
-    expect((mockApi.mock.calls[0][1] as { body: { action: string } }).body.action).toBe('mark_unread');
+    expect(mockBatchTickets.mock.calls[0][0].action).toBe('mark_unread');
   });
 });
 

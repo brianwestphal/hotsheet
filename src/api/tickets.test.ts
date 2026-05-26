@@ -9,8 +9,9 @@ import { TicketSchema } from '../schemas.js';
 import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.js';
 import {
   batchTickets, createTicket, deleteTicket, deleteTicketNote, duplicateTickets, editTicketNote,
-  emptyTrash, getTicketByNumber, getTicketPrefixes, getTicketSearchCounts,
+  emptyTrash, getTicketByNumber, getTicketDetail, getTicketPrefixes, getTicketSearchCounts,
   listTickets, putTicketNotesBulk, queryTickets, restoreTicket, toggleUpNext, updateTicket,
+  updateTicketField,
 } from './tickets.js';
 
 const ticket = {
@@ -86,6 +87,27 @@ describe('ticket callers route to the right endpoint (HS-8629)', () => {
     await deleteTicket(7);
     expect(lastCall?.path).toBe('/tickets/7');
     expect(lastCall?.opts.method).toBe('DELETE');
+  });
+
+  it('updateTicketField → PATCH /tickets/:id with a single narrowed field (HS-8642)', async () => {
+    stub(ticket);
+    await updateTicketField(7, 'priority', 'high');
+    expect(lastCall).toEqual({ path: '/tickets/7', opts: { method: 'PATCH', body: { priority: 'high' }, secret: undefined } });
+    await updateTicketField(7, 'title', 'New title', { secret: 'sek' });
+    expect(lastCall).toEqual({ path: '/tickets/7', opts: { method: 'PATCH', body: { title: 'New title' }, secret: 'sek' } });
+  });
+
+  it('getTicketDetail → GET /tickets/:id, validated against TicketDetailSchema (HS-8642)', async () => {
+    stub({ ...ticket, attachments: [], syncInfo: [] });
+    const detail = await getTicketDetail(7);
+    expect(lastCall?.path).toBe('/tickets/7');
+    expect(detail.attachments).toEqual([]);
+    expect(detail.syncInfo).toEqual([]);
+  });
+
+  it('getTicketDetail rejects a detail payload missing attachments / syncInfo', async () => {
+    stub(ticket); // no attachments / syncInfo
+    await expect(getTicketDetail(7)).rejects.toThrow(/response shape mismatch/);
   });
 
   it('putTicketNotesBulk → PUT /tickets/:id/notes-bulk', async () => {

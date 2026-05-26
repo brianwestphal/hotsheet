@@ -1,9 +1,5 @@
-import { putTicketNotesBulk, updateTicket } from '../api/index.js';
-// HS-8629 — create stays on raw `api()` for now: it passes a loose client
-// `Ticket` (state.tsx's `priority: string`) into the strict `CreateTicketReq`
-// defaults, which needs the client/schema `Ticket` reconciliation (separate
-// follow-up) before it can use the typed `createTicket`.
-import { api } from './api.js';
+import { createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
+import { TicketSchema } from '../schemas.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, signal } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -100,18 +96,23 @@ export async function pasteTickets(): Promise<void> {
     const title = deduplicateTitle(source.title, existingTitles);
     existingTitles.add(title.toLowerCase());
 
-    const created = await api<Ticket>('/tickets', {
-      method: 'POST',
-      body: {
-        title,
-        defaults: {
-          category: source.category,
-          priority: source.priority,
-          status: source.status === 'deleted' ? 'not_started' : source.status,
-          up_next: source.up_next,
-          details: source.details,
-          tags: source.tags,
-        },
+    // HS-8642 — `source` is the loose client `Ticket` (priority / status typed
+    // as `string`); narrow both through the `TicketSchema` SSOT so the typed
+    // `createTicket` accepts them. `.catch(...)` keeps a sane default if a
+    // clipboard ticket ever carried an out-of-range value (runtime-safe, no
+    // `as`). A pasted copy of a trashed ticket re-enters as `not_started`.
+    const priority = TicketSchema.shape.priority.catch('default').parse(source.priority);
+    const rawStatus = source.status === 'deleted' ? 'not_started' : source.status;
+    const status = TicketSchema.shape.status.catch('not_started').parse(rawStatus);
+    const created = await createTicket({
+      title,
+      defaults: {
+        category: source.category,
+        priority,
+        status,
+        up_next: source.up_next,
+        details: source.details,
+        tags: source.tags,
       },
     });
 
