@@ -1,8 +1,13 @@
 import { spawnSync } from 'child_process';
 import { join } from 'path';
 
+// HS-8522 — wire shapes inferred from the typed-API-layer schemas
+// (`src/api/git.ts`), the single source of truth shared with the client.
+import type { FetchResult, GitStatus, GitStatusFiles } from '../api/git.js';
 import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { getGitRoot, isGitRepo } from '../gitignore.js';
+
+export type { FetchResult, GitStatus, GitStatusFiles };
 
 /**
  * HS-7598 (design) / HS-7954 (Phase 1 implementation) — server-side git
@@ -19,29 +24,6 @@ import { getGitRoot, isGitRepo } from '../gitignore.js';
  * See docs/48-git-status-tracker.md.
  */
 
-export interface GitStatus {
-  /** Current branch name, or detached HEAD's short SHA. */
-  branch: string;
-  /** True when HEAD is detached. */
-  detached: boolean;
-  /** "origin/main" if tracking, null otherwise. Phase 1 always null. */
-  upstream: string | null;
-  /** Commits in HEAD not in upstream. Phase 1 always 0. */
-  ahead: number;
-  /** Commits in upstream not in HEAD. Phase 1 always 0. */
-  behind: number;
-  /** Staged file count (pre-commit). */
-  staged: number;
-  /** Unstaged file count (modified files in working tree). */
-  unstaged: number;
-  /** Untracked file count. */
-  untracked: number;
-  /** Unresolved-merge file count. */
-  conflicted: number;
-  /** Last successful Hot-Sheet-initiated `git fetch` timestamp (ms epoch).
-   *  Phase 1 always null — populated in HS-7955. */
-  lastFetchedAt: number | null;
-}
 
 const SPAWN_TIMEOUT_MS = 2_000;
 
@@ -156,13 +138,6 @@ function getLastFetchedAt(projectRoot: string): number | null {
   return lastFetchedAt.get(projectRoot) ?? null;
 }
 
-export interface FetchResult {
-  ok: boolean;
-  lastFetchedAt: number | null;
-  /** stderr line(s) when `ok` is false. Empty when the fetch succeeded. */
-  error: string;
-}
-
 /** Run `git fetch --quiet --no-write-fetch-head` against the upstream of
  *  the current branch. Returns `ok: true` + the new timestamp on success;
  *  `ok: false` + the captured stderr on failure. 30s timeout. */
@@ -255,17 +230,6 @@ export function bucketPorcelain(output: string): { staged: number; unstaged: num
 // ---------------------------------------------------------------------------
 
 const FILES_PER_BUCKET_CAP = 200;
-
-export interface GitStatusFiles {
-  staged: string[];
-  unstaged: string[];
-  untracked: string[];
-  conflicted: string[];
-  /** Per-bucket truncation flags — true when the actual count exceeded the
-   *  per-bucket cap and the array was clipped. The chip's expanded popover
-   *  shows a "…and N more" footer when any of these is true. */
-  truncated: { staged: boolean; unstaged: boolean; untracked: boolean; conflicted: boolean };
-}
 
 /** Read the per-bucket file lists from `git status --porcelain=v1`. Caps
  *  each bucket at 200 entries — beyond that the popover gets unusable and

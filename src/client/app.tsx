@@ -1,6 +1,7 @@
+import { setApiTransport } from '../api/_runner.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
-import { api, apiUpload } from './api.js';
+import { api, apiUpload, apiWithSecret } from './api.js';
 import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
 import { startBellPolling } from './bellPoll.js';
@@ -295,6 +296,19 @@ function initDrawerAndDashboard(): void {
 
 async function init() {
   try {
+    // HS-8522 — wire the typed API layer (`src/api/*`, `apis.*`) to the
+    // client `api()` runtime before any typed caller can run. Routes through
+    // `apiWithSecret` for cross-project calls (`opts.secret`) and `api`
+    // otherwise, so the typed layer inherits project scoping, secret headers,
+    // the server-busy chip, and the network-error popup. `_runner.ts` stays
+    // free of client-only imports so server route files can import schemas
+    // from `src/api/*` without pulling the DOM runtime into the Node bundle.
+    setApiTransport((path, opts) =>
+      opts.secret !== undefined
+        ? apiWithSecret(path, opts.secret, { method: opts.method, body: opts.body })
+        : api(path, { method: opts.method, body: opts.body, skipProjectScope: opts.skipProjectScope }),
+    );
+
     // HS-8054 — start the longtask observer first so any hangs during init
     // itself get logged. `[hotsheet longtask]` prefix; in-memory buffer via
     // `window.__hotsheetGetLongTasks()`.

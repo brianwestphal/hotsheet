@@ -99,7 +99,11 @@ The `hotsheet` global CLI. Args: `--port` (default 4174), `--data-dir` (default 
 
 ## 9. REST API (`9-api.md`)
 
-Single source of truth for HTTP contracts. Zod validation throughout. All mutations bump a change version consumed by long-poll (`/api/poll`, 30 s timeout, 5 s retry); header `X-Hotsheet-User-Action: true` bumps `last_read_at` (controls the unread dot). Endpoint surface covered in `code-summary.md §4`. Noteworthy behaviors:
+Single source of truth for HTTP contracts. Zod validation throughout. All mutations bump a change version consumed by long-poll (`/api/poll`, 30 s timeout, 5 s retry); header `X-Hotsheet-User-Action: true` bumps `last_read_at` (controls the unread dot). Endpoint surface covered in `code-summary.md §4`.
+
+- **Typed API layer (`src/api/`, §9.0.3 — HS-8522, in progress):** per-endpoint request/response zod schemas defined once and shared by client callers + server handlers (replaces inline `api<{…}>(path)` literals + hand-duplicated client/server interfaces). `src/api/_runner.ts` (`apiCall` + `qs`, server-safe via a client-injected transport) + per-resource modules + a flat `apis` namespace in `src/api/index.ts`. Mirrors glassbox `src/api/` (GB-798 / GB-804). **Status: infrastructure + git reference domain shipped**; the remaining ~298 client call sites migrate per-domain across the HS-8522 sub-tickets. Reference: `src/api/git.ts` ↔ `routes/git.ts` ↔ `gitStatusChip.tsx` / `gitStatusPopover.tsx`.
+
+Noteworthy behaviors:
 
 - **Composite status values** on `GET /api/tickets`: `open`, `non_verified`, `active`.
 - **Pagination** on `GET /api/tickets` (HS-8337): `limit` (positive int, max 10000) + `offset` (non-negative int). Validated server-side; invalid values return 400. Both default to "no clause" so callers without pagination keep full-result semantics. List-layout client uses `limit + 1` trick to detect more rows without a count query.

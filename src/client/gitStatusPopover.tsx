@@ -1,4 +1,5 @@
-import { api } from './api.js';
+import type { GitStatusFiles, GitStatusWithFiles } from '../api/git.js';
+import { getGitStatusWithFiles, gitReveal } from '../api/index.js';
 import { toElement } from './dom.js';
 
 /**
@@ -20,28 +21,9 @@ import { toElement } from './dom.js';
  * See docs/48-git-status-tracker.md §48.4.2.
  */
 
-interface GitStatusFiles {
-  staged: string[];
-  unstaged: string[];
-  untracked: string[];
-  conflicted: string[];
-  truncated: { staged: boolean; unstaged: boolean; untracked: boolean; conflicted: boolean };
-}
-
-interface GitStatusJson {
-  branch: string;
-  detached: boolean;
-  upstream: string | null;
-  ahead: number;
-  behind: number;
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  conflicted: number;
-  lastFetchedAt: number | null;
-  files?: GitStatusFiles;
-}
-
+// HS-8522 — `GitStatusFiles` + `GitStatusWithFiles` are the shared types from
+// `src/api/git.ts` (single source of truth). They replace the local
+// `GitStatusFiles` + `GitStatusJson` duplicates this file used to declare.
 const CLOSE_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
 
 let activePopover: HTMLElement | null = null;
@@ -86,9 +68,9 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
 
   // Fetch with files=true so we can populate the bucket file lists when
   // the user expands them. Single round-trip.
-  let data: GitStatusJson | null = null;
+  let data: GitStatusWithFiles | null = null;
   try {
-    data = await api<GitStatusJson | null>('/git/status?files=true');
+    data = await getGitStatusWithFiles();
   } catch {
     /* network error — bail to a friendly message below */
   }
@@ -104,7 +86,7 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
 }
 
 /** Pure: build the branch-line text. Exported for tests. */
-export function buildBranchLine(status: GitStatusJson): string {
+export function buildBranchLine(status: GitStatusWithFiles): string {
   if (status.detached) return `(detached: ${status.branch})`;
   if (status.upstream === null) return `${status.branch} (no upstream)`;
   return `${status.branch} → ${status.upstream}`;
@@ -113,7 +95,7 @@ export function buildBranchLine(status: GitStatusJson): string {
 /** Pure: build the ahead/behind line, or null when no upstream OR both are
  *  zero (in which case the popover hides the line entirely). Exported for
  *  tests. */
-export function buildAheadBehindLine(status: GitStatusJson): string | null {
+export function buildAheadBehindLine(status: GitStatusWithFiles): string | null {
   if (status.upstream === null) return null;
   if (status.ahead === 0 && status.behind === 0) return 'up to date';
   const parts: string[] = [];
@@ -122,7 +104,7 @@ export function buildAheadBehindLine(status: GitStatusJson): string | null {
   return parts.join(' • ');
 }
 
-export function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
+export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): void {
   const titleEl = popover.querySelector<HTMLElement>('.git-popover-title');
   const bodyEl = popover.querySelector<HTMLElement>('.git-popover-body');
   if (titleEl === null || bodyEl === null) return;
@@ -164,7 +146,7 @@ export function paintPopover(popover: HTMLElement, data: GitStatusJson): void {
     row.addEventListener('click', () => {
       const path = row.dataset.path;
       if (path === undefined) return;
-      void api('/git/reveal', { method: 'POST', body: { path } }).catch(() => { /* ignore */ });
+      void gitReveal({ path }).catch(() => { /* ignore */ });
     });
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();

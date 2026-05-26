@@ -1,4 +1,5 @@
-import { api } from './api.js';
+import type { FetchResult, GitStatus } from '../api/git.js';
+import { getGitStatus, gitFetch } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
 import { getActiveProject } from './state.js';
@@ -20,23 +21,10 @@ import { getActiveProject } from './state.js';
  * See docs/48-git-status-tracker.md §48.4.
  */
 
-interface GitStatusJson {
-  branch: string;
-  detached: boolean;
-  upstream: string | null;
-  ahead: number;
-  behind: number;
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  conflicted: number;
-  lastFetchedAt: number | null;
-}
-
 let chipEl: HTMLElement | null = null;
 let branchEl: HTMLElement | null = null;
 let countsEl: HTMLElement | null = null;
-let lastStatus: GitStatusJson | null = null;
+let lastStatus: GitStatus | null = null;
 /**
  * HS-7993 — secret of the project whose status is currently shown by the
  * chip. Mismatched against `getActiveProject()?.secret` at the top of every
@@ -52,7 +40,7 @@ let lastStatusSecret: string | null = null;
  * (cleared on full reload) — fine because the worst case is one cold fetch
  * per project at startup.
  */
-const lastStatusBySecret = new Map<string, GitStatusJson | null>();
+const lastStatusBySecret = new Map<string, GitStatus | null>();
 /**
  * HS-7993 — coalesce concurrent refreshes WITHIN the same project (e.g.
  * window.focus + a poll-version-bump landing in the same tick). Cross-
@@ -103,8 +91,8 @@ export function refreshGitStatusChip(): void {
  */
 export function pickDisplayStatusOnProjectSwitch(
   newSecret: string | null,
-  cache: ReadonlyMap<string, GitStatusJson | null>,
-): GitStatusJson | null {
+  cache: ReadonlyMap<string, GitStatus | null>,
+): GitStatus | null {
   if (newSecret === null) return null;
   return cache.has(newSecret) ? cache.get(newSecret) ?? null : null;
 }
@@ -135,7 +123,7 @@ async function refresh(): Promise<void> {
 
   const promise = (async () => {
     try {
-      const data = await api<GitStatusJson | null>('/git/status');
+      const data = await getGitStatus();
       // Stamp the per-project cache. `api()` captures the active project
       // secret at URL-build time, so even if the user switched mid-flight
       // the response still belongs to `currentSecret`.
@@ -160,7 +148,7 @@ async function refresh(): Promise<void> {
 }
 
 /** Pure: compute the tint class for a status. Exported for tests. */
-export function tintForStatus(status: GitStatusJson): 'clean' | 'dirty' | 'conflicted' | 'ahead' | 'behind' {
+export function tintForStatus(status: GitStatus): 'clean' | 'dirty' | 'conflicted' | 'ahead' | 'behind' {
   if (status.conflicted > 0) return 'conflicted';
   // Phase 2 (HS-7955) populates upstream/ahead/behind. Until then the
   // remote precedence tints never trigger.
@@ -173,14 +161,14 @@ export function tintForStatus(status: GitStatusJson): 'clean' | 'dirty' | 'confl
 /** Pure: compute the count string ("3" / "+1 / 12" / etc.) for the chip's
  *  right-side badge. Empty string when everything's zero (the clean state).
  *  Exported for tests. */
-export function countsLabel(status: GitStatusJson): string {
+export function countsLabel(status: GitStatus): string {
   const local = status.staged + status.unstaged + status.untracked + status.conflicted;
   return local > 0 ? String(local) : '';
 }
 
 /** Pure: compute the ahead/behind glyph cluster for the chip ("↑3↓1" /
  *  "↑3" / "↓1" / "" when both zero). Exported for tests. HS-7955. */
-export function aheadBehindLabel(status: GitStatusJson): string {
+export function aheadBehindLabel(status: GitStatus): string {
   const parts: string[] = [];
   if (status.ahead > 0) parts.push(`↑${status.ahead}`);
   if (status.behind > 0) parts.push(`↓${status.behind}`);
@@ -190,7 +178,7 @@ export function aheadBehindLabel(status: GitStatusJson): string {
 /** Pure: compute the tooltip body. Exported for tests. HS-7955 extends to
  *  include the upstream + ahead/behind + last-fetched-relative when an
  *  upstream is configured. */
-export function tooltipForStatus(status: GitStatusJson, nowMs: number = Date.now()): string {
+export function tooltipForStatus(status: GitStatus, nowMs: number = Date.now()): string {
   const parts: string[] = [];
   if (status.staged > 0) parts.push(`${status.staged} staged`);
   if (status.unstaged > 0) parts.push(`${status.unstaged} unstaged`);
@@ -264,16 +252,11 @@ function render(): void {
 
 /** HS-7955 — Phase 2: trigger a `git fetch` from the chip. The Phase 3
  *  popover (HS-7956) hosts a proper button; for now this is exposed for
- *  the tooltip / future toolbar to call. Resolves with the FetchResult. */
-export interface FetchResult {
-  ok: boolean;
-  lastFetchedAt: number | null;
-  error: string;
-}
-
+ *  the tooltip / future toolbar to call. Resolves with the `FetchResult`
+ *  (HS-8522 — shared shape from `src/api/git.ts`). */
 export async function triggerGitFetch(): Promise<FetchResult> {
   try {
-    const result = await api<FetchResult>('/git/fetch', { method: 'POST' });
+    const result = await gitFetch();
     // Whether the fetch succeeded or not, refresh the chip so the user sees
     // the new ahead/behind numbers (or the unchanged-with-error state).
     void refresh();

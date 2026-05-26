@@ -38,6 +38,19 @@ If BOTH are present, the header takes precedence. If NEITHER is present, the ser
 
 **Anti-pattern (HS-8340):** authing the `GET /api/tickets/:id` per-id endpoint and the `POST /api/tickets` create endpoint but forgetting to auth `GET /api/tickets` (the LIST endpoint). The LIST endpoint resolves the same way as every other endpoint: no auth → default project. Per-id and POST happen to "work" because the caller authed them; the LIST silently returns the default project's data. Always add the auth (`X-Hotsheet-Secret` header OR `?project=<secret>` query param) to EVERY request that touches per-project data. See `src/routes/multiProjectIsolation.test.ts` for the regression-guard test suite that pins this contract.
 
+### 9.0.3 Typed API Layer (`src/api/`) — single source of truth (HS-8522)
+
+The request / response **wire shapes** for each endpoint are defined once as zod schemas in per-resource modules under `src/api/<resource>.ts`, and shared by BOTH the client callers and the server handlers. This replaces two anti-patterns: inline `api<{ … }>(path)` type literals at the call site (the type travelled with the call, never reused) and hand-duplicated `interface` declarations kept in sync by hand across client and server files.
+
+Each `src/api/<resource>.ts` module exports:
+
+- **Schemas** (`XReqSchema` / `XRespSchema`) + their inferred types (`type X = z.infer<typeof XSchema>`). The server imports the request schema to validate the incoming body (`parseBody`/`safeParse`); the client validates the response against the response schema at runtime.
+- **Typed caller functions** (e.g. `getGitStatus()`, `gitReveal({ path })`) that wrap `apiCall(schema, path, opts)` so callers never construct raw URLs or restate the response type.
+
+`src/api/index.ts` aggregates every module into named re-exports plus a flat `apis` namespace (`apis.getGitStatus()`). The runtime helper `src/api/_runner.ts` is **server-safe** (imports only `zod`): the actual fetch is performed by a transport the client injects at boot via `setApiTransport`, so a server route file can import a schema from `src/api/*` without dragging the DOM-bound client `api()` runtime into the Node bundle.
+
+Migration is **per-domain** (HS-8522 sub-tickets); **git** (`src/api/git.ts` ↔ `routes/git.ts` ↔ `gitStatusChip.tsx` / `gitStatusPopover.tsx`) is the shipped reference implementation. **When adding a new endpoint:** add its schema + typed caller in `src/api/<resource>.ts`, validate the request server-side against that schema, and call the typed function from the client — do not reintroduce inline `api<{…}>(path)` type literals.
+
 ### 9.1 Ticket Endpoints
 
 | Method | Path | Description |

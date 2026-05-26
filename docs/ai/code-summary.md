@@ -96,6 +96,18 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `test-helpers.ts` | `setupTestDb` / `cleanupTestDb` for unit tests |
 | `spawnTestServer.ts` | **HS-8588** — shared child-process harness for the `*.e2e.test.ts` suites that need a REAL spawned server (`spawnHotSheet` / `waitForServerReady` / `readSecret` / `postJson` / `patchJson` / `waitForExit` / `canSpawnTsxChild` probe). Extracted from `lifecycle.e2e.test.ts` (HS-7934, now also uses it); backs `db/snapshotCrashRecovery.e2e.test.ts`. Test-only (never bundled); excluded from coverage in `vitest.config.ts`. Suites `describe.skipIf(!canSpawnTsxChild)` so tsx-IPC-restricted sandboxes (HS-8202) skip cleanly. |
 
+### `src/api/` (typed API layer — HS-8522)
+
+The single source of truth for each endpoint's request / response **wire shapes**, shared by client callers AND server handlers (mirrors the sister project glassbox's `src/api/`, GB-798 / GB-804). Replaces inline `api<{ … }>(path)` type literals + hand-duplicated client/server interfaces. Migration is per-domain (HS-8522 sub-tickets); **git is the reference implementation**.
+
+| File | Role |
+|---|---|
+| `_runner.ts` | **Server-safe** (imports only `zod`). `apiCall(responseSchema, path, opts)` routes through a client-injected transport then zod-validates the body (throws a path-qualified error on mismatch). `setApiTransport(t)` is called once at client boot (`app.tsx`) to wire the real `api()` / `apiWithSecret()` runtime — kept as injection (not a direct import) so route files can import schemas from `src/api/*` WITHOUT pulling the DOM-touching client runtime into the Node `cli.js` bundle. Also `qs(params)` (skip-null query builder) + `OkResponseSchema`. |
+| `git.ts` | §48 git-status endpoints. SSOT for `GitStatus` / `GitStatusFiles` / `GitStatusWithFiles` / `FetchResult` (each was previously triplicated across `src/git/status.ts`, `gitStatusChip.tsx`, `gitStatusPopover.tsx`) + `GitRevealReqSchema`. Callers: `getGitStatus` / `getGitStatusWithFiles` / `gitFetch` / `gitReveal`. `src/git/status.ts` now `import type`s + re-exports these; `routes/git.ts` validates the reveal body against `GitRevealReqSchema`; the client chip + popover call the typed functions. |
+| `index.ts` | Aggregates every resource module: named re-exports (`export * from './git.js'`) + a flat `apis` namespace (`apis.getGitStatus()`). Add a line per resource module as each domain migrates. |
+
+**When adding a new endpoint:** define its request + response schema (+ inferred types) and the typed caller in `src/api/<resource>.ts`, validate the request server-side against that schema, and migrate the client to the typed caller — don't reintroduce inline `api<{…}>(path)` literals.
+
 ### `src/routes/`
 
 | File | Endpoints |
