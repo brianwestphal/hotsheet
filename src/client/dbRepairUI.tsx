@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { findWorkingBackup, getRecoveryStatus, getResetwalAvailability, restoreBackup, runResetwal } from '../api/index.js';
 import { loadBackupList } from './backups.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -19,10 +19,6 @@ import { byIdOrNull, toElement } from './dom.js';
 
 interface RecoveryMarker { corruptPath: string; recoveredAt: string; errorMessage: string }
 
-interface FindWorkingBackupResponse {
-  backup: { tier: string; filename: string; ticketCount: number; createdAt: string } | null;
-}
-
 interface InstallInstructions {
   description: string;
   command: string;
@@ -34,13 +30,6 @@ interface ResetwalAvailability {
   path: string | null;
   platform: string;
   installInstructions: InstallInstructions;
-}
-
-interface RepairResult {
-  tier: string;
-  filename: string;
-  ticketCount: number;
-  sizeBytes: number;
 }
 
 /** Pure formatter — extracted so the platform-aware install help can be
@@ -80,8 +69,8 @@ export async function refreshDbRepairStatus(): Promise<void> {
   statusEl.className = 'db-repair-status';
   statusEl.textContent = 'Checking database health…';
   try {
-    const res = await api<{ marker: RecoveryMarker | null }>('/db/recovery-status');
-    const { text, cls } = formatStatusText(res.marker);
+    const marker = await getRecoveryStatus();
+    const { text, cls } = formatStatusText(marker);
     statusEl.textContent = text;
     statusEl.classList.add(cls);
   } catch (err) {
@@ -96,8 +85,8 @@ async function onFindWorkingBackup(): Promise<void> {
   result.innerHTML = '';
   result.appendChild(toElement(<span>Validating backups (newest first)…</span>));
   try {
-    const res = await api<FindWorkingBackupResponse>('/db/repair/find-working-backup', { method: 'POST' });
-    if (res.backup === null) {
+    const backup = await findWorkingBackup();
+    if (backup === null) {
       result.innerHTML = '';
       result.appendChild(toElement(
         <span className="db-repair-result-err">
@@ -106,7 +95,7 @@ async function onFindWorkingBackup(): Promise<void> {
       ));
       return;
     }
-    const b = res.backup;
+    const b = backup;
     result.innerHTML = '';
     result.appendChild(toElement(
       <div>
@@ -140,7 +129,7 @@ async function doRestoreFromFoundBackup(tier: string, filename: string): Promise
   });
   if (!ok) return;
   try {
-    await api('/backups/restore', { method: 'POST', body: { tier, filename } });
+    await restoreBackup(tier, filename);
     window.location.reload();
   } catch (err) {
     const result = byIdOrNull('db-repair-result');
@@ -163,7 +152,7 @@ async function onRunPgResetwal(): Promise<void> {
 
   let availability: ResetwalAvailability;
   try {
-    availability = await api<ResetwalAvailability>('/db/repair/pg-resetwal-availability');
+    availability = await getResetwalAvailability();
   } catch (err) {
     result.innerHTML = '';
     result.appendChild(toElement(
@@ -206,7 +195,7 @@ async function onRunPgResetwal(): Promise<void> {
   result.innerHTML = '';
   result.appendChild(toElement(<span>Running pg_resetwal…</span>));
   try {
-    const res = await api<RepairResult>('/db/repair/run-pg-resetwal', { method: 'POST' });
+    const res = await runResetwal();
     void loadBackupList();
     result.innerHTML = '';
     result.appendChild(toElement(

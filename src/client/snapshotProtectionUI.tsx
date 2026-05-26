@@ -1,3 +1,4 @@
+import { getSnapshotStatus } from '../api/index.js';
 import { api } from './api.js';
 import { byIdOrNull } from './dom.js';
 
@@ -68,7 +69,7 @@ export async function refreshSnapshotProtectionStatus(): Promise<void> {
   }
 
   try {
-    const status = await api<SnapshotStatus>('/db/snapshot-status');
+    const status = await getSnapshotStatus();
     statusEl.textContent = formatSnapshotStatusLine(status);
   } catch (err) {
     console.error('Could not load snapshot status:', err);

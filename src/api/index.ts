@@ -22,12 +22,16 @@
 // Resource modules are added here as each domain is migrated (HS-8522
 // sub-tickets). Today: git, tickets, feedbackDrafts, terminal.
 //
+import * as backups from './backups.js';
+import * as db from './db.js';
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
 import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
 import * as tickets from './tickets.js';
 
+export * from './backups.js';
+export * from './db.js';
 export * from './feedbackDrafts.js';
 export * from './git.js';
 export * from './telemetry.js';
@@ -42,4 +46,6 @@ export const apis = {
   ...feedbackDrafts,
   ...terminal,
   ...telemetry,
+  ...backups,
+  ...db,
 };

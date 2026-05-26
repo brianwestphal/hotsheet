@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { dismissRecovery, getRecoveryStatus } from '../api/index.js';
 import { byIdOrNull } from './dom.js';
 import { showToast } from './toast.js';
 
@@ -19,10 +19,6 @@ export interface DbRecoveryMarker {
    *  fallback, show the banner. */
   restoredFrom?: string;
   restoredTicketCount?: number;
-}
-
-interface RecoveryStatusResponse {
-  marker: DbRecoveryMarker | null;
 }
 
 /** Pure formatter — extracted so it can be unit-tested without DOM. */
@@ -73,8 +69,7 @@ export async function initDbRecoveryBanner(): Promise<void> {
 
   let marker: DbRecoveryMarker | null = null;
   try {
-    const res = await api<RecoveryStatusResponse>('/db/recovery-status');
-    marker = res.marker;
+    marker = await getRecoveryStatus();
   } catch (err) {
     // Server may not be reachable yet on a very early boot path. Silently
     // skip — the banner is informational; failing to surface it is not a
@@ -97,7 +92,7 @@ export async function initDbRecoveryBanner(): Promise<void> {
   if (marker.restoredFrom !== undefined && marker.restoredFrom !== '') {
     banner.style.display = 'none';
     showToast(formatRecoveryToastLabel(marker), { variant: 'success', durationMs: 8000 });
-    void api('/db/dismiss-recovery', { method: 'POST' }).catch((err: unknown) => {
+    void dismissRecovery().catch((err: unknown) => {
       console.warn('Could not clear DB recovery marker after auto-restore toast:', err);
     });
     return;
@@ -118,7 +113,7 @@ export async function initDbRecoveryBanner(): Promise<void> {
 
 async function dismissRecoveryMarker(banner: HTMLElement): Promise<void> {
   try {
-    await api('/db/dismiss-recovery', { method: 'POST' });
+    await dismissRecovery();
   } catch (err) {
     console.warn('Could not dismiss DB recovery marker:', err);
   }

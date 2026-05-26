@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { type BackupInfo, cleanupBackupPreview, listBackups, previewBackup, restoreBackup, triggerManualBackup } from '../api/index.js';
 import { bindDbRepairUI, refreshDbRepairStatus } from './dbRepairUI.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindSnapshotProtectionUI, refreshSnapshotProtectionStatus } from './snapshotProtectionUI.js';
@@ -15,14 +15,6 @@ import { loadTickets } from './ticketList.js';
 export function formatBackupErrorMessage(prefix: string, err: unknown): string {
   const message = err instanceof Error && err.message !== '' ? err.message : 'Unknown error';
   return `${prefix}: ${message}`;
-}
-
-interface BackupInfo {
-  tier: string;
-  filename: string;
-  createdAt: string;
-  ticketCount: number;
-  sizeBytes: number;
 }
 
 function timeAgo(dateStr: string): string {
@@ -59,15 +51,15 @@ export async function loadBackupList(): Promise<void> {
   if (!container) return;
 
   try {
-    const data = await api<{ backups: BackupInfo[] }>('/backups');
-    if (data.backups.length === 0) {
+    const backups = await listBackups();
+    if (backups.length === 0) {
       container.textContent = 'No backups yet. First backup will be created shortly.';
       return;
     }
 
     // Group by tier
     const grouped: Partial<Record<string, BackupInfo[]>> = {};
-    for (const b of data.backups) {
+    for (const b of backups) {
       (grouped[b.tier] ??= []).push(b);
     }
 
@@ -120,13 +112,15 @@ async function startPreview(tier: string, filename: string, createdAt: string): 
   banner.style.display = 'flex';
 
   try {
-    const result = await api<{ tickets: Ticket[]; stats: { total: number; open: number; upNext: number } }>(
-      `/backups/preview/${tier}/${filename}`
-    );
+    const result = await previewBackup(tier, filename);
 
     state.backupPreview = {
       active: true,
-      tickets: result.tickets,
+      // HS-8636 — preview rows are raw records from a possibly-older backup
+      // cluster (not validated against the current `TicketSchema`); the preview
+      // renders them read-only, so erase to `Ticket[]` here as the inline
+      // `api<{ tickets: Ticket[] }>` literal did before this migration.
+      tickets: result.tickets as unknown as Ticket[],
       timestamp: createdAt,
       tier,
       filename,
@@ -152,7 +146,7 @@ async function cancelPreview(): Promise<void> {
   state.backupPreview = null;
   state.selectedIds.clear();
   state.activeTicketId = null;
-  await api('/backups/preview/cleanup', { method: 'POST' });
+  await cleanupBackupPreview();
   void loadTickets();
 }
 
@@ -164,10 +158,7 @@ async function confirmRestore(): Promise<void> {
   btn.disabled = true;
 
   try {
-    await api('/backups/restore', {
-      method: 'POST',
-      body: { tier: state.backupPreview.tier, filename: state.backupPreview.filename },
-    });
+    await restoreBackup(state.backupPreview.tier, state.backupPreview.filename);
     window.location.reload();
   } catch (err) {
     // HS-7890: surface the real cause. Previously the user saw "Restore
@@ -222,13 +213,12 @@ export function bindBackupsUI(): void {
     (backupNowBtn as HTMLButtonElement).disabled = true;
     let resetMs = 1500;
     try {
-      const result = await api<{ error?: string }>('/backups/now', { method: 'POST' });
-      if (result.error !== undefined && result.error !== '') {
-        backupNowBtn.textContent = 'In progress...';
-      } else {
-        backupNowBtn.textContent = 'Done!';
-        void loadBackupList();
-      }
+      // HS-8636 — `triggerManualBackup` throws on the 409 "already in progress"
+      // (the old `result.error` branch was dead — `api()` already threw on 409),
+      // so the busy + transport cases both land in the catch below.
+      await triggerManualBackup();
+      backupNowBtn.textContent = 'Done!';
+      void loadBackupList();
     } catch (err) {
       // HS-7890: surface real cause for ad-hoc backups too.
       console.error('Manual backup failed:', err);
