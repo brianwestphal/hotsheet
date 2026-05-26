@@ -19,9 +19,9 @@
  * imports (channelStore.ts, channelUI.tsx, the test file) keep working.
  */
 
+import { respondChannelPermission } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
-import { apiWithSecret } from './api.js';
 import { buildBashPermissionPreview } from './bashPermissionPreview.js';
 import { channelStore } from './channelStore.js';
 import { clearProjectAttention, isChannelBusy, setChannelBusy } from './channelUI.js';
@@ -349,19 +349,17 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // Include tool/description/input_preview the client already has so that
     // the server-side command-log entry has useful detail even when the
     // respond races ahead of the original permission_request log (HS-6477).
-    // HS-8085 — `apiWithSecret` is the correct helper for cross-project
-    // background-popup responses; sets `X-Hotsheet-Secret` to the
-    // owning project's secret rather than the active project's.
-    void apiWithSecret('/channel/permission/respond', secret, {
-      method: 'POST',
-      body: {
-        request_id: perm.request_id,
-        behavior,
-        tool_name: perm.tool_name,
-        description: perm.description,
-        input_preview: perm.input_preview ?? '',
-      },
-    }).catch(() => { /* network blip — overlay UI already torn down by clearPopupOnly() below */ });
+    // HS-8085 — forward the OWNING project's secret (the typed caller's
+    // `secret` arg → `apiWithSecret` via the `_runner` transport), so a
+    // response initiated from a background-project popup sets
+    // `X-Hotsheet-Secret` to the owning project rather than the active one.
+    void respondChannelPermission({
+      request_id: perm.request_id,
+      behavior,
+      tool_name: perm.tool_name,
+      description: perm.description,
+      input_preview: perm.input_preview ?? '',
+    }, secret).catch(() => { /* network blip — overlay UI already torn down by clearPopupOnly() below */ });
     clearProjectAttention(secret);
     // Also drop any minimized bookkeeping for this request.
     const rec = minimizedRequests.get(perm.request_id);

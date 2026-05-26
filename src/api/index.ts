@@ -23,6 +23,7 @@
 // sub-tickets). Today: git, tickets, feedbackDrafts, terminal.
 //
 import * as backups from './backups.js';
+import * as channel from './channel.js';
 import * as db from './db.js';
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
@@ -31,6 +32,7 @@ import * as terminal from './terminal.js';
 import * as tickets from './tickets.js';
 
 export * from './backups.js';
+export * from './channel.js';
 export * from './db.js';
 export * from './feedbackDrafts.js';
 export * from './git.js';
@@ -48,4 +50,5 @@ export const apis = {
   ...telemetry,
   ...backups,
   ...db,
+  ...channel,
 };

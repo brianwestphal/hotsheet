@@ -1,4 +1,4 @@
-import { listTerminals } from '../api/index.js';
+import { getChannelStatus, listTerminals, triggerChannel } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { api } from './api.js';
@@ -359,7 +359,7 @@ function triggerChannelAndMarkBusy(message?: string) {
   // so the per-ticket cost rollup can attribute downstream OTel events
   // back to the ticket via the marker in `claude_code.user_prompt`.
   const tagged = tagMessageWithActiveTicket(message);
-  void api('/channel/trigger', { method: 'POST', body: { message: tagged } });
+  void triggerChannel(tagged);
   // Timeout fallback: clear busy after 60s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
@@ -424,7 +424,7 @@ function showNoUpNextAlert() {
 export async function initChannel() {
   let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number } | null = null;
   try {
-    status = await api<{ enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number }>('/channel/status');
+    status = await getChannelStatus();
   } catch { /* endpoint may not exist yet */ }
   // If we couldn't reach the server, keep the previous state
   if (status === null) return;
@@ -614,15 +614,15 @@ export function checkChannelDone() {
   const enabled = section !== null && section.style.display !== 'none';
   if (!enabled) return;
 
-  api<{ done?: boolean; alive?: boolean; versionMismatch?: boolean }>('/channel/status').then(s => {
+  getChannelStatus().then(s => {
     // Update alive/disconnected warning
-    if (s.alive !== undefined) setChannelAlive(s.alive);
+    setChannelAlive(s.alive);
     // Update version mismatch warning
     const versionWarning = byIdOrNull('channel-version-warning');
-    if (versionWarning) versionWarning.style.display = s.versionMismatch === true ? '' : 'none';
+    if (versionWarning) versionWarning.style.display = s.versionMismatch ? '' : 'none';
     // Check for done signal — always process it, even if we don't think we're busy
     // (the busy state may have been cleared by timeout or tab switch)
-    if (s.done === true) {
+    if (s.done) {
       setChannelBusy(false); // Clears per-project busy tracking, updates dots, triggers auto-mode
       if (channelBusyTimeout) { clearTimeout(channelBusyTimeout); channelBusyTimeout = null; }
     }

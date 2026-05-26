@@ -1,3 +1,4 @@
+import { getChannelHeartbeatStatus } from '../api/index.js';
 import { api } from './api.js';
 import { checkChannelDone, clearBusyForProject, extendBusyForProject } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
@@ -58,7 +59,7 @@ export function startLongPoll() {
 
 async function checkHeartbeats() {
   try {
-    const data = await api<{ updates: { secret: string; state: string }[] }>('/channel/heartbeat-status');
+    const data = await getChannelHeartbeatStatus();
     for (const update of data.updates) {
       if (update.state === 'idle') {
         clearBusyForProject(update.secret);

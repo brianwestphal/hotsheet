@@ -1,3 +1,4 @@
+import { disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck } from '../api/index.js';
 import { api } from './api.js';
 import { initChannel } from './channelUI.js';
 import { renderCustomCommandSettings } from './commandEditor.js';
@@ -244,7 +245,7 @@ export function bindExperimentalSettings() {
       renderCustomCommandSettings();
     });
 
-    api<{ installed: boolean; version: string | null; meetsMinimum: boolean }>('/channel/claude-check').catch(() => null).then(check => {
+    getClaudeVersionCheck().catch(() => null).then(check => {
       if (!check || !check.installed) {
         channelCheckbox.disabled = true;
         channelHint.textContent = 'Claude Code not detected. Shell commands are still available.';
@@ -282,7 +283,7 @@ export function bindExperimentalSettings() {
   // /channel/status so the command shown in Settings → Experimental
   // matches the actual launch string used by terminals + .mcp.json.
   if (channelCmd !== null) {
-    api<{ serverName?: string }>('/channel/status').catch(() => null).then(status => {
+    getChannelStatus().catch(() => null).then(status => {
       const serverName = status?.serverName ?? 'hotsheet-channel';
       channelCmd.textContent = `claude --dangerously-load-development-channels server:${serverName}`;
     }).catch(() => {});
@@ -296,11 +297,11 @@ export function bindExperimentalSettings() {
 
   channelCheckbox.addEventListener('change', async () => {
     if (channelCheckbox.checked) {
-      await api('/channel/enable', { method: 'POST' });
+      await enableChannel();
       channelInstructions.style.display = '';
       channelEnabledState = true;
     } else {
-      await api('/channel/disable', { method: 'POST' });
+      await disableChannel();
       channelInstructions.style.display = 'none';
       channelEnabledState = false;
     }
