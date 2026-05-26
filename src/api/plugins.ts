@@ -253,6 +253,19 @@ export async function triggerPluginSync(id: string): Promise<SyncResult> {
   return apiCall(SyncResultSchema, `/plugins/${encodeURIComponent(id)}/sync`, { method: 'POST' });
 }
 
+/** `POST /plugins/:id/push-ticket/:ticketId` result. */
+const PushTicketResultSchema = z.object({
+  ok: z.literal(true),
+  remoteId: z.string(),
+  remoteUrl: z.string().nullable(),
+});
+
+/** POST `/plugins/:id/push-ticket/:ticketId` → create a local-only ticket on the
+ *  plugin's remote backend; returns the new remote id + (optional) URL. */
+export async function pushTicketToBackend(pluginId: string, ticketId: number): Promise<z.infer<typeof PushTicketResultSchema>> {
+  return apiCall(PushTicketResultSchema, `/plugins/${encodeURIComponent(pluginId)}/push-ticket/${ticketId}`, { method: 'POST' });
+}
+
 /** POST `/plugins/:id/action` → run a plugin UI action. */
 export async function runPluginAction(id: string, body: PluginActionReq): Promise<z.infer<typeof PluginActionResultSchema>> {
   return apiCall(PluginActionResultSchema, `/plugins/${encodeURIComponent(id)}/action`, { method: 'POST', body });

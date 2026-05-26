@@ -22,6 +22,7 @@ import { toElement } from './dom.js';
 import type { CustomCommand } from './experimentalSettings.js';
 import type * as experimentalSettings from './experimentalSettings.js';
 import { setActiveProject, state } from './state.js';
+import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
 const { apiMock, getCommandItemsMock, isChannelAliveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock } = vi.hoisted(() => ({
   apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
@@ -238,11 +239,15 @@ describe('renderButton running-state branch (HS-8060)', () => {
     refreshLogBadgeMock.mockReset();
     refreshLogBadgeMock.mockResolvedValue();
     confirmDialogMock.mockResolvedValue(true);
+    // HS-8638 — killShellCommand now routes through the typed transport; wire
+    // it to the mocked `api` so the /shell/kill POST is captured by apiMock.
+    wireRealApiTransport();
     _resetRunningButtonsForTesting();
     setupSidebarDOM();
   });
 
   afterEach(() => {
+    resetApiTransport();
     _resetRunningButtonsForTesting();
     document.body.innerHTML = '';
   });

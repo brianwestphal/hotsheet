@@ -1,7 +1,6 @@
-import { duplicateTickets, getBackends, updateTicket, uploadAttachment } from '../api/index.js';
+import { duplicateTickets, getBackends, pushTicketToBackend, updateTicket, uploadAttachment } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { toElement } from './dom.js';
 import { getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
@@ -283,9 +282,7 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
         item.addEventListener('click', async () => {
           closeContextMenu();
           try {
-            const result = await api<{ ok: boolean; remoteId: string; remoteUrl: string | null }>(
-              `/plugins/${b.id}/push-ticket/${ticket.id}`, { method: 'POST' },
-            );
+            const result = await pushTicketToBackend(b.id, ticket.id);
             // HS-8094 — route through `openExternalUrl` so the link works
             // under Tauri's WKWebView (where bare `window.open` silently
             // no-ops while still passing Playwright/Chromium tests).

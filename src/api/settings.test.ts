@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.js';
 import {
-  FileSettingsSchema, getFileSettings, getGlobalConfig, getSettings, GlobalConfigSchema,
-  SettingsSchema, updateFileSettings, updateGlobalConfig, updateSettings,
+  CategoryPresetSchema, FileSettingsSchema, getCategories, getCategoryPresets, getFileSettings,
+  getGlobalConfig, getSettings, getTags, GlobalConfigSchema, SettingsSchema, updateCategories,
+  updateFileSettings, updateGlobalConfig, updateSettings,
 } from './settings.js';
+
+const cat = { id: 'bug', label: 'Bug', shortLabel: 'Bug', color: '#f00', shortcutKey: 'b', description: 'A bug' };
 
 let lastCall: { path: string; opts: ApiCallOpts } | undefined;
 function stub(result: unknown): void {
@@ -91,5 +94,25 @@ describe('settings callers (HS-8635)', () => {
   it('rejects a /settings response with a non-string value', async () => {
     stub({ trash_cleanup_days: 30 });
     await expect(getSettings()).rejects.toThrow(/response shape mismatch/);
+  });
+
+  it('getTags / getCategories / updateCategories / getCategoryPresets (HS-8638)', async () => {
+    stub(['urgent', 'docs']);
+    expect(await getTags()).toEqual(['urgent', 'docs']);
+    expect(lastCall?.path).toBe('/tags');
+    stub([cat]);
+    expect(await getCategories()).toEqual([cat]);
+    expect(lastCall?.path).toBe('/categories');
+    stub([cat]);
+    await updateCategories([cat]);
+    expect(lastCall).toEqual({ path: '/categories', opts: { method: 'PUT', body: [cat] } });
+    stub([{ id: 'software', name: 'Software', categories: [cat] }]);
+    expect(await getCategoryPresets()).toEqual([{ id: 'software', name: 'Software', categories: [cat] }]);
+    expect(lastCall?.path).toBe('/category-presets');
+  });
+
+  it('CategoryPresetSchema validates the preset shape', () => {
+    expect(CategoryPresetSchema.safeParse({ id: 'p', name: 'P', categories: [cat] }).success).toBe(true);
+    expect(CategoryPresetSchema.safeParse({ id: 'p', name: 'P', categories: [{ id: 'x' }] }).success).toBe(false);
   });
 });

@@ -18,8 +18,8 @@
  * partial-output effect can reuse them without re-implementing the rules.
  */
 
+import { killShellCommand } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
   type AnnotatedEntry,
@@ -291,7 +291,7 @@ function bindStopButtonHandler(el: HTMLElement, entry: LogEntry): void {
   stopBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     cancelingShellIds.add(entry.id);
-    void api('/shell/kill', { method: 'POST', body: { id: entry.id } });
+    void killShellCommand(entry.id);
     stopBtn.replaceWith(toElement(<span className="command-log-canceling">{'Canceling…'}</span>));
   });
 }

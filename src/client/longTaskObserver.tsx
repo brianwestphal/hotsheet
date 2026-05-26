@@ -279,21 +279,18 @@ async function postFreezeLog(
   recentInteractions: InteractionEntry[],
 ): Promise<void> {
   try {
-    const { api } = await import('./api.js');
+    const { reportClientFreeze } = await import('../api/index.js');
     const context = recentInteractions.length === 0
       ? 'no recent interactions'
       : recentInteractions
           .map(i => `${i.label}@${formatRelativeMs(i.ts - performance.now())}`)
           .join(', ');
-    await api('/diagnostics/freeze', {
-      method: 'POST',
-      body: {
-        ts: new Date().toISOString(),
-        source: source === 'observer' ? 'client-observer' : 'client-heartbeat',
-        durationMs: Math.round(durationMs),
-        clientWallClock: wallClock,
-        context,
-      },
+    await reportClientFreeze({
+      ts: new Date().toISOString(),
+      source: source === 'observer' ? 'client-observer' : 'client-heartbeat',
+      durationMs: Math.round(durationMs),
+      clientWallClock: wallClock,
+      context,
     });
   } catch { /* swallow — freeze.log is a diagnostic-only path */ }
 }

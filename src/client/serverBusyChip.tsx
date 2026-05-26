@@ -266,7 +266,7 @@ function flushActivation(now: number): void {
  *  actually fired. */
 async function postBannerActivation(a: BannerActivation, now: number): Promise<void> {
   try {
-    const { api } = await import('./api.js');
+    const { reportClientFreeze } = await import('../api/index.js');
     const context = JSON.stringify({
       triggerKind: a.firstTriggerKind,
       triggerStartTs: a.firstTriggerStartTs,
@@ -276,14 +276,11 @@ async function postBannerActivation(a: BannerActivation, now: number): Promise<v
       longestInFlightMs: Math.round(a.longestInFlightMs),
       urlsSeen: Array.from(a.urlsSeen),
     });
-    await api('/diagnostics/freeze', {
-      method: 'POST',
-      body: {
-        ts: new Date().toISOString(),
-        source: 'client-server-busy-banner',
-        durationMs: Math.max(0, Math.round(now - a.firstShownAt)),
-        context,
-      },
+    await reportClientFreeze({
+      ts: new Date().toISOString(),
+      source: 'client-server-busy-banner',
+      durationMs: Math.max(0, Math.round(now - a.firstShownAt)),
+      context,
     });
   } catch { /* swallow — freeze.log is a diagnostic-only path */ }
 }

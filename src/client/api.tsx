@@ -5,6 +5,18 @@ import { byIdOrNull, toElement } from './dom.js';
 import { trackServerRequest } from './serverBusyChip.js';
 import { getActiveProject } from './state.js';
 
+//
+// HS-8522 / HS-8638 — these `api` / `apiWithSecret` / `apiUpload` helpers are
+// the low-level fetch runtime. The HS-8522 migration moved every typed call
+// site onto the typed API layer (`src/api/*`, each endpoint's request +
+// response shape defined once as zod schemas). These raw helpers are now wired
+// in as the `_runner` TRANSPORT TARGET (`setApiTransport` / `setApiUploadTransport`
+// in `app.tsx`) and are not called directly anywhere else.
+//
+// New code should add a schema + typed caller in `src/api/<resource>.ts` and
+// call THAT — do not reintroduce inline `api<{ … }>(path)` type literals here.
+//
+
 /**
  * HS-8567 — extract the error message from a non-OK response body without
  * an `as` cast. Tolerates malformed JSON / missing `error` key by falling

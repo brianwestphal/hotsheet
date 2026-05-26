@@ -1,6 +1,5 @@
-import { deleteProject, getProjectsChannelStatus, getProjectsFeedbackState, listProjects, reorderProjects, revealProject } from '../api/index.js';
+import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, listProjects, reorderProjects, revealProject } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
@@ -154,7 +153,7 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
   recordInteraction(`project-switch:${project.name}`);
   setActiveProject(project);
   renderTabs();
-  void api('/ensure-skills', { method: 'POST' });
+  void ensureSkills();
   if (reloadCallback) {
     await reloadCallback();
   }

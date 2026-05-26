@@ -1,9 +1,17 @@
-import { api } from './api.js';
+import { getCategoryPresets, updateCategories } from '../api/index.js';
 import { byId, toElement } from './dom.js';
-import type { CategoryDef } from './state.js';
 import { state } from './state.js';
 
 let categorySyncTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/** Persist the current category list. `state.categories` is the closed
+ *  `CategoryDef[]` interface; the typed caller's request type is the
+ *  `.loose()` schema shape (carries an index signature). The spread-map
+ *  produces fresh plain objects that satisfy that wire shape without a
+ *  cast. */
+function persistCategories(): Promise<unknown> {
+  return updateCategories(state.categories.map(c => ({ ...c })));
+}
 
 export function renderCategoryList(rebuildCategoryUI: () => void) {
   const container = byId('category-list');
@@ -87,7 +95,7 @@ function checkShortcutConflicts() {
 function debouncedCategorySync(rebuildCategoryUI: () => void) {
   if (categorySyncTimeout) clearTimeout(categorySyncTimeout);
   categorySyncTimeout = setTimeout(async () => {
-    await api('/categories', { method: 'PUT', body: state.categories });
+    await persistCategories();
     rebuildCategoryUI();
   }, 500);
 }
@@ -112,7 +120,7 @@ export function bindCategorySettings(rebuildCategoryUI: () => void) {
 
   // Preset selector
   const presetSelect = byId<HTMLSelectElement>('category-preset-select');
-  void api<{ id: string; name: string }[]>('/category-presets').then(presets => {
+  void getCategoryPresets().then(presets => {
     for (const p of presets) {
       presetSelect.appendChild(toElement(<option value={p.id}>{p.name}</option>));
     }
@@ -120,11 +128,11 @@ export function bindCategorySettings(rebuildCategoryUI: () => void) {
 
   presetSelect.addEventListener('change', async () => {
     if (!presetSelect.value) return;
-    const presets = await api<{ id: string; name: string; categories: CategoryDef[] }[]>('/category-presets');
+    const presets = await getCategoryPresets();
     const preset = presets.find(p => p.id === presetSelect.value);
     if (preset) {
       state.categories = [...preset.categories];
-      await api('/categories', { method: 'PUT', body: state.categories });
+      await persistCategories();
       renderCategoryList(rebuildCategoryUI);
       rebuildCategoryUI();
     }

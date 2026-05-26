@@ -1,6 +1,5 @@
-import { updateSettings } from '../api/index.js';
+import { ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, killShellCommand, updateSettings } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
 import { confirmDialog } from './confirm.js';
@@ -191,7 +190,7 @@ async function confirmStopShellCommand(cmd: CustomCommand, runningLogId: number)
   });
   if (!ok) return;
   try {
-    await api('/shell/kill', { method: 'POST', body: { id: runningLogId } });
+    await killShellCommand(runningLogId);
   } catch {
     // Best-effort. The poll tick will eventually catch up either way —
     // if the kill failed, the id stays in `/api/shell/running` and the
@@ -334,7 +333,7 @@ function startShellPoll(): void {
   if (shellPollTimer !== null) return;
   shellPollTimer = setInterval(async () => {
     try {
-      const response = await api<{ ids: number[]; outputs?: Record<number, string> }>('/shell/running');
+      const response = await getRunningShellCommands();
       // HS-7983 — fan out partial-output events to the Commands Log live
       // render (HS-8015 removed the sidebar row preview). Dedupe via the
       // per-id length cache so a stalled command doesn't thrash the DOM.
@@ -379,7 +378,7 @@ function startShellPoll(): void {
 
 async function autoShowLogEntry(logId: number, autoShow: boolean) {
   try {
-    const entries = await api<{ id: number; summary: string }[]>('/command-log?limit=50');
+    const entries = await getCommandLog({ limit: 50 });
     const entry = entries.find(e => e.id === logId);
     if (!entry) return;
     // Check for error: summary doesn't end with "Completed (exit 0)"
@@ -395,8 +394,8 @@ async function runShellCommand(cmd: CustomCommand, autoShow = false): Promise<vo
   setShellBusy(true);
   try {
     // Ensure AI tool skills are installed/up-to-date before running commands
-    void api('/ensure-skills', { method: 'POST' });
-    const result = await api<{ id: number }>('/shell/exec', { method: 'POST', body: { command: cmd.prompt, name: cmd.name } });
+    void ensureSkills();
+    const result = await execShellCommand(cmd.prompt, cmd.name);
     // HS-8060 — register this run in the per-button state map BEFORE
     // re-rendering so the new render picks up the spinner. The poll
     // tick will drop the entry once the id leaves /api/shell/running.

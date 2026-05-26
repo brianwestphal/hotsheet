@@ -2,10 +2,9 @@ import './markdownSetup.js';
 
 import { marked } from 'marked';
 
-import { getFeedbackDrafts, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
+import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
@@ -514,11 +513,7 @@ async function loadDetail(id: number) {
 
 export async function updateStats() {
   try {
-    const stats = await api<{
-      total: number;
-      open: number;
-      up_next: number;
-    }>('/stats');
+    const stats = await getStats();
     const bar = byIdOrNull('status-bar');
     if (bar) {
       bar.textContent = `${stats.total} tickets \u00B7 ${stats.open} open \u00B7 ${stats.up_next} up next`;

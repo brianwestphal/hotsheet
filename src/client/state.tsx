@@ -538,6 +538,6 @@ export let allKnownTags: string[] = [];
 
 export async function refreshAllKnownTags(): Promise<void> {
   // Lazy import to avoid circular dependency at module init time
-  const { api } = await import('./api.js');
-  try { allKnownTags = await api<string[]>('/tags'); } catch { /* use cached */ }
+  const { getTags } = await import('../api/index.js');
+  try { allKnownTags = await getTags(); } catch { /* use cached */ }
 }

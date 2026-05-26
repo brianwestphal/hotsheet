@@ -14,13 +14,21 @@
  * (including `commandLog.test.ts`) keep working without an import sweep.
  */
 
-import { type FileSettings, getFileSettings, updateFileSettings } from '../api/index.js';
-import { api } from './api.js';
+import {
+  clearCommandLog,
+  type CommandLogEntry,
+  type CommandLogQuery,
+  type FileSettings,
+  getCommandLog,
+  getFileSettings,
+  getRunningShellCommands,
+  type RunningShell,
+  updateFileSettings,
+} from '../api/index.js';
 import { cleanupCancelingShellIds, dismissContextMenu, renderEntryRow } from './commandLogEntryRow.js';
 import { dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
 import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
-  type AnnotatedEntry,
   commandLogStore,
   filteredEntriesSignal,
   getEntrySignals,
@@ -40,8 +48,6 @@ import { bindList } from './reactive-bind.js';
 // `commandLog.test.ts` harness) keep their `from './commandLog.js'`
 // shape after the HS-8385 split.
 export { applyShellPartialEvent, shouldAutoScrollToBottom, writePartialIntoPre };
-
-type LogEntry = AnnotatedEntry;
 
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -136,18 +142,17 @@ export function _resetPanelStateForTesting(): void {
 // --- Load entries from API ---
 
 async function loadEntries() {
-  let entries: { id: number; event_type: string; direction: string; summary: string; detail: string; created_at: string }[];
-  let running: { ids: number[]; outputs?: Record<number, string> };
+  let entries: CommandLogEntry[];
+  let running: RunningShell;
   try {
-    const params = new URLSearchParams();
-    params.set('limit', '100');
     const currentSearch = commandLogStore.state.value.filter.search;
-    if (currentSearch !== '') params.set('search', currentSearch);
+    const query: CommandLogQuery = { limit: 100 };
+    if (currentSearch !== '') query.search = currentSearch;
 
     // Fetch entries and running shell processes in parallel
     const [fetchedEntries, fetchedRunning] = await Promise.all([
-      api<typeof entries>(`/command-log?${params.toString()}`),
-      api<{ ids: number[]; outputs?: Record<number, string> }>('/shell/running').catch(() => ({ ids: [] as number[], outputs: {} as Record<number, string> })),
+      getCommandLog(query),
+      getRunningShellCommands().catch((): RunningShell => ({ ids: [], outputs: {} })),
     ]);
     entries = fetchedEntries;
     running = fetchedRunning;
@@ -163,21 +168,19 @@ async function loadEntries() {
   // since the last tick). The bindList view-layer re-renders only the
   // rows whose shape or partial signal moved.
   commandLogStore.actions.setEntries(entries, running.ids);
-  if (running.outputs !== undefined) {
-    for (const idStr of Object.keys(running.outputs)) {
-      const idNum = Number(idStr);
-      if (!Number.isFinite(idNum)) continue;
-      const fromServer = running.outputs[idNum] ?? '';
-      const sigs = getEntrySignals(idNum);
-      const cached = sigs?.partial.value ?? '';
-      // Use the longer of (cached, server) so a chunk that arrived via
-      // the live `applyShellPartialEvent` between this tick's request
-      // dispatch and its response doesn't get clobbered by the older
-      // poll snapshot. Partial buffers are monotonic on the server, so
-      // length is a safe proxy for "is newer".
-      const next = fromServer.length >= cached.length ? fromServer : cached;
-      if (next !== cached) commandLogStore.actions.setRunningOutput(idNum, next);
-    }
+  for (const idStr of Object.keys(running.outputs)) {
+    const idNum = Number(idStr);
+    if (!Number.isFinite(idNum)) continue;
+    const fromServer = running.outputs[idNum];
+    const sigs = getEntrySignals(idNum);
+    const cached = sigs?.partial.value ?? '';
+    // Use the longer of (cached, server) so a chunk that arrived via
+    // the live `applyShellPartialEvent` between this tick's request
+    // dispatch and its response doesn't get clobbered by the older
+    // poll snapshot. Partial buffers are monotonic on the server, so
+    // length is a safe proxy for "is newer".
+    const next = fromServer.length >= cached.length ? fromServer : cached;
+    if (next !== cached) commandLogStore.actions.setRunningOutput(idNum, next);
   }
   // Drop ids whose process is no longer in the server-reported running
   // list (canceling-shell state cleanup — HS-8385: lives in
@@ -479,13 +482,13 @@ export async function refreshLogBadge() {
   try {
     if (lastSeenId === 0) {
       // First load: set baseline without showing badge
-      const entries = await api<LogEntry[]>('/command-log?limit=1');
+      const entries = await getCommandLog({ limit: 1 });
       if (entries.length > 0) lastSeenId = entries[0].id;
       return;
     }
     // We approximate unread by total count vs. a stored count.
     // For simplicity, just show total count if there are new entries.
-    const entries = await api<LogEntry[]>('/command-log?limit=1');
+    const entries = await getCommandLog({ limit: 1 });
     if (entries.length > 0 && entries[0].id > lastSeenId) {
       updateBadge(true);
     }
@@ -540,7 +543,7 @@ function onSearchInput(value: string) {
 // --- Clear log ---
 
 async function clearLogEntries() {
-  await api('/command-log', { method: 'DELETE' });
+  await clearCommandLog();
   commandLogSelectionStore.actions.clearSelected();
   void loadEntries();
 }

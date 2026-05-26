@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { getWorklistInfo } from '../api/index.js';
 import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
 
@@ -45,7 +45,7 @@ export function formatTicketForClipboard(ticket: Ticket): string {
  *  ignored here — kept on the wire because the prior client
  *  consumed it; future cleanup could drop it from the response. */
 export function initSkillsBanner(): void {
-  void api<{ prompt: string; skillCreated: boolean }>('/worklist-info').then((info) => {
+  void getWorklistInfo().then((info) => {
     if (info.skillCreated) showSkillsBanner();
   });
 }

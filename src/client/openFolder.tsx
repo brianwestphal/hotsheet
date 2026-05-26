@@ -1,16 +1,9 @@
-import { registerProject } from '../api/index.js';
-import { api, showErrorPopup } from './api.js';
+import { browse, type BrowseResult, registerProject } from '../api/index.js';
+import { showErrorPopup } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER, ICON_FOLDER_OPEN } from './icons.js';
 import { refreshProjectTabs, switchProject } from './projectTabs.js';
 import { getTauriInvoke } from './tauriIntegration.js';
-
-interface BrowseResult {
-  path: string;
-  parent: string | null;
-  entries: { name: string; path: string; hasHotsheet: boolean }[];
-  hasHotsheet: boolean;
-}
 
 function renderBreadcrumb(path: string) {
   const container = byId('open-folder-breadcrumb');
@@ -35,7 +28,7 @@ function renderBreadcrumb(path: string) {
 
 async function navigateTo(path: string) {
   try {
-    const result = await api<BrowseResult>(`/browse?path=${encodeURIComponent(path)}`);
+    const result = await browse(path);
     renderBreadcrumb(result.path);
     renderEntries(result);
     updateFooter(result);

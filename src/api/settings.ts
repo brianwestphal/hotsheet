@@ -23,7 +23,10 @@
  */
 import { z } from 'zod';
 
-import { type GlobalConfig, GlobalConfigSchema, type UpdateFileSettingsSchema, type UpdateSettingsSchema } from '../routes/validation.js';
+import {
+  CategoryDefSchema, type GlobalConfig, GlobalConfigSchema,
+  type UpdateCategoriesSchema, type UpdateFileSettingsSchema, type UpdateSettingsSchema,
+} from '../routes/validation.js';
 import { apiCall, type OkResponse, OkResponseSchema } from './_runner.js';
 
 // Re-export the shared global-config wire shape so callers can import it from
@@ -72,6 +75,18 @@ export type FileSettings = z.infer<typeof FileSettingsSchema>;
 export type UpdateSettingsReq = z.infer<typeof UpdateSettingsSchema>;
 export type UpdateFileSettingsReq = z.infer<typeof UpdateFileSettingsSchema>;
 
+// --- tags / categories / category-presets (HS-8638; also in routes/settings.ts) ---
+
+/** `GET /category-presets` row: a named bundle of categories. (`CategoryDef` /
+ *  `CategoryPreset` value types stay owned by `src/types.ts`; these schemas are
+ *  the wire-validation SSOT, reusing `CategoryDefSchema` from validation.ts.) */
+export const CategoryPresetSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  categories: z.array(CategoryDefSchema),
+});
+export type UpdateCategoriesReq = z.infer<typeof UpdateCategoriesSchema>;
+
 // --- Typed callers ---
 
 /** GET `/settings` → the DB key/value store. */
@@ -104,4 +119,24 @@ export async function getGlobalConfig(): Promise<GlobalConfig> {
 /** PATCH `/global-config` → deep-merge a partial; returns the merged config. */
 export async function updateGlobalConfig(patch: Partial<GlobalConfig>): Promise<GlobalConfig> {
   return apiCall(GlobalConfigSchema, '/global-config', { method: 'PATCH', body: patch });
+}
+
+/** GET `/tags` → every distinct tag across the active project's tickets. */
+export async function getTags(): Promise<string[]> {
+  return apiCall(z.array(z.string()), '/tags');
+}
+
+/** GET `/categories` → the active project's category definitions. */
+export async function getCategories(): Promise<z.infer<typeof CategoryDefSchema>[]> {
+  return apiCall(z.array(CategoryDefSchema), '/categories');
+}
+
+/** PUT `/categories` → replace the category list; returns the saved list. */
+export async function updateCategories(categories: UpdateCategoriesReq): Promise<z.infer<typeof CategoryDefSchema>[]> {
+  return apiCall(z.array(CategoryDefSchema), '/categories', { method: 'PUT', body: categories });
+}
+
+/** GET `/category-presets` → the built-in category preset bundles. */
+export async function getCategoryPresets(): Promise<z.infer<typeof CategoryPresetSchema>[]> {
+  return apiCall(z.array(CategoryPresetSchema), '/category-presets');
 }

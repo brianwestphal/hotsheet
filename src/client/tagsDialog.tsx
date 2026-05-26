@@ -1,5 +1,4 @@
-import { updateTicket } from '../api/index.js';
-import { api } from './api.js';
+import { getTags, updateTicket } from '../api/index.js';
 import { displayTag, hasTag, normalizeTag, parseTags, refreshDetail } from './detail.js';
 import { toElement } from './dom.js';
 import { state } from './state.js';
@@ -10,7 +9,7 @@ export async function showTagsDialog() {
   if (selectedTickets.length === 0) return;
 
   // Get all known tags
-  const allTags: string[] = await api('/tags');
+  const allTags: string[] = await getTags();
 
   // Also include tags from selected tickets that might not be in allTags
   for (const t of selectedTickets) {

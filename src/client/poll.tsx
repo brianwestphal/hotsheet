@@ -1,5 +1,4 @@
-import { getChannelHeartbeatStatus } from '../api/index.js';
-import { api } from './api.js';
+import { getChannelHeartbeatStatus, pollVersion as pollVersionApi } from '../api/index.js';
 import { checkChannelDone, clearBusyForProject, extendBusyForProject } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
 import { refreshDetail } from './detail.js';
@@ -15,7 +14,7 @@ let pollDataVersion = 0;
 export function startLongPoll() {
   async function poll() {
     try {
-      const result = await api<{ version: number; dataVersion?: number }>(`/poll?version=${pollVersion}`);
+      const result = await pollVersionApi(pollVersion);
       if (result.version > pollVersion) {
         pollVersion = result.version;
         // HS-7972 — only run the expensive ticket-list + detail-panel rebuild
@@ -25,7 +24,7 @@ export function startLongPoll() {
         // git chip) but DO NOT bump `dataVersion`. Pre-fix every heartbeat
         // re-rendered the whole list, flickering :hover state and the note
         // reader-button under the cursor at the heartbeat rate.
-        const serverDataVersion = result.dataVersion ?? result.version;
+        const serverDataVersion = result.dataVersion;
         const dataChanged = serverDataVersion > pollDataVersion;
         pollDataVersion = serverDataVersion;
         if (dataChanged && state.backupPreview?.active !== true) {

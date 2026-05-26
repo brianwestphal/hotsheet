@@ -15,6 +15,7 @@ import {
   trackPersistentSlowEvent,
   trackServerRequest,
 } from './serverBusyChip.js';
+import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
 // HS-8446 — the banner now requires the global diagnostics opt-in to
 // paint. The existing HS-8175 / HS-8226 / HS-8286 / HS-8425 cases
@@ -212,6 +213,7 @@ vi.mock('./api.js', () => ({
     mockPostedActivations.push({ url: path, body: opts.body });
     return Promise.resolve({ ok: true });
   },
+  apiWithSecret: () => Promise.resolve({ ok: true }),
 }));
 
 describe('banner activation logging (HS-8425)', () => {
@@ -232,9 +234,14 @@ describe('banner activation logging (HS-8425)', () => {
 
   beforeEach(() => {
     posted.length = 0;
+    // HS-8638 — the freeze report now goes through the typed `reportClientFreeze`
+    // caller, which routes via the injected transport; wire it to the mocked
+    // `api` above so the POST is still captured in `posted`.
+    wireRealApiTransport();
   });
 
   afterEach(() => {
+    resetApiTransport();
     document.getElementById('server-slow-banner')?.remove();
     vi.useRealTimers();
   });

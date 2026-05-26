@@ -1,7 +1,6 @@
-import { getChannelStatus, listTerminals, triggerChannel } from '../api/index.js';
+import { ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
-import { api } from './api.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -354,7 +353,7 @@ function tagMessageWithActiveTicket(message: string | undefined): string | undef
 function triggerChannelAndMarkBusy(message?: string) {
   setChannelBusy(true);
   // Ensure AI tool skills are installed/up-to-date before triggering
-  void api('/ensure-skills', { method: 'POST' });
+  void ensureSkills();
   // HS-8152 — tag the message with the active ticket (when present)
   // so the per-ticket cost rollup can attribute downstream OTel events
   // back to the ticket via the marker in `claude_code.user_prompt`.
@@ -380,7 +379,7 @@ async function checkAndTrigger(btn: HTMLElement) {
     return;
   }
   try {
-    const stats = await api<{ up_next: number }>('/stats');
+    const stats = await getStats();
     if (stats.up_next === 0 && !state.settings.auto_order) {
       showNoUpNextAlert();
       return;
@@ -576,7 +575,7 @@ async function attemptAutoTrigger() {
 
   // Check if there are up-next items (skip check if auto-prioritize will handle it)
   try {
-    const stats = await api<{ up_next: number }>('/stats');
+    const stats = await getStats();
     if (stats.up_next === 0 && !state.settings.auto_order) return;
   } catch { /* proceed anyway */ }
 

@@ -1,5 +1,5 @@
 import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
-import { createTicket, updateSettings, uploadAttachment } from '../api/index.js';
+import { createTicket, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
 import { api, apiUpload, apiWithSecret } from './api.js';
@@ -355,14 +355,14 @@ function bindGlassbox() {
   const btn = byId<HTMLButtonElement>('glassbox-btn');
   const icon = byId<HTMLImageElement>('glassbox-icon');
 
-  void api<{ available: boolean }>('/glassbox/status').then(({ available }) => {
+  void getGlassboxStatus().then(({ available }) => {
     if (!available) return;
     icon.src = '/static/assets/glassbox-icon.png';
     btn.style.display = '';
   }).catch(() => { /* ignore */ });
 
   btn.addEventListener('click', () => {
-    void api('/glassbox/launch', { method: 'POST' });
+    void launchGlassbox();
   });
 }
 

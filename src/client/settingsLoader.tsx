@@ -1,10 +1,8 @@
-import { getSettings } from '../api/index.js';
+import { getCategories, getSettings } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
-import { api } from './api.js';
 import { setAppTitleFromActiveProject } from './appTitle.js';
 import { applyDetailPosition, applyDetailSize, updateDetailCategory } from './detail.js';
 import { byIdOrNull, toElement } from './dom.js';
-import type { CategoryDef } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
@@ -68,7 +66,7 @@ export async function loadSettings() {
 /** Load category definitions and rebuild the UI. */
 export async function loadCategories(rebuildCategoryUI: () => void) {
   try {
-    const categories = await api<CategoryDef[]>('/categories');
+    const categories = await getCategories();
     if (categories.length > 0) state.categories = categories;
   } catch { /* use defaults */ }
   rebuildCategoryUI();

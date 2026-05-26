@@ -1,9 +1,8 @@
 import { z } from 'zod';
 
-import { getFileSettings, getSettings, updateFileSettings, updateSettings } from '../api/index.js';
+import { getFileSettings, getSettings, getTags, updateFileSettings, updateSettings } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { parseJsonOrNull } from '../schemas.js';
-import { api } from './api.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -541,7 +540,7 @@ function bindAutoContextSettings() {
       }
     }
     // Fetch tags
-    void api<string[]>('/tags').then(tags => {
+    void getTags().then(tags => {
       for (const tag of tags) {
         if (!autoContextEntries.some(e => e.type === 'tag' && e.key.toLowerCase() === tag.toLowerCase())) {
           options.push({ type: 'tag', key: tag, label: `Tag: ${tag.replace(/\b\w/g, c => c.toUpperCase())}` });

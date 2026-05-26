@@ -25,12 +25,16 @@
 import * as attachments from './attachments.js';
 import * as backups from './backups.js';
 import * as channel from './channel.js';
+import * as commandLog from './commandLog.js';
+import * as dashboard from './dashboard.js';
 import * as db from './db.js';
+import * as diagnostics from './diagnostics.js';
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
 import * as plugins from './plugins.js';
 import * as projects from './projects.js';
 import * as settings from './settings.js';
+import * as shell from './shell.js';
 import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
 import * as tickets from './tickets.js';
@@ -38,12 +42,16 @@ import * as tickets from './tickets.js';
 export * from './attachments.js';
 export * from './backups.js';
 export * from './channel.js';
+export * from './commandLog.js';
+export * from './dashboard.js';
 export * from './db.js';
+export * from './diagnostics.js';
 export * from './feedbackDrafts.js';
 export * from './git.js';
 export * from './plugins.js';
 export * from './projects.js';
 export * from './settings.js';
+export * from './shell.js';
 export * from './telemetry.js';
 export * from './terminal.js';
 export * from './tickets.js';
@@ -63,4 +71,8 @@ export const apis = {
   ...plugins,
   ...attachments,
   ...settings,
+  ...shell,
+  ...commandLog,
+  ...dashboard,
+  ...diagnostics,
 };

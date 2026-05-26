@@ -1,5 +1,5 @@
+import { printHtml } from '../api/index.js';
 import { NotesArraySchema, parseJsonOrNull } from '../schemas.js';
-import { api } from './api.js';
 import { parseTags } from './detail.js';
 import { byIdOrNull, toElement } from './dom.js';
 import type { Ticket } from './state.js';
@@ -96,7 +96,7 @@ function printHTML(bodyHTML: string) {
     <style>${printStyles()}</style>
   </head><body>${bodyHTML}</body></html>`;
 
-  void api('/print', { method: 'POST', body: { html: fullHTML } });
+  void printHtml(fullHTML);
 }
 
 function printDashboard() {

@@ -237,13 +237,15 @@ When you genuinely need `as`, the rule is: **adjacent runtime check or adjacent 
 
 **DB JSON column reads** — every `JSON.parse(row.someJsonColumn)` should go through a zod schema. The existing schemas: `NotesArraySchema` (`tickets.notes`), `TagsArraySchema` (`tickets.tags`), `CategoryDefArraySchema` (`settings.categories`), `SnapshotDataSchema` (`daily_stats.data`), `PluginConflictDataSchema` (`sync_records.conflict_data`). Add new ones to `src/schemas.ts` when adding new JSON columns.
 
-### Typed API layer (`src/api/`) — HS-8522 (in progress, per-domain migration)
+### Typed API layer (`src/api/`) — HS-8522 (complete)
 
 The wire shape of each HTTP endpoint (request + response) is defined ONCE as zod schemas in `src/api/<resource>.ts` and shared by both the client callers and the server handlers — the single source of truth. This replaces inline `api<{ … }>(path)` type literals at the call site AND hand-duplicated `interface` declarations kept in sync across client/server by hand. See `docs/9-api.md` §9.0.3 and `docs/ai/code-summary.md` §3 (`src/api/`). The pattern mirrors the sister project glassbox's `src/api/` (GB-798 / GB-804).
 
-Each resource module exports the request/response schemas (+ inferred types) AND the typed caller functions (e.g. `getGitStatus()`); `src/api/index.ts` aggregates them into named exports + a flat `apis` namespace. `src/api/_runner.ts` is **server-safe** (imports only `zod`) — the fetch is performed by a client-injected transport (`setApiTransport` at boot), so route files can import schemas from `src/api/*` without pulling the DOM-bound client `api()` runtime into the Node bundle. **`_runner.ts` must never import client-only (DOM-touching) modules.**
+Each resource module exports the request/response schemas (+ inferred types) AND the typed caller functions (e.g. `getGitStatus()`); `src/api/index.ts` aggregates them into named exports + a flat `apis` namespace. `src/api/_runner.ts` is **server-safe** (imports only `zod`) — the fetch is performed by a client-injected transport (`setApiTransport` / `setApiUploadTransport` at boot), so route files can import schemas from `src/api/*` without pulling the DOM-bound client `api()` runtime into the Node bundle. **`_runner.ts` must never import client-only (DOM-touching) modules.**
 
-**When adding a new endpoint:** define its request + response schema + typed caller in `src/api/<resource>.ts`, validate the request server-side against that schema, and call the typed function from the client. Do NOT add new inline `api<{…}>(path)` type literals. Migration of the existing ~298 call sites is per-domain across the HS-8522 sub-tickets; **git** is the shipped reference implementation.
+The migration is **complete** (HS-8638 closeout): every client call site goes through a typed caller, and the raw `api()` / `apiWithSecret()` / `apiUpload()` helpers in `src/client/api.tsx` are now used ONLY as the transport target wired in `app.tsx`. Resource modules: git, tickets, feedbackDrafts, terminal, telemetry, backups, db, channel, projects, plugins, attachments, settings, shell, commandLog, dashboard, diagnostics.
+
+**When adding a new endpoint:** define its request + response schema + typed caller in `src/api/<resource>.ts`, validate the request server-side against that schema, and call the typed function from the client. Do NOT add new inline `api<{…}>(path)` type literals, and do NOT call `api()` / `apiWithSecret()` / `apiUpload()` directly (they are the transport target only). **git** is the reference implementation.
 
 ### Requirements Documentation
 

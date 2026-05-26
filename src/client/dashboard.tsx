@@ -1,30 +1,15 @@
+import { type DashboardData, getDashboard } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
-import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getCategoryColor, state } from './state.js';
-
-interface DashboardData {
-  throughput: { date: string; completed: number; created: number }[];
-  cycleTime: { ticket_number: string; title: string; completed_at: string; hours: number }[];
-  categoryBreakdown: { category: string; count: number }[];
-  categoryPeriod: { category: string; count: number }[];
-  snapshots: { date: string; data: { not_started: number; started: number; completed: number; verified: number } }[];
-  kpi: {
-    completedThisWeek: number;
-    completedLastWeek: number;
-    wipCount: number;
-    createdThisWeek: number;
-    medianCycleTimeDays: number | null;
-  };
-}
 
 let currentDays = 30;
 
 export async function renderDashboard(container: HTMLElement) {
   container.replaceChildren(toElement(<div className="dashboard-loading">Loading dashboard...</div>));
   try {
-    const data = await api<DashboardData>(`/dashboard?days=${currentDays}`);
+    const data = await getDashboard(currentDays);
     container.replaceChildren(buildDashboard(data));
   } catch {
     container.replaceChildren(toElement(<div className="dashboard-loading">Failed to load dashboard data.</div>));
@@ -534,7 +519,7 @@ function axisLabels(dates: string[]): SafeHtml[] {
 export async function renderSidebarWidget(): Promise<HTMLElement> {
   const widget = toElement(<div className="sidebar-dashboard-widget" id="sidebar-dashboard-widget"></div>);
   try {
-    const data = await api<DashboardData>('/dashboard?days=7');
+    const data = await getDashboard(7);
     const kpi = data.kpi;
     const change = kpi.completedLastWeek > 0
       ? Math.round(((kpi.completedThisWeek - kpi.completedLastWeek) / kpi.completedLastWeek) * 100)
