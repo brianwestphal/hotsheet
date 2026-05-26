@@ -22,7 +22,7 @@
  *     after its PATCH so the button appears / disappears instantly.
  */
 
-import { api } from './api.js';
+import { isTelemetryEnabledAnywhere } from '../api/index.js';
 
 let lastEnabled: boolean | null = null;
 
@@ -35,10 +35,10 @@ function setSectionVisibility(enabled: boolean): void {
  *  calls do nothing when the value hasn't changed. */
 export async function refreshTelemetrySidebarVisibility(): Promise<void> {
   try {
-    const result = await api<{ enabled: boolean }>('/telemetry/enabled-anywhere');
-    if (result.enabled === lastEnabled) return;
-    lastEnabled = result.enabled;
-    setSectionVisibility(result.enabled);
+    const enabled = await isTelemetryEnabledAnywhere();
+    if (enabled === lastEnabled) return;
+    lastEnabled = enabled;
+    setSectionVisibility(enabled);
   } catch {
     // Network blip — leave the previous state in place. The next
     // settings PATCH will retry.

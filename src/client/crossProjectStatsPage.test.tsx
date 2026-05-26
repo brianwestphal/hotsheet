@@ -11,6 +11,7 @@
 //     `showCrossProjectStatsPage` (back-compat during migration)
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import { api } from './api.js';
 import {
   _testingHS8572,
@@ -29,6 +30,12 @@ import type { ProjectInfo } from './state.js';
 // (`vi.mock` is hoisted above the imports by vitest's transform regardless of
 // its position here, so keeping it below the imports satisfies `import/first`.)
 vi.mock('./api.js', () => ({ api: vi.fn() }));
+
+// HS-8632 — the page fetches via the typed `getTelemetryDashboard` (→ `_runner`
+// transport). Route the transport at the same `api` mock so the existing
+// `vi.mocked(api).mockResolvedValue(...)` payload control + assertions hold.
+beforeEach(() => { setApiTransport((path, opts) => vi.mocked(api)(path, opts)); });
+afterEach(() => { setApiTransport(null as unknown as ApiTransport); });
 
 interface WindowTotals {
   cost: number;

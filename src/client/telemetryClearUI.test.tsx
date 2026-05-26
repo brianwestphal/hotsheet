@@ -7,12 +7,12 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { api } from './api.js';
+import { clearProjectTelemetry } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { bindClearTelemetryButton, formatClearResult, resetClearTelemetryStatus } from './telemetryClearUI.js';
 
-vi.mock('./api.js', () => ({ api: vi.fn() }));
+vi.mock('../api/index.js', () => ({ clearProjectTelemetry: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('./dashboardMode.js', () => ({ refreshSidebarWidgetCost: vi.fn(), clearSidebarWidgetCostForActiveProject: vi.fn() }));
 
@@ -47,7 +47,7 @@ describe('bindClearTelemetryButton (HS-8606)', () => {
   }
 
   beforeEach(() => {
-    vi.mocked(api).mockReset();
+    vi.mocked(clearProjectTelemetry).mockReset();
     vi.mocked(confirmDialog).mockReset().mockResolvedValue(true);
   });
 
@@ -60,24 +60,24 @@ describe('bindClearTelemetryButton (HS-8606)', () => {
     const { btn, status } = mountButton();
     btn.click();
     await vi.waitFor(() => expect(confirmDialog).toHaveBeenCalled());
-    expect(api).not.toHaveBeenCalled();
+    expect(clearProjectTelemetry).not.toHaveBeenCalled();
     expect(status.textContent).toBe('');
   });
 
   it('clears via DELETE and shows the success status when confirmed', async () => {
-    vi.mocked(api).mockResolvedValue({ deleted: 7 } as never);
+    vi.mocked(clearProjectTelemetry).mockResolvedValue({ deleted: 7 });
     const { btn, status } = mountButton();
     btn.click();
     await vi.waitFor(() => expect(status.textContent).toBe('Cleared 7 telemetry rows.'));
-    // Hit the DELETE endpoint.
-    expect(api).toHaveBeenCalledWith('/telemetry/project-data', expect.objectContaining({ method: 'DELETE' }));
+    // Routed through the typed DELETE caller.
+    expect(clearProjectTelemetry).toHaveBeenCalled();
     expect(status.classList.contains('is-success')).toBe(true);
     // Button re-enabled afterwards.
     expect(btn.disabled).toBe(false);
   });
 
   it('shows an error status when the DELETE fails', async () => {
-    vi.mocked(api).mockRejectedValue(new Error('boom'));
+    vi.mocked(clearProjectTelemetry).mockRejectedValue(new Error("boom"));
     const { btn, status } = mountButton();
     btn.click();
     await vi.waitFor(() => expect(status.classList.contains('is-error')).toBe(true));

@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import { _testingHS8572,type DashboardPayload } from './crossProjectStatsPage.js';
 import type * as MainSurfaceStateNS from './mainSurfaceState.js';
 
@@ -43,6 +44,10 @@ vi.mock('./mainSurfaceState.js', async () => {
 
 beforeEach(() => {
   mockApi.mockReset();
+  // HS-8632 — the page now fetches via the typed `getTelemetryDashboard`, which
+  // routes through the `_runner` transport; point it at `mockApi` so the
+  // existing payload + timing control still drives it.
+  setApiTransport((path, opts) => mockApi(path, opts));
   mockIsActive.mockReturnValue(true);
   _testingHS8572.reset();
   document.body.innerHTML = '';
@@ -50,6 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _testingHS8572.reset();
+  setApiTransport(null as unknown as ApiTransport);
   vi.useRealTimers();
 });
 

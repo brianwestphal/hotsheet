@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { getTodayCostByProject } from '../api/index.js';
 import { subscribeToBellState } from './bellPoll.js';
 import { updateSidebarWidgetCost } from './dashboardMode.js';
 
@@ -27,14 +27,10 @@ import { updateSidebarWidgetCost } from './dashboardMode.js';
 
 let unsubscribe: (() => void) | null = null;
 
-interface TodayCostByProjectResponse {
-  costs: Record<string, number>;
-}
-
 async function refreshCostChips(): Promise<void> {
   try {
-    const data = await api<TodayCostByProjectResponse>('/telemetry/today-cost-by-project');
-    updateSidebarWidgetCost(data.costs);
+    const costs = await getTodayCostByProject();
+    updateSidebarWidgetCost(costs);
   } catch {
     // Network hiccup / telemetry table absent → leave the value as-is.
     // The next tick will retry.

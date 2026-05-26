@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { getPerTicketRollup, type TicketRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 // HS-8566 — shared cost formatter (the $1000-cutoff + half-up rule).
 import { formatCost } from './telemetryFormat.js';
@@ -17,13 +17,6 @@ import { formatCost } from './telemetryFormat.js';
  * telemetry or were worked on without Hot Sheet channel triggers.
  */
 
-interface TicketRollup {
-  ticketNumber: string;
-  promptCount: number;
-  totalCost: number;
-  totalTokens: number;
-  totalDurationSeconds: number;
-}
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -52,7 +45,7 @@ export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promis
 
   let rollup: TicketRollup;
   try {
-    rollup = await api<TicketRollup>(`/telemetry/ticket/${encodeURIComponent(ticketNumber)}`);
+    rollup = await getPerTicketRollup(ticketNumber);
   } catch {
     // Network hiccup / receiver down → leave the container empty.
     container.replaceChildren();

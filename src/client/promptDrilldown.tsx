@@ -1,5 +1,5 @@
+import { getPromptTimeline } from '../api/index.js';
 import type { SpanRow } from '../db/otelQueries.js';
-import { api } from './api.js';
 import { toElement } from './dom.js';
 import { assembleSpanTree, findEnclosingSpanId, type SpanTreeNode } from './spanTree.js';
 
@@ -495,7 +495,7 @@ export function openPromptDrilldown(promptId: string): void {
 
   void (async () => {
     try {
-      const timeline = await api<PromptTimeline>(`/telemetry/prompt/${encodeURIComponent(promptId)}`);
+      const timeline: PromptTimeline = await getPromptTimeline(promptId);
       content.replaceChildren(renderTimeline(timeline));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

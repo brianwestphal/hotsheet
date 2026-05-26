@@ -42,7 +42,7 @@
  * alias along with the sidebar entry.
  */
 
-import { api } from './api.js';
+import { getTelemetryDashboard } from '../api/index.js';
 import { unmountColumnView } from './columnView.js';
 import { enterDashboardMode } from './dashboardMode.js';
 import { restoreDashboardToolbarControls } from './dashboardToolbarVisibility.js';
@@ -699,7 +699,7 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     // DB, which contains no otel data unless the user happens to be on
     // the launched-with project. `skipProjectScope` opts out of the
     // auto-append. See `buildUrl` in `src/client/api.tsx`.
-    const payload = await api<DashboardPayload>(`/telemetry/dashboard?window=${encodeURIComponent(window)}&tz=${encodeURIComponent(tz)}`, { skipProjectScope: true });
+    const payload: DashboardPayload = await getTelemetryDashboard(window, tz);
     if (gen !== fetchGeneration) return; // a newer fetch superseded us; let it win.
 
     // HS-8572 — skip the re-render when the fresh payload matches what

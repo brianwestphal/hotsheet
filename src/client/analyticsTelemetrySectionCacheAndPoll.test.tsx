@@ -9,6 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import { _testing } from './analyticsTelemetrySection.js';
 import type * as StateNS from './state.js';
 import type { CostOverTimePoint } from './telemetryCostOverTimeChart.js';
@@ -17,7 +18,7 @@ import type { ToolLatencyHistogramRow } from './telemetryToolHistogram.js';
 
 type TelemetryWindow = 'today' | 'week' | 'month' | '90d' | 'all';
 
-interface WindowTotals { cost: number; tokens: number; promptCount: number }
+interface WindowTotals { cost: number; tokens: number; inputTokens: number; outputTokens: number; promptCount: number }
 interface ModelRollupRow { model: string; cost: number; tokens: number; promptCount: number }
 interface ProjectRollupPayload {
   window: TelemetryWindow;
@@ -28,7 +29,7 @@ interface ProjectRollupPayload {
   costOverTime: CostOverTimePoint[];
 }
 
-function totals(cost = 1): WindowTotals { return { cost, tokens: 1000, promptCount: 5 } }
+function totals(cost = 1): WindowTotals { return { cost, tokens: 1000, inputTokens: 700, outputTokens: 300, promptCount: 5 } }
 function makePayload(overrides: Partial<ProjectRollupPayload> = {}): ProjectRollupPayload {
   const base: ProjectRollupPayload = {
     window: 'month',
@@ -76,6 +77,9 @@ vi.mock('./telemetrySubscriptionDisclaimer.js', () => ({
 
 beforeEach(() => {
   mockApi.mockReset();
+  // HS-8632 — the section now fetches via the typed `getProjectRollup`, which
+  // routes through the `_runner` transport; point it at `mockApi`.
+  setApiTransport((path) => mockApi(path));
   mockGetActiveProject.mockReturnValue({ secret: 'proj-1' });
   _testing.resetHS8572();
   document.body.innerHTML = '';
@@ -83,6 +87,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _testing.resetHS8572();
+  setApiTransport(null as unknown as ApiTransport);
   vi.useRealTimers();
 });
 

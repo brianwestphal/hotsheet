@@ -24,11 +24,13 @@
 //
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
+import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
 import * as tickets from './tickets.js';
 
 export * from './feedbackDrafts.js';
 export * from './git.js';
+export * from './telemetry.js';
 export * from './terminal.js';
 export * from './tickets.js';
 
@@ -39,4 +41,5 @@ export const apis = {
   ...tickets,
   ...feedbackDrafts,
   ...terminal,
+  ...telemetry,
 };

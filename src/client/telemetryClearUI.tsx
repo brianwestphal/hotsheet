@@ -1,6 +1,4 @@
-import { z } from 'zod';
-
-import { api } from './api.js';
+import { clearProjectTelemetry } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull } from './dom.js';
 
@@ -18,8 +16,6 @@ import { byIdOrNull } from './dom.js';
  * to a confirm → fetch → status-line flow, plus a pure formatter for the
  * result message so it can be unit-tested without the DOM.
  */
-
-const ClearResultSchema = z.object({ deleted: z.number() });
 
 /**
  * Pure formatter for the post-clear status line. Exported for unit-testing.
@@ -77,7 +73,7 @@ export function bindClearTelemetryButton(): void {
       btn.disabled = true;
       setStatus(status, 'Clearing…', '');
       try {
-        const result = await api('/telemetry/project-data', { method: 'DELETE', schema: ClearResultSchema });
+        const result = await clearProjectTelemetry();
         setStatus(status, formatClearResult(result.deleted), 'is-success');
         // HS-8620 — drop the sidebar cost widget to $0 immediately. We must
         // ZERO the active project's sticky cache, not just refresh it: a plain

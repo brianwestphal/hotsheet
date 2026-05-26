@@ -42,7 +42,7 @@
  * kicks off its own fetch + re-renders on window-selector change.
  */
 
-import { api } from './api.js';
+import { getProjectRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
@@ -341,9 +341,7 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
 
   try {
     const tz = resolveTimezone();
-    const payload = await api<ProjectRollupPayload>(
-      `/telemetry/project-rollup?window=${encodeURIComponent(w)}&tz=${encodeURIComponent(tz)}`,
-    );
+    const payload: ProjectRollupPayload = await getProjectRollup(w, tz);
 
     // HS-8572 — skip the re-render when the fresh payload matches what
     // is currently painted into the slot. Avoids 30 s tick re-builds
