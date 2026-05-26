@@ -27,6 +27,7 @@ import * as channel from './channel.js';
 import * as db from './db.js';
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
+import * as plugins from './plugins.js';
 import * as projects from './projects.js';
 import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
@@ -37,6 +38,7 @@ export * from './channel.js';
 export * from './db.js';
 export * from './feedbackDrafts.js';
 export * from './git.js';
+export * from './plugins.js';
 export * from './projects.js';
 export * from './telemetry.js';
 export * from './terminal.js';
@@ -54,4 +56,5 @@ export const apis = {
   ...db,
   ...channel,
   ...projects,
+  ...plugins,
 };

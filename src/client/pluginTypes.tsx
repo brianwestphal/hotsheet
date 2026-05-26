@@ -2,59 +2,12 @@
 
 import type { SafeHtml } from '../jsx-runtime.js';
 
-export type ConfigLabelColor = 'default' | 'success' | 'error' | 'warning' | 'transient';
-
-export interface ConfigLayoutItem {
-  type: 'preference' | 'divider' | 'spacer' | 'label' | 'button' | 'group';
-  key?: string;
-  id?: string;
-  text?: string;
-  color?: ConfigLabelColor;
-  label?: string;
-  action?: string;
-  icon?: string;
-  style?: string;
-  title?: string;
-  collapsed?: boolean;
-  items?: ConfigLayoutItem[];
-}
-
-export interface PluginInfo {
-  id: string;
-  name: string;
-  version: string;
-  description: string | null;
-  author: string | null;
-  enabled: boolean;
-  hasBackend: boolean;
-  error: string | null;
-  preferences: PluginPreference[];
-  configLayout?: ConfigLayoutItem[];
-  path?: string;
-  needsConfiguration?: boolean;
-  missingFields?: string[];
-}
-
-export interface PluginPreference {
-  key: string;
-  label: string;
-  type: 'string' | 'boolean' | 'number' | 'select' | 'dropdown' | 'combo';
-  default?: string | boolean | number;
-  description?: string;
-  required?: boolean;
-  secret?: boolean;
-  scope?: 'global' | 'project';
-  options?: { value: string; label: string }[];
-}
-
-export interface SyncConflict {
-  id: number;
-  ticket_id: number;
-  plugin_id: string;
-  remote_id: string;
-  sync_status: string;
-  conflict_data: string | null;
-}
+// HS-8637 — the plugin data shapes now live in the typed API layer
+// (`src/api/plugins.ts`) as the wire SSOT. Re-exported here so existing
+// consumers keep importing from `./pluginTypes.js`.
+export type {
+  ConfigLabelColor, ConfigLayoutItem, PluginInfo, PluginPreference, SyncConflict,
+} from '../api/plugins.js';
 
 export const STATUS_DOT: Record<'connected' | 'disconnected' | 'error' | 'needsConfig', SafeHtml> = {
   connected: <span className="plugin-status-dot connected" title="Connected"></span>,

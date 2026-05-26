@@ -1,7 +1,6 @@
-import { batchTickets, emptyTrash, getTicketSearchCounts, listTickets, queryTickets } from '../api/index.js';
+import { batchTickets, emptyTrash, getSyncedTickets, getTicketSearchCounts, listTickets, queryTickets } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
 import { captureSnapshot, flipAnimate } from './animate.js';
-import { api } from './api.js';
 import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -825,7 +824,7 @@ export async function loadTickets() {
   // manifest; convert it to `SafeHtml` once here so consumers can render
   // with `{info.icon}` rather than `{raw(info.icon)}` on every list row.
   try {
-    const wire = await api<Record<number, { pluginId: string; icon?: string }>>('/sync/tickets');
+    const wire = await getSyncedTickets();
     const mapped: Record<number, SyncedTicketInfo> = {};
     for (const [idStr, info] of Object.entries(wire)) {
       const id = Number(idStr);

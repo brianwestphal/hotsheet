@@ -1,4 +1,4 @@
-import { duplicateTickets, updateTicket } from '../api/index.js';
+import { duplicateTickets, getBackends, updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api, apiUpload } from './api.js';
@@ -254,7 +254,7 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
 
   // Push to remote backend (only for unsynced single-ticket selection)
   if (state.selectedIds.size === 1 && !(ticket.id in syncedTicketMap)) {
-    void api<{ id: string; name: string }[]>('/backends').then(backends => {
+    void getBackends().then(backends => {
       if (backends.length === 0) return;
       // Insert before the backlog separator. Anchored on the
       // `.context-menu-separator-backlog` marker (HS-8414) rather than a

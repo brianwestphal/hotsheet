@@ -1,24 +1,10 @@
+import { getPluginUiElements, type PluginUIElement, runPluginAction, triggerPluginSync } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
-import { api } from './api.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { loadTickets } from './ticketList.js';
 import { showToast } from './toast.js';
-
-interface PluginUIElement {
-  id: string;
-  type: string;
-  location: string;
-  label?: string;
-  icon?: string;
-  title?: string;
-  color?: string;
-  style?: string;
-  action?: string;
-  url?: string;
-  _pluginId?: string;
-}
 
 let cachedElements: PluginUIElement[] = [];
 
@@ -74,7 +60,7 @@ function updateToolbarButtonState(_pluginId: string, busy: boolean) {
 
 export async function loadPluginUI(): Promise<void> {
   try {
-    cachedElements = await api<PluginUIElement[]>('/plugins/ui');
+    cachedElements = await getPluginUiElements();
   } catch {
     cachedElements = [];
   }
@@ -195,16 +181,13 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
   const pluginName = el.title?.replace('Sync with ', '') ?? el._pluginId;
 
   try {
-    const result = await api<{ ok: boolean; result?: { redirect?: string; message?: string } }>(
-      `/plugins/${el._pluginId}/action`,
-      { method: 'POST', body: { actionId: el.action, ticketIds } },
-    );
+    const result = await runPluginAction(el._pluginId, { actionId: el.action, ticketIds });
 
     // Handle special redirects
     if (result.result?.redirect === 'sync') {
       setPluginBusy(el._pluginId, pluginName, true);
       try {
-        await api(`/plugins/${el._pluginId}/sync`, { method: 'POST' });
+        await triggerPluginSync(el._pluginId);
         void loadTickets();
       } finally {
         setPluginBusy(el._pluginId, pluginName, false);

@@ -1,3 +1,6 @@
+import {
+  getPluginConfigLabels, getPluginGlobalConfig, runPluginAction, setPluginGlobalConfig, validatePluginField,
+} from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
@@ -42,10 +45,8 @@ export function renderConfigLayout(container: HTMLElement, items: ConfigLayoutIt
           if (item.action == null || item.action === '') return;
           (btn as HTMLButtonElement).disabled = true;
           try {
-            await api(`/plugins/${pluginId}/action`, {
-              method: 'POST', body: { actionId: item.action },
-            });
-            const labelsRes = await api<Record<string, { text: string; color?: string }>>(`/plugins/config-labels/${pluginId}`);
+            await runPluginAction(pluginId, { actionId: item.action });
+            const labelsRes = await getPluginConfigLabels(pluginId);
             for (const [labelId, payload] of Object.entries(labelsRes)) {
               const el = container.querySelector(`#config-label-${pluginId}-${labelId}`);
               if (el) {
@@ -108,8 +109,8 @@ export function createPreferenceRow(pluginId: string, pref: PluginPreference): H
   const inputContainer = row.querySelector(`#pref-input-${pluginId}-${pref.key}`)!;
 
   if (isGlobal) {
-    void api<{ value: string | null }>(`/plugins/${pluginId}/global-config/${pref.key}`).then(result => {
-      renderPrefInput(inputContainer as HTMLElement, pluginId, pref, result.value ?? String(pref.default ?? ''));
+    void getPluginGlobalConfig(pluginId, pref.key).then(value => {
+      renderPrefInput(inputContainer as HTMLElement, pluginId, pref, value ?? String(pref.default ?? ''));
     }).catch(() => {
       renderPrefInput(inputContainer as HTMLElement, pluginId, pref, String(pref.default ?? ''));
     });
@@ -235,7 +236,7 @@ function createTextInput(pluginId: string, pref: PluginPreference, currentValue:
 
 function savePrefValue(pluginId: string, pref: PluginPreference, value: string) {
   if (pref.scope === 'global') {
-    void api(`/plugins/${pluginId}/global-config`, { method: 'POST', body: { key: pref.key, value } });
+    void setPluginGlobalConfig(pluginId, pref.key, value);
   } else {
     const settingKey = `plugin:${pluginId}:${pref.key}`;
     void api('/settings', { method: 'PATCH', body: { [settingKey]: value } });
@@ -247,9 +248,7 @@ async function validateField(pluginId: string, key: string, value: string) {
   const el = byIdOrNull(`pref-validation-${pluginId}-${key}`);
   if (!el) return;
   try {
-    const result = await api<{ status: string; message: string } | null>(
-      `/plugins/validate/${pluginId}`, { method: 'POST', body: { key, value } },
-    );
+    const result = await validatePluginField(pluginId, key, value);
     if (!result) { el.textContent = ''; el.className = 'plugin-pref-validation'; return; }
     el.textContent = result.message;
     el.className = `plugin-pref-validation ${result.status}`;

@@ -1,13 +1,16 @@
 import { z } from 'zod';
 
+import {
+  disablePlugin, disablePluginEverywhere, enablePlugin, enablePluginEverywhere,
+  getBundledPlugins, getPlugin, getSyncConflicts, installBundledPlugin, installPlugin, listPlugins,
+  type PluginInfo, resolveSyncConflict, revealPlugin, type SyncConflict, uninstallPlugin,
+} from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { parseJsonOrNull } from '../schemas.js';
-import { api } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER_OPEN, ICON_GLOBE, ICON_POWER, ICON_SETTINGS, ICON_UNINSTALL } from './icons.js';
 import { createPreferenceRow, renderConfigLayout } from './pluginConfigDialog.js';
-import type { PluginInfo, SyncConflict } from './pluginTypes.js';
 import { STATUS_DOT } from './pluginTypes.js';
 import { refreshPluginUI } from './pluginUI.js';
 import { getTauriInvoke } from './tauriIntegration.js';
@@ -29,12 +32,6 @@ export function bindPluginSettings() {
 
   const installBtn = byId('plugin-install-btn');
   installBtn.addEventListener('click', () => showFindPluginsDialog());
-}
-
-interface BundledPluginInfo {
-  manifest: { id: string; name: string; version: string; description?: string; icon?: string };
-  installed: boolean;
-  dismissed: boolean;
 }
 
 function showFindPluginsDialog() {
@@ -85,7 +82,7 @@ function showFindPluginsDialog() {
 
   // --- Official Plugins tab ---
   const officialPanel = overlay.querySelector('#find-plugins-official')!;
-  void api<BundledPluginInfo[]>('/plugins/bundled').then(bundled => {
+  void getBundledPlugins().then(bundled => {
     if (bundled.length === 0) {
       // HS-8554 — `.plugin-empty-message` carries the previous inline styles.
       officialPanel.replaceChildren(toElement(<div className="plugin-empty-message plugin-empty-message-centered">No official plugins available.</div>));
@@ -119,7 +116,7 @@ function showFindPluginsDialog() {
           (installBtn as HTMLButtonElement).disabled = true;
           installBtn.textContent = 'Installing...';
           try {
-            await api(`/plugins/bundled/${bp.manifest.id}/install`, { method: 'POST' });
+            await installBundledPlugin(bp.manifest.id);
             installBtn.textContent = 'Installed';
             installBtn.replaceWith(toElement(<span className="bundled-plugin-installed">Installed</span>));
             void loadPlugins();
@@ -162,7 +159,7 @@ function showFindPluginsDialog() {
     confirmBtn.textContent = 'Installing...';
     status.textContent = '';
     try {
-      await api('/plugins/install', { method: 'POST', body: { path } });
+      await installPlugin(path);
       confirmBtn.textContent = 'Installed!';
       status.textContent = 'Restart the app to load the plugin.';
       void loadPlugins();
@@ -184,7 +181,7 @@ async function loadPlugins() {
   const list = byId('plugin-list');
   let plugins: PluginInfo[];
   try {
-    plugins = await api<PluginInfo[]>('/plugins');
+    plugins = await listPlugins();
   } catch {
     // HS-8554 — `.plugin-empty-message` carries the previous inline styles.
     list.replaceChildren(toElement(<div className="plugin-empty-message">Failed to load plugins.</div>));
@@ -279,7 +276,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     const disableItem = iconRow(ICON_POWER, 'Disable');
     disableItem.addEventListener('click', async () => {
       menu.remove();
-      await api(`/plugins/${plugin.id}/disable`, { method: 'POST' });
+      await disablePlugin(plugin.id);
       void loadPlugins();
       void refreshPluginUI();
     });
@@ -288,7 +285,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     const enableItem = iconRow(ICON_POWER, 'Enable');
     enableItem.addEventListener('click', async () => {
       menu.remove();
-      await api(`/plugins/${plugin.id}/enable`, { method: 'POST' });
+      await enablePlugin(plugin.id);
       void loadPlugins();
       void refreshPluginUI();
     });
@@ -301,7 +298,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   const enableAllItem = iconRow(ICON_GLOBE, 'Enable on All Projects');
   enableAllItem.addEventListener('click', async () => {
     menu.remove();
-    await api(`/plugins/${plugin.id}/enable-all`, { method: 'POST' });
+    await enablePluginEverywhere(plugin.id);
     void loadPlugins();
     void refreshPluginUI();
   });
@@ -310,7 +307,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
   const disableAllItem = iconRow(ICON_GLOBE, 'Disable on All Projects');
   disableAllItem.addEventListener('click', async () => {
     menu.remove();
-    await api(`/plugins/${plugin.id}/disable-all`, { method: 'POST' });
+    await disablePluginEverywhere(plugin.id);
     void loadPlugins();
     void refreshPluginUI();
   });
@@ -339,7 +336,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     menu.querySelector('#uninstall-confirm')!.addEventListener('click', async () => {
       menu.remove();
       try {
-        await api(`/plugins/${plugin.id}/uninstall`, { method: 'POST' });
+        await uninstallPlugin(plugin.id);
         void loadPlugins();
       } catch (err) {
         console.error('Failed to uninstall:', err);
@@ -354,7 +351,7 @@ function showPluginContextMenu(e: MouseEvent, plugin: PluginInfo) {
     const revealItem = iconRow(ICON_FOLDER_OPEN, 'Show in Finder');
     revealItem.addEventListener('click', async () => {
       menu.remove();
-      try { await api(`/plugins/${plugin.id}/reveal`, { method: 'POST' }); } catch { /* ignore */ }
+      try { await revealPlugin(plugin.id); } catch { /* ignore */ }
     });
     menu.appendChild(revealItem);
   }
@@ -372,7 +369,7 @@ async function showPluginConfigDialog(plugin: PluginInfo) {
   // Fetch full details
   let detail: PluginInfo;
   try {
-    detail = await api<PluginInfo>(`/plugins/${plugin.id}`);
+    detail = await getPlugin(plugin.id);
   } catch {
     return;
   }
@@ -420,7 +417,7 @@ async function loadConflicts() {
 
   let conflicts: SyncConflict[];
   try {
-    conflicts = await api<SyncConflict[]>('/sync/conflicts');
+    conflicts = await getSyncConflicts();
   } catch {
     return;
   }
@@ -488,10 +485,7 @@ function createConflictRow(conflict: SyncConflict): HTMLElement {
     btn.addEventListener('click', async () => {
       const resolution = (btn as HTMLElement).dataset.action as 'keep_local' | 'keep_remote';
       try {
-        await api(`/sync/conflicts/${conflict.ticket_id}/resolve`, {
-          method: 'POST',
-          body: { plugin_id: conflict.plugin_id, resolution },
-        });
+        await resolveSyncConflict(conflict.ticket_id, conflict.plugin_id, resolution);
         void loadConflicts();
       } catch { /* ignore */ }
     });
