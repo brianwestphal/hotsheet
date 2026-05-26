@@ -2,7 +2,7 @@ import './markdownSetup.js';
 
 import { marked } from 'marked';
 
-import { getFeedbackDrafts, getTicketDetail, updateTicket } from '../api/index.js';
+import { getFeedbackDrafts, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { api } from './api.js';
@@ -582,9 +582,9 @@ export function initResize() {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
     if (state.settings.detail_position === 'bottom') {
-      void api('/settings', { method: 'PATCH', body: { detail_height: String(state.settings.detail_height) } });
+      void updateSettings({ detail_height: String(state.settings.detail_height) });
     } else {
-      void api('/settings', { method: 'PATCH', body: { detail_width: String(state.settings.detail_width) } });
+      void updateSettings({ detail_width: String(state.settings.detail_width) });
     }
   });
 }

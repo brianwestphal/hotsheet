@@ -1,11 +1,9 @@
-import { z } from 'zod';
-
 import {
-  createFeedbackDraft, deleteFeedbackDraft, getFeedbackDrafts,
+  createFeedbackDraft, deleteAttachment, deleteFeedbackDraft, getFeedbackDrafts,
   promoteFeedbackDraftAttachments, updateFeedbackDraft, updateTicket,
+  uploadDraftAttachment as uploadDraftAttachmentToServer,
 } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import {
   type BlockResponse,
@@ -18,12 +16,6 @@ import { morph } from './reactive.js';
 import { loadTickets } from './ticketList.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
-
-// HS-8567 — wire-boundary schema for the draft-attachment upload response.
-const AttachmentResponseSchema = z.object({
-  id: z.number().int(),
-  original_filename: z.string(),
-}).loose();
 
 const FEEDBACK_PREFIX = 'FEEDBACK NEEDED:';
 const IMMEDIATE_PREFIX = 'IMMEDIATE FEEDBACK NEEDED:';
@@ -310,7 +302,7 @@ export function showFeedbackDialog(
     const attachment = pendingAttachments[idx];
     pendingAttachments.splice(idx, 1);
     renderFileList();
-    void api(`/attachments/${String(attachment.id)}`, { method: 'DELETE' });
+    void deleteAttachment(attachment.id);
   });
 
   function renderFileList() {
@@ -333,24 +325,12 @@ export function showFeedbackDialog(
   // failure the file is silently dropped — same surface as the pre-fix
   // upload-on-submit path (which also had no UI for upload errors).
   async function uploadDraftAttachment(file: File): Promise<void> {
-    // Direct `fetch` with FormData + the secret header — `apiUpload`
-    // hits `/api/tickets/:id/attachments` directly; we need a different
-    // path that includes the draft id.
-    const url = `/api/tickets/${String(ticketId)}/feedback-drafts/${sessionDraftId}/attachments`;
-    const form = new FormData();
-    form.append('file', file);
-    const headers: Record<string, string> = {};
-    const { getActiveProject } = await import('./state.js');
-    const proj = getActiveProject();
-    if (proj !== null) headers['X-Hotsheet-Secret'] = proj.secret;
+    // HS-8633 — the typed `uploadDraftAttachmentToServer` caller hits the
+    // draft-scoped multipart endpoint (`apiUploadCall` → injected `apiUpload`
+    // transport, which adds the project secret + validates the response).
     try {
-      const res = await fetch(url, { method: 'POST', body: form, headers });
-      if (!res.ok) return;
-      // HS-8567 — validate at the wire boundary.
-      const raw: unknown = await res.json();
-      const parsed = AttachmentResponseSchema.safeParse(raw);
-      if (!parsed.success) return;
-      pendingAttachments.push({ id: parsed.data.id, original_filename: parsed.data.original_filename });
+      const att = await uploadDraftAttachmentToServer(ticketId, sessionDraftId, file);
+      pendingAttachments.push({ id: att.id, original_filename: att.original_filename });
       // Uploading a new file resets the "committed" flag — until the
       // next Save Draft / Submit, this attachment is unsaved.
       attachmentsCommitted = false;

@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { getFileSettings, updateFileSettings } from '../api/index.js';
 import { byIdOrNull } from './dom.js';
 
 /**
@@ -34,10 +34,7 @@ export async function loadAndWireQuitConfirmSettings(): Promise<void> {
   let mode: 'always' | 'never' | 'with-non-exempt-processes' = 'with-non-exempt-processes';
   let exempt: string[] = [...DEFAULT_EXEMPT];
   try {
-    const fs = await api<{
-      confirm_quit_with_running_terminals?: string;
-      quit_confirm_exempt_processes?: string | string[];
-    }>('/file-settings');
+    const fs = await getFileSettings();
     if (fs.confirm_quit_with_running_terminals === 'always'
         || fs.confirm_quit_with_running_terminals === 'never'
         || fs.confirm_quit_with_running_terminals === 'with-non-exempt-processes') {
@@ -77,15 +74,12 @@ export async function loadAndWireQuitConfirmSettings(): Promise<void> {
       .map(l => l.trim())
       .filter(l => l !== '');
     try {
-      await api('/file-settings', {
-        method: 'PATCH',
-        body: {
-          confirm_quit_with_running_terminals: selected,
-          // Server stores this key as JSON (it's in JSON_VALUE_KEYS in
-          // file-settings.ts), so we send the array stringified — the server
-          // parses it back to native JSON before write.
-          quit_confirm_exempt_processes: JSON.stringify(lines),
-        },
+      await updateFileSettings({
+        confirm_quit_with_running_terminals: selected,
+        // Server stores this key as JSON (it's in JSON_VALUE_KEYS in
+        // file-settings.ts), so we send the array stringified — the server
+        // parses it back to native JSON before write.
+        quit_confirm_exempt_processes: JSON.stringify(lines),
       });
     } catch (err) {
       console.error('quitConfirmSettings: save failed', err);

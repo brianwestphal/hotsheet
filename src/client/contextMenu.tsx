@@ -1,7 +1,7 @@
-import { duplicateTickets, getBackends, updateTicket } from '../api/index.js';
+import { duplicateTickets, getBackends, updateTicket, uploadAttachment } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
-import { api, apiUpload } from './api.js';
+import { api } from './api.js';
 import { toElement } from './dom.js';
 import { getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
@@ -570,7 +570,7 @@ function showNotWorkingDialog(ticket: Ticket) {
 
       // Upload attachments
       for (const file of pendingFiles) {
-        await apiUpload(`/tickets/${ticket.id}/attachments`, file);
+        await uploadAttachment(ticket.id, file);
       }
 
       close();

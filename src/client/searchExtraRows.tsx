@@ -149,7 +149,7 @@ export function clearIncludeFlagsOnly(): void {
 }
 
 async function persistLayoutPreference(layout: 'list' | 'columns'): Promise<void> {
-  const { api } = await import('./api.js');
-  try { await api('/settings', { method: 'PATCH', body: { layout } }); }
+  const { updateSettings } = await import('../api/index.js');
+  try { await updateSettings({ layout }); }
   catch { /* best-effort */ }
 }

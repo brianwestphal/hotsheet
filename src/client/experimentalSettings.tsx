@@ -1,5 +1,4 @@
-import { disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck } from '../api/index.js';
-import { api } from './api.js';
+import { disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getSettings, updateSettings } from '../api/index.js';
 import { initChannel } from './channelUI.js';
 import { renderCustomCommandSettings } from './commandEditor.js';
 import { renderChannelCommands } from './commandSidebar.js';
@@ -57,7 +56,7 @@ let commandItems: CommandItem[] = [];
 // `reloadCustomCommands()` is fire-and-forget from two paths in this file
 // (line ~199 on settings-btn click; line ~249 at bind time) plus the
 // project-switch path. Pre-fix, any in-flight reload whose `await
-// api('/settings')` had not yet resolved would, on resolution, blindly
+// getSettings()` had not yet resolved would, on resolution, blindly
 // reassign `commandItems` to the fetched snapshot — even if the user (or
 // in CI, the test) had just performed a local edit (delete / add / name-
 // change). The local edit was silently overwritten and the row reappeared.
@@ -177,7 +176,7 @@ function migrateOldFormat(data: unknown[]): CommandItem[] {
 export async function reloadCustomCommands(): Promise<void> {
   const epochBeforeFetch = commandItemsMutationEpoch;
   try {
-    const settings = await api<Record<string, string>>('/settings');
+    const settings = await getSettings();
     if (commandItemsMutationEpoch !== epochBeforeFetch) return;
     if (settings.custom_commands !== '') {
       try {
@@ -225,7 +224,7 @@ export async function saveCommandItems() {
   // abandons its response. Centralized here (the chokepoint for every
   // local-mutation save) so individual callsites don't have to remember.
   noteCommandItemsMutation();
-  await api('/settings', { method: 'PATCH', body: { custom_commands: JSON.stringify(commandItems) } });
+  await updateSettings({ custom_commands: JSON.stringify(commandItems) });
   renderChannelCommands();
 }
 
@@ -265,7 +264,7 @@ export function bindExperimentalSettings() {
   });
 
   // Load channel enabled state from global config (authoritative source)
-  api<{ channelEnabled?: boolean }>('/global-config').catch(() => null).then(config => {
+  getGlobalConfig().catch(() => null).then(config => {
     if (config !== null) {
       const enabled = config.channelEnabled === true;
       channelCheckbox.checked = enabled;

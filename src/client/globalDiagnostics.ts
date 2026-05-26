@@ -25,7 +25,7 @@
  * (`settingsDialog.tsx`). Reads are synchronous so the per-tick gate in
  * `serverBusyChip.setBannerVisible` doesn't need to await anything.
  */
-import { api } from './api.js';
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 
 let diagnosticsEnabled = false;
 let loaded = false;
@@ -41,7 +41,7 @@ export function isDiagnosticsEnabled(): boolean {
  *  (default `false` until the first successful load). */
 export async function loadGlobalDiagnostics(): Promise<void> {
   try {
-    const cfg = await api<{ diagnosticsEnabled?: boolean }>('/global-config');
+    const cfg = await getGlobalConfig();
     diagnosticsEnabled = cfg.diagnosticsEnabled === true;
     loaded = true;
   } catch { /* keep cached value */ }
@@ -53,7 +53,7 @@ export async function loadGlobalDiagnostics(): Promise<void> {
 export async function setDiagnosticsEnabled(value: boolean): Promise<void> {
   diagnosticsEnabled = value;
   loaded = true;
-  await api('/global-config', { method: 'PATCH', body: { diagnosticsEnabled: value } });
+  await updateGlobalConfig({ diagnosticsEnabled: value });
 }
 
 /** **TEST ONLY** — set the cached value without round-tripping the API.

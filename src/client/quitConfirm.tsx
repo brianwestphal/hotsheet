@@ -1,6 +1,5 @@
-import { getQuitSummary } from '../api/index.js';
+import { getQuitSummary, updateFileSettings } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { apiWithSecret } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
@@ -167,15 +166,12 @@ export async function runQuitConfirmFlow(): Promise<'proceed' | 'cancel'> {
   const choice = await showQuitConfirmDialog(decision.contributing);
   if (choice.outcome === 'proceed' && choice.dontAskAgain) {
     // Persist 'never' for every project that was in the summary.
-    // HS-8085 — `apiWithSecret` is the right helper for cross-project
-    // mutations: each PATCH targets its own project's settings via the
-    // owning secret rather than the active project's.
+    // HS-8085 — the per-project `secret` arg is the right tool for
+    // cross-project mutations: each PATCH targets its own project's
+    // settings via the owning secret rather than the active project's.
     await Promise.all(summary.projects.map(async (project) => {
       try {
-        await apiWithSecret('/file-settings', project.secret, {
-          method: 'PATCH',
-          body: { confirm_quit_with_running_terminals: 'never' },
-        });
+        await updateFileSettings({ confirm_quit_with_running_terminals: 'never' }, project.secret);
       } catch { /* best-effort — quit is the user's stronger signal */ }
     }));
   }

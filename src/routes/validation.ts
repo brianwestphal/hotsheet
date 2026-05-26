@@ -177,13 +177,13 @@ export const PrintSchema = z.object({
 
 // HS-8290 — terminal-dashboard settings now live globally rather than
 // per-project; see docs/39-visibility-groupings.md.
-const VisibilityGroupingSchema = z.object({
+export const VisibilityGroupingSchema = z.object({
   id: z.string(),
   name: z.string(),
   hiddenByProject: z.record(z.string(), z.array(z.string())),
 });
 
-const DashboardConfigSchema = z.object({
+export const DashboardConfigSchema = z.object({
   // HS-8292 — pre-fix this enum was `['sectioned', 'flat']`, but the
   // client emits `'flow'` (`src/client/terminalDashboard.tsx::LayoutMode`),
   // so every PATCH from the layout-toggle button was rejected as a 400 and
@@ -213,6 +213,14 @@ export const GlobalConfigSchema = z.object({
   // `global-config.ts` for the contract.
   telemetryCostMode: z.enum(['api', 'subscription']).optional(),
 }).strict();
+
+// HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that
+// module now imports them from here so there's ONE definition. `validation.ts`
+// is client-safe (zod-only), so the server storage module + the typed API
+// layer (`src/api/settings.ts`) + the client all share these.
+export type VisibilityGroupingPersisted = z.infer<typeof VisibilityGroupingSchema>;
+export type DashboardConfig = z.infer<typeof DashboardConfigSchema>;
+export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
 
 // --- Plugin routes ---
 

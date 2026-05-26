@@ -1,3 +1,4 @@
+import { getSettings } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
 import { api } from './api.js';
 import { setAppTitleFromActiveProject } from './appTitle.js';
@@ -10,7 +11,7 @@ import { loadTickets } from './ticketList.js';
 /** Load settings from the API and apply them to the app state and UI. */
 export async function loadSettings() {
   try {
-    const settings = await api<Record<string, string>>('/settings');
+    const settings = await getSettings();
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;
     }

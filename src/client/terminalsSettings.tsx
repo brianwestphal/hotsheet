@@ -1,5 +1,4 @@
-import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
-import { api } from './api.js';
+import { destroyTerminal, getCommandSuggestions, getFileSettings, updateFileSettings } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { parseJsonArrayOr } from './json.js';
@@ -90,7 +89,7 @@ const PENCIL_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="1
 /** Load terminals from file-settings and render. Exported so the dialog can call on open. */
 export async function loadAndRenderTerminalsSettings(): Promise<void> {
   try {
-    const fs = await api<{ terminals?: string | unknown[] }>('/file-settings');
+    const fs = await getFileSettings();
     terminals = parseTerminals(fs.terminals);
   } catch {
     terminals = [];
@@ -572,7 +571,7 @@ function scheduleSave(): Promise<void> {
   return new Promise((resolve) => {
     saveTimeout = setTimeout(async () => {
       saveTimeout = null;
-      await api('/file-settings', { method: 'PATCH', body: { terminals } });
+      await updateFileSettings({ terminals });
       try {
         const mod = await import('./terminal.js');
         await mod.refreshTerminalsAfterSettingsChange();

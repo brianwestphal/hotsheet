@@ -16,8 +16,8 @@
  * entry point.
  */
 
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 import type { GlobalConfig } from '../global-config.js';
-import { api } from './api.js';
 import {
   DEFAULT_TILES_PER_ROW,
   MAX_TILES_PER_ROW,
@@ -96,7 +96,7 @@ export function loadSliderValue(opts: {
   if (sliderState.sliderValueLoadPromise !== null) return sliderState.sliderValueLoadPromise;
   sliderState.sliderValueLoadPromise = (async () => {
     try {
-      const cfg = await api<{ dashboard?: { columnsPerRow?: number } }>('/global-config');
+      const cfg = await getGlobalConfig();
       const parsed = parsePersistedColumnCount(cfg.dashboard?.columnsPerRow);
       if (parsed !== null) {
         sliderState.columnCount = parsed;
@@ -140,7 +140,7 @@ function schedulePersistColumnCount(): void {
     // HS-8434 — type the PATCH body against the shared schema so a key
     // added here without a matching schema entry is a compile error.
     const body: Partial<GlobalConfig> = { dashboard: { columnsPerRow: sliderState.columnCount } };
-    void api('/global-config', { method: 'PATCH', body })
+    void updateGlobalConfig(body)
       .catch(() => { /* swallow — UI already reflects the new value */ });
   }, SLIDER_PERSIST_DEBOUNCE_MS);
 }

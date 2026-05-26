@@ -20,7 +20,7 @@
  * cached-accessor pattern: hydrated once at app boot, read synchronously by
  * `terminalCheckout.tsx::createEntry`, updated by the Settings toggle.
  */
-import { api } from './api.js';
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 
 let terminalWebglOptOut = false;
 
@@ -34,7 +34,7 @@ export function isTerminalWebglOptOut(): boolean {
  *  app boot alongside `loadGlobalDiagnostics`. */
 export async function loadTerminalWebglOptOut(): Promise<void> {
   try {
-    const cfg = await api<{ terminalWebglOptOut?: boolean }>('/global-config');
+    const cfg = await getGlobalConfig();
     terminalWebglOptOut = cfg.terminalWebglOptOut === true;
   } catch { /* keep cached value */ }
 }
@@ -45,7 +45,7 @@ export async function loadTerminalWebglOptOut(): Promise<void> {
  *  the §22 docs + the setting's helper text.) */
 export async function setTerminalWebglOptOut(value: boolean): Promise<void> {
   terminalWebglOptOut = value;
-  await api('/global-config', { method: 'PATCH', body: { terminalWebglOptOut: value } });
+  await updateGlobalConfig({ terminalWebglOptOut: value });
 }
 
 // HS-8488 — WebGL2 capability probe, cached (a canvas + getContext per call is

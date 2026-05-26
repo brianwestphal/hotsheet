@@ -1,3 +1,4 @@
+import { updateSettings } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { api } from './api.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
@@ -258,7 +259,7 @@ async function saveCommandItemsExternal(commandItems: CommandItem[]) {
   // click; without the bump a concurrent `reloadCustomCommands` could
   // overwrite the collapsed flag back to its pre-click value.
   noteCommandItemsMutation();
-  await api('/settings', { method: 'PATCH', body: { custom_commands: JSON.stringify(commandItems) } });
+  await updateSettings({ custom_commands: JSON.stringify(commandItems) });
   renderChannelCommands();
 }
 

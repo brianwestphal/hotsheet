@@ -14,7 +14,7 @@
  *
  * See docs/35-terminal-themes.md §35.5.
  */
-import { api } from './api.js';
+import { getFileSettings, updateFileSettings } from '../api/index.js';
 import { toElement } from './dom.js';
 import {
   clearSessionOverride,
@@ -285,7 +285,7 @@ async function persistConfiguredOverride(
   partial: Partial<TerminalAppearance>,
 ): Promise<void> {
   try {
-    const fs = await api<{ terminals?: unknown }>('/file-settings');
+    const fs = await getFileSettings();
     const terminals = parseTerminalsArray(fs.terminals);
     const next = terminals.map((entry) => {
       if (entry.id !== terminalId) return entry;
@@ -300,7 +300,7 @@ async function persistConfiguredOverride(
       }
       return out;
     });
-    await api('/file-settings', { method: 'PATCH', body: { terminals: next } });
+    await updateFileSettings({ terminals: next });
   } catch {
     // Best-effort — if the write fails, session override still applies until
     // page reload.
@@ -311,7 +311,7 @@ async function persistConfiguredOverride(
  *  inherits the project default again. */
 async function clearConfiguredOverride(terminalId: string): Promise<void> {
   try {
-    const fs = await api<{ terminals?: unknown }>('/file-settings');
+    const fs = await getFileSettings();
     const terminals = parseTerminalsArray(fs.terminals);
     const next = terminals.map((entry) => {
       if (entry.id !== terminalId) return entry;
@@ -321,7 +321,7 @@ async function clearConfiguredOverride(terminalId: string): Promise<void> {
       delete out.fontSize;
       return out;
     });
-    await api('/file-settings', { method: 'PATCH', body: { terminals: next } });
+    await updateFileSettings({ terminals: next });
   } catch { /* ignore */ }
 }
 

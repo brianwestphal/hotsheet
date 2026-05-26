@@ -4,7 +4,7 @@
  * through `apiUpload` and the detail re-opens after upload so the new
  * attachment row appears.
  */
-import { apiUpload } from '../api.js';
+import { uploadAttachment } from '../../api/index.js';
 import { openDetail } from '../detail.js';
 import { byId } from '../dom.js';
 import { state } from '../state.js';
@@ -17,7 +17,7 @@ export function bindDetailFileUpload(): void {
     const files = input.files;
     if (!files || files.length === 0 || state.activeTicketId == null) return;
     for (const file of Array.from(files)) {
-      await apiUpload(`/tickets/${state.activeTicketId}/attachments`, file);
+      await uploadAttachment(state.activeTicketId, file);
     }
     input.value = '';
     openDetail(state.activeTicketId);
@@ -52,7 +52,7 @@ export function bindDetailFileUpload(): void {
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0 || state.activeTicketId == null) return;
     for (const file of Array.from(files)) {
-      await apiUpload(`/tickets/${state.activeTicketId}/attachments`, file);
+      await uploadAttachment(state.activeTicketId, file);
     }
     openDetail(state.activeTicketId);
     void loadTickets();

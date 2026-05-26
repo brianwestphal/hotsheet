@@ -9,7 +9,7 @@
  *
  * See docs/35-terminal-themes.md §35.6.
  */
-import { api } from './api.js';
+import { getFileSettings, updateFileSettings } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import {
@@ -109,9 +109,9 @@ async function persistField(partial: Partial<TerminalAppearance>): Promise<void>
   setProjectDefault(activeSecret, next); // fires the pub/sub event with the active secret
 
   try {
-    const fs = await api<{ terminal_default?: unknown }>('/file-settings');
+    const fs = await getFileSettings();
     const existing = parseProjectDefault(fs.terminal_default);
-    await api('/file-settings', { method: 'PATCH', body: { terminal_default: { ...existing, ...partial } } });
+    await updateFileSettings({ terminal_default: { ...existing, ...partial } });
   } catch {
     /* ignore — cached value keeps the change visible until the next dialog open */
   }

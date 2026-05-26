@@ -1,5 +1,4 @@
-import { getSnapshotStatus } from '../api/index.js';
-import { api } from './api.js';
+import { getFileSettings, getSnapshotStatus, updateFileSettings } from '../api/index.js';
 import { byIdOrNull } from './dom.js';
 
 /** HS-8594 — client controls for the Settings → Backups → "Snapshot
@@ -45,7 +44,7 @@ export function bindSnapshotProtectionUI(): void {
   const checkbox = byIdOrNull<HTMLInputElement>('settings-snapshot-protection');
   if (checkbox === null) return;
   checkbox.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { db_snapshot_protection: checkbox.checked } })
+    void updateFileSettings({ db_snapshot_protection: checkbox.checked })
       .then(() => { void refreshSnapshotProtectionStatus(); })
       .catch((err: unknown) => {
         console.error('Could not save snapshot-protection setting:', err);
@@ -62,7 +61,7 @@ export async function refreshSnapshotProtectionStatus(): Promise<void> {
   if (checkbox === null || statusEl === null) return;
 
   try {
-    const fs = await api<{ db_snapshot_protection?: boolean }>('/file-settings');
+    const fs = await getFileSettings();
     checkbox.checked = fs.db_snapshot_protection !== false;
   } catch (err) {
     console.error('Could not load snapshot-protection setting:', err);

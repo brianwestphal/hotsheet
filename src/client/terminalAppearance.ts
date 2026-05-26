@@ -198,7 +198,7 @@ export async function loadProjectDefaultAppearance(secret?: string): Promise<voi
   if (typeof fetch === 'undefined') return;
   try {
     // Local imports to avoid a circular dep between appearance <-> api/state.
-    const { api, apiWithSecret } = await import('./api.js');
+    const { getFileSettings } = await import('../api/index.js');
     const { getActiveProject } = await import('./state.js');
 
     const activeSecret = getActiveProject()?.secret ?? null;
@@ -206,8 +206,8 @@ export async function loadProjectDefaultAppearance(secret?: string): Promise<voi
     if (targetSecret === null) return; // no active project, nothing to cache
 
     const fs = (secret !== undefined && secret !== activeSecret)
-      ? await apiWithSecret<{ terminal_default?: unknown }>('/file-settings', secret)
-      : await api<{ terminal_default?: unknown }>('/file-settings');
+      ? await getFileSettings(secret)
+      : await getFileSettings();
 
     const parsed = parseProjectDefault(fs.terminal_default);
     setProjectDefault(targetSecret, parsed);

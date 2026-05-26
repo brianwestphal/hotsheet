@@ -19,8 +19,8 @@
  * lifetime is per-session.
  */
 
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 import type { GlobalConfig } from '../global-config.js';
-import { api } from './api.js';
 import {
   getGlobalVisibilityState,
   hydratePersistedGlobalState,
@@ -94,7 +94,7 @@ async function writeNow(): Promise<void> {
   if (lastPersisted === serialised) return;
   lastPersisted = serialised;
   try {
-    await api('/global-config', { method: 'PATCH', body: payload });
+    await updateGlobalConfig(payload);
   } catch {
     // Best-effort. The change is still in memory; next toggle will
     // schedule another write attempt.
@@ -118,13 +118,7 @@ async function writeNow(): Promise<void> {
 export async function initPersistedHiddenTerminals(): Promise<void> {
   if (subscriptionUnsub !== null) return;
   try {
-    const cfg = await api<{
-      dashboard?: {
-        visibilityGroupings?: unknown;
-        activeVisibilityGroupingId?: unknown;
-        activeVisibilityGroupingIdByScope?: unknown;
-      };
-    }>('/global-config');
+    const cfg = await getGlobalConfig();
     const dashboard = cfg.dashboard ?? {};
     const state = parsePersistedState(
       dashboard.visibilityGroupings,

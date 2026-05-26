@@ -1,5 +1,5 @@
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 import type { GlobalConfig } from '../global-config.js';
-import { api } from './api.js';
 import { byIdOrNull } from './dom.js';
 
 const SHARE_URL = 'https://www.npmjs.com/package/hotsheet';
@@ -35,12 +35,12 @@ async function accumulateAndCheck(): Promise<void> {
   lastAccumulatedAt = now;
 
   try {
-    const config = await api<GlobalConfig>('/global-config');
+    const config = await getGlobalConfig();
     const newTotal = (config.shareTotalSeconds ?? 0) + elapsed;
     // HS-8434 — type the PATCH body against the shared schema so a key
     // added here without a matching schema entry is a compile error.
     const body: Partial<GlobalConfig> = { shareTotalSeconds: newTotal };
-    await api('/global-config', { method: 'PATCH', body });
+    await updateGlobalConfig(body);
 
     // Check if we should show the prompt
     if (config.shareAccepted === true) return;
@@ -78,7 +78,7 @@ async function dismissBanner(): Promise<void> {
   if (banner) banner.style.display = 'none';
   try {
     const body: Partial<GlobalConfig> = { shareLastPrompted: new Date().toISOString() };
-    await api('/global-config', { method: 'PATCH', body });
+    await updateGlobalConfig(body);
   } catch { /* ignore */ }
 }
 
@@ -89,7 +89,7 @@ async function handleBannerShare(): Promise<void> {
   if (banner) banner.style.display = 'none';
   try {
     const body: Partial<GlobalConfig> = { shareAccepted: true, shareLastPrompted: new Date().toISOString() };
-    await api('/global-config', { method: 'PATCH', body });
+    await updateGlobalConfig(body);
   } catch { /* ignore */ }
 }
 

@@ -25,6 +25,7 @@ import {
   regexEscape,
   validatePattern,
 } from './permissionAllowListUI.js';
+import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
 describe('regexEscape (HS-7953)', () => {
   it('escapes regex metacharacters so a literal command becomes a safe pattern', () => {
@@ -113,9 +114,18 @@ vi.mock('./confirm.js', () => ({
   confirmDialog: vi.fn(() => Promise.resolve(true)),
 }));
 
+// HS-8635 — permissionAllowListUI now uses the typed `getFileSettings` /
+// `updateFileSettings` callers, which route through the injected transport.
+// `vi.mock('./api.js')` above makes the helper's `api` resolve to this file's
+// mock, so the per-test `vi.mocked(api).mockResolvedValueOnce(...)` still drives
+// each typed call (one typed call = one `api` call). Reset after every test so
+// the wiring doesn't leak to other files.
+afterEach(() => { resetApiTransport(); });
+
 describe('loadAndRenderAllowList row layout (HS-8026)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
+    wireRealApiTransport();
     // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
     document.body.replaceChildren(toElement(<div id="permission-allow-list"></div>));
   });
@@ -198,7 +208,10 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
     vi.mocked(api)
       .mockResolvedValueOnce({ permission_allow_rules: rules } as never)
       .mockResolvedValueOnce({ permission_allow_rules: rules } as never)
-      .mockResolvedValueOnce(undefined as never);
+      // PATCH response — the server returns the updated FileSettings, which the
+      // typed `updateFileSettings` validates, so this must be a valid object
+      // (not `undefined`, which would fail the schema in a fire-and-forget call).
+      .mockResolvedValueOnce({ permission_allow_rules: [rules[1]] } as never);
     await loadAndRenderAllowList();
     const trashBtn = document.querySelector<HTMLButtonElement>('.permission-allow-rule-row[data-rule-id="r1"] .permission-allow-delete')!;
     trashBtn.click();
@@ -217,6 +230,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
 describe('openRuleEditor (HS-8026)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
+    wireRealApiTransport();
     // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
     document.body.replaceChildren(toElement(<div id="permission-allow-list"></div>));
   });
@@ -317,6 +331,7 @@ describe('openRuleEditor (HS-8026)', () => {
 describe('buildAlwaysAllowAffordance (HS-7976)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
+    wireRealApiTransport();
     document.body.innerHTML = '';
   });
   afterEach(() => {

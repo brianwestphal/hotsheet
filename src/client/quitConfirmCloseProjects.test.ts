@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api.js';
 import { confirmDialog } from './confirm.js';
 import { confirmCloseProjects, type QuitSummary } from './quitConfirm.js';
+import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
 vi.mock('./api.js', () => ({ api: vi.fn(), apiWithSecret: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn(() => Promise.resolve(true)) }));
@@ -34,9 +35,15 @@ function proj(secret: string, confirmMode: QuitSummary['projects'][number]['conf
 beforeEach(() => {
   vi.mocked(api).mockReset();
   vi.mocked(confirmDialog).mockReset().mockResolvedValue(true);
+  // HS-8635 — `confirmCloseProjects` now calls the typed `getQuitSummary`,
+  // which routes through the injected transport. `vi.mock('./api.js')` above
+  // makes the helper's `api` resolve to this file's mock, so the typed caller
+  // returns whatever `vi.mocked(api).mockResolvedValue(...)` provides.
+  wireRealApiTransport();
 });
 
 afterEach(() => {
+  resetApiTransport();
   vi.clearAllMocks();
 });
 

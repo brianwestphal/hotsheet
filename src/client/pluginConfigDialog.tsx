@@ -1,9 +1,8 @@
 import {
-  getPluginConfigLabels, getPluginGlobalConfig, runPluginAction, setPluginGlobalConfig, validatePluginField,
+  getPluginConfigLabels, getPluginGlobalConfig, getSettings, runPluginAction, setPluginGlobalConfig, updateSettings, validatePluginField,
 } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
-import { api } from './api.js';
 import { TIMERS } from './constants/timers.js';
 import { byIdOrNull, toElement } from './dom.js';
 import type { ConfigLayoutItem, PluginPreference } from './pluginTypes.js';
@@ -115,7 +114,7 @@ export function createPreferenceRow(pluginId: string, pref: PluginPreference): H
       renderPrefInput(inputContainer as HTMLElement, pluginId, pref, String(pref.default ?? ''));
     });
   } else {
-    void api<Record<string, string>>('/settings').then(settings => {
+    void getSettings().then(settings => {
       const settingKey = `plugin:${pluginId}:${pref.key}`;
       const currentValue = settings[settingKey] ?? String(pref.default ?? '');
       renderPrefInput(inputContainer as HTMLElement, pluginId, pref, currentValue);
@@ -239,7 +238,7 @@ function savePrefValue(pluginId: string, pref: PluginPreference, value: string) 
     void setPluginGlobalConfig(pluginId, pref.key, value);
   } else {
     const settingKey = `plugin:${pluginId}:${pref.key}`;
-    void api('/settings', { method: 'PATCH', body: { [settingKey]: value } });
+    void updateSettings({ [settingKey]: value });
   }
   void validateField(pluginId, pref.key, value);
 }

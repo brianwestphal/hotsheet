@@ -18,6 +18,7 @@ import {
   flushPendingViaKeepalive,
   initPersistedHiddenTerminals,
 } from './persistedHiddenTerminals.js';
+import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 import { DEFAULT_GROUPING_ID, type VisibilityGrouping } from './visibilityGroupings.js';
 
 describe('isConfiguredTerminalId', () => {
@@ -70,12 +71,14 @@ describe('initPersistedHiddenTerminals (HS-8290 — global endpoint)', () => {
       return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
     });
     vi.stubGlobal('fetch', fetchSpy);
+    wireRealApiTransport();
     _resetForTests();
     _resetHiddenForTests();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetApiTransport();
     _resetForTests();
     _resetHiddenForTests();
   });
@@ -147,12 +150,14 @@ describe('initPersistedHiddenTerminals — idempotency (HS-8293)', () => {
       }));
     });
     vi.stubGlobal('fetch', fetchSpy);
+    wireRealApiTransport();
     _resetForTests();
     _resetHiddenForTests();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    resetApiTransport();
     _resetForTests();
     _resetHiddenForTests();
   });

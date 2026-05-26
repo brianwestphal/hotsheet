@@ -7,7 +7,7 @@
  * `updateDetailPositionToggle` so other bindings + `reloadAppState`
  * can re-sync the active class after a project switch.
  */
-import { api } from '../api.js';
+import { updateSettings } from '../../api/index.js';
 import { applyDetailPosition, applyDetailSize } from '../detail.js';
 import { byId, byIdOrNull } from '../dom.js';
 import type { AppSettings } from '../state.js';
@@ -33,7 +33,7 @@ export function bindDetailPositionToggle(): void {
         if (panel) panel.style.display = 'none';
         if (handle) handle.style.display = 'none';
         toggle.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
-        void api('/settings', { method: 'PATCH', body: { detail_visible: 'false' } });
+        void updateSettings({ detail_visible: 'false' });
         return;
       }
       // Switching position or re-enabling
@@ -46,7 +46,7 @@ export function bindDetailPositionToggle(): void {
       applyDetailPosition(position);
       applyDetailSize();
       updateDetailPositionToggle();
-      void api('/settings', { method: 'PATCH', body: { detail_position: position, detail_visible: 'true' } });
+      void updateSettings({ detail_position: position, detail_visible: 'true' });
     });
   });
   updateDetailPositionToggle();

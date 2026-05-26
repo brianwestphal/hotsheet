@@ -1,5 +1,5 @@
+import { updateSettings } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
-import { api } from './api.js';
 import { byId, byIdOrNull } from './dom.js';
 import { state } from './state.js';
 import { draggedTicketIds, loadTickets } from './ticketList.js';
@@ -91,7 +91,7 @@ export function bindSortControls() {
     state.sortDir = sortDir;
     suppressAnimation();
     void loadTickets();
-    void api('/settings', { method: 'PATCH', body: { sort_by: sortBy, sort_dir: sortDir } });
+    void updateSettings({ sort_by: sortBy, sort_dir: sortDir });
   });
 }
 

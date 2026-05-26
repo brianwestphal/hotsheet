@@ -27,6 +27,7 @@ import {
   updateStatusDots,
 } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
+import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
 function makeTitleArea(): HTMLDivElement {
   const div = document.createElement('div');
@@ -53,10 +54,16 @@ const C: ProjectInfo = { name: 'C', dataDir: '/tmp/c', secret: 'sec-c' };
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  // HS-8634/HS-8635 — projectTabs now calls typed `../api/index.js` callers
+  // (getProjectsFeedbackState / reorderProjects), which route through the
+  // injected transport. Wire it to the real `api` so the fetch-stub tests
+  // below still exercise the real `api()` → `fetch` URL path.
+  wireRealApiTransport();
   _resetProjectTabsForTesting();
 });
 
 afterEach(() => {
+  resetApiTransport();
   _resetProjectTabsForTesting();
   document.body.innerHTML = '';
 });
@@ -431,7 +438,9 @@ describe('pendingReorderSecrets race guard (HS-8431)', () => {
       ok: true,
       status: 200,
       headers: new Headers({ 'content-type': 'application/json' }),
-      json: () => Promise.resolve(list),
+      // The server's `GET /projects` always includes `ticketCount`, which
+      // `ProjectListItemSchema` (validated by the typed `listProjects`) requires.
+      json: () => Promise.resolve(list.map(p => ({ ...p, ticketCount: 0 }))),
     } as unknown as Response)));
   }
 

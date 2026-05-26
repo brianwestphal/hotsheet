@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { getFileSettings, updateFileSettings } from '../api/index.js';
 import { toElement } from './dom.js';
 import { type AllowRule, newRuleId, parseRules, regexEscape } from './permissionAllowListUI.js';
 
@@ -111,7 +111,7 @@ export function buildBashPermissionPreview(opts: BashPermissionPreviewOptions): 
  */
 async function persistBashAlwaysAllowRule(command: string): Promise<void> {
   const pattern = `^${regexEscape(command)}$`;
-  const fs = await api<{ permission_allow_rules?: unknown }>('/file-settings');
+  const fs = await getFileSettings();
   const existing = parseRules(fs.permission_allow_rules);
   const rule: AllowRule = {
     id: newRuleId(),
@@ -120,8 +120,5 @@ async function persistBashAlwaysAllowRule(command: string): Promise<void> {
     added_at: new Date().toISOString(),
     added_by: 'overlay',
   };
-  await api('/file-settings', {
-    method: 'PATCH',
-    body: { permission_allow_rules: [...existing, rule] },
-  });
+  await updateFileSettings({ permission_allow_rules: [...existing, rule] });
 }

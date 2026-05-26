@@ -1,5 +1,5 @@
-import { setApiTransport } from '../api/_runner.js';
-import { createTicket } from '../api/index.js';
+import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
+import { createTicket, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
 import { api, apiUpload, apiWithSecret } from './api.js';
@@ -249,7 +249,7 @@ function bindFileDropListeners(): void {
     if (!files || files.length === 0) return;
     const ticketId = await resolveDropTicketId(target, findRowUnder);
     for (const file of Array.from(files)) {
-      await apiUpload(`/tickets/${ticketId}/attachments`, file);
+      await uploadAttachment(ticketId, file);
     }
     void loadTickets();
   });
@@ -309,6 +309,9 @@ async function init() {
         ? apiWithSecret(path, opts.secret, { method: opts.method, body: opts.body })
         : api(path, { method: opts.method, body: opts.body, skipProjectScope: opts.skipProjectScope }),
     );
+    // HS-8633 — multipart uploads route through their own transport (FormData,
+    // no JSON Content-Type) so `_runner` stays server-safe + JSON-only.
+    setApiUploadTransport((path, file) => apiUpload(path, file));
 
     // HS-8054 — start the longtask observer first so any hangs during init
     // itself get logged. `[hotsheet longtask]` prefix; in-memory buffer via
@@ -400,7 +403,7 @@ function bindLayoutToggle() {
       updateLayoutToggle();
       if (needsReload) void loadTickets();
       else renderTicketList();
-      void api('/settings', { method: 'PATCH', body: { layout } });
+      void updateSettings({ layout });
     });
   });
   updateLayoutToggle();

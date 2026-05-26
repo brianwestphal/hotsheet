@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { getFileSettings, getSettings, updateFileSettings, updateSettings } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { parseJsonOrNull } from '../schemas.js';
 import { api } from './api.js';
@@ -16,13 +17,6 @@ import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
 import { bindClearTelemetryButton, resetClearTelemetryStatus } from './telemetryClearUI.js';
 import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
 import { isTerminalWebglOptOut, isWebgl2Available, setTerminalWebglOptOut } from './terminalWebgl.js';
-
-interface FileSettingsForGeneralAndTerminal {
-  appName?: string;
-  backupDir?: string;
-  ticketPrefix?: string;
-  terminal_scrollback_bytes?: string | number;
-}
 
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindTabSwitching();
@@ -157,7 +151,7 @@ function bindGeneralTab() {
     }
     notifyPermSelect.value = state.settings.notify_permission;
     notifyCompSelect.value = state.settings.notify_completed;
-    void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
+    void getFileSettings().then((fs) => {
       appNameInput.value = fs.appName ?? '';
       prefixInput.value = fs.ticketPrefix ?? '';
     });
@@ -171,7 +165,7 @@ function bindGeneralTab() {
       const val = Math.max(1, parseInt(trashInput.value, 10) || 3);
       trashInput.value = String(val);
       state.settings.trash_cleanup_days = val;
-      void api('/settings', { method: 'PATCH', body: { trash_cleanup_days: String(val) } });
+      void updateSettings({ trash_cleanup_days: String(val) });
     }, 500);
   });
 
@@ -183,7 +177,7 @@ function bindGeneralTab() {
       const val = Math.max(1, parseInt(verifiedInput.value, 10) || 30);
       verifiedInput.value = String(val);
       state.settings.verified_cleanup_days = val;
-      void api('/settings', { method: 'PATCH', body: { verified_cleanup_days: String(val) } });
+      void updateSettings({ verified_cleanup_days: String(val) });
     }, 500);
   });
 
@@ -192,13 +186,13 @@ function bindGeneralTab() {
   // Auto-prioritize toggle
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { auto_order: String(autoOrderCheckbox.checked) } });
+    void updateSettings({ auto_order: String(autoOrderCheckbox.checked) });
   });
 
   // Hide verified column toggle
   hideVerifiedCheckbox.addEventListener('change', async () => {
     state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
-    await api('/settings', { method: 'PATCH', body: { hide_verified_column: String(hideVerifiedCheckbox.checked) } });
+    await updateSettings({ hide_verified_column: String(hideVerifiedCheckbox.checked) });
     // Re-render to apply column change immediately
     const { renderTicketList } = await import('./ticketList.js');
     renderTicketList();
@@ -210,7 +204,7 @@ function bindGeneralTab() {
   // visibility on the currently-active instance without a full rebuild.
   shellIntegrationCheckbox.addEventListener('change', () => {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { shell_integration_ui: String(shellIntegrationCheckbox.checked) } });
+    void updateSettings({ shell_integration_ui: String(shellIntegrationCheckbox.checked) });
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
   });
 
@@ -222,7 +216,7 @@ function bindGeneralTab() {
   // consumers decide whether to act on it.
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
-    void api('/settings', { method: 'PATCH', body: { shell_streaming_enabled: String(shellStreamingCheckbox.checked) } });
+    void updateSettings({ shell_streaming_enabled: String(shellStreamingCheckbox.checked) });
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`
@@ -247,11 +241,11 @@ function bindGeneralTab() {
   // Notification dropdowns
   notifyPermSelect.addEventListener('change', () => {
     state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
-    void api('/settings', { method: 'PATCH', body: { notify_permission: notifyPermSelect.value } });
+    void updateSettings({ notify_permission: notifyPermSelect.value });
   });
   notifyCompSelect.addEventListener('change', () => {
     state.settings.notify_completed = notifyCompSelect.value as NotifyLevel;
-    void api('/settings', { method: 'PATCH', body: { notify_completed: notifyCompSelect.value } });
+    void updateSettings({ notify_completed: notifyCompSelect.value });
   });
 
   // App name (file-based setting)
@@ -261,7 +255,7 @@ function bindGeneralTab() {
     if (appNameTimeout) clearTimeout(appNameTimeout);
     appNameTimeout = setTimeout(() => {
       const val = appNameInput.value.trim();
-      void api('/file-settings', { method: 'PATCH', body: { appName: val } }).then(() => {
+      void updateFileSettings({ appName: val }).then(() => {
         // HS-8451 — `setAppTitle` now also pushes the title through to
         // the native Tauri window via `set_window_title`, so the
         // "Restart the desktop app to update the title bar" hint that
@@ -283,7 +277,7 @@ function bindGeneralTab() {
         prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
         return;
       }
-      void api('/file-settings', { method: 'PATCH', body: { ticketPrefix: val } }).then(() => {
+      void updateFileSettings({ ticketPrefix: val }).then(() => {
         prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
       });
     }, 800);
@@ -322,7 +316,7 @@ function bindAppIconPicker() {
   let currentIcon = 'default';
 
   // Load current icon from file-settings
-  void api<{ appIcon?: string }>('/file-settings').then((fs) => {
+  void getFileSettings().then((fs) => {
     if (fs.appIcon !== undefined && fs.appIcon !== '') {
       currentIcon = fs.appIcon;
       iconPreview.src = `/static/assets/icon-${currentIcon}.png`;
@@ -352,7 +346,7 @@ function bindAppIconPicker() {
         popup.remove();
 
         // Save to file-settings
-        void api('/file-settings', { method: 'PATCH', body: { appIcon: variant } });
+        void updateFileSettings({ appIcon: variant });
 
         // Apply via Tauri if available
         const invoke = getTauriInvoke();
@@ -387,7 +381,7 @@ function bindBackupsTab() {
 
   settingsBtn.addEventListener('click', () => {
     void loadBackupList();
-    void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
+    void getFileSettings().then((fs) => {
       backupDirInput.value = fs.backupDir ?? '';
     });
   });
@@ -397,7 +391,7 @@ function bindBackupsTab() {
     if (backupDirTimeout) clearTimeout(backupDirTimeout);
     backupDirTimeout = setTimeout(() => {
       const val = backupDirInput.value.trim();
-      void api('/file-settings', { method: 'PATCH', body: { backupDir: val } }).then(() => {
+      void updateFileSettings({ backupDir: val }).then(() => {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
     }, 800);
@@ -431,17 +425,17 @@ function bindTerminalTab() {
     termScrollbackTimeout = setTimeout(() => {
       const raw = termScrollbackInput.value.trim();
       if (raw === '') {
-        void api('/file-settings', { method: 'PATCH', body: { terminal_scrollback_bytes: '' } });
+        void updateFileSettings({ terminal_scrollback_bytes: '' });
         return;
       }
       const n = Math.max(65536, Math.min(16777216, parseInt(raw, 10) || 1048576));
       termScrollbackInput.value = String(n);
-      void api('/file-settings', { method: 'PATCH', body: { terminal_scrollback_bytes: String(n) } });
+      void updateFileSettings({ terminal_scrollback_bytes: String(n) });
     }, 800);
   });
 
   settingsBtn.addEventListener('click', () => {
-    void api<FileSettingsForGeneralAndTerminal>('/file-settings').then((fs) => {
+    void getFileSettings().then((fs) => {
       const scrollback = fs.terminal_scrollback_bytes;
       termScrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
     });
@@ -482,7 +476,7 @@ function bindAutoContextSettings() {
 
   async function loadEntries() {
     try {
-      const settings = await api<Record<string, string>>('/settings');
+      const settings = await getSettings();
       if (settings.auto_context !== '') {
         // HS-8567 — zod-validate the persisted JSON column.
         const parsed = parseJsonOrNull(AutoContextEntryArraySchema, settings.auto_context);
@@ -493,7 +487,7 @@ function bindAutoContextSettings() {
   }
 
   async function saveEntries() {
-    await api('/settings', { method: 'PATCH', body: { auto_context: JSON.stringify(autoContextEntries) } });
+    await updateSettings({ auto_context: JSON.stringify(autoContextEntries) });
   }
 
   function renderEntries() {
@@ -699,14 +693,6 @@ function bindCliToolSettings() {
  * Retention picker writes `telemetry_retention_days` as a number; `0`
  * = keep forever per §67.6 / HS-8154.
  */
-interface TelemetryFileSettings {
-  telemetry_enabled?: boolean;
-  telemetry_metrics_enabled?: boolean;
-  telemetry_logs_enabled?: boolean;
-  telemetry_traces_enabled?: boolean;
-  telemetry_retention_days?: number;
-}
-
 function bindTelemetryTab() {
   const masterEl = byIdOrNull<HTMLInputElement>('settings-telemetry-enabled');
   const metricsEl = byIdOrNull<HTMLInputElement>('settings-telemetry-metrics-enabled');
@@ -727,7 +713,7 @@ function bindTelemetryTab() {
   // metrics + logs, default-off for traces" — so we always write the
   // explicit boolean rather than rely on absence.
   masterEl.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { telemetry_enabled: masterEl.checked } }).then(() => {
+    void updateFileSettings({ telemetry_enabled: masterEl.checked }).then(() => {
       // HS-8479 — refresh the conditional Telemetry sidebar entry so
       // it appears / disappears instantly on toggle.
       void import('./crossProjectStatsButton.js').then(({ refreshTelemetrySidebarVisibility }) => {
@@ -736,13 +722,13 @@ function bindTelemetryTab() {
     });
   });
   metricsEl.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { telemetry_metrics_enabled: metricsEl.checked } });
+    void updateFileSettings({ telemetry_metrics_enabled: metricsEl.checked });
   });
   logsEl.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { telemetry_logs_enabled: logsEl.checked } });
+    void updateFileSettings({ telemetry_logs_enabled: logsEl.checked });
   });
   tracesEl.addEventListener('change', () => {
-    void api('/file-settings', { method: 'PATCH', body: { telemetry_traces_enabled: tracesEl.checked } });
+    void updateFileSettings({ telemetry_traces_enabled: tracesEl.checked });
   });
 
   // Retention picker — debounced (matches the §52 scrollback pattern
@@ -754,7 +740,7 @@ function bindTelemetryTab() {
       const raw = retentionEl.value.trim();
       const n = raw === '' ? 30 : Math.max(0, parseInt(raw, 10) || 0);
       retentionEl.value = String(n);
-      void api('/file-settings', { method: 'PATCH', body: { telemetry_retention_days: n } });
+      void updateFileSettings({ telemetry_retention_days: n });
     }, 600);
   });
 
@@ -782,7 +768,7 @@ function bindTelemetryTab() {
   // On Settings open → fetch current file-settings + populate the form.
   const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => {
-    void api<TelemetryFileSettings>('/file-settings').then((fs) => {
+    void getFileSettings().then((fs) => {
       masterEl.checked = fs.telemetry_enabled === true;
       // Defaults: metrics + logs ON, traces OFF — matches §67.9.
       metricsEl.checked = fs.telemetry_metrics_enabled !== false;

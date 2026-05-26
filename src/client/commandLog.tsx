@@ -14,6 +14,7 @@
  * (including `commandLog.test.ts`) keep working without an import sweep.
  */
 
+import { type FileSettings, getFileSettings, updateFileSettings } from '../api/index.js';
 import { api } from './api.js';
 import { cleanupCancelingShellIds, dismissContextMenu, renderEntryRow } from './commandLogEntryRow.js';
 import { dismissFilterDropdown, showFilterDropdown } from './commandLogFilter.js';
@@ -297,13 +298,10 @@ let suspendSave = false;
 export async function saveDrawerState(): Promise<void> {
   if (suspendSave) return;
   try {
-    await api('/file-settings', {
-      method: 'PATCH',
-      body: {
-        drawer_open: panelOpen ? 'true' : 'false',
-        drawer_active_tab: activeTab,
-        drawer_expanded: isDrawerExpanded() ? 'true' : 'false',
-      },
+    await updateFileSettings({
+      drawer_open: panelOpen ? 'true' : 'false',
+      drawer_active_tab: activeTab,
+      drawer_expanded: isDrawerExpanded() ? 'true' : 'false',
     });
   } catch { /* ignore — the user will open the drawer themselves next time */ }
 }
@@ -361,9 +359,9 @@ export async function applyPerProjectDrawerState(): Promise<void> {
   const { onProjectSwitch, loadAndRenderTerminalTabs } = await import('./terminal.js');
   onProjectSwitch();
 
-  let fs: { drawer_open?: string | boolean; drawer_active_tab?: string; drawer_expanded?: string | boolean };
+  let fs: FileSettings;
   try {
-    fs = await api<{ drawer_open?: string | boolean; drawer_active_tab?: string; drawer_expanded?: string | boolean }>('/file-settings');
+    fs = await getFileSettings();
   } catch {
     fs = {};
   }

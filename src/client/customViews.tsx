@@ -1,6 +1,5 @@
-import { updateTicket } from '../api/index.js';
+import { getSettings, updateSettings, updateTicket } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
-import { api } from './api.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
@@ -31,7 +30,7 @@ export function initCustomViews(loadTickets: () => void) {
 
 export async function loadCustomViews() {
   try {
-    const settings = await api<Record<string, string>>('/settings');
+    const settings = await getSettings();
     if (settings.custom_views !== '') {
       const parsed: unknown = JSON.parse(settings.custom_views);
       if (Array.isArray(parsed)) state.customViews = parsed as typeof state.customViews;
@@ -133,7 +132,7 @@ function showViewContextMenu(anchor: HTMLElement, view: CustomView) {
 }
 
 async function saveViews() {
-  await api('/settings', { method: 'PATCH', body: { custom_views: JSON.stringify(state.customViews) } });
+  await updateSettings({ custom_views: JSON.stringify(state.customViews) });
   renderSidebarViews();
 }
 

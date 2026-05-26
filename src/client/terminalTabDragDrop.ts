@@ -14,7 +14,7 @@
  * other code touches it.
  */
 
-import { api } from './api.js';
+import { updateFileSettings } from '../api/index.js';
 import { byIdOrNull } from './dom.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { configuredSubsetInStripOrder, reorderConfigsById, reorderIds } from './terminalTabReorder.js';
@@ -133,7 +133,7 @@ async function reorderTabAfterDrop(fromId: string, toId: string): Promise<void> 
   // after the server applies the patch.
   requireHooks().setLastKnownConfigs({ ...lastKnown, configured: persistShape.map(c => ({ ...c, dynamic: false })) });
   try {
-    await api('/file-settings', { method: 'PATCH', body: { terminals: persistShape } });
+    await updateFileSettings({ terminals: persistShape });
   } catch {
     // PATCH failed — the in-memory + DOM order still moved, so the user
     // sees their reorder; on the next reload the server-side order wins.

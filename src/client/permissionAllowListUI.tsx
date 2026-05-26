@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { getFileSettings, updateFileSettings } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 
@@ -81,7 +81,7 @@ export async function loadAndRenderAllowList(): Promise<void> {
 
 async function fetchRules(): Promise<AllowRule[]> {
   try {
-    const fs = await api<{ permission_allow_rules?: unknown }>('/file-settings');
+    const fs = await getFileSettings();
     return parseRules(fs.permission_allow_rules);
   } catch {
     return [];
@@ -200,7 +200,7 @@ async function deleteRule(rule: AllowRule): Promise<void> {
   if (!ok) return;
   const rules = await fetchRules();
   const next = rules.filter(r => r.id !== rule.id);
-  await api('/file-settings', { method: 'PATCH', body: { permission_allow_rules: next } });
+  await updateFileSettings({ permission_allow_rules: next });
   renderRules(next);
 }
 
@@ -293,7 +293,7 @@ export function openRuleEditor(options: EditorOptions): HTMLElement {
         };
         next = [...rules, rule];
       }
-      await api('/file-settings', { method: 'PATCH', body: { permission_allow_rules: next } });
+      await updateFileSettings({ permission_allow_rules: next });
       renderRules(next);
       close();
     } catch {
@@ -416,7 +416,7 @@ export function buildAlwaysAllowAffordance(opts: {
    *  Save button if the PATCH fails. */
   async function saveRuleAndCommit(pattern: string, onSaveError?: () => void): Promise<void> {
     try {
-      const fs = await api<{ permission_allow_rules?: unknown }>('/file-settings');
+      const fs = await getFileSettings();
       const existing = parseRules(fs.permission_allow_rules);
       const rule: AllowRule = {
         id: newRuleId(),
@@ -425,10 +425,7 @@ export function buildAlwaysAllowAffordance(opts: {
         added_at: new Date().toISOString(),
         added_by: 'overlay',
       };
-      await api('/file-settings', {
-        method: 'PATCH',
-        body: { permission_allow_rules: [...existing, rule] },
-      });
+      await updateFileSettings({ permission_allow_rules: [...existing, rule] });
     } catch {
       errorEl.textContent = 'Failed to save rule';
       errorEl.style.display = '';

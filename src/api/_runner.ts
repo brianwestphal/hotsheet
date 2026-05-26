@@ -72,6 +72,40 @@ export async function apiCall<T>(responseSchema: z.ZodType<T>, path: string, opt
   return result.data;
 }
 
+/** The client-injected multipart-upload transport. POSTs `file` (as the
+ *  `file` form field) to `path` and returns the decoded JSON body as
+ *  `unknown`; `apiUploadCall` validates it against the response schema. Kept
+ *  separate from `ApiTransport` because the upload path is `FormData`-based
+ *  (no JSON `Content-Type`, browser sets the multipart boundary). `File` is a
+ *  type-only reference (DOM lib) — no runtime import, so this stays
+ *  server-safe. */
+export type ApiUploadTransport = (path: string, file: File) => Promise<unknown>;
+
+let uploadTransport: ApiUploadTransport | null = null;
+
+/** Wire the client runtime's `apiUpload` into the typed layer. Called once at
+ *  client boot from `app.tsx`, alongside `setApiTransport`. */
+export function setApiUploadTransport(t: ApiUploadTransport): void {
+  uploadTransport = t;
+}
+
+/**
+ * Typed multipart-upload call with response validation. Mirrors `apiCall` but
+ * routes through the injected upload transport (HS-8633 attachments domain).
+ */
+export async function apiUploadCall<T>(responseSchema: z.ZodType<T>, path: string, file: File): Promise<T> {
+  if (uploadTransport === null) {
+    throw new Error(`apiUploadCall(${path}): no upload transport configured — setApiUploadTransport must run at client boot.`);
+  }
+  const raw = await uploadTransport(path, file);
+  const result = responseSchema.safeParse(raw);
+  if (!result.success) {
+    const summary = result.error.issues.map(i => `${i.path.join('.') || '<root>'}: ${i.message}`).join('; ');
+    throw new Error(`apiUploadCall(${path}): response shape mismatch — ${summary}`);
+  }
+  return result.data;
+}
+
 /** Build a `?k=v&…` query string from a flat record. Skips `undefined` /
  *  `null`, coerces the rest to string. Returns `''` when empty so callers
  *  can always concatenate it onto a path. */

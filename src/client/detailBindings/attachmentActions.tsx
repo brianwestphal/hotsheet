@@ -4,7 +4,7 @@
  * manager, delete, select, arrow-key nav, Space to preview. Also owns
  * the `previewAttachment` helper since it's the only consumer.
  */
-import { api } from '../api.js';
+import { deleteAttachment, revealAttachment } from '../../api/index.js';
 import { openDetail } from '../detail.js';
 import { byId, toElement } from '../dom.js';
 import { state } from '../state.js';
@@ -60,7 +60,7 @@ export function bindDetailAttachmentActions(): void {
     const revealBtn: HTMLElement | null = target.closest('.attachment-reveal');
     if (revealBtn) {
       const attId = revealBtn.dataset['attId'];
-      if (attId !== undefined && attId !== '') void api(`/attachments/${attId}/reveal`, { method: 'POST' });
+      if (attId !== undefined && attId !== '') void revealAttachment(Number(attId));
       return;
     }
 
@@ -69,7 +69,7 @@ export function bindDetailAttachmentActions(): void {
     if (deleteBtn !== null) {
       const attId = deleteBtn.dataset['attId'];
       if (attId === undefined || attId === '') return;
-      await api(`/attachments/${attId}`, { method: 'DELETE' });
+      await deleteAttachment(Number(attId));
       if (state.activeTicketId != null) {
         openDetail(state.activeTicketId);
       }

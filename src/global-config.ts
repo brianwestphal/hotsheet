@@ -1,72 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { z } from 'zod';
 
-/** HS-8290 — visibility grouping shape inside the global dashboard block.
- *  Each grouping owns the hidden-id sets for EVERY project, keyed by secret.
- *  Pre-HS-8290 the same shape lived per-project as `{id, name, hiddenIds: string[]}`
- *  duplicated across every project's settings.json; that's now collapsed
- *  into a single global record so the dashboard view (which is inherently
- *  cross-project) stops needing the per-project fan-out machinery. */
-const VisibilityGroupingSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  hiddenByProject: z.record(z.string(), z.array(z.string())),
-});
+import type { GlobalConfig } from './routes/validation.js';
+// HS-8635 — the config schemas (`VisibilityGroupingSchema` / `DashboardConfigSchema`
+// / `GlobalConfigSchema`) are the wire SSOT in `routes/validation.ts` (client-safe,
+// zod-only) and shared by the typed API layer (`src/api/settings.ts`) + the client.
+// This module owns only the fs read/write of `~/.hotsheet/config.json`. The three
+// schemas were previously duplicated verbatim here — see docs/39-visibility-groupings.md.
+import { GlobalConfigSchema } from './routes/validation.js';
 
-const DashboardConfigSchema = z.object({
-  // HS-8292 — pre-fix this enum was `['sectioned', 'flat']`, but the client
-  // (`src/client/terminalDashboard.tsx`) emits `'flow'`, so every PATCH
-  // failed validation and flow mode never persisted across reloads.
-  layoutMode: z.enum(['sectioned', 'flow']).optional(),
-  columnsPerRow: z.number().optional(),
-  visibilityGroupings: z.array(VisibilityGroupingSchema).optional(),
-  activeVisibilityGroupingId: z.string().optional(),
-  // HS-8424 — HS-8406 added per-scope active-grouping selection on the
-  // client; this storage schema must also accept the key, otherwise a
-  // stored config containing it would parse as empty on read.
-  activeVisibilityGroupingIdByScope: z.record(z.string(), z.string()).optional(),
-}).strict();
-
-const GlobalConfigSchema = z.object({
-  channelEnabled: z.boolean().optional(),
-  shareTotalSeconds: z.number().optional(),
-  shareLastPrompted: z.string().optional(),
-  shareAccepted: z.boolean().optional(),
-  // HS-8290 — terminal-dashboard settings (formerly stored per-project but
-  // are inherently cross-project since the dashboard shows tiles for every
-  // registered project in one view). See docs/39-visibility-groupings.md.
-  dashboard: DashboardConfigSchema.optional(),
-  // HS-8446 — global diagnostics opt-in. When true, the slow-server
-  // banner (HS-8175 / HS-8226) is allowed to surface AND the HS-8054
-  // UI-hang toast fires. Default false so the noisier diagnostic
-  // surfaces stay opt-in across every project on this machine. The
-  // freeze-log entries (`<dataDir>/freeze.log`) and the server-side
-  // event-loop heartbeat continue to fire regardless — the gate only
-  // suppresses the in-window UI surfaces.
-  diagnosticsEnabled: z.boolean().optional(),
-  // HS-8488 — "use software rendering for terminals" opt-out. When true,
-  // terminals skip the WebGL renderer addon and use xterm's DOM renderer.
-  // Default false (WebGL on). Global / machine-level because terminal
-  // rendering is a machine preference (GPU, battery), not per-project — same
-  // rationale as the CLI-tool + diagnostics settings. See docs/22-terminal.md.
-  terminalWebglOptOut: z.boolean().optional(),
-  // HS-8497 — billing model for telemetry cost display. `'api'` (default)
-  // = the OpenTelemetry `claude_code.cost.usage` metric reflects the real
-  // pay-per-token API cost the user is charged. `'subscription'` = the
-  // user is on Claude Pro / Max (flat monthly fee), so the metric value
-  // is an API-equivalent estimate, not an amount the user actually pays.
-  // The cost UI (per-tab chip + drawer + dashboard) hides or annotates
-  // amounts accordingly when this is set to `'subscription'`. Stored
-  // globally because the user's billing relationship with Anthropic is
-  // identity-level, not per-project.
-  telemetryCostMode: z.enum(['api', 'subscription']).optional(),
-}).strict();
-
-export type VisibilityGroupingPersisted = z.infer<typeof VisibilityGroupingSchema>;
-export type DashboardConfig = z.infer<typeof DashboardConfigSchema>;
-export type GlobalConfig = z.infer<typeof GlobalConfigSchema>;
+export type { DashboardConfig, GlobalConfig, VisibilityGroupingPersisted } from './routes/validation.js';
 
 function getConfigPath(): string {
   return join(homedir(), '.hotsheet', 'config.json');

@@ -17,8 +17,8 @@
  * `dashboardState`.
  */
 
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 import type { GlobalConfig } from '../global-config.js';
-import { api } from './api.js';
 
 export type LayoutMode = 'sectioned' | 'flow';
 
@@ -70,7 +70,7 @@ export function loadLayoutMode(): Promise<void> {
   if (layoutState.layoutModeLoadPromise !== null) return layoutState.layoutModeLoadPromise;
   layoutState.layoutModeLoadPromise = (async () => {
     try {
-      const cfg = await api<{ dashboard?: { layoutMode?: string } }>('/global-config');
+      const cfg = await getGlobalConfig();
       layoutState.layoutMode = parseLayoutMode(cfg.dashboard?.layoutMode);
     } catch {
       layoutState.layoutMode = 'sectioned';
@@ -92,7 +92,7 @@ export function setLayoutMode(next: LayoutMode, onChanged: () => void): void {
   // HS-8434 — type the PATCH body against the shared schema so a key
   // added here without a matching schema entry is a compile error.
   const body: Partial<GlobalConfig> = { dashboard: { layoutMode: next } };
-  void api('/global-config', { method: 'PATCH', body })
+  void updateGlobalConfig(body)
     .catch(() => { /* swallow — UI flip already happened */ });
   onChanged();
 }

@@ -18,7 +18,7 @@
  *   amount the user actually pays. The per-tab cost chip is hidden;
  *   the drawer + dashboard surface a clarifying notice.
  */
-import { api } from './api.js';
+import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 
 type CostMode = 'api' | 'subscription';
 
@@ -36,7 +36,7 @@ export function getTelemetryCostMode(): CostMode {
  *  (default `'api'` until the first successful load). */
 export async function loadTelemetryCostMode(): Promise<void> {
   try {
-    const cfg = await api<{ telemetryCostMode?: CostMode }>('/global-config');
+    const cfg = await getGlobalConfig();
     costMode = cfg.telemetryCostMode === 'subscription' ? 'subscription' : 'api';
     loaded = true;
   } catch { /* keep cached value */ }
@@ -48,7 +48,7 @@ export async function loadTelemetryCostMode(): Promise<void> {
 export async function setTelemetryCostMode(value: CostMode): Promise<void> {
   costMode = value;
   loaded = true;
-  await api('/global-config', { method: 'PATCH', body: { telemetryCostMode: value } });
+  await updateGlobalConfig({ telemetryCostMode: value });
 }
 
 /** **TEST ONLY** — set the cached value without round-tripping the API. */
