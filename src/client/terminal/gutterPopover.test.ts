@@ -21,11 +21,6 @@ import * as channelUI from '../channelUI.js';
 // eslint-disable-next-line import/first
 import { attachGutterHoverPopover, type CommandRecord } from './gutterPopover.js';
 
-interface FakeMarker {
-  line: number;
-  isDisposed: boolean;
-}
-
 interface FakeBufferLine {
   translateToString(trim?: boolean): string;
 }
@@ -44,10 +39,10 @@ interface FakeXTerm {
 function makeRecord(opts: { hasD?: boolean } = {}): CommandRecord {
   return {
     id: 1,
-    promptStart: { line: 0, isDisposed: false } as unknown as FakeMarker as never,
-    commandStart: { line: 1, isDisposed: false } as unknown as FakeMarker as never,
-    outputStart: { line: 2, isDisposed: false } as unknown as FakeMarker as never,
-    commandEnd: opts.hasD === false ? null : { line: 4, isDisposed: false } as unknown as FakeMarker as never,
+    promptStart: { line: 0, isDisposed: false } as never,
+    commandStart: { line: 1, isDisposed: false } as never,
+    outputStart: { line: 2, isDisposed: false } as never,
+    commandEnd: opts.hasD === false ? null : { line: 4, isDisposed: false } as never,
     exitCode: 0,
     decoration: null,
   };

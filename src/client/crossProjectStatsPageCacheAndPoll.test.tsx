@@ -23,7 +23,7 @@ function makePayload(overrides: Partial<DashboardPayload> = {}): DashboardPayloa
     hourlyActivity: [],
     costOverTime: [],
   };
-  return { ...base, ...overrides } as DashboardPayload;
+  return { ...base, ...overrides };
 }
 
 const mockApi = vi.fn<(path: string, opts?: unknown) => Promise<unknown>>();

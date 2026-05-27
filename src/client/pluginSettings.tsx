@@ -243,7 +243,7 @@ function createPluginRow(plugin: PluginInfo): HTMLElement {
   // Right-click context menu
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    showPluginContextMenu(e as MouseEvent, plugin);
+    showPluginContextMenu(e, plugin);
   });
 
   return row;

@@ -39,7 +39,7 @@ function makePayload(overrides: Partial<ProjectRollupPayload> = {}): ProjectRoll
     recentPrompts: [],
     costOverTime: [],
   };
-  return { ...base, ...overrides } as ProjectRollupPayload;
+  return { ...base, ...overrides };
 }
 
 const mockApi = vi.fn<(path: string) => Promise<unknown>>();

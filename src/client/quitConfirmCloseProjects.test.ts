@@ -49,7 +49,7 @@ afterEach(() => {
 
 describe('confirmCloseProjects (HS-8604)', () => {
   it('prompts and returns the confirm result when the project has a running non-exempt terminal', async () => {
-    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'with-non-exempt-processes', [{ isExempt: false }])] } as never);
+    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'with-non-exempt-processes', [{ isExempt: false }])] });
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
     const result = await confirmCloseProjects(['s1']);
@@ -59,14 +59,14 @@ describe('confirmCloseProjects (HS-8604)', () => {
   });
 
   it('returns false (abort) when the user cancels the confirm', async () => {
-    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'with-non-exempt-processes', [{ isExempt: false }])] } as never);
+    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'with-non-exempt-processes', [{ isExempt: false }])] });
     vi.mocked(confirmDialog).mockResolvedValue(false);
 
     expect(await confirmCloseProjects(['s1'])).toBe(false);
   });
 
   it('does NOT prompt (returns true) when the only running terminal is exempt under with-non-exempt mode', async () => {
-    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'with-non-exempt-processes', [{ isExempt: true }])] } as never);
+    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'with-non-exempt-processes', [{ isExempt: true }])] });
 
     const result = await confirmCloseProjects(['s1']);
 
@@ -75,7 +75,7 @@ describe('confirmCloseProjects (HS-8604)', () => {
   });
 
   it('does NOT prompt for an idle tab even under the always setting (nothing to stop)', async () => {
-    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'always', [])] } as never);
+    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'always', [])] });
 
     const result = await confirmCloseProjects(['s1']);
 
@@ -84,7 +84,7 @@ describe('confirmCloseProjects (HS-8604)', () => {
   });
 
   it('does NOT prompt when the project is set to never, even with a running non-exempt terminal', async () => {
-    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'never', [{ isExempt: false }])] } as never);
+    vi.mocked(api).mockResolvedValue({ projects: [proj('s1', 'never', [{ isExempt: false }])] });
 
     const result = await confirmCloseProjects(['s1']);
 
@@ -99,7 +99,7 @@ describe('confirmCloseProjects (HS-8604)', () => {
         proj('s1', 'with-non-exempt-processes', []),
         proj('s2', 'with-non-exempt-processes', [{ isExempt: false }]),
       ],
-    } as never);
+    });
 
     const result = await confirmCloseProjects(['s1']);
 

@@ -10,13 +10,17 @@ name: Security audit
 # a newly-disclosed advisory in a shipped dependency surfaces promptly instead
 # of waiting for the next release.
 #
-# Both jobs are NON-BLOCKING for now (`continue-on-error: true`): the production
-# npm tree currently carries advisories that are unreachable in Hot Sheet (the
-# MCP SDK bundles an Express 5 stack — path-to-regexp / qs / router / body-parser
-# — but `src/` never imports express; the channel uses Node's raw `createServer`
-# + the MCP SDK `Server` class). Flip `continue-on-error` off to make these
-# blocking once HS-8602 establishes a clean / triaged baseline. See
-# docs/dependency-security.md.
+# npm-audit is BLOCKING as of HS-8602: the production npm tree is clean —
+# `npm audit --omit=dev --audit-level=high` reports 0 vulnerabilities after the
+# HS-8602 dependency bumps (@modelcontextprotocol/sdk 1.27.1 -> 1.29.0 pulled in
+# path-to-regexp 8.4.2 + qs 6.15.2, clearing the previously-unreachable bundled
+# Express 5 advisories; ws -> 8.21.0, marked -> 18.0.4, hono -> 4.12.23). The
+# only residual advisories are 3 moderate dev-only items in the nyc -> uuid
+# coverage chain, which `--omit=dev` excludes and `--audit-level=high` ignores.
+#
+# cargo-audit stays NON-BLOCKING pending a separate Rust-baseline triage (the
+# src-tauri crate advisories were never assessed under HS-8602, which is
+# npm-scoped). See docs/dependency-security.md.
 
 on:
   pull_request:
@@ -32,21 +36,25 @@ permissions:
 jobs:
   npm-audit:
     runs-on: ubuntu-latest
-    continue-on-error: true   # HS-8602 flips this to blocking once the baseline is clean
+    # BLOCKING (HS-8602): production tree is clean at high severity. If this
+    # job goes red, a newly-disclosed high/critical advisory has landed in a
+    # SHIPPED dependency — triage it (and, if unreachable, document the
+    # justification in docs/dependency-security.md) before merging.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20', cache: npm }
       - run: npm ci
-      # Production tree only, high severity. ~40 of the ~55 current advisories
-      # are dev-toolchain (eslint / vitest / nyc / sass / tsup / esbuild …) that
-      # never ship in dist/ or the Tauri sidecar, so `--omit=dev` keeps the
-      # signal focused on what actually ships.
+      # Production tree only, high severity. The dev toolchain (eslint / vitest /
+      # nyc / sass / tsup / esbuild …) never ships in dist/ or the Tauri sidecar,
+      # so `--omit=dev` keeps the signal focused on what actually ships. The 3
+      # residual moderate advisories (nyc -> istanbul-lib-processinfo -> uuid)
+      # are dev-only AND below the high threshold, so they don't gate.
       - run: npm audit --omit=dev --audit-level=high
 
   cargo-audit:
     runs-on: ubuntu-latest
-    continue-on-error: true   # HS-8602 flips this to blocking once the baseline is clean
+    continue-on-error: true   # NON-BLOCKING pending a Rust-baseline triage (HS-8602 was npm-scoped); see follow-up ticket
     defaults:
       run:
         working-directory: src-tauri

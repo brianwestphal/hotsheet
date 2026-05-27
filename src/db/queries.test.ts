@@ -90,7 +90,7 @@ describe('ticket creation', () => {
 
   it('treats empty string overrides as not provided', async () => {
     const t = await createTicket('Empty overrides', {
-      category: '' as never,
+      category: '',
       priority: '' as never,
       details: '',
     });
@@ -1333,7 +1333,7 @@ describe('parseNotes', () => {
   });
 
   it('returns empty array for null-like input', () => {
-    expect(parseNotes(null as unknown as string)).toEqual([]);
+    expect(parseNotes(null)).toEqual([]);
   });
 
   it('parses JSON array of notes', () => {

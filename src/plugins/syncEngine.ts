@@ -243,7 +243,7 @@ async function applyFieldsToTicket(ticketId: number, fields: Partial<RemoteTicke
   if (fields.tags !== undefined) updates.tags = JSON.stringify(fields.tags);
 
   if (Object.keys(updates).length > 0) {
-    await updateTicket(ticketId, updates as Parameters<typeof updateTicket>[1]);
+    await updateTicket(ticketId, updates);
   }
 }
 

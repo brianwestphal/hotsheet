@@ -47,9 +47,9 @@ export interface AppearanceLayers {
 export function resolveAppearance(layers: AppearanceLayers): TerminalAppearance {
   const pick = <K extends keyof TerminalAppearance>(field: K): TerminalAppearance[K] => {
     const { sessionOverride, configOverride, projectDefault } = layers;
-    if (sessionOverride?.[field] !== undefined) return sessionOverride[field] as TerminalAppearance[K];
-    if (configOverride?.[field] !== undefined) return configOverride[field] as TerminalAppearance[K];
-    if (projectDefault?.[field] !== undefined) return projectDefault[field] as TerminalAppearance[K];
+    if (sessionOverride?.[field] !== undefined) return sessionOverride[field];
+    if (configOverride?.[field] !== undefined) return configOverride[field];
+    if (projectDefault?.[field] !== undefined) return projectDefault[field];
     return FALLBACK_APPEARANCE[field];
   };
 
@@ -96,7 +96,7 @@ export function setSessionOverride(terminalId: string, partial: Partial<Terminal
   if (Object.keys(next).length === 0) {
     sessionOverrides.delete(terminalId);
   } else {
-    sessionOverrides.set(terminalId, next as Partial<TerminalAppearance>);
+    sessionOverrides.set(terminalId, next);
   }
 }
 

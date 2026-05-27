@@ -8,7 +8,7 @@ import { putTicketNotesBulk } from '../../api/index.js';
 import { openDetailAndFocusNote } from '../detail.js';
 import { byIdOrNull } from '../dom.js';
 import { parseJsonArrayOr } from '../json.js';
-import { state, type Ticket } from '../state.js';
+import { state } from '../state.js';
 import { pushNotesUndo } from '../undo/actions.js';
 
 interface NoteEntry { id: string; text: string; created_at: string }
@@ -33,7 +33,7 @@ export function bindDetailNotes(): void {
     const newNotes: NoteEntry[] = [...parsed, { id: newNoteId, text: '', created_at: new Date().toISOString() }];
     const newNotesJson = JSON.stringify(newNotes);
     await putTicketNotesBulk(state.activeTicketId, newNotesJson);
-    pushNotesUndo({ ...ticket, notes: beforeNotes } as Ticket, 'Add note', newNotesJson);
+    pushNotesUndo({ ...ticket, notes: beforeNotes }, 'Add note', newNotesJson);
     ticket.notes = newNotesJson;
     openDetailAndFocusNote(state.activeTicketId, newNoteId);
   });

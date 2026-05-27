@@ -503,7 +503,7 @@ export function listTools(): ToolListEntry[] {
   return TOOLS.map(t => ({
     name: t.name,
     description: t.description,
-    inputSchema: z.toJSONSchema(t.inputSchema) as Record<string, unknown>,
+    inputSchema: z.toJSONSchema(t.inputSchema),
   }));
 }
 
@@ -516,13 +516,13 @@ export async function callTool(
   name: string,
   args: unknown,
   dataDir: string,
-  // HS-8567 — `globalThis.fetch` returns the standard `Promise<Response>`;
-  // `FetchLike` is our narrowed signature for test-injection. The two are
-  // structurally compatible at every call shape we use; the `as unknown
-  // as` skips a structural-compatibility check that TS can't perform on a
-  // function default. Production callers never pass `fetchFn` so the
-  // narrower signature only matters in tests where the seam is honored.
-  fetchFn: FetchLike = globalThis.fetch as unknown as FetchLike,
+  // HS-8567 — `FetchLike` is our narrowed signature for test-injection;
+  // `globalThis.fetch` is directly assignable to it (no cast needed). Production
+  // callers never pass `fetchFn`, so the narrowed signature only matters in
+  // tests where the seam is honored. (HS-8602 dropped a former
+  // `as unknown as FetchLike` cast here once a typescript-eslint bump confirmed
+  // it was redundant.)
+  fetchFn: FetchLike = globalThis.fetch,
 ): Promise<ToolCallResult> {
   const tool = TOOLS.find(t => t.name === name);
   if (tool === undefined) {

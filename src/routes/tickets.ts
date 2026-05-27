@@ -192,7 +192,7 @@ ticketRoutes.post('/tickets', async (c) => {
   const fileSettings = readFileSettings(c.get('dataDir'));
   const prefix = fileSettings.ticketPrefix !== undefined && fileSettings.ticketPrefix !== '' ? fileSettings.ticketPrefix : undefined;
 
-  const ticket = await createTicket(title, defaults as Parameters<typeof createTicket>[1], prefix);
+  const ticket = await createTicket(title, defaults, prefix);
 
   // When created via API/AI (no User-Action header), mark as unread so the user sees a blue dot
   const isUserAction = c.req.header('X-Hotsheet-User-Action') === 'true';

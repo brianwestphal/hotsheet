@@ -348,7 +348,7 @@ describe('applyPerProjectDrawerState — user mid-fetch click wins (HS-8443)', (
       }
       // Default: empty 200 JSON for any other endpoint the boot path touches.
       return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
-    }) as typeof globalThis.fetch;
+    });
 
     const { applyPerProjectDrawerState, _openPanelForTesting } = await import('./commandLog.js');
 

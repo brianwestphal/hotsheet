@@ -19,7 +19,7 @@ const { apiMock } = vi.hoisted(() => ({
 // mocking `./api.js`. The transport returns the raw `{ prefixes }` body, which
 // `apiCall` validates against `PrefixesRespSchema` and unwraps to the array.
 beforeEach(() => {
-  setApiTransport(apiMock as unknown as ApiTransport);
+  setApiTransport(apiMock);
 });
 
 afterEach(() => {

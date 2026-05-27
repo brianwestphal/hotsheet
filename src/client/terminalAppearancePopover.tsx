@@ -204,15 +204,15 @@ function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
 
   const applyField = (field: keyof TerminalAppearance, value: string | number): void => {
     if (opts.isDynamic) {
-      setSessionOverride(opts.terminalId, { [field]: value } as Partial<TerminalAppearance>);
+      setSessionOverride(opts.terminalId, { [field]: value });
       opts.onApply();
     } else {
       // HS-7896 — update the caller's in-memory config snapshot SYNCHRONOUSLY
       // before kicking off the disk persist + onApply, so reapplyAppearance
       // (which reads `inst.config` via resolveInstanceAppearance) sees the
       // freshly chosen value on the very first re-render.
-      opts.onConfigOverrideChange?.({ [field]: value } as Partial<TerminalAppearance>);
-      void persistConfiguredOverride(opts.terminalId, { [field]: value } as Partial<TerminalAppearance>);
+      opts.onConfigOverrideChange?.({ [field]: value });
+      void persistConfiguredOverride(opts.terminalId, { [field]: value });
       opts.onApply();
     }
   };

@@ -85,7 +85,7 @@ export function spawnHotSheet(options: SpawnHotSheetOptions = {}): SpawnedHotShe
     const text = typeof c === 'string' ? c : c.toString('utf-8');
     buffered += text;
     for (let i = waiters.length - 1; i >= 0; i--) {
-      const w = waiters[i] as { marker: string; resolve: () => void };
+      const w = waiters[i];
       if (buffered.includes(w.marker)) {
         w.resolve();
         waiters.splice(i, 1);

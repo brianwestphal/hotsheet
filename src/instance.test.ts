@@ -122,7 +122,7 @@ describe('isInstanceRunning', () => {
   });
 
   it('returns false on connection error', async () => {
-    globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as typeof fetch;
+    globalThis.fetch = () => Promise.reject(new Error('ECONNREFUSED'));
     expect(await isInstanceRunning(4174)).toBe(false);
   });
 });
@@ -155,7 +155,7 @@ describe('cleanupStaleInstance', () => {
   it('cleans up when PID is dead and port is not active', async () => {
     // Use a PID that is almost certainly not alive
     writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: 2147483647 }));
-    globalThis.fetch = (() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as typeof fetch;
+    globalThis.fetch = () => Promise.reject(new Error('ECONNREFUSED'));
 
     const result = await cleanupStaleInstance();
     expect(result).toBe(true);

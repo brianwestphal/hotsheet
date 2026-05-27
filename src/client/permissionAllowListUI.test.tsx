@@ -135,7 +135,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
   });
 
   it('renders an empty-state hint and the Add button when no rules exist', async () => {
-    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: [] } as never);
+    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: [] });
     await loadAndRenderAllowList();
     const list = document.getElementById('permission-allow-list')!;
     expect(list.querySelector('.permission-allow-empty')).not.toBeNull();
@@ -147,7 +147,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
       { id: 'r1', tool: 'Bash', pattern: '^git status$', added_at: '2026-04-28T00:00:00Z', added_by: 'overlay' },
       { id: 'r2', tool: 'Read', pattern: '^/etc/hosts$', added_at: '2026-04-29T00:00:00Z', added_by: 'settings' },
     ];
-    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: rules } as never);
+    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: rules });
     await loadAndRenderAllowList();
     const list = document.getElementById('permission-allow-list')!;
     const rows = list.querySelectorAll('.permission-allow-rule-row');
@@ -164,7 +164,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
     const longPattern = '^npx vitest run src/text-to-pattern/extremely/long/path/here$';
     vi.mocked(api).mockResolvedValueOnce({
       permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: longPattern, added_at: 'now' }],
-    } as never);
+    });
     await loadAndRenderAllowList();
     const code = document.querySelector<HTMLElement>('.permission-allow-rule-pattern')!;
     expect(code.getAttribute('title')).toBe(longPattern);
@@ -174,7 +174,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
   it('clicking the row opens the editor in edit mode pre-filled with the rule', async () => {
     vi.mocked(api).mockResolvedValueOnce({
       permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: '^git status$', added_at: 'now' }],
-    } as never);
+    });
     await loadAndRenderAllowList();
     const row = document.querySelector<HTMLElement>('.permission-allow-rule-row')!;
     row.click();
@@ -190,7 +190,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
   it('clicking the pencil opens the editor (and stops propagation so the row click does not fire twice)', async () => {
     vi.mocked(api).mockResolvedValueOnce({
       permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: '^x$', added_at: 'now' }],
-    } as never);
+    });
     await loadAndRenderAllowList();
     const editBtn = document.querySelector<HTMLButtonElement>('.permission-allow-edit')!;
     editBtn.click();
@@ -206,12 +206,12 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
     // First call: initial fetch. Second call: re-fetch inside deleteRule.
     // Third: PATCH (returns whatever).
     vi.mocked(api)
-      .mockResolvedValueOnce({ permission_allow_rules: rules } as never)
-      .mockResolvedValueOnce({ permission_allow_rules: rules } as never)
+      .mockResolvedValueOnce({ permission_allow_rules: rules })
+      .mockResolvedValueOnce({ permission_allow_rules: rules })
       // PATCH response — the server returns the updated FileSettings, which the
       // typed `updateFileSettings` validates, so this must be a valid object
       // (not `undefined`, which would fail the schema in a fire-and-forget call).
-      .mockResolvedValueOnce({ permission_allow_rules: [rules[1]] } as never);
+      .mockResolvedValueOnce({ permission_allow_rules: [rules[1]] });
     await loadAndRenderAllowList();
     const trashBtn = document.querySelector<HTMLButtonElement>('.permission-allow-rule-row[data-rule-id="r1"] .permission-allow-delete')!;
     trashBtn.click();

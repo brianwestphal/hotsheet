@@ -174,7 +174,7 @@ export function setChannelAlive(alive: boolean) {
  *  bundle. The 30 s heartbeat-timer machinery (`extendBusyForProject`)
  *  remains imperative — timer handles aren't reactive state. */
 const projectAttentionStore = defineStore({
-  initial: () => ({ secrets: new Set<string>() as ReadonlySet<string> }),
+  initial: () => ({ secrets: new Set<string>() }),
   actions: (set, get) => ({
     markAttention: (secret: string) => {
       const next = new Set(get().secrets);

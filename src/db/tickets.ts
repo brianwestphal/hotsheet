@@ -183,7 +183,7 @@ export async function updateTicket(id: number, updates: Partial<{
 }
 
 export async function deleteTicket(id: number): Promise<void> {
-  await updateTicket(id, { status: 'deleted' as TicketStatus });
+  await updateTicket(id, { status: 'deleted' });
 }
 
 export async function hardDeleteTicket(id: number): Promise<void> {
@@ -606,7 +606,7 @@ export async function queryTickets(
 // --- Trash ---
 
 export async function restoreTicket(id: number): Promise<Ticket | null> {
-  return updateTicket(id, { status: 'not_started' as TicketStatus });
+  return updateTicket(id, { status: 'not_started' });
 }
 
 export async function batchRestoreTickets(ids: number[]): Promise<void> {

@@ -67,7 +67,7 @@ function makePayload(overrides: Partial<DashboardPayload> & Record<string, unkno
     hourlyActivity: [],
     costOverTime: [],
   };
-  return { ...base, ...overrides } as DashboardPayload;
+  return { ...base, ...overrides };
 }
 
 describe('renderShell (HS-8507 cross-project stats page)', () => {

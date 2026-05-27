@@ -176,6 +176,13 @@ describe('jsx — component functions', () => {
     function Wrapper(props: { children?: SafeHtml | string }) {
       return jsx('div', { className: 'wrapper', children: props.children });
     }
+    // Wrapper's all-optional props are narrower than jsx()'s Props (whose
+    // `children` includes null + an index signature), so the component type
+    // must be forced — `tsc` errors (TS2345) if this assertion is removed.
+    // typescript-eslint 8.60.0 nonetheless reports it as unnecessary (a
+    // false-positive specific to all-optional-param bivariance; the identical
+    // cast on `Greeting` above is correctly left alone), so suppress it here.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
     const result = jsx(Wrapper as (props: Record<string, unknown>) => SafeHtml, { children: jsx('p', { children: 'inside' }) });
     expect(result.__html).toBe('<div class="wrapper"><p>inside</p></div>');
   });

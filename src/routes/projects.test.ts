@@ -391,7 +391,7 @@ describe('GET /projects/permissions — channel-unreachable signaling (HS-8207)'
         ));
       }
       return Promise.reject(new Error('unexpected url ' + u));
-    }) as unknown as typeof fetch;
+    });
 
     try {
       // Pass v with a high value so the version-ahead fast path doesn't

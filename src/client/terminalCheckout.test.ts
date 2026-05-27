@@ -869,7 +869,7 @@ describe('applyHistoryReplay — restores consumer dims after replay (HS-8064)',
 
     const termResize = vi.spyOn(h.term, 'resize');
     const entry = _getEntryForTesting('s', 't');
-    applyHistoryReplay(entry!, { cols: 80, rows: 24 } as { bytes?: string; cols?: number; rows?: number });
+    applyHistoryReplay(entry!, { cols: 80, rows: 24 });
     expect(termResize).not.toHaveBeenCalled();
     expect(h.term.cols).toBe(120);
     expect(h.term.rows).toBe(40);
@@ -983,7 +983,7 @@ describe('applyHistoryReplay — clears buffer before replay (HS-8287)', () => {
     const resetSpy = vi.spyOn(h.term, 'reset');
     const resizeSpy = vi.spyOn(h.term, 'resize');
     const entry = _getEntryForTesting('s', 't');
-    applyHistoryReplay(entry!, { cols: 80, rows: 24 } as { bytes?: string; cols?: number; rows?: number });
+    applyHistoryReplay(entry!, { cols: 80, rows: 24 });
     expect(resetSpy).not.toHaveBeenCalled();
     expect(resizeSpy).not.toHaveBeenCalled();
 
@@ -1596,7 +1596,7 @@ describe('device-status reply suppression during replay (HS-8610)', () => {
       replayingDuringWrite = entry.replaying;
       if (typeof cb === 'function') cb();
       return true;
-    }) as typeof entry.term.write);
+    }));
 
     applyHistoryReplay(entry, { bytes: btoa('\x1b[?6n'), cols: 80, rows: 24 });
 

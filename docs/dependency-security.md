@@ -21,15 +21,15 @@ independently of our release cadence.
 Two jobs:
 
 - **`npm-audit`** — `npm audit --omit=dev --audit-level=high`. Production tree
-  only: roughly 40 of the ~55 current advisories are dev-toolchain (eslint,
-  vitest, nyc, sass, tsup, esbuild, …) that never ship, so `--omit=dev` keeps
-  the signal on what actually ends up in `dist/` and the sidecar.
+  only: the dev toolchain (eslint, vitest, nyc, sass, tsup, esbuild, …) never
+  ships, so `--omit=dev` keeps the signal on what actually ends up in `dist/`
+  and the sidecar. **Blocking** as of HS-8602 (the production tree is clean — see
+  the baseline note below).
 - **`cargo-audit`** — `cargo audit` against `src-tauri/Cargo.lock` via the
   RustSec advisory DB. Before HS-8601, nothing screened the shipped desktop
-  binary's crates at all.
-
-Both jobs are currently **non-blocking** (`continue-on-error: true`) — see the
-baseline note below.
+  binary's crates at all. Still **non-blocking** (`continue-on-error: true`):
+  HS-8602 was npm-scoped, so the Rust baseline hasn't been triaged + cleared
+  yet; that's a follow-up before flipping this job to blocking too.
 
 ## Dependabot (HS-8601)
 
@@ -40,28 +40,37 @@ change gets its own review.
 
 ## The current baseline & the "reachability" triage rule (HS-8592 / HS-8602)
 
-`npm audit` reports a scary-looking count (~55: 30 moderate / 25 high as of the
-HS-8592 audit), but most of it is noise, and the audit jobs stay non-blocking
-until that's cleaned up under **HS-8602**:
+The HS-8592 audit reported a scary-looking ~55 (30 moderate / 25 high), but most
+of it was noise. **HS-8602 cleared it.** A plain `npm update` (semver-compatible
+bumps only — no `--force`) pulled the in-range fixes and dropped the count to **3
+moderate / 0 high**:
 
-- **~40 are dev-only** — build/test toolchain, never shipped. `--omit=dev`
-  drops them.
-- The headline **high-severity production advisories are unreachable**: the MCP
-  SDK (`@modelcontextprotocol/sdk`) bundles an Express 5 stack (`express`,
-  `body-parser`, `qs`, `router`, `path-to-regexp`, `express-rate-limit`, all
-  DoS/ReDoS), but **Hot Sheet never imports `express`** — `src/channel.ts` uses
-  Node's raw `createServer` plus the MCP SDK `Server` class, so that transport
-  is never instantiated.
-- The genuinely reachable production items (`ws`, `marked`) are low-risk on a
-  localhost-bound single-user tool and have in-range fixes.
+- `@modelcontextprotocol/sdk` 1.27.1 → 1.29.0, which in turn upgraded the bundled
+  Express 5 transitive stack (`path-to-regexp` → 8.4.2, `qs` → 6.15.2), clearing
+  the bulk of the high-severity production advisories.
+- The genuinely reachable production items: `ws` 8.20.0 → 8.21.0,
+  `marked` 18.0.0 → 18.0.4 (plus `hono` 4.12.7 → 4.12.23).
+
+After the bumps:
+
+- **`npm audit --omit=dev --audit-level=high` reports 0 vulnerabilities** — the
+  production gate now passes on a clean baseline, so its job is **blocking**.
+- The only residual advisories are **3 moderate dev-only** items in the
+  `nyc` → `istanbul-lib-processinfo` → `uuid` coverage chain. They are excluded
+  by `--omit=dev` and below the `--audit-level=high` threshold, so they don't
+  gate. npm's only offered fix is a `--force` downgrade to `nyc@14.1.1` (a
+  breaking major rollback), which is not worth taking for a dev-only,
+  never-shipped coverage tool. No `audit-ci`/allowlist file is needed — the
+  gate's `--omit=dev --audit-level=high` scope already excludes them.
 
 **Triage rule:** before treating a production advisory as actionable, confirm
 the vulnerable code path is actually reachable from Hot Sheet's own code.
-Unreachable transitive advisories (dead-code transports, etc.) should be
-recorded with a short justification rather than chased. Once HS-8602 lands the
-`npm update` + `npm audit fix` + triage that yields a clean/justified baseline,
-flip `continue-on-error` off in `security-audit.yml` so the gate becomes
-blocking.
+Unreachable transitive advisories (dead-code transports — e.g. the MCP SDK's
+bundled Express 5 stack, which Hot Sheet never instantiates because
+`src/channel.ts` uses Node's raw `createServer` + the MCP SDK `Server` class)
+should be recorded with a short justification rather than chased. When the
+production gate goes red, either upgrade to a fixed version or — if the advisory
+is provably unreachable — document the justification here before merging.
 
 ## Running the audits locally
 

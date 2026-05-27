@@ -363,7 +363,7 @@ function defaultFactory(args: SpawnArgs): PtyLike {
     cols: args.cols,
     rows: args.rows,
     cwd: args.cwd,
-    env: args.env as { [key: string]: string },
+    env: args.env,
   });
   return pty;
 }

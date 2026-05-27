@@ -178,7 +178,7 @@ export function applyHideButtonBadge(button: HTMLElement | null, count: number):
     return;
   }
   if (badge === null) {
-    badge = toElement(<span className="hide-btn-badge" />) as HTMLSpanElement;
+    badge = toElement(<span className="hide-btn-badge" />);
     button.appendChild(badge);
   }
   const text = count > 99 ? '99+' : String(count);
