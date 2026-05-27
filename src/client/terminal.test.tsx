@@ -435,3 +435,49 @@ describe('loadAndRenderTerminalTabs — drawer bindList identity (HS-8312)', () 
     expect((tabsAfter[2] as HTMLElement).dataset.terminalId).toBe('t3');
   });
 });
+
+/**
+ * HS-8657 — middle-click (auxclick button 1) closes a terminal tab, matching
+ * macOS Terminal.app + the X button. Gated on `dynamic`: configured terminals
+ * aren't closeable. Right-click (button 2) routes to the context menu, not close.
+ * The test PTYs aren't alive (no real websocket), so `closeDynamicTerminal`
+ * skips the confirm dialog and destroys + removes the tab directly — the
+ * alive-only confirm path is covered by the existing X-button / context-menu
+ * close coverage.
+ */
+function auxclick(el: HTMLElement, button: number): void {
+  el.dispatchEvent(new MouseEvent('auxclick', { button, bubbles: true, cancelable: true }));
+}
+
+describe('middle-click closes a terminal tab (HS-8657)', () => {
+  it('middle-click (button 1) on a DYNAMIC tab closes it', async () => {
+    apiMock.mockResolvedValue({ configured: [], dynamic: [{ id: 'dyn-1', name: 'sh', command: 'sh', dynamic: true }], home: '/Users/test' });
+    await loadAndRenderTerminalTabs();
+    const tab = document.querySelector<HTMLElement>('[data-terminal-id="dyn-1"]');
+    expect(tab).not.toBeNull();
+    auxclick(tab!, 1);
+    await vi.waitFor(() => { expect(document.querySelector('[data-terminal-id="dyn-1"]')).toBeNull(); });
+  });
+
+  it('middle-click on a CONFIGURED tab is a no-op (configured terminals are not closeable)', async () => {
+    apiMock.mockResolvedValue({ configured: [{ id: 'cfg-1', name: 'zsh', command: 'zsh' }], dynamic: [], home: '/Users/test' });
+    await loadAndRenderTerminalTabs();
+    const tab = document.querySelector<HTMLElement>('[data-terminal-id="cfg-1"]');
+    expect(tab).not.toBeNull();
+    auxclick(tab!, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.querySelector('[data-terminal-id="cfg-1"]')).not.toBeNull();
+  });
+
+  it('right-click (button 2) on a dynamic tab does NOT close it (that opens the context menu)', async () => {
+    apiMock.mockResolvedValue({ configured: [], dynamic: [{ id: 'dyn-1', name: 'sh', command: 'sh', dynamic: true }], home: '/Users/test' });
+    await loadAndRenderTerminalTabs();
+    const tab = document.querySelector<HTMLElement>('[data-terminal-id="dyn-1"]');
+    expect(tab).not.toBeNull();
+    auxclick(tab!, 2);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.querySelector('[data-terminal-id="dyn-1"]')).not.toBeNull();
+  });
+});

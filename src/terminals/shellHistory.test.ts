@@ -107,14 +107,31 @@ describe('sanitiseFishName (HS-7965)', () => {
   });
 });
 
-describe('buildBashRc (HS-7965)', () => {
-  it('sources ~/.bashrc first then exports HISTFILE + reads it', () => {
+describe('buildBashRc (HS-7965, HS-8654)', () => {
+  it('reproduces login-shell startup files (bash_profile chain + bashrc fallback) before the HISTFILE override', () => {
     const out = buildBashRc('/proj/.hotsheet/shell_history/t1');
+    // HS-8654 — the user's real macOS terminal launches bash as a LOGIN shell,
+    // so the generated rc must source the login chain (where most bash users
+    // keep PATH/env), not just ~/.bashrc.
+    expect(out).toContain(`source "$HOME/.bash_profile"`);
+    expect(out).toContain(`source "$HOME/.bash_login"`);
+    expect(out).toContain(`source "$HOME/.profile"`);
     expect(out).toContain(`source "$HOME/.bashrc"`);
     expect(out).toContain(`export HISTFILE='/proj/.hotsheet/shell_history/t1'`);
     expect(out).toContain(`history -r "$HISTFILE"`);
-    // The source line precedes the override so the user rc loads FIRST.
+    // All four startup files precede the HISTFILE override so the user's rc
+    // loads FIRST and our override lands AFTER (the whole point — see header).
     expect(out.indexOf('source "$HOME/.bashrc"')).toBeLessThan(out.indexOf('export HISTFILE'));
+  });
+
+  it('selects the startup files first-match-wins (bash_profile, then bash_login, then profile, then bashrc)', () => {
+    // First-match-only mirrors bash's own login-shell selection and (by the
+    // .bash_profile-sources-.bashrc convention) avoids double-sourcing .bashrc.
+    const out = buildBashRc('/proj/.hotsheet/shell_history/t1');
+    expect(out).toMatch(/if \[ -f "\$HOME\/\.bash_profile" \]/);
+    expect(out.indexOf('.bash_profile')).toBeLessThan(out.indexOf('.bash_login'));
+    expect(out.indexOf('.bash_login')).toBeLessThan(out.indexOf('.profile'));
+    expect(out.indexOf('.profile')).toBeLessThan(out.indexOf('.bashrc'));
   });
 
   it('quotes the histfile path so spaces / quotes survive', () => {

@@ -939,6 +939,20 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+O")
                 .build(app)?;
 
+            // HS-8655 — custom "Close Tab" item instead of the predefined
+            // `.close_window()`. The predefined item binds ⌘W to closing the
+            // OS window (which the user never wants — ⌘W should close an
+            // in-app tab, never the whole app). By owning the item we route
+            // ⌘W through `on_menu_event` → the `app:close-tab` JS event, which
+            // the frontend turns into "close the focused terminal (with
+            // confirm) or the active project tab (with confirm)". The window
+            // stays closeable via the red traffic light and ⌘Q (both of which
+            // still run the §37 quit-confirm flow).
+            let close_tab_item = MenuItemBuilder::new("Close Tab")
+                .id("app-close-tab")
+                .accelerator("CmdOrCtrl+W")
+                .build(app)?;
+
             // HS-7596 / §37 — custom Quit item instead of the predefined `.quit()`.
             // The predefined item maps to NSApp::terminate: on macOS, which in
             // this Tauri version does NOT fire RunEvent::ExitRequested reliably
@@ -983,7 +997,7 @@ pub fn run() {
             let window_menu = SubmenuBuilder::new(app, "Window")
                 .minimize()
                 .separator()
-                .close_window()
+                .item(&close_tab_item)
                 .build()?;
             MenuBuilder::new(app)
                 .item(&app_menu)
@@ -1012,6 +1026,14 @@ pub fn run() {
                 "app-open-folder" => {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.eval("window.dispatchEvent(new Event('app:open-folder'))");
+                    }
+                }
+                "app-close-tab" => {
+                    // HS-8655 — ⌘W never closes the window. Route it to the
+                    // frontend, which closes the focused terminal (with
+                    // confirm) or the active project tab (with confirm).
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.eval("window.dispatchEvent(new Event('app:close-tab'))");
                     }
                 }
                 "app-quit" => {

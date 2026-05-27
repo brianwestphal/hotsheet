@@ -235,20 +235,24 @@ export function switchTabByOffset(offset: number): void {
   void switchProject(list[next]);
 }
 
-/** Close the active tab. */
-export function closeActiveTab(): void {
+/**
+ * Close the active tab. `skipConfirm` bypasses the §37 running-terminal
+ * confirm — the Cmd+W path (HS-8655) supplies its own unconditional confirm
+ * upstream, so re-confirming here would double-prompt.
+ */
+export function closeActiveTab(skipConfirm = false): void {
   const active = getActiveProject();
-  if (active) void removeProject(active);
+  if (active) void removeProject(active, skipConfirm);
 }
 
 // --- Remove helpers ---
 
-async function removeProject(project: ProjectInfo): Promise<void> {
+async function removeProject(project: ProjectInfo, skipConfirm = false): Promise<void> {
   if (projectsStore.state.value.projects.length <= 1) return;
   // HS-8604 — §37-style confirmation when the tab has running / non-exempt
   // terminals (gated by the per-project `confirm_quit_with_running_terminals`
   // setting). Aborts the close if the user cancels.
-  if (!(await confirmCloseProjects([project.secret]))) return;
+  if (!skipConfirm && !(await confirmCloseProjects([project.secret]))) return;
   try {
     // HS-8085 — DELETE auths via the URL `:secret` param, not the
     // `X-Hotsheet-Secret` header (see `src/routes/projects.ts:90`); the

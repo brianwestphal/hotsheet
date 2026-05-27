@@ -14,7 +14,7 @@ Each shell exposes a different override hook:
 
 | Shell | Override | Generated init-file content |
 | --- | --- | --- |
-| **bash** | `--rcfile <path>` CLI arg | sources `~/.bashrc` (defensive `[ -f ]`) → exports per-terminal `HISTFILE` → `history -r "$HISTFILE"` |
+| **bash** | `--rcfile <path>` CLI arg | reproduces login-shell startup-file selection — sources the first existing of `~/.bash_profile` / `~/.bash_login` / `~/.profile`, with `~/.bashrc` as a fallback (HS-8654) → exports per-terminal `HISTFILE` → `history -r "$HISTFILE"` |
 | **zsh**  | `ZDOTDIR=<dir>` env var | generated `<dir>/.zshrc` sources `$HOME/.zshrc` → exports `HISTFILE` → `fc -p "$HISTFILE"`. Companion `<dir>/.zshenv` + `<dir>/.zprofile` shims source the user's matching home rcs so the full rc-load chain is preserved. |
 | **fish** | `XDG_CONFIG_HOME=<dir>` env var | generated `<dir>/fish/config.fish` sources `~/.config/fish/config.fish` → `set -x fish_history hotsheet_<projectHash>_<terminalId>` (fish indexes by session NAME, not file path; the resulting file lives at `~/.local/share/fish/<name>_history`) |
 
@@ -34,7 +34,7 @@ All generated init files + history files live under `<dataDir>/.hotsheet/` so th
 
 ## 51.4 Bash command rewrite
 
-Bash is the awkward one: `--rcfile` is a CLI argument, not an env var, so we can't override via `buildEnv()`. The wrap happens in `setupShellHistoryForSpawn` via the pure helper `rewriteBashCommand(command, rcPath)`:
+Bash is the awkward one: `--rcfile` is a CLI argument, not an env var, so we can't override via `buildEnv()`. It also makes bash **non-login**, which normally reads only `~/.bashrc` — but the user's real macOS terminal launches bash as a **login** shell that reads `~/.bash_profile` (the chain), where most bash users keep their PATH / env. So `buildBashRc` reproduces login-shell startup-file selection (first existing of `.bash_profile` / `.bash_login` / `.profile`, `.bashrc` fallback) so the user's environment loads exactly as it does in their normal terminal (HS-8654 — pre-fix only `~/.bashrc` was sourced, so a user whose config lives in `.bash_profile` got none of it). The command wrap happens in `setupShellHistoryForSpawn` via the pure helper `rewriteBashCommand(command, rcPath)`:
 
 - `bash` → `bash --rcfile '<path>'`.
 - `bash -i` → `bash --rcfile '<path>' -i` (preserves trailing args).
@@ -81,4 +81,4 @@ No UI for this in v1 — the default Just Works; power users who want the global
 
 - New `src/terminals/shellHistory.ts` — the entire feature. Pure helpers (`classifyShellCommand`, `normaliseHistoryScope`, `shellEscape`, `sanitiseFishName`, `buildBashRc` / `buildZshRc` / `buildZshShim` / `buildFishConfig`, `rewriteBashCommand`) + the imperative entry point `setupShellHistoryForSpawn`.
 - Edited `src/terminals/registry.ts` — `spawnIntoSession` calls the new helper; `buildEnv` extended to accept extra vars.
-- 25 unit tests in `src/terminals/shellHistory.test.ts` covering classification, scope normalisation, shell-escape rules, fish-name sanitisation, all 4 init-file builders, and bash-command rewrite (bare / with-args / already-has-rcfile / login-shell-skip / quote-escaping).
+- 26 unit tests in `src/terminals/shellHistory.test.ts` covering classification, scope normalisation, shell-escape rules, fish-name sanitisation, all 4 init-file builders (including the HS-8654 bash login-chain selection + ordering), and bash-command rewrite (bare / with-args / already-has-rcfile / login-shell-skip / quote-escaping).

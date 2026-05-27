@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { toElement } from './dom.js';
 import type { KeyContext } from './shortcuts.js';
 import {
+  decideCloseTabTarget,
   decideShiftArrowTabAction,
   findVisibleModalOverlay,
   isCommandsLogFocused,
@@ -585,5 +586,66 @@ describe('shouldPreventHistoryBackKey (HS-8418)', () => {
     expect(shouldPreventHistoryBackKey(ev('Enter'), noFocusCtx)).toBe(false);
     expect(shouldPreventHistoryBackKey(ev('ArrowLeft'), noFocusCtx)).toBe(false);
     expect(shouldPreventHistoryBackKey(ev('Escape'), noFocusCtx)).toBe(false);
+  });
+});
+
+describe('decideCloseTabTarget (HS-8655 — Cmd+W)', () => {
+  const yesDynamic = () => true;
+  const noDynamic = () => false;
+
+  it('closes the focused dynamic terminal', () => {
+    expect(decideCloseTabTarget({
+      isTerminalFocused: true,
+      activeDrawerTab: 'terminal:dyn-3',
+      isDynamicTerminal: yesDynamic,
+      projectCount: 2,
+    })).toEqual({ kind: 'terminal', id: 'dyn-3' });
+  });
+
+  it('is a no-op when the focused terminal is configured (not closeable)', () => {
+    expect(decideCloseTabTarget({
+      isTerminalFocused: true,
+      activeDrawerTab: 'terminal:main',
+      isDynamicTerminal: noDynamic,
+      projectCount: 2,
+    })).toEqual({ kind: 'none' });
+  });
+
+  it('does NOT fall through to the project tab while a terminal is focused', () => {
+    // Even with a closeable project tab available, a focused (configured)
+    // terminal keeps Cmd+W a no-op rather than closing the project behind it.
+    expect(decideCloseTabTarget({
+      isTerminalFocused: true,
+      activeDrawerTab: 'commands-log',
+      isDynamicTerminal: yesDynamic,
+      projectCount: 5,
+    })).toEqual({ kind: 'none' });
+  });
+
+  it('is a no-op for a malformed terminal: drawer tab with an empty id', () => {
+    expect(decideCloseTabTarget({
+      isTerminalFocused: true,
+      activeDrawerTab: 'terminal:',
+      isDynamicTerminal: yesDynamic,
+      projectCount: 2,
+    })).toEqual({ kind: 'none' });
+  });
+
+  it('closes the active project tab when no terminal is focused and more than one project is open', () => {
+    expect(decideCloseTabTarget({
+      isTerminalFocused: false,
+      activeDrawerTab: 'commands-log',
+      isDynamicTerminal: noDynamic,
+      projectCount: 2,
+    })).toEqual({ kind: 'project' });
+  });
+
+  it('never closes the last project tab (which would close the app)', () => {
+    expect(decideCloseTabTarget({
+      isTerminalFocused: false,
+      activeDrawerTab: 'commands-log',
+      isDynamicTerminal: noDynamic,
+      projectCount: 1,
+    })).toEqual({ kind: 'none' });
   });
 });

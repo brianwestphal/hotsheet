@@ -15,8 +15,12 @@
  * each shell's init-file override mechanism so the user's normal rc loads
  * FIRST and our HISTFILE override runs AFTER:
  *
- * - **bash** — spawn with `--rcfile <dir>/.bashrc`. Generated `.bashrc`
- *   sources `~/.bashrc` (defensive `[ -f ]` guard) then exports the
+ * - **bash** — spawn with `--rcfile <dir>/.bashrc`. Because that makes bash
+ *   non-login (it would otherwise read only `~/.bashrc`), the generated
+ *   `.bashrc` reproduces LOGIN-shell startup-file selection — the first
+ *   existing of `~/.bash_profile` / `~/.bash_login` / `~/.profile`, with
+ *   `~/.bashrc` as a fallback — so the user's environment loads exactly as it
+ *   does in their normal macOS terminal (HS-8654), then exports the
  *   per-terminal HISTFILE + `history -r` to load.
  * - **zsh** — `ZDOTDIR=<dir>` env redirects rc-file lookup. Generated
  *   `<dir>/.zshrc` sources `$HOME/.zshrc` (guarded) + exports HISTFILE +
@@ -180,15 +184,32 @@ function setupFish(dataDir: string, initRoot: string, terminalId: string): Shell
 // Init-file content builders (pure)
 // -------------------------------------------------------------------------
 
-/** Pure: generate the bash init-file body. Sources the user's normal
- *  `~/.bashrc` first (guarded) so the user's prompt / aliases / etc. are
- *  preserved, then exports the per-terminal HISTFILE + reads it. Exported
- *  for tests. */
+/** Pure: generate the bash init-file body. Because Hot Sheet spawns bash
+ *  non-login (via `--rcfile`), bash would normally read only `~/.bashrc` —
+ *  but the user's real macOS terminal launches bash as a LOGIN shell, which
+ *  reads `~/.bash_profile` (the first existing of `.bash_profile` /
+ *  `.bash_login` / `.profile`), where most bash users keep their PATH / env /
+ *  aliases (HS-8654). So the generated rc reproduces login-shell startup-file
+ *  selection (first match wins, `.bashrc` as the final fallback) so the
+ *  user's environment loads exactly as it does in their normal terminal, then
+ *  overrides the per-terminal HISTFILE + reads it. By convention `.bash_profile`
+ *  sources `.bashrc`, so the first-match-only chain mirrors the real shell
+ *  rather than double-sourcing `.bashrc`. Exported for tests. */
 export function buildBashRc(histFile: string): string {
   const escaped = shellEscape(histFile);
-  return `# Hot Sheet — generated. Sources the user's bashrc first, then overrides
-# HISTFILE so up-arrow recall is scoped to this terminal tab.
-[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc"
+  return `# Hot Sheet — generated. Reproduces the user's login-shell startup files
+# (first existing of .bash_profile / .bash_login / .profile, with .bashrc as a
+# fallback) the way macOS Terminal.app launches bash, then overrides HISTFILE
+# so up-arrow recall is scoped to this terminal tab.
+if [ -f "$HOME/.bash_profile" ]; then
+  source "$HOME/.bash_profile"
+elif [ -f "$HOME/.bash_login" ]; then
+  source "$HOME/.bash_login"
+elif [ -f "$HOME/.profile" ]; then
+  source "$HOME/.profile"
+elif [ -f "$HOME/.bashrc" ]; then
+  source "$HOME/.bashrc"
+fi
 export HISTFILE=${escaped}
 [ -f "$HISTFILE" ] && history -r "$HISTFILE"
 `;

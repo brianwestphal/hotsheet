@@ -4,8 +4,9 @@ import { getActiveDrawerTab } from './commandLog.js';
 import { byId, byIdOrNull } from './dom.js';
 import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
+import { projectsStore } from './projectsStore.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
-import { state } from './state.js';
+import { getActiveProject, state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { isFindShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
 import { focusActiveTerminalSearch } from './terminalSearch.js';
@@ -98,22 +99,22 @@ export function shouldPreventHistoryBackKey(e: KeyboardEvent, ctx: KeyContext): 
 
 const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   {
-    label: 'Cmd/Ctrl+Shift+[: previous project tab',
+    // HS-8656 — Cmd/Ctrl+Shift+[ / ] cycle tabs, matching macOS Terminal.app
+    // (which supports both the brackets AND the arrows). These are ALIASES for
+    // the Cmd/Ctrl+Shift+Arrow entry below — terminal-aware via
+    // `decideShiftArrowTabAction`: when a terminal (or the commands-log, non-
+    // input) is focused they cycle the DRAWER/terminal tab; otherwise they cycle
+    // the PROJECT tab (the pre-HS-8656 bracket behavior). Unlike the arrows,
+    // brackets are never a text-selection chord, so there's no input-
+    // fallthrough — a regular-input focus still cycles the project tab.
+    label: 'Cmd/Ctrl+Shift+[: previous tab (terminal-aware)',
     match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[',
-    run: (e) => {
-      e.preventDefault();
-      switchTabByOffset(-1);
-      return 'handled';
-    },
+    run: (e, ctx) => { e.preventDefault(); cycleTabForBracket(-1, e, ctx); return 'handled'; },
   },
   {
-    label: 'Cmd/Ctrl+Shift+]: next project tab',
+    label: 'Cmd/Ctrl+Shift+]: next tab (terminal-aware)',
     match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']',
-    run: (e) => {
-      e.preventDefault();
-      switchTabByOffset(1);
-      return 'handled';
-    },
+    run: (e, ctx) => { e.preventDefault(); cycleTabForBracket(1, e, ctx); return 'handled'; },
   },
   {
     // HS-6472 + HS-8366 — terminal-aware project/drawer tab cycling. The
@@ -414,6 +415,10 @@ export function bindKeyboardShortcuts() {
   window.addEventListener('app:redo', triggerRedo);
   window.addEventListener('app:preferences', () => byIdOrNull('settings-btn')?.click());
   window.addEventListener('app:open-folder', () => showOpenFolderDialog());
+  // HS-8655 — ⌘W (Tauri menu) closes the focused terminal or active project
+  // tab, never the OS window. Browser ⌘W can't be intercepted by JS, so this
+  // path is Tauri-only; the browser keeps its native close-tab behavior.
+  window.addEventListener('app:close-tab', () => { void closeFocusedTabOrProjectTab(); });
 
   // Keyboard fallback for browser mode (non-Tauri) — capture phase. Kept
   // outside the dispatch table because it has to fire BEFORE the
@@ -763,6 +768,22 @@ export function pickNextDrawerTabId(
   return tabs[nextIdx].tabId;
 }
 
+/** HS-8656 — Cmd/Ctrl+Shift+[ / ] tab cycling. Reuses the Cmd+Shift+Arrow
+ *  decision (`decideShiftArrowTabAction`) so the brackets behave identically —
+ *  drawer/terminal tab when a terminal is focused, project tab otherwise — but
+ *  brackets are never a text-selection chord, so a regular-input focus cycles
+ *  the project tab rather than falling through to the browser. */
+export function cycleTabForBracket(offset: number, e: KeyboardEvent, ctx: KeyContext): void {
+  const decision = decideShiftArrowTabAction({
+    isInput: ctx.isInput,
+    isTerminalFocused: ctx.isTerminalFocused,
+    isCommandsLogFocused: ctx.isCommandsLogFocused,
+    isAlt: e.altKey,
+  });
+  if (decision === 'drawer-tab') switchTerminalTabByOffset(offset);
+  else switchTabByOffset(offset); // 'project' | 'fallthrough' | 'fallthrough-alt'
+}
+
 function switchTerminalTabByOffset(offset: number): void {
   const tabs = Array.from(document.querySelectorAll<HTMLElement>('.drawer-tab[data-drawer-tab]'));
   const tabSummaries = tabs.map(el => ({
@@ -772,4 +793,89 @@ function switchTerminalTabByOffset(offset: number): void {
   const targetId = pickNextDrawerTabId(tabSummaries, offset);
   if (targetId === null || targetId === '') return;
   void import('./commandLog.js').then(({ switchDrawerTab }) => { switchDrawerTab(targetId); });
+}
+
+/**
+ * HS-8655 — the target ⌘W should act on. ⌘W must NEVER close the OS window
+ * (the Tauri menu routes it here via the `app:close-tab` event instead of the
+ * predefined Close-Window item):
+ *
+ * - `terminal` — a dynamic (closeable) terminal owns focus → close it.
+ * - `project`  — no terminal is focused and there's more than one project tab
+ *   → close the active one.
+ * - `none`     — nothing safely closeable: a configured (persistent) terminal
+ *   is focused, or the only project tab would be closed (which would close the
+ *   app). ⌘W is a no-op.
+ *
+ * Pure + injectable so unit tests can pin every cell without a live terminal
+ * registry or project store.
+ */
+export type CloseTabTarget =
+  | { readonly kind: 'terminal'; readonly id: string }
+  | { readonly kind: 'project' }
+  | { readonly kind: 'none' };
+
+export interface CloseTabContext {
+  readonly isTerminalFocused: boolean;
+  /** `getActiveDrawerTab()` output — `'commands-log'` or `'terminal:<id>'`. */
+  readonly activeDrawerTab: string;
+  /** `isDynamic(id)` from the terminal registry — only dynamic terminals close. */
+  readonly isDynamicTerminal: (id: string) => boolean;
+  readonly projectCount: number;
+}
+
+export function decideCloseTabTarget(ctx: CloseTabContext): CloseTabTarget {
+  if (ctx.isTerminalFocused) {
+    // A terminal owns focus → close THAT terminal, but only when it's a
+    // dynamic (closeable) one. Configured terminals are persistent and can't
+    // be closed (matching the context-menu "Close Tab" gate), so ⌘W is a
+    // no-op rather than falling through to close the project tab.
+    const prefix = 'terminal:';
+    if (ctx.activeDrawerTab.startsWith(prefix)) {
+      const id = ctx.activeDrawerTab.slice(prefix.length);
+      if (id !== '' && ctx.isDynamicTerminal(id)) return { kind: 'terminal', id };
+    }
+    return { kind: 'none' };
+  }
+  // No terminal focused → close the active project tab, but never the last one
+  // (closing it would leave no project open — effectively closing the app).
+  if (ctx.projectCount > 1) return { kind: 'project' };
+  return { kind: 'none' };
+}
+
+/**
+ * HS-8655 — handler for the Tauri `app:close-tab` event (⌘W). Closes the
+ * focused dynamic terminal (its own confirm fires when the PTY is alive) or,
+ * when no terminal is focused, the active project tab behind an unconditional
+ * confirm. Never closes the OS window.
+ */
+export async function closeFocusedTabOrProjectTab(): Promise<void> {
+  const { isDynamic } = await import('./terminalTabContextMenu.js');
+  const target = decideCloseTabTarget({
+    isTerminalFocused: isTerminalFocused(),
+    activeDrawerTab: getActiveDrawerTab(),
+    isDynamicTerminal: isDynamic,
+    projectCount: projectsStore.state.value.projects.length,
+  });
+  if (target.kind === 'terminal') {
+    // closeDynamicTerminal shows its own confirm dialog when the PTY is alive.
+    const { closeDynamicTerminal } = await import('./terminalInstanceLifecycle.js');
+    await closeDynamicTerminal(target.id);
+    return;
+  }
+  if (target.kind === 'project') {
+    const active = getActiveProject();
+    if (active === null) return;
+    const { confirmDialog } = await import('./confirm.js');
+    const ok = await confirmDialog({
+      title: 'Close tab?',
+      message: `Close the "${active.name}" project tab? Its terminals will be stopped.`,
+      confirmLabel: 'Close tab',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    // skipConfirm — we already confirmed here, so removeProject must not
+    // re-prompt with its §37 running-terminal confirm.
+    if (ok) closeActiveTab(true);
+  }
 }

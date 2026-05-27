@@ -137,6 +137,18 @@ function bindTabBtnHandlers(tabBtn: HTMLElement, config: TerminalTabConfig): voi
     e.stopPropagation();
     void closeDynamicTerminal(config.id);
   });
+  // HS-8657 — middle-click (auxclick button 1) closes the tab, matching macOS
+  // Terminal.app + the X button. `closeDynamicTerminal` shows the confirm
+  // dialog when the PTY is alive. Gated on `dynamic`: configured terminals
+  // aren't closeable (no X glyph, and the context menu's "Close Tab" is
+  // disabled for them), so middle-click is a no-op there. Right-click is
+  // button 2 → handled by `contextmenu` below, not here.
+  tabBtn.addEventListener('auxclick', (e) => {
+    if (e.button !== 1 || config.dynamic !== true) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void closeDynamicTerminal(config.id);
+  });
   // HS-7827 — block dragstart from the close button so the native drag
   // gesture stays bound to the tab body.
   closeBtn?.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });

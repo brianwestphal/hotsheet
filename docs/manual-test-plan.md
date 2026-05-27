@@ -397,6 +397,9 @@ GPU-dependent **visual-quality** checks (crispness, no blur, no raster artifacts
 - [ ] Reordering via drag changes drawer tab order
 - [ ] The **+** button after the last tab creates a new dynamic terminal running the default shell; new tab is selected
 - [ ] Dynamic terminal tabs show an **×** close button; clicking tears down the PTY and removes the tab
+- [ ] **HS-8657 middle-click closes a dynamic tab (with confirmation when alive).** Middle-click (mouse button 3 / the scroll-wheel click) a dynamic terminal tab whose PTY is running → the "Close terminal?" confirm fires; confirm tears down the PTY + removes the tab, cancel leaves it. Middle-click a configured tab → nothing happens (configured terminals aren't closeable). Right-click still opens the context menu (not close). (Automated unit coverage exercises the non-alive direct-close + the gating; the live-PTY confirm dialog needs a real terminal.)
+- [ ] **HS-8656 Cmd/Ctrl+Shift+[ / ] cycle tabs.** With a terminal focused, Cmd+Shift+[ / ] move between drawer/terminal tabs (same as Cmd+Shift+←/→); with focus outside the drawer they move between project tabs. (macOS Terminal.app parity — both brackets and arrows work.)
+- [ ] **HS-8655 Cmd+W closes a tab, never the app (Tauri build only).** ⌘W must NEVER close the desktop window. With a dynamic terminal focused → ⌘W closes that terminal (confirm fires when the PTY is alive). With a configured terminal focused → ⌘W does nothing (persistent terminals aren't closeable). With no terminal focused and more than one project tab open → ⌘W closes the active project tab after a "Close tab?" confirm; with only one project tab → ⌘W does nothing. The window is still closeable via the red traffic light and ⌘Q (both run the §37 quit-confirm). Browser ⌘W can't be intercepted, so this is a Tauri-only behavior. (Automated unit coverage exercises the pure target-decision matrix; the Tauri menu routing + live confirm dialogs need a real desktop build.)
 - [ ] Configured default terminal tabs do **not** show a close button (only removable via Settings)
 - [ ] Many tabs overflow → the tabs area scrolls horizontally (Commands Log stays pinned; **+** stays visible at the end when scrolled fully right)
 
@@ -414,7 +417,10 @@ GPU-dependent **visual-quality** checks (crispness, no blur, no raster artifacts
 - [ ] Reload the browser → the active project's drawer state is restored from settings
 - [ ] If the saved active tab is a `terminal:<id>` that was since removed in Settings, drawer falls back to Commands Log without error
 
-### OSC 9 desktop notifications (§27, HS-7264)
+### Per-terminal shell history (§51, HS-7965 / HS-8654)
+- [ ] With bash as the default shell (`$SHELL` = bash) and config kept in `~/.bash_profile` (e.g. a custom `PATH` export or `alias hs8654=echo`), open a Hot Sheet drawer terminal → the `.bash_profile` content is loaded: the alias/PATH is present (HS-8654 — pre-fix only `~/.bashrc` was sourced, so `.bash_profile`-only config was missing). Compare against the same check in your real macOS terminal — they should match.
+- [ ] Up-arrow recall in that terminal is scoped to the tab (commands from a different tab / project don't appear), confirming the HISTFILE override still lands after the user's rc.
+- [ ] Settings → Terminal → set history scope to "inherit" → new terminals fall back to the shared global history + no `--rcfile` rewrite (bash reads its normal startup files directly).
 - [ ] In a drawer terminal, run `printf '\e]9;Build done\a'` — a toast with text "Build done" appears in the bottom-right, and the tab (if not active) gains the bell glyph
 - [ ] Click the tab — the bell glyph clears immediately; the toast stays up for its remaining ~6 s and auto-fades
 - [ ] Switch to a second project; in a terminal there, run `printf '\e]9;Tests passed\a'` — the toast does NOT appear in the first project (active-project scope); the second project's tab gets a bell dot
