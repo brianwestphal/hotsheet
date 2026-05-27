@@ -326,13 +326,13 @@ pageRoutes.get('/', (c) => {
                     <input type="file" id="detail-file-input" style="display:none" multiple />
                   </label>
                 </div>
+                {/* HS-8152 / HS-8648 — per-ticket Claude usage stats block (§67.10.7), positioned just above Notes. Populated by `loadAndRenderTicketTelemetry` from `src/client/ticketTelemetryStats.tsx` when the ticket has attributed prompts; `.detail-telemetry-stats:empty` collapses it to zero height otherwise. */}
+                <div className="detail-telemetry-stats detail-field-full" id="detail-telemetry-stats"></div>
                 <div className="detail-field detail-field-full" id="detail-notes-section">
                   <div className="detail-notes-label"><span>Notes</span> <button className="sidebar-add-view-btn" id="detail-add-note-btn" title="Add note"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></div>
                   <div id="detail-notes" className="detail-notes"></div>
                 </div>
                 <div className="detail-meta detail-field-full" id="detail-meta"></div>
-                {/* HS-8152 — per-ticket Claude usage stats block (§67.10.7). Populated by `loadAndRenderTicketTelemetry` from `src/client/ticketTelemetryStats.tsx` when the ticket has attributed prompts; empty otherwise. */}
-                <div className="detail-telemetry-stats detail-field-full" id="detail-telemetry-stats"></div>
                 <div className="plugin-detail-bottom" id="plugin-detail-bottom"></div>
               </div>
             </aside>

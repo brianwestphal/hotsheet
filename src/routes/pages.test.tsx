@@ -34,3 +34,23 @@ describe('page shell demo-mode stamp (HS-8612)', () => {
     expect(html).not.toContain('__HOTSHEET_DEMO__');
   });
 });
+
+describe('detail-panel telemetry block placement (HS-8648)', () => {
+  it('renders the per-ticket telemetry container just above the Notes section', async () => {
+    const res = await app.request('/');
+    const html = await res.text();
+    const telemetryIdx = html.indexOf('id="detail-telemetry-stats"');
+    const notesIdx = html.indexOf('id="detail-notes-section"');
+    const metaIdx = html.indexOf('id="detail-meta"');
+
+    // All three must be present in the rendered shell.
+    expect(telemetryIdx).toBeGreaterThan(-1);
+    expect(notesIdx).toBeGreaterThan(-1);
+    expect(metaIdx).toBeGreaterThan(-1);
+
+    // HS-8648 moved telemetry from the bottom (after meta) to directly above
+    // Notes: telemetry < notes < meta in source order.
+    expect(telemetryIdx).toBeLessThan(notesIdx);
+    expect(notesIdx).toBeLessThan(metaIdx);
+  });
+});

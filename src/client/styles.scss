@@ -3810,6 +3810,68 @@ body.cross-project-stats-active {
   }
 }
 
+// HS-8648 — per-ticket "Claude usage" stats block (§67.10.7). Sits just above
+// the Notes section in the detail panel. The container is a CSS container so
+// the stat grid responds to the (user-resizable) detail-panel width: 2 columns
+// when narrow, 4 across when there's room. `:empty` collapses the block when
+// the ticket has no attributed prompts (the renderer leaves the node empty).
+.detail-telemetry-stats {
+  container-type: inline-size;
+  container-name: detail-telemetry;
+
+  &:empty {
+    display: none;
+  }
+}
+
+.ticket-telemetry-block {
+  margin-bottom: 16px;
+}
+
+.ticket-telemetry-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.ticket-telemetry-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.ticket-telemetry-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  min-width: 0; // let long values truncate instead of stretching the column
+}
+
+.ticket-telemetry-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ticket-telemetry-stat-value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+// Widen to a single 4-across row once the panel can fit it. 360px is the
+// inline size of the `.detail-telemetry-stats` container, not the viewport.
+@container detail-telemetry (min-width: 360px) {
+  .ticket-telemetry-stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
 // --- Dropdown Menu ---
 
 .dropdown-menu {

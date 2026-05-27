@@ -5,7 +5,8 @@ import { formatCost } from './telemetryFormat.js';
 
 /**
  * HS-8152 — per-ticket Claude usage stats block (§67.10.7). Renders
- * inside the detail panel under the meta-info row. Shows aggregate
+ * inside the detail panel just above the Notes section (HS-8648 moved
+ * it there from the bottom). Shows aggregate
  * cost / tokens / prompt count / wall-clock duration attributed to
  * the active ticket via the HS-8151 marker mechanism (channel-
  * triggered prompts prepend `<!-- hotsheet:ticket=HS-NNNN -->` to

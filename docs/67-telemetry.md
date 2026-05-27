@@ -368,7 +368,7 @@ Once the prompt ↔ ticket correlation investigation (HS-8151) lands, attach a "
 
 Locations:
 
-- **Detail panel** — read-only stats block under Notes.
+- **Detail panel** — read-only stats block rendered by `ticketTelemetryStats.tsx` into `#detail-telemetry-stats`, positioned directly **above** the Notes section (HS-8648 moved it there from the panel bottom). The stat grid is container-query driven: 2 columns when the panel is narrow, 4 across when it's wide enough. `:empty` collapses the block when the ticket has no attributed prompts.
 - **Ticket row** — optional dollar-amount chip when usage > $0.50 (configurable threshold).
 - **Reader mode** — included in the §49 read-only overlay.
 
