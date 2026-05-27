@@ -162,6 +162,60 @@ describe('sync engine — pull', () => {
     expect(ticket2!.up_next).toBe(true);
   });
 
+  it('does NOT collapse two remote issues that share a title onto one local ticket (HS-8658)', async () => {
+    // Mirror the real GitHub bug: a CLOSED issue → completed and an OPEN issue
+    // → not_started, both with the SAME title. The GitHub plugin pulls newest-
+    // updated first, so the completed one is processed before the not_started
+    // one and creates its local ticket first. Pre-fix, the second issue's
+    // title-dedup matched that just-created ticket and `upsertSyncRecord`
+    // (UNIQUE on (ticket_id, plugin_id)) overwrote the first issue's remote_id
+    // — so the OPEN issue ended up pointing at the closed issue's `completed`
+    // ticket (and the closed issue's sync record vanished).
+    const t = Date.now();
+    const backend = createMockBackend([
+      { id: 'gh-closed', fields: { title: 'middle click closes tab', details: '', category: 'issue', priority: 'default', status: 'completed', tags: [], up_next: false }, updatedAt: new Date(t + 20000), deleted: false },
+      { id: 'gh-open', fields: { title: 'middle click closes tab', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(t + 10000), deleted: false },
+    ]);
+    loaderMock.__registerBackend(backend);
+
+    const result = await runSync('mock-backend');
+    expect(result.ok).toBe(true);
+    expect(result.pulled).toBe(2);
+
+    // Each remote issue keeps its OWN sync record (pre-fix, gh-closed's record
+    // was overwritten so this lookup returned null) pointing at its OWN ticket.
+    const recClosed = await getSyncRecordByRemoteId('mock-backend', 'gh-closed');
+    const recOpen = await getSyncRecordByRemoteId('mock-backend', 'gh-open');
+    expect(recClosed).not.toBeNull();
+    expect(recOpen).not.toBeNull();
+    expect(recClosed!.ticket_id).not.toBe(recOpen!.ticket_id);
+
+    // ...and each ticket carries the status its own remote state implies.
+    const closedTicket = await getTicket(recClosed!.ticket_id);
+    const openTicket = await getTicket(recOpen!.ticket_id);
+    expect(closedTicket!.status).toBe('completed');
+    expect(openTicket!.status).toBe('not_started');
+  });
+
+  it('still dedups a remote issue onto a PRE-EXISTING UNSYNCED local ticket of the same title', async () => {
+    // The original dedup intent (HS-8658 keeps it): first-connecting a plugin to
+    // a repo you already track locally links the remote issue to the existing
+    // ticket instead of creating a duplicate. The local ticket has no sync
+    // record yet, so it's still a valid dedup target.
+    const local = await createTicket('Pre-existing dedup title', { status: 'started' });
+    const backend = createMockBackend([
+      { id: 'gh-dedup', fields: { title: 'Pre-existing dedup title', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    loaderMock.__registerBackend(backend);
+
+    const result = await runSync('mock-backend');
+    expect(result.pulled).toBe(1);
+
+    const rec = await getSyncRecordByRemoteId('mock-backend', 'gh-dedup');
+    expect(rec).not.toBeNull();
+    expect(rec!.ticket_id).toBe(local.id); // linked to the existing ticket, no duplicate created
+  });
+
   it('updates existing local tickets when remote changes', async () => {
     // Create a local ticket and sync record
     const ticket = await createTicket('Original Title');

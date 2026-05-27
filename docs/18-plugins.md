@@ -214,7 +214,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 **Pull (remote → local):**
 - Calls `pullChanges(since)` to fetch remote modifications.
 - For each remote change:
-  - If no sync record exists, creates a new local ticket (with title-based dedup to prevent duplicates).
+  - If no sync record exists, creates a new local ticket. Title-based dedup links the remote issue to a **pre-existing, not-yet-synced** local ticket of the same title (so first-connecting a plugin to a repo you already track locally doesn't duplicate). **HS-8658:** the dedup candidate set excludes tickets that already carry a sync record for this plugin, so two distinct remote issues that happen to share a title (e.g. a closed "foo" → `completed` and an open "foo" → `not_started`) each get their OWN local ticket instead of the second collapsing onto the first's freshly-created ticket (which the `UNIQUE(ticket_id, plugin_id)` constraint would then overwrite, leaving the open issue pointing at the closed issue's `completed` ticket).
   - If a sync record exists: compares timestamps to detect conflicts.
   - If only remote modified → applies remote changes.
   - If both modified → creates a conflict record.

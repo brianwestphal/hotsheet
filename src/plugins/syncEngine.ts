@@ -162,13 +162,27 @@ async function handleNewRemote(
 ): Promise<'applied' | 'skipped'> {
   if (change.deleted === true) return 'skipped';
 
-  // Dedup: check if a local ticket with the same title already exists
+  // Dedup: link this remote issue to a PRE-EXISTING local ticket of the same
+  // title (so first-connect against a repo you already track locally doesn't
+  // create duplicates). HS-8658 — exclude tickets that already carry a sync
+  // record for THIS plugin: two distinct remote issues that happen to share a
+  // title (e.g. a closed "foo" + an open "foo") must NOT collapse onto one
+  // local ticket. Pre-fix, the second issue processed dedup-matched the ticket
+  // the first issue had just created, and `upsertSyncRecord` (UNIQUE on
+  // (ticket_id, plugin_id)) OVERWROTE the first issue's remote_id with the
+  // second's — so the open issue ended up pointing at the closed issue's
+  // `completed` ticket. The `NOT IN (… ticket_sync …)` guard keeps an
+  // already-mapped ticket out of the candidate set so each remote issue gets
+  // its own local ticket.
   if (change.fields.title != null && change.fields.title !== '') {
     const { getDb: getDbForDedup } = await import('../db/connection.js');
     const db = await getDbForDedup();
     const existing = await db.query<{ id: number }>(
-      "SELECT id FROM tickets WHERE title = $1 AND status != 'deleted' LIMIT 1",
-      [change.fields.title],
+      `SELECT id FROM tickets
+         WHERE title = $1 AND status != 'deleted'
+           AND id NOT IN (SELECT ticket_id FROM ticket_sync WHERE plugin_id = $2)
+         LIMIT 1`,
+      [change.fields.title, backend.id],
     );
     if (existing.rows.length > 0) {
       await upsertSyncRecord(existing.rows[0].id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
