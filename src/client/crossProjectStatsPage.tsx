@@ -54,6 +54,7 @@ import {
   markCrossProjectStatsActive,
 } from './mainSurfaceState.js';
 import { projectsByIdSignal } from './projectsStore.js';
+import { delegate } from './reactive.js';
 import { state } from './state.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
@@ -341,12 +342,12 @@ function renderCostByProjectTable(rows: ProjectCostRow[]): HTMLElement {
   // sub-region from HS-8508). Pre-HS-8509 this opened the drawer
   // Telemetry tab; that tab was removed in Phase 5. Delegated on
   // the table so re-renders don't drop the listener.
-  table.addEventListener('click', (e) => {
-    const target = e.target as Element | null;
-    if (target === null) return;
-    if (target.closest('th') !== null) return; // header clicks handled above
-    const tr = target.closest<HTMLElement>('tr.telemetry-dashboard-project-row');
-    if (tr === null) return;
+  // HS-8615 — kerf `delegate()` (was a hand-rolled `addEventListener` +
+  // `closest()`). The `th` header guard the pre-fix code carried is no longer
+  // needed: `delegate` only fires when `closest('tr.telemetry-dashboard-project-row')`
+  // matches, and a header `th` is never inside a project-row `tr`. The root is
+  // the per-render `table`, so the listener dies with it (`void` opt-out).
+  void delegate<HTMLElement>(table, 'click', 'tr.telemetry-dashboard-project-row', (_e, tr) => {
     const secret = tr.dataset['secret'];
     if (secret === undefined) return;
     const project = projectsByIdSignal.value[secret] as ProjectInfo | undefined;
@@ -609,12 +610,11 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   // `<select>` pre-HS-8515; replaced with the `.dashboard-range-bar`
   // button group the analytics dashboard uses for visual consistency).
   // No live polling — per §69.6.
+  // HS-8615 — kerf `delegate()` (was a hand-rolled `addEventListener` +
+  // `closest()`); root is the per-render button group, listener dies with it.
   const buttons = root.querySelector<HTMLElement>('#telemetry-dashboard-window-buttons');
   if (buttons !== null) {
-    buttons.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement | null;
-      const btn = target?.closest<HTMLElement>('button[data-window]');
-      if (btn === null || btn === undefined) return;
+    void delegate<HTMLElement>(buttons, 'click', 'button[data-window]', (_e, btn) => {
       const window = btn.dataset.window as DashboardWindow | undefined;
       if (window === undefined) return;
       void fetchAndRender(container, window);

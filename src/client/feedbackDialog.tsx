@@ -12,7 +12,7 @@ import {
   parseFeedbackBlocks,
 } from './feedbackParser.js';
 import type { FeedbackDraft, NoteEntry } from './noteRenderer.js';
-import { morph } from './reactive.js';
+import { delegate, morph } from './reactive.js';
 import { loadTickets } from './ticketList.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
@@ -277,7 +277,7 @@ export function showFeedbackDialog(
   // Draft + close path no longer silently drops the user's files.
   const pendingAttachments: { id: number; original_filename: string }[] =
     (draftSeed?.attachments ?? []).map(a => ({ id: a.id, original_filename: a.original_filename }));
-  const fileListEl = overlay.querySelector('#feedback-files')!;
+  const fileListEl = overlay.querySelector<HTMLElement>('#feedback-files')!;
   const fileInput = overlay.querySelector('#feedback-file-input') as HTMLInputElement;
 
   // HS-8365 — `morph()` reconciles in place, so any user focus / selection
@@ -285,11 +285,12 @@ export function showFeedbackDialog(
   // survives a file add / remove. Listener attachment uses delegation on
   // `fileListEl` rather than per-button so a morphed-in row from the
   // template doesn't need a follow-up wiring pass — the delegated click
-  // walks up via `closest('.category-delete-btn')` and reads the row's
-  // `data-idx`.
-  fileListEl.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>('.category-delete-btn');
-    if (btn === null || btn === undefined || !fileListEl.contains(btn)) return;
+  // reads the row's `data-idx`.
+  // HS-8615 — the hand-rolled `addEventListener` + `closest()` is now kerf's
+  // `delegate()` (containment + `closest()` walk are built in). `fileListEl`
+  // belongs to the per-open overlay, so the disposer is captured + called in
+  // `close()` (scope shorter than page — kerf hard rule #5).
+  const disposeFileDeleteDelegate = delegate<HTMLButtonElement>(fileListEl, 'click', '.category-delete-btn', (_e, btn) => {
     const idx = parseInt(btn.dataset.idx ?? '-1', 10);
     if (Number.isNaN(idx) || idx < 0 || idx >= pendingAttachments.length) return;
     // HS-8428 — DELETE the server-side attachment row + file on disk.
@@ -400,6 +401,7 @@ export function showFeedbackDialog(
       // Fire-and-forget — overlay removal can race the response.
       void deleteFeedbackDraft(ticketId, sessionDraftId).catch(() => { /* swallow */ });
     }
+    disposeFileDeleteDelegate();
     overlay.remove();
   };
   requireChild<HTMLButtonElement>(overlay, '#feedback-close').addEventListener('click', close);

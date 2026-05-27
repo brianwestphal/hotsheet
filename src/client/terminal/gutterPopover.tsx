@@ -33,6 +33,7 @@ import type { IDecoration, IMarker, Terminal as XTerm } from '@xterm/xterm';
 
 import { isChannelAlive, triggerChannelAndMarkBusy } from '../channelUI.js';
 import { toElement } from '../dom.js';
+import { delegate } from '../reactive.js';
 import { buildAskClaudePrompt } from '../terminalOsc133.js';
 import { POPOVER_CLOSE_DELAY_MS } from '../uiTimings.js';
 
@@ -101,9 +102,10 @@ function showGutterPopover(
     }
   });
   popover.addEventListener('mouseleave', () => { scheduleGutterPopoverClose(); });
-  popover.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.terminal-osc133-popover-btn');
-    if (btn === null) return;
+  // HS-8615 — kerf `delegate()` (was a hand-rolled `addEventListener` +
+  // `closest()`). The root is the per-show `popover`, torn down by
+  // `closeGutterPopover()`, so the listener dies with it (`void` opt-out).
+  void delegate<HTMLButtonElement>(popover, 'click', '.terminal-osc133-popover-btn', (_e, btn) => {
     const action = btn.dataset.action;
     if (action === 'copy-command') void copyCommandOfRecord(term, record);
     else if (action === 'copy-output') void copyOutputOfRecord(term, record);

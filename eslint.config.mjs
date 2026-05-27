@@ -132,7 +132,10 @@ export default tseslint.config(
       // rule.
       "src/client/clipboardUtil.tsx",
       // HS-8365 — `src/client/columnView.tsx` migrated, removed from allowlist.
-      "src/client/commandEditor.tsx",
+      // HS-8614 — `src/client/commandEditor.tsx` migrated
+      // (`renderCustomCommandSettings` `innerHTML = ''` + the per-row
+      // listeners replaced by `replaceChildren` + delegated handlers), removed
+      // from allowlist.
       "src/client/commandLog.tsx",
       "src/client/commandLogFilter.tsx",
       "src/client/commandSidebar.tsx",
@@ -158,11 +161,16 @@ export default tseslint.config(
       "src/client/pluginUI.tsx",
       "src/client/projectTabs.tsx",
       // HS-8365 — `src/client/readerOverlay.tsx` migrated, removed from allowlist.
-      "src/client/settingsCategories.tsx",
+      // HS-8614 — `src/client/settingsCategories.tsx` migrated (the
+      // `renderCategoryList` `innerHTML = ''` + per-row listeners replaced by a
+      // single `replaceChildren` + delegated handlers), removed from allowlist.
       "src/client/settingsDialog.tsx",
       "src/client/settingsLoader.tsx",
       "src/client/tags.tsx",
-      "src/client/tagsDialog.tsx",
+      // HS-8614 — `src/client/tagsDialog.tsx` migrated (`renderTagRows`
+      // `innerHTML = ''` + per-checkbox `change` listener replaced by a single
+      // `replaceChildren` + one delegated `change` handler), removed from
+      // allowlist.
       // HS-8448 — `src/client/terminal.tsx` + `src/client/terminalDashboard.tsx`
       // no longer contain any `innerHTML =` assignments (migrated incrementally
       // under HS-8365 / §54), removed from the allowlist so new innerHTML

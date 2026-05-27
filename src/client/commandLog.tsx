@@ -42,6 +42,7 @@ import { SHELL_PARTIAL_OUTPUT_EVENT, type ShellPartialOutputEvent } from './comm
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull } from './dom.js';
 import { recordInteraction } from './longTaskObserver.js';
+import { delegate } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 
 // Re-export the streaming helpers so existing importers (and the
@@ -584,13 +585,19 @@ export function initCommandLog() {
   searchEl?.addEventListener('input', () => { onSearchInput(searchEl.value); });
 
   // Drawer tab switching — supports `commands-log` and dynamic `terminal:<id>` ids.
-  byIdOrNull('command-log-panel')?.addEventListener('click', (e) => {
-    const tabEl = (e.target as HTMLElement).closest<HTMLElement>('.drawer-tab');
-    if (!tabEl) return;
-    if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;  // close button handled by terminal module
-    const t = tabEl.dataset.drawerTab;
-    if (typeof t === 'string' && t !== '') switchDrawerTab(t);
-  });
+  // HS-8615 — kerf `delegate()` (was a hand-rolled `addEventListener` +
+  // `closest()`). `#command-log-panel` is page-lifetime, so the disposer is
+  // discarded via `void`. The close-button guard stays inside the handler: the
+  // `.drawer-tab-close` button is a CHILD of `.drawer-tab`, so a close click
+  // still matches the delegate — the terminal module owns that action.
+  const drawerPanel = byIdOrNull('command-log-panel');
+  if (drawerPanel !== null) {
+    void delegate<HTMLElement>(drawerPanel, 'click', '.drawer-tab', (e, tabEl) => {
+      if (e.target instanceof Element && e.target.closest('.drawer-tab-close') !== null) return;
+      const t = tabEl.dataset.drawerTab;
+      if (typeof t === 'string' && t !== '') switchDrawerTab(t);
+    });
+  }
 
   // Resize handle
   initResize();

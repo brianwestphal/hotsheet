@@ -27,9 +27,12 @@ Two jobs:
   the baseline note below).
 - **`cargo-audit`** — `cargo audit` against `src-tauri/Cargo.lock` via the
   RustSec advisory DB. Before HS-8601, nothing screened the shipped desktop
-  binary's crates at all. Still **non-blocking** (`continue-on-error: true`):
-  HS-8602 was npm-scoped, so the Rust baseline hasn't been triaged + cleared
-  yet; that's a follow-up before flipping this job to blocking too.
+  binary's crates at all. **Blocking** as of HS-8649 (the Rust baseline is clean
+  at the `vulnerability` level — see the cargo baseline note below). Plain
+  `cargo audit` fails only on `vulnerability` advisories; `unmaintained` /
+  `unsound` advisories surface as non-failing warnings (the workflow does NOT
+  pass `--deny warnings`), so the residual informational warnings documented
+  below don't gate.
 
 ## Dependabot (HS-8601)
 
@@ -71,6 +74,46 @@ bundled Express 5 stack, which Hot Sheet never instantiates because
 should be recorded with a short justification rather than chased. When the
 production gate goes red, either upgrade to a fixed version or — if the advisory
 is provably unreachable — document the justification here before merging.
+
+## The cargo (src-tauri) baseline (HS-8649)
+
+HS-8649 ran the first `cargo audit` over `src-tauri/Cargo.lock`. It reported **6
+vulnerabilities + 21 informational warnings**. The same in-range-fix-first rule
+the npm side uses cleared every `vulnerability`:
+
+- **`rustls-webpki` 0.103.9 → 0.103.13** — clears four advisories: RUSTSEC-2026-0104
+  (reachable panic in CRL parsing), RUSTSEC-2026-0098 / -0099 (name-constraint
+  matching bugs), RUSTSEC-2026-0049 (CRL distribution-point matching). Transitive
+  via Tauri's TLS stack. Patch-level bump within `0.103.x`.
+- **`tar` 0.4.44 → 0.4.46** — clears RUSTSEC-2026-0067 (`unpack_in` symlink chmod,
+  medium 5.1) and RUSTSEC-2026-0068 (PAX size-header handling, medium 5.1).
+  Patch-level bump.
+
+Both were applied with a plain `cargo update -p rustls-webpki -p tar` (semver-
+compatible; no other crates moved). After the bumps **`cargo audit` exits 0** —
+no vulnerabilities — so the job is **blocking**.
+
+The **21 residual warnings are all `unmaintained` / `unsound` informational
+advisories**, not vulnerabilities, and plain `cargo audit` does not fail on them:
+
+- **gtk-rs GTK3 bindings — unmaintained** (`atk` / `atk-sys` / `gdk` / `gdk-sys`
+  / `gdkwayland-sys` / `gdkx11` / `gdkx11-sys` / `gtk` / `gtk-sys` / `gtk3-macros`,
+  RUSTSEC-2024-0411…0420; plus the `glib` 0.18.5 unsoundness RUSTSEC-2024-0429).
+  These are **Linux-only** GUI deps pulled in transitively by the Tauri/`rfd`
+  stack; they don't ship on macOS/Windows builds and the gtk-rs project's "no
+  longer maintained" status is a whole-ecosystem notice with no patched version
+  to move to (it's superseded by gtk4 bindings, a major-version migration owned
+  upstream by Tauri, not by Hot Sheet).
+- **`rand` unsound (RUSTSEC-2026-0097, three versions) + `fxhash` /
+  `proc-macro-error` / `unic-*` unmaintained** — all transitive, no patched
+  version offered, and the `rand` unsoundness is conditional on "a custom
+  logger that calls `rand::rng()`" which Hot Sheet's Rust code does not do.
+
+None are reachable-and-fixable today; they're tracked here per the reachability
+rule and will clear as Tauri advances its own dependency tree. If a future
+`cargo audit` reports a NEW `vulnerability` (not warning) advisory, the blocking
+job goes red — upgrade to the fixed version, or document an unreachable
+justification here before merging.
 
 ## Running the audits locally
 

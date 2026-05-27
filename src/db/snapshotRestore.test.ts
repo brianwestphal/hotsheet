@@ -16,6 +16,18 @@ import { createTicket, getTickets } from './queries.js';
 import { listRestoreSources } from './restore.js';
 import { _resetSnapshotStateForTests, snapshotPath, writeSnapshotNow } from './snapshot.js';
 
+// HS-8650 — this suite drives a REAL PGLite cluster through
+// seed → `dumpDataDir`/`writeSnapshotNow` → corrupt → reopen → auto-restore,
+// then `closeAllDatabases()` in `afterEach`. In isolation it's ~6.5s, but
+// during the full merged-coverage run (200+ files in parallel + V8
+// instrumentation) the CPU starvation pushes a single test body to ~28s and
+// the close work past vitest's DEFAULT 10s `hookTimeout` — surfacing as
+// "Hook timed out in 10000ms" in `afterEach`, a CI-flakiness risk (not a
+// product bug). Scope generous timeouts to THIS file (rather than bumping the
+// global config + masking real hangs elsewhere): testTimeout headroom for the
+// slow snapshot dump/restore bodies, hookTimeout headroom for the close.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 30_000 });
+
 let dataDir: string;
 
 /** Corrupt the live cluster the way the HS-7889 tests do — overwriting

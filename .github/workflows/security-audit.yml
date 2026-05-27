@@ -18,9 +18,14 @@ name: Security audit
 # only residual advisories are 3 moderate dev-only items in the nyc -> uuid
 # coverage chain, which `--omit=dev` excludes and `--audit-level=high` ignores.
 #
-# cargo-audit stays NON-BLOCKING pending a separate Rust-baseline triage (the
-# src-tauri crate advisories were never assessed under HS-8602, which is
-# npm-scoped). See docs/dependency-security.md.
+# cargo-audit is BLOCKING as of HS-8649: the src-tauri crate baseline is clean at
+# the `vulnerability` level — `cargo audit` reports 0 vulnerabilities after the
+# HS-8649 bumps (rustls-webpki 0.103.9 -> 0.103.13 cleared RUSTSEC-2026-0104 /
+# -0098 / -0099 / -0049; tar 0.4.44 -> 0.4.46 cleared RUSTSEC-2026-0067 / -0068).
+# The 21 residual advisories are `unmaintained` / `unsound` informational
+# warnings (Linux-only gtk-rs GTK3 bindings, plus unmaintained transitive utility
+# crates) — plain `cargo audit` does NOT fail on those, and each is justified in
+# docs/dependency-security.md.
 
 on:
   pull_request:
@@ -54,7 +59,10 @@ jobs:
 
   cargo-audit:
     runs-on: ubuntu-latest
-    continue-on-error: true   # NON-BLOCKING pending a Rust-baseline triage (HS-8602 was npm-scoped); see follow-up ticket
+    # BLOCKING (HS-8649): the src-tauri baseline is clean at the `vulnerability`
+    # level. If this job goes red, a newly-disclosed advisory has landed in a
+    # SHIPPED crate — bump to the fixed version (or, if provably unreachable,
+    # document the justification in docs/dependency-security.md) before merging.
     defaults:
       run:
         working-directory: src-tauri

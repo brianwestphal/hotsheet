@@ -1,6 +1,15 @@
 import { getCategoryPresets, updateCategories } from '../api/index.js';
 import { byId, toElement } from './dom.js';
+import { delegate } from './reactive.js';
 import { state } from './state.js';
+
+/** Read the row index a delegated handler should act on. Each `.category-row`
+ *  carries a `data-index` stamped at render time (HS-8614); the handler reads
+ *  it off `closest('.category-row')` rather than closing over a per-row `i`
+ *  that goes stale when the list is rebuilt. */
+function rowIndex(el: Element): number {
+  return Number(el.closest('.category-row')?.getAttribute('data-index') ?? -1);
+}
 
 let categorySyncTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -13,14 +22,22 @@ function persistCategories(): Promise<unknown> {
   return updateCategories(state.categories.map(c => ({ ...c })));
 }
 
-export function renderCategoryList(rebuildCategoryUI: () => void) {
+export function renderCategoryList(_rebuildCategoryUI: () => void) {
+  // HS-8614 — rows are pure markup now; the per-field `input` listeners and
+  // the delete-button `click` are delegated once at the stable `#category-list`
+  // container in `bindCategorySettings`, reading the row index from the
+  // `data-index` attribute stamped here. Pre-fix this loop re-attached 6
+  // closure-captured-index listeners per row on every rebuild (delete / edit /
+  // settings-open). The `_rebuildCategoryUI` param is retained for the existing
+  // call-site signature; the delegated handlers close over the instance passed
+  // to `bindCategorySettings`.
   const container = byId('category-list');
-  container.innerHTML = '';
+  const rows: Element[] = [];
 
   for (let i = 0; i < state.categories.length; i++) {
     const cat = state.categories[i];
-    const row = toElement(
-      <div className="category-row">
+    rows.push(toElement(
+      <div className="category-row" data-index={i}>
         <input type="color" className="category-color-input" value={cat.color} title="Color" />
         <input type="text" className="category-label-input" value={cat.label} placeholder="Label" title="Display name" />
         <input type="text" className="category-short-input" value={cat.shortLabel} placeholder="ABR" title="Short label (3 chars)" maxlength="4" />
@@ -28,45 +45,10 @@ export function renderCategoryList(rebuildCategoryUI: () => void) {
         <input type="text" className="category-desc-input" value={cat.description} placeholder="Description..." title="Description (for AI tools)" />
         <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
       </div>
-    );
-
-    // HS-8088 — `querySelectorAll('input')` returns
-    // `NodeListOf<HTMLInputElement>` which is iterable, so destructuring
-    // works without the pre-fix `as unknown as HTMLInputElement[]` cast.
-    const [colorInput, labelInput, shortInput, keyInput, descInput] = row.querySelectorAll('input');
-
-    const scheduleSync = () => {
-      debouncedCategorySync(rebuildCategoryUI);
-    };
-
-    colorInput.addEventListener('input', () => { state.categories[i].color = colorInput.value; scheduleSync(); });
-    labelInput.addEventListener('input', () => {
-      state.categories[i].label = labelInput.value;
-      // Auto-generate ID from label for new categories
-      if (!cat.id || cat.id === '') {
-        state.categories[i].id = labelInput.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-      }
-      scheduleSync();
-    });
-    shortInput.addEventListener('input', () => { state.categories[i].shortLabel = shortInput.value.toUpperCase(); scheduleSync(); });
-    keyInput.addEventListener('input', () => {
-      const key = keyInput.value.toLowerCase().slice(0, 1);
-      keyInput.value = key;
-      state.categories[i].shortcutKey = key;
-      checkShortcutConflicts();
-      scheduleSync();
-    });
-    descInput.addEventListener('input', () => { state.categories[i].description = descInput.value; scheduleSync(); });
-
-    row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
-      state.categories.splice(i, 1);
-      renderCategoryList(rebuildCategoryUI);
-      debouncedCategorySync(rebuildCategoryUI);
-    });
-
-    container.appendChild(row);
+    ));
   }
 
+  container.replaceChildren(...rows);
   checkShortcutConflicts();
 }
 
@@ -101,6 +83,65 @@ function debouncedCategorySync(rebuildCategoryUI: () => void) {
 }
 
 export function bindCategorySettings(rebuildCategoryUI: () => void) {
+  // HS-8614 — delegate every per-row interaction once at the stable
+  // `#category-list` container (page-lifetime; the settings dialog is
+  // server-rendered into the page, not created per-open). The handlers read
+  // the row index from the `data-index` attribute `renderCategoryList` stamps,
+  // so a rebuild swaps the rows without touching listeners. Each handler is
+  // page-lifetime so the disposer is intentionally discarded (kerf hard rule
+  // #5 — root is attached once at startup, never torn down).
+  const list = byId('category-list');
+  const scheduleSync = () => { debouncedCategorySync(rebuildCategoryUI); };
+
+  // These delegates are page-lifetime (root attached once at boot, never torn
+  // down), so the disposer is intentionally discarded via `void` — the kerf
+  // `require-delegate-disposer` opt-out for genuinely page-lifetime roots.
+  void delegate<HTMLInputElement>(list, 'input', '.category-color-input', (_e, input) => {
+    const i = rowIndex(input);
+    if (i < 0) return;
+    state.categories[i].color = input.value;
+    scheduleSync();
+  });
+  void delegate<HTMLInputElement>(list, 'input', '.category-label-input', (_e, input) => {
+    const i = rowIndex(input);
+    if (i < 0) return;
+    const cat = state.categories[i];
+    cat.label = input.value;
+    // Auto-generate ID from label for new categories.
+    if (!cat.id || cat.id === '') {
+      cat.id = input.value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    }
+    scheduleSync();
+  });
+  void delegate<HTMLInputElement>(list, 'input', '.category-short-input', (_e, input) => {
+    const i = rowIndex(input);
+    if (i < 0) return;
+    state.categories[i].shortLabel = input.value.toUpperCase();
+    scheduleSync();
+  });
+  void delegate<HTMLInputElement>(list, 'input', '.category-key-input', (_e, input) => {
+    const i = rowIndex(input);
+    if (i < 0) return;
+    const key = input.value.toLowerCase().slice(0, 1);
+    input.value = key;
+    state.categories[i].shortcutKey = key;
+    checkShortcutConflicts();
+    scheduleSync();
+  });
+  void delegate<HTMLInputElement>(list, 'input', '.category-desc-input', (_e, input) => {
+    const i = rowIndex(input);
+    if (i < 0) return;
+    state.categories[i].description = input.value;
+    scheduleSync();
+  });
+  void delegate(list, 'click', '.category-delete-btn', (_e, btn) => {
+    const i = rowIndex(btn);
+    if (i < 0) return;
+    state.categories.splice(i, 1);
+    renderCategoryList(rebuildCategoryUI);
+    debouncedCategorySync(rebuildCategoryUI);
+  });
+
   // Add button
   byId('category-add-btn').addEventListener('click', () => {
     state.categories.push({

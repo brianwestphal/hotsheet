@@ -57,6 +57,18 @@
  * or spread into a fresh object, no mutation antipattern, so the new
  * frozen-snapshot semantics surface no regressions. All 3099 unit
  * tests + tsc + lint + build pass after the bump.
+ *
+ * HS-8613 / HS-8614 — added `delegate` / `delegateCapture` to the re-export.
+ * These are kerf's recommended event mechanism: one listener at a stable
+ * container that dispatches via `closest(selector)` from `event.target`,
+ * replacing per-element `addEventListener` that has to be re-attached on
+ * every full-container rebuild (and goes stale under `morph()`). `delegate`
+ * auto-promotes the well-known non-bubblers (`focus`, `blur`, `scroll`,
+ * `load`, `error`, `mouseenter`, `mouseleave`) to the capture phase so the
+ * call site is identical for bubbling and non-bubbling events;
+ * `delegateCapture` is the explicit capture-phase escape hatch. Both return
+ * a disposer — capture it whenever the registration's scope is shorter than
+ * the page (kerf hard rule #5). See `docs/60-reactivity-primitive.md` §60.4.
  */
 export type { ReadonlySignal, Signal, Store } from 'kerfjs';
-export { batch, computed, defineStore, effect, morph, resetAllStores, signal } from 'kerfjs';
+export { batch, computed, defineStore, delegate, delegateCapture, effect, morph, resetAllStores, signal } from 'kerfjs';

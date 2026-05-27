@@ -7,6 +7,7 @@
 import { deleteAttachment, revealAttachment } from '../../api/index.js';
 import { openDetail } from '../detail.js';
 import { byId, toElement } from '../dom.js';
+import { delegate } from '../reactive.js';
 import { state } from '../state.js';
 import { getTauriInvoke } from '../tauriIntegration.js';
 
@@ -53,11 +54,17 @@ export async function previewAttachment(item: HTMLElement): Promise<void> {
 
 export function bindDetailAttachmentActions(): void {
   const attEl = byId('detail-attachments');
-  attEl.addEventListener('click', async (e) => {
-    const target = e.target as HTMLElement;
+  // HS-8615 — kerf `delegate()` (was hand-rolled `addEventListener` +
+  // `closest()`). `#detail-attachments` is page-lifetime, so the disposers are
+  // discarded via `void`. The reveal / delete buttons are CHILDREN of
+  // `.attachment-item`, so a single `.attachment-item` delegate + an in-handler
+  // `closest()` branch preserves the pre-fix priority order (reveal → delete →
+  // select) without the three nested selectors racing each other.
+  void delegate<HTMLElement>(attEl, 'click', '.attachment-item', (e, item) => {
+    const target = e.target instanceof Element ? e.target : null;
 
     // Reveal in file manager
-    const revealBtn: HTMLElement | null = target.closest('.attachment-reveal');
+    const revealBtn = target?.closest<HTMLElement>('.attachment-reveal');
     if (revealBtn) {
       const attId = revealBtn.dataset['attId'];
       if (attId !== undefined && attId !== '') void revealAttachment(Number(attId));
@@ -65,30 +72,25 @@ export function bindDetailAttachmentActions(): void {
     }
 
     // Delete
-    const deleteBtn: HTMLElement | null = target.closest('.attachment-delete');
-    if (deleteBtn !== null) {
+    const deleteBtn = target?.closest<HTMLElement>('.attachment-delete');
+    if (deleteBtn) {
       const attId = deleteBtn.dataset['attId'];
       if (attId === undefined || attId === '') return;
-      await deleteAttachment(Number(attId));
-      if (state.activeTicketId != null) {
-        openDetail(state.activeTicketId);
-      }
+      void deleteAttachment(Number(attId)).then(() => {
+        if (state.activeTicketId != null) openDetail(state.activeTicketId);
+      });
       return;
     }
 
     // Select attachment item (click on the row itself)
-    const item: HTMLElement | null = target.closest('.attachment-item');
-    if (item) {
-      attEl.querySelectorAll('.attachment-item.selected').forEach(el => el.classList.remove('selected'));
-      item.classList.add('selected');
-      item.focus();
-    }
+    attEl.querySelectorAll('.attachment-item.selected').forEach(el => el.classList.remove('selected'));
+    item.classList.add('selected');
+    item.focus();
   });
 
   // Double-click to preview
-  attEl.addEventListener('dblclick', (e) => {
-    const item = (e.target as HTMLElement).closest<HTMLElement>('.attachment-item');
-    if (item != null) void previewAttachment(item);
+  void delegate<HTMLElement>(attEl, 'dblclick', '.attachment-item', (_e, item) => {
+    void previewAttachment(item);
   });
 
   // Keyboard navigation and Space to preview

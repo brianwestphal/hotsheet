@@ -11,6 +11,7 @@
  */
 
 import { toElement } from './dom.js';
+import { delegate } from './reactive.js';
 
 export interface RecentPromptRow {
   readonly promptId: string;
@@ -51,12 +52,12 @@ export function renderRecentPromptsList(
 
   // Delegated click — open the drilldown modal (HS-8149). Lazy-imports
   // the modal so a page that never opens the modal doesn't pay the
-  // bundle cost.
-  list.addEventListener('click', (e) => {
-    const target = e.target as Element | null;
-    if (target === null) return;
-    const li = target.closest<HTMLElement>('.telemetry-recent-prompt');
-    if (li === null) return;
+  // bundle cost. HS-8615 — kerf `delegate()` (was a hand-rolled
+  // `addEventListener` + `closest()`). The root is the freshly-built `list`
+  // element this function returns, so the listener dies with it when the
+  // caller discards the list — the disposer is intentionally dropped via
+  // `void` (no shorter-scope teardown hook, and it can't outlive its root).
+  void delegate<HTMLElement>(list, 'click', '.telemetry-recent-prompt', (_e, li) => {
     const promptId = li.dataset['promptId'];
     if (typeof promptId !== 'string' || promptId === '') return;
     void import('./promptDrilldown.js').then(({ openPromptDrilldown }) => {

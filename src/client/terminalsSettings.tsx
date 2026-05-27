@@ -2,6 +2,7 @@ import { destroyTerminal, getCommandSuggestions, getFileSettings, updateFileSett
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { parseJsonArrayOr } from './json.js';
+import { delegate } from './reactive.js';
 import { getActiveProject } from './state.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
@@ -14,10 +15,22 @@ import { DEFAULT_THEME_ID, TERMINAL_THEMES } from './terminalThemes.js';
  * lazy flag) and reorderable via drag. The list is persisted to
  * `.hotsheet/settings.json` under the `terminals` key.
  *
- * Click handlers are attached per row rather than via delegation — mirrors
- * the commandEditor.tsx pattern which has shipped without issue. The row is
- * draggable, so each button stops both `click` and `mousedown` propagation
- * to keep the native drag gesture from swallowing the click in WebKit.
+ * HS-8614 — the index-capturing per-row handlers (edit / delete button
+ * clicks + the row drag `dragstart`/`dragend`/`dragover`/`drop`) are now
+ * delegated ONCE at the stable `#settings-terminals-list` container
+ * (`ensureRowDelegationBound`), reading the row index from each row's
+ * `data-index` attribute instead of closing over the render-time `index`.
+ * Pre-fix every row re-attached ~7 closure-captured-index listeners on every
+ * add / delete / reorder.
+ *
+ * The ONE per-row listener that survives is the stateless button `mousedown`
+ * stop-propagation "swallow": the row is `draggable=true`, and in WebKit (and
+ * thus Tauri's WKWebView) a `mousedown` on a button inside a draggable row can
+ * start a drag and cancel the click. The swallow must run AT the button,
+ * BEFORE the event reaches the draggable row, to keep the click alive — which
+ * container-level delegation (bubble phase, fires after the row) can't
+ * reproduce. It captures no index, so it carries no stale-closure risk and
+ * doesn't block a future `morph()` migration.
  */
 
 interface EditableTerminalConfig extends TerminalTabConfig {
@@ -51,6 +64,11 @@ export function _resetTerminalsForTests(): void {
   if (saveTimeout !== null) clearTimeout(saveTimeout);
   saveTimeout = null;
   dragFromIndex = null;
+  // HS-8614 — drop the delegated row listeners + binding marker so the next
+  // render re-binds against the test's fresh `#settings-terminals-list`.
+  for (const dispose of rowDelegateDisposers) dispose();
+  rowDelegateDisposers = [];
+  delegatedList = null;
 }
 
 /**
@@ -164,22 +182,87 @@ async function handleDelete(index: number): Promise<void> {
 function renderList(): void {
   const list = byIdOrNull('settings-terminals-list');
   if (!list) return;
+  ensureRowDelegationBound(list);
   // HS-8365 — `replaceChildren(...rows)` instead of the prior
-  // `innerHTML = '' + append-each` pattern. Each row's per-element
-  // listeners (mousedown swallow + drag handlers + click) capture `index`
-  // in a closure, so `morph()` would either preserve stale-index
-  // listeners across re-orderings or need a delegation refactor that
-  // conflicts with the per-row drag-gesture isolation this file
-  // intentionally uses (see the module-level JSDoc rationale). The
-  // `replaceChildren` form keeps the per-row listener pattern intact
-  // while removing the `innerHTML = ''` smell — full `morph()` migration
-  // here is gated on an event-delegation refactor that's out of scope.
+  // `innerHTML = '' + append-each` pattern. HS-8614 — the per-row
+  // index-capturing listeners moved to one delegated set on the container
+  // (see `ensureRowDelegationBound`), so rows are now near-pure markup
+  // (only the stateless WebKit mousedown swallow stays per-button).
   if (terminals.length === 0) {
     list.replaceChildren(toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
     return;
   }
   const rows = terminals.map((_, i) => renderRow(i));
   list.replaceChildren(...rows);
+}
+
+/** Read the row index a delegated handler should act on from the row's
+ *  `data-index`. `renderRow` stamps it on every render, so it always reflects
+ *  the current position (renderList re-runs after every add / delete /
+ *  reorder). Returns -1 when the element isn't inside a row. */
+function rowIndexOf(el: Element): number {
+  const raw = el.closest('.settings-terminal-row')?.getAttribute('data-index');
+  return raw === null || raw === undefined ? -1 : Number(raw);
+}
+
+/** Track the element the delegated handlers are bound to + their disposers.
+ *  In production the list is page-lifetime (server-rendered, always present),
+ *  so this binds exactly once. In unit tests the DOM is rebuilt per test; when
+ *  the element identity changes we dispose the prior listeners and re-bind, so
+ *  reusing the same element across tests never stacks duplicate handlers. */
+let delegatedList: HTMLElement | null = null;
+let rowDelegateDisposers: (() => void)[] = [];
+
+function ensureRowDelegationBound(list: HTMLElement): void {
+  if (delegatedList === list) return;
+  for (const dispose of rowDelegateDisposers) dispose();
+  rowDelegateDisposers = [];
+  delegatedList = list;
+
+  // Edit / delete button clicks. `preventDefault` + `stopPropagation` mirror
+  // the pre-fix per-button handlers (keep the click from bubbling to the row).
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-edit-btn', (e, btn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const i = rowIndexOf(btn);
+    if (i >= 0) openEditor(terminals[i], { mode: 'edit' });
+  }));
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-delete-btn', (e, btn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const i = rowIndexOf(btn);
+    if (i >= 0) void handleDelete(i);
+  }));
+
+  // Drag-to-reorder. The drag events bubble (or are capture-promoted by
+  // `delegate`), so one listener per type at the container handles every row.
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'dragstart', '.settings-terminal-row', (e, row) => {
+    const i = rowIndexOf(row);
+    if (i < 0) return;
+    dragFromIndex = i;
+    const dt = (e as DragEvent).dataTransfer;
+    dt?.setData('text/plain', String(i));
+    if (dt !== null) dt.effectAllowed = 'move';
+    row.classList.add('dragging');
+  }));
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'dragend', '.settings-terminal-row', (_e, row) => {
+    dragFromIndex = null;
+    row.classList.remove('dragging');
+  }));
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'dragover', '.settings-terminal-row', (e) => { e.preventDefault(); }));
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'drop', '.settings-terminal-row', (e, row) => {
+    e.preventDefault();
+    const index = rowIndexOf(row);
+    if (dragFromIndex === null || index < 0 || dragFromIndex === index) {
+      dragFromIndex = null;
+      return;
+    }
+    const [moved] = terminals.splice(dragFromIndex, 1);
+    terminals.splice(index, 0, moved);
+    dragFromIndex = null;
+    renderList();
+    void scheduleSave();
+  }));
 }
 
 function renderRow(index: number): HTMLElement {
@@ -195,54 +278,15 @@ function renderRow(index: number): HTMLElement {
     </div>
   );
 
-  const editBtn = row.querySelector('.cmd-outline-edit-btn') as HTMLButtonElement;
-  const deleteBtn = row.querySelector('.cmd-outline-delete-btn') as HTMLButtonElement;
-
-  // Block drag initiation from the buttons — in WebKit (and thus Tauri WKWebView),
-  // a mousedown on a button inside a draggable="true" row can trigger a drag, and
-  // the browser then cancels the click. Stopping mousedown propagation keeps the
-  // drag gesture constrained to the row background / drag handle.
+  // The one per-row listener that can't move to the container: the WebKit
+  // mousedown swallow (see the module JSDoc). It must run at the button before
+  // the draggable row, so the click survives in WKWebView. Stateless — no
+  // index captured, no stale-closure risk. The button `dragstart` listeners
+  // the pre-fix code attached were dead (a `<button>` isn't draggable, so the
+  // drag always starts on the row, never the button) and are dropped.
   const swallow = (e: Event) => { e.stopPropagation(); };
-  editBtn.addEventListener('mousedown', swallow);
-  deleteBtn.addEventListener('mousedown', swallow);
-  editBtn.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
-  deleteBtn.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation(); });
-
-  editBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openEditor(terminals[index], { mode: 'edit' });
-  });
-  deleteBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    void handleDelete(index);
-  });
-
-  // Drag-to-reorder lives on the row itself.
-  row.addEventListener('dragstart', (e) => {
-    dragFromIndex = index;
-    e.dataTransfer?.setData('text/plain', String(index));
-    if (e.dataTransfer !== null) e.dataTransfer.effectAllowed = 'move';
-    row.classList.add('dragging');
-  });
-  row.addEventListener('dragend', () => {
-    dragFromIndex = null;
-    row.classList.remove('dragging');
-  });
-  row.addEventListener('dragover', (e) => { e.preventDefault(); });
-  row.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if (dragFromIndex === null || dragFromIndex === index) {
-      dragFromIndex = null;
-      return;
-    }
-    const [moved] = terminals.splice(dragFromIndex, 1);
-    terminals.splice(index, 0, moved);
-    dragFromIndex = null;
-    renderList();
-    void scheduleSave();
-  });
+  row.querySelector('.cmd-outline-edit-btn')!.addEventListener('mousedown', swallow);
+  row.querySelector('.cmd-outline-delete-btn')!.addEventListener('mousedown', swallow);
 
   return row;
 }

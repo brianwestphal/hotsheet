@@ -1,6 +1,7 @@
 import { type BackupInfo, cleanupBackupPreview, listBackups, previewBackup, restoreBackup, triggerManualBackup } from '../api/index.js';
 import { bindDbRepairUI, refreshDbRepairStatus } from './dbRepairUI.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
+import { delegate } from './reactive.js';
 import { bindSnapshotProtectionUI, refreshSnapshotProtectionStatus } from './snapshotProtectionUI.js';
 import type { Ticket } from './state.js';
 import { state } from './state.js';
@@ -189,15 +190,19 @@ export function bindBackupsUI(): void {
   // permanent), so the per-row `addEventListener` pattern that used to
   // re-bind on every reload is gone. Rows carry `data-tier` /
   // `data-filename` / `data-created-at` for the closest()-style lookup.
-  byIdOrNull('backup-list')?.addEventListener('click', (e) => {
-    const row = (e.target as HTMLElement | null)?.closest<HTMLElement>('.backup-row');
-    if (row === null || row === undefined) return;
-    const tier = row.dataset.tier;
-    const filename = row.dataset.filename;
-    const createdAt = row.dataset.createdAt;
-    if (tier === undefined || filename === undefined || createdAt === undefined) return;
-    void startPreview(tier, filename, createdAt);
-  });
+  // HS-8615 — the hand-rolled `addEventListener` + `closest()` is now kerf's
+  // `delegate()` (same one-listener-at-the-container semantics). `#backup-list`
+  // is page-lifetime, so the disposer is intentionally discarded via `void`.
+  const backupList = byIdOrNull('backup-list');
+  if (backupList !== null) {
+    void delegate<HTMLElement>(backupList, 'click', '.backup-row', (_e, row) => {
+      const tier = row.dataset.tier;
+      const filename = row.dataset.filename;
+      const createdAt = row.dataset.createdAt;
+      if (tier === undefined || filename === undefined || createdAt === undefined) return;
+      void startPreview(tier, filename, createdAt);
+    });
+  }
 
   byIdOrNull('backup-cancel-btn')?.addEventListener('click', () => {
     void cancelPreview();

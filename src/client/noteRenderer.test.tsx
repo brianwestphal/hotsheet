@@ -7,9 +7,21 @@
  * stability. Server-created notes carry their own `id` and must be preserved
  * verbatim.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { parseNotesJson } from './noteRenderer.js';
+import type * as ApiIndex from '../api/index.js';
+import { deleteTicketNote, editTicketNote } from '../api/index.js';
+import type { Ticket } from '../types.js';
+import { _resetNotesDelegationForTests, parseNotesJson, renderNotes } from './noteRenderer.js';
+import { state } from './state.js';
+
+vi.mock('../api/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiIndex>()),
+  editTicketNote: vi.fn(() => Promise.resolve({})),
+  deleteTicketNote: vi.fn(() => Promise.resolve({})),
+  deleteFeedbackDraft: vi.fn(() => Promise.resolve({})),
+}));
+vi.mock('./undo/actions.js', () => ({ pushNotesUndo: vi.fn() }));
 
 describe('parseNotesJson — deterministic id-less ids (HS-8645)', () => {
   it('returns the SAME id for the same id-less note across two parses', () => {
@@ -51,5 +63,100 @@ describe('parseNotesJson — deterministic id-less ids (HS-8645)', () => {
   it('empty input yields no notes', () => {
     expect(parseNotesJson('')).toEqual([]);
     expect(parseNotesJson('   ')).toEqual([]); // whitespace-only is not JSON and not a real note
+  });
+});
+
+/**
+ * HS-8613 — the per-note listeners are delegated once at `#detail-notes`,
+ * reading note identity from `data-note-id` + a module-level render context
+ * (the container is reused across tickets). These tests cover the edit flow
+ * through delegation and the context-swap correctness the design depends on.
+ */
+function ticket(id: number): Ticket {
+  return { id, title: `T${id}`, details: '', notes: '', ticket_number: `HS-${id}` } as Ticket;
+}
+function noteEntry(id: string): HTMLElement {
+  const el = document.querySelector<HTMLElement>(`#detail-notes .note-entry[data-note-id="${id}"]`);
+  if (el === null) throw new Error(`no note-entry ${id}`);
+  return el;
+}
+
+describe('renderNotes — delegated note interactions (HS-8613)', () => {
+  beforeEach(() => {
+    _resetNotesDelegationForTests();
+    document.body.innerHTML = '<div id="detail-notes"></div>';
+    vi.mocked(editTicketNote).mockClear();
+    vi.mocked(deleteTicketNote).mockClear();
+  });
+  afterEach(() => {
+    document.body.innerHTML = '';
+    state.tickets = [];
+    _resetNotesDelegationForTests();
+  });
+
+  it('clicking a note enters edit mode (textarea seeded with the note text)', () => {
+    state.tickets = [ticket(1)];
+    const notes = [{ id: 'n1', text: 'first', created_at: '' }];
+    renderNotes(1, notes);
+
+    noteEntry('n1').click();
+    const ta = noteEntry('n1').querySelector<HTMLTextAreaElement>('.note-edit-area');
+    expect(ta).not.toBeNull();
+    expect(ta!.value).toBe('first');
+  });
+
+  it('Cmd+Enter commits the edit via editTicketNote with the right id + text', async () => {
+    state.tickets = [ticket(2)];
+    const notes = [{ id: 'n2', text: 'before', created_at: '' }];
+    renderNotes(2, notes);
+
+    noteEntry('n2').click();
+    const ta = noteEntry('n2').querySelector<HTMLTextAreaElement>('.note-edit-area')!;
+    ta.value = 'after';
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+    await vi.waitFor(() => { expect(vi.mocked(editTicketNote)).toHaveBeenCalledWith(2, 'n2', 'after'); });
+    expect(notes[0].text).toBe('after');
+  });
+
+  it('right-click → Delete Note removes the note via deleteTicketNote', async () => {
+    state.tickets = [ticket(3)];
+    const notes = [{ id: 'n3', text: 'doomed', created_at: '' }];
+    renderNotes(3, notes);
+
+    noteEntry('n3').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 5, clientY: 5 }));
+    const item = document.querySelector<HTMLElement>('.note-context-menu .context-menu-item');
+    expect(item).not.toBeNull();
+    item!.click();
+    await vi.waitFor(() => { expect(vi.mocked(deleteTicketNote)).toHaveBeenCalledWith(3, 'n3'); });
+  });
+
+  it('the bottom Add-note button forwards to the top add button', () => {
+    state.tickets = [ticket(4)];
+    const topBtn = document.createElement('button');
+    topBtn.id = 'detail-add-note-btn';
+    const clicked = vi.fn();
+    topBtn.addEventListener('click', clicked);
+    document.body.appendChild(topBtn);
+
+    renderNotes(4, [{ id: 'n4', text: 'x', created_at: '' }]);
+    document.querySelector<HTMLButtonElement>('.detail-add-note-bottom-btn')!.click();
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTEXT-SWAP REGRESSION: after re-rendering for a different ticket, the delegated edit hits the NEW ticket', async () => {
+    state.tickets = [ticket(10), ticket(20)];
+    // Render ticket 10's notes, then (same container) ticket 20's notes.
+    renderNotes(10, [{ id: 'a', text: 'ten', created_at: '' }]);
+    const notes20 = [{ id: 'b', text: 'twenty', created_at: '' }];
+    renderNotes(20, notes20);
+
+    noteEntry('b').click();
+    const ta = noteEntry('b').querySelector<HTMLTextAreaElement>('.note-edit-area')!;
+    ta.value = 'twenty-edited';
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+    // Must edit ticket 20's note 'b' — not ticket 10 (whose context the
+    // pre-fix per-element closures would have captured).
+    await vi.waitFor(() => { expect(vi.mocked(editTicketNote)).toHaveBeenCalledWith(20, 'b', 'twenty-edited'); });
+    expect(notes20[0].text).toBe('twenty-edited');
   });
 });

@@ -1,6 +1,7 @@
 import { getTags, updateTicket } from '../api/index.js';
 import { displayTag, hasTag, normalizeTag, parseTags, refreshDetail } from './detail.js';
 import { toElement } from './dom.js';
+import { delegate } from './reactive.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
@@ -53,28 +54,40 @@ export async function showTagsDialog() {
     </div>
   );
 
+  const body = overlay.querySelector<HTMLElement>('#tags-dialog-body')!;
+
   function renderTagRows() {
-    const body = overlay.querySelector('#tags-dialog-body')!;
-    body.innerHTML = '';
+    // HS-8614 — rows are pure markup carrying `data-tag`; the checkbox
+    // `change` listener is delegated once on `#tags-dialog-body` below (it
+    // reads the tag off `data-tag` rather than closing over the loop variable).
+    // `indeterminate` has no HTML attribute form, so it stays an imperative
+    // per-checkbox property write — that's a property, not a listener, so it
+    // doesn't reintroduce the re-attach-on-rebuild smell.
+    const rows: Element[] = [];
     for (const tag of allTags) {
       const st = currentStates.get(tag)!;
       const row = toElement(
-        <label className="tags-dialog-row">
+        <label className="tags-dialog-row" data-tag={tag}>
           <input type="checkbox" checked={st === 'checked'} />
           <span>{displayTag(tag)}</span>
         </label>
       );
-      const cb = row.querySelector('input') as HTMLInputElement;
-      if (st === 'mixed') cb.indeterminate = true;
-      cb.addEventListener('change', () => {
-        currentStates.set(tag, cb.checked ? 'checked' : 'unchecked');
-      });
-      body.appendChild(row);
+      if (st === 'mixed') (row.querySelector('input') as HTMLInputElement).indeterminate = true;
+      rows.push(row);
     }
     if (allTags.length === 0) {
-      body.appendChild(toElement(<div style="padding:12px 16px;color:var(--text-muted);font-size:13px">No tags yet. Create one below.</div>));
+      rows.push(toElement(<div style="padding:12px 16px;color:var(--text-muted);font-size:13px">No tags yet. Create one below.</div>));
     }
+    body.replaceChildren(...rows);
   }
+
+  // One delegated listener at the stable body container, disposed on close
+  // (kerf hard rule #5 — the dialog's scope is shorter than the page).
+  const disposeRowDelegate = delegate<HTMLInputElement>(body, 'change', '.tags-dialog-row input[type="checkbox"]', (_e, cb) => {
+    const tag = cb.closest<HTMLElement>('.tags-dialog-row')?.dataset.tag;
+    if (tag === undefined) return;
+    currentStates.set(tag, cb.checked ? 'checked' : 'unchecked');
+  });
 
   renderTagRows();
   document.body.appendChild(overlay);
@@ -105,7 +118,7 @@ export async function showTagsDialog() {
   newInput.addEventListener('input', updateDoneState);
 
   // Close/cancel
-  const close = () => overlay.remove();
+  const close = () => { disposeRowDelegate(); overlay.remove(); };
   overlay.querySelector('#tags-dialog-close')!.addEventListener('click', close);
   overlay.querySelector('#tags-dialog-cancel')!.addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });

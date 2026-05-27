@@ -18,6 +18,26 @@ import {
 } from './experimentalSettings.js';
 import { showColorDropdown, showIconPicker } from './iconPicker.js';
 import { renderIconSvg } from './icons.js';
+import { delegate } from './reactive.js';
+
+/** HS-8614 — recover the `ItemRef` a delegated handler should act on from the
+ *  row's `data-ref` attribute (`renderCommandOutlineRow` / `renderGroupOutlineRow`
+ *  stamp `JSON.stringify(ref)` there). Parses to `unknown` then narrows by hand
+ *  so there's no `JSON.parse(x) as ItemRef` wire-boundary cast. Returns null
+ *  when `el` isn't inside a row or the payload is malformed. */
+function readRef(el: Element): ItemRef | null {
+  const raw = el.closest<HTMLElement>('.cmd-outline-row')?.dataset.ref;
+  if (raw === undefined) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const o = parsed as Record<string, unknown>;
+  if (o.type === 'top' && typeof o.index === 'number') return { type: 'top', index: o.index };
+  if (o.type === 'child' && typeof o.groupIndex === 'number' && typeof o.childIndex === 'number') {
+    return { type: 'child', groupIndex: o.groupIndex, childIndex: o.childIndex };
+  }
+  return null;
+}
 
 /** Show the command editor as a modal dialog overlay. */
 export function showCommandEditorModal(ref: ItemRef) {
@@ -147,7 +167,10 @@ function renderCommandOutlineRow(ref: ItemRef): HTMLElement {
   const textColor = contrastColor(currentColor);
   const isChild = ref.type === 'child';
 
-  const row = toElement(
+  // HS-8614 \u2014 pure markup. The edit / delete clicks + the drag handlers are
+  // delegated once at `#settings-commands-list` (`ensureCommandRowDelegationBound`),
+  // reading the `ItemRef` back from `data-ref`.
+  return toElement(
     <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{renderIconSvg(currentIcon.svg, 12, textColor)}</span>
@@ -156,21 +179,6 @@ function renderCommandOutlineRow(ref: ItemRef): HTMLElement {
       <button className="cmd-outline-delete-btn" title="Delete">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
     </div>
   );
-
-  row.querySelector('.cmd-outline-edit-btn')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showCommandEditorModal(ref);
-  });
-
-  row.querySelector('.cmd-outline-delete-btn')!.addEventListener('click', (e) => {
-    e.stopPropagation();
-    deleteAtRef(ref);
-    renderCustomCommandSettings();
-    void saveCommandItems();
-  });
-
-  addDragHandlers(row, ref);
-  return row;
 }
 
 function renderGroupOutlineRow(topIndex: number): HTMLElement {
@@ -178,7 +186,12 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
   const group = commandItems[topIndex] as CommandGroup;
   const ref: ItemRef = { type: 'top', index: topIndex };
 
-  const row = toElement(
+  // HS-8614 \u2014 pure markup. The contentEditable name's `blur`/`keydown`, the
+  // empty-group delete click, and the drag handlers are all delegated once at
+  // `#settings-commands-list` (`ensureCommandRowDelegationBound`). `commandItems`
+  // is only read here for the markup; the handlers re-fetch it via
+  // `getCommandItems()` so they always see the live array.
+  return toElement(
     <div className="cmd-outline-row cmd-outline-group-row" draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-group-name" contentEditable="true">{group.name}</span>
@@ -188,64 +201,111 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
       }
     </div>
   );
-
-  const nameEl = row.querySelector('.cmd-outline-group-name') as HTMLElement;
-  nameEl.addEventListener('blur', () => {
-    const newName = nameEl.textContent.trim();
-    if (newName === '') { nameEl.textContent = group.name; return; }
-    if (newName !== group.name) {
-      (commandItems[topIndex] as CommandGroup).name = newName;
-      void saveCommandItems();
-    }
-  });
-  nameEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
-    if (e.key === 'Escape') { nameEl.textContent = group.name; nameEl.blur(); }
-  });
-
-  if (group.children.length === 0) {
-    row.querySelector('.cmd-outline-delete-btn')!.addEventListener('click', (e) => {
-      e.stopPropagation();
-      commandItems.splice(topIndex, 1);
-      renderCustomCommandSettings();
-      void saveCommandItems();
-    });
-  }
-
-  addDragHandlers(row, ref);
-  return row;
 }
 
-function addDragHandlers(row: HTMLElement, ref: ItemRef) {
-  const commandItems = getCommandItems();
-  const item = ref.type === 'top' ? commandItems[ref.index] : resolveCommand(ref);
-  const isGroupRow = isGroup(item);
+/** Track the element the command-outline delegated handlers are bound to + the
+ *  disposers. Same element-identity pattern as `terminalsSettings` (HS-8614):
+ *  production binds once against the page-lifetime `#settings-commands-list`;
+ *  tests rebuild the DOM, so a changed element identity disposes + re-binds
+ *  rather than stacking duplicate listeners. */
+let delegatedCommandList: HTMLElement | null = null;
+let commandRowDisposers: (() => void)[] = [];
 
-  row.addEventListener('dragstart', (e) => {
+/** Test-only — drop the delegated listeners + binding marker so the next render
+ *  re-binds against a fresh `#settings-commands-list`. */
+export function _resetCommandRowDelegationForTests(): void {
+  for (const dispose of commandRowDisposers) dispose();
+  commandRowDisposers = [];
+  delegatedCommandList = null;
+}
+
+function ensureCommandRowDelegationBound(list: HTMLElement): void {
+  if (delegatedCommandList === list) return;
+  for (const dispose of commandRowDisposers) dispose();
+  commandRowDisposers = [];
+  delegatedCommandList = list;
+  const d = commandRowDisposers;
+
+  // Edit button — open the command editor modal for the row's ref.
+  d.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-edit-btn', (e, btn) => {
+    e.stopPropagation();
+    const ref = readRef(btn);
+    if (ref !== null) showCommandEditorModal(ref);
+  }));
+
+  // Delete button — covers both command rows and empty-group rows.
+  // `deleteAtRef({type:'top'})` splices `commandItems[index]`, identical to the
+  // pre-fix empty-group delete branch, so one handler serves both.
+  d.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-delete-btn', (e, btn) => {
+    e.stopPropagation();
+    const ref = readRef(btn);
+    if (ref === null) return;
+    deleteAtRef(ref);
+    renderCustomCommandSettings();
+    void saveCommandItems();
+  }));
+
+  // Group name (contentEditable) — commit on blur, Enter blurs, Escape reverts.
+  // `blur` is auto-promoted to the capture phase by `delegate`.
+  d.push(delegate<HTMLElement>(list, 'blur', '.cmd-outline-group-name', (_e, nameEl) => {
+    const ref = readRef(nameEl);
+    if (ref === null || ref.type !== 'top') return;
+    const group = getCommandItems()[ref.index];
+    if (!isGroup(group)) return;
+    const newName = nameEl.textContent.trim();
+    if (newName === '') { nameEl.textContent = group.name; return; }
+    if (newName !== group.name) { group.name = newName; void saveCommandItems(); }
+  }));
+  d.push(delegate<HTMLElement>(list, 'keydown', '.cmd-outline-group-name', (e, nameEl) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter') { e.preventDefault(); nameEl.blur(); }
+    if (ke.key === 'Escape') {
+      const ref = readRef(nameEl);
+      if (ref !== null && ref.type === 'top') {
+        const group = getCommandItems()[ref.index];
+        if (isGroup(group)) nameEl.textContent = group.name;
+      }
+      nameEl.blur();
+    }
+  }));
+
+  // Drag-to-reorder. Module-level `draggedRef` / `dropTargetRef` / `dropPosition`
+  // carry the gesture state across the delegated handlers; each reads the
+  // hovered row's ref from `data-ref`. `getCommandItems()` is re-fetched inside
+  // the handlers so a mid-session reload's fresh array is always honored.
+  d.push(delegate<HTMLElement>(list, 'dragstart', '.cmd-outline-row', (e, row) => {
+    const ref = readRef(row);
+    if (ref === null) return;
     draggedRef = ref;
-    e.dataTransfer!.setData('text/plain', JSON.stringify(ref));
-    e.dataTransfer!.effectAllowed = 'move';
+    const dt = (e as DragEvent).dataTransfer;
+    dt?.setData('text/plain', JSON.stringify(ref));
+    if (dt !== null) dt.effectAllowed = 'move';
     setTimeout(() => row.classList.add('dragging'), 0);
-  });
+  }));
 
-  row.addEventListener('dragend', () => {
+  d.push(delegate<HTMLElement>(list, 'dragend', '.cmd-outline-row', (_e, row) => {
     row.classList.remove('dragging');
     draggedRef = null;
     dropTargetRef = null;
     dropPosition = null;
     clearAllDropIndicators();
-  });
+  }));
 
-  row.addEventListener('dragover', (e) => {
-    if (draggedRef === null || refEqual(draggedRef, ref)) return;
+  d.push(delegate<HTMLElement>(list, 'dragover', '.cmd-outline-row', (e, row) => {
+    const ref = readRef(row);
+    if (draggedRef === null || ref === null || refEqual(draggedRef, ref)) return;
     e.preventDefault();
-    e.dataTransfer!.dropEffect = 'move';
+    const commandItems = getCommandItems();
+    const dt = (e as DragEvent).dataTransfer;
+    if (dt !== null) dt.dropEffect = 'move';
 
+    const item = ref.type === 'top' ? commandItems[ref.index] : resolveCommand(ref);
+    const isGroupRow = isGroup(item);
     const draggedItem = draggedRef.type === 'top' ? commandItems[draggedRef.index] : resolveCommand(draggedRef);
     const draggedIsGroup = isGroup(draggedItem);
 
     const rect = row.getBoundingClientRect();
-    const fraction = (e.clientY - rect.top) / rect.height;
+    const fraction = ((e as DragEvent).clientY - rect.top) / rect.height;
 
     clearAllDropIndicators();
 
@@ -262,20 +322,22 @@ function addDragHandlers(row: HTMLElement, ref: ItemRef) {
       dropPosition = 'below';
       row.classList.add('drop-below');
     }
-  });
+  }));
 
-  row.addEventListener('dragleave', (e) => {
-    if (row.contains(e.relatedTarget as Node)) return;
+  d.push(delegate<HTMLElement>(list, 'dragleave', '.cmd-outline-row', (e, row) => {
+    const related = (e as DragEvent).relatedTarget;
+    if (related instanceof Node && row.contains(related)) return;
     row.classList.remove('drop-above', 'drop-below', 'drop-into');
-    if (refEqual(dropTargetRef, ref)) { dropTargetRef = null; dropPosition = null; }
-  });
+    if (refEqual(dropTargetRef, readRef(row))) { dropTargetRef = null; dropPosition = null; }
+  }));
 
-  row.addEventListener('drop', (e) => {
+  d.push(delegate<HTMLElement>(list, 'drop', '.cmd-outline-row', (e) => {
     e.preventDefault();
     clearAllDropIndicators();
     if (draggedRef === null || dropTargetRef === null || dropPosition === null) return;
     if (refEqual(draggedRef, dropTargetRef)) { draggedRef = null; return; }
 
+    const commandItems = getCommandItems();
     const draggedItem = draggedRef.type === 'top' ? commandItems[draggedRef.index] : resolveCommand(draggedRef);
     const draggedIsGroup = isGroup(draggedItem);
 
@@ -321,7 +383,7 @@ function addDragHandlers(row: HTMLElement, ref: ItemRef) {
     draggedRef = null; dropTargetRef = null; dropPosition = null;
     renderCustomCommandSettings();
     void saveCommandItems();
-  });
+  }));
 }
 
 function removeCommandAtRef(ref: ItemRef, commandItems: CommandItem[]): CustomCommand {
@@ -334,17 +396,21 @@ export function renderCustomCommandSettings() {
   const commandItems = getCommandItems();
   const list = byIdOrNull('settings-commands-list');
   if (!list) return;
-  list.innerHTML = '';
+  ensureCommandRowDelegationBound(list);
 
+  // HS-8614 — accumulate every child then commit via one `replaceChildren`
+  // (was `innerHTML = '' + append-each`). Rows are pure markup; the per-row
+  // listeners are delegated once at `list` above.
+  const children: Element[] = [];
   for (let i = 0; i < commandItems.length; i++) {
     const item = commandItems[i];
     if (isGroup(item)) {
-      list.appendChild(renderGroupOutlineRow(i));
+      children.push(renderGroupOutlineRow(i));
       for (let j = 0; j < item.children.length; j++) {
-        list.appendChild(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }));
+        children.push(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }));
       }
     } else {
-      list.appendChild(renderCommandOutlineRow({ type: 'top', index: i }));
+      children.push(renderCommandOutlineRow({ type: 'top', index: i }));
     }
   }
 
@@ -376,5 +442,9 @@ export function renderCustomCommandSettings() {
     void saveCommandItems();
   });
 
-  list.appendChild(btnRow);
+  // The btnRow keeps per-element click listeners: it's a single (non-row)
+  // element rebuilt fresh on every render, so there's no stale-closure or
+  // re-attach-waste concern the per-row delegation addresses.
+  children.push(btnRow);
+  list.replaceChildren(...children);
 }

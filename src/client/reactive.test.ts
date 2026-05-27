@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { batch, computed, defineStore, effect, resetAllStores, signal } from './reactive.js';
+import { batch, computed, defineStore, delegate, delegateCapture, effect, resetAllStores, signal } from './reactive.js';
 
 describe('reactive — primitive re-exports (HS-8235)', () => {
   it('signal exposes .value reads + writes', () => {
@@ -108,5 +108,51 @@ describe('reactive — defineStore / resetAllStores re-exports (HS-8238)', () =>
     resetAllStores();
     expect(a.state.value.n).toBe(1);
     expect(b.state.value.s).toBe('init');
+  });
+});
+
+describe('reactive — delegate / delegateCapture re-exports (HS-8613/HS-8614)', () => {
+  it('delegate installs one root listener that dispatches via closest() and survives child rebuilds', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<button class="btn" data-id="1">a</button><button class="btn" data-id="2">b</button>';
+    document.body.appendChild(root);
+    const seen: string[] = [];
+    const dispose = delegate<HTMLButtonElement>(root, 'click', '.btn', (_e, btn) => {
+      seen.push(btn.dataset.id ?? '');
+    });
+    root.querySelector<HTMLButtonElement>('[data-id="1"]')!.click();
+    // Rebuild the children — the single root listener must keep firing on the
+    // fresh nodes (the whole point of delegation over per-element listeners).
+    root.innerHTML = '<button class="btn" data-id="3">c</button>';
+    root.querySelector<HTMLButtonElement>('[data-id="3"]')!.click();
+    expect(seen).toEqual(['1', '3']);
+    dispose();
+    root.querySelector<HTMLButtonElement>('[data-id="3"]')!.click();
+    expect(seen).toEqual(['1', '3']);
+    root.remove();
+  });
+
+  it('delegate fires on a click inside a matched wrapper (closest walk-up), not just the wrapper itself', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<div class="row" data-idx="7"><span class="inner">x</span></div>';
+    document.body.appendChild(root);
+    let idx = '';
+    const dispose = delegate<HTMLElement>(root, 'click', '.row', (_e, row) => { idx = row.dataset.idx ?? ''; });
+    root.querySelector<HTMLElement>('.inner')!.click();
+    expect(idx).toBe('7');
+    dispose();
+    root.remove();
+  });
+
+  it('delegateCapture matches the target element directly (strict, no walk-up)', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<input class="field" />';
+    document.body.appendChild(root);
+    let fired = 0;
+    const dispose = delegateCapture<HTMLInputElement>(root, 'focus', '.field', () => { fired += 1; });
+    root.querySelector<HTMLInputElement>('.field')!.dispatchEvent(new FocusEvent('focus'));
+    expect(fired).toBe(1);
+    dispose();
+    root.remove();
   });
 });

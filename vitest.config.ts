@@ -14,6 +14,15 @@ export default defineConfig({
   test: {
     pool: 'forks',
     testTimeout: 30000,
+    // HS-8650 — raise the per-hook timeout from vitest's 10s default to match
+    // `testTimeout`. The PGLite-heavy DB suites tear down real embedded-Postgres
+    // clusters in `afterEach` (`closeAllDatabases()` → CHECKPOINT + close); under
+    // the full merged-coverage run (200+ files in parallel + V8 instrumentation)
+    // that close work can exceed 10s purely from CPU starvation, surfacing as a
+    // flaky "Hook timed out in 10000ms" that isn't a real hang. 30s gives every
+    // teardown hook the same headroom the bodies already get. (The slowest
+    // suite, `snapshotRestore.test.ts`, scopes an even-higher local override.)
+    hookTimeout: 30000,
     // HS-8097: `node_modules/**` only matches the top-level node_modules.
     // The Tauri release artefact at
     // `src-tauri/target/release/bundle/.../server/node_modules/` ships with
