@@ -186,11 +186,23 @@ test.describe('GitHub plugin — sync triggers & direction modes (HS-5059)', () 
     if (record) createdRemoteIds.push(record.remote_id);
   });
 
-  test('auto_sync_new=false: new local tickets are NOT auto-pushed', async ({ request }) => {
+  test('auto_sync_new=false: new local tickets are NOT auto-pushed (HS-8661)', async ({ request }) => {
     await request.patch('/api/settings', {
       headers, data: { 'plugin:github-issues:auto_sync_new': 'false' },
     });
     await request.post('/api/plugins/github-issues/reactivate', { headers });
+
+    // HS-8661 regression: explicitly seed an already-synced ticket so the legacy
+    // "auto-create if there are already synced tickets" fallback WOULD fire if
+    // shouldAutoSync's false answer were (as before the fix) allowed to fall
+    // through. Don't rely on a prior test having left a sync record around.
+    const seed = await request.post('/api/tickets', {
+      headers, data: { title: `auto_sync seed ${Date.now()}`, defaults: { details: 'seed' } },
+    });
+    const seedTicket = await seed.json() as { id: number };
+    const seedPush = await request.post(`/api/plugins/github-issues/push-ticket/${seedTicket.id}`, { headers });
+    const seedResult = await seedPush.json() as { remoteId: string };
+    createdRemoteIds.push(seedResult.remoteId);
 
     const uniqueTitle = `auto_sync false ${Date.now()}`;
     const createRes = await request.post('/api/tickets', {
@@ -200,7 +212,8 @@ test.describe('GitHub plugin — sync triggers & direction modes (HS-5059)', () 
 
     await request.post('/api/plugins/github-issues/sync', { headers });
 
-    // Verify NO sync record for this ticket.
+    // Verify NO sync record for this ticket — the opt-out must be honored even
+    // though a synced ticket already exists for this backend.
     const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });
     const records = await recordsRes.json() as { ticket_id: number }[];
     expect(records.find(r => r.ticket_id === ticket.id)).toBeUndefined();

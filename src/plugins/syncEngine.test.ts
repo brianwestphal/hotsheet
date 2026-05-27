@@ -478,6 +478,67 @@ describe('sync engine — per-project isolation', () => {
   });
 });
 
+describe('sync engine — HS-8661: shouldAutoSync opt-out is authoritative', () => {
+  it('does not auto-create when shouldAutoSync returns false, even with existing synced tickets', async () => {
+    pluginEnabledForProject = true;
+
+    // Backend that explicitly opts OUT of auto-sync (e.g. GitHub's auto_sync_new off)
+    const backend = createMockBackend();
+    backend.id = 'optout-backend';
+    backend.name = 'Opt-out Backend';
+    backend.shouldAutoSync = () => false;
+    loaderMock.__registerBackend(backend);
+
+    // Precondition: at least one ticket is already synced to this backend. Before
+    // the fix this is exactly what made the legacy fallback push the new ticket.
+    const alreadySynced = await createTicket('Already synced');
+    await upsertSyncRecord(alreadySynced.id, 'optout-backend', 'remote-existing', 'synced');
+
+    const ticket = await createTicket('Should respect opt-out');
+    await onTicketCreated(ticket.id);
+
+    const entries = await getOutboxEntries('optout-backend');
+    expect(entries.filter(e => e.ticket_id === ticket.id).length).toBe(0);
+  });
+
+  it('auto-creates when shouldAutoSync returns true', async () => {
+    pluginEnabledForProject = true;
+
+    const backend = createMockBackend();
+    backend.id = 'optin-backend';
+    backend.name = 'Opt-in Backend';
+    backend.shouldAutoSync = () => true;
+    loaderMock.__registerBackend(backend);
+
+    const ticket = await createTicket('Should auto-sync');
+    await onTicketCreated(ticket.id);
+
+    const entries = await getOutboxEntries('optin-backend');
+    const created = entries.filter(e => e.ticket_id === ticket.id);
+    expect(created.length).toBe(1);
+    expect(created[0].action).toBe('create');
+  });
+
+  it('does not auto-create when shouldAutoSync returns true but the ticket is already synced', async () => {
+    pluginEnabledForProject = true;
+
+    const backend = createMockBackend();
+    backend.id = 'optin-synced-backend';
+    backend.name = 'Opt-in Already-Synced Backend';
+    backend.shouldAutoSync = () => true;
+    loaderMock.__registerBackend(backend);
+
+    // Simulates a ticket that was just pulled from remote — already has a sync record.
+    const ticket = await createTicket('Pulled from remote');
+    await upsertSyncRecord(ticket.id, 'optin-synced-backend', 'remote-pulled', 'synced');
+
+    await onTicketCreated(ticket.id);
+
+    const entries = await getOutboxEntries('optin-synced-backend');
+    expect(entries.filter(e => e.ticket_id === ticket.id).length).toBe(0);
+  });
+});
+
 describe('sync engine — error handling', () => {
   it('returns error when backend is not found', async () => {
     const result = await runSync('nonexistent-backend');

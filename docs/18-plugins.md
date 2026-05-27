@@ -265,6 +265,8 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 - Backends can implement `shouldAutoSync(ticket)` to auto-push new local tickets.
 - Tickets already synced (have sync records) are not re-pushed.
 - Configurable via a plugin preference (e.g. `auto_sync_new` toggle).
+- **A backend that implements `shouldAutoSync` is authoritative**: when it returns `false`, the ticket is NOT auto-pushed — even if the backend already has other synced tickets. A `false` answer is an explicit opt-out and must not fall through to the legacy fallback below (HS-8661 — pre-fix, a `false` answer fell through and a new ticket was auto-pushed whenever any ticket was already synced, ignoring `auto_sync_new`).
+- **Legacy fallback** (backends that do NOT implement `shouldAutoSync` only): auto-create a new ticket if the backend already has at least one synced ticket — never on a backend with no sync history (prevents cross-project push).
 
 ### 18.10 API Endpoints
 

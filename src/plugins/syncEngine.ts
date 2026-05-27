@@ -397,7 +397,10 @@ export async function onTicketCreated(ticketId: number): Promise<void> {
     if (!backend.capabilities.create) continue;
     if (!await isEnabledForCurrentProject(backend.id)) continue;
 
-    // Check if the plugin wants to auto-sync this ticket
+    // A plugin that implements shouldAutoSync gives the authoritative answer on
+    // whether to auto-create new tickets — honor it whether it returns true OR
+    // false. A false answer is an explicit opt-out (e.g. GitHub's auto_sync_new
+    // setting is off) and must NOT fall through to the legacy fallback below.
     if (backend.shouldAutoSync) {
       const ticket = await getTicket(ticketId);
       if (ticket && backend.shouldAutoSync(ticket)) {
@@ -406,11 +409,12 @@ export async function onTicketCreated(ticketId: number): Promise<void> {
         if (!existing) {
           await addToOutbox(ticketId, backend.id, 'create', {});
         }
-        continue;
       }
+      continue;
     }
 
-    // Legacy: only auto-create if there are already synced tickets
+    // Legacy: backends without shouldAutoSync auto-create only if there are
+    // already synced tickets (prevents cross-project push).
     const records = await getSyncRecordsForPlugin(backend.id);
     if (records.length === 0) continue;
     await addToOutbox(ticketId, backend.id, 'create', {});
