@@ -14,7 +14,7 @@ import {
   callLoadTickets, callUpdateBatchToolbar, callUpdateColumnSelectionClasses,
   draggedTicketIds, setDraggedTicketIds,
 } from './ticketListState.js';
-import { getIndicatorDotType, showCategoryMenu, showPriorityMenu, toggleUpNext  } from './ticketRow.js';
+import { getIndicatorDotType, liveTicket, showCategoryMenu, showPriorityMenu, toggleUpNext  } from './ticketRow.js';
 import { getTicketSignals, ticketsByStatusSignal } from './ticketsStore.js';
 import { trackedBatch } from './undo/actions.js';
 
@@ -492,27 +492,32 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
   );
 
   // Category menu
+  // HS-8652 — re-fetch the live ticket by id (the column card is preserved
+  // across category/priority/up_next changes, so the closure `ticket` goes
+  // stale after an external update; see `liveTicket`). A STATUS change moves the
+  // card to a different status-column, which recreates it, so the click-select
+  // handler below can keep reading the closure status safely.
   const catBadge = card.querySelector('.ticket-category-badge') as HTMLElement;
   catBadge.addEventListener('click', (e) => {
     e.stopPropagation();
-    showCategoryMenu(catBadge, ticket);
+    showCategoryMenu(catBadge, liveTicket(ticket.id, ticket));
   });
 
   // Priority menu
   const priSpan = card.querySelector('.ticket-priority-indicator') as HTMLElement;
   priSpan.addEventListener('click', (e) => {
     e.stopPropagation();
-    showPriorityMenu(priSpan, ticket);
+    showPriorityMenu(priSpan, liveTicket(ticket.id, ticket));
   });
 
   // Star toggle
   card.querySelector('.ticket-star')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    void toggleUpNext(ticket);
+    void toggleUpNext(liveTicket(ticket.id, ticket));
   });
 
   // Context menu
-  card.addEventListener('contextmenu', (e) => { showTicketContextMenu(e, ticket); });
+  card.addEventListener('contextmenu', (e) => { showTicketContextMenu(e, liveTicket(ticket.id, ticket)); });
 
   // Draggable
   card.draggable = true;

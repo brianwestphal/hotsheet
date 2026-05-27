@@ -28,6 +28,7 @@
  * The intent here is "establish the computed-derived shape;
  * leave the body extension to the atomic-flip ticket."
  */
+import { isExactTicketIdSearch } from '../ticketNumber.js';
 import type { ReadonlySignal, Signal } from './reactive.js';
 import { computed, defineStore, signal } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -238,6 +239,24 @@ export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() =>
     filter.includeArchiveInSearch,
   );
   if (filter.search === '') return viewFiltered;
+  // HS-8653 — an EXACT ticket-id search (e.g. `HS-100`) must surface THE ticket
+  // regardless of the active view / status: it may live in archive, trash, or
+  // backlog. The server already returns it (HS-8100 short-circuits the status
+  // gate + matches on `ticket_number` equality), but `applyViewFilter` above
+  // would re-hide an archived / deleted match before it reaches the DOM. Mirror
+  // the server's exact-id semantics here: strict case-insensitive equality on
+  // `ticket_number`, bypassing the view filter for the matched ticket. The
+  // server's exact-id path returns ONLY that ticket, so this is normally a
+  // single row; we still dedup against `viewFiltered` for the active-ticket case
+  // and fall through to the substring filter if no loaded ticket matches.
+  if (isExactTicketIdSearch(filter.search)) {
+    const target = filter.search.trim().toLowerCase();
+    const exact = tickets.filter(t => t.ticket_number.toLowerCase() === target);
+    if (exact.length > 0) {
+      const exactIds = new Set(exact.map(t => t.id));
+      return [...exact, ...viewFiltered.filter(t => !exactIds.has(t.id))];
+    }
+  }
   const lc = filter.search.toLowerCase();
   return viewFiltered.filter(t => ticketMatchesSearch(t, lc));
 });

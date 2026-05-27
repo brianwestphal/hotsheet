@@ -160,3 +160,95 @@ describe('renderNotes — delegated note interactions (HS-8613)', () => {
     expect(notes20[0].text).toBe('twenty-edited');
   });
 });
+
+/**
+ * HS-8651 — `renderNotes` commits via `morph()` (was `replaceChildren`). These
+ * pin the morph behaviors: in-place reconciliation (node identity preserved →
+ * scroll/focus survive), in-progress inline-edit preservation across a
+ * re-render (the full-payoff goal), and that a committed save still rebuilds
+ * the entry into display mode.
+ */
+describe('renderNotes — morph reconciliation (HS-8651)', () => {
+  beforeEach(() => {
+    _resetNotesDelegationForTests();
+    document.body.innerHTML = '<div id="detail-notes"></div>';
+    vi.mocked(editTicketNote).mockClear();
+    vi.mocked(deleteTicketNote).mockClear();
+  });
+  afterEach(() => {
+    document.body.innerHTML = '';
+    state.tickets = [];
+    _resetNotesDelegationForTests();
+  });
+
+  it('reuses note-entry nodes across a same-data re-render (morph in place, not teardown)', () => {
+    state.tickets = [ticket(1)];
+    const notes = [{ id: 'a', text: 'one', created_at: '' }, { id: 'b', text: 'two', created_at: '' }];
+    renderNotes(1, notes);
+    const aEl = noteEntry('a');
+    const bEl = noteEntry('b');
+
+    renderNotes(1, notes); // re-render identical data
+
+    // morph reconciles in place → SAME element instances (a `replaceChildren`
+    // rebuild would have produced fresh nodes, resetting scroll + focus).
+    expect(noteEntry('a')).toBe(aEl);
+    expect(noteEntry('b')).toBe(bEl);
+  });
+
+  it('preserves existing note nodes when a new note is added (keyed by data-key)', () => {
+    state.tickets = [ticket(1)];
+    renderNotes(1, [{ id: 'a', text: 'one', created_at: '' }, { id: 'b', text: 'two', created_at: '' }]);
+    const aEl = noteEntry('a');
+    const bEl = noteEntry('b');
+
+    // A new note arrives (e.g. via poll) — A and B keep their identity; C is new.
+    renderNotes(1, [
+      { id: 'a', text: 'one', created_at: '' },
+      { id: 'b', text: 'two', created_at: '' },
+      { id: 'c', text: 'three', created_at: '' },
+    ]);
+    expect(noteEntry('a')).toBe(aEl);
+    expect(noteEntry('b')).toBe(bEl);
+    expect(noteEntry('c')).not.toBeNull();
+  });
+
+  it('PRESERVES an in-progress (uncommitted) inline edit across a re-render', () => {
+    state.tickets = [ticket(1)];
+    const notes = [{ id: 'a', text: 'hello', created_at: '' }];
+    renderNotes(1, notes);
+
+    // Enter edit mode (delegated click injects the textarea).
+    noteEntry('a').click();
+    const ta = noteEntry('a').querySelector<HTMLTextAreaElement>('.note-edit-area');
+    expect(ta).not.toBeNull();
+    ta!.value = 'in-progress edit';
+
+    // A re-render fires WHILE editing (e.g. a detail poll) — same note data.
+    renderNotes(1, notes);
+
+    // The textarea (and its unsaved value) survives — `commitNotesChildren`
+    // marked the editing entry `data-morph-skip`. A `replaceChildren` rebuild
+    // (or an un-skipped morph) would have discarded it.
+    const taAfter = noteEntry('a').querySelector<HTMLTextAreaElement>('.note-edit-area');
+    expect(taAfter).toBe(ta);
+    expect(taAfter!.value).toBe('in-progress edit');
+  });
+
+  it('a committed save rebuilds the entry into display mode (textarea gone, new text shown)', async () => {
+    state.tickets = [ticket(1)];
+    const notes = [{ id: 'a', text: 'before', created_at: '' }];
+    renderNotes(1, notes);
+
+    noteEntry('a').click();
+    const ta = noteEntry('a').querySelector<HTMLTextAreaElement>('.note-edit-area')!;
+    ta.value = 'after';
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+
+    await vi.waitFor(() => { expect(vi.mocked(editTicketNote)).toHaveBeenCalledWith(1, 'a', 'after'); });
+    // The committed textarea is NOT skipped → morph rebuilt the entry: no
+    // textarea, the new text rendered in `.note-text`.
+    expect(noteEntry('a').querySelector('.note-edit-area')).toBeNull();
+    expect(noteEntry('a').querySelector('.note-text')?.textContent).toContain('after');
+  });
+});

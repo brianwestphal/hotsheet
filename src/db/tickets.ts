@@ -1,3 +1,4 @@
+import { isExactTicketIdSearch } from '../ticketNumber.js';
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
 import { getDb } from './connection.js';
 import { generateNoteId, normalizeNotesAppend, parseNotes } from './notes.js';
@@ -193,21 +194,14 @@ export async function hardDeleteTicket(id: number): Promise<void> {
 
 // --- Ticket queries ---
 
-/**
- * HS-8100 — pure: true when `search` is an exact ticket-number reference
- * (e.g. `HS-100`, `BUG-42`, `MIGRATION_V2-7`). When the user types a
- * complete ticket id, they want THAT ticket regardless of which bucket
- * it lives in — backlog, archive, or even trash. Matches the same shape
- * `ticketRefs.ts::buildTicketRefRegex` recognizes for inline links, but
- * anchored to the full string (case-insensitive whitespace tolerated).
- *
- * Exported for tests + the search-counts route which suppresses the
- * "Include N ..." rows when the query is an exact-id (the row would
- * be redundant — the main query already returned it).
- */
-export function isExactTicketIdSearch(search: string): boolean {
-  return /^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$/.test(search);
-}
+// HS-8100 — exact ticket-id detection. HS-8653 moved the canonical
+// implementation to the shared, dependency-free `src/ticketNumber.ts` so the
+// client (`filteredTickets`) and the server agree on the semantics. Re-exported
+// here (imported at the top, re-exported below) for back-compat with the
+// existing server-side importers (the search-counts route + tests) that
+// suppress the "Include N ..." rows when the query is an exact-id (the main
+// query already returned it).
+export { isExactTicketIdSearch };
 
 function buildTicketWhereClause(filters: TicketFilters): { where: string; values: unknown[] } {
   const conditions: string[] = [];

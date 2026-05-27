@@ -281,6 +281,70 @@ describe('ticketsStore — filteredTickets derived signal', () => {
 });
 
 /**
+ * HS-8653 — an EXACT ticket-id search (e.g. `HS-100`) must surface THE ticket
+ * regardless of view / status — archive, trash (deleted), or backlog — because
+ * the user has unambiguously asked for that one ticket. The server already
+ * returns it (HS-8100 short-circuits the status gate); these tests pin that the
+ * client `filteredTickets` no longer re-hides it via `applyViewFilter`. The
+ * default view here is `'all'`, whose active scope excludes deleted / backlog /
+ * archive — so without the fix each of these returns `[]`.
+ */
+describe('ticketsStore — filteredTickets exact ticket-id search (HS-8653)', () => {
+  it('surfaces an ARCHIVED ticket by its exact number', () => {
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'archive' })]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([100]);
+  });
+
+  it('surfaces a DELETED (trash) ticket by its exact number', () => {
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'deleted' })]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([100]);
+  });
+
+  it('surfaces a BACKLOG ticket by its exact number', () => {
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'backlog' })]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([100]);
+  });
+
+  it('exact-id match is case-insensitive', () => {
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'archive' })]);
+    ticketsStore.actions.patchFilter({ search: 'hs-100' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([100]);
+  });
+
+  it('exact-id match wins even when the active view is Archive and the ticket is active', () => {
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'not_started' })]);
+    ticketsStore.actions.patchFilter({ view: 'archive', search: 'HS-100' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([100]);
+  });
+
+  it('does NOT duplicate an active exact-match ticket already visible in the view', () => {
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'not_started' })]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([100]);
+  });
+
+  it('a NON-exact (substring) search still respects the active-scope exclusion for archived tickets', () => {
+    // 'bug' is a substring match, NOT an exact ticket-id, so the archived
+    // ticket stays hidden (only the §40 "Include N archive" row surfaces it).
+    ticketsStore.actions.setTickets([makeTicket(100, { status: 'archive', title: 'a bug' })]);
+    ticketsStore.actions.patchFilter({ search: 'bug' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([]);
+  });
+
+  it('an exact-id-shaped search with no matching loaded ticket falls through to the substring filter', () => {
+    // `HS-99` has the exact-id shape but no loaded ticket carries that number;
+    // it must not falsely surface the archived HS-1234, and the substring
+    // 'HS-99' doesn't match it either → empty.
+    ticketsStore.actions.setTickets([makeTicket(1234, { status: 'archive' })]);
+    ticketsStore.actions.patchFilter({ search: 'HS-99' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([]);
+  });
+});
+
+/**
  * HS-8334 — `filteredTickets` body extended to be the single source
  * of filter truth (view + include flags + search, against the full
  * unfiltered store contents). These tests pin the per-view branches

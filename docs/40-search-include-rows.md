@@ -101,16 +101,18 @@ See [docs/manual-test-plan.md] (no §40 entry yet — append):
 
 When the user types an exact ticket-number reference in the search box (e.g. `HS-100`, `BUG-42`, `MIGRATION_V2-7`), the result must show that ticket regardless of which bucket it lives in — including **trash** (`status = 'deleted'`), which the §40.2 include flags don't cover.
 
-**Detection** — pure helper `isExactTicketIdSearch(s)` in `src/db/tickets.ts`. Matches `^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$` (case-insensitive, trims whitespace). Same shape as `ticketRefs.ts::buildTicketRefRegex`'s inline-link pattern, anchored to the full string so a query like `HS-100 fix me` (free text containing a ticket id) is NOT treated as exact.
+**Detection** — pure helper `isExactTicketIdSearch(s)`. HS-8653 moved the canonical implementation to the dependency-free `src/ticketNumber.ts` so the server (`src/db/tickets.ts`, which re-exports it) and the client (`ticketsStore.ts`) share ONE definition and can't drift. Matches `^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$` (case-insensitive, trims whitespace). Same shape as `ticketRefs.ts::buildTicketRefRegex`'s inline-link pattern, anchored to the full string so a query like `HS-100 fix me` (free text containing a ticket id) is NOT treated as exact.
 
 **Server behavior** in `buildTicketWhereClause`:
 - The default `status NOT IN ('deleted', 'backlog', 'archive')` guard is dropped — every bucket is visible.
 - The search predicate switches from substring `ILIKE %q%` (which would have pulled `HS-1000` for an `HS-1` query) to strict `LOWER(ticket_number) = LOWER($q)` so `HS-1` resolves to exactly that one ticket.
 - Other filters (category / priority / up_next) still apply.
 
+**Client behavior (HS-8653)** — the server returning the ticket isn't enough: `ticketsStore.ts::filteredTickets` runs the loaded set through `applyViewFilter`, whose active scope excludes `deleted` / `backlog` / `archive`, so it re-hid the archived/trashed exact match the server had returned (symptom: searching an archived ticket's exact number showed nothing). The fix mirrors the server's exact-id semantics on the client: when `isExactTicketIdSearch(search)` is true, `filteredTickets` bypasses the view-filter exclusion for the ticket whose `ticket_number` strictly equals the search (case-insensitive), prepending it (deduped against the view-filtered set). Falls through to the normal substring filter when no loaded ticket matches the exact id.
+
 **search-counts** (`countSearchMatchesInExcludedStatuses`) returns `{ backlog: 0, archive: 0 }` for exact-id searches — the main query already returned the matched ticket from any bucket, so the §40.2 "Include {N} ..." rows would be redundant.
 
-**Tests:** 8 new in `src/db/queries.test.ts`'s `exact ticket-id search bypasses status filter (HS-8100)` describe block — covers backlog / archive / trash hits, case insensitivity, no-substring-drift, suppressed include counts, and the regex shape (positive + negative cases).
+**Tests:** 8 in `src/db/queries.test.ts`'s `exact ticket-id search bypasses status filter (HS-8100)` describe block (server: backlog / archive / trash hits, case insensitivity, no-substring-drift, suppressed include counts, regex shape) + 8 in `src/client/ticketsStore.test.ts`'s `filteredTickets exact ticket-id search (HS-8653)` block (client: archive / trash / backlog surfacing, case insensitivity, archive-view override, no-dup, non-exact-respects-exclusion, no-match-fallthrough).
 
 ## 40.5 Client-side filter parity (HS-8380)
 
@@ -122,4 +124,4 @@ Post-fix, `ticketMatchesSearch` checks all five columns the server does, so the 
 
 **Tests:** 2 new in `src/client/ticketsStore.test.ts`'s `filteredTickets derived signal` describe block — covers a notes-only match and a tags-only match against a query that doesn't appear in title / details / ticket_number.
 
-**Status:** Shipped (HS-7756) + extended (HS-8100, HS-8380).
+**Status:** Shipped (HS-7756) + extended (HS-8100, HS-8380, HS-8653).

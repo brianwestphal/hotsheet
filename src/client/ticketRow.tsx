@@ -279,6 +279,26 @@ export function getIndicatorDotType(ticket: Ticket): 'feedback' | 'unread' | nul
 
 // --- Ticket row ---
 
+/**
+ * HS-8652 — return the freshest known ticket for `id`, NOT the closure-captured
+ * object the row was first rendered with. `bindList` (`reactive-bind.ts`) has
+ * PRESERVE semantics — it never re-invokes the row factory for a surviving key
+ * — so the `ticket` a row's handler closes over goes STALE after an EXTERNAL
+ * update (Claude via the channel, an MCP tool, another browser tab) that
+ * replaces the per-ticket signal value (`reconcilePerTicketSignals` /
+ * `applyServerUpdate` swap in a new object; the closure is never touched). The
+ * HS-8367 `Object.assign(ticket, updated)` only keeps the closure fresh after
+ * the USER's own action, not the poll path. So every handler that reads a
+ * MUTABLE field (status / category / priority / up_next / title) must re-fetch
+ * through this. The per-ticket signal value (HS-8335) is the freshest source;
+ * `state.tickets` is the fallback; the closure object is the last resort for a
+ * ticket that has already left the list. (id-only handlers — selection, drag,
+ * keyboard nav — don't need it: `ticket.id` is immutable.)
+ */
+export function liveTicket(id: number, fallback: Ticket): Ticket {
+  return getTicketSignals(id)?.ticket.value ?? state.tickets.find(t => t.id === id) ?? fallback;
+}
+
 export function createTicketRow(ticket: Ticket): HTMLElement {
   const isSelected = state.selectedIds.has(ticket.id);
   const isDone = ticket.status === 'completed' || ticket.status === 'verified';
@@ -326,7 +346,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
   });
   row.addEventListener('mouseup', () => { row.draggable = false; });
   row.addEventListener('dragend', () => { row.draggable = false; setDraggedTicketIds([]); });
-  row.addEventListener('contextmenu', (e) => { showTicketContextMenu(e, ticket); });
+  row.addEventListener('contextmenu', (e) => { showTicketContextMenu(e, liveTicket(ticket.id, ticket)); });
   row.addEventListener('dragstart', (e) => {
     if (state.selectedIds.has(ticket.id) && state.selectedIds.size > 1) {
       setDraggedTicketIds(Array.from(state.selectedIds));
@@ -372,14 +392,14 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
   // Status cycle
   row.querySelector('.ticket-status-btn')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    void cycleStatus(ticket);
+    void cycleStatus(liveTicket(ticket.id, ticket));
   });
 
   // Category menu
   const catBadge = row.querySelector('.ticket-category-badge') as HTMLElement;
   catBadge.addEventListener('click', (e) => {
     e.stopPropagation();
-    showCategoryMenu(catBadge, ticket);
+    showCategoryMenu(catBadge, liveTicket(ticket.id, ticket));
   });
 
   // Title input
@@ -395,24 +415,24 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
     callUpdateBatchToolbar();
   });
   titleInput.addEventListener('input', () => {
-    recordTextChange(ticket, 'title', titleInput.value);
+    recordTextChange(liveTicket(ticket.id, ticket), 'title', titleInput.value);
     debouncedSave(ticket.id, { title: titleInput.value });
   });
   titleInput.addEventListener('keydown', (e) => {
-    handleTicketKeydown(e, ticket, titleInput);
+    handleTicketKeydown(e, liveTicket(ticket.id, ticket), titleInput);
   });
 
   // Priority menu
   const priSpan = row.querySelector('.ticket-priority-indicator') as HTMLElement;
   priSpan.addEventListener('click', (e) => {
     e.stopPropagation();
-    showPriorityMenu(priSpan, ticket);
+    showPriorityMenu(priSpan, liveTicket(ticket.id, ticket));
   });
 
   // Star toggle
   row.querySelector('.ticket-star')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    void toggleUpNext(ticket);
+    void toggleUpNext(liveTicket(ticket.id, ticket));
   });
 
   return row;
