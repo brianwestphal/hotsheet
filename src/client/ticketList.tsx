@@ -706,6 +706,26 @@ function buildScopeKey(): string {
 }
 let lastScopeKey: string | null = null;
 
+/** HS-8520 / HS-8660 — convert the server's synced-tickets wire map into the
+ *  client `syncedTicketMap` shape, converting each plugin-manifest SVG string
+ *  to `SafeHtml` once (so list / column consumers render via `{info.icon}`
+ *  rather than `raw(info.icon)` per row). Exported for unit coverage of the
+ *  icon-mapping shape. */
+export function buildSyncedIconMap(wire: Awaited<ReturnType<typeof getSyncedTickets>>): Record<number, SyncedTicketInfo> {
+  const mapped: Record<number, SyncedTicketInfo> = {};
+  for (const [idStr, info] of Object.entries(wire)) {
+    const id = Number(idStr);
+    mapped[id] = info.icon != null && info.icon !== ''
+      ? {
+          pluginId: info.pluginId,
+          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- plugin-supplied SVG string from a registered plugin's manifest (trusted plugin data).
+          icon: raw(info.icon),
+        }
+      : { pluginId: info.pluginId };
+  }
+  return mapped;
+}
+
 export async function loadTickets() {
   // In preview mode, filter backup tickets locally instead of querying the API
   if (state.backupPreview?.active === true) {
@@ -810,6 +830,18 @@ export async function loadTickets() {
   }
 
   const query = params.toString();
+  // HS-8660 — fetch the sync-icon map IN PARALLEL with the ticket list and
+  // install it BEFORE `setTicketsAnimated`, so the plugin icon is baked into
+  // each row on its FIRST render. The icon is read at `createTicketRow` /
+  // `createColumnCard` time from `syncedTicketMap`, and bindList preserves rows
+  // by ticket id — so a map populated AFTER `setTicketsAnimated` never reaches
+  // the freshly-created rows (the trailing `renderTicketList()` re-runs the
+  // bindList but doesn't re-create preserved rows), leaving newly-synced
+  // tickets icon-less until a layout switch remounts the list. The parallel
+  // fetch keeps the map off the critical path so this adds no latency.
+  const syncMapPromise = getSyncedTickets()
+    .then(buildSyncedIconMap)
+    .catch(() => null);
   const rows = await listTickets(query);
   if (isListLayout && rows.length > state.listLimit) {
     state.hasMoreTickets = true;
@@ -818,26 +850,9 @@ export async function loadTickets() {
     state.hasMoreTickets = false;
   }
   updateLoadMoreButton();
+  const syncMap = await syncMapPromise;
+  if (syncMap !== null) setSyncedTicketMap(syncMap);
   setTicketsAnimated(rows);
-  // Fetch sync map before rendering so icons appear on first render.
-  // Server delivers each entry's icon as an HTML string from the plugin
-  // manifest; convert it to `SafeHtml` once here so consumers can render
-  // with `{info.icon}` rather than `{raw(info.icon)}` on every list row.
-  try {
-    const wire = await getSyncedTickets();
-    const mapped: Record<number, SyncedTicketInfo> = {};
-    for (const [idStr, info] of Object.entries(wire)) {
-      const id = Number(idStr);
-      mapped[id] = info.icon != null && info.icon !== ''
-        ? {
-            pluginId: info.pluginId,
-            // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- plugin-supplied SVG string from a registered plugin's manifest (trusted plugin data).
-            icon: raw(info.icon),
-          }
-        : { pluginId: info.pluginId };
-    }
-    setSyncedTicketMap(mapped);
-  } catch { /* non-critical */ }
   renderTicketList();
   // HS-7756 — fetch + render the per-bucket search counts. Done after the
   // main render so the user sees their tickets immediately and the
