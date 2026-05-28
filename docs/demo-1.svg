@@ -1,0 +1,852 @@
+  <defs><clipPath id="demo-1-cp0"><rect x="28" y="21.5" width="16" height="16"/></clipPath><clipPath id="demo-1-cp1"><rect x="68" y="16" width="640" height="27"/></clipPath><clipPath id="demo-1-ov2"><rect x="68" y="16" width="640" height="27" rx="0"  /></clipPath><clipPath id="demo-1-ct3"><rect x="68" y="16" width="640" height="27" /></clipPath><clipPath id="demo-1-cp4"><rect x="936" y="14.5" width="67" height="30"/></clipPath><clipPath id="demo-1-ov5"><rect x="937" y="15.5" width="65" height="28" rx="5"  /></clipPath><clipPath id="demo-1-cp6"><rect x="945" y="21.5" width="16" height="16"/></clipPath><clipPath id="demo-1-cp7"><rect x="978" y="21.5" width="16" height="16"/></clipPath><clipPath id="demo-1-cp8"><rect x="1175" y="14.5" width="67" height="30"/></clipPath><clipPath id="demo-1-ov9"><rect x="1176" y="15.5" width="65" height="28" rx="5"  /></clipPath><clipPath id="demo-1-cp10"><rect x="1184" y="21.5" width="16" height="16"/></clipPath><clipPath id="demo-1-cp11"><rect x="1217" y="21.5" width="16" height="16"/></clipPath><clipPath id="demo-1-cp12"><rect x="1266" y="14.5" width="30" height="30"/></clipPath><clipPath id="demo-1-ov13"><rect x="1267" y="15.5" width="28" height="28" rx="5"  /></clipPath><clipPath id="demo-1-cp14"><rect x="1267" y="15.5" width="28" height="28"/></clipPath><clipPath id="demo-1-cp15"><rect x="1314" y="20.5" width="18" height="18"/></clipPath><clipPath id="demo-1-cp16"><rect x="1356" y="20.5" width="18" height="18"/></clipPath><clipPath id="demo-1-ct17"><rect x="20" y="70.5" width="623" height="19.5" /></clipPath><clipPath id="demo-1-ct18"><rect x="1321.4" y="68" width="58.6" height="24.5" /></clipPath><clipPath id="demo-1-cp19"><rect x="0" y="102.5" width="1400" height="764.5"/></clipPath><clipPath id="demo-1-ov20"><rect x="0" y="102.5" width="1400" height="764.5" rx="0"  /></clipPath><clipPath id="demo-1-cp21"><rect x="0" y="102.5" width="180" height="764.5"/></clipPath><clipPath id="demo-1-ov22"><rect x="0" y="102.5" width="179" height="764.5" rx="0"  /></clipPath><clipPath id="demo-1-cp23"><rect x="16" y="118.5" width="98" height="20"/></clipPath><clipPath id="demo-1-ct24"><rect x="0" y="195" width="179" height="28.5" /></clipPath><clipPath id="demo-1-ct25"><rect x="0" y="223.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct26"><rect x="0" y="255" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct27"><rect x="0" y="286.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct28"><rect x="0" y="318" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct29"><rect x="0" y="349.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct30"><rect x="0" y="381" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct31"><rect x="0" y="425.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct32"><rect x="0" y="457" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct33"><rect x="0" y="488.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct34"><rect x="0" y="528" width="179" height="28.5" /></clipPath><clipPath id="demo-1-ct35"><rect x="0" y="556.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct36"><rect x="0" y="588" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct37"><rect x="0" y="619.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct38"><rect x="0" y="651" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct39"><rect x="0" y="682.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct40"><rect x="0" y="714" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct41"><rect x="0" y="753.5" width="179" height="28.5" /></clipPath><clipPath id="demo-1-ct42"><rect x="0" y="782" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct43"><rect x="0" y="813.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct44"><rect x="0" y="845" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct45"><rect x="0" y="876.5" width="179" height="31.5" /></clipPath><clipPath id="demo-1-ct46"><rect x="16" y="142.5" width="72.3" height="18" /></clipPath><clipPath id="demo-1-ct47"><rect x="16" y="162.5" width="68.7" height="16.5" /></clipPath><clipPath id="demo-1-cp48"><rect x="66.9" y="204.8" width="13" height="13"/></clipPath><clipPath id="demo-1-cp49"><rect x="16" y="232.3" width="14" height="14"/></clipPath><clipPath id="demo-1-ct50"><rect x="16" y="263.8" width="14" height="14" /></clipPath><clipPath id="demo-1-ct51"><rect x="16" y="295.3" width="14" height="14" /></clipPath><clipPath id="demo-1-ct52"><rect x="16" y="326.8" width="14" height="14" /></clipPath><clipPath id="demo-1-ct53"><rect x="16" y="358.3" width="14" height="14" /></clipPath><clipPath id="demo-1-cp54"><rect x="16" y="389.8" width="14" height="14"/></clipPath><clipPath id="demo-1-cp55"><rect x="16" y="434.3" width="14" height="14"/></clipPath><clipPath id="demo-1-cp56"><rect x="16" y="465.8" width="14" height="14"/></clipPath><clipPath id="demo-1-cp57"><rect x="16" y="497.3" width="14" height="14"/></clipPath><clipPath id="demo-1-cp58"><rect x="16" y="790.8" width="14" height="14"/></clipPath><clipPath id="demo-1-cp59"><rect x="16" y="822.3" width="14" height="14"/></clipPath><clipPath id="demo-1-cp60"><rect x="16" y="853.8" width="14" height="14"/></clipPath><clipPath id="demo-1-cp61"><rect x="16" y="885.3" width="14" height="14"/></clipPath><clipPath id="demo-1-cp62"><rect x="180" y="102.5" width="1220" height="764.5"/></clipPath><clipPath id="demo-1-ov63"><rect x="180" y="102.5" width="1220" height="764.5" rx="0"  /></clipPath><clipPath id="demo-1-cp64"><rect x="180" y="102.5" width="856" height="764.5"/></clipPath><clipPath id="demo-1-ov65"><rect x="180" y="102.5" width="856" height="764.5" rx="0"  /></clipPath><clipPath id="demo-1-ct66"><rect x="221" y="108.5" width="69.9" height="26" /></clipPath><clipPath id="demo-1-ct67"><rect x="298.9" y="108.5" width="58.7" height="26" /></clipPath><clipPath id="demo-1-ct68"><rect x="365.6" y="108.5" width="54.3" height="26" /></clipPath><clipPath id="demo-1-ct69"><rect x="433.8" y="112.5" width="15.9" height="18" /></clipPath><clipPath id="demo-1-cp70"><rect x="469.8" y="114.5" width="14" height="14"/></clipPath><clipPath id="demo-1-cp71"><rect x="504.8" y="114.5" width="14" height="14"/></clipPath><clipPath id="demo-1-cp72"><rect x="180" y="141.5" width="856" height="725.5"/></clipPath><clipPath id="demo-1-ov73"><rect x="180" y="141.5" width="856" height="725.5" rx="0"  /></clipPath><clipPath id="demo-1-bs74"><polygon points="1036,182 180,182 183,181 1036,181"/></clipPath><clipPath id="demo-1-ct75"><rect x="221" y="153" width="20" height="20" /></clipPath><clipPath id="demo-1-ct76"><rect x="249" y="154.5" width="40" height="17" /></clipPath><clipPath id="demo-1-cp77"><rect x="360" y="150" width="620" height="26"/></clipPath><clipPath id="demo-1-ct78"><rect x="360" y="150" width="620" height="26" /></clipPath><clipPath id="demo-1-cp79"><rect x="180" y="181.5" width="856" height="681.5"/></clipPath><clipPath id="demo-1-ov80"><rect x="180" y="181.5" width="856" height="681.5" rx="0"  /></clipPath><clipPath id="demo-1-cp81"><rect x="180" y="181.5" width="213.3" height="681.5"/></clipPath><clipPath id="demo-1-ov82"><rect x="180" y="181.5" width="213.3" height="681.5" rx="0"  /></clipPath><clipPath id="demo-1-ct83"><rect x="192" y="189.8" width="88.1" height="18" /></clipPath><clipPath id="demo-1-ct84"><rect x="361.7" y="189.5" width="19.5" height="18.5" /></clipPath><clipPath id="demo-1-cp85"><rect x="180" y="217" width="213.3" height="646"/></clipPath><clipPath id="demo-1-ov86"><rect x="180" y="217" width="213.3" height="646" rx="0"  /></clipPath><filter id="demo-1-sh87" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-bw88"><polygon points="188,225 385,225 335.8,274.3"/></clipPath><clipPath id="demo-1-bw89"><polygon points="385,225 385,330 332.5,277.5"/></clipPath><clipPath id="demo-1-bw90"><polygon points="385,330 188,330 335.8,280.8"/></clipPath><clipPath id="demo-1-bw91"><polygon points="188,330 188,225 345.5,277.5"/></clipPath><clipPath id="demo-1-br92"><path d="M194,225 L379.3,225 A6,6 0 0 1 385.3,231 L385.3,324.4 A6,6 0 0 1 379.3,330.4 L194,330.4 A6,6 0 0 1 188,324.4 L188,231 A6,6 0 0 1 194,225 Z"/></clipPath><clipPath id="demo-1-ct93"><rect x="201" y="262" width="173.3" height="36.4" /></clipPath><clipPath id="demo-1-ct94"><rect x="201" y="237.5" width="40" height="17" /></clipPath><clipPath id="demo-1-ct95"><rect x="247" y="237.8" width="75.3" height="16.5" /></clipPath><clipPath id="demo-1-cp96"><rect x="333.3" y="239" width="14" height="14"/></clipPath><clipPath id="demo-1-ct97"><rect x="358.3" y="234" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct98"><rect x="201" y="304.4" width="60" height="17" /></clipPath><filter id="demo-1-sh99" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-bw100"><polygon points="188,336 385,336 335.8,385.3"/></clipPath><clipPath id="demo-1-bw101"><polygon points="385,336 385,442 332,389"/></clipPath><clipPath id="demo-1-bw102"><polygon points="385,442 188,442 335.8,392.8"/></clipPath><clipPath id="demo-1-bw103"><polygon points="188,442 188,336 347,389"/></clipPath><clipPath id="demo-1-br104"><path d="M194,336.4 L379.3,336.4 A6,6 0 0 1 385.3,342.4 L385.3,435.8 A6,6 0 0 1 379.3,441.8 L194,441.8 A6,6 0 0 1 188,435.8 L188,342.4 A6,6 0 0 1 194,336.4 Z"/></clipPath><clipPath id="demo-1-ct105"><rect x="201" y="373.4" width="173.3" height="36.4" /></clipPath><clipPath id="demo-1-ct106"><rect x="201" y="348.9" width="40" height="17" /></clipPath><clipPath id="demo-1-ct107"><rect x="247" y="349.1" width="75.3" height="16.5" /></clipPath><clipPath id="demo-1-cp108"><rect x="333.3" y="350.4" width="14" height="14"/></clipPath><clipPath id="demo-1-ct109"><rect x="358.3" y="345.4" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct110"><rect x="201" y="415.8" width="23.7" height="17" /></clipPath><clipPath id="demo-1-ct111"><rect x="228.7" y="415.8" width="85.3" height="17" /></clipPath><filter id="demo-1-sh112" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct113"><rect x="199" y="484.8" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct114"><rect x="199" y="460.3" width="40" height="17" /></clipPath><clipPath id="demo-1-ct115"><rect x="245" y="460.5" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp116"><rect x="333.3" y="461.8" width="14" height="14"/></clipPath><clipPath id="demo-1-ct117"><rect x="358.3" y="456.8" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct118"><rect x="199" y="527.1" width="75.3" height="17" /></clipPath><clipPath id="demo-1-ct119"><rect x="278.3" y="527.1" width="47.3" height="17" /></clipPath><filter id="demo-1-sh120" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct121"><rect x="199" y="596.1" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct122"><rect x="199" y="571.6" width="40" height="17" /></clipPath><clipPath id="demo-1-ct123"><rect x="245" y="571.9" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp124"><rect x="333.3" y="573.1" width="14" height="14"/></clipPath><clipPath id="demo-1-ct125"><rect x="358.3" y="568.1" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct126"><rect x="199" y="638.5" width="57.3" height="17" /></clipPath><clipPath id="demo-1-ct127"><rect x="260.3" y="638.5" width="57" height="17" /></clipPath><filter id="demo-1-sh128" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct129"><rect x="199" y="707.5" width="175.3" height="18.2" /></clipPath><clipPath id="demo-1-ct130"><rect x="199" y="683" width="40" height="17" /></clipPath><clipPath id="demo-1-ct131"><rect x="245" y="683.3" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp132"><rect x="333.3" y="684.5" width="14" height="14"/></clipPath><clipPath id="demo-1-ct133"><rect x="358.3" y="679.5" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct134"><rect x="199" y="731.7" width="23.7" height="17" /></clipPath><clipPath id="demo-1-ct135"><rect x="226.7" y="731.7" width="52.2" height="17" /></clipPath><filter id="demo-1-sh136" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct137"><rect x="199" y="800.7" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct138"><rect x="199" y="776.2" width="40" height="17" /></clipPath><clipPath id="demo-1-ct139"><rect x="245" y="776.4" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp140"><rect x="333.3" y="777.7" width="14" height="14"/></clipPath><clipPath id="demo-1-ct141"><rect x="358.3" y="772.7" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct142"><rect x="199" y="843.1" width="54.4" height="17" /></clipPath><clipPath id="demo-1-ct143"><rect x="257.4" y="843.1" width="29.5" height="17" /></clipPath><clipPath id="demo-1-cp144"><rect x="394.3" y="181.5" width="213.3" height="681.5"/></clipPath><clipPath id="demo-1-ov145"><rect x="394.3" y="181.5" width="213.3" height="681.5" rx="0"  /></clipPath><clipPath id="demo-1-ct146"><rect x="406.3" y="189.8" width="57.7" height="18" /></clipPath><clipPath id="demo-1-ct147"><rect x="576.1" y="189.5" width="19.4" height="18.5" /></clipPath><clipPath id="demo-1-cp148"><rect x="394.3" y="217" width="213.3" height="646"/></clipPath><clipPath id="demo-1-ov149"><rect x="394.3" y="217" width="213.3" height="646" rx="0"  /></clipPath><filter id="demo-1-sh150" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-bw151"><polygon points="402,225 600,225 550.5,274.5"/></clipPath><clipPath id="demo-1-bw152"><polygon points="600,225 600,349 538,287"/></clipPath><clipPath id="demo-1-bw153"><polygon points="600,349 402,349 550.5,299.5"/></clipPath><clipPath id="demo-1-bw154"><polygon points="402,349 402,225 588,287"/></clipPath><clipPath id="demo-1-br155"><path d="M408.3,225 L593.5,225 A6,6 0 0 1 599.5,231 L599.5,342.6 A6,6 0 0 1 593.5,348.6 L408.3,348.6 A6,6 0 0 1 402.3,342.6 L402.3,231 A6,6 0 0 1 408.3,225 Z"/></clipPath><clipPath id="demo-1-ct156"><rect x="415.3" y="262" width="173.3" height="54.6" /></clipPath><clipPath id="demo-1-ct157"><rect x="415.3" y="237.5" width="40" height="17" /></clipPath><clipPath id="demo-1-ct158"><rect x="461.3" y="237.8" width="75.3" height="16.5" /></clipPath><clipPath id="demo-1-cp159"><rect x="547.6" y="239" width="14" height="14"/></clipPath><clipPath id="demo-1-ct160"><rect x="572.6" y="234" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct161"><rect x="415.3" y="322.6" width="57.3" height="17" /></clipPath><clipPath id="demo-1-ct162"><rect x="476.6" y="322.6" width="54.2" height="17" /></clipPath><filter id="demo-1-sh163" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-bw164"><polygon points="402,355 600,355 550.5,404.5"/></clipPath><clipPath id="demo-1-bw165"><polygon points="600,355 600,460 547.5,407.5"/></clipPath><clipPath id="demo-1-bw166"><polygon points="600,460 402,460 550.5,410.5"/></clipPath><clipPath id="demo-1-bw167"><polygon points="402,460 402,355 559.5,407.5"/></clipPath><clipPath id="demo-1-br168"><path d="M408.3,354.6 L593.5,354.6 A6,6 0 0 1 599.5,360.6 L599.5,453.9 A6,6 0 0 1 593.5,459.9 L408.3,459.9 A6,6 0 0 1 402.3,453.9 L402.3,360.6 A6,6 0 0 1 408.3,354.6 Z"/></clipPath><clipPath id="demo-1-ct169"><rect x="415.3" y="391.6" width="173.3" height="36.4" /></clipPath><clipPath id="demo-1-ct170"><rect x="415.3" y="367.1" width="40" height="17" /></clipPath><clipPath id="demo-1-ct171"><rect x="461.3" y="367.3" width="75.3" height="16.5" /></clipPath><clipPath id="demo-1-cp172"><rect x="547.6" y="368.6" width="14" height="14"/></clipPath><clipPath id="demo-1-ct173"><rect x="572.6" y="363.6" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct174"><rect x="415.3" y="433.9" width="79.9" height="17" /></clipPath><clipPath id="demo-1-ct175"><rect x="499.2" y="433.9" width="47.6" height="17" /></clipPath><filter id="demo-1-sh176" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct177"><rect x="413.3" y="502.9" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct178"><rect x="413.3" y="478.4" width="40" height="17" /></clipPath><clipPath id="demo-1-ct179"><rect x="459.3" y="478.7" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp180"><rect x="547.6" y="479.9" width="14" height="14"/></clipPath><clipPath id="demo-1-ct181"><rect x="572.6" y="474.9" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct182"><rect x="413.3" y="545.3" width="27.2" height="17" /></clipPath><clipPath id="demo-1-ct183"><rect x="444.5" y="545.3" width="24" height="17" /></clipPath><clipPath id="demo-1-ct184"><rect x="472.5" y="545.3" width="68.4" height="17" /></clipPath><clipPath id="demo-1-cp185"><rect x="608.5" y="181.5" width="213.3" height="681.5"/></clipPath><clipPath id="demo-1-ov186"><rect x="608.5" y="181.5" width="213.3" height="681.5" rx="0"  /></clipPath><clipPath id="demo-1-ct187"><rect x="620.5" y="189.8" width="78" height="18" /></clipPath><clipPath id="demo-1-ct188"><rect x="790.6" y="189.5" width="19.2" height="18.5" /></clipPath><clipPath id="demo-1-cp189"><rect x="608.5" y="217" width="213.3" height="646"/></clipPath><clipPath id="demo-1-ov190"><rect x="608.5" y="217" width="213.3" height="646" rx="0"  /></clipPath><filter id="demo-1-sh191" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct192"><rect x="627.5" y="262" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct193"><rect x="627.5" y="237.5" width="40" height="17" /></clipPath><clipPath id="demo-1-ct194"><rect x="673.5" y="237.8" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp195"><rect x="761.8" y="239" width="14" height="14"/></clipPath><clipPath id="demo-1-ct196"><rect x="786.8" y="234" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct197"><rect x="627.5" y="304.4" width="35.8" height="17" /></clipPath><clipPath id="demo-1-ct198"><rect x="667.3" y="304.4" width="26.8" height="17" /></clipPath><filter id="demo-1-sh199" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct200"><rect x="627.5" y="373.4" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct201"><rect x="627.5" y="348.9" width="40" height="17" /></clipPath><clipPath id="demo-1-ct202"><rect x="673.5" y="349.1" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp203"><rect x="761.8" y="350.4" width="14" height="14"/></clipPath><clipPath id="demo-1-ct204"><rect x="786.8" y="345.4" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct205"><rect x="627.5" y="415.8" width="79.9" height="17" /></clipPath><clipPath id="demo-1-ct206"><rect x="711.4" y="415.8" width="57.4" height="17" /></clipPath><clipPath id="demo-1-cp207"><rect x="822.8" y="181.5" width="213.3" height="681.5"/></clipPath><clipPath id="demo-1-ov208"><rect x="822.8" y="181.5" width="213.3" height="681.5" rx="0"  /></clipPath><clipPath id="demo-1-ct209"><rect x="834.8" y="189.8" width="56.9" height="18" /></clipPath><clipPath id="demo-1-ct210"><rect x="1006.3" y="189.5" width="17.7" height="18.5" /></clipPath><clipPath id="demo-1-cp211"><rect x="822.8" y="217" width="213.3" height="646"/></clipPath><clipPath id="demo-1-ov212"><rect x="822.8" y="217" width="213.3" height="646" rx="0"  /></clipPath><filter id="demo-1-sh213" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.5"/></filter><clipPath id="demo-1-ct214"><rect x="841.8" y="262" width="175.3" height="36.4" /></clipPath><clipPath id="demo-1-ct215"><rect x="841.8" y="237.5" width="40" height="17" /></clipPath><clipPath id="demo-1-ct216"><rect x="887.8" y="237.8" width="77.3" height="16.5" /></clipPath><clipPath id="demo-1-cp217"><rect x="976.1" y="239" width="14" height="14"/></clipPath><clipPath id="demo-1-ct218"><rect x="1001.1" y="234" width="15.9" height="24" /></clipPath><clipPath id="demo-1-ct219"><rect x="841.8" y="304.4" width="45" height="17" /></clipPath><clipPath id="demo-1-ct220"><rect x="890.7" y="304.4" width="26.8" height="17" /></clipPath><clipPath id="demo-1-cp221"><rect x="1040" y="102.5" width="360" height="764.5"/></clipPath><clipPath id="demo-1-ov222"><rect x="1041" y="102.5" width="359" height="764.5" rx="0"  /></clipPath><clipPath id="demo-1-ct223"><rect x="1165.5" y="474.3" width="110.1" height="21" /></clipPath><clipPath id="demo-1-cp224"><rect x="20" y="878" width="12" height="12"/></clipPath><clipPath id="demo-1-ct225"><rect x="36" y="875" width="48.1" height="18" /></clipPath><clipPath id="demo-1-ct226"><rect x="102.1" y="875" width="276.2" height="18" /></clipPath><clipPath id="demo-1-ct227"><rect x="1177.2" y="875" width="166.8" height="18" /></clipPath><clipPath id="demo-1-cp228"><rect x="724" y="12" width="200" height="35"/></clipPath><clipPath id="demo-1-ct229"><rect x="724" y="12" width="200" height="35" /></clipPath><clipPath id="demo-1-cp230"><rect x="734" y="22.5" width="14" height="14"/></clipPath><clipPath id="demo-1-cp231"><rect x="1360" y="877" width="14" height="14"/></clipPath><style>@font-face { font-family: "dmf0"; font-style: normal; font-weight: 700; src: url("data:font/ttf;base64,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"); }
+@font-face { font-family: "dmf1"; font-style: normal; font-weight: 400; src: url("data:font/ttf;base64,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"); }
+@font-face { font-family: "dmf2"; font-style: normal; font-weight: 600; src: url("data:font/ttf;base64,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"); }
+@font-face { font-family: "dmf3"; font-style: normal; font-weight: 500; src: url("data:font/ttf;base64,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"); }
+@font-face { font-family: "dmf4"; font-style: normal; font-weight: 400; src: url("data:font/ttf;base64,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"); }
+@font-face { font-family: "dmf5"; font-style: normal; font-weight: 400; src: url("data:font/ttf;base64,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"); }</style></defs>
+  <rect x="0" y="0" width="1400" height="900" rx="0" fill="rgb(255,255,255)" />
+  <rect x="0" y="0" width="1400" height="60" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="1400,60 0,60 0,59 1400,59" fill="rgb(229,231,235)" />
+  <rect x="20.5" y="14.5" width="31" height="31" rx="5.5" fill="none" stroke="rgba(0,0,0,0)" stroke-width="1" />
+  <g clip-path="url(#demo-1-cp0)">
+  <g transform="translate(28, 21.5)" color="rgb(156, 163, 175)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="16" height="16"><path d="m7 11 2-2-2-2" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M11 13h4" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><rect width="18" height="18" x="3" y="3" rx="2" ry="2" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect></svg></g>
+  </g>
+  <g clip-path="url(#demo-1-cp1)">
+  <g clip-path="url(#demo-1-ov2)">
+    <g role="img" aria-label="Hot Sheet Demo"><title>Hot Sheet Demo</title><text x="68 81.61 92.28 99.23 103.38 115.05 125.95 136.28 146.63 153.56 157.72 170.69 181.02 197.31" y="36" font-family="dmf0" font-size="18" font-weight="700" fill="rgb(17,24,39)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-cp4)">
+  <rect x="936.5" y="15.5" width="66" height="29" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g clip-path="url(#demo-1-ov5)">
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov5)">
+  <rect x="937" y="15.5" width="33" height="28" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="970,16 970,44 969,44 969,16" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov5)">
+  <g clip-path="url(#demo-1-cp6)">
+  <g transform="translate(945, 21.5)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="16" height="16"><line x1="8" y1="6" x2="21" y2="6" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="8" y1="12" x2="21" y2="12" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="8" y1="18" x2="21" y2="18" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="3" y1="6" x2="3.01" y2="6" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="3" y1="12" x2="3.01" y2="12" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="3" y1="18" x2="3.01" y2="18" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov5)">
+  <rect x="970" y="15.5" width="32" height="28" rx="0" fill="rgb(239,246,255)" />
+  </g>
+  <g clip-path="url(#demo-1-ov5)">
+  <g clip-path="url(#demo-1-cp7)">
+  <g transform="translate(978, 21.5)" color="rgb(59, 130, 246)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="16" height="16"><rect width="18" height="18" x="3" y="3" rx="2" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><path d="M9 3v18" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M15 3v18" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+  </g>
+    <rect x="1015" y="14.5" width="148" height="30" rx="6" fill="rgb(255,255,255)" />
+    <rect x="1015.5" y="15.5" width="147" height="29" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <text x="1024" y="34" font-size="13" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" fill="rgb(17, 24, 39)">Newest First</text>
+    <polyline points="1149.5,27.7 1153,31.3 1156.5,27.7" fill="none" stroke="rgb(118,118,118)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+  <g clip-path="url(#demo-1-cp8)">
+  <rect x="1175.5" y="15.5" width="66" height="29" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g clip-path="url(#demo-1-ov9)">
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov9)">
+  <rect x="1176" y="15.5" width="33" height="28" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="1209,16 1209,44 1208,44 1208,16" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov9)">
+  <g clip-path="url(#demo-1-cp10)">
+  <g transform="translate(1184, 21.5)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="16" height="16"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><line x1="3" y1="15" x2="21" y2="15" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov9)">
+  <rect x="1209" y="15.5" width="32" height="28" rx="0" fill="rgb(239,246,255)" />
+  </g>
+  <g clip-path="url(#demo-1-ov9)">
+  <g clip-path="url(#demo-1-cp11)">
+  <g transform="translate(1217, 21.5)" color="rgb(59, 130, 246)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2" stroke-linecap="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="16" height="16"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><line x1="15" y1="3" x2="15" y2="21" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-cp12)">
+  <rect x="1266.5" y="15.5" width="29" height="29" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g clip-path="url(#demo-1-ov13)">
+    <g clip-path="url(#demo-1-cp14)">
+    <image href="data:image/png;base64,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" x="1267" y="15.5" width="28" height="28" preserveAspectRatio="none" />
+    </g>
+  </g>
+  </g>
+    <g clip-path="url(#demo-1-cp15)">
+    <g transform="translate(1314, 20.5)" color="rgb(156, 163, 175)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="18" height="18"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><rect x="6" y="14" width="12" height="8" rx="1" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect></svg></g>
+    </g>
+    <g clip-path="url(#demo-1-cp16)">
+    <g transform="translate(1356, 20.5)" color="rgb(156, 163, 175)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="18" height="18"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><circle cx="12" cy="12" r="3" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" x="0" y="0"></circle></svg></g>
+    </g>
+  <rect x="0" y="60" width="1400" height="42.5" rx="0" fill="rgb(219,234,254)" />
+  <polygon points="1400,103 0,103 0,101 1400,101" fill="rgb(59,130,246)" />
+  <g role="img" aria-label="AI tool skills created. Restart your AI tool to use the new ticket creation skills (hs-bug, hs-feature, etc.)."><title>AI tool skills created. Restart your AI tool to use the new ticket creation skills (hs-bug, hs-feature, etc.).</title><text x="20 28.67 32.08 35.66 40.2 47.81 55.42 58.63 62.2 68.94 75.92 79.06 82.27 85.48 92.2 95.8 102.98 107.67 115.02 122.13 126.67 134.02 141.94 145.72 149.3 157.52 164.88 171.53 176.19 183.28 188.28 192.92 196.52 203.23 210.84 218.34 223.22 226.81 235.48 238.89 242.47 247.02 254.63 262.23 265.44 269.03 273.58 281.17 284.77 292.27 299 306.34 309.92 314.58 322.14 329.5 333.08 340.59 347.94 357.92 361.52 366.16 369.3 376.48 383.16 390.5 395.16 398.73 405.94 410.61 417.97 425.06 429.7 432.84 440.45 447.95 451.53 458.27 465.25 468.39 471.59 474.81 481.53 485.11 490 497.58 504.31 510.36 518.27 525.78 533.63 537.41 540.98 548.56 555.3 561.09 565.44 572.78 579.88 584.53 592.03 596.72 604.08 607.86 611.44 618.78 623.34 630.53 634.31 639.2" y="84.5" font-family="dmf1" font-size="13" fill="rgb(30,58,95)"></text></g>
+  <rect x="1321.4" y="68" width="58.6" height="24.5" rx="6" fill="rgb(255,255,255)" />
+  <rect x="1321.5" y="68.5" width="58" height="24" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g role="img" aria-label="Dismiss"><title>Dismiss</title><text x="1330.38 1338.42 1341.2 1347.03 1356.67 1359.45 1365.16" y="84" font-family="dmf1" font-size="11" fill="rgb(30,58,95)"></text></g>
+  <g clip-path="url(#demo-1-cp19)">
+  <g clip-path="url(#demo-1-ov20)">
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov20)">
+  <g clip-path="url(#demo-1-cp21)">
+  <rect x="0" y="102.5" width="180" height="764.5" rx="0" fill="rgb(249,250,251)" />
+  <polygon points="180,103 180,867 179,867 179,103" fill="rgb(229,231,235)" />
+  <g clip-path="url(#demo-1-ov22)">
+        <g clip-path="url(#demo-1-cp23)">
+        <g transform="translate(16, 118.5)" color="rgb(17, 24, 39)"><svg viewBox="0 0 98 20" fill="rgb(0, 0, 0)" stroke-width="1px" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="98" height="20"><rect x="0" y="20" width="10" height="0" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect><rect x="14" y="20" width="10" height="0" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect><rect x="28" y="0" width="10" height="20" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect><rect x="42" y="0" width="10" height="20" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect><rect x="56" y="20" width="10" height="0" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect><rect x="70" y="0" width="10" height="20" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect><rect x="84" y="20" width="10" height="0" fill="#3b82f6" rx="1" opacity="0.7" stroke="none" stroke-width="1px" stroke-dasharray="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-opacity="1" fill-opacity="1" cx="0" cy="0" r="0"></rect></svg></g>
+        </g>
+      <g role="img" aria-label="VIEWS"><title>VIEWS</title><text x="16 24.31 28.2 35.5 46.98" y="215" font-family="dmf2" font-size="11" font-weight="600" fill="rgb(156,163,175)"></text></g>
+      <rect x="0" y="223.5" width="179" height="31.5" rx="0" fill="rgb(239,246,255)" />
+      <g role="img" aria-label="All Tickets"><title>All Tickets</title><text x="38 46.94 50.33 53.72 57.2 65.34 68.66 75.98 82.86 90.34 95.09" y="243.5" font-family="dmf3" font-size="13" font-weight="500" fill="rgb(59,130,246)"></text></g>
+      <g role="img" aria-label="Non-Verified"><title>Non-Verified</title><text x="38 47.56 55.17 62.67 68.09 76.14 83.5 88.38 91.52 96.14 99.27 106.63" y="275" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Up Next"><title>Up Next</title><text x="38 47.5 55.36 58.94 68.52 75.61 82.34" y="306.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Open"><title>Open</title><text x="38 47.95 55.8 63.16" y="338" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Completed"><title>Completed</title><text x="38 47.22 54.83 66.06 73.92 77.13 84.48 89.03 96.39" y="369.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Verified"><title>Verified</title><text x="38 46.05 53.39 58.27 61.41 66.03 69.17 76.52" y="401" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <rect x="16" y="418.5" width="147" height="1" rx="0" fill="rgb(229,231,235)" />
+      <g role="img" aria-label="Backlog"><title>Backlog</title><text x="38 46.45 53.56 60.75 67.73 70.95 78.55" y="445.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Archive"><title>Archive</title><text x="38 46.67 51.36 58.56 66.13 69.27 75.98" y="477" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Trash"><title>Trash</title><text x="38 45.2 50.08 57.17 63.91" y="508.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="CATEGORY"><title>CATEGORY</title><text x="16 24.39 31.94 39.66 46.97 55.86 65.02 72.83" y="548" font-family="dmf2" font-size="11" font-weight="600" fill="rgb(156,163,175)"></text></g>
+      <g role="img" aria-label="Issue"><title>Issue</title><text x="32 35.39 42 48.72 56.23" y="576.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Bug"><title>Bug</title><text x="32 40.45 47.97" y="608" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Feature"><title>Feature</title><text x="32 39.36 46.7 53.8 58.45 65.95 70.64" y="639.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Req Change"><title>Req Change</title><text x="32 40.22 47.56 55.42 59 68.22 75.8 82.89 90.41 98.25" y="671" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Task"><title>Task</title><text x="32 38.83 45.92 52.64" y="702.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Investigation"><title>Investigation</title><text x="32 35.39 42.66 49.36 56.72 63.38 68.03 71.16 79.02 86.11 90.75 93.89 101.5" y="734" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="PRIORITY"><title>PRIORITY</title><text x="16 23.83 31.88 35.75 44.91 52.97 56.84 64.58" y="773.5" font-family="dmf2" font-size="11" font-weight="600" fill="rgb(156,163,175)"></text></g>
+      <g role="img" aria-label="Highest"><title>Highest</title><text x="38 47.56 50.7 58.55 66.13 73.47 80.14" y="802" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="High"><title>High</title><text x="38 47.56 50.7 58.55" y="833.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Default"><title>Default</title><text x="38 47.36 54.72 59.16 66.25 73.75 76.97" y="865" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+      <g role="img" aria-label="Low"><title>Low</title><text x="38 44.98 52.33" y="896.5" font-family="dmf1" font-size="13" fill="rgb(107,114,128)"></text></g>
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g role="img" aria-label="3 completed"><title>3 completed</title><text x="16 23.69 26.97 33.8 41 51.69 59.16 62.36 69.34 73.83 80.8" y="155.5" font-family="dmf3" font-size="12" font-weight="500" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g role="img" aria-label="3 in progress"><title>3 in progress</title><text x="16 22.95 26.11 28.89 35.38 38.53 45.31 49.41 55.97 62.73 66.83 73.17 78.89" y="174.5" font-family="dmf1" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+    <g clip-path="url(#demo-1-cp48)">
+    <g transform="translate(66.9, 204.8)" color="rgb(156, 163, 175)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="13" height="13"><rect width="18" height="18" x="3" y="3" rx="2" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><path d="M8 12h8" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M12 8v8" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+    <g clip-path="url(#demo-1-cp49)">
+    <g transform="translate(16, 232.3)" color="rgb(59, 130, 246)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="M3 12h18" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M3 6h18" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M3 18h18" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+  <g role="img" aria-label="◔"><title>◔</title><text x="18.78" y="275.75" font-family="dmf4" font-size="14" fill="rgb(107,114,128)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+  <g role="img" aria-label="★"><title>★</title><text x="15.97" y="307.25" font-family="dmf1" font-size="14" fill="rgb(107,114,128)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+  <g role="img" aria-label="○"><title>○</title><text x="16.58" y="338.75" font-family="dmf1" font-size="14" fill="rgb(107,114,128)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+  <g role="img" aria-label="✓"><title>✓</title><text x="17" y="370.25" font-family="dmf1" font-size="14" fill="rgb(107,114,128)"></text></g><image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAARCAIAAABmX9r1AAAA2klEQVR4nLyS6wvBYBTG391kfHGJD3JJilybWyj/PCEhlBYSYS5Fwm61qc1bVlsyfNrz6XT6dc7znA4uyQ/wSyj4Q9ZA9zu33uy+QYqiNNs9Zn+ENW4G0dOFJMmlfNZ0EscJ0/kyk4qTpF2DDsfT+XwxQt3+yOkgE/GYbnzLHBqtHi+Ir9ZqzVxvbK2SRxCgQwUqjWJYqzNQVQB9jMZ0NBL0uF3AeAKbjajXiizHT+jZYDiBHSqXMm7X0vl93mQiBs3CulqmCAL/AEHBLDwvYhgaDgXewiLWfsETAAD//xm7Y3cAAAAGSURBVAMAS9pRVLXP/UwAAAAASUVORK5CYII=" x="17" y="356.3" width="12" height="17" preserveAspectRatio="none" clip-path="url(#demo-1-ct53)"/>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+    <g clip-path="url(#demo-1-cp54)">
+    <g transform="translate(16, 389.8)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="M18 6 7 17l-5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m22 10-7.5 7.5L13 16" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+    <g clip-path="url(#demo-1-cp55)">
+    <g transform="translate(16, 434.3)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><rect width="18" height="18" x="3" y="4" rx="2" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><path d="M16 2v4" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M8 2v4" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M3 10h18" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+    <g clip-path="url(#demo-1-cp56)">
+    <g transform="translate(16, 465.8)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><rect width="20" height="5" x="2" y="3" rx="1" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M10 12h4" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g opacity="0.6" style="isolation:isolate">
+    <g clip-path="url(#demo-1-cp57)">
+    <g transform="translate(16, 497.3)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="M3 6h18" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><line x1="10" x2="10" y1="11" y2="17" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="14" x2="14" y1="11" y2="17" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <rect x="16" y="568.3" width="8" height="8" rx="4" fill="rgb(107,114,128)" />
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <rect x="16" y="599.8" width="8" height="8" rx="4" fill="rgb(239,68,68)" />
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <rect x="16" y="631.3" width="8" height="8" rx="4" fill="rgb(34,197,94)" />
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <rect x="16" y="662.8" width="8" height="8" rx="4" fill="rgb(249,115,22)" />
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <rect x="16" y="694.3" width="8" height="8" rx="4" fill="rgb(59,130,246)" />
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <rect x="16" y="725.8" width="8" height="8" rx="4" fill="rgb(139,92,246)" />
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g clip-path="url(#demo-1-cp58)">
+  <g transform="translate(16, 790.8)" color="rgb(239, 68, 68)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 11 5-5 5 5" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 17 5-5 5 5" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g clip-path="url(#demo-1-cp59)">
+  <g transform="translate(16, 822.3)" color="rgb(249, 115, 22)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m18 15-6-6-6 6" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g clip-path="url(#demo-1-cp60)">
+  <g transform="translate(16, 853.8)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 15 5 5 5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 9 5-5 5 5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  </g>
+  <g clip-path="url(#demo-1-ov22)">
+  <g clip-path="url(#demo-1-cp61)">
+  <g transform="translate(16, 885.3)" color="rgb(59, 130, 246)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m6 9 6 6 6-6" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov20)">
+  <g clip-path="url(#demo-1-cp62)">
+  <g clip-path="url(#demo-1-ov63)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov63)">
+  <g clip-path="url(#demo-1-cp64)">
+  <g clip-path="url(#demo-1-ov65)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <rect x="180" y="102.5" width="856" height="39" rx="0" fill="rgb(249,250,251)" />
+  <polygon points="1036,142 180,142 180,141 1036,141" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <rect x="199" y="114.5" width="14" height="14" rx="2" fill="rgb(255,255,255)" stroke="rgb(118,118,118)" stroke-width="1" />
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g opacity="0.4" style="isolation:isolate">
+  <rect x="221" y="108.5" width="69.9" height="26" rx="6" fill="rgb(255,255,255)" />
+  <rect x="221.5" y="109.5" width="69" height="25" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g role="img" aria-label="Category"><title>Category</title><text x="230 238.58 245.2 249.47 256.33 263.64 270.73 275.36" y="125.5" font-family="dmf1" font-size="12" fill="rgb(17,24,39)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g opacity="0.4" style="isolation:isolate">
+  <rect x="298.9" y="108.5" width="58.7" height="26" rx="6" fill="rgb(255,255,255)" />
+  <rect x="299.5" y="109.5" width="58" height="25" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g role="img" aria-label="Priority"><title>Priority</title><text x="307.89 315.5 320.08 323.05 330.13 334.7 337.67 342.03" y="125.5" font-family="dmf1" font-size="12" fill="rgb(17,24,39)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g opacity="0.4" style="isolation:isolate">
+  <rect x="365.6" y="108.5" width="54.3" height="26" rx="6" fill="rgb(255,255,255)" />
+  <rect x="366.5" y="109.5" width="53" height="25" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+  <g role="img" aria-label="Status"><title>Status</title><text x="374.56 382.2 386.56 393.19 397.55 404.55" y="125.5" font-family="dmf1" font-size="12" fill="rgb(17,24,39)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g opacity="0.4" style="isolation:isolate">
+    <g role="img" aria-label="☆"><title>☆</title><text x="433.84" y="127.5" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g opacity="0.4" style="isolation:isolate">
+    <g clip-path="url(#demo-1-cp70)">
+    <g transform="translate(469.8, 114.5)" color="rgb(239, 68, 68)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="M3 6h18" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><line x1="10" y1="11" x2="10" y2="17" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line><line x1="14" y1="11" x2="14" y2="17" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></line></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g opacity="0.4" style="isolation:isolate">
+  <rect x="497.8" y="109.5" width="28" height="24" rx="6" fill="rgb(255,255,255)" />
+  <rect x="498.5" y="110.5" width="27" height="23" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g clip-path="url(#demo-1-cp71)">
+    <g transform="translate(504.8, 114.5)" color="rgb(17, 24, 39)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(17, 24, 39)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><circle cx="12" cy="12" r="1" fill="none" stroke="rgb(17, 24, 39)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" x="0" y="0"></circle><circle cx="19" cy="12" r="1" fill="none" stroke="rgb(17, 24, 39)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" x="0" y="0"></circle><circle cx="5" cy="12" r="1" fill="none" stroke="rgb(17, 24, 39)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" x="0" y="0"></circle></svg></g>
+    </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov65)">
+  <g clip-path="url(#demo-1-cp72)">
+  <g clip-path="url(#demo-1-ov73)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov73)">
+  <rect x="180" y="145.5" width="856" height="36" rx="0" fill="rgb(249,250,251)" />
+  <line x1="183" y1="181.5" x2="1036" y2="181.5" stroke="rgb(229,231,235)" stroke-width="1" stroke-dasharray="3 2" clip-path="url(#demo-1-bs74)" />
+  </g>
+  <g clip-path="url(#demo-1-ov73)">
+  <g opacity="0.3" style="isolation:isolate">
+  <g role="img" aria-label="○"><title>○</title><text x="224.58" y="168.5" font-family="dmf1" font-size="14" fill="rgb(107,114,128)"></text></g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov73)">
+  <rect x="249" y="154.5" width="40" height="17" rx="3" fill="rgb(107,114,128)" />
+  <g role="img" aria-label="ISS"><title>ISS</title><text x="260.23 263.66 270.7" y="166.5" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov73)">
+  <g clip-path="url(#demo-1-cp77)">
+  <polygon points="980,176 360,176 360,175 980,175" fill="rgb(59,130,246)" />
+  <image href="data:image/png;base64,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" x="360" y="152" width="620" height="21" preserveAspectRatio="none" clip-path="url(#demo-1-ct78)"/>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov73)">
+  <g opacity="0.3" style="isolation:isolate">
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov73)">
+  <g clip-path="url(#demo-1-cp79)">
+  <rect x="180" y="181.5" width="856" height="681.5" rx="0" fill="rgb(229,231,235)" />
+  <g clip-path="url(#demo-1-ov80)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov80)">
+  <g clip-path="url(#demo-1-cp81)">
+  <rect x="180" y="181.5" width="213.3" height="681.5" rx="0" fill="rgb(249,250,251)" />
+  <g clip-path="url(#demo-1-ov82)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov82)">
+  <rect x="180" y="181.5" width="213.3" height="35.5" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="393,217 180,217 180,216 393,216" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov82)">
+  <g role="img" aria-label="NOT STARTED"><title>NOT STARTED</title><text x="192 201.41 210.77 218.88 222.38 230.63 237.8 246.66 255.13 263.23 270.89" y="202.75" font-family="dmf2" font-size="12" font-weight="600" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov82)">
+  <rect x="361.7" y="189.5" width="19.5" height="18.5" rx="9.3" fill="rgb(249,250,251)" />
+  <g role="img" aria-label="6"><title>6</title><text x="367.7" y="202.5" font-family="dmf3" font-size="11" font-weight="500" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov82)">
+  <g clip-path="url(#demo-1-cp85)">
+  <g clip-path="url(#demo-1-ov86)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="188" y="226" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh87)" />
+  <rect x="188" y="225" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <path d="M194,225 L379,225 A6,6 0 0 1 385,231 L385,324 A6,6 0 0 1 379,330 L194,330 A6,6 0 0 1 188,324 L188,231 A6,6 0 0 1 194,225 Z M194,226 L379,226 A5,5 0 0 1 384,231 L384,324 A5,5 0 0 1 379,329 L194,329 A3,5 0 0 1 191,324 L191,231 A3,5 0 0 1 194,226 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw88)"/>
+  <path d="M194,225 L379,225 A6,6 0 0 1 385,231 L385,324 A6,6 0 0 1 379,330 L194,330 A6,6 0 0 1 188,324 L188,231 A6,6 0 0 1 194,225 Z M194,226 L379,226 A5,5 0 0 1 384,231 L384,324 A5,5 0 0 1 379,329 L194,329 A3,5 0 0 1 191,324 L191,231 A3,5 0 0 1 194,226 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw89)"/>
+  <path d="M194,225 L379,225 A6,6 0 0 1 385,231 L385,324 A6,6 0 0 1 379,330 L194,330 A6,6 0 0 1 188,324 L188,231 A6,6 0 0 1 194,225 Z M194,226 L379,226 A5,5 0 0 1 384,231 L384,324 A5,5 0 0 1 379,329 L194,329 A3,5 0 0 1 191,324 L191,231 A3,5 0 0 1 194,226 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw90)"/>
+  <path d="M194,225 L379,225 A6,6 0 0 1 385,231 L385,324 A6,6 0 0 1 379,330 L194,330 A6,6 0 0 1 188,324 L188,231 A6,6 0 0 1 194,225 Z M194,226 L379,226 A5,5 0 0 1 384,231 L384,324 A5,5 0 0 1 379,329 L194,329 A3,5 0 0 1 191,324 L191,231 A3,5 0 0 1 194,226 Z" fill="rgb(234,179,8)" fill-rule="evenodd" clip-path="url(#demo-1-bw91)"/>
+  <g clip-path="url(#demo-1-br92)">
+  </g>
+    <g role="img" aria-label="Evaluate Stripe vs Square"><title>Evaluate Stripe vs Square</title><text x="201 208.66 215.38 222.47 225.69 233.19 240.3 244.84 252.19 255.77 263.98 268.63 273.5 276.64 284.5 291.84 295.42 302.2 308.94 312.52 320.72 328.56 336.08 343.17 347.86" y="276" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="for payment processing"><title>for payment processing</title><text x="201 205.33 212.94 217.81 221.39 229.25 236.09 243.08 254.31 261.66 269.17 273.81 277.41 285.25 289.94 297.55 304.75 312.09 318.7 325.42 328.56 336.08" y="294.19" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="201" y="237.5" width="40" height="17" rx="3" fill="rgb(139,92,246)" />
+  <g role="img" aria-label="INV"><title>INV</title><text x="211.53 214.95 222.97" y="249.5" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="HS-4"><title>HS-4</title><text x="247 253.8 260.59 267.39" y="248.75" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+    <g clip-path="url(#demo-1-cp96)">
+    <g transform="translate(333.3, 239)" color="rgb(249, 115, 22)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m18 15-6-6-6 6" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="★"><title>★</title><text x="358.31" y="252" font-family="dmf1" font-size="16" fill="rgb(234,179,8)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="201" y="304.4" width="60" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="payments"><title>payments</title><text x="207 213.33 218.92 224.64 233.67 239.59 245.69 249.53" y="316.38" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="188" y="337.4" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh99)" />
+  <rect x="188" y="336.4" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <path d="M194,336 L379,336 A6,6 0 0 1 385,342 L385,436 A6,6 0 0 1 379,442 L194,442 A6,6 0 0 1 188,436 L188,342 A6,6 0 0 1 194,336 Z M194,337 L379,337 A5,5 0 0 1 384,342 L384,436 A5,5 0 0 1 379,441 L194,441 A3,5 0 0 1 191,436 L191,342 A3,5 0 0 1 194,337 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw100)"/>
+  <path d="M194,336 L379,336 A6,6 0 0 1 385,342 L385,436 A6,6 0 0 1 379,442 L194,442 A6,6 0 0 1 188,436 L188,342 A6,6 0 0 1 194,336 Z M194,337 L379,337 A5,5 0 0 1 384,342 L384,436 A5,5 0 0 1 379,441 L194,441 A3,5 0 0 1 191,436 L191,342 A3,5 0 0 1 194,337 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw101)"/>
+  <path d="M194,336 L379,336 A6,6 0 0 1 385,342 L385,436 A6,6 0 0 1 379,442 L194,442 A6,6 0 0 1 188,436 L188,342 A6,6 0 0 1 194,336 Z M194,337 L379,337 A5,5 0 0 1 384,342 L384,436 A5,5 0 0 1 379,441 L194,441 A3,5 0 0 1 191,436 L191,342 A3,5 0 0 1 194,337 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw102)"/>
+  <path d="M194,336 L379,336 A6,6 0 0 1 385,342 L385,436 A6,6 0 0 1 379,442 L194,442 A6,6 0 0 1 188,436 L188,342 A6,6 0 0 1 194,336 Z M194,337 L379,337 A5,5 0 0 1 384,342 L384,436 A5,5 0 0 1 379,441 L194,441 A3,5 0 0 1 191,436 L191,342 A3,5 0 0 1 194,337 Z" fill="rgb(234,179,8)" fill-rule="evenodd" clip-path="url(#demo-1-bw103)"/>
+  <g clip-path="url(#demo-1-br104)">
+  </g>
+    <g role="img" aria-label="Add product comparison"><title>Add product comparison</title><text x="201 209.3 217.2 225.11 228.69 236.55 241.23 248.84 256.75 264.27 271.58 276.23 279.81 287.02 294.61 305.84 313.7 320.8 325.67 328.81 335.55 343.14" y="387.38" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="view for category pages"><title>view for category pages</title><text x="201 207.97 211.09 218.45 228.44 232.02 236.36 243.97 248.84 252.42 259.63 266.72 271.27 278.63 286.47 294.06 299 305.98 309.56 317.42 324.53 332.38 339.72" y="405.56" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="201" y="348.9" width="40" height="17" rx="3" fill="rgb(34,197,94)" />
+  <g role="img" aria-label="FEA"><title>FEA</title><text x="210.8 217.09 223.64" y="360.88" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="HS-2"><title>HS-2</title><text x="247 253.8 260.59 267.39" y="360.13" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+    <g clip-path="url(#demo-1-cp108)">
+    <g transform="translate(333.3, 350.4)" color="rgb(249, 115, 22)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m18 15-6-6-6 6" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="★"><title>★</title><text x="358.31" y="363.38" font-family="dmf1" font-size="16" fill="rgb(234,179,8)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="201" y="415.8" width="23.7" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="ux"><title>ux</title><text x="207 213.09" y="427.75" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="228.7" y="415.8" width="85.3" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="product-pages"><title>product-pages</title><text x="234.66 240.98 244.95 251.08 257.47 263.56 269.45 273.2 278.08 284.42 290.19 296.52 302.45" y="427.75" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="188" y="448.8" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh112)" />
+  <rect x="188" y="447.8" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="188.5" y="448.5" width="196" height="104" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Product images not loading"><title>Product images not loading</title><text x="199 207.17 211.86 219.47 227.38 234.88 242.2 246.86 250.44 253.56 264.81 271.91 279.75 287.09 293.83 297.41 304.92 312.52 317.17 320.75 323.95 331.56 338.66 346.56 349.7 357.22" y="498.75" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="on slow connections"><title>on slow connections</title><text x="199 206.59 214.11 217.69 224.42 227.63 234.98 244.97 248.55 255.75 263.34 270.86 278.38 285.72 293.05 297.69 300.83 308.44 315.94" y="516.94" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="460.3" width="40" height="17" rx="3" fill="rgb(239,68,68)" />
+  <g role="img" aria-label="BUG"><title>BUG</title><text x="207.42 214.64 222.58" y="472.25" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="HS-5"><title>HS-5</title><text x="245 251.8 258.59 265.39" y="471.5" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+    <g clip-path="url(#demo-1-cp116)">
+    <g transform="translate(333.3, 461.8)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 15 5 5 5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 9 5-5 5 5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="358.31" y="474.75" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="527.1" width="75.3" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="performance"><title>performance</title><text x="205 211.33 217.27 221.64 225.33 231.44 235.63 244.66 250.42 256.52 262.33" y="539.13" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="278.3" y="527.1" width="47.3" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="images"><title>images</title><text x="284.27 286.98 296 301.77 308.09 314.03" y="539.13" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="188" y="560.1" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh120)" />
+  <rect x="188" y="559.1" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="188.5" y="559.5" width="196" height="105" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Allow customers to save"><title>Allow customers to save</title><text x="199 207.67 210.89 214.09 221.45 231.44 235.02 242.22 249.73 256.39 260.95 268.55 279.78 287.14 291.89 298.61 302.19 306.75 314.34 317.92 324.66 331.5 338.22" y="610.13" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="multiple shipping addresses"><title>multiple shipping addresses</title><text x="199 210.23 217.73 220.95 225.59 228.73 236.59 239.8 247.16 250.73 257.45 265.03 268.17 276.03 283.89 287.02 294.53 302.38 305.95 313.05 320.97 328.88 333.56 340.91 347.52 354.23 361.59" y="628.31" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="571.6" width="40" height="17" rx="3" fill="rgb(34,197,94)" />
+  <g role="img" aria-label="FEA"><title>FEA</title><text x="208.8 215.09 221.64" y="583.63" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="HS-6"><title>HS-6</title><text x="245 251.8 258.59 265.39" y="582.88" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+    <g clip-path="url(#demo-1-cp124)">
+    <g transform="translate(333.3, 573.1)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 15 5 5 5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 9 5-5 5 5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="358.31" y="586.13" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="638.5" width="57.3" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="checkout"><title>checkout</title><text x="205 210.8 216.95 222.88 228.67 234.16 240.28 246.38" y="650.5" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="260.3" y="638.5" width="57" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="accounts"><title>accounts</title><text x="266.31 272.06 277.88 283.67 289.8 295.91 302 305.83" y="650.5" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="188" y="671.5" width="197.3" height="87.2" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh128)" />
+  <rect x="188" y="670.5" width="197.3" height="87.2" rx="6" fill="rgb(255,255,255)" />
+  <rect x="188.5" y="671.5" width="196" height="86" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Add dark mode support"><title>Add dark mode support</title><text x="199 207.3 215.2 223.11 226.69 234.61 241.7 246.58 253.56 257.14 268.38 275.98 283.89 291.23 294.81 301.55 309.05 316.91 324.77 332.38 337.38" y="721.5" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="683" width="40" height="17" rx="3" fill="rgb(34,197,94)" />
+  <g role="img" aria-label="FEA"><title>FEA</title><text x="208.8 215.09 221.64" y="695" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="HS-10"><title>HS-10</title><text x="245 251.8 258.59 265.39 272.19" y="694.25" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+    <g clip-path="url(#demo-1-cp132)">
+    <g transform="translate(333.3, 684.5)" color="rgb(59, 130, 246)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m6 9 6 6 6-6" fill="none" stroke="rgb(59, 130, 246)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="358.31" y="697.5" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="731.7" width="23.7" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="ux"><title>ux</title><text x="205 211.09" y="743.69" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="226.7" y="731.7" width="52.2" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="theming"><title>theming</title><text x="232.66 236.56 242.72 248.64 257.66 260.39 266.48" y="743.69" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="188" y="764.7" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh136)" />
+  <rect x="188" y="763.7" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="188.5" y="764.5" width="196" height="104" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Research SSR frameworks"><title>Research SSR frameworks</title><text x="199 207.22 214.56 221.3 228.66 235.75 240.44 247.63 255.2 258.78 266.98 275.2 283.61 287.19 291.83 296.7 303.8 315.03 322.38 332.11 339.72 344.59 351.33" y="814.69" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="for product pages"><title>for product pages</title><text x="199 203.33 210.94 215.81 219.39 227.25 231.94 239.55 247.45 254.95 262.28 266.94 270.52 278.38 285.47 293.31 300.66" y="832.88" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="776.2" width="40" height="17" rx="3" fill="rgb(139,92,246)" />
+  <g role="img" aria-label="INV"><title>INV</title><text x="209.53 212.95 220.97" y="788.19" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="HS-12"><title>HS-12</title><text x="245 251.8 258.59 265.39 272.19" y="787.44" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+    <g clip-path="url(#demo-1-cp140)">
+    <g transform="translate(333.3, 777.7)" color="rgb(148, 163, 184)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(148, 163, 184)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 7 5 5 5-5" fill="none" stroke="rgb(148, 163, 184)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 13 5 5 5-5" fill="none" stroke="rgb(148, 163, 184)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="358.31" y="790.69" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="199" y="843.1" width="54.4" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="frontend"><title>frontend</title><text x="205 208.89 212.86 218.97 225.08 228.92 234.86 240.95" y="855.06" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov86)">
+  <rect x="257.4" y="843.1" width="29.5" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="seo"><title>seo</title><text x="263.36 268.84 274.77" y="855.06" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov80)">
+  <g clip-path="url(#demo-1-cp144)">
+  <rect x="394.3" y="181.5" width="213.3" height="681.5" rx="0" fill="rgb(249,250,251)" />
+  <g clip-path="url(#demo-1-ov145)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov145)">
+  <rect x="394.3" y="181.5" width="213.3" height="35.5" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="608,217 394,217 394,216 608,216" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov145)">
+  <g role="img" aria-label="STARTED"><title>STARTED</title><text x="406.25 414.5 421.67 430.53 439 447.11 454.77" y="202.75" font-family="dmf2" font-size="12" font-weight="600" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov145)">
+  <rect x="576.1" y="189.5" width="19.4" height="18.5" rx="9.3" fill="rgb(249,250,251)" />
+  <g role="img" aria-label="3"><title>3</title><text x="582.08" y="202.5" font-family="dmf3" font-size="11" font-weight="500" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov145)">
+  <g clip-path="url(#demo-1-cp148)">
+  <g clip-path="url(#demo-1-ov149)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="402.3" y="226" width="197.3" height="123.6" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh150)" />
+  <rect x="402.3" y="225" width="197.3" height="123.6" rx="6" fill="rgb(255,255,255)" />
+  <path d="M408,225 L594,225 A6,6 0 0 1 600,231 L600,343 A6,6 0 0 1 594,349 L408,349 A6,6 0 0 1 402,343 L402,231 A6,6 0 0 1 408,225 Z M408,226 L594,226 A5,5 0 0 1 599,231 L599,343 A5,5 0 0 1 594,348 L408,348 A3,5 0 0 1 405,343 L405,231 A3,5 0 0 1 408,226 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw151)"/>
+  <path d="M408,225 L594,225 A6,6 0 0 1 600,231 L600,343 A6,6 0 0 1 594,349 L408,349 A6,6 0 0 1 402,343 L402,231 A6,6 0 0 1 408,225 Z M408,226 L594,226 A5,5 0 0 1 599,231 L599,343 A5,5 0 0 1 594,348 L408,348 A3,5 0 0 1 405,343 L405,231 A3,5 0 0 1 408,226 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw152)"/>
+  <path d="M408,225 L594,225 A6,6 0 0 1 600,231 L600,343 A6,6 0 0 1 594,349 L408,349 A6,6 0 0 1 402,343 L402,231 A6,6 0 0 1 408,225 Z M408,226 L594,226 A5,5 0 0 1 599,231 L599,343 A5,5 0 0 1 594,348 L408,348 A3,5 0 0 1 405,343 L405,231 A3,5 0 0 1 408,226 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw153)"/>
+  <path d="M408,225 L594,225 A6,6 0 0 1 600,231 L600,343 A6,6 0 0 1 594,349 L408,349 A6,6 0 0 1 402,343 L402,231 A6,6 0 0 1 408,225 Z M408,226 L594,226 A5,5 0 0 1 599,231 L599,343 A5,5 0 0 1 594,348 L408,348 A3,5 0 0 1 405,343 L405,231 A3,5 0 0 1 408,226 Z" fill="rgb(234,179,8)" fill-rule="evenodd" clip-path="url(#demo-1-bw154)"/>
+  <g clip-path="url(#demo-1-br155)">
+  </g>
+    <g role="img" aria-label="Fix checkout failing when"><title>Fix checkout failing when</title><text x="415.25 422.61 425.73 432.48 436.06 443.27 450.83 458.19 465.38 472.05 479.66 487.16 491.81 495.39 499.83 506.92 510.06 513.27 516.41 523.92 531.77 535.34 545.33 552.91 560.25" y="276" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="cart has mixed shipping"><title>cart has mixed shipping</title><text x="415.25 422.44 429.53 434.55 439.19 442.77 450.34 457.44 464.16 467.75 478.98 482.11 488.53 495.89 503.8 507.38 514.11 521.69 524.81 532.67 540.53 543.67 551.17" y="294.19" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="methods"><title>methods</title><text x="415.25 426.48 433.83 438.47 446.05 453.66 461.56" y="312.38" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="415.3" y="237.5" width="40" height="17" rx="3" fill="rgb(239,68,68)" />
+  <g role="img" aria-label="BUG"><title>BUG</title><text x="423.67 430.89 438.83" y="249.5" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <g role="img" aria-label="HS-1"><title>HS-1</title><text x="461.25 468.05 474.84 481.64" y="248.75" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+    <g clip-path="url(#demo-1-cp159)">
+    <g transform="translate(547.6, 239)" color="rgb(239, 68, 68)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 11 5-5 5 5" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 17 5-5 5 5" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <g role="img" aria-label="★"><title>★</title><text x="572.56" y="252" font-family="dmf1" font-size="16" fill="rgb(234,179,8)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="415.3" y="322.6" width="57.3" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="checkout"><title>checkout</title><text x="421.25 427.05 433.2 439.13 444.92 450.41 456.53 462.63" y="334.56" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="476.6" y="322.6" width="54.2" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="shipping"><title>shipping</title><text x="482.56 488.05 494.2 496.92 503.27 509.59 512.33 518.42" y="334.56" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="402.3" y="355.6" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh163)" />
+  <rect x="402.3" y="354.6" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <path d="M408,355 L594,355 A6,6 0 0 1 600,361 L600,454 A6,6 0 0 1 594,460 L408,460 A6,6 0 0 1 402,454 L402,361 A6,6 0 0 1 408,355 Z M408,356 L594,356 A5,5 0 0 1 599,361 L599,454 A5,5 0 0 1 594,459 L408,459 A3,5 0 0 1 405,454 L405,361 A3,5 0 0 1 408,356 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw164)"/>
+  <path d="M408,355 L594,355 A6,6 0 0 1 600,361 L600,454 A6,6 0 0 1 594,460 L408,460 A6,6 0 0 1 402,454 L402,361 A6,6 0 0 1 408,355 Z M408,356 L594,356 A5,5 0 0 1 599,361 L599,454 A5,5 0 0 1 594,459 L408,459 A3,5 0 0 1 405,454 L405,361 A3,5 0 0 1 408,356 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw165)"/>
+  <path d="M408,355 L594,355 A6,6 0 0 1 600,361 L600,454 A6,6 0 0 1 594,460 L408,460 A6,6 0 0 1 402,454 L402,361 A6,6 0 0 1 408,355 Z M408,356 L594,356 A5,5 0 0 1 599,361 L599,454 A5,5 0 0 1 594,459 L408,459 A3,5 0 0 1 405,454 L405,361 A3,5 0 0 1 408,356 Z" fill="rgb(229,231,235)" fill-rule="evenodd" clip-path="url(#demo-1-bw166)"/>
+  <path d="M408,355 L594,355 A6,6 0 0 1 600,361 L600,454 A6,6 0 0 1 594,460 L408,460 A6,6 0 0 1 402,454 L402,361 A6,6 0 0 1 408,355 Z M408,356 L594,356 A5,5 0 0 1 599,361 L599,454 A5,5 0 0 1 594,459 L408,459 A3,5 0 0 1 405,454 L405,361 A3,5 0 0 1 408,356 Z" fill="rgb(234,179,8)" fill-rule="evenodd" clip-path="url(#demo-1-bw167)"/>
+  <g clip-path="url(#demo-1-br168)">
+  </g>
+    <g role="img" aria-label="Set up automated database"><title>Set up automated database</title><text x="415.25 423.45 430.8 435.45 439.03 446.53 454.39 457.97 465.08 472.58 477.13 484.73 495.97 503.06 507.63 514.97 522.88 526.45 534.38 541.47 546.11 553.2 561.13 568.22 574.94" y="405.56" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="backups to S3"><title>backups to S3</title><text x="415.25 423.16 430.25 437.45 444.42 451.94 459.8 466.53 470.11 474.66 482.27 485.84 494.05" y="423.75" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="415.3" y="367.1" width="40" height="17" rx="3" fill="rgb(59,130,246)" />
+  <g role="img" aria-label="TSK"><title>TSK</title><text x="424.58 431.5 438.55" y="379.06" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <g role="img" aria-label="HS-3"><title>HS-3</title><text x="461.25 468.05 474.84 481.64" y="378.31" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+    <g clip-path="url(#demo-1-cp172)">
+    <g transform="translate(547.6, 368.6)" color="rgb(249, 115, 22)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m18 15-6-6-6 6" fill="none" stroke="rgb(249, 115, 22)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <g role="img" aria-label="★"><title>★</title><text x="572.56" y="381.56" font-family="dmf1" font-size="16" fill="rgb(234,179,8)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="415.3" y="433.9" width="79.9" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="infrastructure"><title>infrastructure</title><text x="421.25 423.97 430.06 433.95 438.03 443.78 449.23 453.16 457.27 463.36 469.25 473.17 479.27 483.23" y="445.94" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="499.2" y="433.9" width="47.6" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="devops"><title>devops</title><text x="505.17 511.55 517.36 522.83 528.95 535.3" y="445.94" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="402.3" y="466.9" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh176)" />
+  <rect x="402.3" y="465.9" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="402.5" y="466.5" width="197" height="104" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Update tax calculation to"><title>Update tax calculation to</title><text x="413.25 422.75 430.61 438.52 445.61 450.17 457.52 461.09 465.75 472.84 479.58 483.16 490.36 497.45 500.67 507.86 515.38 518.59 525.69 530.33 533.47 541.08 548.58 552.16 556.72" y="516.94" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+<g role="img" aria-label="handle EU VAT rules"><title>handle EU VAT rules</title><text x="413.25 420.81 427.91 435.42 443.33 446.55 453.89 457.47 465.14 474.66 478.23 486.09 493.69 501.86 505.44 510.31 517.81 521.03 528.38" y="535.13" font-family="dmf1" font-size="13" fill="rgb(17,24,39)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="413.3" y="478.4" width="40" height="17" rx="3" fill="rgb(249,115,22)" />
+  <g role="img" aria-label="REQ"><title>REQ</title><text x="422.23 429.45 436" y="490.44" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <g role="img" aria-label="HS-7"><title>HS-7</title><text x="459.25 466.05 472.84 479.64" y="489.69" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+    <g clip-path="url(#demo-1-cp180)">
+    <g transform="translate(547.6, 479.9)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 15 5 5 5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 9 5-5 5 5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="572.56" y="492.94" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="413.3" y="545.3" width="27.2" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="tax"><title>tax</title><text x="419.25 423.16 428.92" y="557.31" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="444.5" y="545.3" width="24" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="eu"><title>eu</title><text x="450.48 456.41" y="557.31" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov149)">
+  <rect x="472.5" y="545.3" width="68.4" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="compliance"><title>compliance</title><text x="478.52 484.31 490.44 499.45 505.8 508.59 511.31 517.08 523.17 528.98" y="557.31" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov80)">
+  <g clip-path="url(#demo-1-cp185)">
+  <rect x="608.5" y="181.5" width="213.3" height="681.5" rx="0" fill="rgb(249,250,251)" />
+  <g clip-path="url(#demo-1-ov186)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov186)">
+  <rect x="608.5" y="181.5" width="213.3" height="35.5" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="822,217 609,217 609,216 822,216" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov186)">
+  <g role="img" aria-label="COMPLETED"><title>COMPLETED</title><text x="620.5 629.59 639.27 650.31 658.53 665.86 673.53 681.64 689.3" y="202.75" font-family="dmf2" font-size="12" font-weight="600" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov186)">
+  <rect x="790.6" y="189.5" width="19.2" height="18.5" rx="9.3" fill="rgb(249,250,251)" />
+  <g role="img" aria-label="2"><title>2</title><text x="796.59" y="202.5" font-family="dmf3" font-size="11" font-weight="500" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov186)">
+  <g clip-path="url(#demo-1-cp189)">
+  <g clip-path="url(#demo-1-ov190)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="616.5" y="226" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh191)" />
+  <rect x="616.5" y="225" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="617.5" y="225.5" width="196" height="104" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Write API documentation for"><title>Write API documentation for</title><text x="627.5 639.61 644.48 647.63 652.17 659.53 663.11 671.8 679.97 683.38 686.95 694.86 702.47 709.67 717.17 728.41 735.77 743.28 747.92 755.02 759.66 762.8 770.41 777.91 781.5 785.83 793.44" y="276" font-family="dmf1" font-size="13" fill="rgb(156,163,175)"></text></g>
+<line x1="627.5" y1="271.5" x2="798.3" y2="271.5" stroke="rgb(156, 163, 175)" stroke-width="1"/>
+<g role="img" aria-label="order endpoints"><title>order endpoints</title><text x="627.5 635.09 639.78 647.69 655.05 659.92 663.5 670.84 678.36 686.27 694.13 701.73 704.86 712.38 716.89" y="294.19" font-family="dmf1" font-size="13" fill="rgb(156,163,175)"></text></g>
+<line x1="627.5" y1="289.5" x2="723.6" y2="289.5" stroke="rgb(156, 163, 175)" stroke-width="1"/>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="627.5" y="237.5" width="40" height="17" rx="3" fill="rgb(59,130,246)" />
+  <g role="img" aria-label="TSK"><title>TSK</title><text x="636.83 643.75 650.8" y="249.5" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <g role="img" aria-label="HS-8"><title>HS-8</title><text x="673.5 680.3 687.09 693.89" y="248.75" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+    <g clip-path="url(#demo-1-cp195)">
+    <g transform="translate(761.8, 239)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 15 5 5 5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 9 5-5 5 5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="786.81" y="252" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="627.5" y="304.4" width="35.8" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="docs"><title>docs</title><text x="633.5 639.88 646 651.8" y="316.38" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="667.3" y="304.4" width="26.8" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="api"><title>api</title><text x="673.31 679.06 685.41" y="316.38" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="616.5" y="337.4" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh199)" />
+  <rect x="616.5" y="336.4" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="617.5" y="336.5" width="196" height="105" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Migrate to connection"><title>Migrate to connection</title><text x="627.5 638.78 641.92 649.77 654.64 661.73 666.28 673.64 677.22 681.77 689.38 692.95 700.14 707.75 715.27 722.77 730.13 737.45 742.09 745.23 752.83" y="387.38" font-family="dmf1" font-size="13" fill="rgb(156,163,175)"></text></g>
+<line x1="627.5" y1="382.5" x2="760.4" y2="382.5" stroke="rgb(156, 163, 175)" stroke-width="1"/>
+<g role="img" aria-label="pooling for database"><title>pooling for database</title><text x="627.5 635.34 642.95 650.56 653.77 656.91 664.42 672.27 675.84 680.19 687.78 692.66 696.25 704.16 711.25 715.89 723 730.91 738 744.73" y="405.56" font-family="dmf1" font-size="13" fill="rgb(156,163,175)"></text></g>
+<line x1="627.5" y1="401.5" x2="752.1" y2="401.5" stroke="rgb(156, 163, 175)" stroke-width="1"/>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="627.5" y="348.9" width="40" height="17" rx="3" fill="rgb(59,130,246)" />
+  <g role="img" aria-label="TSK"><title>TSK</title><text x="636.83 643.75 650.8" y="360.88" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <g role="img" aria-label="HS-11"><title>HS-11</title><text x="673.5 680.3 687.09 693.89 700.69" y="360.13" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+    <g clip-path="url(#demo-1-cp203)">
+    <g transform="translate(761.8, 350.4)" color="rgb(107, 114, 128)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 15 5 5 5-5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 9 5-5 5 5" fill="none" stroke="rgb(107, 114, 128)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="786.81" y="363.38" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="627.5" y="415.8" width="79.9" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="infrastructure"><title>infrastructure</title><text x="633.5 636.22 642.31 646.2 650.28 656.03 661.48 665.41 669.52 675.61 681.5 685.42 691.52 695.48" y="427.75" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov190)">
+  <rect x="711.4" y="415.8" width="57.4" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="database"><title>database</title><text x="717.42 723.8 729.56 733.47 739.23 745.63 751.38 756.88" y="427.75" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov80)">
+  <g clip-path="url(#demo-1-cp207)">
+  <rect x="822.8" y="181.5" width="213.3" height="681.5" rx="0" fill="rgb(249,250,251)" />
+  <g clip-path="url(#demo-1-ov208)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov208)">
+  <rect x="822.8" y="181.5" width="213.3" height="35.5" rx="0" fill="rgb(255,255,255)" />
+  <polygon points="1036,217 823,217 823,216 1036,216" fill="rgb(229,231,235)" />
+  </g>
+  <g clip-path="url(#demo-1-ov208)">
+  <g role="img" aria-label="VERIFIED"><title>VERIFIED</title><text x="834.75 843.52 851.17 859.64 863.55 870.92 874.83 882.5" y="202.75" font-family="dmf2" font-size="12" font-weight="600" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov208)">
+  <rect x="1006.3" y="189.5" width="17.7" height="18.5" rx="8.8" fill="rgb(249,250,251)" />
+  <g role="img" aria-label="1"><title>1</title><text x="1012.34" y="202.5" font-family="dmf3" font-size="11" font-weight="500" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov208)">
+  <g clip-path="url(#demo-1-cp211)">
+  <g clip-path="url(#demo-1-ov212)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+  <rect x="830.8" y="226" width="197.3" height="105.4" rx="6" fill="rgba(0,0,0,0.1)" filter="url(#demo-1-sh213)" />
+  <rect x="830.8" y="225" width="197.3" height="105.4" rx="6" fill="rgb(255,255,255)" />
+  <rect x="831.5" y="225.5" width="196" height="104" rx="5.5" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <g role="img" aria-label="Fix CORS headers blocking"><title>Fix CORS headers blocking</title><text x="841.75 849.11 852.23 858.98 862.56 871.8 881.75 890.16 898.38 901.95 909.52 916.88 923.97 931.88 939.23 943.98 950.7 954.28 962.2 965.41 973.02 980.2 987.19 990.33 997.84" y="276" font-family="dmf1" font-size="13" fill="rgb(156,163,175)"></text></g>
+<line x1="841.8" y1="271.5" x2="1005.7" y2="271.5" stroke="rgb(156, 163, 175)" stroke-width="1"/>
+<g role="img" aria-label="mobile app API requests"><title>mobile app API requests</title><text x="841.75 852.98 860.58 868.48 871.63 874.84 882.19 885.77 892.86 900.72 908.58 912.16 920.84 929.03 932.44 936.02 940.7 948.05 955.89 963.41 970.75 977.42 981.94" y="294.19" font-family="dmf1" font-size="13" fill="rgb(156,163,175)"></text></g>
+<line x1="841.8" y1="289.5" x2="988.7" y2="289.5" stroke="rgb(156, 163, 175)" stroke-width="1"/>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+  <rect x="841.8" y="237.5" width="40" height="17" rx="3" fill="rgb(239,68,68)" />
+  <g role="img" aria-label="BUG"><title>BUG</title><text x="850.17 857.39 865.33" y="249.5" font-family="dmf2" font-size="10" font-weight="600" fill="rgb(255,255,255)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+  <g role="img" aria-label="HS-9"><title>HS-9</title><text x="887.75 894.55 901.34 908.14" y="248.75" font-family="dmf5" font-size="11" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+    <g clip-path="url(#demo-1-cp217)">
+    <g transform="translate(976.1, 239)" color="rgb(239, 68, 68)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><path d="m7 11 5-5 5 5" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m7 17 5-5 5 5" fill="none" stroke="rgb(239, 68, 68)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+  <g role="img" aria-label="☆"><title>☆</title><text x="1001.06" y="252" font-family="dmf1" font-size="16" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+  <rect x="841.8" y="304.4" width="45" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="mobile"><title>mobile</title><text x="847.75 856.77 862.89 869.27 871.98 874.78" y="316.38" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov212)">
+  <rect x="890.7" y="304.4" width="26.8" height="17" rx="3" fill="rgb(243,244,246)" />
+  <g role="img" aria-label="api"><title>api</title><text x="896.72 902.47 908.81" y="316.38" font-family="dmf3" font-size="10" font-weight="500" fill="rgb(107,114,128)"></text></g>
+  </g>
+  <g clip-path="url(#demo-1-ov63)">
+  <g clip-path="url(#demo-1-cp221)">
+  <rect x="1040" y="102.5" width="360" height="764.5" rx="0" fill="rgb(249,250,251)" />
+  <polygon points="1040,867 1040,103 1041,103 1041,867" fill="rgb(229,231,235)" />
+  <g clip-path="url(#demo-1-ov222)">
+  </g>
+  </g>
+  </g>
+  <g clip-path="url(#demo-1-ov222)">
+  </g>
+  <g clip-path="url(#demo-1-ov222)">
+  <g role="img" aria-label="Nothing selected"><title>Nothing selected</title><text x="1165.45 1175.69 1183.81 1188.75 1196.83 1200.14 1208.16 1216.53 1220.33 1227.5 1235.34 1238.73 1246.59 1254.41 1259.23 1267.09" y="490.25" font-family="dmf1" font-size="14" fill="rgb(156,163,175)"></text></g>
+  </g>
+  <rect x="0" y="867" width="1400" height="33" rx="0" fill="rgb(249,250,251)" />
+  <polygon points="0,867 1400,867 1400,868 0,868" fill="rgb(229,231,235)" />
+  <g clip-path="url(#demo-1-cp224)">
+  <g transform="translate(20, 878)" color="rgb(225, 29, 72)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(225, 29, 72)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="12" height="12"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" fill="none" stroke="rgb(225, 29, 72)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+  <g role="img" aria-label="Sponsor"><title>Sponsor</title><text x="36 43.8 51.27 58.47 65.64 72.09 79.31" y="888" font-family="dmf3" font-size="12" font-weight="500" fill="rgb(225,29,72)"></text></g>
+  <g role="img" aria-label="Know someone who'd love this? Share Hot Sheet"><title>Know someone who'd love this? Share Hot Sheet</title><text x="102.11 110 117.02 123.86 133.16 136.53 142.81 149.91 160.34 167.2 174.3 181.3 188.14 191.52 200.81 207.88 214.97 218.53 225.91 229.28 232.31 239.17 245.44 252.3 255.67 260.03 267.08 270.05 276.33 282.48 285.86 293.5 300.56 307.19 311.58 318.44 321.81 330.72 337.81 342.17 345.55 353.19 360.25 367.11 373.95" y="888" font-family="dmf1" font-size="12" fill="rgb(59,130,246)"></text></g>
+  <g role="img" aria-label="12 tickets · 9 open · 4 up next"><title>12 tickets · 9 open · 4 up next</title><text x="1177.19 1182.75 1189.98 1193.36 1197.72 1200.69 1207.41 1213.63 1220.48 1224.72 1231 1234.38 1237.94 1241.31 1248.95 1252.33 1259.42 1266.75 1273.61 1280.61 1283.98 1287.55 1290.92 1298.64 1302.02 1309.02 1316.34 1319.72 1326.72 1333.34 1339.63" y="888" font-family="dmf1" font-size="12" fill="rgb(156,163,175)"></text></g>
+    <g clip-path="url(#demo-1-cp228)">
+    <rect x="724" y="12" width="200" height="35" rx="17.5" fill="rgb(249,250,251)" />
+    <rect x="724.5" y="12.5" width="199" height="34" rx="17" fill="none" stroke="rgb(229,231,235)" stroke-width="1" />
+    <image href="data:image/png;base64,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" x="755" y="19" width="134" height="21" preserveAspectRatio="none" clip-path="url(#demo-1-ct229)"/>
+    </g>
+  <g clip-path="url(#demo-1-cp230)">
+  <g transform="translate(734, 22.5)" color="rgb(156, 163, 175)"><svg class="search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><circle cx="11" cy="11" r="8" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" x="0" y="0"></circle><path d="m21 21-4.3-4.3" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+  </g>
+    <g clip-path="url(#demo-1-cp231)">
+    <g transform="translate(1360, 877)" color="rgb(156, 163, 175)"><svg class="icon-open" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" font-family="-apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif" width="14" height="14"><rect width="18" height="18" x="3" y="3" rx="2" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0"></rect><path d="M3 15h18" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path><path d="m9 10 3-3 3 3" fill="none" stroke="rgb(156, 163, 175)" stroke-width="2px" stroke-dasharray="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="1" fill-opacity="1" opacity="1" cx="0" cy="0" r="0" x="0" y="0"></path></svg></g>
+    </g>
+  <g clip-path="url(#demo-1-ov63)">
+  <g style="isolation:isolate">
+  </g>
+  </g>

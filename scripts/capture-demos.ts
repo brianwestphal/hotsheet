@@ -147,7 +147,10 @@ async function captureScenario(scenario: Scenario): Promise<void> {
         } catch { /* private mode */ }
       });
 
-      await page.goto(`http://localhost:${port}/`, { waitUntil: 'networkidle', timeout: 30_000 });
+      // `'load'` not `'networkidle'` — Hot Sheet's `/api/poll` long-poll keeps
+      // the network active forever, so `'networkidle'` (Playwright's "500 ms
+      // of no requests") never resolves and times out at 30 s.
+      await page.goto(`http://localhost:${port}/`, { waitUntil: 'load', timeout: 30_000 });
       // The app's first paint can race the early API loads; settle wait
       // matches the e2e fixture's pattern.
       await page.waitForTimeout(800);

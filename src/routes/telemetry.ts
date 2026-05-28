@@ -2,28 +2,34 @@ import { Hono } from 'hono';
 
 import { clearProjectTelemetry, type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTelemetryDebugInfo, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
-import { readProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 
 /**
- * HS-8479 / §69.2 — true when at least one registered project has telemetry
- * enabled (HS-8684: default-on — anything except an explicit `false`).
- * Drives the conditional visibility of the global Telemetry sidebar entry
- * + the `#cross-project-stats-toggle` header button (and only that — does
- * not gate anything else).
+ * HS-8479 / §69.2 — true when at least one currently-loaded project has
+ * telemetry enabled (HS-8684: default-on — anything except an explicit
+ * `false`). Drives the conditional visibility of the `#cross-project-stats-toggle`
+ * header button (and the legacy Telemetry sidebar entry).
  *
- * Iterates `~/.hotsheet/projects.json` for the dataDirs + reads each
- * file-settings file. At single-user scale (handful of projects) this
- * is cheap; no cache needed. Returns `false` only when EVERY registered
- * project has explicitly opted out — the empty-project-list case
- * also returns `false` so a fresh install with no projects doesn't
- * advertise the telemetry surface.
+ * HS-8682-followup — iterates `getAllProjects()` (in-memory loaded projects)
+ * instead of `readProjectList()` (`~/.hotsheet/projects.json` on disk) so the
+ * gate matches what the cross-project rollup queries actually filter to per
+ * HS-8625 (the route passes `getAllProjects().map(p => p.secret)` as
+ * `allowedSecrets`). The on-disk list lags in two cases: (a) demo mode never
+ * writes to `~/.hotsheet/projects.json` (the primary isn't added in the demo
+ * branch of `postStartup` and extras registered via `seedDemoExtraProjects`
+ * don't either), so the visibility gate used to stay false for `--demo:13`
+ * while the rollup data was there; (b) any future code path that registers a
+ * project in-memory without persisting. Using `getAllProjects()` keeps the
+ * gate aligned with what the user can actually see data for.
+ *
+ * Returns `false` only when EVERY loaded project has explicitly opted out —
+ * the empty-list case also returns `false` so a fresh install with no
+ * projects doesn't advertise the telemetry surface.
  */
 function anyProjectHasTelemetryEnabled(): boolean {
-  const dataDirs = readProjectList();
-  for (const dataDir of dataDirs) {
-    const settings = readFileSettings(dataDir);
+  for (const project of getAllProjects()) {
+    const settings = readFileSettings(project.dataDir);
     // HS-8684 — default-on. `undefined` (no choice yet) AND `true` both count
     // as enabled; only an explicit `false` opts out.
     if (settings['telemetry_enabled'] !== false) return true;

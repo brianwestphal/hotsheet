@@ -4478,6 +4478,9 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 }
 
 .settings-tab {
+  // HS-8685 — `position: relative` anchors the absolutely-positioned
+  // `.plugin-tab-badge` notification badge to this button's box.
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -6038,7 +6041,31 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   }
 }
 
-.plugin-tab-badge,
+// HS-8685 — `.plugin-tab-badge` (Settings → Plugins tab notification dot)
+// is positioned in the top-right corner of its parent `.settings-tab` button,
+// matching the typical notification-badge convention. The `.settings-tab`
+// rule above sets `position: relative` to anchor it.
+//
+// `.plugin-conflict-badge` (used inline in the Sync Conflicts heading
+// `Sync Conflicts <3>`) keeps its margin-based inline placement.
+.plugin-tab-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
 .plugin-conflict-badge {
   background: #ef4444;
   color: white;
@@ -6362,31 +6389,115 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   color: var(--text-muted);
 }
 
+// HS-8686 — summary line above the per-field table. Picks up the message from
+// `computeConflictDiff` ("3 fields differ: title, status, tags." or
+// "No field-level differences detected — likely a metadata-only conflict.").
+// The optional "Last clean sync: …" tail renders inline in muted text.
+.conflict-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.conflict-base-synced {
+  color: var(--text-muted);
+}
+
 .conflict-fields {
   margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
 }
+
+// HS-8686 — three-column table header so the Local + Remote columns get
+// labeled once at the top, not repeated inside every row.
+.conflict-fields-head {
+  display: grid;
+  grid-template-columns: 100px 1fr 1fr;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  background: var(--bg-muted, rgba(0, 0, 0, 0.03));
+  border-bottom: 1px solid var(--border);
+}
+
+.conflict-col-local { color: #3b82f6; }
+.conflict-col-remote { color: #f97316; }
 
 .conflict-field {
   display: grid;
   grid-template-columns: 100px 1fr 1fr;
   gap: 8px;
   font-size: 12px;
-  padding: 4px 0;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
 
   &:last-child { border-bottom: none; }
+}
+
+// HS-8686 — Multiline values (newline-containing or >80 chars, e.g.
+// `details`) get block layout with a soft-wrapped <pre> so paragraph breaks
+// stay scannable instead of squishing into a single line.
+.conflict-field-multiline {
+  grid-template-columns: 100px 1fr;
+  grid-template-rows: auto auto;
+
+  .conflict-field-name { grid-column: 1; grid-row: 1 / span 2; }
+  .conflict-field-local { grid-column: 2; grid-row: 1; }
+  .conflict-field-remote { grid-column: 2; grid-row: 2; margin-top: 6px; }
 }
 
 .conflict-field-name {
   font-weight: 500;
 }
 
+// HS-8686 — small "Local" / "Remote" label above each value when the row is
+// multiline (the table header only labels the inline rows). For inline rows
+// the side-label is hidden — the column heading already covers it.
+.conflict-field-side-label {
+  display: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+
+.conflict-field-multiline .conflict-field-side-label {
+  display: inline;
+}
+
 .conflict-field-local {
   color: #3b82f6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .conflict-field-remote {
   color: #f97316;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+// HS-8686 — keep the long-text <pre> renderings inside the column, soft-wrap
+// instead of horizontal-scroll. Removes <pre>'s default top/bottom margin so
+// the value sits flush with the side-label above it.
+.conflict-field-value {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  margin: 0;
 }
 
 .conflict-actions {
