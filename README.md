@@ -203,6 +203,22 @@ Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.
   <img src="docs/demo-9.png" alt="Claude Channel integration with play button, custom command buttons, and AI-driven workflow" width="900">
 </p>
 
+### Telemetry & Cost Tracking
+
+Opt in per project (Settings → Telemetry) and Hot Sheet stamps Claude Code's spawn env so its OpenTelemetry exporter posts cost / token / latency events back to a localhost-bound endpoint. The data drives several surfaces:
+
+- **Today's cost widget** in the sidebar — total spend across today's Claude prompts in this project, updated as the channel ticks. A `*` superscript reminds Pro / Max subscribers the figure is the API-equivalent cost, not what they actually pay.
+- **Per-project analytics dashboard** gains a **Claude usage** section below the ticket charts: window-total chips (today / week / month / all-time), a cost-over-time chart, cost-by-model donut, per-tool latency histograms, and the 10 most recent prompts — click any row for a timeline drilldown showing every event with its attribute / body JSON.
+- **Cross-project stats page** (header-bar `line-chart` icon, visible when any project has telemetry on) — cost rollup across every loaded project: window-total chips, a by-project stacked cost-over-time chart, sortable cost-by-project table, model donut, and a 7×24 hourly-activity heatmap for the trailing 90 days.
+- **Per-ticket Claude usage** — when you trigger Claude via the channel with an active ticket selected, Hot Sheet prepends an invisible `<!-- hotsheet:ticket=HS-NNNN -->` marker to the prompt so the cost / tokens / wall-clock from that work attribute back to the ticket and appear as a "Claude usage on this ticket" block in the detail panel.
+- **Beta enhanced tracing** — separate toggle wires `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` so each prompt's drilldown switches from a flat event timeline to a parent-child span tree with an inline waterfall chart. New `claude` sessions started after the toggle begin capturing spans.
+
+Security model: localhost-bound OTLP receiver + `hotsheet_project` resource-attribute filter — foreign OTLP traffic from other tools on the same machine can't pollute Hot Sheet's tables even if it tries. 30-day default retention via the cleanup sweep; **Clear telemetry data** in Settings wipes the project's rows on demand.
+
+<p align="center">
+  <img src="docs/demo-13.png" alt="Cross-project telemetry stats page with cost-over-time chart, cost-by-project table, model donut, and hourly activity heatmap" width="900">
+</p>
+
 ### Other AI Tools
 
 The worklist works with any AI tool that reads files — Cursor, Copilot, Aider, etc. Each ticket includes its number, type, priority, status, title, and details.
@@ -294,6 +310,10 @@ By default, backups are stored in `.hotsheet/backups/`. To store them elsewhere 
 ```
 
 This can also be changed from the settings panel UI.
+
+### Snapshot Protection (on by default)
+
+In addition to the timed backups, Hot Sheet keeps a single fresh **atomic snapshot** at `<dataDir>/.hotsheet/snapshot.tar.gz` — written debounced ~2 s after every ticket change plus on graceful shutdown plus on a 120 s safety timer. On launch, if the live database fails an integrity probe (corrupt files, half-flushed write, PGLite crash mid-checkpoint), Hot Sheet **automatically restores from the latest good source** (canonical snapshot → 5-min / hourly / daily backup tier), preserves the corrupt cluster aside, and surfaces a toast. The bound on data loss is "writes since the last snapshot" (clean exit = zero loss); the failure mode is no longer "open an empty DB." Toggle in Settings → Backups.
 
 ### Instance locking
 

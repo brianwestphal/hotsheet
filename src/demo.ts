@@ -1,3 +1,5 @@
+import type { PGlite } from '@electric-sql/pglite';
+
 import { getDb } from './db/connection.js';
 
 // --- Scenario definitions ---
@@ -20,6 +22,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 10, label: 'Multi-project tabs — multiple projects in one window' },
   { id: 11, label: 'Embedded terminal — drawer with named terminal tabs and PTY output' },
   { id: 12, label: 'Terminal dashboard — every terminal across every project at once' },
+  { id: 13, label: 'Telemetry — cross-project Claude Code cost tracking (HS-8682)' },
 ];
 
 // --- Ticket data model ---
@@ -623,6 +626,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   10: SCENARIO_1, // Primary project uses hero data; extra projects added by seedDemoExtraProjects
   11: SCENARIO_1, // Reuses hero tickets so the screenshot shows tickets + terminal drawer together
   12: SCENARIO_1, // Primary project for the dashboard demo; extra projects + terminal config added by seedDemoExtraProjects
+  13: SCENARIO_1, // Primary project for the cross-project telemetry demo (HS-8682); extra projects + otel_metrics seeded by seedDemoExtraProjects
 };
 
 // --- Custom views for scenario 3 ---
@@ -704,6 +708,96 @@ const SCENARIO_11_TERMINALS = [
   },
 ];
 
+// --- Telemetry seeding (scenario 13, HS-8682) ---
+
+/**
+ * HS-8682 — seed `otel_metrics` cost.usage rows for the §70 cross-project
+ * stats demo. Inserts deterministic-but-varied cost rows into the shared
+ * telemetry DB (per §67.6 the otel tables live in the default project's DB
+ * keyed by `project_secret`). Targets ~30 days of trailing data per project
+ * spread across 2-3 models and working-hour timestamps so the cost-over-time
+ * chart + cost-by-project table + model donut + hourly heatmap all render
+ * with meaningful data. Determinism is keyed off the project secret so the
+ * same demo launch produces the same screenshot.
+ *
+ * `projectIndex` is a 0-based ordering hint that drives a per-project
+ * intensity multiplier — index 0 is the busiest project in the rollup, so
+ * the cost-by-project table has a clear winner instead of three near-equal
+ * rows.
+ */
+async function seedDemoTelemetryRows(
+  db: PGlite,
+  projectSecret: string,
+  projectIndex: number,
+): Promise<void> {
+  const models = ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'] as const;
+  const querySources = ['main_agent', 'subagent'] as const;
+  const projectMultiplier = projectIndex === 0 ? 1.4 : projectIndex === 1 ? 1.0 : 0.6;
+
+  // Deterministic 32-bit hash seeded by the project secret. Same secret →
+  // same data → reproducible screenshots across launches.
+  const seedFromString = (s: string): number => {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) + s.charCodeAt(i)) >>> 0;
+    return h >>> 0;
+  };
+  const projectSeed = seedFromString(projectSecret);
+  const rand = (i: number): number => {
+    // Mulberry32-ish: deterministic PRNG fed by (projectSeed, i).
+    let x = (projectSeed + i * 2_654_435_761) >>> 0;
+    x ^= x >>> 13; x = Math.imul(x, 0x5bd1e995) >>> 0; x ^= x >>> 15;
+    return (x >>> 0) / 0x100000000;
+  };
+
+  const now = Date.now();
+  let counter = 0;
+
+  for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
+    const dayMs = now - dayOffset * 86_400_000;
+    // Weekend dip — the heatmap looks more believable with a weekday peak.
+    const dow = new Date(dayMs).getDay();
+    const weekdayBoost = (dow >= 1 && dow <= 5) ? 1.5 : 0.5;
+    const promptsToday = Math.floor((rand(dayOffset) * 6 + 2) * weekdayBoost * projectMultiplier);
+
+    for (let p = 0; p < promptsToday; p++) {
+      counter++;
+      const modelIdx = Math.floor(rand(counter * 7) * models.length);
+      const model = models[Math.min(modelIdx, models.length - 1)];
+      // Opus dominates the cost; sonnet middle; haiku cheap.
+      const modelMultiplier = model.includes('opus') ? 2.5 : model.includes('sonnet') ? 1.0 : 0.3;
+      const baseCost = 0.02 + rand(counter * 11) * 1.48; // $0.02-$1.50 base
+      const cost = +(baseCost * modelMultiplier).toFixed(4);
+
+      // Spread within working hours (8-22) so the heatmap has a visible
+      // workday band rather than smearing through 3am.
+      const hour = Math.floor(rand(counter * 13) * 14) + 8;
+      const minute = Math.floor(rand(counter * 17) * 60);
+      const second = Math.floor(rand(counter * 19) * 60);
+      const ts = new Date(dayMs);
+      ts.setHours(hour, minute, second, 0);
+
+      const sourceIdx = rand(counter * 23) < 0.85 ? 0 : 1; // main_agent dominant
+      const querySource = querySources[sourceIdx];
+
+      await db.query(
+        `INSERT INTO otel_metrics
+           (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+         VALUES ($1::timestamptz, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+        [
+          ts.toISOString(),
+          projectSecret,
+          `sess-demo-${projectIndex}-${dayOffset}-${p}`,
+          'claude_code.cost.usage',
+          JSON.stringify({ model, 'query.source': querySource }),
+          JSON.stringify({ asDouble: cost }),
+          'delta',
+          true,
+        ],
+      );
+    }
+  }
+}
+
 // --- Seeding ---
 
 export async function seedDemoData(scenario: number): Promise<void> {
@@ -746,7 +840,7 @@ export async function seedDemoData(scenario: number): Promise<void> {
   // already column; that's preserved. Scenario 8 (Dashboard) overrides
   // the layout entirely with its own view so the setting doesn't
   // matter — left out for clarity.
-  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11, 12]);
+  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11, 12, 13]);
   if (COLUMN_VIEW_SCENARIOS.has(scenario)) {
     writeProjectSettings(dataDir, { layout: 'columns' });
   }
@@ -784,6 +878,22 @@ export async function seedDemoData(scenario: number): Promise<void> {
       drawer_active_tab: 'terminal:dev-server',
       terminals: JSON.stringify(SCENARIO_11_TERMINALS),
     });
+  }
+  if (scenario === 13) {
+    // HS-8682 — cross-project telemetry stats showcase. Enable telemetry on
+    // the primary project so the header-bar `#cross-project-stats-toggle`
+    // button renders (visibility-gated on `anyProjectHasTelemetryEnabled()`
+    // per §70). The otel_metrics rows themselves are seeded in
+    // `seedDemoExtraProjects` after all 3 project secrets are known. The
+    // descriptive `appName` keeps the cost-by-project table readable next
+    // to the curated extras (otherwise the primary would render as a
+    // temp-dir basename). Uses `writeFileSettings` directly because
+    // `telemetry_enabled` is a typed boolean on the wire (per
+    // `src/api/settings.ts`), and `writeProjectSettings` would coerce it
+    // to the string `'true'` — which then fails the `!== true` server-side
+    // gate in `src/terminals/registry/otelEnv.ts`.
+    const { writeFileSettings: writeFs } = await import('./file-settings.js');
+    writeFs(dataDir, { appName: 'Hot Sheet Web App', telemetry_enabled: true });
   }
   if (scenario === 12) {
     // Terminal dashboard showcase. The dashboard's "see everything at
@@ -874,16 +984,21 @@ const EXTRA_PROJECTS: ExtraProject[] = [
  * Called from cli.ts after the server is running.
  */
 export async function seedDemoExtraProjects(scenario: number, primaryDataDir: string, port: number): Promise<void> {
-  // Multi-project demos: scenario 10 (tabs) + scenario 12 (terminal dashboard).
-  if (scenario !== 10 && scenario !== 12) return;
+  // Multi-project demos: scenario 10 (tabs), scenario 12 (terminal dashboard),
+  // scenario 13 (cross-project telemetry stats — HS-8682).
+  if (scenario !== 10 && scenario !== 12 && scenario !== 13) return;
 
   const fs = await import('fs');
   const path = await import('path');
   const { registerProject } = await import('./projects.js');
-  const { writeFileSettings } = await import('./file-settings.js');
-  const { getDbForDir } = await import('./db/connection.js');
+  const { readFileSettings, writeFileSettings } = await import('./file-settings.js');
+  const { getDb, getDbForDir } = await import('./db/connection.js');
 
   const baseDir = path.dirname(primaryDataDir);
+  // HS-8682 — capture each extra project's secret as we go so we can seed
+  // per-project otel_metrics rows after all registrations complete (telemetry
+  // tables live in the primary's shared DB per §67.6, keyed by project_secret).
+  const extraSecrets: Array<{ secret: string; appName: string }> = [];
 
   for (const extra of EXTRA_PROJECTS) {
     const extraDataDir = path.join(baseDir, `${path.basename(primaryDataDir)}-${extra.appName.toLowerCase().replace(/\s+/g, '-')}`);
@@ -909,9 +1024,9 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
     }
     await db.query(`SELECT setval('ticket_seq', $1)`, [extra.tickets.length]);
 
-    // Settings: app name for both scenarios; scenario 12 also configures
-    // per-project terminals so the dashboard grid has variety.
-    const settings: Record<string, string> = { appName: extra.appName };
+    // Settings: app name for every multi-project scenario; scenarios 12 + 13
+    // layer in their own flags.
+    const settings: Record<string, string | boolean> = { appName: extra.appName };
     if (scenario === 12) {
       const terminals = extra.appName === 'Mobile App'
         ? SCENARIO_12_MOBILE_TERMINALS
@@ -920,9 +1035,39 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
           : [];
       if (terminals.length > 0) settings.terminals = JSON.stringify(terminals);
     }
+    if (scenario === 13) {
+      // HS-8682 — enable telemetry on each extra project so it appears in the
+      // §70 cross-project rollup (the route filters by
+      // `getAllProjects().map(p => p.secret)` per HS-8625; the rollup itself
+      // includes any row whose project_secret is in that set).
+      settings.telemetry_enabled = true;
+    }
     writeFileSettings(extraDataDir, settings);
 
-    // Register with the running server
-    await registerProject(extraDataDir, port);
+    // Register with the running server + capture the secret for scenario 13's
+    // telemetry-row seeding below.
+    const ctx = await registerProject(extraDataDir, port);
+    if (scenario === 13) {
+      extraSecrets.push({ secret: ctx.secret, appName: extra.appName });
+    }
+  }
+
+  // HS-8682 — seed `otel_metrics` cost.usage rows once all 3 projects are
+  // registered + their telemetry flags set. All rows go into the primary's
+  // shared telemetry DB (per §67.6); each row carries its owning project's
+  // `project_secret` so the cross-project page's per-project aggregates work.
+  if (scenario === 13) {
+    const primarySecret = readFileSettings(primaryDataDir).secret;
+    if (typeof primarySecret === 'string' && primarySecret !== '') {
+      const sharedDb = await getDb();
+      // Primary first (index 0 → highest project-multiplier so the cost-by-
+      // project table has a clear winner row).
+      await seedDemoTelemetryRows(sharedDb, primarySecret, 0);
+      let idx = 1;
+      for (const { secret } of extraSecrets) {
+        await seedDemoTelemetryRows(sharedDb, secret, idx);
+        idx++;
+      }
+    }
   }
 }
