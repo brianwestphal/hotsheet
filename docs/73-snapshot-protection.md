@@ -5,8 +5,7 @@ investigation (`docs/72-snapshot-persistence.md`, esp. §72.6 — "Option D"). G
 for implementation; this doc is the design of record. Three shaping decisions were
 confirmed with the user up front (see §73.2).
 
-> **Status: Design — greenlit, not yet implemented.** Behavior described here ships
-> across the phased follow-ups in §73.10. Unlike §72 (which proposes moving the *live*
+> **Status: Shipped (fully implemented).** The phased follow-ups in §73.10 (HS-8586 / HS-8587 / HS-8594 / HS-8588) all landed. Unlike §72 (which proposes moving the *live*
 > store into memory), Option D keeps today's on-disk `nodefs` cluster exactly as-is and
 > adds an atomic snapshot + automatic recovery around it. It is independently shippable
 > and does **not** require adopting `memoryfs`.

@@ -195,7 +195,7 @@ function createComboInput(pluginId: string, pref: PluginPreference, currentValue
   textInput.addEventListener('focus', () => renderOptions(textInput.value));
   textInput.addEventListener('input', () => renderOptions(textInput.value));
   textInput.addEventListener('blur', () => {
-    setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+    setTimeout(() => { dropdown.style.display = 'none'; }, TIMERS.COMBO_BLUR_MS);
     savePrefValue(pluginId, pref, textInput.value);
   });
 

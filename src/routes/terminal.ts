@@ -28,6 +28,7 @@ import {
   type TerminalState,
 } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { notifyBellWaiters } from './notify.js';
 import { parseBody } from './validation.js';
 
@@ -305,7 +306,7 @@ terminalRoutes.post('/create', async (c) => {
     } catch (err) {
       // Mirror eagerSpawnTerminals' policy: log but don't fail the request.
       // The config is still registered, so a subsequent WS attach can retry.
-      console.warn(`[terminals] Eager-spawn on /create failed for '${id}': ${String(err)}`);
+      console.warn(`[terminals] Eager-spawn on /create failed for '${id}': ${getErrorMessage(err)}`);
     }
   }
   return c.json({ config });

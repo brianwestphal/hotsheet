@@ -58,7 +58,7 @@ import { delegate } from './reactive.js';
 import { state } from './state.js';
 import { getTelemetryCostMode } from './telemetryCostMode.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
-import { formatCost } from './telemetryFormat.js';
+import { formatCost, formatTokens } from './telemetryFormat.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
 import { unmountBindList } from './ticketList.js';
@@ -134,12 +134,9 @@ export interface DashboardPayload {
 
 // HS-8566 — see `telemetryFormat.ts`. `formatCost` now hides cents for
 // values >= $1000 with half-up rounding + thousands separators.
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
+// HS-8670 — `formatTokens` moved to `telemetryFormat.ts`; this surface
+// previously returned raw `String(n)` (rendering fractional token counts),
+// the divergence this consolidation fixes.
 
 function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
   // HS-8628 — input / output split on a second meta line (different pricing);

@@ -15,6 +15,7 @@ import { DEFAULT_TERMINAL_ID, listTerminalConfigs, parseTerminalDefault, type Te
 import { DEFAULT_EXEMPT_PROCESSES, inspectForegroundProcess } from '../terminals/processInspect.js';
 import { destroyProjectTerminals, listAliveTerminalsAcrossProjects, listBellPendingForProject } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { addBellWaiter, addPermissionWaiter, getBellVersion, getPermissionVersion, notifyChange  } from './notify.js';
 import { listDynamicTerminalConfigs } from './terminal.js';
 import { parseBody, RegisterProjectSchema, ReorderProjectsSchema } from './validation.js';
@@ -88,7 +89,7 @@ projectRoutes.post('/register', async (c) => {
       secret: ctx.secret,
     }, 201);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Registration failed';
+    const msg = getErrorMessage(err);
     return c.json({ error: msg }, 500);
   }
 });

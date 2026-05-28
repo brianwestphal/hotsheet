@@ -1,7 +1,8 @@
 import { getPerTicketRollup, type TicketRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 // HS-8566 — shared cost formatter (the $1000-cutoff + half-up rule).
-import { formatCost } from './telemetryFormat.js';
+// HS-8670 — shared token formatter (was duplicated here + 3 other surfaces).
+import { formatCost, formatTokens } from './telemetryFormat.js';
 
 /**
  * HS-8152 — per-ticket Claude usage stats block (§67.10.7). Renders
@@ -18,12 +19,6 @@ import { formatCost } from './telemetryFormat.js';
  * telemetry or were worked on without Hot Sheet channel triggers.
  */
 
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(Math.round(n));
-}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds.toFixed(1)} s`;

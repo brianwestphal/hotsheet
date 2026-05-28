@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatCost, formatRatePerMtok } from './telemetryFormat.js';
+import { formatCost, formatRatePerMtok, formatTokens } from './telemetryFormat.js';
 
 describe('formatCost (HS-8566)', () => {
   it('shows $0.00 for an exact zero — preserves cent-column parity', () => {
@@ -76,5 +76,28 @@ describe('formatRatePerMtok (HS-8628)', () => {
   it('rounds to two decimals', () => {
     // $1 over 3,000,000 tokens = $0.333…/Mtok → $0.33/Mtok.
     expect(formatRatePerMtok(1, 3_000_000)).toBe('$0.33/Mtok');
+  });
+});
+
+describe('formatTokens (HS-8670)', () => {
+  it('rounds sub-1K counts half-up to a whole number (fixes the cross-project String(n) divergence)', () => {
+    expect(formatTokens(0)).toBe('0');
+    expect(formatTokens(42)).toBe('42');
+    // Delta-summed SQL can yield fractional counts — the old cross-project
+    // copy rendered these raw (e.g. "123.6"); the shared formatter rounds.
+    expect(formatTokens(123.6)).toBe('124');
+    expect(formatTokens(123.4)).toBe('123');
+    expect(formatTokens(999)).toBe('999');
+  });
+
+  it('uses a K tier with one decimal between 1K and 1M', () => {
+    expect(formatTokens(1_000)).toBe('1.0K');
+    expect(formatTokens(1_500)).toBe('1.5K');
+    expect(formatTokens(999_999)).toBe('1000.0K');
+  });
+
+  it('uses an M tier with two decimals at >= 1M', () => {
+    expect(formatTokens(1_000_000)).toBe('1.00M');
+    expect(formatTokens(2_345_000)).toBe('2.35M');
   });
 });

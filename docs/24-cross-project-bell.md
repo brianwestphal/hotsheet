@@ -15,7 +15,7 @@ The unifying mechanism is **server-side bell detection** — the PTY data handle
 
 The PTY data handler — currently writes to the ring buffer + broadcasts to subscribers — runs an OSC-aware bell scanner on each chunk. A naive `chunk.includes(0x07)` also fires on the BEL terminator of OSC/DCS/APC/PM/SOS escape strings, which shells (especially Apple Terminal's zshrc integration) emit on every prompt to update the window title (`\x1b]0;TITLE\x07`), icon, and working directory (`\x1b]7;file://host/cwd\x07`). Treating those terminators as real bells makes a freshly-opened terminal show a bell indicator immediately (HS-6766).
 
-`scanForRealBell` maintains two bits of state on the session (`bellScanInString`, `bellScanAfterEsc`) and walks the chunk byte-by-byte:
+`scanForRealBell` (since renamed `scanPtyChunk` and moved from `registry.ts` to `src/terminals/oscScanner.ts` — see §27.2) maintains two bits of state on the session (`bellScanInString`, `bellScanAfterEsc`) and walks the chunk byte-by-byte:
 
 - When an ESC introducer (`\x1b]` OSC, `\x1bP` DCS, `\x1b_` APC, `\x1b^` PM, `\x1bX` SOS) is seen, enter "string" state.
 - While in "string" state, a BEL (`\x07`) or ST (`\x1b\\`) terminator exits the state and is NOT reported as a bell.

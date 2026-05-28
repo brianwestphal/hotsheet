@@ -2,6 +2,7 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { runWithDataDir } from '../db/connection.js';
+import { parseNotes } from '../db/notes.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
 import { scheduleSnapshot } from '../db/snapshot.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
@@ -9,13 +10,9 @@ import { readFileSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
 // to keep the local call sites readable.
 import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_DEBOUNCE_MS as WORKLIST_DEBOUNCE } from '../limits.js';
+// HS-8671 — zod-validated DB-JSON parsing (drops the blind `as` casts).
+import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { Ticket } from '../types.js';
-
-interface AutoContextEntry {
-  type: 'category' | 'tag';
-  key: string;
-  text: string;
-}
 
 interface SyncState {
   dataDir: string;
@@ -110,16 +107,6 @@ export function getSyncState(dir: string): { worklistTimeout: ReturnType<typeof 
   return syncStates.get(dir);
 }
 
-function parseTicketNotes(raw: string): { text: string; created_at: string }[] {
-  if (raw === '') return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed as { text: string; created_at: string }[];
-  } catch { /* not JSON */ }
-  if (raw.trim() !== '') return [{ text: raw, created_at: '' }];
-  return [];
-}
-
 async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Promise<string> {
   const attachments = await getAttachments(ticket.id);
   const lines: string[] = [];
@@ -132,15 +119,11 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
   lines.push(`- Title: ${ticket.title}`);
 
   // Tags (displayed in Title Case)
-  let ticketTags: string[] = [];
-  try {
-    const tags: unknown = JSON.parse(ticket.tags);
-    if (Array.isArray(tags) && tags.length > 0) {
-      ticketTags = tags as string[];
-      const display = tags.map((t: string) => t.replace(/\b\w/g, (c: string) => c.toUpperCase()));
-      lines.push(`- Tags: ${display.join(', ')}`);
-    }
-  } catch { /* ignore */ }
+  const ticketTags: string[] = parseJsonOrNull(TagsArraySchema, ticket.tags) ?? [];
+  if (ticketTags.length > 0) {
+    const display = ticketTags.map(t => t.replace(/\b\w/g, c => c.toUpperCase()));
+    lines.push(`- Tags: ${display.join(', ')}`);
+  }
 
   // Build auto-context: category first, then tags alphabetically
   const contextParts: string[] = [];
@@ -163,7 +146,7 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
     }
   }
 
-  const notes = parseTicketNotes(ticket.notes);
+  const notes = parseNotes(ticket.notes);
   if (notes.length > 0) {
     lines.push(`- Notes:`);
     for (const note of notes) {
@@ -183,14 +166,8 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
 }
 
 async function loadAutoContext(): Promise<AutoContextEntry[]> {
-  try {
-    const settings = await getSettings();
-    if (settings.auto_context !== '') {
-      const parsed: unknown = JSON.parse(settings.auto_context);
-      if (Array.isArray(parsed)) return parsed as AutoContextEntry[];
-    }
-  } catch { /* ignore */ }
-  return [];
+  const settings = await getSettings();
+  return parseJsonOrNull(AutoContextArraySchema, settings.auto_context) ?? [];
 }
 
 async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<string> {

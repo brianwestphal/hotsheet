@@ -142,26 +142,34 @@ export async function getSnapshots(days: number): Promise<{ date: string; data: 
 }
 
 async function getThroughputTimeline(db: PGlite, since: Date, sinceStr: string): Promise<{ date: string; completed: number; created: number }[]> {
+  // HS-8675 — bucket in UTC (`AT TIME ZONE 'UTC'`) so the SQL date keys match
+  // the UTC-keyed densified `dateMap` below. A bare `DATE(timestamptz)` truncates
+  // in the PGLite session timezone, so on a machine ahead of UTC a completion's
+  // local date could fall outside the UTC-keyed map and be silently dropped.
+  // The rest of this module (snapshots, KPI week boundaries) is already UTC-based.
   const completedByDay = await db.query<{ date: string; count: string }>(
-    `SELECT DATE(completed_at) as date, COUNT(*) as count FROM tickets
+    `SELECT DATE(completed_at AT TIME ZONE 'UTC') as date, COUNT(*) as count FROM tickets
      WHERE completed_at >= $1 AND completed_at IS NOT NULL
-     GROUP BY DATE(completed_at) ORDER BY date ASC`,
+     GROUP BY DATE(completed_at AT TIME ZONE 'UTC') ORDER BY date ASC`,
     [sinceStr]
   );
   const createdByDay = await db.query<{ date: string; count: string }>(
-    `SELECT DATE(created_at) as date, COUNT(*) as count FROM tickets
+    `SELECT DATE(created_at AT TIME ZONE 'UTC') as date, COUNT(*) as count FROM tickets
      WHERE created_at >= $1
-     GROUP BY DATE(created_at) ORDER BY date ASC`,
+     GROUP BY DATE(created_at AT TIME ZONE 'UTC') ORDER BY date ASC`,
     [sinceStr]
   );
 
+  // Densify one entry per UTC day from `since` to today inclusive. Iterate with
+  // UTC accessors (`setUTCDate`) so the keys are exact UTC dates regardless of
+  // the server's local timezone or DST transitions.
   const dateMap = new Map<string, { completed: number; created: number }>();
-  const current = new Date(since);
-  const today = new Date();
-  while (current <= today) {
-    const d = current.toISOString().slice(0, 10);
-    dateMap.set(d, { completed: 0, created: 0 });
-    current.setDate(current.getDate() + 1);
+  const cursor = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate()));
+  const now = new Date();
+  const endMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  while (cursor.getTime() <= endMs) {
+    dateMap.set(cursor.toISOString().slice(0, 10), { completed: 0, created: 0 });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   for (const r of completedByDay.rows) {
     const d = typeof r.date === 'string' ? r.date.slice(0, 10) : new Date(r.date).toISOString().slice(0, 10);

@@ -1,7 +1,7 @@
 import { unmountColumnView } from './columnView.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { hideDashboardToolbarControls, restoreDashboardToolbarControls } from './dashboardToolbarVisibility.js';
-import { byId, byIdOrNull } from './dom.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import {
   isAnalyticsDashboardActive,
   isCrossProjectStatsPageActive,
@@ -241,11 +241,14 @@ export function updateSidebarWidgetCost(costs: Record<string, number>): void {
     const label = formatCost(cost);
     el.replaceChildren(
       document.createTextNode(label),
-      Object.assign(document.createElement('sup'), {
-        className: 'sidebar-widget-cost-asterisk',
-        textContent: '*',
-        title: 'Estimate only for Claude Pro / Max / other-subscription users. See cost overview pages for details.',
-      }),
+      toElement(
+        <sup
+          className="sidebar-widget-cost-asterisk"
+          title="Estimate only for Claude Pro / Max / other-subscription users. See cost overview pages for details."
+        >
+          *
+        </sup>,
+      ),
     );
     el.style.display = '';
   } else {

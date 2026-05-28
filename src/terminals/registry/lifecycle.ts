@@ -15,6 +15,7 @@ import { buildOtelEnv } from './otelEnv.js';
 import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
+  projectPrefix,
   resolveScrollbackBytes,
   sessionKey,
   sessions,
@@ -262,7 +263,7 @@ export function destroyTerminal(
  *  process kept running, unreachable from any UI, until the whole app exited.
  *  Mirrors `destroyTerminal` / `destroyAllTerminals`. */
 export function destroyProjectTerminals(secret: string): void {
-  const prefix = `${secret}::`;
+  const prefix = projectPrefix(secret);
   for (const key of [...sessions.keys()]) {
     if (!key.startsWith(prefix)) continue;
     const session = sessions.get(key);
@@ -276,7 +277,7 @@ export function destroyProjectTerminals(secret: string): void {
 
 /** List ids of terminals the registry currently knows about for a project. */
 export function listProjectTerminalIds(secret: string): string[] {
-  const prefix = `${secret}::`;
+  const prefix = projectPrefix(secret);
   const out: string[] = [];
   for (const key of sessions.keys()) {
     if (key.startsWith(prefix)) out.push(key.slice(prefix.length));

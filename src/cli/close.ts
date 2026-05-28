@@ -11,6 +11,7 @@ import { execFile } from 'child_process';
 import { resolve } from 'path';
 import { z } from 'zod';
 
+import { type QuitSummary, QuitSummarySchema } from '../api/projects.js';
 import { isInstanceRunning, readInstanceFile } from '../instance.js';
 import { ErrorBodySchema, ProjectListItemSchema, ProjectRegistrationSchema } from '../schemas.js';
 
@@ -106,22 +107,11 @@ export async function handleClose(dataDir: string, force: boolean): Promise<void
  * --close to start failing for users on older servers.
  */
 async function confirmCloseAgainstQuitSummary(port: number, secret: string): Promise<boolean> {
-  // HS-8567 — explicit zod schema for the wire response.
-  const QuitSummarySchema = z.object({
-    projects: z.array(z.object({
-      secret: z.string(),
-      name: z.string(),
-      confirmMode: z.enum(['always', 'never', 'with-non-exempt-processes']),
-      entries: z.array(z.object({
-        terminalId: z.string(),
-        label: z.string(),
-        foregroundCommand: z.string(),
-        isShell: z.boolean(),
-        isExempt: z.boolean(),
-      }).loose()),
-    }).loose()),
-  }).loose();
-  type QuitSummary = z.infer<typeof QuitSummarySchema>;
+  // HS-8674 — share the wire schema with the route + typed caller
+  // (`src/api/projects.ts::QuitSummarySchema`) instead of a hand-duplicated
+  // inline copy. close.ts is a CLI without the client transport, so it does a
+  // raw fetch + `safeParse` against the same schema rather than calling the
+  // typed `getQuitSummary()`.
   let summary: QuitSummary;
   try {
     const res = await fetch(`http://localhost:${port}/api/projects/quit-summary`);

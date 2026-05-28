@@ -82,7 +82,7 @@ All tools live under the `hotsheet_` prefix so they sort together in the agent's
 
 ## 63.3 Tool implementation
 
-Each tool lives in a `tools/list` + `tools/call` handler pair in `src/channel.ts`. The handler:
+As built, the tool definitions, per-tool Zod schemas, the `tools/list` catalog, and the `tools/call` dispatch + localhost-HTTP proxy all live in a dedicated `src/channel.tools.ts`; `src/channel.ts` only registers the `tools/list` + `tools/call` handlers and imports from it. The dispatcher:
 
 1. Validates the input against a Zod schema (reuse the existing schemas in `src/routes/validation.ts` where possible — they are the source of truth for the REST API and re-using them keeps the two surfaces in lockstep).
 2. Reads `port` + `secret` from `<dataDir>/settings.json` (the channel server already has `dataDir` from its `--data-dir` CLI arg).

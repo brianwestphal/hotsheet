@@ -63,3 +63,19 @@ export function formatCost(n: number): string {
   const rounded = Math.round(n);
   return `$${rounded.toLocaleString('en-US')}`;
 }
+
+/**
+ * HS-8670 — shared token-count formatter for every telemetry surface. Was
+ * copy-pasted in `ticketTelemetryStats.tsx`, `analyticsTelemetrySection.tsx`,
+ * and `crossProjectStatsPage.tsx` (plus a `formatTokensShort` twin in
+ * `telemetryModelDonut.tsx`), with the cross-project + donut copies diverging by
+ * returning raw `String(n)` — so they could render fractional token counts where
+ * the others rounded. Token counts are conceptually integers but arrive
+ * fractional from delta-summed SQL, so below 1K we round half-up to a whole
+ * number; the M / K tiers keep 2 / 1 decimals for readability.
+ */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(Math.round(n));
+}

@@ -197,6 +197,16 @@ async function rotateIfNeeded(path: string, pendingBytes: number): Promise<void>
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastHeartbeatNs = 0n;
+// HS-8674 — single-instance assumption: there is ONE event-loop heartbeat per
+// Node process (the timer is idempotent), and it attributes every stall to the
+// dataDir of the FIRST `startServerEventLoopHeartbeat` caller. On a
+// multi-project instance the event loop is shared, so a stall genuinely can't
+// be attributed to one project — every project's work runs on the same loop.
+// We therefore log it against the first-booted project's freeze.log rather than
+// fanning the same entry out to every registered dataDir (which would multiply
+// one real stall into N misleading per-project entries). The per-CLIENT freeze
+// path (`appendFreezeLog` from the `/api/diagnostics/freeze` route) is correctly
+// per-project; only this process-wide heartbeat is single-attribution.
 let heartbeatDataDir: string | null = null;
 
 /**

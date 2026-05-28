@@ -2,7 +2,7 @@
 
 HS-7598. Surface the project's git state — branch, dirty working tree, commits ahead/behind upstream — as a passive indicator in the Hot Sheet sidebar. The user often needs to know "do I have changes that need committing? do I need to push?" while bouncing between tickets and code; today they have to drop into a terminal and run `git status` to find out.
 
-> **Status:** Shipped (Phases 1 + 2 + 3). Phase 1 (HS-7954): `src/git/status.ts` + `src/git/watcher.ts` (500 ms cache + `fs.watch` on `.git/index` + `.git/HEAD`) + `GET /api/git/status` + sidebar chip. Phase 2 (HS-7955): `getGitStatus` populates `upstream` / `ahead` / `behind`; new `runGitFetch` + `POST /api/git/fetch` endpoint; chip extended with `↑N ↓M` glyphs + two-line tooltip including `last fetched N minutes ago` via pure `formatRelativeTime`. Phase 3 (HS-7956): chip click toggles a non-modal popover (`src/client/gitStatusPopover.tsx`) anchored under the chip with branch line (`main → origin/main` / `main (no upstream)` / `(detached: <SHA>)`), ahead/behind line (when upstream), per-bucket counters (clickable to expand into per-file lists fetched from the new `?files=true` query param backed by `getGitStatusFiles` + pure `bucketPorcelainFiles` using `git status --porcelain=v1 -z`), and a `Last fetched … / Fetch now` row that re-renders on success. File rows click → reveal-in-finder via new `POST /api/git/reveal` (joined against git root + path-traversal guarded). Right-click on file row → "Copy path" context menu. 47 unit tests across `status.test.ts` (15: 10 for `bucketPorcelain` + 5 for `bucketPorcelainFiles` -z parsing / 200-cap truncation / spaces in paths) + `gitStatusChip.test.ts` (24) + `gitStatusPopover.test.ts` (8: branch line + ahead/behind line formatting).
+> **Status:** Shipped (Phases 1 + 2 + 3). Phase 1 (HS-7954): `src/git/status.ts` + `src/git/watcher.ts` (500 ms cache + `fs.watch` on `.git/index` + `.git/HEAD`) + `GET /api/git/status` + sidebar chip. Phase 2 (HS-7955): `getGitStatus` populates `upstream` / `ahead` / `behind`; new `runGitFetch` + `POST /api/git/fetch` endpoint; chip extended with `↑N ↓M` glyphs + two-line tooltip including `last fetched N minutes ago` via pure `formatRelativeTime`. Phase 3 (HS-7956): chip click toggles a non-modal popover (`src/client/gitStatusPopover.tsx`) anchored under the chip with branch line (`main → origin/main` / `main (no upstream)` / `(detached: <SHA>)`), ahead/behind line (when upstream), per-bucket counters (clickable to expand into per-file lists fetched from the new `?files=true` query param backed by `getGitStatusFiles` + pure `bucketPorcelainFiles` using `git status --porcelain=v1 -z`). (A `Last fetched … / Fetch now` row was part of the original Phase 3 design but was **removed in HS-7974** — the popover is read-only; `POST /api/git/fetch` still exists but no UI surfaces it.) File rows click → reveal-in-finder via new `POST /api/git/reveal` (joined against git root + path-traversal guarded). Right-click on file row → "Copy path" context menu. 47 unit tests across `status.test.ts` (15: 10 for `bucketPorcelain` + 5 for `bucketPorcelainFiles` -z parsing / 200-cap truncation / spaces in paths) + `gitStatusChip.test.ts` (24) + `gitStatusPopover.test.ts` (8: branch line + ahead/behind line formatting).
 
 ## 48.1 Built-in plugin or core feature?
 
@@ -77,9 +77,9 @@ A new `git_status` event is added to `command_log` when the user clicks "Fetch" 
 
 ### 48.3.3 Watching
 
-The server watches `<gitRoot>/.git/index` and `<gitRoot>/.git/HEAD` (chokidar). When either changes, it bumps a per-project `gitChangeVersion` integer and notifies the existing `/api/poll` long-poll waiters. Clients fetch `/api/git/status` and re-render.
+The server watches `<gitRoot>/.git/index` and `<gitRoot>/.git/HEAD` using Node's built-in `fs.watch` (no chokidar dependency — see `src/git/watcher.ts`). When either changes, it bumps a per-project `gitChangeVersion` integer and notifies the existing `/api/poll` long-poll waiters. Clients fetch `/api/git/status` and re-render.
 
-Watching `.git/index` catches stages / commits / unstages. Watching `.git/HEAD` catches branch switches and detached-HEAD transitions. Watching `.git/refs/remotes/` would catch background fetches done by other tooling (IDE, terminal `git fetch`), but `chokidar` plus `git`'s ref-packing can be flaky here — defer until Phase 2 demands it.
+Watching `.git/index` catches stages / commits / unstages. Watching `.git/HEAD` catches branch switches and detached-HEAD transitions. Watching `.git/refs/remotes/` would catch background fetches done by other tooling (IDE, terminal `git fetch`), but `fs.watch` plus `git`'s ref-packing can be flaky here — not implemented.
 
 A noisy editor that touches `.git/index.lock` should NOT trigger a re-render. The watcher filters to exact filenames (`index`, `HEAD`) and ignores tmp/lock siblings.
 
@@ -155,17 +155,19 @@ If `getGitStatus` cannot find a `git` binary at all (PATH lookup fails), the chi
 
 New keys in `<dataDir>/settings.json` (per `src/db/settings.ts`):
 
-| Key | Default | Description |
-|---|---|---|
-| `git_tracking_enabled` | `true` | Master switch. When `false`, the chip never renders and `/api/git/status` returns `null`. |
-| `git_auto_fetch_interval_ms` | `0` | Background fetch cadence. `0` = never (default). Recommended values: `300000` (5min), `1800000` (30min). The fetch only runs while Hot Sheet is in the foreground — no background-tab auto-fetch. |
-| `git_chip_show_clean` | `true` | When `false`, the chip hides itself when the repo is clean + up-to-date. Power-user opt-in for less visual noise. |
+| Key | Default | Status | Description |
+|---|---|---|---|
+| `git_tracking_enabled` | `true` | **Shipped** | Master switch. When `false`, the chip never renders and `/api/git/status` returns `null`. Read in `src/routes/git.ts`. |
+| `git_auto_fetch_interval_ms` | `0` | **Not implemented** | *Designed, never built.* Intended background-fetch cadence (`0` = never). No source reads this key and there is no auto-fetch timer. |
+| `git_chip_show_clean` | `true` | **Not implemented** | *Designed, never built.* Intended to hide the chip when the repo is clean + up-to-date. No source reads this key. |
 
-Settings → **Git Status** sub-section (under General) exposes the three knobs.
+Only `git_tracking_enabled` is wired today. The other two keys, and the **Git Status** settings sub-section described in §48.6, were specified during design but never implemented — see §48.6. If they're wanted, file a feature ticket (the chip code in `src/client/gitStatusChip.tsx` and the fetch endpoint already exist; what's missing is the timer + the show-clean gate + the settings UI).
 
 ## 48.6 Settings dialog wiring
 
-A new "Git Status" tab in the Settings dialog (or a sub-section under General — UX TBD during HS-7954 implementation):
+> **Not implemented.** The Git Status settings sub-section described below was specified at design time but never built — there is no Git Status UI in the Settings dialog today, and `git_tracking_enabled` can only be toggled by editing `settings.json` directly. The original design:
+
+A new "Git Status" tab in the Settings dialog (or a sub-section under General):
 
 - Toggle: Enable git tracking [on by default if a git repo is detected]
 - Toggle: Hide chip when clean
@@ -184,7 +186,9 @@ Per the existing settings convention ([2-data-storage.md](2-data-storage.md)), t
 
 Three phased tickets, each ships independently:
 
-- **HS-7954 — Phase 1: branch + dirty.** Server: `src/git/status.ts` minus ahead/behind; `GET /api/git/status`; chokidar watcher on `.git/index` + `.git/HEAD`; settings keys; gitignore-aware filtering. Client: sidebar chip with branch + total-uncommitted count; muted/yellow tinting; tooltip with breakdown. No fetch button, no expanded panel. Most of the architecture lands here; remaining tickets are pure additions.
+> **As-built note:** the sequencing below is the original plan. What actually shipped differs in two ways: the watcher uses `fs.watch` (not chokidar — see §48.3.3), and the auto-fetch timer (`git_auto_fetch_interval_ms`) + the "Fetch now" / "Hide chip when clean" UI were never built (see §48.5/§48.6; the HS-7974 cleanup also removed the popover fetch row).
+
+- **HS-7954 — Phase 1: branch + dirty.** Server: `src/git/status.ts` minus ahead/behind; `GET /api/git/status`; `fs.watch` watcher on `.git/index` + `.git/HEAD`; settings keys; gitignore-aware filtering. Client: sidebar chip with branch + total-uncommitted count; muted/yellow tinting; tooltip with breakdown. No fetch button, no expanded panel. Most of the architecture lands here; remaining tickets are pure additions.
 - **HS-7955 — Phase 2: ahead/behind + fetch.** Server: extend `getGitStatus` with upstream + ahead + behind; `POST /api/git/fetch`; `command_log` entry on fetch; auto-fetch timer if interval > 0. Client: extend chip with ahead/behind glyphs + amber/blue tints; "Fetch now" button (initially in tooltip; expanded popover lands in HS-7956); tab-focus-triggered refetch.
 - **HS-7956 — Phase 3: expanded panel.** Click-to-open popover with full breakdown + per-bucket file lists + "Fetch now" + Phase 3 file-row interactions (click → reveal in finder via `openInFileManager`).
 

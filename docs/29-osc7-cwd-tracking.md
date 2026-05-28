@@ -14,7 +14,7 @@ This feature wires OSC 7 up as a first-class signal: every terminal instance tra
 
 ## 29.2 Client parsing
 
-`src/client/terminal.tsx` registers a handler during `mountXterm`:
+`src/client/terminalDrawerMount.tsx` registers a handler when mounting the drawer xterm (this code was split out of the old `terminal.tsx` during the §54 / HS-8189 reorganization):
 
 ```ts
 term.parser.registerOscHandler(7, (payload) => {

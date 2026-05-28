@@ -2,7 +2,7 @@
 
 HS-8233. Adds chevron-up (previous) / chevron-down (next) buttons to the [§49 reader mode](49-reader-mode.md) overlay so the user can read through every non-empty note on a ticket without having to dismiss the overlay and re-click the book icon for each note. Builds on HS-7961's reader overlay infrastructure; does NOT change the per-note book trigger or the Details book trigger entry points.
 
-> **Status:** Shipped. New optional `navigation` slot on `OpenReaderOverlayOptions` in `src/client/readerOverlay.tsx`; `noteRenderer.tsx`'s book-button click handler builds the navigation list at click time. 14 new unit tests in `readerOverlay.test.ts` cover the rendered-buttons / disabled-at-boundaries / step-forward / step-backward / keyboard / aria-label / clamped-initialIndex / Escape-still-works contracts.
+> **Status:** Shipped. New optional `navigation` slot on `OpenReaderOverlayOptions` in `src/client/readerOverlay.tsx`; the per-note book-button click handler (in `src/client/contextMenu.tsx`) builds the navigation list at click time. 14 new unit tests in `readerOverlay.test.ts` cover the rendered-buttons / disabled-at-boundaries / step-forward / step-backward / keyboard / aria-label / clamped-initialIndex / Escape-still-works contracts.
 
 ## 59.1 Problem statement
 
@@ -14,7 +14,7 @@ The §49 reader overlay was originally per-content: click the book icon on note 
 - Two new buttons in the reader overlay header — chevron-up (`previous`) + chevron-down (`next`) — visible whenever the overlay is opened with a list-navigation context.
 - Buttons are **disabled** at list boundaries (chevron-up at the first entry, chevron-down at the last entry) per the ticket's explicit ask.
 - Keyboard shortcuts: `ArrowUp` = previous, `ArrowDown` = next.
-- The per-note book-button entry point in `noteRenderer.tsx` builds a navigation list of every non-empty note in display order and passes the clicked note's index as the initial.
+- The per-note book-button entry point in `contextMenu.tsx` builds a navigation list of every non-empty note in display order and passes the clicked note's index as the initial.
 
 **Out of scope.**
 - ~~Navigation for the ticket Details reader. The Details reader has only one entry — there's nothing to navigate. The buttons are not rendered when navigation isn't supplied.~~ **Updated 2026-05-18 (HS-8429):** the Details reader now also navigates across the unified `[Details, ...non-empty notes]` list; see §59.9.
@@ -56,7 +56,7 @@ When `navigation` is omitted (the existing Details-reader path), the buttons are
 
 ## 59.4 Per-note caller wiring
 
-`noteRenderer.tsx`'s `.note-reader-btn` click handler builds the navigation list at click time:
+The `.note-reader-btn` click handler (in `contextMenu.tsx`) builds the navigation list at click time:
 
 1. Iterate every note in display order.
 2. Skip notes whose `text.trim() === ''` (empty notes don't have a reader button so they aren't navigable from this surface either).
@@ -133,7 +133,7 @@ export function buildCombinedReaderEntries(input: {
 - Titles use the existing `buildDetailsReaderTitle` and `buildNoteReaderTitle` helpers — no new title formatting.
 - Returns an empty array when both Details and every note are empty (defensive — caller still gates `navigation` on `entries.length > 1`).
 
-The helper is pure (no DOM, no async, no module state) so it's testable in isolation. Both `app.tsx::bindDetailReaderButton` and `noteRenderer.tsx`'s `.note-reader-btn` click handler call it; each computes its own `initialIndex` (Details reader → position of the Details entry, typically 0; note reader → position of the clicked note, +1 when Details is included).
+The helper is pure (no DOM, no async, no module state) so it's testable in isolation. Both `detailBindings/readerButton.tsx::bindDetailReaderButton` and the `.note-reader-btn` click handler in `contextMenu.tsx` call it; each computes its own `initialIndex` (Details reader → position of the Details entry, typically 0; note reader → position of the clicked note, +1 when Details is included).
 
 **Behavior summary.**
 

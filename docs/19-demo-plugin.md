@@ -73,4 +73,4 @@ The demo plugin is available in the source repository (`plugins/demo-plugin/`) b
 
 ## 19.4 Build
 
-Built as part of the main `npm run build` via tsup. Entry point: `plugins/demo-plugin/src/index.ts` → `dist/plugins/demo-plugin/index.js`.
+Built **only** by `npm run build:plugins` (a separate esbuild loop over `plugins/*`), **not** the main `npm run build` — `tsup.config.ts` explicitly excludes the demo plugin from production builds (consistent with §19.3). Entry point: `plugins/demo-plugin/src/index.ts` → `dist/plugins/demo-plugin/index.js` (produced by `build:plugins` for local/manual install only).

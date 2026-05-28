@@ -11,7 +11,7 @@ Together these two features let the user see at a glance _what_ each terminal is
 
 ## 23.2 Title-change escape sequences
 
-xterm.js handles parsing of OSC 0 / OSC 2 / OSC 1 (icon name, treated equivalently) natively. The client subscribes to `term.onTitleChange((newTitle) => { ... })` in `mountXterm` and stores the value on the `TerminalInstance` as `runtimeTitle`.
+xterm.js handles parsing of OSC 0 / OSC 2 / OSC 1 (icon name, treated equivalently) natively. The client subscribes to `term.onTitleChange((newTitle) => { ... })` when mounting the drawer xterm (`src/client/terminalDrawerMount.tsx` — the xterm-mount + escape-sequence handlers were split out of the old `terminal.tsx` during the §54 / HS-8189 reorganization) and stores the value on the `TerminalInstance` as `runtimeTitle`.
 
 **Where the runtime title is shown.** Only in the **in-pane terminal toolbar** (`.terminal-label`). The drawer tab (`.drawer-tab-label`) always shows the static configured/derived name. `updateTabLabel` applies the two separately — drawer-tab = `tabDisplayName(config)`, toolbar = `effectiveHeaderLabel(inst)`.
 

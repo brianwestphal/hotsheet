@@ -41,7 +41,7 @@ When the explicit `status` filter names a single bucket directly (e.g. `?status=
 
 ### Render
 
-`src/client/searchExtraRows.tsx` exposes `renderSearchExtraRows(reload)`. It paints into a new `<div id="search-extra-rows">` element that lives between the multi-select toolbar (`#batch-toolbar`) and the ticket list (`#ticket-list`) in `pages.tsx`. Each row is a flex pill with a Lucide icon (`calendar` for backlog, `archive` for archive), a label, and click + Enter / Space keyboard activation. Active state (`.is-active`) tints the row with the accent so the user can see at a glance which buckets they've already mixed in; the label flips between "Include {N} backlog items" and "Hide {N} backlog items" accordingly.
+`src/client/searchExtraRows.tsx` exposes `renderSearchExtraRows(reload)`. It paints into a new `<div id="search-extra-rows">` element that lives directly above the multi-select toolbar (`#batch-toolbar`) in `pages.tsx` — DOM order is `#search-extra-rows` → `#batch-toolbar` → `#ticket-list`. Each row is a flex pill with a Lucide icon (`calendar` for backlog, `archive` for archive), a label, and click + Enter / Space keyboard activation. Active state (`.is-active`) tints the row with the accent so the user can see at a glance which buckets they've already mixed in; the label flips between "Include {N} backlog items" and "Hide {N} backlog items" accordingly.
 
 ### Fetch + reload flow
 
@@ -68,7 +68,7 @@ When the user manually clicks the **column view** layout button while either inc
 
 - **Server:** `src/db/tickets.ts` (`buildTicketWhereClause` extended with the include-flag OR-wrap; new `countSearchMatchesInExcludedStatuses(search)` helper). `src/routes/tickets.ts` (`GET /tickets` parses the new query-string flags; new `GET /tickets/search-counts` route). `src/types.ts` (`TicketFilters` gains `include_backlog?: boolean` + `include_archive?: boolean`).
 - **Client:** `src/client/searchExtraRows.tsx` (new module — `renderSearchExtraRows`, `clearSearchIncludeState`, `clearIncludeFlagsOnly`). `src/client/ticketList.tsx` `loadTickets` extended. `src/client/app.tsx` `bindLayoutToggle` extended for the column-view "restart search" path. `src/client/state.tsx` state shape extended.
-- **Markup:** `src/routes/pages.tsx` adds `<div id="search-extra-rows">` between the multi-select toolbar and the ticket list.
+- **Markup:** `src/routes/pages.tsx` adds `<div id="search-extra-rows">` directly above the multi-select toolbar (DOM order: `#search-extra-rows` → `#batch-toolbar` → `#ticket-list`).
 - **SCSS:** `src/client/styles.scss` adds `.search-extra-rows`, `.search-extra-row` (+ `.is-active`), `.search-extra-row-icon`, `.search-extra-row-label`.
 - **Tests:** 4 new unit tests in `src/db/queries.test.ts` cover `include_backlog`, `include_archive`, the `countSearchMatchesInExcludedStatuses` helper, and the empty-search short-circuit. All 126 db tests pass; full test suite (860 unit tests) clean.
 

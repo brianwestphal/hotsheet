@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { parseNotes } from '../db/notes.js';
+import { getDataDir } from '../db/connection.js';
+import { generateNoteId, parseNotes } from '../db/notes.js';
 import {
   addToOutbox, deleteNoteSyncRecord, deleteSyncRecord, getNoteSyncRecords,
   getOutboxEntries, getSyncRecord, getSyncRecordByRemoteId,
@@ -18,8 +19,9 @@ import type { RemoteChange, RemoteTicketFields, TicketingBackend,TicketSyncRecor
 
 /** Per-plugin sync timers. Each scheduled sync replaces any previous timer for
  *  the same pluginId (startScheduledSync calls stopScheduledSync first).
- *  No guard against overlapping sync execution — if a timer fires while a
- *  previous sync is still running, both run concurrently.
+ *  Overlapping execution is now guarded by `runSync` (HS-8669) — a tick that
+ *  fires while a previous run for the same (plugin, project) is still in flight
+ *  coalesces onto it rather than starting a second concurrent pass.
  *  Modified by: startScheduledSync(), stopScheduledSync(), stopAllScheduledSyncs(). */
 const syncTimers = new Map<string, ReturnType<typeof setInterval>>();
 
@@ -63,7 +65,37 @@ export function stopAllScheduledSyncs(): void {
 
 // --- Full sync (pull + push) ---
 
+/** HS-8669 — in-flight guard, keyed by (pluginId, dataDir). A scheduled tick or
+ *  a manual sync that fires while a previous `runSync` for the SAME plugin in the
+ *  SAME project is still running would otherwise run concurrently — both walking
+ *  the outbox + the direct-compare push loop, which can create duplicate remote
+ *  issues (cf. HS-8658). The dataDir is part of the key so two different projects
+ *  CAN sync the same global plugin in parallel (they hit different DBs). A
+ *  concurrent caller coalesces onto the in-flight run's result rather than
+ *  starting a second pass — the next tick / debounced push picks up anything a
+ *  slightly-stale coalesced result missed. */
+const inFlightSyncs = new Map<string, Promise<SyncResult>>();
+
 export async function runSync(pluginId: string): Promise<SyncResult> {
+  // Resolve the current project context defensively — the no-dataDir scheduled
+  // branch can call runSync outside a runWithDataDir scope, where getDataDir throws.
+  let dataDirKey = '';
+  try { dataDirKey = getDataDir(); } catch { dataDirKey = ''; }
+  const key = `${pluginId}::${dataDirKey}`;
+
+  const existing = inFlightSyncs.get(key);
+  if (existing) return existing;
+
+  const run = runSyncInner(pluginId);
+  inFlightSyncs.set(key, run);
+  try {
+    return await run;
+  } finally {
+    inFlightSyncs.delete(key);
+  }
+}
+
+async function runSyncInner(pluginId: string): Promise<SyncResult> {
   cancelPendingPush(); // Manual sync supersedes debounced push
   const backend = getBackendForPlugin(pluginId);
   if (!backend) return { ok: false, error: 'Backend not found or disabled' };
@@ -574,7 +606,7 @@ async function pullNewRemoteComments(ctx: CommentSyncCtx): Promise<void> {
       }
       continue;
     }
-    const noteId = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const noteId = generateNoteId(); // HS-8669 — canonical `n_<date>_<counter>` id (was an ad-hoc Math.random form)
     localNotes.push({ id: noteId, text: comment.text, created_at: comment.createdAt.toISOString() });
     localNoteById.set(noteId, localNotes[localNotes.length - 1]);
     await upsertNoteSyncRecord(ticketId, noteId, backend.id, comment.id, comment.text);

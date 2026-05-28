@@ -46,7 +46,7 @@ import { getProjectRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
-import { formatCost } from './telemetryFormat.js';
+import { formatCost, formatTokens } from './telemetryFormat.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { type RecentPromptRow, renderRecentPromptsList } from './telemetryRecentPromptsList.js';
 import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
@@ -116,12 +116,7 @@ function cacheKey(projectSecret: string, w: TelemetryWindow): string {
 
 // HS-8566 — see `telemetryFormat.ts`. `formatCost` now hides cents for
 // values >= $1000 with half-up rounding + thousands separators.
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(Math.round(n));
-}
+// HS-8670 — `formatTokens` likewise moved to `telemetryFormat.ts`.
 
 function resolveTimezone(): string {
   try {

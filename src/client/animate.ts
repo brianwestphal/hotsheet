@@ -2,6 +2,8 @@
 // Captures element positions before render, then animates
 // elements from their old position to their new position.
 
+import { TRANSITION_CLEANUP_MS } from './uiTimings.js';
+
 type Snapshot = Map<string, DOMRect>;
 
 let suppressNext = false;
@@ -49,6 +51,6 @@ export function flipAnimate(before: Snapshot) {
 
     const cleanup = () => { htmlEl.style.transition = ''; };
     htmlEl.addEventListener('transitionend', cleanup, { once: true });
-    setTimeout(cleanup, 250);
+    setTimeout(cleanup, TRANSITION_CLEANUP_MS);
   });
 }

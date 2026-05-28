@@ -248,6 +248,8 @@ Prompt: `Make a commit message for the recently completed tickets, without wrapp
 | `/api/channel/permission/dismiss` | POST | Dismiss a pending permission overlay without responding |
 | `/api/channel/notify` | POST | Notify long-poll of channel state changes (used internally by channel server) |
 | `/api/channel/permission/notify` | POST | Wake the permission long-poll when a new permission request arrives (used internally by channel server) |
+| `/api/channel/heartbeat` | POST | Receive busy / idle / heartbeat state from the Claude Code hooks (`{ projectDir, state }`; auth-skipped — see §12.9) |
+| `/api/channel/heartbeat-status` | GET | Return and clear accumulated heartbeat updates (`{ updates: [{ secret, state }] }`) for the long-poll |
 
 ## 12.13 MCP Tools
 

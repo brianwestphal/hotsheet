@@ -48,3 +48,13 @@ export const COPIED_GLYPH_FLASH_MS = 900;
  *  dropdown closing. The window allows a click on the dropdown itself
  *  to land before `blur` tears the dropdown down. */
 export const BLUR_DEBOUNCE_MS = 150;
+
+/** Fallback timeout to clean up an element's inline `transition` after a
+ *  CSS transition, in case the `transitionend` event never fires (interrupted
+ *  transition, display:none mid-flight, etc.). Slightly longer than the
+ *  longest tweened property. */
+export const TRANSITION_CLEANUP_MS = 250;
+
+/** Time a toast spends fading out (`.visible` removed) before it's pulled from
+ *  the DOM. Matches the toast's CSS opacity-transition duration. */
+export const TOAST_FADE_OUT_MS = 300;

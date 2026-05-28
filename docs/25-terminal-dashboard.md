@@ -10,13 +10,13 @@ The **Terminal Dashboard** is a second top-level view for Hot Sheet (the first b
 2. No new server-side state and no duplicate PTYs. Attachments are just additional `TerminalSubscriber`s against the existing registry.
 3. Lazy terminals stay cold — the dashboard never forces a spawn on its own; spawns only happen when the user enlarges a tile.
 4. Bell indicators from [24-cross-project-bell.md](24-cross-project-bell.md) surface here too, with a more prominent tile-level affordance (bounce + outline) that persists until the user actually looks at the terminal.
-5. Tauri-only (like §22).
+5. Works on web and Tauri alike (the Tauri-only gate was removed in HS-8624 — see §22.11 and §25.11).
 
 ## 25.2 Entry point and app-header chrome
 
 A new iconic toggle button sits **before the first project tab** in the top toolbar, using the Lucide `square-terminal` glyph (HS-7030 — replaced `layout-panel-left` because the square-terminal glyph signals "this is the terminal feature" far more clearly in a toolbar shared with layout toggles). It is identified as `#terminal-dashboard-toggle`. The button:
 
-- Shows only when Hot Sheet is running inside Tauri (same gate as the embedded-terminal feature, §22.11). In a plain browser context the button is not rendered at all.
+- Renders on both web and Tauri (HS-8624 removed the former Tauri-only gate; see §22.11 / §25.11).
 - Has a pressed/active visual state when the dashboard is open, matching the existing toolbar-toggle style (accent-border, accent-tinted background).
 - Toggles the dashboard on and off.
 
@@ -333,12 +333,12 @@ A modal dialog rendered on the body when the user clicks an eye-icon button (eit
 
 **Implementation.** `src/client/hideTerminalDialog.tsx` — `showHideTerminalDialog(opts)` builds + mounts the overlay, `closeHideTerminalDialog()` tears it down. `refreshOpenHideDialog()` is exposed for callers that mutate hidden state outside the dialog (e.g. via the context-menu Hide entry) — no-op when the dialog isn't open. The dialog re-renders its body in-place after every toggle, so the user sees the row treatment update without losing scroll position or focus.
 
-## 25.11 Tauri-only feature gating
+## 25.11 Feature gating
 
-The whole dashboard is off in plain-browser sessions:
+> **HS-8624 update:** the dashboard is **no longer Tauri-gated.** Like the embedded terminal itself (§22.11), the toggle now renders on web and Tauri alike (`initTerminalDashboard` in `src/client/terminalDashboard.tsx` dropped the `getTauriInvoke()` early-return). The original Tauri-only design is preserved below for historical context.
 
-- The `#terminal-dashboard-toggle` toolbar button is not rendered when `window.__TAURI__` is absent (same detector used by `applyTerminalTabVisibility` in §22.11).
-- No state, no keybindings, no server-side awareness. The feature is purely client-side.
+- The `#terminal-dashboard-toggle` toolbar button used to be rendered only when `window.__TAURI__` was present; that gate was removed in HS-8624.
+- No state, no keybindings change. The feature is purely client-side.
 
 Server-side, no new endpoints or config keys are needed — all attach / clear-bell flows already exist.
 
@@ -382,7 +382,7 @@ See [manual-test-plan.md §12](manual-test-plan.md#12-embedded-terminal) — add
 6. **Bell surfacing.** `printf '\007'` in a background terminal. The tile bounces once and keeps a colored outline. Click it (center overlay) — outline clears, server-side `bellPending` flips.
 7. **Lazy / exited placeholder.** Mark a terminal `lazy: true`, never attach it, open the dashboard — it renders as a placeholder. Single-click — it spawns and transitions to the center overlay once the first history frame lands. `exit` a running shell, reopen dashboard — same flow with the exit-code placeholder.
 8. **Zero-terminal project.** Open the dashboard with a project whose `terminals` is `[]` — its section shows the empty-state row, not a blank grid.
-9. **Web gating.** In a plain browser (no Tauri), confirm the dashboard toggle button is absent from the toolbar.
+9. **Web availability (HS-8624).** In a plain browser (no Tauri), confirm the dashboard toggle button is **present** and the dashboard works (the former Tauri-only gate was removed).
 
 ## 25.15 Cross-references
 

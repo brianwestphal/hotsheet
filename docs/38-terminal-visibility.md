@@ -1,5 +1,7 @@
 # 38. Persisted terminal visibility (HS-7825)
 
+> **Superseded in part by HS-8290 (see §39).** This doc describes the original HS-7825 storage: a **per-project** `hidden_terminals` key in `settings.json` plus a **server-side** prune in the `/file-settings` PATCH handler. The §39 visibility-groupings reshape (HS-8290) moved visibility state into **global** config and made pruning **client-side** (`pruneHiddenForProject` / `pruneStaleIdsInGroupings`); `hidden_terminals` is no longer a per-project file-settings key (it's in `HS_8290_DEAD_KEYS` in `src/file-settings.ts`, stripped on read), and there is no longer a `prunedHiddenTerminals` step in the file-settings PATCH. The behavior (persisted, configured-terminal-only hidden state; dynamic terminals session-only) is preserved — only the storage location + prune site moved. Read §39 for the current design.
+
 ## 38.1 Overview
 
 The Show / Hide Terminals dialog (§25.10.6 / §36.6.5) lets users hide configured terminals from the global Terminal Dashboard (§25) and the per-project drawer terminal grid (§36). HS-7661 shipped this as **session-only** — every reload reset the hidden set so the user could declutter the current view without committing to a permanent setting. HS-7825 layers persistence on top: hidden state for **configured** terminals now survives across page reloads + app relaunches. Dynamic terminals (`dyn-*`) remain session-only because their lifetime ends with the PTY anyway.

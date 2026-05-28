@@ -8,6 +8,7 @@ import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
 import { clampFontSize, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, TERMINAL_FONTS } from './terminalFonts.js';
 import { DEFAULT_THEME_ID, TERMINAL_THEMES } from './terminalThemes.js';
+import { BLUR_DEBOUNCE_MS } from './uiTimings.js';
 
 /**
  * Settings UI for the per-project list of default terminals
@@ -581,7 +582,7 @@ async function wireCommandCombobox(
   input.addEventListener('focus', () => { activeIndex = -1; render(); });
   input.addEventListener('input', () => { activeIndex = -1; render(); });
   input.addEventListener('blur', () => {
-    setTimeout(() => { popover.hidden = true; }, 150);
+    setTimeout(() => { popover.hidden = true; }, BLUR_DEBOUNCE_MS);
   });
   input.addEventListener('keydown', (e) => {
     if (popover.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {

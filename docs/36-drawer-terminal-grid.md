@@ -4,7 +4,7 @@
 
 The **drawer terminal grid** is an alternate rendering of the bottom drawer (see [22-terminal.md](22-terminal.md)) that shows every terminal in the **current project** as a grid of scaled-down, live tiles. It is conceptually a project-scoped version of the global Terminal Dashboard (see [25-terminal-dashboard.md](25-terminal-dashboard.md) §25): a peek-and-zoom surface that lets the user see what every terminal in this one project is doing without tabbing through each one, then click to enlarge or double-click to open a dedicated full-drawer view.
 
-The feature is **Tauri-only** (same gate as §22.11) and sits next to the drawer's existing Commands Log + per-terminal tab stack rather than replacing them — the user toggles in and out of grid mode via a new button in the drawer toolbar.
+The feature works on **both web and Tauri** (HS-8624 removed the former Tauri-only gate — see §22.11 / §36.8) and sits next to the drawer's existing Commands Log + per-terminal tab stack rather than replacing them — the user toggles in and out of grid mode via a new button in the drawer toolbar.
 
 **Core promises:**
 
@@ -19,7 +19,7 @@ The feature is **Tauri-only** (same gate as §22.11) and sits next to the drawer
 
 A new toggle button sits in the drawer toolbar's `.drawer-tabs-end` cluster, **before** the `.drawer-expand-btn` (the "expand drawer to full height" button from HS-6312). Id: `#drawer-grid-toggle`. It uses the Lucide `layout-grid` glyph so the iconography reads as "grid of tiles" (distinct from the global `square-terminal` glyph used for §25's cross-project dashboard).
 
-- Shows only when Hot Sheet is running inside Tauri (same detector as §22.11 / §25.2). In a plain browser context the button is not rendered.
+- Renders on both web and Tauri (HS-8624 removed the former Tauri-only gate — see §22.11 / §36.8).
 - Is **disabled** (not hidden) when the current project has ≤1 terminal — the button still renders so the UI doesn't jump as the user adds / removes terminals, but `disabled` prevents accidental activation and shows a tooltip explaining why. As soon as a second terminal is created (via the drawer's `+` or the `/api/terminal/create` endpoint) the button enables.
 - Gains a pressed/active visual state (`.active`) when grid mode is on, matching the rest of the drawer toolbar affordances.
 - Clicking the button toggles grid mode on and off.
@@ -129,12 +129,14 @@ The grid toggle is **disabled** whenever the current project has ≤1 terminal. 
 
 When the count drops from ≥2 to ≤1 while the user is *already* in grid mode, the mode exits automatically — showing a grid of one tile is strictly worse than the normal tabs view, and the alternative is an awkward "disabled mid-use" state. The auto-exit restores the previously-active drawer tab.
 
-## 36.8 Tauri-only feature gating
+## 36.8 Feature gating
 
-Per §22.11, the embedded-terminal feature is desktop-only. The grid view is a rendering over those terminals, so it follows the same rule:
+> **HS-8624 update:** the embedded-terminal feature (and therefore this grid view) is **no longer Tauri-only** — `initDrawerTerminalGrid` dropped its `getTauriInvoke() === null` early-return along with the five sibling gates. The toggle now renders on web and Tauri alike. The original desktop-only design is preserved below for context.
 
-- `#drawer-grid-toggle` is not rendered when `getTauriInvoke()` returns `null`.
-- `#drawer-grid-sizer` is also hidden in that case.
+Pre-HS-8624 the grid view was desktop-only (it's a rendering over the embedded terminals, which were Tauri-gated per §22.11):
+
+- `#drawer-grid-toggle` used to not render when `getTauriInvoke()` returned `null`; that gate was removed in HS-8624.
+- `#drawer-grid-sizer` was hidden in the same case.
 - No state, no keybindings, no server-side awareness.
 
 Server-side, no new endpoints or config keys are needed. Every attach / clear-bell flow already exists.
@@ -183,7 +185,7 @@ See [manual-test-plan.md §12](manual-test-plan.md#12-embedded-terminal) — add
 7. **Dedicated view.** Double-click a tile — full-drawer pane, `fit()` runs. Back or Esc returns to the grid or centered overlay the user was in before.
 8. **Placeholders.** Mark a terminal `lazy:true`, never attach it, enter grid mode — placeholder tile. Single-click → spawns → transitions to centered. Exit a terminal (`exit` inside the shell) → placeholder with `Exited (code N)`. Single-click → restart + centered.
 9. **Bell.** `printf '\007'` in one terminal while another project is active — the project-tab bell indicator shows. Switch to that project, open grid mode — the tile has a bounce + persistent outline. Click the tile (centered) → outline clears + server bell pending flag drops.
-10. **Mode-state + Tauri-only.** In a plain browser (no Tauri), confirm the grid toggle button is absent from the drawer toolbar. In Tauri, grid state survives a project switch but resets on page reload.
+10. **Mode-state + web availability (HS-8624).** In a plain browser (no Tauri), confirm the grid toggle button is **present** and grid mode works. In both web and Tauri, grid state survives a project switch but resets on page reload.
 
 ## 36.12 Cross-references
 

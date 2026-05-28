@@ -34,7 +34,7 @@ Companion to [7. Backup & Restore](7-backup-restore.md). Each scheduled backup w
 
 - `schemaVersion`: integer constant (`SCHEMA_VERSION` in `src/db/connection.ts`). Bumped manually whenever `initSchema` changes a table's shape (added/removed/renamed/retyped column, new table). Any reader can compare the saved value to the current code's value to decide whether the rows are still loadable as-is.
 - `exportedAt`: ISO 8601 timestamp at the moment the export was built. Distinct from the filename timestamp because the filename is fixed when the tarball write begins.
-- `tables`: hard-coded list — every table created by `initSchema` in `src/db/connection.ts`. Hard-coding (not `information_schema.tables`) keeps the export deterministic across PGLite versions and avoids picking up internal tables. When a new table is added in `initSchema`, append it to the `TABLES` constant in `src/dbJsonExport.ts` AND bump `SCHEMA_VERSION`.
+- `tables`: hard-coded list of the **durable** tables created by `initSchema` in `src/db/connection.ts`. Hard-coding (not `information_schema.tables`) keeps the export deterministic across PGLite versions and avoids picking up internal tables. **The three `otel_*` telemetry tables are intentionally excluded** — telemetry is a separate disposable dataset (per [67-telemetry.md](67-telemetry.md) / [72-snapshot-persistence.md](72-snapshot-persistence.md) §72.8), not part of the rescue payload. When a new **durable** table is added in `initSchema`, append it to the `TABLES` constant in `src/dbJsonExport.ts` AND bump `SCHEMA_VERSION` (telemetry tables stay out).
 - A missing table (e.g. mid-migration) yields `[]` rather than throwing, so the rescue path stays available even when the schema is in flux.
 
 ### 41.3 Atomic Write

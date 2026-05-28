@@ -134,6 +134,33 @@ describe('getDashboardStats', () => {
     expect(todayEntry!.completed).toBeGreaterThanOrEqual(1);
   });
 
+  // HS-8675 — regression guard for the timezone bug: throughput must bucket by
+  // UTC date even when the PGLite session timezone is ahead of UTC. Under the
+  // old `DATE(completed_at)` (session-tz) bucketing, a completion timestamped
+  // late in the UTC day rolls to the *next* calendar day in a UTC+9 session, so
+  // its key fell outside the UTC-keyed densified map and the count was dropped.
+  it('buckets throughput by UTC date regardless of session timezone', async () => {
+    const db = await getDb();
+    await db.query(`SET TIME ZONE 'Asia/Tokyo'`); // UTC+9, no DST
+    try {
+      const t = await createTicket('Stats throughput tz');
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      // 23:30Z today = 08:30 next-day in Tokyo → old code bucketed it to the
+      // Tokyo date (tomorrow), which is absent from the UTC-keyed map → dropped.
+      await db.query(
+        `UPDATE tickets SET status = 'completed', completed_at = ($1 || 'T23:30:00Z')::timestamptz WHERE id = $2`,
+        [todayUtc, t.id]
+      );
+
+      const stats = await getDashboardStats(30);
+      const entry = stats.throughput.find(e => e.date === todayUtc);
+      expect(entry).toBeDefined();
+      expect(entry!.completed).toBeGreaterThanOrEqual(1);
+    } finally {
+      await db.query(`SET TIME ZONE 'UTC'`); // restore for sibling tests on the shared connection
+    }
+  });
+
   it('calculates cycle time for completed tickets', async () => {
     const db = await getDb();
 

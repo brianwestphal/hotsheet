@@ -12,6 +12,7 @@
  * reuse the same affordance with the same styling.
  */
 import { toElement } from './dom.js';
+import { TOAST_FADE_OUT_MS } from './uiTimings.js';
 
 export interface ShowToastOptions {
   durationMs?: number;
@@ -29,6 +30,6 @@ export function showToast(message: string, opts: ShowToastOptions = {}): void {
   requestAnimationFrame(() => toast.classList.add('visible'));
   window.setTimeout(() => {
     toast.classList.remove('visible');
-    window.setTimeout(() => toast.remove(), 300);
+    window.setTimeout(() => toast.remove(), TOAST_FADE_OUT_MS);
   }, durationMs);
 }

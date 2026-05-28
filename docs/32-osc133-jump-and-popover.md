@@ -107,7 +107,7 @@ The clipboard is stubbed in `addInitScript` before bundle load (push-onto-`windo
 - [26-shell-integration-osc133.md](26-shell-integration-osc133.md) §26.6 Phase 2 — this doc is the implementation.
 - [31-osc133-copy-last-output.md](31-osc133-copy-last-output.md) — Phase 1b (sibling).
 - `src/client/terminalOsc133.ts` — `findPromptLine`, `computeLastOutputRange`.
-- `src/client/terminal.tsx` — `jumpToPromptMarker`, `attachGutterHoverPopover`, `showGutterPopover`, `readRecordCommand` / `readRecordOutput`, `copyCommandOfRecord` / `copyOutputOfRecord` / `rerunCommandOfRecord`, `applyShellIntegrationToolbarVisibility`, `reapplyShellIntegrationDecorations`, `shellIntegrationUiEnabled`.
+- `jumpToPromptMarker`, `attachGutterHoverPopover`, `showGutterPopover`, `readRecordCommand` / `readRecordOutput`, `copyCommandOfRecord` / `copyOutputOfRecord` / `rerunCommandOfRecord`, `applyShellIntegrationToolbarVisibility`, `reapplyShellIntegrationDecorations`, `shellIntegrationUiEnabled` — these were extracted from the old `terminal.tsx` during the §54 / HS-8189 reorganization and now live in the `terminal*` module family (`src/client/terminalDrawerMount.tsx`, `src/client/terminalShellIntegration.tsx`, `src/client/terminal/gutterPopover.tsx`).
 - `src/client/settingsDialog.tsx`, `src/client/settingsLoader.tsx`, `src/client/state.tsx` — `shell_integration_ui` setting plumbing.
 - `src/client/styles.scss` — `.terminal-osc133-popover` + button styles.
 - **Tickets:** HS-7269 (this doc), HS-7267 / HS-7268 (prior phases), HS-7270 (Phase 3 — Ask Claude), HS-7328 (Playwright e2e — shipped, see §32.6 E2E), HS-7460 (platform-specific `Cmd/Ctrl+Up/Down` match via `isJumpShortcut` so the wrong-platform modifier falls through to xterm).

@@ -24,7 +24,7 @@ When the "Auto-prioritize tickets" setting is enabled (default: on) and the Up N
 3. Mark them as Up Next via the API.
 4. Then proceed to work through them normally.
 
-This allows the AI to self-direct when no explicit priorities have been set by the user. The setting is stored as `auto_order` in the database settings table.
+This allows the AI to self-direct when no explicit priorities have been set by the user. The setting is stored as `auto_order` in the file-based project settings (`<dataDir>/settings.json`, read via `src/db/settings.ts`) — per [2-data-storage.md](2-data-storage.md) §2.3 the DB settings table now holds only plugin keys.
 
 ### 6.3 Open Tickets Export
 

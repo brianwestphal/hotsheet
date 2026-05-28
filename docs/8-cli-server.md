@@ -64,15 +64,15 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 11. Start the Hono HTTP server.
 12. Bump process priority to macOS QoS class `user-interactive` (HS-8308 — best-effort, macOS only; see §8.10).
 13. Trigger initial markdown sync.
-13. Generate/update AI tool skill files.
-14. Start the automatic backup scheduler.
-15. Restore previous projects from `~/.hotsheet/projects.json`.
-16. Migrate global config (one-time migration from DB).
-17. Clean up stale channel servers.
-18. Set up skills and channel config for all projects.
-19. Install Claude Code heartbeat hooks (if channel enabled).
-20. Write the instance file (`~/.hotsheet/instance.json`).
-21. Open the browser (unless `--no-open`).
+14. Generate/update AI tool skill files.
+15. Start the automatic backup scheduler.
+16. Restore previous projects from `~/.hotsheet/projects.json`.
+17. Migrate global config (one-time migration from DB).
+18. Clean up stale channel servers.
+19. Set up skills and channel config for all projects.
+20. Install Claude Code heartbeat hooks (if channel enabled).
+21. Write the instance file (`~/.hotsheet/instance.json`).
+22. Open the browser (unless `--no-open`).
 
 ### 8.6 HTTP Server
 

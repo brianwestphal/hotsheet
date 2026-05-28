@@ -22,6 +22,22 @@ export function sessionKey(secret: string, terminalId: string): string {
   return `${secret}::${terminalId}`;
 }
 
+/** The `${secret}::` prefix for a project's session keys. HS-8674 — symmetric
+ *  with `sessionKey` so the prefix isn't hand-built at each callsite. */
+export function projectPrefix(secret: string): string {
+  return `${secret}::`;
+}
+
+/** Split a session key back into `{ secret, terminalId }`. HS-8674 — the inverse
+ *  of `sessionKey`, centralizing the `::` split that was hand-rolled three ways
+ *  across the registry slices. Terminal ids never contain `::`, so the first
+ *  separator is authoritative. */
+export function parseSessionKey(key: string): { secret: string; terminalId: string } {
+  const sepIdx = key.indexOf('::');
+  if (sepIdx === -1) return { secret: key, terminalId: '' };
+  return { secret: key.slice(0, sepIdx), terminalId: key.slice(sepIdx + 2) };
+}
+
 /** Resolve the per-session scrollback budget from project settings (clamped to
  *  `[SCROLLBACK_MIN, SCROLLBACK_MAX]`). Read once at session-create time so
  *  every PTY for that project gets the user's chosen size. */

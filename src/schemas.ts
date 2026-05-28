@@ -68,6 +68,19 @@ export type Ticket = z.infer<typeof TicketSchema>;
 export const TagsArraySchema = z.array(z.string());
 
 // ---------------------------------------------------------------------------
+// Auto-context entries — the `auto_context` setting is a JSON-encoded array of
+// per-category / per-tag preamble blocks injected into the worklist export.
+// ---------------------------------------------------------------------------
+
+export const AutoContextEntrySchema = z.object({
+  type: z.enum(['category', 'tag']),
+  key: z.string(),
+  text: z.string(),
+});
+export const AutoContextArraySchema = z.array(AutoContextEntrySchema);
+export type AutoContextEntry = z.infer<typeof AutoContextEntrySchema>;
+
+// ---------------------------------------------------------------------------
 // Category definitions — `settings.categories` row. Same shape as
 // `CategoryDefSchema` in `src/routes/validation.ts` but re-declared here so
 // the client can import without reaching into `routes/`.

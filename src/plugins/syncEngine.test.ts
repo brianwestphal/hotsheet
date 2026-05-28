@@ -772,3 +772,42 @@ describe('sync engine — resolveConflict keep_remote', () => {
     expect(resolved!.sync_status).toBe('synced');
   });
 });
+
+describe('sync engine — overlapping run guard (HS-8669)', () => {
+  it('coalesces concurrent runSync calls for the same plugin into one pass', async () => {
+    const backend = createMockBackend([
+      { id: 'remote-guard', fields: { title: 'Guard', details: '', category: 'bug', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    // Count + slow down pullChanges so the first runSync is still in flight
+    // when the second is invoked — without the guard, both would pull/push.
+    let pullCount = 0;
+    const originalPull = backend.pullChanges.bind(backend);
+    backend.pullChanges = async (since: Date | null) => {
+      pullCount++;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return originalPull(since);
+    };
+    loaderMock.__registerBackend(backend);
+
+    const [r1, r2] = await Promise.all([runSync('mock-backend'), runSync('mock-backend')]);
+
+    expect(pullCount).toBe(1); // second call coalesced onto the in-flight run
+    expect(r1).toBe(r2); // both callers received the same result object
+    expect(r1.ok).toBe(true);
+  });
+
+  it('runs again after the previous run settles (guard is released)', async () => {
+    const backend = createMockBackend([
+      { id: 'remote-release', fields: { title: 'Release', details: '', category: 'bug', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    let pullCount = 0;
+    const originalPull = backend.pullChanges.bind(backend);
+    backend.pullChanges = (since: Date | null) => { pullCount++; return originalPull(since); };
+    loaderMock.__registerBackend(backend);
+
+    await runSync('mock-backend');
+    await runSync('mock-backend'); // sequential — the first already settled
+
+    expect(pullCount).toBe(2); // guard released, second sync ran for real
+  });
+});

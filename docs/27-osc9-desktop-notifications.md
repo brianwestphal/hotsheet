@@ -14,7 +14,7 @@ This feature ships the server-side detector, the cross-project transport, and an
 
 ## 27.2 Detection
 
-The scanner in `src/terminals/registry.ts` (formerly `scanForRealBell`, now `scanPtyChunk`) walks every byte of every PTY output chunk. It already tracks OSC/DCS/APC/PM/SOS string state to avoid misreading an OSC-terminating BEL as a bell. For HS-7264 the same pass accumulates the OSC payload into `SessionState.oscAccumulator` while the scanner is inside an OSC specifically (not DCS/APC/PM/SOS), and on close (BEL or ESC\\) inspects the payload:
+The scanner (`scanPtyChunk`, formerly `scanForRealBell`) in `src/terminals/oscScanner.ts` (extracted from `registry.ts`, which is now a thin re-export facade per HS-8189) walks every byte of every PTY output chunk. It already tracks OSC/DCS/APC/PM/SOS string state to avoid misreading an OSC-terminating BEL as a bell. For HS-7264 the same pass accumulates the OSC payload into `SessionState.oscAccumulator` while the scanner is inside an OSC specifically (not DCS/APC/PM/SOS), and on close (BEL or ESC\\) inspects the payload:
 
 - If the payload starts with `9;` — the rest is the user-facing notification message.
 - If the rest starts with a digit followed by `;` (e.g. `9;1;…`, `9;4;…`) — that's an iTerm2 proprietary subcommand (progress bars, marks), NOT a notification. Skipped.

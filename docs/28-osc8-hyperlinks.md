@@ -26,7 +26,7 @@ ST-terminated variants (`\x1b\\` instead of `\x07`) work too — xterm.js handle
 
 ## 28.3 Implementation
 
-### Drawer terminal (`src/client/terminal.tsx`)
+### Drawer terminal (`src/client/terminalDrawerMount.tsx`)
 
 The `XTerm` constructor now passes:
 

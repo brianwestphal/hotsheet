@@ -30,21 +30,32 @@ const SPAWN_TIMEOUT_MS = 2_000;
 /** Spawn options shared across every git invocation in this module. */
 type GitInvoker = (args: string[], cwd: string) => { stdout: string; status: number | null };
 
-const defaultInvoker: GitInvoker = (args, cwd) => {
-  const res = spawnSync('git', args, {
-    cwd,
-    encoding: 'utf-8',
-    timeout: SPAWN_TIMEOUT_MS,
-    env: {
-      ...process.env,
-      // HS-7954: never block the server on a credential prompt; never fight
-      // the user's interactive terminal for `.git/index.lock`.
-      GIT_TERMINAL_PROMPT: '0',
-      GIT_OPTIONAL_LOCKS: '0',
-    },
-  });
-  return { stdout: typeof res.stdout === 'string' ? res.stdout : '', status: res.status };
-};
+/**
+ * Build a `git` invoker. HS-8674 — single factory shared by the status reads
+ * (short timeout, stdout only) and `git fetch` (long timeout, stdout+stderr
+ * folded for UI surfacing). The env block is identical for both: HS-7954 —
+ * never block the server on a credential prompt; never fight the user's
+ * interactive terminal for `.git/index.lock`.
+ */
+function makeGitInvoker({ timeoutMs, includeStderr = false }: { timeoutMs: number; includeStderr?: boolean }): GitInvoker {
+  return (args, cwd) => {
+    const res = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf-8',
+      timeout: timeoutMs,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_OPTIONAL_LOCKS: '0',
+      },
+    });
+    const stdout = typeof res.stdout === 'string' ? res.stdout : '';
+    const stderr = typeof res.stderr === 'string' ? res.stderr : '';
+    return { stdout: includeStderr ? stdout + stderr : stdout, status: res.status };
+  };
+}
+
+const defaultInvoker: GitInvoker = makeGitInvoker({ timeoutMs: SPAWN_TIMEOUT_MS });
 
 /**
  * Read the project's git status. Returns `null` when the project root
@@ -141,7 +152,7 @@ function getLastFetchedAt(projectRoot: string): number | null {
 /** Run `git fetch --quiet --no-write-fetch-head` against the upstream of
  *  the current branch. Returns `ok: true` + the new timestamp on success;
  *  `ok: false` + the captured stderr on failure. 30s timeout. */
-export function runGitFetch(projectRoot: string, invoker: GitInvoker = defaultInvokerWithTimeout(30_000)): FetchResult {
+export function runGitFetch(projectRoot: string, invoker: GitInvoker = makeGitInvoker({ timeoutMs: 30_000, includeStderr: true })): FetchResult {
   if (!isGitRepo(projectRoot)) {
     return { ok: false, lastFetchedAt: null, error: 'Not a git repository' };
   }
@@ -160,26 +171,6 @@ export function runGitFetch(projectRoot: string, invoker: GitInvoker = defaultIn
     return { ok: true, lastFetchedAt: now, error: '' };
   }
   return { ok: false, lastFetchedAt: getLastFetchedAt(projectRoot), error: fetchRes.stdout.trim() === '' ? 'fetch failed' : fetchRes.stdout.trim() };
-}
-
-function defaultInvokerWithTimeout(timeoutMs: number): GitInvoker {
-  return (args, cwd) => {
-    const res = spawnSync('git', args, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: timeoutMs,
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_OPTIONAL_LOCKS: '0',
-      },
-    });
-    // For fetch we want stderr too — combine into a single field for the
-    // caller's UI surfacing.
-    const out = (typeof res.stdout === 'string' ? res.stdout : '')
-      + (typeof res.stderr === 'string' ? res.stderr : '');
-    return { stdout: out, status: res.status };
-  };
 }
 
 /** Test-only — drop the lastFetchedAt cache so each test starts clean. */

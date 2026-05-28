@@ -19,7 +19,8 @@ import { toElement } from './dom.js';
 import { MODEL_DONUT_COLORS } from './telemetryColors.js';
 // HS-8566 — shared formatter (hides cents for >= $1000, half-up rounding).
 // HS-8628 — `formatRatePerMtok` for the derived per-model price estimate.
-import { formatCost as defaultFormatCost, formatRatePerMtok } from './telemetryFormat.js';
+// HS-8670 — `formatTokens` shared (replaces the local `formatTokensShort` twin).
+import { formatCost as defaultFormatCost, formatRatePerMtok, formatTokens } from './telemetryFormat.js';
 
 export interface ModelRollupRow {
   readonly model: string;
@@ -32,12 +33,6 @@ export interface ModelRollupRow {
   readonly promptCount?: number;
 }
 
-/** HS-8628 — compact token formatter for the legend (K / M suffixes). */
-function formatTokensShort(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
 
 export interface RenderCostByModelDonutOpts {
   /** Format a cost number for legend entries. Default `$N.NN`. */
@@ -98,7 +93,7 @@ export function renderCostByModelDonut(
               <span className="telemetry-dashboard-model-legend-cost">{formatCost(row.cost)}</span>
               {hasSplit || rate !== null
                 ? <span className="telemetry-dashboard-model-legend-meta">
-                    {hasSplit ? `${formatTokensShort(inTok)} in / ${formatTokensShort(outTok)} out` : ''}
+                    {hasSplit ? `${formatTokens(inTok)} in / ${formatTokens(outTok)} out` : ''}
                     {hasSplit && rate !== null ? ' · ' : ''}
                     {rate !== null ? `~${rate}` : ''}
                   </span>

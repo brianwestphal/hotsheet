@@ -18,11 +18,14 @@ export interface JsonDbExport {
   tables: Record<string, unknown[]>;
 }
 
-/** Hard-coded list of tables to dump. Mirrors `initSchema()` in
- *  `src/db/connection.ts`. Hard-coding (instead of `information_schema`)
- *  keeps the export deterministic across PGLite versions and avoids
- *  picking up internal/system tables. When a new table is added in
- *  `initSchema`, append it here AND bump `SCHEMA_VERSION`. */
+/** Hard-coded list of the DURABLE tables to dump (a subset of `initSchema()`
+ *  in `src/db/connection.ts`). The three `otel_*` telemetry tables are
+ *  intentionally excluded — telemetry is a separate disposable dataset (see
+ *  docs §67 / §72.8), not part of this rescue payload. Hard-coding (instead of
+ *  `information_schema`) keeps the export deterministic across PGLite versions
+ *  and avoids picking up internal/system tables. When a new DURABLE table is
+ *  added in `initSchema`, append it here AND bump `SCHEMA_VERSION` (leave the
+ *  `otel_*` tables out). */
 const TABLES = [
   'tickets',
   'attachments',

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { join } from 'path';
 import { z } from 'zod';
 
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { createPglite } from './pglite.js';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
@@ -139,7 +140,7 @@ function writeRecoveryMarker(dataDir: string, marker: DbRecoveryMarker): void {
   try {
     writeFileSync(recoveryMarkerPath(dataDir), JSON.stringify(marker, null, 2));
   } catch (writeErr: unknown) {
-    const writeMessage = writeErr instanceof Error ? writeErr.message : String(writeErr);
+    const writeMessage = getErrorMessage(writeErr);
     console.error(`Could not write DB recovery marker: ${writeMessage}`);
   }
 }
@@ -320,7 +321,7 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
     await probeIntegrity(db);
     return db;
   } catch (probeErr: unknown) {
-    const m = probeErr instanceof Error ? probeErr.message : String(probeErr);
+    const m = getErrorMessage(probeErr);
     console.error('[db] integrity probe failed after open:', m);
     databases.delete(dbPath);
     try { await db.close(); } catch { /* already broken */ }
@@ -375,7 +376,7 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
       console.error(`[db] auto-restored from ${src.label} (${ticketCount} tickets)`);
       return { db, label: src.label, ticketCount };
     } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
+      const m = getErrorMessage(e);
       console.error(`[db] restore source ${src.label} did not load: ${m}`);
       // Un-cache + wipe the partial dir before trying the next source.
       const bad = databases.get(dbPath);
@@ -387,7 +388,7 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
 }
 
 async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover: boolean): Promise<PGlite> {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = getErrorMessage(err);
   const stack = err instanceof Error ? err.stack : undefined;
 
   // `forceRecover` is set by the integrity-probe failure path (the cluster
@@ -415,7 +416,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
       await probeIntegrity(db);
       return db;
     } catch (retryErr: unknown) {
-      const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      const retryMessage = getErrorMessage(retryErr);
       console.error('Retry after stale postmaster.pid removal also failed:', retryMessage);
       const bad = databases.get(dbPath);
       if (bad) { databases.delete(dbPath); try { await bad.close(); } catch { /* ignore */ } }
@@ -431,7 +432,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   try {
     renameSync(dbPath, corruptPath);
   } catch (renameErr: unknown) {
-    const renameMessage = renameErr instanceof Error ? renameErr.message : String(renameErr);
+    const renameMessage = getErrorMessage(renameErr);
     // Previous behavior was to rmSync the live data on rename failure —
     // pure data loss. Surface the original error instead so the user can
     // intervene manually.
@@ -477,7 +478,7 @@ function tryRemoveStalePostmasterPid(dbPath: string): boolean {
     rmSync(pidPath, { force: true });
     return true;
   } catch (rmErr: unknown) {
-    const rmMessage = rmErr instanceof Error ? rmErr.message : String(rmErr);
+    const rmMessage = getErrorMessage(rmErr);
     console.error(`Could not remove stale postmaster.pid: ${rmMessage}`);
     return false;
   }

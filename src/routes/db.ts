@@ -4,6 +4,7 @@ import { clearRecoveryMarker, readRecoveryMarker } from '../db/connection.js';
 import { findWorkingBackup, getResetwalAvailability, runResetwalAndDump } from '../db/repair.js';
 import { getSnapshotStatus } from '../db/snapshot.js';
 import type { AppEnv } from '../types.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 
 /** HS-7899: routes for the launch-time DB-recovery banner. The marker
  *  itself is written by `recoverFromOpenFailure()` in
@@ -50,7 +51,7 @@ dbRoutes.post('/repair/find-working-backup', async (c) => {
     const result = await findWorkingBackup(dataDir);
     return c.json({ backup: result });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Validation failed';
+    const msg = getErrorMessage(err);
     return c.json({ error: msg }, 500);
   }
 });
@@ -78,7 +79,7 @@ dbRoutes.post('/repair/run-pg-resetwal', async (c) => {
     const result = await runResetwalAndDump(dataDir, marker.corruptPath);
     return c.json(result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'pg_resetwal failed';
+    const msg = getErrorMessage(err);
     return c.json({ error: msg }, 500);
   }
 });

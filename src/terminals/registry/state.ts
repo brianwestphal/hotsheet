@@ -2,6 +2,8 @@ import { DEFAULT_TERMINAL_ID } from '../config.js';
 import {
   DEFAULT_COLS,
   DEFAULT_ROWS,
+  parseSessionKey,
+  projectPrefix,
   resolveScrollbackBytes,
   sessionKey,
   sessions,
@@ -122,10 +124,9 @@ export function listAliveTerminalsAcrossProjects(): Array<{ secret: string; term
   const result: Array<{ secret: string; terminalId: string; rootPid: number }> = [];
   for (const [key, session] of sessions.entries()) {
     if (session.pty === null) continue;
-    const sepIdx = key.indexOf('::');
-    if (sepIdx <= 0) continue;
-    const secret = key.slice(0, sepIdx);
-    const terminalId = key.slice(sepIdx + 2);
+    if (!key.includes('::')) continue;
+    const { secret, terminalId } = parseSessionKey(key);
+    if (secret === '') continue; // skip malformed `::…` keys (empty secret)
     result.push({ secret, terminalId, rootPid: session.pty.pid });
   }
   return result;
@@ -134,7 +135,7 @@ export function listAliveTerminalsAcrossProjects(): Array<{ secret: string; term
 /** List terminal ids with pending bells for a single project, plus the
  *  optional OSC 9 notification message for each. HS-7264. */
 export function listBellPendingForProject(secret: string): Array<{ terminalId: string; message: string | null }> {
-  const prefix = `${secret}::`;
+  const prefix = projectPrefix(secret);
   const out: Array<{ terminalId: string; message: string | null }> = [];
   for (const [key, session] of sessions.entries()) {
     if (!key.startsWith(prefix)) continue;

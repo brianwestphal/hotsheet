@@ -125,7 +125,7 @@ The "channel alive" test waits 500 ms after page load before hovering — initCh
 - [12-claude-channel.md](12-claude-channel.md) — channel delivery path.
 - [29-osc7-cwd-tracking.md](29-osc7-cwd-tracking.md) — source of `inst.runtimeCwd`.
 - `src/client/terminalOsc133.ts` — `buildAskClaudePrompt` pure helper.
-- `src/client/terminal.tsx` — `askClaudeAboutRecord`, popover Ask-Claude button wiring.
+- `src/client/terminal/gutterPopover.tsx` — `askClaudeAboutRecord`, popover Ask-Claude button wiring (extracted from the old `terminal.tsx` during the §54 / HS-8189 reorganization).
 - `src/client/channelUI.tsx` — `isChannelAlive`, `triggerChannelAndMarkBusy`.
 - `src/client/styles.scss` — `.terminal-osc133-popover-ask` accent styling.
 - **Tickets:** HS-7270 (this doc), HS-7267 / HS-7268 / HS-7269 (prior phases), HS-7332 (Playwright e2e — shipped, see §33.6 E2E; the optional `shell_analysis` command-log entry remains deferred per §33.5 — no user-facing value over the channel log already capturing the trigger).

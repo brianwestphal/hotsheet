@@ -4,6 +4,7 @@ import { cleanupPreview, createBackup, listBackups, loadBackupForPreview, restor
 import { clearRecoveryMarker } from '../db/connection.js';
 import { scheduleAllSync } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { CreateBackupSchema, parseBody, RestoreBackupSchema } from './validation.js';
 
 export const backupRoutes = new Hono<AppEnv>();
@@ -39,7 +40,7 @@ backupRoutes.get('/preview/:tier/:filename', async (c) => {
     const result = await loadBackupForPreview(dataDir, tier, filename);
     return c.json(result);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Preview failed';
+    const msg = getErrorMessage(err);
     return c.json({ error: msg }, 400);
   }
 });
@@ -63,7 +64,7 @@ backupRoutes.post('/restore', async (c) => {
     clearRecoveryMarker(dataDir);
     return c.json({ ok: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Restore failed';
+    const msg = getErrorMessage(err);
     return c.json({ error: msg }, 500);
   }
 });

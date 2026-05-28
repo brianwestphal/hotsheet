@@ -12,7 +12,7 @@
 ### 2.2 Database Tables
 
 #### Tickets Table
-- Stores ticket records with fields: id, ticket_number, title, details, category, priority, status, up_next, notes, created_at, updated_at, completed_at, verified_at, deleted_at.
+- Stores ticket records with fields: id, ticket_number, title, details, category, priority, status, up_next, notes, tags, last_read_at, created_at, updated_at, completed_at, verified_at, deleted_at.
 - Ticket numbers are auto-generated from a PostgreSQL sequence (`ticket_seq`) and prefixed with `HS-` (e.g., HS-1, HS-42). Numbers are never reused.
 - Notes are stored as a JSON-encoded text array of `{ id, text, created_at }` entries, with legacy plain-text support.
 

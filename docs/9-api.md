@@ -63,6 +63,11 @@ Migration was **per-domain** (HS-8522 sub-tickets) and is now **complete** (HS-8
 | DELETE | `/api/tickets/:id/hard` | Hard-delete a ticket and its attachments |
 | POST | `/api/tickets/:id/restore` | Restore a deleted ticket |
 | POST | `/api/tickets/:id/up-next` | Toggle the up_next flag |
+| GET | `/api/tickets/search-counts` | Backlog + archive match counts for a search, feeding the "Include …" rows (HS-7756; see [40-search-include-rows.md](40-search-include-rows.md)) |
+| GET | `/api/tickets/prefixes` | Distinct ticket-number prefixes, for the cross-reference link-detection regex (HS-8036; see [55-ticket-cross-references.md](55-ticket-cross-references.md)) |
+| GET | `/api/tickets/by-number/:number` | Look up a ticket by `ticket_number` for the stacking cross-reference dialog (HS-8036) |
+
+Feedback-draft sub-resource endpoints (`GET`/`POST /api/tickets/:id/feedback-drafts`, `PATCH`/`DELETE /api/tickets/:id/feedback-drafts/:draftId`) are documented in [21-feedback.md](21-feedback.md) §21.
 
 #### Query Filters (GET `/api/tickets`)
 
@@ -158,7 +163,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist). The 
 |--------|------|-------------|
 | GET | `/api/settings` | Get database settings |
 | PATCH | `/api/settings` | Update database settings |
-| GET | `/api/file-settings` | Get file-based settings (appName, backupDir) |
+| GET | `/api/file-settings` | Get the full file-based project settings object (`readFileSettings(dataDir)` — every key in `settings.json`, not just `appName`/`backupDir`; per [2-data-storage.md](2-data-storage.md) §2.3 all UI/behavior settings now live here) |
 | PATCH | `/api/file-settings` | Update file-based settings |
 
 ### 9.11 Backup Endpoints
@@ -187,8 +192,28 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist). The 
 | PATCH | `/api/global-config` | Update global config fields (share timing, channel enabled, etc.) |
 | GET | `/api/glassbox/status` | Check if Glassbox CLI is available |
 | POST | `/api/glassbox/launch` | Launch Glassbox for current project |
+| POST | `/api/diagnostics/freeze` | Append client long-task / heartbeat events to `<dataDir>/freeze.log` (HS-8054 diagnostics) |
 
-See also [14-commands-log.md](14-commands-log.md) §14.8 for command log endpoints and [15-shell-commands.md](15-shell-commands.md) §15.4 for shell execution endpoints.
+**Git** (see [48-git-status-tracker.md](48-git-status-tracker.md)):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/git/status` | Git working-tree status (branch / dirty / ahead-behind); `?files=true` adds per-bucket file lists |
+| POST | `/api/git/fetch` | Run `git fetch` against the current branch's upstream |
+| POST | `/api/git/reveal` | Reveal a path under the git root in the OS file manager (path-traversal guarded) |
+
+**Database / recovery** (see [7-backup-restore.md](7-backup-restore.md), [42-repair-database.md](42-repair-database.md), [73-snapshot-protection.md](73-snapshot-protection.md)):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/db/recovery-status` | Launch-time DB-recovery marker status |
+| POST | `/api/db/dismiss-recovery` | Dismiss the recovery banner / clear the marker |
+| GET | `/api/db/snapshot-status` | Snapshot Protection status line (healthy / recovered) |
+| POST | `/api/db/repair/find-working-backup` | Iterate backup tarballs newest-first for one that loads cleanly |
+| GET | `/api/db/repair/pg-resetwal-availability` | Probe the system for a `pg_resetwal` binary + install instructions |
+| POST | `/api/db/repair/run-pg-resetwal` | Run `pg_resetwal -f` on a copy of the corrupt dir, then dump a fresh tarball |
+
+See also [14-commands-log.md](14-commands-log.md) §14.8 for command log endpoints, [15-shell-commands.md](15-shell-commands.md) §15.4 for shell execution endpoints, and [67-telemetry.md](67-telemetry.md) §67.5 for the OTLP receiver (`POST /v1/{metrics,logs,traces}`) + the telemetry rollup / `DELETE /api/telemetry/project-data` ([74-clear-telemetry-data.md](74-clear-telemetry-data.md)) / `GET /api/telemetry/_debug` endpoints.
 
 ### 9.13 Claude Channel Endpoints
 
@@ -224,6 +249,8 @@ The heartbeat endpoint accepts `{ projectDir: string, state: "busy" | "idle" | "
 | GET | `/api/projects/feedback-state` | HS-8378 — returns per-project boolean indicating whether any non-deleted ticket has a `FEEDBACK NEEDED:` / `IMMEDIATE FEEDBACK NEEDED:` prompt as its most recent note. Drives the cross-project tab purple dot. |
 | POST | `/api/projects/reorder` | Reorder the project list (`{ secrets: string[] }`) |
 | GET | `/api/projects/permissions` | Long-poll for pending permissions across all projects (versioned, 3s timeout) |
+| GET | `/api/projects/bell-state` | Long-poll for per-project terminal bell + pending-prompt state, driving the cross-project tab dot (HS-6638 / HS-8034; see [24-cross-project-bell.md](24-cross-project-bell.md)) |
+| GET | `/api/projects/quit-summary` | Cross-project foreground-process aggregation for the quit-confirm dialog (HS-7596; see [37-quit-confirm.md](37-quit-confirm.md)) |
 
 ### 9.15 Change Notification
 

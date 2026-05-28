@@ -611,6 +611,31 @@ export interface ToolLatencyHistogram {
 const HISTOGRAM_BUCKET_UPPER_MS = [10, 50, 100, 500, 1000, 5000, 10000];
 const HISTOGRAM_BUCKET_LABELS = ['<10ms', '10-50ms', '50-100ms', '100-500ms', '500ms-1s', '1-5s', '5-10s', '10s+'];
 
+/** HS-8673 — generate the histogram-bucket `CASE` SQL from
+ *  `HISTOGRAM_BUCKET_UPPER_MS` so the events-sourced and spans-sourced query
+ *  bodies can't drift if the thresholds change. `valueExpr` is a SQL fragment
+ *  evaluating to the duration in milliseconds (different per source). */
+function buildHistogramBucketCase(valueExpr: string): string {
+  const lines: string[] = ['CASE'];
+  for (let i = 0; i < HISTOGRAM_BUCKET_UPPER_MS.length; i++) {
+    lines.push(`          WHEN ${valueExpr} < ${HISTOGRAM_BUCKET_UPPER_MS[i]} THEN ${i}`);
+  }
+  lines.push(`          ELSE ${HISTOGRAM_BUCKET_UPPER_MS.length}`);
+  lines.push('        END');
+  return lines.join('\n');
+}
+
+/** HS-8673 — local-timezone window boundaries (today / 7-day / 30-day) shared by
+ *  `getDashboardPayload` and `getProjectRollupPayload`. The unrounded arithmetic
+ *  (24*60*60*1000) is preserved verbatim — `Date.setDate` would silently shift
+ *  by DST jumps near the spring/fall transitions. */
+function windowBoundaries(now: Date): { midnight: Date; weekStart: Date; monthStart: Date } {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekStart = new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
+  const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
+  return { midnight, weekStart, monthStart };
+}
+
 export async function getToolLatencyHistogram(
   projectSecret: string | null,
   sinceTs: Date | null,
@@ -679,16 +704,7 @@ async function getToolLatencyHistogramFromEvents(
   const bucketsResult = await db.query<{ tool: string; bucket: number; c: bigint | number }>(
     `SELECT
         COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
-        CASE
-          WHEN (attributes_json->>'duration_ms')::numeric < 10 THEN 0
-          WHEN (attributes_json->>'duration_ms')::numeric < 50 THEN 1
-          WHEN (attributes_json->>'duration_ms')::numeric < 100 THEN 2
-          WHEN (attributes_json->>'duration_ms')::numeric < 500 THEN 3
-          WHEN (attributes_json->>'duration_ms')::numeric < 1000 THEN 4
-          WHEN (attributes_json->>'duration_ms')::numeric < 5000 THEN 5
-          WHEN (attributes_json->>'duration_ms')::numeric < 10000 THEN 6
-          ELSE 7
-        END AS bucket,
+        ${buildHistogramBucketCase("(attributes_json->>'duration_ms')::numeric")} AS bucket,
         COUNT(*) AS c
      FROM otel_events
      WHERE ${eventNameMatchSql('event_name', 'tool_result')}
@@ -763,16 +779,7 @@ async function getToolLatencyHistogramFromSpans(
   const bucketsResult = await db.query<{ tool: string; bucket: number; c: bigint | number }>(
     `SELECT
         SUBSTRING(span_name FROM 18) AS tool,
-        CASE
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 10 THEN 0
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 50 THEN 1
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 100 THEN 2
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 500 THEN 3
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 1000 THEN 4
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 5000 THEN 5
-          WHEN EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000 < 10000 THEN 6
-          ELSE 7
-        END AS bucket,
+        ${buildHistogramBucketCase('EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000')} AS bucket,
         COUNT(*) AS c
      FROM otel_spans
      WHERE span_name LIKE 'claude_code.tool.%'${clauses.clauses}
@@ -1501,9 +1508,7 @@ export async function getDashboardPayload(
   allowedSecrets: readonly string[] | null = null,
   now: Date = new Date(),
 ): Promise<DashboardPayload> {
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
-  const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const { midnight, weekStart, monthStart } = windowBoundaries(now);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
   // HS-8625 — `allowedSecrets` restricts every cross-project aggregate to the
@@ -1564,9 +1569,7 @@ export async function getProjectRollupPayload(
   timezone = 'UTC',
   now: Date = new Date(),
 ): Promise<ProjectRollupPayload> {
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = new Date(midnight.getTime() - 6 * 24 * 60 * 60 * 1000);
-  const monthStart = new Date(midnight.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const { midnight, weekStart, monthStart } = windowBoundaries(now);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
   const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime] = await Promise.all([

@@ -50,7 +50,7 @@ undoable.
 
 ## §66.5 Icon
 
-Lucide `inbox` (new `ICON_INBOX` constant in `src/client/icons.ts`).
+Lucide `inbox` (new `ICON_INBOX` constant in `src/client/icons.tsx`).
 The user explicitly declined "inbox" as a label, but the visual is the
 universally-recognized glyph for "active work pile" — picking a less
 familiar icon would force users to learn a new affordance for what is
@@ -58,7 +58,7 @@ fundamentally the inverse of the calendar-icon Move to Backlog.
 
 ## §66.6 Implementation pointer
 
-- Icon: `ICON_INBOX` in `src/client/icons.ts`.
+- Icon: `ICON_INBOX` in `src/client/icons.tsx`.
 - Menu wiring: inside `showTicketContextMenu` (`src/client/contextMenu.tsx`),
   immediately above the existing `Move to Backlog` block. Gate:
   `state.selectedIds.size > 0 && Array.from(state.selectedIds).every(id => state.tickets.find(tk => tk.id === id)?.status === 'backlog')`.
