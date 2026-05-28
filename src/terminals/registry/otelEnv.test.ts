@@ -1,8 +1,8 @@
 /**
- * HS-8145 — pure-helper tests for the spawn-env OTLP injector.
- * Verifies the §67.3 contract: off by default, on when
- * `telemetry_enabled: true`, sub-toggles + beta traces, defensive
- * empties when port/secret missing.
+ * HS-8145 / HS-8684 — pure-helper tests for the spawn-env OTLP injector.
+ * Verifies the §67.3 contract: HS-8684 default-on (undefined →
+ * enabled), opt-out via `telemetry_enabled: false`, sub-toggles +
+ * beta traces, defensive empties when port/secret missing.
  */
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -34,12 +34,14 @@ describe('buildOtelEnv (HS-8145 / §67.3)', () => {
     return d;
   }
 
-  it('returns {} when telemetry_enabled is missing (default-off)', () => {
-    const d = dir({ secret: 'abc', port: 4174 });
-    expect(buildOtelEnv(d)).toEqual({});
+  it('returns the full env block when telemetry_enabled is missing (HS-8684 default-on)', () => {
+    const d = dir({ secret: 'abc-secret', port: 4174 });
+    const env = buildOtelEnv(d);
+    expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toContain('hotsheet_project=abc-secret');
   });
 
-  it('returns {} when telemetry_enabled is explicitly false', () => {
+  it('returns {} when telemetry_enabled is explicitly false (opt-out)', () => {
     const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: false });
     expect(buildOtelEnv(d)).toEqual({});
   });

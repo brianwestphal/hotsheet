@@ -172,17 +172,24 @@ describe('GET /telemetry/ticket/:number', () => {
 });
 
 describe('GET /telemetry/enabled-anywhere', () => {
-  it('returns enabled:false when no project has telemetry on', async () => {
+  it('returns enabled:true when no project has explicitly opted out (HS-8684 default-on)', async () => {
     mockReadProjectList.mockReturnValue(['/tmp/A/.hotsheet', '/tmp/B/.hotsheet']);
-    mockReadFileSettings.mockReturnValue({}); // neither has telemetry_enabled
+    mockReadFileSettings.mockReturnValue({}); // neither has telemetry_enabled → default-on
     const res = await buildApp().request('/api/telemetry/enabled-anywhere');
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ enabled: true });
+  });
+
+  it('returns enabled:false when every project has explicitly opted out', async () => {
+    mockReadProjectList.mockReturnValue(['/tmp/A/.hotsheet', '/tmp/B/.hotsheet']);
+    mockReadFileSettings.mockReturnValue({ telemetry_enabled: false });
+    const res = await buildApp().request('/api/telemetry/enabled-anywhere');
     expect(await res.json()).toEqual({ enabled: false });
   });
 
-  it('returns enabled:true when ANY project has telemetry on', async () => {
+  it('returns enabled:true when ANY project has telemetry on (explicit true)', async () => {
     mockReadProjectList.mockReturnValue(['/tmp/A/.hotsheet', '/tmp/B/.hotsheet']);
-    mockReadFileSettings.mockImplementation((dir: string) => dir === '/tmp/B/.hotsheet' ? { telemetry_enabled: true } : {});
+    mockReadFileSettings.mockImplementation((dir: string) => dir === '/tmp/B/.hotsheet' ? { telemetry_enabled: true } : { telemetry_enabled: false });
     const res = await buildApp().request('/api/telemetry/enabled-anywhere');
     expect(await res.json()).toEqual({ enabled: true });
   });

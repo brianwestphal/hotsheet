@@ -50,7 +50,7 @@ Every payload carries the resource attributes Hot Sheet injects (§67.3) plus si
 
 ## 67.3 Configuration: spawn-env injection
 
-When Hot Sheet spawns a terminal (`src/terminals/registry/lifecycle.ts::buildEnv` or its equivalent — see §67.4 for the extraction), it injects the following env vars when the per-project `telemetry_enabled` setting is `true`:
+When Hot Sheet spawns a terminal (`src/terminals/registry/lifecycle.ts::buildEnv` or its equivalent — see §67.4 for the extraction), it injects the following env vars when the per-project `telemetry_enabled` setting is **not explicitly `false`** (HS-8684 default-on — see §67.3.3):
 
 ```
 CLAUDE_CODE_ENABLE_TELEMETRY=1
@@ -80,9 +80,13 @@ The `<port>` value matches the main server's port (decision: same-port topology 
 
 A user might run Claude Code in multiple Hot Sheet projects simultaneously, each in its own terminal. The receiver needs to know which project a given OTLP payload belongs to. The project's `secret` is already unique, already known to both the spawning code and the receiving code, and already treated as not-quite-secret-but-not-public, so it's the natural fit. The receiver looks up the project by matching the `hotsheet_project` resource attribute against the per-project secret registry; payloads with an unknown secret are dropped.
 
-### Why opt-in (default off)
+### Default-on (HS-8684) — opt out per project
 
-Telemetry adds disk writes, includes prompt text in the receiver path, and inflates the local DB. Users should consent before any of that happens. The setting lives per-project (see §67.6) so a user can enable it in their primary project and leave it off in a quick scratchpad project.
+**HS-8684 reversed the original opt-in default** to default-on. The per-project `telemetry_enabled` setting now treats `undefined` (no explicit choice made) as enabled; only `false` opts out. Rationale: the telemetry data never leaves the machine — the OTLP receiver is localhost-bound + the `hotsheet_project` resource-attribute gate (§67.5.3) drops foreign payloads — so the "user should consent" framing was protecting against a leak that the architecture already prevents. Defaulting on lets users see their Claude cost rollups, per-ticket attribution, and the cross-project stats page out-of-the-box without having to discover the setting first.
+
+Users can still opt out per project via Settings → Telemetry; flipping the master toggle off writes `telemetry_enabled: false` (explicit), which the gates in `src/terminals/registry/otelEnv.ts` and `src/routes/telemetry.ts::anyProjectHasTelemetryEnabled` respect.
+
+The setting still lives per-project (see §67.6) so a user can opt a quick scratchpad project out while leaving telemetry on for their primary project.
 
 ## 67.4 Configuration: receiver topology
 
@@ -275,7 +279,7 @@ If the user wants faster metrics (e.g. live cost chip update), they can set `OTE
 
 **Per-project (file-settings under `<dataDir>/.hotsheet/settings.json`):**
 
-- `telemetry_enabled: boolean` — master toggle. Default `false`. When `false`, no spawn-env injection AND incoming OTLP payloads for this project's secret are dropped (defensive defense-in-depth — the receiver should never see them since no Claude Code in this project is exporting).
+- `telemetry_enabled: boolean` — master toggle. **HS-8684 — default-on**: `undefined` (no choice yet) treated as enabled. Only an explicit `false` opts out. When `false`, no spawn-env injection AND incoming OTLP payloads for this project's secret are dropped (defensive defense-in-depth — the receiver should never see them since no Claude Code in this project is exporting).
 - `telemetry_metrics_enabled: boolean` — sub-toggle. Default `true` when master is on. Controls `OTEL_METRICS_EXPORTER`.
 - `telemetry_logs_enabled: boolean` — sub-toggle. Default `true`. Controls `OTEL_LOGS_EXPORTER`.
 - `telemetry_traces_enabled: boolean` — sub-toggle. Default `false` (beta). Controls `OTEL_TRACES_EXPORTER` + `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`.
@@ -295,7 +299,7 @@ Five separate user-facing surfaces, each its own ticket:
 
 > **HS-8527 (2026-05-22) — relocation.** Pre-HS-8527 this surface was a small monospace dollar-amount pill (`.project-tab-cost`) inside every project tab header. That chip is gone. The same dollar-amount value now lives in the **sidebar dashboard widget** (the one that opens the analytics dashboard on click), right-aligned on the same line as "N in progress." The widget itself was also moved up the sidebar — it now sits directly under the git-status chip (`#sidebar-git-chip`) rather than at the bottom (after `#stats-bar`), so the cost stays visible without scrolling on short viewports. Tab headers themselves now carry only the project name + status dot + bell glyph.
 
-Today's-cost element in the sidebar dashboard widget (`.sidebar-widget-cost`). Populated only when `telemetry_enabled === true` AND today's cumulative cost > $0 for the active project AND the user's billing model is `'api'` (subscription mode hides the value because the metric is an API-equivalent estimate, not what the user pays — see HS-8497 / §67.13). Refreshes on the same poll cadence as the existing tab-bell-state poll. The widget itself remains the analytics-dashboard launcher on click. Tooltip: "Claude usage today (resets at local midnight)."
+Today's-cost element in the sidebar dashboard widget (`.sidebar-widget-cost`). Populated when `telemetry_enabled !== false` (HS-8684 default-on) AND today's cumulative cost > $0 for the active project AND the user's billing model is `'api'` (subscription mode hides the value because the metric is an API-equivalent estimate, not what the user pays — see HS-8497 / §67.13). Refreshes on the same poll cadence as the existing tab-bell-state poll. The widget itself remains the analytics-dashboard launcher on click. Tooltip: "Claude usage today (resets at local midnight)."
 
 Source query: `SUM((value_json->>'value')::numeric) FROM otel_metrics WHERE project_secret = ? AND metric_name = 'claude_code.cost.usage' AND ts >= midnight_local`. Single sum, indexed scan, ~1 ms. The bulk `/api/telemetry/today-cost-by-project` endpoint stays in use — it returns the full map and the client filters down to the active secret. Keeping the bulk shape (instead of switching to the single-project `/api/telemetry/today-cost`) means re-introducing a multi-secret cost surface later (e.g. a project-picker list) doesn't need any route plumbing.
 

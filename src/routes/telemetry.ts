@@ -7,20 +7,26 @@ import { getAllProjects, getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 
 /**
- * HS-8479 / §69.2 — true when at least one registered project has
- * `telemetry_enabled === true` in its `<dataDir>/.hotsheet/settings.json`.
- * Drives the conditional visibility of the global Telemetry sidebar
- * entry (and only that — does not gate anything else).
+ * HS-8479 / §69.2 — true when at least one registered project has telemetry
+ * enabled (HS-8684: default-on — anything except an explicit `false`).
+ * Drives the conditional visibility of the global Telemetry sidebar entry
+ * + the `#cross-project-stats-toggle` header button (and only that — does
+ * not gate anything else).
  *
  * Iterates `~/.hotsheet/projects.json` for the dataDirs + reads each
  * file-settings file. At single-user scale (handful of projects) this
- * is cheap; no cache needed.
+ * is cheap; no cache needed. Returns `false` only when EVERY registered
+ * project has explicitly opted out — the empty-project-list case
+ * also returns `false` so a fresh install with no projects doesn't
+ * advertise the telemetry surface.
  */
 function anyProjectHasTelemetryEnabled(): boolean {
   const dataDirs = readProjectList();
   for (const dataDir of dataDirs) {
     const settings = readFileSettings(dataDir);
-    if (settings['telemetry_enabled'] === true) return true;
+    // HS-8684 — default-on. `undefined` (no choice yet) AND `true` both count
+    // as enabled; only an explicit `false` opts out.
+    if (settings['telemetry_enabled'] !== false) return true;
   }
   return false;
 }

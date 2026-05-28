@@ -205,7 +205,7 @@ Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.
 
 ### Telemetry & Cost Tracking
 
-Opt in per project (Settings → Telemetry) and Hot Sheet stamps Claude Code's spawn env so its OpenTelemetry exporter posts cost / token / latency events back to a localhost-bound endpoint. The data drives several surfaces:
+**On by default** (HS-8684 — opt out per project via Settings → Telemetry). Hot Sheet stamps Claude Code's spawn env so its OpenTelemetry exporter posts cost / token / latency events back to a localhost-bound endpoint. The data drives several surfaces:
 
 - **Today's cost widget** in the sidebar — total spend across today's Claude prompts in this project, updated as the channel ticks. A `*` superscript reminds Pro / Max subscribers the figure is the API-equivalent cost, not what they actually pay.
 - **Per-project analytics dashboard** gains a **Claude usage** section below the ticket charts: window-total chips (today / week / month / all-time), a cost-over-time chart, cost-by-model donut, per-tool latency histograms, and the 10 most recent prompts — click any row for a timeline drilldown showing every event with its attribute / body JSON.

@@ -768,7 +768,10 @@ function bindTelemetryTab() {
   const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => {
     void getFileSettings().then((fs) => {
-      masterEl.checked = fs.telemetry_enabled === true;
+      // HS-8684 — default-on: only an explicit `false` shows the master toggle
+      // off. `undefined` (no choice yet) renders as checked, matching the gate
+      // in `src/terminals/registry/otelEnv.ts`.
+      masterEl.checked = fs.telemetry_enabled !== false;
       // Defaults: metrics + logs ON, traces OFF — matches §67.9.
       metricsEl.checked = fs.telemetry_metrics_enabled !== false;
       logsEl.checked = fs.telemetry_logs_enabled !== false;

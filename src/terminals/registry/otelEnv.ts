@@ -7,10 +7,13 @@ import { readFileSettings } from '../../file-settings.js';
  * (§67.3 / §67.5).
  *
  * Returns `{}` when the per-project `telemetry_enabled` setting is
- * not `true` — gated default-off so we never surprise a user with
- * telemetry export they didn't ask for.
+ * explicitly `false` (the user opted out). HS-8684 — gate is now
+ * **default-on**: `undefined` (no explicit choice made) yields the
+ * full env block, matching the user's request that telemetry track by
+ * default since the data never leaves the local OTLP receiver. Only an
+ * explicit `false` suppresses export.
  *
- * Returns the full env block when `telemetry_enabled === true`,
+ * Returns the full env block when `telemetry_enabled !== false`,
  * matching the contract documented in `docs/67-telemetry.md` §67.3:
  *
  *   CLAUDE_CODE_ENABLE_TELEMETRY=1
@@ -19,7 +22,7 @@ import { readFileSettings } from '../../file-settings.js';
  *   OTEL_LOGS_EXPORTER=otlp                   (if telemetry_logs_enabled !== false)
  *   OTEL_TRACES_EXPORTER=otlp                 (if telemetry_traces_enabled === true)
  *   CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1     (if telemetry_traces_enabled === true)
- *   OTEL_LOG_USER_PROMPTS=1                   (always, when telemetry_enabled === true — HS-8537)
+ *   OTEL_LOG_USER_PROMPTS=1                   (always, when telemetry is enabled — HS-8537)
  *   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf (Claude Code default; matches §67.3)
  *   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<port>
  *   OTEL_RESOURCE_ATTRIBUTES=hotsheet_project=<secret>,working_dir=<dataDir>
@@ -74,7 +77,11 @@ import { readFileSettings } from '../../file-settings.js';
  */
 export function buildOtelEnv(dataDir: string): Record<string, string> {
   const settings = readFileSettings(dataDir);
-  if (settings.telemetry_enabled !== true) return {};
+  // HS-8684 — default-on: only an explicit `false` opts out. `undefined`
+  // (no choice made) gets telemetry — data stays in the localhost OTLP
+  // receiver + tagged with `hotsheet_project` per §67.5.3, so the default
+  // never leaks data off-machine.
+  if (settings.telemetry_enabled === false) return {};
 
   const port = typeof settings.port === 'number' ? settings.port : null;
   const secret = typeof settings.secret === 'string' && settings.secret !== '' ? settings.secret : null;
