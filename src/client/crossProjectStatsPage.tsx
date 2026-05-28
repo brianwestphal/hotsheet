@@ -62,6 +62,7 @@ import { formatCost, formatTokens } from './telemetryFormat.js';
 import { renderCostByModelDonut } from './telemetryModelDonut.js';
 import { renderSubscriptionDisclaimer } from './telemetrySubscriptionDisclaimer.js';
 import { unmountBindList } from './ticketList.js';
+import { formatRelativeTime } from './timeFormat.js';
 
 export { isCrossProjectStatsPageActive, markCrossProjectStatsSupplanted } from './mainSurfaceState.js';
 
@@ -195,19 +196,13 @@ function renderEmptyState(): HTMLElement {
   return card;
 }
 
+/** HS-8677 — delegates to the shared `timeFormat.ts::formatRelativeTime` (which
+ *  picked the canonical long-pluralized wording: "5 minutes ago" instead of the
+ *  prior surface-specific "5 min ago"). `absoluteThresholdMs: 7d` preserves the
+ *  pre-consolidation behavior of falling back to `toLocaleDateString()` past
+ *  one week. */
 function formatRelativeTs(ts: string | null, now: Date = new Date()): string {
-  if (ts === null) return '—';
-  try {
-    const t = new Date(ts).getTime();
-    const ms = now.getTime() - t;
-    if (ms < 60_000) return 'just now';
-    if (ms < 3_600_000) return `${Math.round(ms / 60_000)} min ago`;
-    if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)} h ago`;
-    if (ms < 7 * 86_400_000) return `${Math.round(ms / 86_400_000)} d ago`;
-    return new Date(ts).toLocaleDateString();
-  } catch {
-    return '—';
-  }
+  return formatRelativeTime(ts, { now, fallback: '—', absoluteThresholdMs: 7 * 86_400_000 });
 }
 
 // Exported for unit testing (HS-8622). Pure aside from reading the
@@ -447,17 +442,14 @@ function renderHourlyHeatmap(cells: HourlyActivityCell[]): HTMLElement {
  * (`fetchAndRender`) calls into it after the wire round-trip
  * resolves. Pure render: no fetching, no global state mutation.
  */
-export function renderShell(payload: DashboardPayload, container: HTMLElement): void {
-  container.replaceChildren();
-  // HS-8533 — empty detection: the page is empty only when every
-  // signal we have agrees there's no data. Pre-fix the gate was
-  // `allTime.promptCount === 0 && allTime.cost === 0`, which falsely
-  // tripped when a transient query glitch zeroed the all-time
-  // totals while every other section of the payload still carried
-  // rows. Cross-check the today / week / month windows AND the
-  // section-level arrays (`costByProject`, `costByModel`,
-  // `hourlyActivity`, `costOverTime`) — any non-zero signal means
-  // data exists, so render the chrome.
+/**
+ * HS-8681 — pure data check: is every signal in the payload zero / empty?
+ * Extracted so `renderShell` reads as orchestration. Pre-HS-8533 the gate was
+ * just `allTime.promptCount === 0 && allTime.cost === 0`, which falsely tripped
+ * when a transient query glitch zeroed the all-time totals while every other
+ * section still carried rows; cross-check every window AND the section arrays.
+ */
+function isEmptyDashboardPayload(payload: DashboardPayload): boolean {
   const { today, week, month, allTime } = payload.windowTotals;
   const anyWindowHasData =
     today.cost > 0 || today.promptCount > 0
@@ -469,28 +461,95 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
     || payload.costByModel.length > 0
     || payload.hourlyActivity.length > 0
     || payload.costOverTime.length > 0;
-  const isEmpty = !anyWindowHasData && !anySectionHasData;
-  if (isEmpty) {
+  return !anyWindowHasData && !anySectionHasData;
+}
+
+/**
+ * HS-8497 / HS-8681 — subscription-cost notice banner shown above the dashboard
+ * chrome when `getTelemetryCostMode() === 'subscription'`, so users on Claude
+ * Pro / Max read the dollar figures as API-equivalent estimates rather than
+ * what they actually pay.
+ */
+function buildSubscriptionNotice(): HTMLElement {
+  const notice = toElement(
+    <div className="telemetry-subscription-notice" role="note">
+      <strong>Subscription mode:</strong> The dollar amounts below are the API-equivalent cost of your Claude Code usage. Your actual bill is your Claude Pro / Max subscription fee. Switch to <em>Pay-per-token</em> in <button type="button" className="telemetry-subscription-notice-link" data-action="open-telemetry-settings">Settings → Telemetry → Billing</button> if you're on an API key.
+    </div>
+  );
+  notice.querySelector('.telemetry-subscription-notice-link')?.addEventListener('click', () => {
+    const settingsBtn = byIdOrNull('settings-btn');
+    if (settingsBtn !== null) (settingsBtn).click();
+  });
+  return notice;
+}
+
+/** HS-8681 — populate the four window-total chips. */
+function populateChips(root: HTMLElement, totals: DashboardPayload['windowTotals']): void {
+  const chips = root.querySelector<HTMLElement>('#telemetry-dashboard-chips');
+  if (chips === null) return;
+  chips.appendChild(renderWindowChip('Today', totals.today));
+  chips.appendChild(renderWindowChip('This week', totals.week));
+  chips.appendChild(renderWindowChip('This month', totals.month));
+  chips.appendChild(renderWindowChip('All time', totals.allTime));
+}
+
+/** HS-8681 — populate the cost-over-time chart slot (HS-8506 / §70.4). */
+function populateCostOverTime(root: HTMLElement, points: readonly CostOverTimePoint[]): void {
+  if (points.length === 0) return;
+  const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-over-time');
+  if (target === null) return;
+  target.replaceChildren(renderCostOverTimeChart(points, {
+    resolveProjectLabel: resolveProjectName,
+    formatCost,
+  }));
+}
+
+/** HS-8681 — populate the cost-by-project sortable table (HS-8482). */
+function populateCostByProject(root: HTMLElement, rows: ProjectCostRow[]): void {
+  if (rows.length === 0) return;
+  const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-project');
+  if (target === null) return;
+  target.replaceChildren(renderCostByProjectTable(rows));
+}
+
+/** HS-8681 — populate the cost-by-model donut slot (HS-8482). */
+function populateCostByModel(root: HTMLElement, rows: ModelRollup[]): void {
+  if (rows.length === 0) return;
+  const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-model');
+  if (target === null) return;
+  target.replaceChildren(renderCostByModelDonut(rows, { formatCost }));
+}
+
+/** HS-8681 — populate the hourly-activity heatmap (HS-8483). */
+function populateHeatmap(root: HTMLElement, cells: HourlyActivityCell[]): void {
+  const hasData = cells.some(c => c.cost > 0 || c.promptCount > 0);
+  if (!hasData) return;
+  const target = root.querySelector<HTMLElement>('#telemetry-dashboard-heatmap');
+  if (target === null) return;
+  target.replaceChildren(renderHourlyHeatmap(cells));
+}
+
+/** HS-8681 — wire the HS-8515 window-selector button group. The `delegate()`
+ *  listener dies with `root` (recreated per-render). */
+function wireWindowSelector(root: HTMLElement, container: HTMLElement): void {
+  const buttons = root.querySelector<HTMLElement>('#telemetry-dashboard-window-buttons');
+  if (buttons === null) return;
+  void delegate<HTMLElement>(buttons, 'click', 'button[data-window]', (_e, btn) => {
+    const window = btn.dataset.window as DashboardWindow | undefined;
+    if (window === undefined) return;
+    void fetchAndRender(container, window);
+  });
+}
+
+export function renderShell(payload: DashboardPayload, container: HTMLElement): void {
+  container.replaceChildren();
+  if (isEmptyDashboardPayload(payload)) {
     container.appendChild(renderEmptyState());
     return;
   }
 
-  // HS-8497 — when the user is on a Claude Pro/Max subscription, the
-  // dollar amounts shown across the dashboard are API-equivalent
-  // estimates rather than what they actually pay. Surface a notice
-  // banner above the dashboard chrome so the numbers are interpreted
-  // correctly.
   if (getTelemetryCostMode() === 'subscription') {
-    const notice = toElement(
-      <div className="telemetry-subscription-notice" role="note">
-        <strong>Subscription mode:</strong> The dollar amounts below are the API-equivalent cost of your Claude Code usage. Your actual bill is your Claude Pro / Max subscription fee. Switch to <em>Pay-per-token</em> in <button type="button" className="telemetry-subscription-notice-link" data-action="open-telemetry-settings">Settings → Telemetry → Billing</button> if you're on an API key.
-      </div>
-    );
-    container.appendChild(notice);
-    notice.querySelector('.telemetry-subscription-notice-link')?.addEventListener('click', () => {
-      const settingsBtn = byIdOrNull('settings-btn');
-      if (settingsBtn !== null) (settingsBtn).click();
-    });
+    container.appendChild(buildSubscriptionNotice());
   }
 
   const root = toElement(
@@ -552,71 +611,15 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
     disclaimerSlot.appendChild(renderSubscriptionDisclaimer());
   }
 
-  // Populate the chips row.
-  const chips = root.querySelector<HTMLElement>('#telemetry-dashboard-chips');
-  if (chips !== null) {
-    chips.appendChild(renderWindowChip('Today', payload.windowTotals.today));
-    chips.appendChild(renderWindowChip('This week', payload.windowTotals.week));
-    chips.appendChild(renderWindowChip('This month', payload.windowTotals.month));
-    chips.appendChild(renderWindowChip('All time', payload.windowTotals.allTime));
-  }
-
-  // HS-8506 / §70.4 — cost-over-time chart, slotted in immediately
-  // below the chips row and above cost-by-project. Server is
-  // backwards-compatible: the field exists since HS-8505 (Phase 1
-  // backend), so any reach of this code path will have it. The
-  // `?? []` guards a stale browser cache or a downgraded server.
-  const costOverTimePoints = payload.costOverTime as readonly CostOverTimePoint[] | undefined ?? [];
-  if (costOverTimePoints.length > 0) {
-    const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-over-time');
-    if (target !== null) {
-      target.replaceChildren(renderCostOverTimeChart(costOverTimePoints, {
-        resolveProjectLabel: resolveProjectName,
-        formatCost,
-      }));
-    }
-  }
-
-  // HS-8482 — cost-by-project + cost-by-model sections.
-  if (payload.costByProject.length > 0) {
-    const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-project');
-    if (target !== null) {
-      target.replaceChildren(renderCostByProjectTable(payload.costByProject));
-    }
-  }
-  if (payload.costByModel.length > 0) {
-    const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-model');
-    if (target !== null) {
-      target.replaceChildren(renderCostByModelDonut(payload.costByModel, { formatCost }));
-    }
-  }
-
-  // HS-8483 — heatmap section. Top-10 most-expensive-prompts list
-  // was removed per HS-8503 feedback (HS-8507 / §70.4). The wire
-  // payload still carries it; we ignore it here until Phase 5
-  // cleanup (HS-8509) drops it from the response shape.
-  const heatmapHasData = payload.hourlyActivity.some(c => c.cost > 0 || c.promptCount > 0);
-  if (heatmapHasData) {
-    const target = root.querySelector<HTMLElement>('#telemetry-dashboard-heatmap');
-    if (target !== null) {
-      target.replaceChildren(renderHourlyHeatmap(payload.hourlyActivity));
-    }
-  }
-
-  // HS-8515 — Window-selector re-fetch via the button group (was a
-  // `<select>` pre-HS-8515; replaced with the `.dashboard-range-bar`
-  // button group the analytics dashboard uses for visual consistency).
-  // No live polling — per §69.6.
-  // HS-8615 — kerf `delegate()` (was a hand-rolled `addEventListener` +
-  // `closest()`); root is the per-render button group, listener dies with it.
-  const buttons = root.querySelector<HTMLElement>('#telemetry-dashboard-window-buttons');
-  if (buttons !== null) {
-    void delegate<HTMLElement>(buttons, 'click', 'button[data-window]', (_e, btn) => {
-      const window = btn.dataset.window as DashboardWindow | undefined;
-      if (window === undefined) return;
-      void fetchAndRender(container, window);
-    });
-  }
+  populateChips(root, payload.windowTotals);
+  // `costOverTime` has existed on the wire since HS-8505 Phase 1; the
+  // `DashboardPayload` interface types it as a non-optional array, so no
+  // runtime guard is needed here.
+  populateCostOverTime(root, payload.costOverTime);
+  populateCostByProject(root, payload.costByProject);
+  populateCostByModel(root, payload.costByModel);
+  populateHeatmap(root, payload.hourlyActivity);
+  wireWindowSelector(root, container);
 
   container.appendChild(root);
 }

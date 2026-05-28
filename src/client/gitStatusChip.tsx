@@ -3,6 +3,7 @@ import { getGitStatus, gitFetch } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
 import { getActiveProject } from './state.js';
+import { formatRelativeTime as formatRelativeTimeFromTs } from './timeFormat.js';
 
 /**
  * HS-7954 — sidebar git status chip. Subscribes to (a) the existing
@@ -200,16 +201,11 @@ export function tooltipForStatus(status: GitStatus, nowMs: number = Date.now()):
   return local;
 }
 
-/** Pure: format a millisecond duration as a friendly relative-time string
- *  ("just now" / "5 minutes ago" / "2 hours ago" / "3 days ago"). */
+/** HS-8677 — kept for `gitStatusChip.test.ts` and the one `nowMs -
+ *  status.lastFetchedAt` callsite below; delegates to the shared
+ *  `timeFormat.ts::formatRelativeTime` (which takes an absolute timestamp). */
 export function formatRelativeTime(deltaMs: number): string {
-  if (deltaMs < 60_000) return 'just now';
-  const minutes = Math.floor(deltaMs / 60_000);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'} ago`;
+  return formatRelativeTimeFromTs(Date.now() - deltaMs);
 }
 
 function render(): void {

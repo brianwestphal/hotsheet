@@ -6,6 +6,7 @@ import { bindSnapshotProtectionUI, refreshSnapshotProtectionStatus } from './sna
 import type { Ticket } from './state.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
+import { formatRelativeTime } from './timeFormat.js';
 
 /** HS-7890: turn an `api()` rejection into a user-readable label.
  *  `api()` throws an Error whose `.message` is the server's `error` field
@@ -18,15 +19,11 @@ export function formatBackupErrorMessage(prefix: string, err: unknown): string {
   return `${prefix}: ${message}`;
 }
 
+/** HS-8677 — delegates to the shared `timeFormat.ts::formatRelativeTime`.
+ *  Output unified to long-pluralized wording ("5 minutes ago" instead of "5m
+ *  ago") matching the rest of the client. */
 function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return formatRelativeTime(dateStr);
 }
 
 function formatSize(bytes: number): string {

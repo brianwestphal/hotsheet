@@ -10,6 +10,7 @@ import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedbac
 import { recordInteraction } from './longTaskObserver.js';
 import { parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
+import { morph } from './reactive.js';
 import { syncDetailReaderButton } from './readerOverlay.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
@@ -49,7 +50,9 @@ export function renderDetailsMarkdown(text: string): void {
   const currentTicketNumber = state.activeTicketId === null
     ? undefined
     : state.tickets.find(t => t.id === state.activeTicketId)?.ticket_number;
-  rendered.innerHTML = linkifyWithCachedPrefixes(html, currentTicketNumber);
+  // HS-8677 / §62 — `morph(el, htmlString)` accepts the raw linkified-markdown
+  // output and reconciles in place (same DOM shape as the prior `innerHTML =`).
+  morph(rendered, linkifyWithCachedPrefixes(html, currentTicketNumber));
 }
 
 /**
@@ -297,7 +300,7 @@ function loadPreviewDetail(id: number) {
   setDetailReadOnly(true);
 
   // No attachments in backup preview
-  byId('detail-attachments').innerHTML = '';
+  byId('detail-attachments').replaceChildren();
 
   // Tags (read-only in preview)
   renderDetailTags(parseTags(ticket.tags), true);
@@ -306,7 +309,9 @@ function loadPreviewDetail(id: number) {
   const notesContainer = byId('detail-notes');
   const notes = parseNotesJson(ticket.notes);
   if (notes.length > 0) {
-    notesContainer.innerHTML = (<>
+    // HS-8677 / §62 — `morph()` accepts a string and reconciles `notesContainer`
+    // in place, preserving focus / selection on any open note edit inputs.
+    morph(notesContainer, (<>
       {notes.map(note =>
         <div className="note-entry">
           {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
@@ -316,19 +321,19 @@ function loadPreviewDetail(id: number) {
           }</div>
         </div>
       )}
-    </>).toString();
+    </>).toString());
   } else {
-    notesContainer.innerHTML = '';
+    notesContainer.replaceChildren();
   }
 
   // Meta info
   const meta = byId('detail-meta');
-  meta.innerHTML = (<>
+  morph(meta, (<>
     <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
     {ticket.completed_at !== null && ticket.completed_at !== '' ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
     {ticket.verified_at !== null && ticket.verified_at !== '' ? <div>Verified: {new Date(ticket.verified_at).toLocaleString()}</div> : null}
-  </>).toString();
+  </>).toString());
 }
 
 /** Force-reload the detail panel for the currently active ticket.
@@ -397,7 +402,7 @@ async function loadDetail(id: number) {
   // Render attachments with selection support
   const attContainer = byId('detail-attachments');
   if (ticket.attachments.length > 0) {
-    attContainer.innerHTML = (<>
+    morph(attContainer, (<>
       {ticket.attachments.map(att =>
         <div className="attachment-item" tabIndex={0} data-att-id={String(att.id)} data-stored-path={att.stored_path} data-filename={att.original_filename}>
           <span className="attachment-name">{att.original_filename}</span>
@@ -405,9 +410,9 @@ async function loadDetail(id: number) {
           <button className="attachment-delete" data-att-id={String(att.id)} title="Remove">{'\u00d7'}</button>
         </div>
       )}
-    </>).toString();
+    </>).toString());
   } else {
-    attContainer.innerHTML = '';
+    attContainer.replaceChildren();
   }
 
   // Render tags
@@ -473,7 +478,7 @@ async function loadDetail(id: number) {
 
   // Meta info
   const meta = byId('detail-meta');
-  meta.innerHTML = (<>
+  morph(meta, (<>
     <div>Created: {new Date(ticket.created_at).toLocaleString()}</div>
     <div>Updated: {new Date(ticket.updated_at).toLocaleString()}</div>
     {ticket.completed_at !== null && ticket.completed_at !== '' ? <div>Completed: {new Date(ticket.completed_at).toLocaleString()}</div> : null}
@@ -491,7 +496,7 @@ async function loadDetail(id: number) {
         </div>
       )}
     </> : null}
-  </>).toString();
+  </>).toString());
 
   // HS-8152 — per-ticket Claude usage stats block (§67.10.7). Clear
   // the previous ticket's stats immediately + fetch the new ticket's
@@ -505,8 +510,8 @@ async function loadDetail(id: number) {
   // Render plugin UI extensions for the detail panel
   const detailTop = byIdOrNull('plugin-detail-top');
   const detailBottom = byIdOrNull('plugin-detail-bottom');
-  if (detailTop) { detailTop.innerHTML = ''; renderPluginDetailElements(detailTop, 'detail_top', [ticket.id]); }
-  if (detailBottom) { detailBottom.innerHTML = ''; renderPluginDetailElements(detailBottom, 'detail_bottom', [ticket.id]); }
+  if (detailTop) { detailTop.replaceChildren(); renderPluginDetailElements(detailTop, 'detail_top', [ticket.id]); }
+  if (detailBottom) { detailBottom.replaceChildren(); renderPluginDetailElements(detailBottom, 'detail_bottom', [ticket.id]); }
 }
 
 // --- Stats ---

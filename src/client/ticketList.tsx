@@ -726,8 +726,90 @@ export function buildSyncedIconMap(wire: Awaited<ReturnType<typeof getSyncedTick
   return mapped;
 }
 
+/**
+ * HS-8681 — build the URL-search-params for the standard /tickets fetch. Pure
+ * (no I/O). Captures the §40 search-include flags, the HS-8334 coarse-scope
+ * mapping, and the HS-8337 list-layout pagination shape into one place. The
+ * standard views (`all` / `up-next` / `open` / `completed` / `non-verified` /
+ * `verified` / `category:*` / `priority:*`) all collapse to the active coarse
+ * scope; per-view narrowing happens client-side in `filteredTickets`. HS-8618 —
+ * a search collapses every standard view to 'all' via `effectiveView`, so
+ * backlog/archive matches surface as §40 include-rows rather than being
+ * confined to that bucket.
+ */
+function buildTicketsQuery(isListLayout: boolean): string {
+  const params = new URLSearchParams();
+  const scopeView = effectiveView(state.view, state.search);
+  if (scopeView === 'trash') params.set('status', 'deleted');
+  else if (scopeView === 'backlog') params.set('status', 'backlog');
+  else if (scopeView === 'archive') params.set('status', 'archive');
+  else params.set('status', 'active');
+
+  if (state.search) params.set('search', state.search);
+  // HS-7756 — opt-in extra-bucket inclusion when the user has clicked the
+  // "Include {N} ..." rows. Server-side OR's these into the WHERE clause.
+  if (state.includeBacklogInSearch) params.set('include_backlog', 'true');
+  if (state.includeArchiveInSearch) params.set('include_archive', 'true');
+
+  params.set('sort_by', state.sortBy);
+  params.set('sort_dir', state.sortDir);
+
+  // HS-8337 — list layout requests `listLimit + 1` rows so we can detect
+  // whether more rows exist without a second roundtrip (the extra row is
+  // trimmed before installing). Column view groups by status and would orphan
+  // a column under a partial fetch, so it fetches the full set.
+  if (isListLayout) params.set('limit', String(state.listLimit + 1));
+
+  return params.toString();
+}
+
+/**
+ * HS-8681 — custom-view fetch branch. HS-8337: custom views still fetch
+ * everything (the query endpoint doesn't paginate), so the Load More button
+ * stays hidden regardless of layout.
+ */
+async function loadCustomViewTickets(viewId: string): Promise<void> {
+  const view = state.customViews.find(v => v.id === viewId);
+  if (view) {
+    const viewTag = view.tag;
+    setTicketsAnimated(await queryTickets({
+      logic: view.logic,
+      conditions: view.conditions,
+      sort_by: state.sortBy,
+      sort_dir: state.sortDir === 'desc' ? 'desc' : 'asc',
+      ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
+      ...(view.includeArchived === true ? { include_archived: true } : {}),
+    }));
+  } else {
+    setTicketsAnimated([]);
+  }
+  state.hasMoreTickets = false;
+  updateLoadMoreButton();
+  renderTicketList();
+}
+
+/**
+ * HS-8681 / HS-7756 — refresh the per-bucket search-include counts after the
+ * main render. The user sees their tickets immediately and the "Include {N}
+ * ..." rows pop in a moment later if applicable; an empty search clears the
+ * counts inline so the rows disappear synchronously.
+ */
+function refreshSearchExtraCounts(): void {
+  if (state.search === '') {
+    state.searchExtraCounts = { backlog: 0, archive: 0 };
+    renderSearchExtraRows(() => { void loadTickets(); });
+    return;
+  }
+  void getTicketSearchCounts(state.search)
+    .then(counts => {
+      state.searchExtraCounts = counts;
+      renderSearchExtraRows(() => { void loadTickets(); });
+    })
+    .catch(() => { /* non-critical */ });
+}
+
 export async function loadTickets() {
-  // In preview mode, filter backup tickets locally instead of querying the API
+  // Preview mode: filter backup tickets locally instead of querying the API.
   if (state.backupPreview?.active === true) {
     state.hasMoreTickets = false;
     updateLoadMoreButton();
@@ -735,114 +817,42 @@ export async function loadTickets() {
     return;
   }
 
-  // HS-8337 — reset the list-mode pagination window whenever the filter
-  // scope changes between calls (view / search / sort / layout switch).
-  // The Load More entry point bumps `listLimit` BEFORE calling `loadTickets`
-  // with the same scope key, so it doesn't get clobbered here.
+  // HS-8337 — reset the list-mode pagination window whenever the filter scope
+  // changes between calls (view / search / sort / layout). The Load More entry
+  // point bumps `listLimit` BEFORE calling `loadTickets` with the same scope
+  // key, so it doesn't get clobbered here.
   const scopeKey = buildScopeKey();
   if (lastScopeKey !== scopeKey) {
     state.listLimit = LIST_PAGE_SIZE;
     lastScopeKey = scopeKey;
   }
 
-  // Custom view: use the query endpoint. HS-8337 — custom views still
-  // fetch everything (no `limit` on the query endpoint); per the ticket,
-  // pagination is scoped to the standard /tickets path that drives the
-  // sidebar's built-in views. The Load More button stays hidden.
+  // Custom views use the dedicated query endpoint — early return.
   if (state.view.startsWith('custom:')) {
-    const viewId = state.view.slice(7);
-    const view = state.customViews.find(v => v.id === viewId);
-    if (view) {
-      const viewTag = view.tag;
-      setTicketsAnimated(await queryTickets({
-        logic: view.logic,
-        conditions: view.conditions,
-        sort_by: state.sortBy,
-        sort_dir: state.sortDir === 'desc' ? 'desc' : 'asc',
-        ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
-        ...(view.includeArchived === true ? { include_archived: true } : {}),
-      }));
-    } else {
-      setTicketsAnimated([]);
-    }
-    state.hasMoreTickets = false;
-    updateLoadMoreButton();
-    renderTicketList();
+    await loadCustomViewTickets(state.view.slice(7));
     return;
   }
 
-  // HS-8334 (2026-05-11) — server fetch is for the COARSE SCOPE only.
-  // The per-view narrowing (`up-next` / `open` / `completed` / etc.)
-  // and the `category:*` / `priority:*` filters now happen client-side
-  // in `filteredTickets`. Three coarse scopes:
-  //   - active scope (default for everything in the active-set views)
-  //   - trash, backlog, archive (separate scopes, not in active set)
-  // Custom views took the early-return branch above and aren't here.
-  // HS-8618 — search is view-independent. `effectiveView` collapses every
-  // standard view to 'all' (→ active scope) when a search is active, so a
-  // search run from the Backlog or Archive view fetches the active scope and
-  // surfaces the backlog/archive matches as §40 include-rows instead of being
-  // confined to that bucket. Trash + custom views are exempt (custom already
-  // took the early-return branch above).
-  const params = new URLSearchParams();
-  const scopeView = effectiveView(state.view, state.search);
-  if (scopeView === 'trash') {
-    params.set('status', 'deleted');
-  } else if (scopeView === 'backlog') {
-    params.set('status', 'backlog');
-  } else if (scopeView === 'archive') {
-    params.set('status', 'archive');
-  } else {
-    // 'all' / 'up-next' / 'open' / 'completed' / 'non-verified' /
-    // 'verified' / 'category:*' / 'priority:*' — all active scope.
-    params.set('status', 'active');
-  }
-
-  // HS-7756 — clear the search-include flags + restore the pre-include
-  // view mode whenever the search becomes empty. This handles every clear
-  // path (`×` button, programmatic reset, project switch to a project with
-  // no saved query) without each one needing to know about includes.
+  // HS-7756 — clear search-include flags + restore the pre-include view mode
+  // whenever the search becomes empty (× button, programmatic reset, project
+  // switch). Handled once here rather than at every clear path.
   if (state.search === '') {
     const { clearSearchIncludeState } = await import('./searchExtraRows.js');
     clearSearchIncludeState();
   }
 
-  if (state.search) params.set('search', state.search);
-  // HS-7756 — opt-in extra-bucket inclusion when the user has clicked
-  // the "Include {N} ..." rows. Server-side OR's these into the WHERE
-  // clause, so the merged result set comes back already-sorted.
-  if (state.includeBacklogInSearch) params.set('include_backlog', 'true');
-  if (state.includeArchiveInSearch) params.set('include_archive', 'true');
-
-  params.set('sort_by', state.sortBy);
-  params.set('sort_dir', state.sortDir);
-
-  // HS-8337 — list-layout pagination. Request `listLimit + 1` rows so we
-  // can detect whether more rows exist without a second roundtrip (the
-  // extra row is trimmed before installing into the store). Column layout
-  // continues to fetch the full result set: column view groups by status,
-  // and a partial fetch could orphan a column entirely. Reads `state.layout`
-  // captured into a local so an in-flight layout toggle doesn't cause the
-  // post-await trim path to disagree with the request shape.
-  const isListLayout = state.layout === 'list';
-  if (isListLayout) {
-    params.set('limit', String(state.listLimit + 1));
-  }
-
-  const query = params.toString();
   // HS-8660 — fetch the sync-icon map IN PARALLEL with the ticket list and
   // install it BEFORE `setTicketsAnimated`, so the plugin icon is baked into
-  // each row on its FIRST render. The icon is read at `createTicketRow` /
-  // `createColumnCard` time from `syncedTicketMap`, and bindList preserves rows
-  // by ticket id — so a map populated AFTER `setTicketsAnimated` never reaches
-  // the freshly-created rows (the trailing `renderTicketList()` re-runs the
-  // bindList but doesn't re-create preserved rows), leaving newly-synced
-  // tickets icon-less until a layout switch remounts the list. The parallel
-  // fetch keeps the map off the critical path so this adds no latency.
+  // each row on its first render. (bindList preserves rows by ticket id, so a
+  // map installed AFTER setTicketsAnimated never reaches freshly-created rows.)
   const syncMapPromise = getSyncedTickets()
     .then(buildSyncedIconMap)
     .catch(() => null);
-  const rows = await listTickets(query);
+
+  // Captured into a local so an in-flight layout toggle doesn't cause the
+  // post-await trim path to disagree with the request shape.
+  const isListLayout = state.layout === 'list';
+  const rows = await listTickets(buildTicketsQuery(isListLayout));
   if (isListLayout && rows.length > state.listLimit) {
     state.hasMoreTickets = true;
     rows.length = state.listLimit;
@@ -850,25 +860,13 @@ export async function loadTickets() {
     state.hasMoreTickets = false;
   }
   updateLoadMoreButton();
+
   const syncMap = await syncMapPromise;
   if (syncMap !== null) setSyncedTicketMap(syncMap);
   setTicketsAnimated(rows);
   renderTicketList();
-  // HS-7756 — fetch + render the per-bucket search counts. Done after the
-  // main render so the user sees their tickets immediately and the
-  // "Include {N} ..." rows pop in a moment later if applicable. Empty
-  // search clears the counts inline.
-  if (state.search === '') {
-    state.searchExtraCounts = { backlog: 0, archive: 0 };
-    renderSearchExtraRows(() => { void loadTickets(); });
-  } else {
-    void getTicketSearchCounts(state.search)
-      .then(counts => {
-        state.searchExtraCounts = counts;
-        renderSearchExtraRows(() => { void loadTickets(); });
-      })
-      .catch(() => { /* non-critical */ });
-  }
+
+  refreshSearchExtraCounts();
 }
 
 /**

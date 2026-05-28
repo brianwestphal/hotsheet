@@ -144,7 +144,9 @@ export default tseslint.config(
       "src/client/dashboard.tsx",
       "src/client/dashboardMode.tsx",
       "src/client/dbRepairUI.tsx",
-      "src/client/detail.tsx",
+      // HS-8677 — `src/client/detail.tsx` migrated (4 non-empty JSX assignments
+      // + 1 raw-HTML linkified-markdown to `morph()`; 5 empty clears to
+      // `replaceChildren()`), removed from allowlist.
       "src/client/drawerTerminalGrid.tsx",
       // HS-8365 — `src/client/feedbackDialog.tsx` migrated, removed from allowlist.
       "src/client/iconPicker.tsx",

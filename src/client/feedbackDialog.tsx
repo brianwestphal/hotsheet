@@ -220,93 +220,65 @@ export async function openFeedbackDialogForNote(
  * saved draft, inline responses are pre-inserted, and the catch-all is
  * pre-filled. Save Draft writes back via PATCH; Submit deletes the draft.
  */
-export function showFeedbackDialog(
-  ticketId: number,
-  ticketNumber: string,
-  prompt: string,
-  draftSeed?: FeedbackDraftSeed,
-  parentNoteId?: string,
-) {
-  // Remove any existing feedback dialog
-  document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
 
-  // HS-7599: re-opening an existing draft uses the saved block layout
-  // verbatim so future changes to parseFeedbackBlocks don't reshape it.
-  const blocks = draftSeed !== undefined ? draftSeed.partitions.blocks : parseFeedbackBlocks(prompt);
-  const effectivePrompt = draftSeed !== undefined ? draftSeed.promptText : prompt;
-  const effectiveParentNoteId = draftSeed?.parentNoteId ?? parentNoteId ?? null;
-  const overlay = buildOverlay(ticketNumber, blocks);
+/**
+ * HS-8680 — shared state carried across the dialog's button handlers.
+ * `state` is mutable: `buildSaveDraftHandler` flips `draftPersistedToServer`
+ * after a successful POST; both Save Draft and Submit flip `attachmentsCommitted`
+ * so the `close()` cleanup branch knows not to fire the orphan-delete DELETE.
+ * `pendingAttachments` is shared by reference so the attachment-section
+ * uploads + the Submit/Save handlers see the same list.
+ */
+interface FeedbackDialogCtx {
+  ticketId: number;
+  ticketNumber: string;
+  blocks: FeedbackBlock[];
+  overlay: HTMLElement;
+  pendingAttachments: { id: number; original_filename: string }[];
+  sessionDraftId: string;
+  effectiveParentNoteId: string | null;
+  effectivePrompt: string;
+  state: { draftPersistedToServer: boolean; attachmentsCommitted: boolean };
+  close: () => void;
+}
 
-  // Restore inline responses from the draft seed BEFORE the insert-response
-  // wiring runs so each saved response lands in its original slot.
-  if (draftSeed !== undefined) {
-    for (const r of draftSeed.partitions.inlineResponses) {
-      if (r.text === '') continue;
-      const slot = overlay.querySelector<HTMLElement>(`.feedback-insert-slot[data-after-block="${r.blockIndex}"]`);
-      if (slot === null) continue;
-      const insertBtn = slot.querySelector('.feedback-insert-btn');
-      const responseEl = buildInlineResponse();
-      (responseEl.querySelector('textarea') as HTMLTextAreaElement).value = r.text;
-      slot.insertBefore(responseEl, insertBtn);
-    }
-    const catchAll = overlay.querySelector('#feedback-catchall-text') as HTMLTextAreaElement;
-    catchAll.value = draftSeed.partitions.catchAll;
+/** HS-8680 / HS-7599 — restore inline responses + catch-all text from a saved
+ *  draft into the overlay BEFORE insert-response wiring so each saved response
+ *  lands in its original slot. */
+function restoreDraftSeedToOverlay(overlay: HTMLElement, draftSeed: FeedbackDraftSeed): void {
+  for (const r of draftSeed.partitions.inlineResponses) {
+    if (r.text === '') continue;
+    const slot = overlay.querySelector<HTMLElement>(`.feedback-insert-slot[data-after-block="${r.blockIndex}"]`);
+    if (slot === null) continue;
+    const insertBtn = slot.querySelector('.feedback-insert-btn');
+    const responseEl = buildInlineResponse();
+    (responseEl.querySelector('textarea') as HTMLTextAreaElement).value = r.text;
+    slot.insertBefore(responseEl, insertBtn);
   }
+  const catchAll = overlay.querySelector('#feedback-catchall-text') as HTMLTextAreaElement;
+  catchAll.value = draftSeed.partitions.catchAll;
+}
 
-  // HS-8428 — generate a stable `sessionDraftId` for the dialog session.
-  // When reopening an existing draft, reuse its id so newly-attached
-  // files are linked to the same draft. When opening fresh, generate
-  // upfront so the user can attach files BEFORE clicking Save Draft —
-  // the file goes directly to the new draft-attachment endpoint and
-  // gets linked by `draft_id`. The draft ROW itself doesn't have to
-  // exist yet; the server's POST attachment route doesn't FK-check it.
-  // If the user closes the dialog without ever clicking Save Draft, the
-  // server-side cleanup sweep GC's the orphan rows (HS-8428 §cleanup).
-  const sessionDraftId = draftSeed?.id ?? `fd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-  // Whether the draft ROW exists server-side. Used by the close-without-
-  // save path to decide whether to fire an orphan-cleanup DELETE.
-  let draftPersistedToServer = draftSeed !== undefined;
-  // Whether attachments are in their "final" state — promoted to real
-  // (Submit) OR linked to a persisted draft row (Save Draft). Drives the
-  // close-without-save cleanup decision.
-  let attachmentsCommitted = draftSeed !== undefined;
-
-  // HS-8428 — pending draft attachments. Replaces the pre-fix
-  // `pendingFiles: File[]` array. Each entry has a server-assigned `id`
-  // because the file is uploaded on attach (not on Submit), so a Save
-  // Draft + close path no longer silently drops the user's files.
-  const pendingAttachments: { id: number; original_filename: string }[] =
-    (draftSeed?.attachments ?? []).map(a => ({ id: a.id, original_filename: a.original_filename }));
+/**
+ * HS-8680 / HS-8428 — wire the dialog's attachment section: file-list render +
+ * delete-delegate, the upload helper (uploads to the draft-scoped endpoint so
+ * a Save-Draft + close path no longer drops files), the add-file button, the
+ * file-input change handler, and overlay-wide drag/drop. Returns the upload
+ * helper (so Submit/Save can re-render after promote/clear) and the
+ * `disposeFileDeleteDelegate` so `close()` can release the delegate.
+ */
+function setupAttachmentSection(opts: {
+  overlay: HTMLElement;
+  ticketId: number;
+  sessionDraftId: string;
+  pendingAttachments: { id: number; original_filename: string }[];
+  state: { attachmentsCommitted: boolean };
+}): { disposeFileDeleteDelegate: () => void } {
+  const { overlay, ticketId, sessionDraftId, pendingAttachments, state } = opts;
   const fileListEl = overlay.querySelector<HTMLElement>('#feedback-files')!;
   const fileInput = overlay.querySelector('#feedback-file-input') as HTMLInputElement;
 
-  // HS-8365 — `morph()` reconciles in place, so any user focus / selection
-  // on a sibling textarea (the catch-all or per-block response inputs)
-  // survives a file add / remove. Listener attachment uses delegation on
-  // `fileListEl` rather than per-button so a morphed-in row from the
-  // template doesn't need a follow-up wiring pass — the delegated click
-  // reads the row's `data-idx`.
-  // HS-8615 — the hand-rolled `addEventListener` + `closest()` is now kerf's
-  // `delegate()` (containment + `closest()` walk are built in). `fileListEl`
-  // belongs to the per-open overlay, so the disposer is captured + called in
-  // `close()` (scope shorter than page — kerf hard rule #5).
-  const disposeFileDeleteDelegate = delegate<HTMLButtonElement>(fileListEl, 'click', '.category-delete-btn', (_e, btn) => {
-    const idx = parseInt(btn.dataset.idx ?? '-1', 10);
-    if (Number.isNaN(idx) || idx < 0 || idx >= pendingAttachments.length) return;
-    // HS-8428 — DELETE the server-side attachment row + file on disk.
-    // Best-effort: if the DELETE fails (network, server restart), the
-    // attachment will eventually be cleaned up via the orphan sweep
-    // (the draft row doesn't exist yet for an in-flight unsaved draft;
-    // for a persisted draft the attachment would survive until the next
-    // promote / discard cycle). Splice locally either way so the UI
-    // reflects the user's intent immediately.
-    const attachment = pendingAttachments[idx];
-    pendingAttachments.splice(idx, 1);
-    renderFileList();
-    void deleteAttachment(attachment.id);
-  });
-
-  function renderFileList() {
+  function renderFileList(): void {
     const template = toElement(
       <div>
         {pendingAttachments.map((att, i) => (
@@ -320,21 +292,23 @@ export function showFeedbackDialog(
     morph(fileListEl, template);
   }
 
-  // HS-8428 — upload a file to the draft-attachment endpoint and append
-  // to the pendingAttachments list. Fire-and-forget from the caller's
-  // perspective; the file row appears as soon as the POST resolves. On
-  // failure the file is silently dropped — same surface as the pre-fix
-  // upload-on-submit path (which also had no UI for upload errors).
+  // HS-8615 — kerf `delegate()` (containment + closest() walk built in). The
+  // delegate is per-overlay; its disposer fires in `close()`.
+  const disposeFileDeleteDelegate = delegate<HTMLButtonElement>(fileListEl, 'click', '.category-delete-btn', (_e, btn) => {
+    const idx = parseInt(btn.dataset.idx ?? '-1', 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= pendingAttachments.length) return;
+    // HS-8428 — best-effort DELETE; if it fails the orphan sweep cleans up.
+    const attachment = pendingAttachments[idx];
+    pendingAttachments.splice(idx, 1);
+    renderFileList();
+    void deleteAttachment(attachment.id);
+  });
+
   async function uploadDraftAttachment(file: File): Promise<void> {
-    // HS-8633 — the typed `uploadDraftAttachmentToServer` caller hits the
-    // draft-scoped multipart endpoint (`apiUploadCall` → injected `apiUpload`
-    // transport, which adds the project secret + validates the response).
     try {
       const att = await uploadDraftAttachmentToServer(ticketId, sessionDraftId, file);
       pendingAttachments.push({ id: att.id, original_filename: att.original_filename });
-      // Uploading a new file resets the "committed" flag — until the
-      // next Save Draft / Submit, this attachment is unsaved.
-      attachmentsCommitted = false;
+      state.attachmentsCommitted = false;
       renderFileList();
     } catch { /* swallow — best-effort upload */ }
   }
@@ -347,7 +321,6 @@ export function showFeedbackDialog(
     fileInput.value = '';
   });
 
-  // Drag-and-drop file support on the entire overlay
   overlay.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'copy'; });
   overlay.addEventListener('drop', (e) => {
     e.preventDefault();
@@ -356,19 +329,19 @@ export function showFeedbackDialog(
     }
   });
 
-  // Initial render so a reopen with prior-session attachments shows them
-  // before the first user interaction.
   renderFileList();
 
-  // HS-7930 — the slot itself is the click target so the user can drop a
-  // response anywhere in the gap between two blocks. The hover-only
-  // `.feedback-insert-btn` inside is purely decorative (it surfaces the
-  // "+ Add response here" label as the visible affordance once the slot is
-  // hovered). One response per slot — clicking a slot that already has a
-  // response is a no-op so the user can interact with their own textarea /
-  // × button without spawning duplicates. Removing the response (× button
-  // on the inline-response card) restores the click-to-add affordance,
-  // matching the user's "deleting a text field would undo this" semantics.
+  return { disposeFileDeleteDelegate };
+}
+
+/**
+ * HS-8680 / HS-7930 — wire the per-slot click-to-add-response handler. The
+ * slot itself is the click target so a click anywhere in the gap between two
+ * blocks drops a response. One response per slot; clicking a populated slot
+ * is a no-op so the user can interact with their textarea / × button without
+ * spawning duplicates.
+ */
+function wireInsertSlots(overlay: HTMLElement): void {
   overlay.querySelectorAll<HTMLElement>('.feedback-insert-slot').forEach(slot => {
     slot.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
@@ -381,24 +354,160 @@ export function showFeedbackDialog(
       requireChild<HTMLTextAreaElement>(responseEl, 'textarea').focus();
     });
   });
+}
 
-  // HS-8428 — close cleans up orphaned attachments. Save Draft / Submit
-  // set `attachmentsCommitted = true` before calling `close()` so the
-  // cleanup only fires on the "user dismissed without saving" paths
-  // (× button, Later button, outside-click-when-no-text). Cleanup
-  // strategy:
-  //   - If `draftPersistedToServer` is true (Save Draft was clicked at
-  //     least once during this session), the attachments are linked to
-  //     a real draft row — leaving them in place is the right behavior;
-  //     they'll resurface on the next reopen of that draft.
-  //   - Otherwise, the user uploaded files in a fresh dialog and never
-  //     hit Save Draft, so there's no draft row to anchor them to.
-  //     Fire DELETE on the (non-existent-but-tolerant) draft id; the
-  //     server's DELETE handler drops the orphan attachments + their
-  //     files on disk and returns ok.
+/** HS-8680 — No Response Needed: persist the placeholder note, close, reload. */
+function buildNoResponseHandler(ctx: FeedbackDialogCtx, btn: HTMLButtonElement): () => Promise<void> {
+  return async () => {
+    btn.disabled = true;
+    try {
+      await updateTicket(ctx.ticketId, { notes: 'NO RESPONSE NEEDED' });
+      ctx.close();
+      void loadTickets();
+    } catch {
+      btn.disabled = false;
+    }
+  };
+}
+
+/**
+ * HS-8680 / HS-7599 — Save Draft: persist the dialog state to `feedback_drafts`
+ * so the user can come back later without sending. POST creates a new draft
+ * (id pre-generated client-side as `sessionDraftId`); PATCH updates the seed
+ * draft. After success the dialog closes and the notes list re-renders so the
+ * new draft entry appears inline after its FEEDBACK NEEDED parent. HS-8428 —
+ * allow Save Draft when only attachments exist (no text yet) since the
+ * attachments are themselves draft state worth preserving.
+ */
+function buildSaveDraftHandler(ctx: FeedbackDialogCtx): () => Promise<void> {
+  return async () => {
+    const partitions = collectPartitions(ctx.overlay, ctx.blocks);
+    if (!partitionsHaveText(partitions) && ctx.pendingAttachments.length === 0) {
+      focusFirstInput(ctx.overlay);
+      return;
+    }
+    const btn = ctx.overlay.querySelector('#feedback-save-draft') as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    try {
+      if (ctx.state.draftPersistedToServer) {
+        await updateFeedbackDraft(ctx.ticketId, ctx.sessionDraftId, partitions);
+      } else {
+        await createFeedbackDraft(ctx.ticketId, {
+          id: ctx.sessionDraftId,
+          parent_note_id: ctx.effectiveParentNoteId,
+          prompt_text: ctx.effectivePrompt,
+          partitions,
+        });
+        ctx.state.draftPersistedToServer = true;
+      }
+      // Both flags flip so close() skips the orphan-cleanup DELETE — attachments
+      // are now linked to a real draft row.
+      ctx.state.attachmentsCommitted = true;
+      ctx.close();
+      void loadTickets();
+    } catch {
+      btn.textContent = 'Save Draft';
+      btn.disabled = false;
+    }
+  };
+}
+
+/**
+ * HS-8680 / HS-7599 — Submit: promote draft-scoped attachments to real, write
+ * the note, delete the draft row if persisted, close, reload, ping the channel.
+ * HS-8428 — promote runs BEFORE the note PATCH so the attachment list reflects
+ * the new attachments by the time `loadTickets()` re-renders. The promote
+ * endpoint is a no-op when there are no draft attachments.
+ */
+function buildSubmitHandler(ctx: FeedbackDialogCtx): () => Promise<void> {
+  return async () => {
+    const text = collectResponse(ctx.overlay, ctx.blocks);
+    if ((text === null || text === '') && ctx.pendingAttachments.length === 0) {
+      focusFirstInput(ctx.overlay);
+      return;
+    }
+    const submitBtn = ctx.overlay.querySelector('#feedback-submit') as HTMLButtonElement;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitting...';
+    try {
+      if (ctx.pendingAttachments.length > 0) {
+        await promoteFeedbackDraftAttachments(ctx.ticketId, ctx.sessionDraftId);
+      }
+      if (text !== null && text !== '') {
+        await updateTicket(ctx.ticketId, { notes: text });
+      }
+      // HS-7599 / HS-8428 — clear the draft on successful submit so the user
+      // doesn't see a now-stale draft alongside the just-sent note. The promote
+      // step above cleared `draft_id` on every attachment, so the DELETE only
+      // drops the draft row itself.
+      if (ctx.state.draftPersistedToServer) {
+        try { await deleteFeedbackDraft(ctx.ticketId, ctx.sessionDraftId); } catch { /* gone */ }
+      }
+      // Both flags flip so close() skips the orphan-cleanup DELETE.
+      ctx.state.attachmentsCommitted = true;
+      ctx.state.draftPersistedToServer = false;
+      ctx.close();
+      void loadTickets();
+      void notifyChannel(ctx.ticketNumber);
+    } catch {
+      submitBtn.textContent = 'Submit';
+      submitBtn.disabled = false;
+    }
+  };
+}
+
+export function showFeedbackDialog(
+  ticketId: number,
+  ticketNumber: string,
+  prompt: string,
+  draftSeed?: FeedbackDraftSeed,
+  parentNoteId?: string,
+) {
+  // Clear any prior feedback dialog.
+  document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
+
+  // HS-7599 — re-opening an existing draft uses the saved block layout verbatim
+  // so future changes to `parseFeedbackBlocks` don't reshape it.
+  const blocks = draftSeed !== undefined ? draftSeed.partitions.blocks : parseFeedbackBlocks(prompt);
+  const effectivePrompt = draftSeed !== undefined ? draftSeed.promptText : prompt;
+  const effectiveParentNoteId = draftSeed?.parentNoteId ?? parentNoteId ?? null;
+  const overlay = buildOverlay(ticketNumber, blocks);
+
+  if (draftSeed !== undefined) restoreDraftSeedToOverlay(overlay, draftSeed);
+
+  // HS-8428 — stable `sessionDraftId` for the session. Reuse the seed's id on
+  // reopen so new file uploads link to the same draft; generate upfront on a
+  // fresh dialog so the user can attach files BEFORE Save Draft (the draft row
+  // doesn't have to exist yet — POST /attachments doesn't FK-check it; the
+  // orphan sweep GCs unsaved rows). `draftPersistedToServer` tracks whether the
+  // draft row exists server-side (Save Draft was clicked at least once);
+  // `attachmentsCommitted` tracks whether attachments are in their "final"
+  // state (promoted via Submit OR anchored via Save Draft). Both drive the
+  // close-without-save cleanup decision.
+  const sessionDraftId = draftSeed?.id ?? `fd_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const state = {
+    draftPersistedToServer: draftSeed !== undefined,
+    attachmentsCommitted: draftSeed !== undefined,
+  };
+  const pendingAttachments: { id: number; original_filename: string }[] =
+    (draftSeed?.attachments ?? []).map(a => ({ id: a.id, original_filename: a.original_filename }));
+
+  const { disposeFileDeleteDelegate } = setupAttachmentSection({
+    overlay, ticketId, sessionDraftId, pendingAttachments, state,
+  });
+
+  wireInsertSlots(overlay);
+
+  // HS-8428 — close cleans up orphaned attachments. Save Draft / Submit flip
+  // `state.attachmentsCommitted` BEFORE calling `close()` so the cleanup only
+  // fires on the "dismissed without saving" paths (× button, Later button,
+  // outside-click-when-no-text). When the draft row exists, attachments stay
+  // anchored and resurface on next reopen; otherwise the DELETE drops the
+  // orphan rows + their files on disk (the server's DELETE handler tolerates a
+  // missing draft id).
   const close = () => {
-    if (!attachmentsCommitted && !draftPersistedToServer && pendingAttachments.length > 0) {
-      // Fire-and-forget — overlay removal can race the response.
+    if (!state.attachmentsCommitted && !state.draftPersistedToServer && pendingAttachments.length > 0) {
       void deleteFeedbackDraft(ticketId, sessionDraftId).catch(() => { /* swallow */ });
     }
     disposeFileDeleteDelegate();
@@ -406,138 +515,22 @@ export function showFeedbackDialog(
   };
   requireChild<HTMLButtonElement>(overlay, '#feedback-close').addEventListener('click', close);
   requireChild<HTMLButtonElement>(overlay, '#feedback-later').addEventListener('click', close);
-  // HS-7599: click outside the dialog dismisses ONLY when no text has been
-  // entered. Any text in any input (catch-all or any inline textarea) keeps
-  // the dialog open so the user doesn't lose work to a stray click. The
-  // user can still close explicitly via the × / Later / Esc / Save Draft
-  // paths. Threshold per spec is "any text entered at all" — even
-  // whitespace/quoted-prompt-text doesn't count since those aren't pre-
-  // populated in this dialog.
+  // HS-7599 — click outside dismisses ONLY when no text has been entered.
   overlay.addEventListener('click', (e) => {
     if (e.target !== overlay) return;
     if (overlayHasAnyText(overlay)) return;
     close();
   });
 
-  // No Response Needed
+  const ctx: FeedbackDialogCtx = {
+    ticketId, ticketNumber, blocks, overlay, pendingAttachments,
+    sessionDraftId, effectiveParentNoteId, effectivePrompt, state, close,
+  };
+
   const noResponseBtn = requireChild<HTMLButtonElement>(overlay, '#feedback-no-response');
-  noResponseBtn.addEventListener('click', async () => {
-    noResponseBtn.disabled = true;
-    try {
-      await updateTicket(ticketId, { notes: 'NO RESPONSE NEEDED' });
-      close();
-      void loadTickets();
-    } catch {
-      noResponseBtn.disabled = false;
-    }
-  });
-
-  // HS-7599: Save Draft. Persists the current dialog state to
-  // `feedback_drafts` so the user can come back later without sending. The
-  // saved partition structure is restored verbatim on click-to-reopen so
-  // future heuristic tweaks don't reshape an in-flight draft. POST creates
-  // a new draft (id generated client-side); PATCH updates the seed draft.
-  // After success the dialog closes and the notes list re-renders so the
-  // new draft entry appears inline after its FEEDBACK NEEDED parent (or
-  // free-floating at the end if `parentNoteId` is null).
-  overlay.querySelector('#feedback-save-draft')!.addEventListener('click', async () => {
-    const partitions = collectPartitions(overlay, blocks);
-    // HS-8428 — allow Save Draft when the user has only attached files
-    // (no text yet) since the attachments are themselves draft state worth
-    // preserving. Pre-fix the button required text and silently dropped
-    // any attached files; with Option 1 the files are already uploaded
-    // and just need a draft row to anchor them across reopens.
-    if (!partitionsHaveText(partitions) && pendingAttachments.length === 0) {
-      focusFirstInput(overlay);
-      return;
-    }
-
-    const btn = overlay.querySelector('#feedback-save-draft') as HTMLButtonElement;
-    btn.disabled = true;
-    btn.textContent = 'Saving...';
-
-    try {
-      if (draftPersistedToServer) {
-        await updateFeedbackDraft(ticketId, sessionDraftId, partitions);
-      } else {
-        // HS-8428 — use the pre-generated `sessionDraftId` (same id the
-        // file-attach path already used for any uploads). The draft row
-        // now anchors all the attachments that were uploaded earlier in
-        // this session.
-        await createFeedbackDraft(ticketId, {
-          id: sessionDraftId,
-          parent_note_id: effectiveParentNoteId,
-          prompt_text: effectivePrompt,
-          partitions,
-        });
-        draftPersistedToServer = true;
-      }
-      // HS-8428 — flip both flags so the close handler doesn't fire the
-      // orphan-cleanup DELETE. Attachments are now linked to a real
-      // draft row.
-      attachmentsCommitted = true;
-      close();
-      void loadTickets();
-    } catch {
-      btn.textContent = 'Save Draft';
-      btn.disabled = false;
-    }
-  });
-
-  // Submit
-  overlay.querySelector('#feedback-submit')!.addEventListener('click', async () => {
-    const text = collectResponse(overlay, blocks);
-    if ((text === null || text === '') && pendingAttachments.length === 0) {
-      focusFirstInput(overlay);
-      return;
-    }
-
-    const submitBtn = overlay.querySelector('#feedback-submit') as HTMLButtonElement;
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Submitting...';
-
-    try {
-      // HS-8428 — promote draft-scoped attachments to real before the
-      // note PATCH so the attachment list reflects the new attachments
-      // by the time `loadTickets()` re-renders. Single UPDATE on the
-      // server side so the transition is atomic. The promote endpoint
-      // is a no-op when the draft has no attachments (the common case
-      // for text-only submissions), so we can fire it unconditionally.
-      if (pendingAttachments.length > 0) {
-        await promoteFeedbackDraftAttachments(ticketId, sessionDraftId);
-      }
-
-      if (text !== null && text !== '') {
-        await updateTicket(ticketId, { notes: text });
-      }
-
-      // HS-7599 / HS-8428: clear the draft on successful submit so the
-      // user doesn't see a now-stale draft alongside the just-sent note.
-      // The DELETE handler also cleans up any non-promoted draft
-      // attachments — but since we just promoted them all (draft_id
-      // cleared), the DELETE is a no-op on the attachment side and
-      // only drops the draft row itself.
-      if (draftPersistedToServer) {
-        try {
-          await deleteFeedbackDraft(ticketId, sessionDraftId);
-        } catch { /* draft already gone — fine */ }
-      }
-
-      // HS-8428 — set both flags so the `close()` handler doesn't fire
-      // the orphan-cleanup DELETE. Submit is the cleanest "we're done
-      // with this dialog" exit; everything is committed.
-      attachmentsCommitted = true;
-      draftPersistedToServer = false; // draft row is gone, but no orphans
-
-      close();
-      void loadTickets();
-
-      void notifyChannel(ticketNumber);
-    } catch {
-      submitBtn.textContent = 'Submit';
-      submitBtn.disabled = false;
-    }
-  });
+  noResponseBtn.addEventListener('click', buildNoResponseHandler(ctx, noResponseBtn));
+  overlay.querySelector('#feedback-save-draft')!.addEventListener('click', buildSaveDraftHandler(ctx));
+  overlay.querySelector('#feedback-submit')!.addEventListener('click', buildSubmitHandler(ctx));
 
   document.body.appendChild(overlay);
   focusFirstInput(overlay);

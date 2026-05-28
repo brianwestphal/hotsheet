@@ -1,5 +1,6 @@
 import { dismissRecovery, getRecoveryStatus } from '../api/index.js';
 import { byIdOrNull } from './dom.js';
+import { formatRelativeTime as formatRelativeTimeShared } from './timeFormat.js';
 import { showToast } from './toast.js';
 
 /** HS-7899: launch-time banner that appears when the server fell back
@@ -30,17 +31,12 @@ export function formatRecoveryBannerLabel(marker: DbRecoveryMarker): string {
   return `Database failed to load ${when} and was reset to empty${tail}. Restore from a backup to recover your tickets.`;
 }
 
+/** HS-8677 — delegates to the shared `timeFormat.ts::formatRelativeTime`.
+ *  Output is the same long-pluralized "N minute(s) ago" wording; the only
+ *  visible change is the sub-minute label ("moments ago" → "just now") and the
+ *  null/NaN fallback ("recently" → "—" overridden via the `fallback` opt). */
 function formatRelativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return 'recently';
-  const diffMs = Date.now() - t;
-  if (diffMs < 60_000) return 'moments ago';
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-  const days = Math.floor(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'} ago`;
+  return formatRelativeTimeShared(iso, { fallback: 'recently' });
 }
 
 function truncate(text: string, max: number): string {

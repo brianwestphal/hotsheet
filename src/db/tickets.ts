@@ -1,3 +1,5 @@
+import type { PGlite } from '@electric-sql/pglite';
+
 import { isExactTicketIdSearch } from '../ticketNumber.js';
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
 import { getDb } from './connection.js';
@@ -74,6 +76,54 @@ export async function getTicket(id: number): Promise<Ticket | null> {
   return result.rows[0] ?? null;
 }
 
+/**
+ * HS-8681 — pure helper that returns the additional SET fragments driven by a
+ * status transition. Pulled out of `updateTicket` so the status-driven column
+ * mappings (`completed_at` / `verified_at` / `deleted_at` / `up_next`) are
+ * named and readable. Unknown statuses (e.g. composite filter values like
+ * `open` / `active` that should never reach an UPDATE) return an empty array,
+ * matching the original if/else chain's no-match behavior.
+ */
+function buildStatusTransitionSets(status: TicketStatus): string[] {
+  switch (status) {
+    case 'completed':
+      return ['completed_at = NOW()', 'verified_at = NULL', 'up_next = FALSE'];
+    case 'verified':
+      // If not already completed, also set completed_at.
+      return ['verified_at = NOW()', 'completed_at = COALESCE(completed_at, NOW())', 'up_next = FALSE'];
+    case 'deleted':
+      return ['deleted_at = NOW()'];
+    case 'backlog':
+    case 'archive':
+      return ['up_next = FALSE', 'deleted_at = NULL'];
+    case 'not_started':
+    case 'started':
+      return ['completed_at = NULL', 'verified_at = NULL', 'deleted_at = NULL'];
+    default:
+      return [];
+  }
+}
+
+/**
+ * HS-8681 — append timestamped note entries to the ticket's notes JSON array
+ * and return the serialized JSON to assign. Returns `null` when there are no
+ * notes to append (empty input, or `normalizeNotesAppend` produced zero
+ * bodies). HS-8427 — `normalizeNotesAppend` unwraps an agent's accidentally-
+ * JSON-stringified note array into one or more plain-text bodies; plain-text
+ * input passes through as a single-element array.
+ */
+async function buildNotesAppendValue(db: PGlite, id: number, raw: string): Promise<string | null> {
+  const bodies = normalizeNotesAppend(raw);
+  if (bodies.length === 0) return null;
+  const current = await db.query<{ notes: string }>(`SELECT notes FROM tickets WHERE id = $1`, [id]);
+  const existing = parseNotes(current.rows[0]?.notes || '');
+  const now = new Date().toISOString();
+  for (const body of bodies) {
+    existing.push({ id: generateNoteId(), text: body, created_at: now });
+  }
+  return JSON.stringify(existing);
+}
+
 export async function updateTicket(id: number, updates: Partial<{
   title: string;
   details: string;
@@ -133,46 +183,19 @@ export async function updateTicket(id: number, updates: Partial<{
     paramIdx++;
   }
 
-  // Notes: append as a timestamped entry to the JSON array stored as
-  // text. HS-8427 — pass the input through `normalizeNotesAppend` to
-  // unwrap an agent's accidentally-JSON-stringified note array
-  // (`[{"text":"..."}]`) into one or more plain-text bodies. Plain-text
-  // input passes through as a single-element array, so the UI path is
-  // unaffected.
+  // Notes: append timestamped entries to the JSON array. See `buildNotesAppendValue`.
   if (updates.notes !== undefined && updates.notes !== '') {
-    const bodies = normalizeNotesAppend(updates.notes);
-    if (bodies.length > 0) {
-      const current = await db.query<{ notes: string }>(`SELECT notes FROM tickets WHERE id = $1`, [id]);
-      const existing = parseNotes(current.rows[0]?.notes || '');
-      const now = new Date().toISOString();
-      for (const body of bodies) {
-        existing.push({ id: generateNoteId(), text: body, created_at: now });
-      }
+    const notesJson = await buildNotesAppendValue(db, id, updates.notes);
+    if (notesJson !== null) {
       sets.push(`notes = $${paramIdx}`);
-      values.push(JSON.stringify(existing));
+      values.push(notesJson);
       paramIdx++;
     }
   }
 
-  // Handle status transitions
-  if (updates.status === 'completed') {
-    sets.push('completed_at = NOW()');
-    sets.push('verified_at = NULL');
-    sets.push('up_next = FALSE');
-  } else if (updates.status === 'verified') {
-    sets.push('verified_at = NOW()');
-    // If not already completed, also set completed_at
-    sets.push('completed_at = COALESCE(completed_at, NOW())');
-    sets.push('up_next = FALSE');
-  } else if (updates.status === 'deleted') {
-    sets.push('deleted_at = NOW()');
-  } else if (updates.status === 'backlog' || updates.status === 'archive') {
-    sets.push('up_next = FALSE');
-    sets.push('deleted_at = NULL');
-  } else if (updates.status === 'not_started' || updates.status === 'started') {
-    sets.push('completed_at = NULL');
-    sets.push('verified_at = NULL');
-    sets.push('deleted_at = NULL');
+  // Status transitions: see `buildStatusTransitionSets`.
+  if (updates.status !== undefined) {
+    sets.push(...buildStatusTransitionSets(updates.status));
   }
 
   values.push(id);
