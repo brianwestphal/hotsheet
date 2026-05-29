@@ -166,7 +166,14 @@ async function captureScenario(scenario: Scenario): Promise<void> {
 
       const tree = await captureElementTree(page, 'body', { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height });
       await embedRemoteImages(tree);
-      const svg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, `demo-${scenario.id}-`);
+      // HS-8687 / domotion-svg 0.6.0: `elementTreeToSvg` now returns a complete
+      // SVG document (outer `<svg xmlns viewBox …>` included) AND its variadic
+      // tail moved into an `opts` object. The old (0.5.0) function returned
+      // inner-body markup only — the previously-saved `docs/demo-N.svg` files
+      // were technically malformed because we wrote that bare inner content
+      // straight to disk. The new shape produces a self-contained, browser-
+      // openable SVG with no caller-side `wrapSvg` step.
+      const svg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, { idPrefix: `demo-${scenario.id}-` });
       const svgPath = join(DOCS_DIR, `demo-${scenario.id}.svg`);
       writeFileSync(svgPath, svg);
       console.log(`  ✓ SVG: ${svgPath} (${(svg.length / 1024).toFixed(1)} KB)`);
