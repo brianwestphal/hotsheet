@@ -3,6 +3,7 @@ import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
+import { isDemoMode } from './demoMode.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import {
   startPermissionPolling, stopPermissionPolling,
@@ -147,7 +148,13 @@ export function setChannelAlive(alive: boolean) {
   if (!warning) return;
   const section = byIdOrNull('channel-play-section');
   const enabled = section !== null && section.style.display !== 'none';
-  warning.style.display = enabled && !alive ? '' : 'none';
+  // HS-8688 — the "Claude not connected" strip is intentionally suppressed
+  // under `--demo:N`. The scenario-9 demo enables `channel_enabled: 'true'`
+  // (so the play-section renders) but has no real Claude process to attach
+  // to, which would normally surface the warning and pollute the marketing
+  // screenshot. Per the ticket: "make sure the 'claude not connected'
+  // warning isn't showing. it should never show during demos".
+  warning.style.display = enabled && !alive && !isDemoMode() ? '' : 'none';
   // If the channel server went down while we thought Claude was busy, clear busy state
   if (wasAlive && !alive && isChannelBusy()) {
     setChannelBusy(false);

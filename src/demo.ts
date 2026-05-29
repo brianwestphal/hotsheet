@@ -682,6 +682,20 @@ const SCENARIO_9_COMMANDS = [
 // so the line discipline echoes the Ctrl-L back as `^L` and the printf
 // output is wiped. Lazy terminals spawn on first WS attach, so the printf
 // streams directly into the live subscriber after the no-op resize branch.
+//
+// HS-8688 scenario-12 trade-off: the §25 dashboard's tile virtualization only
+// mounts tiles whose state is already `'alive'` (`mountIfNotMounted = tile.
+// state === 'alive'` in `terminalTileGridLifecycle.tsx`). Lazy tiles therefore
+// stay cold ("Not yet started" play-glyph placeholders) until the user clicks
+// them — fine in the drawer demo where ONE terminal is the focus, but
+// catastrophic in the dashboard demo where every cold placeholder is its own
+// visual blemish. Scenario 12 needs `lazy: false` so the eager-spawn path
+// (`eagerSpawnTerminals` at registerProject time) lights up every tile in
+// the grid. The printf decoration is dropped for scenario 12 — the HS-6799
+// scrollback clear wipes it on first attach anyway, leaving an "empty
+// alive" tile (running but blank xterm). That's the lesser visual hit: a
+// grid of running terminals beats a grid of cold placeholders even if each
+// tile lacks the printf flavor text.
 const DEMO_TERMINAL_APPEARANCE = { theme: 'github-dark', fontSize: 15 } as const;
 
 const SCENARIO_11_TERMINALS = [
@@ -704,6 +718,50 @@ const SCENARIO_11_TERMINALS = [
     name: 'Claude',
     command: '{{claudeCommand}}',
     lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
+  },
+];
+
+// HS-8688 / HS-8689 — scenario-12-only terminal configs. Eager (`lazy: false`)
+// so `eagerSpawnTerminals` lights them up at project registration and the §25
+// dashboard sees `tile.state === 'alive'` when it first renders the grid.
+//
+// HS-8689 — each terminal renders a styled, content-rich simulation matching
+// its title (Dev Server → Vite-style server output, Tests → test runner pass
+// summary, Claude → Claude Code session) so the dashboard grid telegraphs
+// "real developer workflows" instead of an uninformative wall of black tiles.
+// The bare `exec sleep 3600` from the HS-8688 first pass produced alive-but-
+// blank xterms which the user flagged as visually flat.
+//
+// Pattern: `stty -echoctl 2>/dev/null; while :; do {clear+printf content};
+// sleep 10; done`. The continuous re-emit beats the HS-6799 first-attach
+// scrollback clear in `attach.ts:97` — within 10 s of attach the next loop
+// iteration repaints the content. `stty -echoctl` (best-effort; some PTYs
+// reject it but we never see the failure) suppresses the `^L` byte the line
+// discipline echoes when HS-6799 writes Ctrl-L to a PTY where nothing reads
+// stdin. `\033[H\033[2J` is "cursor home + clear-screen" — equivalent to the
+// `clear` command but no PATH dependency. The shell-side `while :;` keeps
+// reusing the same TTY without a re-exec.
+const SCENARIO_12_PRIMARY_TERMINALS = [
+  {
+    id: 'dev-server',
+    name: 'Dev Server',
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[36m> npm run dev\\033[0m\\n\\n  VITE v5.4.0  ready in \\033[1m412\\033[0m ms\\n\\n  \\033[32m➜\\033[0m  Local:   \\033[36mhttp://localhost:3000/\\033[0m\\n  \\033[32m➜\\033[0m  Network: \\033[36mhttp://192.168.1.42:3000/\\033[0m\\n\\n  \\033[2m[HMR] update: src/client/styles.scss\\033[0m\\n  \\033[2m[HMR] update: src/client/detail.tsx\\033[0m\\n\\n\\033[2m  watching for file system changes...\\033[0m\\n'; sleep 10; done",
+    lazy: false,
+    ...DEMO_TERMINAL_APPEARANCE,
+  },
+  {
+    id: 'tests',
+    name: 'Tests',
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[36m> npm run test:watch\\033[0m\\n\\n \\033[32m RUN \\033[0m v4.1.7\\n\\n \\033[32m✓\\033[0m  src/client/dom.test.ts \\033[2m(12)\\033[0m \\033[2m48 ms\\033[0m\\n \\033[32m✓\\033[0m  src/client/state.test.tsx \\033[2m(8)\\033[0m \\033[2m31 ms\\033[0m\\n \\033[32m✓\\033[0m  src/db/queries.test.ts \\033[2m(47)\\033[0m \\033[2m214 ms\\033[0m\\n \\033[32m✓\\033[0m  src/routes/tickets.test.ts \\033[2m(31)\\033[0m \\033[2m158 ms\\033[0m\\n\\n \\033[32m Test Files \\033[0m \\033[1m4 passed\\033[0m\\033[2m (4)\\033[0m\\n \\033[32m      Tests \\033[0m \\033[1m98 passed\\033[0m\\033[2m (98)\\033[0m\\n \\033[32m   Duration \\033[0m 451 ms\\n\\n\\033[2m  watching for changes...\\033[0m\\n'; sleep 10; done",
+    lazy: false,
+    ...DEMO_TERMINAL_APPEARANCE,
+  },
+  {
+    id: 'claude',
+    name: 'Claude',
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[36mClaude Code\\033[0m \\033[2mv2.0.0  (opus-4-7)\\033[0m\\n\\n\\033[33m>\\033[0m implement dark mode toggle in the settings dialog\\n\\n\\033[32m●\\033[0m Reading project layout\\n  \\033[2m└─ src/client/settingsDialog.tsx\\033[0m\\n  \\033[2m└─ src/client/styles.scss\\033[0m\\n\\n\\033[32m●\\033[0m Adding theme toggle to General tab\\n  \\033[2m└─ Edit(src/client/settingsDialog.tsx) +18 -2\\033[0m\\n  \\033[2m└─ Edit(src/client/styles.scss) +24 -0\\033[0m\\n\\n\\033[32m●\\033[0m Running tests \\033[32m✓ 12 passed\\033[0m\\n\\nDark mode toggle is live in General → Theme.\\n\\n\\033[33m>\\033[0m \\033[7m \\033[0m\\n'; sleep 10; done",
+    lazy: false,
     ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
@@ -872,9 +930,13 @@ export async function seedDemoData(scenario: number): Promise<void> {
     // could be any shell). Each terminal uses `printf` for the visible
     // output then `exec sleep 3600` so the PTY stays alive without
     // surfacing a shell prompt that would clutter the screenshot.
+    //
+    // HS-8688 — `drawer_expanded` removed (was `'true'`). The expanded
+    // drawer hogged ~70% of the viewport, leaving the ticket list as a
+    // sliver — per the ticket: "you expanded the bottom drawer but i
+    // think leaving it at the original height might be better".
     writeProjectSettings(dataDir, {
       drawer_open: 'true',
-      drawer_expanded: 'true',
       drawer_active_tab: 'terminal:dev-server',
       terminals: JSON.stringify(SCENARIO_11_TERMINALS),
     });
@@ -900,15 +962,19 @@ export async function seedDemoData(scenario: number): Promise<void> {
     // once" appeal only lands when there are multiple projects each
     // with multiple terminals — a single-project dashboard would just
     // look like a project-scoped grid (which is what §36's drawer-grid
-    // is for). So we configure the primary project with the same three
-    // terminals as scenario 11, and `seedDemoExtraProjects` registers
-    // two additional projects (Mobile App + API Platform) each with
-    // their own 2-3 terminals. The dashboard-open flag is in-memory
-    // only (§25), so the user clicks the `square-terminal` toolbar
-    // button after launch to enter the view — the screenshot workflow
-    // then captures all ~7 terminals as a single grid.
+    // is for). So we configure the primary project with three terminals
+    // and `seedDemoExtraProjects` registers two additional projects
+    // (Mobile App + API Platform) each with their own 2-3 terminals.
+    // The dashboard-open flag is in-memory only (§25), so the user
+    // clicks the `square-terminal` toolbar button after launch to enter
+    // the view — the screenshot workflow then captures all ~7 terminals
+    // as a single grid.
+    //
+    // HS-8688 — uses `SCENARIO_12_PRIMARY_TERMINALS` (eager / no printf)
+    // instead of `SCENARIO_11_TERMINALS` (lazy / printf). See the
+    // SCENARIO_12_PRIMARY_TERMINALS comment for the rationale.
     writeProjectSettings(dataDir, {
-      terminals: JSON.stringify(SCENARIO_11_TERMINALS),
+      terminals: JSON.stringify(SCENARIO_12_PRIMARY_TERMINALS),
     });
   }
 }
@@ -922,21 +988,30 @@ interface ExtraProject {
 
 /** Extra-project terminal configs for the §25 dashboard showcase
  *  (scenario 12). Each project gets a couple of visibly-distinct
- *  terminals so the dashboard grid has variety. The "printf then exec
- *  sleep 3600" pattern matches `SCENARIO_11_TERMINALS`. */
+ *  terminals so the dashboard grid has variety.
+ *
+ *  HS-8688 / HS-8689 — eager (`lazy: false`) so the dashboard sees them
+ *  alive at first render (see `SCENARIO_12_PRIMARY_TERMINALS` comment for
+ *  the dashboard-virtualization rationale), and each terminal uses the
+ *  same `stty -echoctl; while :; do clear-then-printf; sleep 10; done`
+ *  pattern as the primary terminals so the styled content survives the
+ *  HS-6799 first-attach scrollback clear. Content matches each terminal's
+ *  title — Metro renders a React Native start banner, logcat renders
+ *  Android log lines, API Server renders a service-listening summary,
+ *  pg log renders Postgres query logs. */
 const SCENARIO_12_MOBILE_TERMINALS = [
   {
     id: 'metro',
     name: 'Metro',
-    command: "printf '\\033[36m> npx react-native start\\033[0m\\n\\n  Welcome to Metro v0.81.0\\n  Fast - Scalable - Integrated\\n\\n\\033[32m  ✓ Bundling complete\\033[0m\\n\\033[2m  watching files for changes...\\033[0m\\n'; exec sleep 3600",
-    lazy: true,
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[36m> npx react-native start\\033[0m\\n\\n  Welcome to \\033[1mMetro\\033[0m v0.81.0\\n  Fast \\033[2m-\\033[0m Scalable \\033[2m-\\033[0m Integrated\\n\\n  Dev server ready. Press \\033[1mi\\033[0m for iOS, \\033[1ma\\033[0m for Android.\\n\\n  \\033[32m✓\\033[0m Bundling \\033[2mindex.js\\033[0m   complete \\033[2m(2841 modules)\\033[0m\\n  \\033[32m✓\\033[0m Bundling \\033[2mauth/index\\033[0m  complete \\033[2m(412 modules)\\033[0m\\n\\n\\033[2m  watching files for changes...\\033[0m\\n'; sleep 10; done",
+    lazy: false,
     ...DEMO_TERMINAL_APPEARANCE,
   },
   {
     id: 'logcat',
     name: 'logcat',
-    command: "printf '\\033[2m11-18 09:42:01.213\\033[0m  Push.deeplink  Received: orders/9821\\n\\033[2m11-18 09:42:01.241\\033[0m  Push.deeplink  Resolving intent…\\n\\033[2m11-18 09:42:01.252\\033[0m  Push.deeplink  Routing to OrderDetail\\n\\033[2m11-18 09:42:01.318\\033[0m  Render         OrderDetailScreen mounted\\n'; exec sleep 3600",
-    lazy: true,
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[2m11-18 09:42:01.213\\033[0m \\033[36mPush.deeplink\\033[0m  Received: orders/9821\\n\\033[2m11-18 09:42:01.241\\033[0m \\033[36mPush.deeplink\\033[0m  Resolving intent…\\n\\033[2m11-18 09:42:01.252\\033[0m \\033[36mPush.deeplink\\033[0m  Routing to OrderDetail\\n\\033[2m11-18 09:42:01.318\\033[0m \\033[35mRender\\033[0m         OrderDetailScreen mounted\\n\\033[2m11-18 09:42:01.402\\033[0m \\033[33mNetwork\\033[0m        GET /api/orders/9821 \\033[32m200\\033[0m \\033[2m218ms\\033[0m\\n\\033[2m11-18 09:42:01.541\\033[0m \\033[35mRender\\033[0m         OrderDetail items=4 total=$184.20\\n\\033[2m11-18 09:42:02.819\\033[0m \\033[36mUser\\033[0m           tap: Mark as delivered\\n\\033[2m11-18 09:42:02.864\\033[0m \\033[33mNetwork\\033[0m        PATCH /api/orders/9821 \\033[32m200\\033[0m \\033[2m41ms\\033[0m\\n\\033[2m11-18 09:42:02.871\\033[0m \\033[32mState\\033[0m          order.status=delivered\\n'; sleep 10; done",
+    lazy: false,
     ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
@@ -944,15 +1019,15 @@ const SCENARIO_12_API_TERMINALS = [
   {
     id: 'server',
     name: 'API Server',
-    command: "printf '\\033[36m> npm run dev:api\\033[0m\\n\\n  api.platform.local listening on :8080\\n  graphql:  http://localhost:8080/graphql\\n  rest:     http://localhost:8080/v1\\n  health:   ok\\n\\n\\033[33m  WARN \\033[0mrate-limiter: bucket high water mark 87%%\\n'; exec sleep 3600",
-    lazy: true,
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[36m> npm run dev:api\\033[0m\\n\\n  api.platform.local listening on \\033[1m:8080\\033[0m\\n  graphql:  \\033[36mhttp://localhost:8080/graphql\\033[0m\\n  rest:     \\033[36mhttp://localhost:8080/v1\\033[0m\\n  health:   \\033[32mok\\033[0m\\n\\n  \\033[2m09:42:14\\033[0m \\033[32mPOST\\033[0m /v1/auth/login        \\033[32m200\\033[0m \\033[2m18ms\\033[0m\\n  \\033[2m09:42:15\\033[0m \\033[32mGET \\033[0m /v1/orders?status=open \\033[32m200\\033[0m \\033[2m41ms\\033[0m\\n  \\033[2m09:42:15\\033[0m \\033[34mPOST\\033[0m /v1/orders/9821/ship  \\033[32m201\\033[0m \\033[2m72ms\\033[0m\\n\\n  \\033[33mWARN\\033[0m rate-limiter bucket at 87%% (auth tier=basic)\\n'; sleep 10; done",
+    lazy: false,
     ...DEMO_TERMINAL_APPEARANCE,
   },
   {
     id: 'db-tail',
     name: 'pg log',
-    command: "printf '\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: 12.4 ms  SELECT * FROM orders WHERE id = \\$1\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: 4.1 ms   UPDATE orders SET status=\\$1 WHERE id=\\$2\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  checkpoint complete\\n'; exec sleep 3600",
-    lazy: true,
+    command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: \\033[1m12.4 ms\\033[0m  statement: SELECT * FROM orders WHERE id = $1\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: \\033[1m4.1 ms\\033[0m   statement: UPDATE orders SET status=$1 WHERE id=$2\\n\\033[2m2026-05-18 09:41:03 UTC\\033[0m \\033[32mLOG:\\033[0m  checkpoint complete: wrote 41 buffers (0.3%%)\\n\\033[2m2026-05-18 09:41:04 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: \\033[1m187.2 ms\\033[0m statement: REFRESH MATERIALIZED VIEW order_metrics\\n\\033[2m2026-05-18 09:41:04 UTC\\033[0m \\033[33mWARN:\\033[0m  pg_stat_statements has 247 entries\\n\\033[2m2026-05-18 09:41:05 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: \\033[1m2.9 ms\\033[0m   statement: SELECT pg_advisory_lock($1)\\n\\033[2m2026-05-18 09:41:05 UTC\\033[0m \\033[32mLOG:\\033[0m  duration: \\033[1m1.4 ms\\033[0m   statement: COMMIT\\n'; sleep 10; done",
+    lazy: false,
     ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
@@ -993,6 +1068,13 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
   const { registerProject } = await import('./projects.js');
   const { readFileSettings, writeFileSettings } = await import('./file-settings.js');
   const { getDb, getDbForDir } = await import('./db/connection.js');
+  // HS-8688 — `registerProject` does NOT call `eagerSpawnTerminals` itself;
+  // the primary project gets eager-spawned by `cli.ts:542` at startup, and
+  // restored projects get it in `restorePreviousProjects`. Demo-mode extras
+  // register OUTSIDE both paths, so without an explicit call the non-lazy
+  // terminals stay un-spawned and the §25 dashboard tiles render as cold
+  // "Not yet started" placeholders for Mobile App + API Platform forever.
+  const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
 
   const baseDir = path.dirname(primaryDataDir);
   // HS-8682 — capture each extra project's secret as we go so we can seed
@@ -1047,6 +1129,12 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
     // Register with the running server + capture the secret for scenario 13's
     // telemetry-row seeding below.
     const ctx = await registerProject(extraDataDir, port);
+    // HS-8688 — eager-spawn the extra project's non-lazy terminals so the
+    // §25 dashboard sees each tile as `state: 'alive'` when it first
+    // mounts the grid. Without this the Mobile App + API Platform sections
+    // of the dashboard render as cold "Not yet started" placeholders even
+    // though the configs have `lazy: false`.
+    eagerSpawnTerminals(ctx.secret, extraDataDir);
     if (scenario === 13) {
       extraSecrets.push({ secret: ctx.secret, appName: extra.appName });
     }

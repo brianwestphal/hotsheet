@@ -1,4 +1,5 @@
 import { getWorklistInfo } from '../api/index.js';
+import { isDemoMode } from './demoMode.js';
 import type { Ticket } from './state.js';
 import { showSkillsBanner } from './tauriIntegration.js';
 
@@ -45,6 +46,15 @@ export function formatTicketForClipboard(ticket: Ticket): string {
  *  ignored here — kept on the wire because the prior client
  *  consumed it; future cleanup could drop it from the response. */
 export function initSkillsBanner(): void {
+  // HS-8688 — suppress under `--demo:N`. The skills banner is the seeded
+  // "AI tool skills created. Restart your AI tool to use the new ticket
+  // creation skills (hs-bug, hs-feature, etc.)." strip; it leaks into demo
+  // screenshots because every fresh demo boot creates a new skills directory
+  // and the worklist-info endpoint reports `skillCreated: true` on first
+  // poll. Demo mode never has a real AI tool to restart, so the banner is
+  // pure noise. Gated alongside the other demo-mode suppressors in
+  // `demoMode.ts`.
+  if (isDemoMode()) return;
   void getWorklistInfo().then((info) => {
     if (info.skillCreated) showSkillsBanner();
   });

@@ -34,17 +34,123 @@ const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 const VIEWPORT = { width: 1400, height: 900 } as const;
 
 /**
+ * HS-8688 — click the first visible ticket row so the detail panel renders
+ * with real content. The user-visible result: a scenario that previously
+ * showed an empty "no ticket selected" detail panel now opens with the first
+ * card's title, status pill, notes, etc. Skipped for scenarios where the
+ * detail panel isn't visible (8 dashboard, 12 terminal dashboard) or where
+ * the user is actively interacting with something else (2 ticket-entry input).
+ *
+ * Card selector covers both list view (`.ticket-row[data-id]`) and column
+ * view (`.column-card[data-id]`) per the click handler in `src/client/app.tsx`.
+ * Trash rows are excluded — those aren't real tickets.
+ */
+async function selectFirstTicket(page: Page): Promise<void> {
+  const sel = '.ticket-row[data-id]:not(.trash-row), .column-card[data-id]';
+  const first = await page.waitForSelector(sel, { state: 'visible', timeout: 5000 }).catch(() => null);
+  if (!first) return;
+  await first.click();
+  // Let the detail panel paint.
+  await page.waitForTimeout(250);
+}
+
+/**
  * Per-scenario in-app navigation hook, run after the page loads + the initial
- * settle wait. Most scenarios are static (the demo seeder already configured
- * settings to land on the right view); only the three "open a different
- * surface" demos need a click.
+ * settle wait. HS-8688 expanded this to cover the demo-screenshot polish asks:
+ * pre-select a ticket so the detail panel has content, switch sidebar to the
+ * right view (Up Next for demo 4, a custom view for demo 3), type example
+ * text into the new-ticket entry input for demo 2, multi-select for demo 5,
+ * hover the cumulative-flow chart for demo 8, and wait for every dashboard
+ * tile to leave the cold "Not yet started" placeholder for demo 12.
  */
 async function navigateForScenario(page: Page, id: number): Promise<void> {
   switch (id) {
+    case 2: {
+      // HS-8688 — Quick entry demo. The whole point is the bullet-list new-
+      // ticket input; type example text so the screenshot shows the input
+      // actively being used. Don't press Enter — submitting would create the
+      // ticket and clear the input.
+      const draft = await page.waitForSelector('input.draft-input', { state: 'visible', timeout: 5000 }).catch(() => null);
+      if (draft) {
+        await draft.fill('Add dark mode support to the settings dialog');
+        // Make sure the input keeps focus so the caret renders in the shot.
+        await draft.focus();
+      }
+      // No `selectFirstTicket` here — focus belongs in the entry input.
+      break;
+    }
+    case 3: {
+      // HS-8688 — Sidebar filtering demo. Switch from "All Tickets" to one of
+      // the configured custom views (per `SCENARIO_3_VIEWS` in `src/demo.ts`)
+      // so the screenshot demonstrates the filtering feature, not the default
+      // view. `high-priority-bugs` is the more visually obvious choice.
+      const customView = await page.waitForSelector(
+        '.sidebar-item[data-view="custom:high-priority-bugs"]',
+        { state: 'visible', timeout: 5000 },
+      ).catch(() => null);
+      if (customView) await customView.click();
+      await page.waitForTimeout(250);
+      await selectFirstTicket(page);
+      break;
+    }
+    case 4: {
+      // HS-8688 — AI worklist demo. Switch the sidebar to the Up Next view
+      // (the built-in filter, `data-view="up-next"`) so the screenshot
+      // matches the demo's framing.
+      const upNext = await page.waitForSelector(
+        '.sidebar-item[data-view="up-next"]',
+        { state: 'visible', timeout: 5000 },
+      ).catch(() => null);
+      if (upNext) await upNext.click();
+      await page.waitForTimeout(250);
+      await selectFirstTicket(page);
+      break;
+    }
+    case 5: {
+      // HS-8688 — Batch operations demo. The whole point is the multi-select
+      // toolbar, so select 3 tickets via Cmd/Ctrl-click. Selectable rows are
+      // both list-view `.ticket-row[data-id]` and column-view
+      // `.column-card[data-id]` (the scenario uses column layout per the
+      // HS-8430 COLUMN_VIEW_SCENARIOS set in `src/demo.ts`).
+      const cards = await page.locator('.column-card[data-id], .ticket-row[data-id]:not(.trash-row)').all();
+      const targets = cards.slice(0, 3);
+      // Cmd on macOS / Ctrl elsewhere — Playwright's `'Meta'` works on
+      // Chromium across platforms because the click-handler in `app.tsx`
+      // treats Meta + Ctrl identically for additive selection.
+      for (const t of targets) {
+        await t.click({ modifiers: ['Meta'] });
+      }
+      await page.waitForTimeout(250);
+      break;
+    }
     case 8: {
       // Stats dashboard — sidebar widget click toggles dashboard mode.
       await page.click('#sidebar-dashboard-widget');
       await page.waitForSelector('#dashboard-container, .dashboard-section', { timeout: 5000 });
+      // HS-8688 — hover the Cumulative Flow chart so its tooltip popup
+      // renders. The hover handler lives in `addChartHover` in
+      // `src/client/dashboard.tsx` and listens to `mousemove` on the chart's
+      // `<svg>` directly, using `clientX`/`clientY` against the SVG's
+      // `getBoundingClientRect`. So a `page.mouse.move(x, y)` to an
+      // absolute viewport coord inside the SVG is enough; no special
+      // synthetic-event dispatch needed.
+      await page.waitForTimeout(800); // chart render settle
+      // Scoped to `.dashboard-chart-body svg` so we hit the chart's actual SVG,
+      // NOT the `INFO_ICON` SVG sitting in `.dashboard-chart-header > button`
+      // (the i-button next to the chart title). A bare `svg.first()` selector
+      // picked up the info icon — which IS still an SVG but isn't wired to
+      // `addChartHover`'s `mousemove` listener, so the popup never showed.
+      const cfdSvg = page.locator('.dashboard-chart-card', { hasText: 'Cumulative Flow' }).locator('.dashboard-chart-body svg');
+      const box = await cfdSvg.boundingBox();
+      if (box) {
+        // 70% across the time axis — late enough that the stacked bands have
+        // mass to show in the tooltip, far enough from the right edge that
+        // the tooltip popup itself doesn't clip out of the SVG.
+        await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.5);
+        // Tooltip is rendered synchronously on the same mousemove, but allow
+        // a frame for the DOM update to flush before the screenshot.
+        await page.waitForTimeout(150);
+      }
       break;
     }
     case 12: {
@@ -55,8 +161,24 @@ async function navigateForScenario(page: Page, id: number): Promise<void> {
       await page.waitForSelector('#terminal-dashboard-toggle', { state: 'visible', timeout: 10_000 });
       await page.click('#terminal-dashboard-toggle');
       await page.waitForSelector('.terminal-dashboard, .terminal-dashboard-section', { timeout: 5000 });
-      // Give the tile xterms a beat to render their canned PTY output.
-      await page.waitForTimeout(1500);
+      // HS-8688 — every tile starts at `state: 'not_spawned'` and renders the
+      // "Not yet started" play-glyph placeholder until its WebSocket-checkout
+      // triggers the lazy spawn and the PTY's output streams through. The §54
+      // `mountTileViaCheckout` connects synchronously on each tile mount, so
+      // a generous settle wait gets every visible tile attached + its bytes
+      // painted. We deliberately do NOT click cold placeholders as a "kick":
+      // the first click enters the §25 center-magnify state which then sits
+      // in front of the other tiles and eats subsequent clicks, leaving the
+      // rest cold AND the dashboard in a magnified-one-tile pose nobody wants
+      // in a marketing shot.
+      //
+      // HS-8689 — bumped from 5 s to 12 s to span one full iteration of the
+      // scenario-12 terminals' `while :; do clear-then-printf; sleep 10; done`
+      // re-emit loop. The HS-6799 first-attach scrollback clear wipes whatever
+      // bytes the eager-spawned PTY had written before WS attach; the next
+      // loop iteration (within ≤ 10 s) repaints the content. Waiting at least
+      // one loop interval guarantees the screenshot catches the repaint.
+      await page.waitForTimeout(12_000);
       break;
     }
     case 13: {
@@ -71,7 +193,11 @@ async function navigateForScenario(page: Page, id: number): Promise<void> {
       break;
     }
     default:
-      // No navigation; the seeder configured everything.
+      // HS-8688 — every "static" scenario (1, 6, 7, 9, 10, 11) at least
+      // benefits from a pre-selected ticket so its detail panel renders with
+      // content instead of the empty placeholder. The seeder already
+      // configured the right view; this just clicks the first card.
+      await selectFirstTicket(page);
       break;
   }
 }

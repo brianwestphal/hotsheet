@@ -21,6 +21,9 @@
  * `terminalCheckout.tsx::createEntry`, updated by the Settings toggle.
  */
 import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
+// HS-8688 — `isDemoMode()` was promoted out of this file into a shared module
+// so the skills banner + Claude-not-connected warning gates can use it too.
+import { isDemoMode } from './demoMode.js';
 
 let terminalWebglOptOut = false;
 
@@ -79,18 +82,10 @@ function isWebglForceDisabled(): boolean {
   return (window as unknown as { __HOTSHEET_DISABLE_WEBGL__?: boolean }).__HOTSHEET_DISABLE_WEBGL__ === true;
 }
 
-/**
- * HS-8612 — demo-mode force-DOM seam. The server stamps `window.__HOTSHEET_DEMO__`
- * in the page `<head>` when launched with `--demo:N` (see
- * `src/components/layout.tsx`), so this is a synchronous read available before
- * the first terminal mounts — same shape as `isWebglForceDisabled` above. Demo
- * mode must force the DOM renderer so domotion-svg can DOM-capture the live
- * `<span>`-per-cell tree, which a single WebGL `<canvas>` can't provide.
- */
-function isDemoMode(): boolean {
-  if (typeof window === 'undefined') return false;
-  return (window as unknown as { __HOTSHEET_DEMO__?: boolean }).__HOTSHEET_DEMO__ === true;
-}
+// HS-8612's local `isDemoMode()` was promoted to a shared `demoMode.ts` module
+// under HS-8688 so multiple gates (terminal renderer here, skills banner in
+// `clipboardUtil`, Claude-not-connected warning in `channelUI`) share one
+// source of truth. Imported at the top of this file.
 
 /**
  * HS-8488 — should a freshly-created terminal load the WebGL renderer addon?
