@@ -13,6 +13,10 @@ scheduled_tasks.lock
 test-results/
 .env
 
+# HAR captures from `npm run capture-demos` — large + regeneratable, kept
+# alongside the per-scenario PNG + SVG in `docs/` for local debugging only.
+*.har
+
 # Tauri / Rust
 src-tauri/target/
 src-tauri/binaries/

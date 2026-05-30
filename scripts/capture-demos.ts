@@ -261,8 +261,24 @@ async function captureScenario(scenario: Scenario): Promise<void> {
     console.log(`  server ready, launching browser...`);
 
     const browser = await chromium.launch();
+    const harPath = join(DOCS_DIR, `demo-${scenario.id}.har`);
     try {
-      const context = await browser.newContext({ viewport: { width: VIEWPORT.width, height: VIEWPORT.height } });
+      // HS-8688-follow-up — record every HTTP request + response (including
+      // WebSocket upgrades) into a HAR file alongside the PNG + SVG. Useful
+      // for debugging the demo replay (which long-polls fired, which API
+      // routes timed out, what the cost-by-project payload actually looked
+      // like). HAR files are written when the context closes, so the
+      // explicit `context.close()` in the finally block below is load-bearing
+      // — `browser.close()` alone would flush too, but being explicit avoids
+      // a race if the close path changes. `content: 'embed'` (the default)
+      // inlines response bodies as base64 so the HAR is replay-complete; OK
+      // for the demo data sizes we work with (~MB per scenario). HAR files
+      // are gitignored (see `.gitignore`) since they're large and easily
+      // regeneratable.
+      const context = await browser.newContext({
+        viewport: { width: VIEWPORT.width, height: VIEWPORT.height },
+        recordHar: { path: harPath, content: 'embed' },
+      });
       const page = await context.newPage();
 
       // HS-8367 — suppress the §50 upgrade-nudge overlay (otherwise it
@@ -303,6 +319,11 @@ async function captureScenario(scenario: Scenario): Promise<void> {
       const svgPath = join(DOCS_DIR, `demo-${scenario.id}.svg`);
       writeFileSync(svgPath, svg);
       console.log(`  ✓ SVG: ${svgPath} (${(svg.length / 1024).toFixed(1)} KB)`);
+      // Explicitly close the context first so the HAR is flushed to disk
+      // before `browser.close()` tears everything down — see comment on the
+      // newContext call above.
+      await context.close();
+      console.log(`  ✓ HAR: ${harPath}`);
     } finally {
       await browser.close();
     }
