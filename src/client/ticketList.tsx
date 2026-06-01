@@ -790,9 +790,9 @@ async function loadCustomViewTickets(viewId: string): Promise<void> {
 
 /**
  * HS-8681 / HS-7756 — refresh the per-bucket search-include counts after the
- * main render. The user sees their tickets immediately and the "Include {N}
- * ..." rows pop in a moment later if applicable; an empty search clears the
- * counts inline so the rows disappear synchronously.
+ * main render. The user sees their tickets immediately and the
+ * `Include {N} …` rows pop in a moment later if applicable; an empty search
+ * clears the counts inline so the rows disappear synchronously.
  */
 function refreshSearchExtraCounts(): void {
   if (state.search === '') {

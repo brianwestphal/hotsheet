@@ -201,8 +201,8 @@ export function tooltipForStatus(status: GitStatus, nowMs: number = Date.now()):
   return local;
 }
 
-/** HS-8677 — kept for `gitStatusChip.test.ts` and the one `nowMs -
- *  status.lastFetchedAt` callsite below; delegates to the shared
+/** HS-8677 — kept for `gitStatusChip.test.ts` and the one
+ *  `nowMs - status.lastFetchedAt` callsite below; delegates to the shared
  *  `timeFormat.ts::formatRelativeTime` (which takes an absolute timestamp). */
 export function formatRelativeTime(deltaMs: number): string {
   return formatRelativeTimeFromTs(Date.now() - deltaMs);
