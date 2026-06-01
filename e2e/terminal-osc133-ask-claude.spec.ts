@@ -140,7 +140,10 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
     });
     // Stub the secondary endpoints the trigger flow hits so they don't 404.
     await page.route(/\/api\/ensure-skills/, async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+      // EnsureSkillsResultSchema requires `{ updated: boolean }` (the server
+      // returns consumeSkillsCreatedFlag()); a stale `{ok:true}` body fails the
+      // typed-API response validation and trips the strict-error gate.
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{"updated":false}' });
     });
 
     await configureFixtureTerminal(request, 'osc133-fail-alive', {
