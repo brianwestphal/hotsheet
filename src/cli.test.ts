@@ -23,10 +23,25 @@ import { computeIsEntryPoint } from './cli.js';
  * doesn't mistake a skip for a flake.
  */
 function probeCanSpawnTsxChild(): boolean {
+  // `tsx --help` is NOT a sufficient probe: tsx prints its help text and
+  // exits WITHOUT ever creating the IPC server, so it succeeds even in a
+  // partial sandbox that denies the unix-socket `listen` (EPERM on
+  // `/tmp/.../tsx-501/<n>.pipe`) that loading an actual `.ts` file
+  // requires. That false positive let the spawn-bearing describe blocks
+  // run (and fail with empty output + exit 1) under exactly the sandbox
+  // they were meant to skip. Execute a throwaway `.ts` file instead —
+  // that exercises the same child-spawn + IPC machinery the real tests
+  // below depend on, so the skip fires whenever the real spawns would EPERM.
+  const probeFile = join(tmpdir(), `hotsheet-tsx-probe-${process.pid}.ts`);
   try {
-    execFileSync('npx', ['tsx', '--help'], { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
-    return true;
-  } catch { return false; }
+    writeFileSync(probeFile, 'process.stdout.write("tsx-probe-ok");\n');
+    const out = execFileSync('npx', ['tsx', probeFile], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
+    return out.includes('tsx-probe-ok');
+  } catch {
+    return false;
+  } finally {
+    try { rmSync(probeFile, { force: true }); } catch { /* ignore */ }
+  }
 }
 const canSpawnTsxChild = probeCanSpawnTsxChild();
 

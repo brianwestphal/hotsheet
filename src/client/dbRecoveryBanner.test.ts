@@ -31,9 +31,12 @@ describe('formatRecoveryBannerLabel (HS-7899)', () => {
     expect(out).toMatch(/Restore from a backup/i);
   });
 
-  it('uses "moments ago" for sub-minute recovery', () => {
+  it('uses "just now" for sub-minute recovery', () => {
+    // HS-8677: the shared timeFormat.ts::formatRelativeTime renders the
+    // sub-minute bucket as "just now" (the old per-module formatter said
+    // "moments ago"); this pins the new shared wording.
     const fresh = marker({ recoveredAt: new Date(Date.now() - 5_000).toISOString() });
-    expect(formatRecoveryBannerLabel(fresh)).toMatch(/moments ago/);
+    expect(formatRecoveryBannerLabel(fresh)).toMatch(/just now/);
   });
 
   it('uses singular "1 minute ago" for exactly one minute', () => {
