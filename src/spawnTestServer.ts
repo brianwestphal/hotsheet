@@ -9,7 +9,7 @@
  * `dist/cli.js` bundle (tsup only bundles the CLI + client entry points).
  */
 import { type ChildProcess, execFileSync, spawn } from 'child_process';
-import { mkdtempSync, readFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -17,16 +17,28 @@ const REPO_ROOT = join(import.meta.dirname, '..');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 /**
- * HS-8202 — restricted sandboxes block tsx's IPC mkfifo, so spawning a tsx
- * child EPERMs and the readiness probe times out (30 s of red per case).
- * Probe once and let suites `describe.skipIf(!canSpawnTsxChild)` cleanly.
+ * HS-8202 — restricted sandboxes block tsx's IPC unix-socket `listen`
+ * (EPERM on `/tmp/.../tsx-501/<n>.pipe`), so spawning a tsx child EPERMs and
+ * the readiness probe times out (30 s of red per case). Probe once and let
+ * suites `describe.skipIf(!canSpawnTsxChild)` cleanly.
+ *
+ * The probe must EXECUTE a real `.ts` file, not run `npx tsx --help`: tsx
+ * prints its help text and exits WITHOUT ever creating the IPC server, so a
+ * `--help` probe succeeds in exactly the partial sandbox that denies the
+ * socket — a false positive that lets the guarded suites run and fail with
+ * empty output / exit 130 / 15 s hangs. Running a throwaway file exercises
+ * the same child-spawn + IPC machinery the real `tsx src/cli.ts` spawns use.
  */
 export function probeCanSpawnTsxChild(): boolean {
+  const probeFile = join(tmpdir(), `hotsheet-tsx-probe-${process.pid}.ts`);
   try {
-    execFileSync('npx', ['tsx', '--help'], { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
-    return true;
+    writeFileSync(probeFile, 'process.stdout.write("tsx-probe-ok");\n');
+    const out = execFileSync('npx', ['tsx', probeFile], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
+    return out.includes('tsx-probe-ok');
   } catch {
     return false;
+  } finally {
+    try { rmSync(probeFile, { force: true }); } catch { /* ignore */ }
   }
 }
 

@@ -4,46 +4,18 @@
  * Tests the arg parsing logic directly (unit) and key server behaviors
  * via process spawning (integration).
  */
-import { execFileSync } from 'child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { computeIsEntryPoint } from './cli.js';
-
-/**
- * HS-8202 — precondition probe for tsx-child-spawn capability. Restricted
- * sandboxes (e.g. Claude Code on macOS) deny the `mkfifo` syscall tsx uses
- * for its IPC pipe at `/tmp/claude-501/tsx-501/<random>.pipe`, so every
- * `npx tsx src/cli.ts` invocation in this file would EPERM and time out
- * (4 × 5 s = 20 s of red per full run). Probe once at module load with a
- * short-lived `tsx --help` and skip the spawn-bearing describe blocks
- * cleanly when it fails. Skip messages cite the env requirement so a dev
- * doesn't mistake a skip for a flake.
- */
-function probeCanSpawnTsxChild(): boolean {
-  // `tsx --help` is NOT a sufficient probe: tsx prints its help text and
-  // exits WITHOUT ever creating the IPC server, so it succeeds even in a
-  // partial sandbox that denies the unix-socket `listen` (EPERM on
-  // `/tmp/.../tsx-501/<n>.pipe`) that loading an actual `.ts` file
-  // requires. That false positive let the spawn-bearing describe blocks
-  // run (and fail with empty output + exit 1) under exactly the sandbox
-  // they were meant to skip. Execute a throwaway `.ts` file instead —
-  // that exercises the same child-spawn + IPC machinery the real tests
-  // below depend on, so the skip fires whenever the real spawns would EPERM.
-  const probeFile = join(tmpdir(), `hotsheet-tsx-probe-${process.pid}.ts`);
-  try {
-    writeFileSync(probeFile, 'process.stdout.write("tsx-probe-ok");\n');
-    const out = execFileSync('npx', ['tsx', probeFile], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
-    return out.includes('tsx-probe-ok');
-  } catch {
-    return false;
-  } finally {
-    try { rmSync(probeFile, { force: true }); } catch { /* ignore */ }
-  }
-}
-const canSpawnTsxChild = probeCanSpawnTsxChild();
+// HS-8202 — the tsx-child-spawn capability probe lives in spawnTestServer.ts
+// (shared with the *.e2e.test.ts suites) so all spawn-bearing tests agree on
+// what counts as "tsx can really spawn here". The probe executes a throwaway
+// `.ts` file rather than `tsx --help`, which is the only way to catch the
+// partial sandbox that denies tsx's IPC unix-socket `listen`.
+import { canSpawnTsxChild } from './spawnTestServer.js';
 
 // We can't import parseArgs directly (it's not exported), so test via
 // spawning the CLI process and checking its behavior.
