@@ -1,0 +1,57 @@
+name: CI
+
+# Push / PR gate (HS — e2e-drift catch). Until this workflow existed, lint +
+# unit + e2e ran ONLY on `v*-rc.*` / `v*-beta.*` release tags via
+# release-candidate.yml — so regressions (notably stale e2e mocks drifting from
+# the typed-API zod response schemas) accumulated undetected between releases
+# and only surfaced when a release was already in flight. This runs the same
+# checks on every push to `main` and every PR, using the credential-free
+# `:fast` script variants (per CLAUDE.md): they skip the live-GitHub-integration
+# / plugin-credential tests that need secrets CI doesn't have, but still run the
+# full unit suite and the full non-credential e2e suite — which is where the
+# typed-API/mock drift shows up.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel a superseded run when new commits land on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm run build:client
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:e2e:fast

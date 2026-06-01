@@ -48,7 +48,7 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'a', name: 'Alpha', command: 'echo a', lazy: true, bellPending: false, state: 'not_spawned' },
           ],
@@ -103,7 +103,7 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'a', name: 'Alpha', command: 'echo a', lazy: true, bellPending: false, state: 'not_spawned' },
             { id: 'b', name: 'Beta',  command: 'echo b', lazy: true, bellPending: false, state: 'not_spawned' },
@@ -157,7 +157,7 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'x', name: 'X', command: 'echo x', lazy: true, bellPending: false, state: 'not_spawned' },
           ],
@@ -199,7 +199,7 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ configured: [], dynamic: [] }),
+        body: JSON.stringify({ home: '/home/user', configured: [], dynamic: [] }),
       });
     });
 

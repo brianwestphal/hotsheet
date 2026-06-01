@@ -44,7 +44,7 @@ test.describe('Cross-project bell indicator', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           bells: {
-            [bellSecret]: { anyTerminalPending: true, terminalIds: ['t1'] },
+            [bellSecret]: { anyTerminalPending: true, terminalIds: ['t1'], notifications: {} },
           },
           v: 1,
         }),
@@ -111,7 +111,7 @@ test.describe('Cross-project bell indicator', () => {
       const secrets = await page.evaluate(() => (window as unknown as { __bellSecrets: { a: string; b: string } }).__bellSecrets);
       const body = phase === 'cleared'
         ? { bells: {}, v: 3 }
-        : { bells: { [secrets.a]: { anyTerminalPending: true, terminalIds: ['t1'] } }, v: phase === 'pendingA' ? 1 : 2 };
+        : { bells: { [secrets.a]: { anyTerminalPending: true, terminalIds: ['t1'], notifications: {} } }, v: phase === 'pendingA' ? 1 : 2 };
       await route.fulfill({
         status: 200, contentType: 'application/json', body: JSON.stringify(body),
       });
@@ -217,6 +217,7 @@ test.describe('Cross-project bell indicator', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
+          home: '/home/user',
           configured: [{ id: 'default', name: 'Default', command: '/bin/echo hi', lazy: true, bellPending: true }],
           dynamic: [],
         }),

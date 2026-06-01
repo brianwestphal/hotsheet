@@ -134,7 +134,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' },
             { id: 'cold', name: 'Cold', command: 'echo', lazy: true, bellPending: false, state: 'not_spawned' },
@@ -164,7 +164,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -186,7 +186,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -228,7 +228,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -256,7 +256,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -278,7 +278,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -304,7 +304,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -333,7 +333,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -375,7 +375,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ configured, dynamic: [] }),
+        body: JSON.stringify({ home: '/home/user', configured, dynamic: [] }),
       });
     });
     await page.setViewportSize({ width: 800, height: 600 });
@@ -425,7 +425,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -441,7 +441,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          bells: pending ? { [secret]: { anyTerminalPending: true, terminalIds: ['live'] } } : {},
+          bells: pending ? { [secret]: { anyTerminalPending: true, terminalIds: ['live'], notifications: {} } } : {},
           v: pending ? 1 : 2,
         }),
       });
@@ -477,7 +477,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'cold', name: 'Cold', command: 'echo', lazy: true, bellPending: false, state: 'not_spawned', exitCode: null },
           ],
@@ -511,7 +511,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'dead', name: 'Dead', command: 'echo', lazy: false, bellPending: false, state: 'exited', exitCode: 137 },
           ],
@@ -540,7 +540,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'cold', name: 'Cold', command: 'echo', lazy: true, bellPending: false, state: 'not_spawned', exitCode: null },
           ],
@@ -569,7 +569,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -626,7 +626,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -692,7 +692,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -740,7 +740,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'live1', name: 'A', command: 'echo', lazy: false, bellPending: false, state: 'alive' },
             { id: 'live2', name: 'B', command: 'echo', lazy: false, bellPending: false, state: 'alive' },
@@ -793,7 +793,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),
@@ -838,7 +838,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'live1', name: 'A', command: 'echo', lazy: false, bellPending: false, state: 'alive' },
             { id: 'live2', name: 'B', command: 'echo', lazy: false, bellPending: false, state: 'alive' },
@@ -887,7 +887,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [
             { id: 'live1', name: 'A', command: 'echo', lazy: false, bellPending: false, state: 'alive' },
           ],
@@ -941,7 +941,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
+        body: JSON.stringify({ home: '/home/user',
           configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
           dynamic: [],
         }),

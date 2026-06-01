@@ -203,8 +203,25 @@ test.describe('Detail panel interactions', () => {
   // channel feature is enabled, hidden on FEEDBACK NEEDED notes (those are
   // Claude → user, not user → Claude), and surfaces a warning when Claude
   // isn't connected at click time.
-  test('megaphone button hidden when channel feature is disabled (HS-7601)', async ({ page, request }) => {
-    // Default test config has channel disabled — confirm.
+  test('megaphone button hidden when channel feature is disabled (HS-7601)', async ({ page }) => {
+    // HS-8492 flipped the new-install `channelEnabled` default to TRUE, so the
+    // channel is no longer disabled-by-default in a fresh test project. Two
+    // boot paths set the client's channel-enabled state (which gates the
+    // megaphone): `initChannel` from /api/channel/status, and
+    // `bindExperimentalSettings` from /api/global-config. Stub BOTH as disabled
+    // and reload so the megaphone's `isChannelEnabled()` gate reads false.
+    await page.route('**/api/channel/status*', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ enabled: false, alive: false, port: null, done: false, versionMismatch: false, serverName: 'hotsheet-channel-test', aliveCount: 0 }),
+      });
+    });
+    await page.route('**/api/global-config*', async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ channelEnabled: false }) });
+    });
+    await page.goto('/');
     await createTicket(page, 'Megaphone disabled ticket');
     await openDetail(page, 'Megaphone disabled ticket');
     // Add a note to render an entry.
@@ -213,10 +230,8 @@ test.describe('Detail panel interactions', () => {
     await noteEntry.locator('textarea.note-edit-area').fill('Hello world');
     await page.locator('#detail-body').click({ position: { x: 5, y: 5 } });
     await expect(noteEntry.locator('.note-text')).toContainText('Hello world');
-    // Megaphone should NOT be present (channel disabled by default in tests).
+    // Megaphone should NOT be present (channel explicitly disabled above).
     await expect(noteEntry.locator('.note-megaphone-btn')).toHaveCount(0);
-    // Cleanup so no test pollution
-    void request;
   });
 
 // HS-7600: a second "Add note" pill at the bottom of the notes list so the

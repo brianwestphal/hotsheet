@@ -42,8 +42,13 @@ async function spawn(args: string[], opts?: { timeout?: number; env?: Record<str
         exitCode: error ? (error as { status?: number }).status ?? 1 : 0,
       });
     });
-    // For server-starting commands, kill after a short delay
-    if (!args.includes('--help') && !args.includes('--list') && !args.includes('--close') && !args.includes('--version')) {
+    // For server-starting commands, kill after a short delay. Help/list/close/
+    // version all exit on their own — the 2s SIGTERM must NOT fire for them, or
+    // a slow CI cold-start (npx + tsx warm-up) gets killed mid-help and the test
+    // sees a non-zero exit. `-h` is an alias for `--help` and was missing from
+    // this list, so the `-h` test flaked under CI load (exit 1 vs 0) — HS-8202.
+    const selfExiting = ['--help', '-h', '--list', '--close', '--version'];
+    if (!args.some((a) => selfExiting.includes(a))) {
       setTimeout(() => { try { proc.kill('SIGTERM'); } catch { /* ignore */ } }, 2000);
     }
   });

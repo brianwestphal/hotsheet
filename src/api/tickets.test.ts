@@ -111,7 +111,7 @@ describe('ticket callers route to the right endpoint (HS-8629)', () => {
   });
 
   it('putTicketNotesBulk → PUT /tickets/:id/notes-bulk', async () => {
-    stub([]);
+    stub({ ok: true });
     await putTicketNotesBulk(7, '[]');
     expect(lastCall).toEqual({ path: '/tickets/7/notes-bulk', opts: { method: 'PUT', body: { notes: '[]' } } });
   });

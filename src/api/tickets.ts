@@ -139,10 +139,15 @@ export async function deleteTicket(id: number, opts: Pick<ApiCallOpts, 'secret'>
   return apiCall(OkResponseSchema, `/tickets/${id}`, { method: 'DELETE', secret: opts.secret });
 }
 
-/** PUT `/tickets/:id/notes-bulk` → replace the whole notes array (JSON string). */
-export async function putTicketNotesBulk(id: number, notes: string): Promise<z.infer<typeof NotesArraySchema>> {
+/** PUT `/tickets/:id/notes-bulk` → replace the whole notes array (JSON string).
+ *  The server responds `{ ok: true }` (not the updated notes array — unlike the
+ *  single-note PATCH/DELETE siblings); no caller consumes a return value here.
+ *  HS-8629's migration mistakenly validated the response against
+ *  `NotesArraySchema`, which threw `response shape mismatch` at runtime and
+ *  tripped the strict-error e2e gate (detail.spec). */
+export async function putTicketNotesBulk(id: number, notes: string): Promise<{ ok: true }> {
   const body: NotesBulkReq = { notes };
-  return apiCall(NotesArraySchema, `/tickets/${id}/notes-bulk`, { method: 'PUT', body });
+  return apiCall(OkResponseSchema, `/tickets/${id}/notes-bulk`, { method: 'PUT', body });
 }
 
 /** PATCH `/tickets/:id/notes/:noteId` → edit a single note's text. */

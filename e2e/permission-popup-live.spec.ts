@@ -69,7 +69,7 @@ test.describe('Permission popup — live polling lifecycle (HS-8207)', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ enabled: true, alive: true, port: 9999, done: false, versionMismatch: false }),
+        body: JSON.stringify({ enabled: true, alive: true, port: 9999, done: false, versionMismatch: false, serverName: 'hotsheet-channel-test', aliveCount: 1 }),
       });
     });
 
@@ -262,14 +262,19 @@ test.describe('Permission popup — live-terminal-checkout body (HS-8207)', () =
     // checkout body slot then tries to open a WebSocket to that fake
     // secret, which the server correctly rejects with 403. Expected.
     errorCapture.allowErrors([/ws:\/\/.*terminal\/ws.*fake-project-secret/]);
-    // A long Bash command with an UNTERMINATED `command` value (no closing
-    // `"` or `}`) — `formatInputPreview`'s forgiving extractor returns the
-    // recovered value with `…` appended, tripping `flatTruncated` in
+    // A long, deliberately-truncated WebFetch `url` (no closing `"` or `}`) —
+    // `formatInputPreview`'s forgiving extractor returns the recovered value
+    // with `…` appended, tripping `flatTruncated` in
     // `permissionOverlay.tsx::showPermissionPopupBody`. That selects the
     // §54 live-terminal checkout body slot instead of the flat-JSON pre.
-    const truncatedCmd = '{"command":"' + (
-      "find / -name '*.log' -mtime -1 -size +1M "
-      + "| xargs -I {} sh -c 'echo === {} ==='; "
+    // HS-8582 — must be a NON-Bash tool: `shouldUseLiveCheckout` now
+    // short-circuits to false for Bash (a Bash permission's content is the
+    // command itself, never the live terminal), so a truncated Bash preview
+    // falls to the flat `<pre>` and never mounts the live-terminal slot. The
+    // live-checkout machinery is tool-agnostic; WebFetch's truncated `url` is
+    // the same flat-truncated trigger the HS-8582 unit tests were repointed to.
+    const truncatedCmd = '{"url":"' + (
+      'https://example.com/a/very/long/path/segment/that/keeps/going/and/going/'
     ).repeat(20);
 
     await page.addInitScript((input) => {
@@ -277,7 +282,7 @@ test.describe('Permission popup — live-terminal-checkout body (HS-8207)', () =
       w.__HS8207_phase = 'pending';
       w.__HS8207_perm = {
         request_id: 'req-live-truncated',
-        tool_name: 'Bash',
+        tool_name: 'WebFetch',
         description: 'Run a long pipeline',
         input_preview: input,
       };
@@ -290,7 +295,7 @@ test.describe('Permission popup — live-terminal-checkout body (HS-8207)', () =
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ enabled: true, alive: true, port: 9999, done: false, versionMismatch: false }),
+        body: JSON.stringify({ enabled: true, alive: true, port: 9999, done: false, versionMismatch: false, serverName: 'hotsheet-channel-test', aliveCount: 1 }),
       });
     });
     await page.route('**/api/projects/permissions*', async (route) => {

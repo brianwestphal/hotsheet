@@ -55,9 +55,9 @@ test.describe('Project tab drag-to-reorder (HS-8431)', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { name: 'Alpha', dataDir: '/tmp/hs-8431-alpha', secret: realSecret },
-          { name: 'Beta',  dataDir: '/tmp/hs-8431-beta',  secret: 'hs-8431-beta-secret' },
-          { name: 'Gamma', dataDir: '/tmp/hs-8431-gamma', secret: 'hs-8431-gamma-secret' },
+          { name: 'Alpha', dataDir: '/tmp/hs-8431-alpha', secret: realSecret, ticketCount: 0 },
+          { name: 'Beta',  dataDir: '/tmp/hs-8431-beta',  secret: 'hs-8431-beta-secret', ticketCount: 0 },
+          { name: 'Gamma', dataDir: '/tmp/hs-8431-gamma', secret: 'hs-8431-gamma-secret', ticketCount: 0 },
         ]),
       });
     });
@@ -139,9 +139,9 @@ test.describe('Project tab drag-to-reorder (HS-8431)', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { name: 'Alpha', dataDir: '/tmp/hs-8431-alpha', secret: realSecret },
-          { name: 'Beta',  dataDir: '/tmp/hs-8431-beta',  secret: 'hs-8431-beta-secret' },
-          { name: 'Gamma', dataDir: '/tmp/hs-8431-gamma', secret: 'hs-8431-gamma-secret' },
+          { name: 'Alpha', dataDir: '/tmp/hs-8431-alpha', secret: realSecret, ticketCount: 0 },
+          { name: 'Beta',  dataDir: '/tmp/hs-8431-beta',  secret: 'hs-8431-beta-secret', ticketCount: 0 },
+          { name: 'Gamma', dataDir: '/tmp/hs-8431-gamma', secret: 'hs-8431-gamma-secret', ticketCount: 0 },
         ]),
       });
     });
@@ -208,9 +208,9 @@ test.describe('Project tab drag-to-reorder (HS-8431)', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { name: 'Alpha', dataDir: '/tmp/hs-8431-alpha', secret: realSecret },
-          { name: 'Beta',  dataDir: '/tmp/hs-8431-beta',  secret: 'hs-8431-beta-secret' },
-          { name: 'Gamma', dataDir: '/tmp/hs-8431-gamma', secret: 'hs-8431-gamma-secret' },
+          { name: 'Alpha', dataDir: '/tmp/hs-8431-alpha', secret: realSecret, ticketCount: 0 },
+          { name: 'Beta',  dataDir: '/tmp/hs-8431-beta',  secret: 'hs-8431-beta-secret', ticketCount: 0 },
+          { name: 'Gamma', dataDir: '/tmp/hs-8431-gamma', secret: 'hs-8431-gamma-secret', ticketCount: 0 },
         ]),
       });
     });
@@ -290,15 +290,15 @@ test.describe('Project tab drag-to-reorder (HS-8431)', () => {
     // Build a 9-project list. P1 is the real backend so auth'd calls
     // (poll, settings, etc.) keep working; P2..P9 are mock-only secrets.
     const mockProjects = [
-      { name: 'P1', dataDir: '/tmp/hs-8431-p1', secret: realSecret },
-      { name: 'P2', dataDir: '/tmp/hs-8431-p2', secret: 'hs-8431-p2-secret' },
-      { name: 'P3', dataDir: '/tmp/hs-8431-p3', secret: 'hs-8431-p3-secret' },
-      { name: 'P4', dataDir: '/tmp/hs-8431-p4', secret: 'hs-8431-p4-secret' },
-      { name: 'P5', dataDir: '/tmp/hs-8431-p5', secret: 'hs-8431-p5-secret' },
-      { name: 'P6', dataDir: '/tmp/hs-8431-p6', secret: 'hs-8431-p6-secret' },
-      { name: 'P7', dataDir: '/tmp/hs-8431-p7', secret: 'hs-8431-p7-secret' },
-      { name: 'P8', dataDir: '/tmp/hs-8431-p8', secret: 'hs-8431-p8-secret' },
-      { name: 'P9', dataDir: '/tmp/hs-8431-p9', secret: 'hs-8431-p9-secret' },
+      { name: 'P1', dataDir: '/tmp/hs-8431-p1', secret: realSecret, ticketCount: 0 },
+      { name: 'P2', dataDir: '/tmp/hs-8431-p2', secret: 'hs-8431-p2-secret', ticketCount: 0 },
+      { name: 'P3', dataDir: '/tmp/hs-8431-p3', secret: 'hs-8431-p3-secret', ticketCount: 0 },
+      { name: 'P4', dataDir: '/tmp/hs-8431-p4', secret: 'hs-8431-p4-secret', ticketCount: 0 },
+      { name: 'P5', dataDir: '/tmp/hs-8431-p5', secret: 'hs-8431-p5-secret', ticketCount: 0 },
+      { name: 'P6', dataDir: '/tmp/hs-8431-p6', secret: 'hs-8431-p6-secret', ticketCount: 0 },
+      { name: 'P7', dataDir: '/tmp/hs-8431-p7', secret: 'hs-8431-p7-secret', ticketCount: 0 },
+      { name: 'P8', dataDir: '/tmp/hs-8431-p8', secret: 'hs-8431-p8-secret', ticketCount: 0 },
+      { name: 'P9', dataDir: '/tmp/hs-8431-p9', secret: 'hs-8431-p9-secret', ticketCount: 0 },
     ];
 
     await page.route(/\/api\/projects(\?.*)?$/, async route => {
@@ -455,9 +455,9 @@ test.describe('Project tab drag-to-reorder (HS-8431)', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { name: 'Alpha', dataDir: '/tmp/hs-8432-alpha', secret: realSecret },
-          { name: 'Beta',  dataDir: '/tmp/hs-8432-beta',  secret: 'hs-8432-beta-secret' },
-          { name: 'Gamma', dataDir: '/tmp/hs-8432-gamma', secret: 'hs-8432-gamma-secret' },
+          { name: 'Alpha', dataDir: '/tmp/hs-8432-alpha', secret: realSecret, ticketCount: 0 },
+          { name: 'Beta',  dataDir: '/tmp/hs-8432-beta',  secret: 'hs-8432-beta-secret', ticketCount: 0 },
+          { name: 'Gamma', dataDir: '/tmp/hs-8432-gamma', secret: 'hs-8432-gamma-secret', ticketCount: 0 },
         ]),
       });
     });
