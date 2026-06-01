@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { isInsideHotSheetTerminal } from '../test-helpers.js';
 import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, isRecoverableOpenError, readRecoveryMarker, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
 
@@ -227,7 +228,10 @@ describe('isRecoverableOpenError (HS-8426)', () => {
  *  `gracefulShutdown` (`src/lifecycle.ts`). It must close every cached
  *  PGLite instance — leaving even one open means the process exit will
  *  leave a stale `postmaster.pid` for HS-7888 to clean up next launch. */
-describe('closeAllDatabases (HS-7931)', () => {
+// HS-8202 — skip inside a Hot Sheet terminal: opening THREE real PGLite (WASM)
+// clusters under a timeout reliably blows past it when co-resident with a live
+// Hot Sheet competing for CPU/memory. CI (no HOTSHEET_IN_TERMINAL) runs it.
+describe.skipIf(isInsideHotSheetTerminal())('closeAllDatabases (HS-7931)', () => {
   // HS-8105: this test creates THREE real PGLite instances (dbA, dbB, plus
   // the post-close re-open). Each `initdb` is a few-hundred-ms operation
   // when run alone, but vitest's fork-pool runs ~30 sibling test files

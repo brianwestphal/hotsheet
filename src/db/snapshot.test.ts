@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeFileSettings } from '../file-settings.js';
-import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
+import { cleanupTestDb, isInsideHotSheetTerminal, setupTestDb } from '../test-helpers.js';
 import { getDbForDir } from './connection.js';
 import { createPglite } from './pglite.js';
 import {
@@ -144,7 +144,10 @@ describe('writeSnapshotNow', () => {
   });
 });
 
-describe('scheduleSnapshot (debounce trigger)', () => {
+// HS-8202 — skip inside a Hot Sheet terminal: the debounced CHECKPOINT + gzip
+// dump must land inside a tight `vi.waitFor` window, which PGLite contention
+// with a live co-resident Hot Sheet routinely misses. CI still runs it.
+describe.skipIf(isInsideHotSheetTerminal())('scheduleSnapshot (debounce trigger)', () => {
   it('fires a debounced snapshot after the configured interval', async () => {
     writeFileSettings(dataDir, { db_snapshot_debounce_ms: 10 });
     await seedTickets(1);

@@ -24,7 +24,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  canSpawnTsxChild,
+  canRunServerSpawnTests,
   patchJson,
   postJson,
   readSecret,
@@ -139,7 +139,7 @@ async function killAndWait(child: SpawnedHotSheet): Promise<void> {
   await waitForExit(child.proc, 10_000);
 }
 
-describe.skipIf(!canSpawnTsxChild)('snapshot crash-recovery e2e (HS-8588) (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
+describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) (skipped: no tsx child-spawn here, or running inside a Hot Sheet terminal; HS-8202)', () => {
   it('SIGKILL + corrupt cluster → auto-restores from snapshot; loss is bounded to post-snapshot writes', async () => {
     const child = spawnTracked();
     await child.ready;

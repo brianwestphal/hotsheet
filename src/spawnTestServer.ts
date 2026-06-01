@@ -44,6 +44,19 @@ export function probeCanSpawnTsxChild(): boolean {
 
 export const canSpawnTsxChild = probeCanSpawnTsxChild();
 
+/**
+ * The gate the spawn-bearing e2e suites actually use. Requires BOTH that tsx
+ * can really spawn a child here (`canSpawnTsxChild`) AND that we are NOT running
+ * inside a Hot Sheet-spawned terminal (`HOTSHEET_IN_TERMINAL=1`). The latter is
+ * the canonical `isInsideHotSheetTerminal()` from `test-helpers.ts` — inlined
+ * here (rather than imported) to keep this harness free of the DB-connection
+ * import chain that `test-helpers.ts` pulls in. See that helper's doc comment
+ * for why server-spawn + signal tests are unreliable co-resident with a live
+ * Hot Sheet (tsx-through-a-TTY exits 130 instead of running the clean-exit
+ * handler). CI doesn't set the var, so it still runs these suites.
+ */
+export const canRunServerSpawnTests = canSpawnTsxChild && process.env.HOTSHEET_IN_TERMINAL !== '1';
+
 export interface SpawnedHotSheet {
   proc: ChildProcess;
   port: number;

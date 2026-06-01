@@ -20,7 +20,7 @@ import { rmSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  canSpawnTsxChild,
+  canRunServerSpawnTests,
   postJson,
   readSecret,
   type SpawnedHotSheet,
@@ -55,7 +55,7 @@ afterEach(() => {
   activeChildren = [];
 });
 
-describe.skipIf(!canSpawnTsxChild)('graceful shutdown e2e (HS-7934) (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
+describe.skipIf(!canRunServerSpawnTests)('graceful shutdown e2e (HS-7934) (skipped: no tsx child-spawn here, or running inside a Hot Sheet terminal; HS-8202)', () => {
   it('round-trip: writes rows, POST /api/shutdown, child exits 0, rows survive into the next spawn', async () => {
     const child = spawnTracked();
     await child.ready;

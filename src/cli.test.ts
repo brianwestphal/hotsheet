@@ -10,12 +10,13 @@ import { join } from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { computeIsEntryPoint } from './cli.js';
-// HS-8202 — the tsx-child-spawn capability probe lives in spawnTestServer.ts
-// (shared with the *.e2e.test.ts suites) so all spawn-bearing tests agree on
-// what counts as "tsx can really spawn here". The probe executes a throwaway
-// `.ts` file rather than `tsx --help`, which is the only way to catch the
-// partial sandbox that denies tsx's IPC unix-socket `listen`.
-import { canSpawnTsxChild } from './spawnTestServer.js';
+// HS-8202 — the spawn-test gate lives in spawnTestServer.ts (shared with the
+// *.e2e.test.ts suites) so all spawn-bearing tests agree on when it's safe to
+// spawn a real CLI child. It is true only when tsx can really spawn a child
+// here (the probe executes a throwaway `.ts` file rather than `tsx --help`,
+// the only way to catch the partial sandbox that denies tsx's IPC unix-socket
+// `listen`) AND we're not running inside a Hot Sheet terminal.
+import { canRunServerSpawnTests } from './spawnTestServer.js';
 
 // We can't import parseArgs directly (it's not exported), so test via
 // spawning the CLI process and checking its behavior.
@@ -55,7 +56,7 @@ async function spawn(args: string[], opts?: { timeout?: number; env?: Record<str
 // loader warm-up). Two retries = three total attempts, which is empirically
 // enough to absorb the tail of the spawn-latency distribution without
 // hiding a genuine regression (a real break would fail all three).
-describe.skipIf(!canSpawnTsxChild)('CLI — help and version (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
+describe.skipIf(!canRunServerSpawnTests)('CLI — help and version (skipped: no tsx child-spawn here, or running inside a Hot Sheet terminal; HS-8202)', () => {
   it('--help prints usage and exits 0', { retry: 2 }, async () => {
     const { stdout, exitCode } = await spawn(['--help']);
     expect(exitCode).toBe(0);
@@ -81,7 +82,7 @@ describe.skipIf(!canSpawnTsxChild)('CLI — help and version (skipped: tsx subpr
   });
 });
 
-describe.skipIf(!canSpawnTsxChild)('CLI — server startup with custom args (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
+describe.skipIf(!canRunServerSpawnTests)('CLI — server startup with custom args (skipped: no tsx child-spawn here, or running inside a Hot Sheet terminal; HS-8202)', () => {
   const tempDir = join(tmpdir(), `hs-cli-test-${Date.now()}`);
   const tempHome = join(tmpdir(), `hs-cli-home-${Date.now()}`);
   const dataDir = join(tempDir, '.hotsheet');
@@ -131,7 +132,7 @@ describe.skipIf(!canSpawnTsxChild)('CLI — server startup with custom args (ski
   });
 });
 
-describe.skipIf(!canSpawnTsxChild)('CLI — instance file and lock cleanup (skipped: tsx subprocess EPERM in this sandbox; HS-8202)', () => {
+describe.skipIf(!canRunServerSpawnTests)('CLI — instance file and lock cleanup (skipped: no tsx child-spawn here, or running inside a Hot Sheet terminal; HS-8202)', () => {
   it('stale instance file does not prevent startup', async () => {
     const tempDir = join(tmpdir(), `hs-stale-${Date.now()}`);
     const dataDir = join(tempDir, '.hotsheet');
