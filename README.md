@@ -153,7 +153,7 @@ The loop stays tight because the AI always knows what to work on next — and yo
 - **Auto-cleanup** — verified tickets auto-archive after a configurable number of days; trashed tickets auto-delete
 - **Portable settings** — all project settings stored in `settings.json` for easy copying between projects
 - **App icon variants** — 9 icon variants to choose from in Settings, applied instantly to the dock icon
-- **Fully local** — embedded PostgreSQL (PGLite), no network calls, no accounts, no telemetry
+- **Fully local** — embedded PostgreSQL (PGLite), no accounts, nothing phones home. The Claude Code cost telemetry is captured to a localhost-bound endpoint and never leaves your machine; the only outbound network activity is the stuff you opt into (desktop-app update checks, plugin sync you configure).
 
 ---
 
@@ -443,7 +443,7 @@ All settings can also be changed from the settings panel UI.
 | Build | tsup (server + client bundles), sass (SCSS) |
 | Storage | `.hotsheet/` in your project directory |
 
-Data stays local. No network calls, no accounts, no telemetry.
+Data stays local. No accounts, no cloud — and the built-in Claude Code cost telemetry is localhost-bound, so even that never leaves your machine.
 
 ---
 
