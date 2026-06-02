@@ -20,6 +20,11 @@ test.describe('Upgrade install smoke test', () => {
     });
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 15000 });
+    // HS-8490 flipped the new-install default layout to COLUMN view; these
+    // smoke flows use list-view selectors (`.ticket-row[data-id]`), so switch
+    // to list view first via the toolbar (matching the e2e coverage-fixture).
+    await page.locator('.layout-btn[data-layout="list"]').click();
+    await expect(page.locator('#ticket-list')).not.toHaveClass(/ticket-list-columns/, { timeout: 5000 });
   });
 
   test('page loads after upgrade', async ({ page }) => {

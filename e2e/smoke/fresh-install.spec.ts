@@ -16,6 +16,13 @@ test.describe('Fresh install smoke test', () => {
     });
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 15000 });
+    // HS-8490 flipped the new-install default layout to COLUMN view; a genuine
+    // fresh install has no persisted layout, so tickets render as
+    // `.column-card[data-id]`. These smoke flows use list-view selectors
+    // (`.ticket-row[data-id]`), so switch to list view first via the toolbar
+    // (the same view the e2e coverage-fixture pins for determinism).
+    await page.locator('.layout-btn[data-layout="list"]').click();
+    await expect(page.locator('#ticket-list')).not.toHaveClass(/ticket-list-columns/, { timeout: 5000 });
   });
 
   test('page loads with draft input and sidebar', async ({ page }) => {
