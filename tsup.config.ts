@@ -41,7 +41,20 @@ export default defineConfig([
     },
   },
   // Channel server (MCP server for Claude Code integration)
-  // Bundle everything including @modelcontextprotocol/sdk so it's fully self-contained
+  // Bundle everything including @modelcontextprotocol/sdk so it's mostly
+  // self-contained — EXCEPT zod, which build-sidecar.sh ships under
+  // src-tauri/server/node_modules/ and resolves at runtime.
+  //
+  // HS-8706 — zod MUST stay external. `@modelcontextprotocol/sdk@1.29.0`'s
+  // `types.js` runs top-level `z.custom()` calls (its new Tasks-API schemas) at
+  // module-load time. When zod is bundled, esbuild's lazy ESM module init runs
+  // the SDK module body BEFORE zod's, so zod's `ZodCustom` class is still
+  // undefined when `custom()` fires → `TypeError: Class2 is not a constructor`
+  // → channel.js crashes on boot → the installed app's MCP server "won't
+  // connect" because it can't even start. (`tsx` dev never hit this — Node's
+  // real ESM loader initializes zod first.) Keeping zod external makes the
+  // bundle resolve the real, fully-initialized zod module at runtime, matching
+  // the dev order. Pinned by `src/channelBundle.test.ts`.
   {
     entry: ['src/channel.ts'],
     format: 'esm',
@@ -51,7 +64,8 @@ export default defineConfig([
     splitting: false,
     clean: false,
     sourcemap: false,
-    noExternal: [/.*/],
+    noExternal: [/^(?!zod($|\/))/],
+    external: ['zod'],
   },
   // Client bundle (browser JS + SCSS)
   {

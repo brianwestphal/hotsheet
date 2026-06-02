@@ -162,6 +162,36 @@ describe('cleanupStaleInstance', () => {
     expect(existsSync(instancePath)).toBe(false);
   });
 
+  it('HS-8706: PRESERVES the instance file when the PID is alive but the port is not active', async () => {
+    // The exact installed-app launch-hang trigger: the owning process is still
+    // alive (mid-startup / transiently busy / draining during a --replace
+    // handoff) but its HTTP port doesn't answer the probe. Deleting the file
+    // here would let a second launch start its own server for the same project
+    // and collide on the hotsheet.lock the live process still holds → eternal
+    // "Starting Hot Sheet…" splash. The file MUST survive.
+    writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: process.pid }));
+    globalThis.fetch = () => Promise.reject(new Error('ECONNREFUSED'));
+
+    const result = await cleanupStaleInstance();
+    expect(result).toBe(false); // not cleaned up — defer to the live owner
+    expect(existsSync(instancePath)).toBe(true); // file preserved
+  });
+
+  it('HS-8706: does NOT POST /api/shutdown when the PID is alive but the port is down', async () => {
+    // A live owner must never be shut down by another process's cleanup pass —
+    // only a dead-PID-but-port-active orphan gets the graceful-shutdown POST.
+    writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: process.pid }));
+    const fetchCalls: string[] = [];
+    globalThis.fetch = (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : input.url);
+      fetchCalls.push(url);
+      return Promise.reject(new Error('ECONNREFUSED'));
+    };
+
+    await cleanupStaleInstance();
+    expect(fetchCalls.some(u => u.includes('/api/shutdown'))).toBe(false);
+  });
+
   it('attempts shutdown and cleans up when PID is dead but port is active (orphaned server)', async () => {
     writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: 2147483647 }));
 

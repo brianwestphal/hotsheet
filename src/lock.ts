@@ -3,6 +3,8 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
+import { startupLog } from './startup-log.js';
+
 // HS-8596 — `pidStartTime` disambiguates a recycled PID from the genuine
 // instance that wrote the lock (see `classifyExistingLock`). Older locks
 // (pre-HS-8596) have no `pidStartTime`; the schema keeps it optional so they
@@ -77,27 +79,49 @@ export type LockDisposition = 'reacquire-self' | 'stale' | 'live';
  *   - `reacquire-self` — the same process already holds it (re-register).
  *   - `stale` — safe to remove + acquire: either the PID is dead, OR it is
  *     alive but its start time no longer matches the one recorded in the lock
- *     (the PID was recycled by an unrelated process after a hard crash).
- *   - `live` — another Hot Sheet instance genuinely holds it (start times
- *     match), OR we couldn't disambiguate (old lock without `pidStartTime`,
- *     or no `ps` on this platform) and so conservatively assume it's live.
+ *     (the PID was recycled by an unrelated process after a hard crash), OR the
+ *     caller passed `reclaimUnverified` and we couldn't positively confirm the
+ *     PID is the original writer (HS-8706).
+ *   - `live` — another Hot Sheet instance genuinely holds it: the live PID's
+ *     start time POSITIVELY matches the one recorded in the lock. Without
+ *     `reclaimUnverified`, an alive PID we couldn't disambiguate (old lock with
+ *     no `pidStartTime`, or no `ps` on this platform) also conservatively counts
+ *     as live.
+ *
+ * HS-8706 — `policy.reclaimUnverified` closes the launch-hang class from
+ * HS-8704: when the boot path has ALREADY established (via the authoritative
+ * global instance file) that no live, responsive Hot Sheet instance exists, an
+ * alive-but-unverifiable PID here is necessarily a recycled PID from a
+ * SIGKILL'd instance — `cleanupStaleInstance` removed that instance's global
+ * file but left this per-project lock behind. Reclaim it instead of returning
+ * `live` (which made `acquireLock` silently `process.exit(1)` and wedged the
+ * GUI splash forever). A POSITIVE start-time match is never reclaimed — that
+ * one branch proves a genuinely live second writer, so it stays `live`.
  */
 export function classifyExistingLock(
   lock: { pid: number; pidStartTime?: string },
   selfPid: number,
   probes: { isPidAlive: (pid: number) => boolean; processStartTime: (pid: number) => string | null },
+  policy: { reclaimUnverified?: boolean } = {},
 ): LockDisposition {
   if (lock.pid === selfPid) return 'reacquire-self';
   if (!probes.isPidAlive(lock.pid)) return 'stale';
   // The recorded PID is alive — but a hard crash (SIGKILL / power loss) skips
   // `releaseAllLocks`, leaving the lock behind, and the OS may have since
   // reassigned that PID to an unrelated process. If the lock recorded the
-  // writer's start time AND we can read the live PID's start time, a mismatch
-  // proves the PID was recycled, so the original instance is gone → stale.
+  // writer's start time AND we can read the live PID's start time, the match
+  // settles it definitively: equal → genuinely live; unequal → recycled, stale.
   if (lock.pidStartTime !== undefined && lock.pidStartTime !== '') {
     const liveStart = probes.processStartTime(lock.pid);
-    if (liveStart !== null && liveStart !== lock.pidStartTime) return 'stale';
+    if (liveStart !== null) return liveStart === lock.pidStartTime ? 'live' : 'stale';
+    // liveStart === null — `ps` couldn't read it; fall through to unverifiable.
   }
+  // Unverifiable: alive, but we couldn't tie the PID to the original writer
+  // (pre-HS-8596 lock with no start time, or `ps` returned nothing). The caller
+  // that already proved no live instance exists reclaims it (HS-8706); everyone
+  // else keeps the conservative `live` so a never-checked path can't corrupt a
+  // genuinely-shared DB.
+  if (policy.reclaimUnverified === true) return 'stale';
   return 'live';
 }
 
@@ -110,45 +134,14 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-export function acquireLock(dataDir: string): void {
-  const lockPath = join(dataDir, 'hotsheet.lock');
+/** Result of a single lock-acquire attempt that does NOT exit on a live
+ *  holder — so callers can decide to fatal-exit immediately (`acquireLock`)
+ *  or wait for a shutting-down holder to release it
+ *  (`acquireLockWaitingForShutdown`). */
+type AcquireOnceResult = { status: 'acquired' } | { status: 'live'; pid: number };
 
-  if (existsSync(lockPath)) {
-    try {
-      const parsed = LockFileSchema.safeParse(JSON.parse(readFileSync(lockPath, 'utf-8')));
-      if (!parsed.success) {
-        // Corrupt lock file — remove and continue to acquire
-        rmSync(lockPath, { force: true });
-      } else {
-        const disposition = classifyExistingLock(parsed.data, process.pid, {
-          isPidAlive,
-          processStartTime: getProcessStartTime,
-        });
-
-        if (disposition === 'reacquire-self') {
-          // Same process re-acquiring the lock (e.g., project re-registered after tab close)
-          lockPaths.add(lockPath);
-          return;
-        }
-
-        if (disposition === 'live') {
-          console.error(`\n  Error: Another Hot Sheet instance (PID ${parsed.data.pid}) is already using this data directory.`);
-          console.error(`  Directory: ${dataDir}`);
-          console.error(`  Stop that instance first, or use --data-dir to point to a different location.\n`);
-          process.exit(1);
-        }
-
-        // disposition === 'stale' — dead PID, or a recycled PID whose start
-        // time no longer matches what we recorded (HS-8596).
-        console.log(`  Removing stale lock from PID ${parsed.data.pid}`);
-        rmSync(lockPath, { force: true });
-      }
-    } catch {
-      // JSON parse error — remove corrupt lock file
-      rmSync(lockPath, { force: true });
-    }
-  }
-
+/** Write our own lock file + register the exit-time release handler. */
+function writeOwnLock(lockPath: string): void {
   writeFileSync(lockPath, JSON.stringify({
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -169,5 +162,129 @@ export function acquireLock(dataDir: string): void {
     // and short-circuited the close pipeline — including the second-
     // signal escalation path.
     process.on('exit', releaseAllLocks);
+  }
+}
+
+/**
+ * One acquire attempt. Acquires (writing our lock) for every disposition except
+ * a genuinely-live holder, for which it returns `{ status: 'live', pid }`
+ * WITHOUT exiting. Pure of the exit decision so both the sync `acquireLock`
+ * (exit-on-live) and the async `acquireLockWaitingForShutdown` (wait-on-live)
+ * can build on it.
+ */
+function tryAcquireLockOnce(dataDir: string, opts: { reclaimUnverified?: boolean }): AcquireOnceResult {
+  const lockPath = join(dataDir, 'hotsheet.lock');
+
+  if (existsSync(lockPath)) {
+    try {
+      const parsed = LockFileSchema.safeParse(JSON.parse(readFileSync(lockPath, 'utf-8')));
+      if (!parsed.success) {
+        // Corrupt lock file — remove and continue to acquire
+        rmSync(lockPath, { force: true });
+      } else {
+        const disposition = classifyExistingLock(parsed.data, process.pid, {
+          isPidAlive,
+          processStartTime: getProcessStartTime,
+        }, { reclaimUnverified: opts.reclaimUnverified });
+
+        if (disposition === 'reacquire-self') {
+          // Same process re-acquiring the lock (e.g., project re-registered after tab close)
+          lockPaths.add(lockPath);
+          return { status: 'acquired' };
+        }
+
+        if (disposition === 'live') {
+          return { status: 'live', pid: parsed.data.pid };
+        }
+
+        // disposition === 'stale' — dead PID, or a recycled PID whose start
+        // time no longer matches what we recorded (HS-8596).
+        console.log(`  Removing stale lock from PID ${parsed.data.pid}`);
+        rmSync(lockPath, { force: true });
+      }
+    } catch {
+      // JSON parse error — remove corrupt lock file
+      rmSync(lockPath, { force: true });
+    }
+  }
+
+  writeOwnLock(lockPath);
+  return { status: 'acquired' };
+}
+
+/** HS-8706 — the durable FATAL exit for a genuinely-live lock holder. Pre-fix
+ *  this was a bare `console.error` + `process.exit(1)`: on a GUI launch (no
+ *  terminal) the message went nowhere AND the exit killed the sidecar before
+ *  its server started, so the Tauri splash spun forever with zero record of why
+ *  (the HS-8704 trace gapped right here). */
+function fatalLockHeld(dataDir: string, pid: number): never {
+  startupLog(`[startup] FATAL: data directory ${dataDir} is locked by a live Hot Sheet instance (PID ${pid}); exiting`);
+  startupLog('  Stop that instance first, or use --data-dir to point to a different location.');
+  process.exit(1);
+}
+
+/**
+ * Acquire the per-dataDir lock that guards against two PGLite processes opening
+ * the same on-disk cluster. Exits the process (FATAL) if a genuinely-live
+ * instance holds it.
+ *
+ * HS-8706 — `opts.reclaimUnverified` is passed by the boot paths
+ * (`cli.ts::initializeProject`, `projects.ts::registerProject`) that have
+ * already confirmed, via the authoritative global instance file, that no live
+ * Hot Sheet instance is running. With it set, an orphaned lock left by a
+ * SIGKILL'd instance whose PID the OS recycled is reclaimed instead of being
+ * mistaken for a live instance — the false positive that silently exited the
+ * sidecar and wedged the GUI splash forever (HS-8704). See `classifyExistingLock`.
+ *
+ * For the primary launch path use {@link acquireLockWaitingForShutdown}, which
+ * tolerates a previous instance still mid-shutdown.
+ */
+export function acquireLock(dataDir: string, opts: { reclaimUnverified?: boolean } = {}): void {
+  const r = tryAcquireLockOnce(dataDir, opts);
+  if (r.status === 'live') fatalLockHeld(dataDir, r.pid);
+}
+
+/**
+ * HS-8706 (third-pass fix for the installed-app launch hang) — acquire the lock
+ * but, when it is held by a genuinely-live holder, WAIT for that holder to
+ * release it (up to `waitMs`) before giving up.
+ *
+ * Why this exists: quitting Hot Sheet runs `gracefulShutdown`, whose
+ * `snapshotDatabases` (§73 CHECKPOINT + gzip dump) and `closeDatabases` phases
+ * can block the event loop for SECONDS, and which only releases the per-project
+ * `hotsheet.lock` at the very END (after the DB is fully closed). During that
+ * window the process is alive, its HTTP port is wedged (so a relaunch can't
+ * JOIN it), and the lock is still held (so a relaunch can't ACQUIRE it) — the
+ * old behavior FATAL-exited instantly and the Tauri splash hung. The
+ * alternating "every other launch works" the user saw is a relaunch landing
+ * inside vs. outside that shutdown window.
+ *
+ * Waiting is SAFE: the holder only releases the lock AFTER it has closed the DB,
+ * so we never open the PGLite cluster concurrently. Each poll re-classifies, so
+ * a holder that is SIGKILL'd mid-shutdown (pid dies, lock left behind) is
+ * reclaimed as stale on the next iteration rather than waited on. If the holder
+ * is genuinely wedged forever, we FATAL after the deadline — no worse than the
+ * old instant exit, but only after giving the common case time to resolve.
+ */
+export async function acquireLockWaitingForShutdown(
+  dataDir: string,
+  opts: { reclaimUnverified?: boolean } = {},
+  waitMs = 15_000,
+  pollMs = 250,
+): Promise<void> {
+  const deadline = Date.now() + waitMs;
+  let announced = false;
+  for (;;) {
+    const r = tryAcquireLockOnce(dataDir, opts);
+    if (r.status === 'acquired') {
+      if (announced) startupLog('  Previous (shutting-down) instance released the lock — acquired.');
+      return;
+    }
+    if (Date.now() >= deadline) fatalLockHeld(dataDir, r.pid);
+    if (!announced) {
+      announced = true;
+      startupLog(`  Data directory ${dataDir} is locked by PID ${r.pid} but it is not serving — likely a previous instance shutting down. Waiting up to ${Math.round(waitMs / 1000)}s for it to release the lock...`);
+    }
+    await new Promise(res => setTimeout(res, pollMs));
   }
 }

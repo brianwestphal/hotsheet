@@ -19,12 +19,12 @@ import { PLUGINS_ENABLED } from './feature-flags.js';
 import { ensureSecret, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { cleanupStaleInstance, isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';
-import { acquireLock } from './lock.js';
+import { acquireLockWaitingForShutdown } from './lock.js';
 import { addToProjectList, readProjectList } from './project-list.js';
 import { registerExistingProject, registerProject } from './projects.js';
 import { ErrorBodySchema, ProjectNameOnlySchema } from './schemas.js';
 import { startServer } from './server.js';
-import { ensureSkills, initSkills, setSkillCategories } from './skills.js';
+import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
 import { createStartupWatchdog, getCurrentPhase, getElapsedMs, initStartupLog, startupLog, startupMark } from './startup-log.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
@@ -93,7 +93,25 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
   mkdirSync(dataDir, { recursive: true });
 
   if (demo === null) {
-    acquireLock(dataDir);
+    // HS-8706 — reaching here means `main` → `handleExistingInstance` already
+    // proved no live, responsive Hot Sheet instance exists (a real one holds
+    // the global instance file + answers its port, and finding one makes this
+    // process JOIN it and exit before we get here). So any leftover
+    // `hotsheet.lock` is orphaned (a SIGKILL'd instance whose PID the OS
+    // recycled). `reclaimUnverified` reclaims it instead of letting `acquireLock`
+    // mistake the recycled PID for a live instance and silently `process.exit(1)`
+    // — the GUI-splash hang traced in HS-8704. The phase marker pins a lock-exit
+    // to this exact step in the durable startup log.
+    // HS-8706 — wait for a previous instance that is mid-shutdown to release
+    // the lock instead of FATAL-exiting instantly. Quitting Hot Sheet runs a
+    // graceful shutdown whose snapshot + DB-close phases block for seconds and
+    // only release `hotsheet.lock` at the very end; a relaunch landing in that
+    // window used to die here (lock held by the still-alive draining process)
+    // and hang the splash — the "every other launch fails" the user saw. Safe:
+    // the holder only frees the lock AFTER closing the DB, so we never open the
+    // cluster concurrently. See `acquireLockWaitingForShutdown`.
+    startupMark('init-project: acquiring lock');
+    await acquireLockWaitingForShutdown(dataDir, { reclaimUnverified: true });
     ensureGitignore(process.cwd());
   }
 
@@ -163,10 +181,27 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   const { runWithDataDir: runWith } = await import('./db/connection.js');
   initSkills(actualPort);
   setSkillCategories(await runWith(dataDir, () => getCategories()));
-  const updatedPlatforms = ensureSkills();
-  if (updatedPlatforms.length > 0) {
-    console.log(`\n  AI tool skills created/updated for: ${updatedPlatforms.join(', ')}`);
-    console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
+  // HS-8706 — derive the project root from `dataDir` instead of the old
+  // cwd-keyed skill installer. On a GUI launch the
+  // Tauri shell spawns this sidecar with `cwd = /`, so `process.cwd()` pointed
+  // at the filesystem root: `ensureClaudeSkills` then tried `mkdirSync('/.claude')`,
+  // which throws `ENOENT` and the unhandled rejection FATAL-exited the server
+  // right after `starting server` — wedging the "Starting Hot Sheet…" splash
+  // forever. A direct-from-terminal launch happened to work only because its
+  // cwd was the project root. `registerProject` was already fixed the same way
+  // under HS-8486; this is the matching fix for the PRIMARY startup path.
+  const projectRoot = resolve(dataDir).replace(/\/\.hotsheet\/?$/, '');
+  // HS-8706 — best-effort. Skill-file installation must never be able to abort
+  // startup: a write failure here (bad path, read-only fs, permissions) is a
+  // missing convenience, not a reason to kill an already-listening server.
+  try {
+    const updatedPlatforms = ensureSkillsForDir(projectRoot);
+    if (updatedPlatforms.length > 0) {
+      console.log(`\n  AI tool skills created/updated for: ${updatedPlatforms.join(', ')}`);
+      console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
+    }
+  } catch (e: unknown) {
+    console.warn(`  [skills] Failed to install AI tool skills: ${getErrorMessage(e)}`);
   }
 
   // Load plugins (non-critical, feature-flagged)
@@ -441,6 +476,10 @@ async function handleExistingInstance(
   startupMark(`existing-instance: checking if instance on port ${instance.port} is running`);
   const running = await isInstanceRunning(instance.port);
   startupMark(`existing-instance: instance check running=${running}`);
+  // HS-8706 — when the instance isn't serving its port we fall through to a
+  // fresh start. If a previous instance is still mid-shutdown (alive, port
+  // wedged, lock not yet released), `acquireLockWaitingForShutdown` on the
+  // init path waits for it to release the lock rather than colliding.
   if (!running) return false;
 
   if (replace) {

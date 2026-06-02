@@ -242,6 +242,62 @@ describe('ensureClaudeSkills', () => {
   });
 });
 
+// HS-8706 — the installed (Tauri) beta app hung forever on the "Starting Hot
+// Sheet…" splash. ROOT CAUSE: the primary-startup path in cli.ts installed AI
+// tool skills via `ensureSkills()`, which keyed off `process.cwd()`. A GUI
+// launch spawns the sidecar with `cwd = /`, so with `claude` on PATH the writer
+// tried `mkdirSync('/.claude')` → ENOENT → the unhandled throw FATAL-exited the
+// server moments after it started listening, wedging the splash. A
+// direct-from-terminal launch only worked by accident (its cwd WAS the project
+// root). The fix points the primary path at `ensureSkillsForDir(projectRoot)`
+// derived from `dataDir`. These tests pin that `ensureSkillsForDir` is
+// cwd-independent (the property the fix relies on) and that the wiring uses it.
+describe('skill install is cwd-independent (HS-8706 launch hang)', () => {
+  let projectDir: string;
+  let elsewhereCwd: string;
+
+  beforeEach(() => {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    projectDir = join(tmpdir(), `hs-skills-proj-${stamp}`);
+    elsewhereCwd = join(tmpdir(), `hs-skills-cwd-${stamp}`);
+    mkdirSync(join(projectDir, '.hotsheet'), { recursive: true });
+    mkdirSync(join(projectDir, '.claude'), { recursive: true });
+    mkdirSync(elsewhereCwd, { recursive: true });
+    writeFileSync(join(projectDir, '.hotsheet', 'settings.json'), JSON.stringify({ secret: 'test-secret', port: 4174 }));
+    initSkills(4174);
+    setSkillCategories(DEFAULT_CATEGORIES);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(projectDir, { recursive: true, force: true });
+    rmSync(elsewhereCwd, { recursive: true, force: true });
+  });
+
+  it('writes skills to the passed project root, NOT to process.cwd()', () => {
+    // Simulate the GUI launch: cwd is some unrelated directory, the project
+    // being served is elsewhere. Pre-fix `ensureSkills()` wrote relative to cwd.
+    vi.spyOn(process, 'cwd').mockReturnValue(elsewhereCwd);
+
+    const platforms = ensureSkillsForDir(projectDir);
+
+    expect(platforms).toContain('Claude Code');
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hotsheet', 'SKILL.md'))).toBe(true);
+    // The cwd directory must be left completely untouched — no stray `.claude`.
+    expect(existsSync(join(elsewhereCwd, '.claude'))).toBe(false);
+  });
+
+  it('does not throw when process.cwd() is a non-writable / nonexistent path', () => {
+    // This is the exact failure mode: GUI cwd was `/` and mkdir('/.claude')
+    // threw ENOENT. Proving `ensureSkillsForDir` never consults cwd means a
+    // hostile cwd can no longer crash the writer.
+    vi.spyOn(process, 'cwd').mockReturnValue('/nonexistent-cwd-hs8706/deep/path');
+
+    expect(() => ensureSkillsForDir(projectDir)).not.toThrow();
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hotsheet', 'SKILL.md'))).toBe(true);
+  });
+});
+
 describe('ensureClaudePermissions', () => {
   let tempDir: string;
   let settingsDir: string;

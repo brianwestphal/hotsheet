@@ -86,16 +86,23 @@ if [ -d dist/plugins ]; then
   cp -R dist/plugins "$SERVER_DIR/plugins"
 fi
 
-# Copy only the external runtime dependencies (PGLite, Hono, @hono).
+# Copy only the external runtime dependencies (PGLite, Hono, @hono, zod).
 #
 # node-pty is a native addon (build/Release/pty.node) required by the embedded
 # terminal feature. CI installs deps with `npm ci` on the matching target OS,
 # so node_modules/node-pty already contains the correct prebuilt binary for
 # this target. We copy the whole directory — `cp -R` preserves build/Release/.
 #
+# HS-8706 — zod is external for channel.js (see tsup.config.ts): bundling it
+# crashed channel.js on boot because esbuild initialized @modelcontextprotocol/
+# sdk's top-level `z.custom()` schemas before zod's `ZodCustom` class. It must
+# ship here so the runtime `import 'zod'` in channel.js resolves. zod is
+# dependency-free, so the copy is self-contained. (cli.js still BUNDLES zod, so
+# this copy only serves channel.js.)
+#
 # Optional packages are skipped if they're not yet installed so this script
 # stays usable on branches that haven't added the terminal deps yet.
-REQUIRED_DEPS=(@electric-sql/pglite hono @hono/node-server)
+REQUIRED_DEPS=(@electric-sql/pglite hono @hono/node-server zod)
 OPTIONAL_DEPS=(node-pty ws @xterm/xterm @xterm/addon-fit @xterm/addon-web-links @xterm/addon-serialize)
 
 for pkg in "${REQUIRED_DEPS[@]}"; do

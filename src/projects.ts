@@ -50,8 +50,13 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   // Ensure secret exists and write port to settings.json
   const secret = ensureSecret(absDataDir, port);
 
-  // Acquire lock to prevent duplicate instances
-  acquireLock(absDataDir);
+  // Acquire lock to prevent duplicate instances. HS-8706 — reclaim an orphaned
+  // lock from a recycled PID. The single global instance file guarantees at most
+  // one live Hot Sheet primary (a second launch joins the first and exits), so
+  // a lock we can't positively tie to a live process is stale, never a genuine
+  // second instance. Without `reclaimUnverified` the recycled-PID false positive
+  // `process.exit(1)`s the whole running app mid project-restore.
+  acquireLock(absDataDir, { reclaimUnverified: true });
 
   // Initialize markdown sync for this project
   initMarkdownSync(absDataDir, port);
