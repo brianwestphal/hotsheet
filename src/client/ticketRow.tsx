@@ -255,7 +255,11 @@ function syncTicketRowTags(row: HTMLElement, ticket: Ticket): void {
   else row.appendChild(container);
 }
 
-/** Check if a ticket has pending feedback (last note is a FEEDBACK NEEDED prefix). */
+/** Check if a ticket has pending feedback (its most recent note contains the
+ *  FEEDBACK NEEDED phrase). HS-8702 — matches the all-caps phrase ANYWHERE in
+ *  the note (colon optional), mirroring `parseFeedbackPrefix` in
+ *  `feedbackDialog.tsx` and `notesEndWithFeedback` in `src/feedback-state.ts`;
+ *  case-sensitive so lowercase prose doesn't false-positive. */
 export function hasPendingFeedback(ticket: Ticket): boolean {
   if (ticket.notes === '' || ticket.notes === '[]') return false;
   // HS-8090 — `parseJsonArrayOr` consolidates the try/catch + Array.isArray
@@ -266,8 +270,7 @@ export function hasPendingFeedback(ticket: Ticket): boolean {
   if (notes.length === 0) return false;
   const lastText = notes[notes.length - 1].text;
   if (typeof lastText !== 'string') return false;
-  const trimmed = lastText.trim();
-  return trimmed.startsWith('FEEDBACK NEEDED:') || trimmed.startsWith('IMMEDIATE FEEDBACK NEEDED:');
+  return lastText.includes('FEEDBACK NEEDED');
 }
 
 /** Returns the indicator dot type: 'feedback' (purple, highest priority), 'unread' (blue), or null. */

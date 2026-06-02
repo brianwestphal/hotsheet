@@ -967,10 +967,12 @@ Design spike (HS-7265) — **no code yet**. Proposes handling the four-mark Fina
 
 ## 21. Feedback notes (`21-feedback.md`)
 
-AI tools request user feedback by adding a note to a ticket whose text begins with a recognized prefix (checked only on the most recent note):
+AI tools request user feedback by adding a note to a ticket containing a recognized phrase (checked only on the most recent note):
 
-- `FEEDBACK NEEDED:` — shows dialog when ticket is opened.
-- `IMMEDIATE FEEDBACK NEEDED:` — auto-selects the ticket in the project's tab and opens the dialog.
+- `FEEDBACK NEEDED` — shows dialog when ticket is opened.
+- `IMMEDIATE FEEDBACK NEEDED` — auto-selects the ticket in the project's tab and opens the dialog.
+
+**HS-8702** — the phrase is matched **anywhere** in the most recent note (not just as a leading prefix) with the trailing colon **optional**, because AIs don't always follow the exact formatting; matching is **case-sensitive** so lowercase prose doesn't false-positive. The AI-facing instructions still tell AIs to use the leading `FEEDBACK NEEDED:` prefix — only the read side (`parseFeedbackPrefix` / `hasPendingFeedback` / `notesEndWithFeedback`) was loosened.
 
 Dialog shows prompt as markdown, one or more textareas, file attachments, and three buttons: **Later** (muted link, dismiss), **No Response Needed** (adds `NO RESPONSE NEEDED` note, clears state), **Submit** (creates note with response, uploads attachments, notifies channel). Click-outside dismisses like Later. Dialog auto-shows **once per detail-panel open** (tracked by note ID). "Provide Feedback" link button appears below a feedback-prefix note if it's the most recent. **HS-8339** — the same affordance is also surfaced as the first item in the ticket right-click context menu (`showTicketContextMenu` in `src/client/contextMenu.tsx`) when `hasPendingFeedback(ticket)` is true and the ticket is the sole selection; the item parses the latest note via `parseNotesJson` + `getTicketFeedbackState` and calls `showFeedbackDialog(...)` with the same parent-note-id linkage the inline link uses, so saved-draft pickup and channel notification on submit behave identically. No trailing separator after the item so the existing separator-count-indexed insertion logic in the Push-to-backend async block stays balanced.
 

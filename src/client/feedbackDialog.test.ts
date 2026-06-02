@@ -5,6 +5,7 @@ import { getFeedbackDrafts } from '../api/index.js';
 import {
   buildOverlay,
   openFeedbackDialogForNote,
+  parseFeedbackPrefix,
   pickDraftForFeedbackNote,
   resetAutoShownFeedback,
   shouldAutoShowFeedback,
@@ -27,6 +28,42 @@ vi.mock('../api/index.js', () => ({
   promoteFeedbackDraftAttachments: vi.fn(),
   updateTicket: vi.fn(),
 }));
+
+/**
+ * HS-8702 — parseFeedbackPrefix matches the all-caps phrase ANYWHERE in the
+ * note (not just as a strict leading prefix), with the trailing colon
+ * optional, because AIs don't always follow the exact formatting. Matching is
+ * case-sensitive; the prompt is the text after the phrase.
+ */
+describe('parseFeedbackPrefix (HS-8702)', () => {
+  it('parses a standard leading prefix and strips the colon', () => {
+    expect(parseFeedbackPrefix('FEEDBACK NEEDED: which color?')).toEqual({ type: 'standard', prompt: 'which color?' });
+  });
+
+  it('parses an immediate leading prefix (and prefers it over the standard substring)', () => {
+    expect(parseFeedbackPrefix('IMMEDIATE FEEDBACK NEEDED: ship it?')).toEqual({ type: 'immediate', prompt: 'ship it?' });
+  });
+
+  it('matches the phrase embedded mid-text and extracts the trailing question', () => {
+    expect(parseFeedbackPrefix('Some context. FEEDBACK NEEDED: pick one?')).toEqual({ type: 'standard', prompt: 'pick one?' });
+  });
+
+  it('matches without the trailing colon', () => {
+    expect(parseFeedbackPrefix('FEEDBACK NEEDED which approach?')).toEqual({ type: 'standard', prompt: 'which approach?' });
+  });
+
+  it('returns an empty prompt when the phrase is the last thing in the note', () => {
+    expect(parseFeedbackPrefix('done — FEEDBACK NEEDED')).toEqual({ type: 'standard', prompt: '' });
+  });
+
+  it('is case-sensitive: lowercase prose is not a feedback note', () => {
+    expect(parseFeedbackPrefix('I think feedback needed from you')).toBeNull();
+  });
+
+  it('returns null when the phrase is absent', () => {
+    expect(parseFeedbackPrefix('just a normal note')).toBeNull();
+  });
+});
 
 /**
  * HS-7822 — pickDraftForFeedbackNote pure-helper tests. The helper drives

@@ -36,6 +36,10 @@ async function addFeedbackNote(
   page: import('@playwright/test').Page,
   ticketTitle: string,
   prompt: string,
+  // HS-8702 — when provided, the note uses this verbatim instead of the
+  // canonical `FEEDBACK NEEDED: ${prompt}` shape, so tests can exercise the
+  // relaxed detection (phrase embedded mid-text, missing colon, etc.).
+  rawText?: string,
 ): Promise<{ ticketId: number; noteId: string }> {
   const secret = await getProjectSecret(page);
   const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret };
@@ -49,7 +53,7 @@ async function addFeedbackNote(
     } catch { return []; }
   })();
   const noteId = `n_test_${Date.now().toString(36)}`;
-  const newNotes = [...existingNotes, { id: noteId, text: `FEEDBACK NEEDED: ${prompt}`, created_at: new Date().toISOString() }];
+  const newNotes = [...existingNotes, { id: noteId, text: rawText ?? `FEEDBACK NEEDED: ${prompt}`, created_at: new Date().toISOString() }];
   const putRes = await page.request.put(`/api/tickets/${ticketId}/notes-bulk`, {
     headers,
     data: { notes: JSON.stringify(newNotes) },
@@ -80,6 +84,21 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
     // dismissal path. Use a corner so we miss the dialog.
     await overlay.click({ position: { x: 5, y: 5 } });
     await expect(overlay).toHaveCount(0);
+  });
+
+  test('HS-8702 — a note with FEEDBACK NEEDED embedded mid-text (no leading prefix) still auto-shows the dialog', async ({ page }) => {
+    await createTicket(page, 'Mid-text feedback ticket');
+    // The phrase is NOT at the start of the note and has the colon — exactly
+    // the shape an AI produces when it doesn't follow the prefix-at-start rule.
+    await addFeedbackNote(page, 'Mid-text feedback ticket', '', 'Some context I wrote first. FEEDBACK NEEDED: option A or option B?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Mid-text feedback ticket');
+    // Relaxed detection (HS-8702) must still treat this as a feedback note, so
+    // the dialog auto-shows and the prompt is the text after the phrase.
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+    await expect(overlay).toContainText('option A or option B?');
   });
 
   test('clicking outside the dialog with text entered keeps it open', async ({ page }) => {

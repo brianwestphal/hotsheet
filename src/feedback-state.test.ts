@@ -76,12 +76,33 @@ describe('notesEndWithFeedback (HS-8378)', () => {
     expect(notesEndWithFeedback(JSON.stringify([null]))).toBe(false);
   });
 
-  it('does NOT match a feedback prefix embedded mid-text', () => {
-    // The prefix must be at the very start of the trimmed note for the
-    // client-side check too — a casual mention of "FEEDBACK NEEDED:"
-    // inside a longer note shouldn't trigger the dot.
+  it('HS-8702 — matches the phrase embedded mid-text (relaxed from start-only)', () => {
+    // Pre-HS-8702 the phrase had to be at the very start of the note. AIs
+    // don't always follow that, so the phrase anywhere in the LAST note now
+    // counts — the user still gets pulled to the prompt.
     const notes = JSON.stringify([
-      { text: 'Earlier I asked: FEEDBACK NEEDED: yes or no?', created_at: '2026-05-13T11:00:00Z' },
+      { text: 'Some context first. FEEDBACK NEEDED: yes or no?', created_at: '2026-05-13T11:00:00Z' },
+    ]);
+    expect(notesEndWithFeedback(notes)).toBe(true);
+  });
+
+  it('HS-8702 — matches without the trailing colon', () => {
+    const notes = JSON.stringify([
+      { text: 'FEEDBACK NEEDED which approach should I take?', created_at: '2026-05-13T11:00:00Z' },
+    ]);
+    expect(notesEndWithFeedback(notes)).toBe(true);
+  });
+
+  it('HS-8702 — matches IMMEDIATE FEEDBACK NEEDED embedded mid-text', () => {
+    const notes = JSON.stringify([
+      { text: 'Heads up — IMMEDIATE FEEDBACK NEEDED: build is broken.', created_at: '2026-05-13T11:00:00Z' },
+    ]);
+    expect(notesEndWithFeedback(notes)).toBe(true);
+  });
+
+  it('HS-8702 — case-sensitive: lowercase prose does NOT false-positive', () => {
+    const notes = JSON.stringify([
+      { text: 'I think feedback needed from the user before continuing.', created_at: '2026-05-13T11:00:00Z' },
     ]);
     expect(notesEndWithFeedback(notes)).toBe(false);
   });

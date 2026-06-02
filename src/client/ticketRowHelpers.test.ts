@@ -113,6 +113,24 @@ describe('hasPendingFeedback', () => {
     expect(hasPendingFeedback(ticket({ notes }))).toBe(true);
   });
 
+  it('HS-8702 — matches the phrase embedded mid-text (relaxed from start-only)', async () => {
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const notes = JSON.stringify([{ text: 'Some context. FEEDBACK NEEDED: pick one?' }]);
+    expect(hasPendingFeedback(ticket({ notes }))).toBe(true);
+  });
+
+  it('HS-8702 — matches without the trailing colon', async () => {
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const notes = JSON.stringify([{ text: 'FEEDBACK NEEDED which one?' }]);
+    expect(hasPendingFeedback(ticket({ notes }))).toBe(true);
+  });
+
+  it('HS-8702 — case-sensitive: lowercase prose does NOT false-positive', async () => {
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const notes = JSON.stringify([{ text: 'some feedback needed here eventually' }]);
+    expect(hasPendingFeedback(ticket({ notes }))).toBe(false);
+  });
+
   it('returns false for an empty notes array', async () => {
     const { hasPendingFeedback } = await import('./ticketRow.js');
     const notes = JSON.stringify([]);

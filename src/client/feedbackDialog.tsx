@@ -17,19 +17,36 @@ import { loadTickets } from './ticketList.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
-const FEEDBACK_PREFIX = 'FEEDBACK NEEDED:';
-const IMMEDIATE_PREFIX = 'IMMEDIATE FEEDBACK NEEDED:';
+const STANDARD_PHRASE = 'FEEDBACK NEEDED';
+const IMMEDIATE_PHRASE = 'IMMEDIATE FEEDBACK NEEDED';
 
-/** Parse a note's text for a feedback prefix. Returns null if not a feedback note. */
+/** Parse a note's text for a feedback request. Returns null if not a feedback note.
+ *
+ *  HS-8702 — the all-caps phrase is matched ANYWHERE in the note, not just as a
+ *  strict leading prefix, and the trailing colon is optional. AIs don't always
+ *  place "FEEDBACK NEEDED" at the very start of the note or include the colon
+ *  (the worklist still instructs them to — we just stopped requiring it on the
+ *  read side). Matching is case-sensitive so ordinary lowercase prose like
+ *  "feedback needed from you" never false-positives. The prompt is the text
+ *  after the phrase (leading colon + whitespace stripped); any context before
+ *  the phrase stays visible in the full note body in the detail panel. */
 export function parseFeedbackPrefix(text: string): { type: 'standard' | 'immediate'; prompt: string } | null {
-  const trimmed = text.trim();
-  if (trimmed.startsWith(IMMEDIATE_PREFIX)) {
-    return { type: 'immediate', prompt: trimmed.slice(IMMEDIATE_PREFIX.length).trim() };
+  const immediateIdx = text.indexOf(IMMEDIATE_PHRASE);
+  if (immediateIdx !== -1) {
+    return { type: 'immediate', prompt: extractFeedbackPrompt(text, immediateIdx + IMMEDIATE_PHRASE.length) };
   }
-  if (trimmed.startsWith(FEEDBACK_PREFIX)) {
-    return { type: 'standard', prompt: trimmed.slice(FEEDBACK_PREFIX.length).trim() };
+  const standardIdx = text.indexOf(STANDARD_PHRASE);
+  if (standardIdx !== -1) {
+    return { type: 'standard', prompt: extractFeedbackPrompt(text, standardIdx + STANDARD_PHRASE.length) };
   }
   return null;
+}
+
+/** The prompt is whatever follows the matched phrase, with a single leading
+ *  colon + surrounding whitespace stripped. Empty string when the phrase is
+ *  the last thing in the note. */
+function extractFeedbackPrompt(text: string, from: number): string {
+  return text.slice(from).replace(/^:?\s*/, '').trim();
 }
 
 /** Check if the ticket's most recent note is a feedback request. */

@@ -15,13 +15,18 @@ import type { PGlite } from '@electric-sql/pglite';
  * handler stays readable.
  */
 
-const FEEDBACK_PREFIX = 'FEEDBACK NEEDED:';
-const IMMEDIATE_PREFIX = 'IMMEDIATE FEEDBACK NEEDED:';
+const FEEDBACK_PHRASE = 'FEEDBACK NEEDED';
 
 /** Returns true when the LAST note in the JSON-encoded `notes` column
- *  starts with one of the feedback-needed prefixes. Mirrors the client
- *  `hasPendingFeedback` shape — same prefix list, same "only the most
+ *  contains the FEEDBACK NEEDED phrase. Mirrors the client
+ *  `hasPendingFeedback` / `parseFeedbackPrefix` shape — same "only the most
  *  recent note matters" rule.
+ *
+ *  HS-8702 — matches the all-caps phrase ANYWHERE in the note (colon
+ *  optional), not just as a strict leading prefix, because AIs don't always
+ *  follow the exact formatting. `IMMEDIATE FEEDBACK NEEDED` is a superset of
+ *  the phrase, so the single substring check covers both. Case-sensitive so
+ *  lowercase prose doesn't false-positive.
  *
  *  Defensive: tolerates `null`, `undefined`, `''`, `'[]'`, non-JSON,
  *  non-array, missing `text` on the last entry, etc. Any of those returns
@@ -42,8 +47,7 @@ export function notesEndWithFeedback(notes: string | null | undefined): boolean 
   if (last === null || typeof last !== 'object') return false;
   const text = (last as { text?: unknown }).text;
   if (typeof text !== 'string') return false;
-  const head = text.trim();
-  return head.startsWith(FEEDBACK_PREFIX) || head.startsWith(IMMEDIATE_PREFIX);
+  return text.includes(FEEDBACK_PHRASE);
 }
 
 /** Returns true when ANY non-deleted ticket in the project has a pending
@@ -59,9 +63,11 @@ export function notesEndWithFeedback(notes: string | null | undefined): boolean 
  */
 export async function projectHasPendingFeedback(db: PGlite): Promise<boolean> {
   try {
-    // Cheap pre-filter: tickets whose notes JSON literally contains one
-    // of the prefix strings somewhere. Saves a JSON.parse on every ticket
-    // in projects where most tickets have no notes at all.
+    // Cheap pre-filter: tickets whose notes JSON literally contains the
+    // FEEDBACK NEEDED phrase somewhere. Saves a JSON.parse on every ticket
+    // in projects where most tickets have no notes at all. HS-8702 — the
+    // colon is no longer required and `IMMEDIATE FEEDBACK NEEDED` is a
+    // superset, so a single `LIKE '%FEEDBACK NEEDED%'` covers both.
     //
     // HS-8381 — exclude `backlog` + `archive` (in addition to `deleted`)
     // from the candidate set. The purple project-tab dot is meant to
@@ -74,7 +80,7 @@ export async function projectHasPendingFeedback(db: PGlite): Promise<boolean> {
         WHERE status NOT IN ('deleted', 'backlog', 'archive')
           AND notes != ''
           AND notes != '[]'
-          AND (notes LIKE '%FEEDBACK NEEDED:%' OR notes LIKE '%IMMEDIATE FEEDBACK NEEDED:%')`,
+          AND notes LIKE '%FEEDBACK NEEDED%'`,
     );
     for (const row of res.rows) {
       if (notesEndWithFeedback(row.notes)) return true;
