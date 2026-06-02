@@ -17,6 +17,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - New installs default to Claude Channel + column view, with a Claude terminal auto-seeded.
 - Various bug fixes
 
+- Terminal tabs: middle-click to close, bracket-key cycling, and reliable Cmd+W routing.
+- Closing a project tab now confirms and cleanly kills its running terminals.
+- Improved horizontal scrolling for devices that have scrollbar visibility set to "always"
+- Ticket search now works the same across list and column views, with exact ticket-number matching.
+- Any note containing all-caps "FEEDBACK NEEDED" is treated as a feedback prompt.
+- Provide Feedback auto-loads your saved draft from every entry path.
+- Cmd/Ctrl+key category shortcuts work while typing a draft ticket title.
+
+- Completed the typed API layer ??? every endpoint's wire shape is a shared zod schema.
+- Added automated dependency security auditing (npm + cargo) plus Dependabot.
+- Adopted a no-bare-`as` policy with a zod validation foundation and an enforcing lint rule.
+- Added a push/PR CI gate to catch release-only e2e regressions, plus a Docker e2e script.
+
+## [0.18.0] - 2026-06-03
+
+
+
+- Claude Code telemetry: per-project opt-in cost and token tracking via an embedded OTLP receiver.
+- Per-project and cross-project stats pages with telemetry and spending data (API-based estimates provided even when using subscription)
+- WebGL terminal rendering with automatic DOM fallback and a software-rendering opt-out.
+- Snapshot Protection: atomic DB snapshots with startup integrity probe and automatic corruption recovery.
+- Sponsor links and a leaner sidebar.
+- Web terminals are now enabled.
+- New installs default to Claude Channel + column view, with a Claude terminal auto-seeded.
+- Various bug fixes
+
 
 - Terminal tabs: middle-click to close, bracket-key cycling, and reliable Cmd+W routing.
 - Closing a project tab now confirms and cleanly kills its running terminals.
