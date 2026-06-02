@@ -23,6 +23,7 @@
 
 ### Server startup (`src/cli.ts` → `src/server.ts`)
 
+0. Open the persisted startup log (`src/startup-log.ts`) — every phase below is mirrored to BOTH stderr and `~/.hotsheet/startup.log` via `startupMark()` so a hang is diagnosable even on a GUI launch (Dock/Spotlight, no controlling terminal — HS-8704). An escalating watchdog (`createStartupWatchdog`, 10s/20s/30s then every 30s) names the stuck phase. The Tauri shell appends its own milestone lines to the same file (`src-tauri/src/lib.rs::startup_log`). The "running at " / "running instance on port " stdout lines the shell greps to leave the splash are pinned by `src/launchReadinessContract.test.ts`.
 1. Parse args (`--port`, `--data-dir`, `--no-open`, `--demo:N`, `--close`, `--list`, `--strict-port`, `--check-for-updates`).
 2. Check for update (`src/update-check.ts`), resolve/register data dir, acquire lock (`src/lock.ts`).
 3. Init PGLite + run schema migrations (`src/db/connection.ts`).
@@ -92,6 +93,7 @@ UI → `src/client/api.tsx` → `/api/...` → route handler → `src/db/*` → 
 | `gitignore.ts` | Ensure `.hotsheet/` is in `.gitignore` |
 | `migrate-settings.ts` | Upgrade older settings.json shapes |
 | `update-check.ts` | Version freshness check against npm |
+| `startup-log.ts` | HS-8704 — persists the startup timeline to `~/.hotsheet/startup.log` (path overridable via `HOTSHEET_STARTUP_LOG`) so a launch hang is diagnosable on a GUI launch with no terminal. `initStartupLog()` writes a session header (argv/cwd/tty); `startupMark(phase)` tees a phase marker to stderr + file and updates the current-phase tracker; `startupLog(msg)` writes arbitrary lines (watchdog + fatal-error handler); `createStartupWatchdog(hooks)` is a pure escalating-watchdog factory (10s/20s/30s then every 30s, names the stuck phase). Best-effort: any fs error disables file logging silently. Tested in `startup-log.test.ts`. |
 | `processPriority.ts` | HS-8308 — `bumpProcessPriorityBestEffort()` shells out to macOS `taskpolicy -p $$ -c user-interactive` at server boot so keystroke handling stays responsive under heavy CPU load (e.g. tests inside the embedded terminal). Pure helpers `shouldBumpProcessPriority(platform)` + `buildTaskpolicyArgs(pid, qosClass?)` for unit-test isolation. No-op on Linux/Windows. See docs/8-cli-server.md §8.10. |
 | `test-helpers.ts` | `setupTestDb` / `cleanupTestDb` for unit tests |
 | `spawnTestServer.ts` | **HS-8588** — shared child-process harness for the `*.e2e.test.ts` suites that need a REAL spawned server (`spawnHotSheet` / `waitForServerReady` / `readSecret` / `postJson` / `patchJson` / `waitForExit` / `canSpawnTsxChild` probe). Extracted from `lifecycle.e2e.test.ts` (HS-7934, now also uses it); backs `db/snapshotCrashRecovery.e2e.test.ts`. Test-only (never bundled); excluded from coverage in `vitest.config.ts`. Suites `describe.skipIf(!canSpawnTsxChild)` so tsx-IPC-restricted sandboxes (HS-8202) skip cleanly. |
@@ -661,6 +663,7 @@ Env flags: `PLUGINS_ENABLED` (build/runtime toggle), `NO_WEB_SERVER` (E2E), `NOD
 - `config.json` — `channelEnabled`, `shareTotalSeconds`, `shareLastPrompted`, `shareAccepted`, `diagnosticsEnabled` (HS-8446 — gates the slow-server banner + HS-8054 UI-hang toast; default false), `telemetryCostMode` (HS-8497), `terminalWebglOptOut` (HS-8488 — software-rendering opt-out for terminals; default false/undefined = WebGL).
 - `instance.json` — running instance PID + port (for single-instance mode + multi-project join).
 - `projects.json` — registered projects (secret → dataDir).
+- `startup.log` — HS-8704 append-only launch timeline (sidecar phase markers + Tauri shell milestones, interleaved by timestamp). Size-capped (~1 MB → truncate-on-init); written by `src/startup-log.ts` + `src-tauri/src/lib.rs::startup_log`. Path overridable via `HOTSHEET_STARTUP_LOG`.
 - `plugins/` — installed plugins.
 - `dismissed-plugins.json` — plugins the user has dismissed.
 

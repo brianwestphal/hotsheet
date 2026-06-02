@@ -93,6 +93,8 @@ The `hotsheet` global CLI. Args: `--port` (default 4174), `--data-dir` (default 
 
 **HS-8308 (2026-05-09)** — added §8.10 Process Priority. Best-effort macOS QoS bump via `taskpolicy -p $$ -c user-interactive` immediately after the Hono server starts; Linux/Windows no-op. Closes the user's keystroke-lag-under-test-load report — Terminal.app gets `user-interactive` implicitly, the Node sidecar didn't until this change. Implementation in `src/processPriority.ts` (pure helpers `shouldBumpProcessPriority` + `buildTaskpolicyArgs`, side-effecting `bumpProcessPriorityBestEffort`). 8 unit tests in `processPriority.test.ts`.
 
+**HS-8704 (2026-06-02)** — added §8.11 Self-Diagnosing Launch. The installed beta app hung on the "Starting Hot Sheet…" splash, reproducible only on a GUI launch (Dock/Spotlight, no controlling terminal → all diagnostics vanished). Option A fix persists the startup timeline to `~/.hotsheet/startup.log` (overridable via `HOTSHEET_STARTUP_LOG`): `src/startup-log.ts` tees each `startupMark(phase)` to stderr + file and runs an escalating watchdog (10s/20s/30s then every 30s) that NAMES the stuck phase; `src-tauri/src/lib.rs::startup_log` appends the Tauri shell's milestones to the same file. The separate "leave the splash" stdout handshake stays pinned by `src/launchReadinessContract.test.ts`. Unit-tested in `src/startup-log.test.ts`. Hardening options B (Rust readiness-timeout recovery screen) + C remain available if the captured logs show a need.
+
 **Status:** Shipped.
 
 ---

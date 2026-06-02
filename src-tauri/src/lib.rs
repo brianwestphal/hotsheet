@@ -140,6 +140,36 @@ fn collect_forwarded_server_args(app_args: &[String]) -> Vec<String> {
     out
 }
 
+/// HS-8704 (option A — self-diagnosing launch): mirror a startup diagnostic
+/// line to BOTH stderr (visible only on a terminal launch) AND
+/// `~/.hotsheet/startup.log` — the only record that survives a GUI launch
+/// (Dock / Spotlight / Finder), where the process has no controlling terminal
+/// and every `eprintln!` vanishes ("open -a 'Hot Sheet' hangs, but no logs are
+/// shown"). The Node sidecar appends its own `[startup +Nms] …` phase markers
+/// to the SAME file (see `src/startup-log.ts`), so the two processes interleave
+/// by timestamp into one launch timeline. Best-effort: any filesystem error is
+/// swallowed so logging never affects the launch. Release-only — dev builds
+/// always run from a terminal.
+#[cfg(not(debug_assertions))]
+fn startup_log(msg: &str) {
+    eprintln!("{msg}");
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok());
+    if let Some(home) = home {
+        use std::io::Write;
+        let dir = std::path::PathBuf::from(home).join(".hotsheet");
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("startup.log"))
+        {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+}
+
 #[cfg(not(debug_assertions))]
 /// Determines the app/window title from .hotsheet/settings.json or the parent folder name.
 fn resolve_app_name(data_dir: &str) -> String {
@@ -763,13 +793,13 @@ async fn spawn_sidecar_and_navigate(
     data_dir: &str,
     extra_args: Vec<String>,
 ) -> Result<(), String> {
-    eprintln!("[sidecar] spawn_sidecar_and_navigate called with data_dir={} extra_args={:?}", data_dir, extra_args);
+    startup_log(&format!("[sidecar] spawn_sidecar_and_navigate called with data_dir={} extra_args={:?}", data_dir, extra_args));
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource dir: {e}"))?;
     let cli_js = resource_dir.join("server").join("cli.js");
-    eprintln!("[sidecar] cli_js={}, exists={}", cli_js.display(), cli_js.exists());
+    startup_log(&format!("[sidecar] cli_js={}, exists={}", cli_js.display(), cli_js.exists()));
 
     let mut sidecar_args = vec![
         cli_js.to_string_lossy().to_string(),
@@ -794,7 +824,7 @@ async fn spawn_sidecar_and_navigate(
         .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
     let sidecar_pid = child.pid();
-    eprintln!("[sidecar] spawned with PID {}", sidecar_pid);
+    startup_log(&format!("[sidecar] spawned with PID {}", sidecar_pid));
     *app.state::<SidecarPid>().0.lock().unwrap() = Some(sidecar_pid);
 
     let window = app
@@ -817,22 +847,34 @@ async fn spawn_sidecar_and_navigate(
                     let line_str = String::from_utf8_lossy(&line);
                     eprintln!("[sidecar stdout] {}", line_str.trim());
                     if !navigated {
+                        // HS-8704 — LOAD-BEARING string match. These two
+                        // substrings are emitted by `src/server.ts` ("running
+                        // at ") and `src/cli.ts` ("running instance on port ").
+                        // If they drift, the WebView never navigates off the
+                        // "Starting Hot Sheet…" splash and the installed app
+                        // hangs at launch. The cross-file coupling is pinned by
+                        // `src/launchReadinessContract.test.ts`.
                         // Case 1: sidecar started its own server
                         if let Some(idx) = line_str.find("running at ") {
                             let url = line_str[idx + "running at ".len()..].trim();
                             if let Ok(parsed) = url.parse() {
                                 let _ = window.navigate(parsed);
                                 navigated = true;
+                                // HS-8704 — the SUCCESS milestone: the WebView
+                                // has been told to leave the "Starting Hot
+                                // Sheet…" splash. Its absence in the log
+                                // pinpoints a hang to BEFORE this navigate.
+                                startup_log(&format!("[sidecar] navigated WebView to {} (own server)", url));
                             }
                         }
                         // Case 2: sidecar joined an existing instance
                         if let Some(idx) = line_str.find("running instance on port ") {
                             let port_str = line_str[idx + "running instance on port ".len()..].trim();
                             let url = format!("http://localhost:{}", port_str);
-                            eprintln!("[sidecar] joining existing instance at {}", url);
                             if let Ok(parsed) = url.parse() {
                                 let _ = window.navigate(parsed);
                                 navigated = true;
+                                startup_log(&format!("[sidecar] navigated WebView to {} (joined existing instance)", url));
                             }
                         }
                     }
@@ -849,13 +891,13 @@ async fn spawn_sidecar_and_navigate(
         // Fallback: if sidecar exited without navigating, try reading port from settings.json.
         // Skipped in demo mode — the sidecar picks a temp dataDir we don't know up front.
         if !navigated && !data_dir_owned.is_empty() {
-            eprintln!("[sidecar] process exited without navigating, trying settings.json fallback");
+            startup_log("[sidecar] process exited without navigating, trying settings.json fallback");
             let settings_path = std::path::PathBuf::from(&data_dir_owned).join("settings.json");
             if let Ok(contents) = std::fs::read_to_string(&settings_path) {
                 if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&contents) {
                     if let Some(port) = settings.get("port").and_then(|p| p.as_u64()) {
                         let url = format!("http://localhost:{}", port);
-                        eprintln!("[sidecar] fallback: navigating to {}", url);
+                        startup_log(&format!("[sidecar] fallback: navigating to {}", url));
                         if let Ok(parsed) = url.parse() {
                             let _ = window.navigate(parsed);
                         }
@@ -1158,7 +1200,7 @@ pub fn run() {
                 let has_demo = app_args.iter().any(|a| a.starts_with("--demo:"));
                 let forwarded = collect_forwarded_server_args(&app_args);
 
-                eprintln!("[setup] has_data_dir={} has_demo={} args={:?}", has_data_dir, has_demo, app_args);
+                startup_log(&format!("[setup] has_data_dir={} has_demo={} args={:?}", has_data_dir, has_demo, app_args));
 
                 // Demo mode: bypass project restoration and let the sidecar pick its own
                 // temp dataDir (cli.ts resolveDemoDataDir). The forwarded --demo:N flag tells
@@ -1168,7 +1210,7 @@ pub fn run() {
                     let extra = forwarded.clone();
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = spawn_sidecar_and_navigate(&handle, "", extra).await {
-                            eprintln!("[setup] failed to spawn demo sidecar: {e}");
+                            startup_log(&format!("[setup] failed to spawn demo sidecar: {e}"));
                         }
                     });
                     return Ok(());
@@ -1203,14 +1245,14 @@ pub fn run() {
                     }
 
                     if let Some(ref data_dir) = restored_dir {
-                        eprintln!("[setup] restoring project: {}", data_dir);
+                        startup_log(&format!("[setup] restoring project: {}", data_dir));
                         // Restore the most recent project — spawn sidecar and return
                         let handle = app.handle().clone();
                         let dir = data_dir.clone();
                         let extra = forwarded.clone();
                         tauri::async_runtime::spawn(async move {
                             if let Err(e) = spawn_sidecar_and_navigate(&handle, &dir, extra).await {
-                                eprintln!("[setup] failed to restore project: {e}");
+                                startup_log(&format!("[setup] failed to restore project: {e}"));
                                 // Navigate to welcome screen as fallback
                                 if let Some(window) = handle.get_webview_window("main") {
                                     let _ = window.navigate("tauri://localhost/welcome.html".parse().unwrap());
@@ -1285,7 +1327,7 @@ pub fn run() {
                     let extra = forwarded.clone();
                     tauri::async_runtime::spawn(async move {
                         if let Err(e) = spawn_sidecar_and_navigate(&handle, &data_dir, extra).await {
-                            eprintln!("[setup] failed to spawn sidecar: {e}");
+                            startup_log(&format!("[setup] failed to spawn sidecar: {e}"));
                         }
                     });
                 }

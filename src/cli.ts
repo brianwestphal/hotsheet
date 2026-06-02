@@ -25,6 +25,7 @@ import { registerExistingProject, registerProject } from './projects.js';
 import { ErrorBodySchema, ProjectNameOnlySchema } from './schemas.js';
 import { startServer } from './server.js';
 import { ensureSkills, initSkills, setSkillCategories } from './skills.js';
+import { createStartupWatchdog, getCurrentPhase, getElapsedMs, initStartupLog, startupLog, startupMark } from './startup-log.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
 import { getErrorMessage } from './utils/errorMessage.js';
@@ -89,9 +90,6 @@ async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
  * Returns the initialized database instance.
  */
 async function initializeProject(dataDir: string, demo: number | null): Promise<PGlite> {
-  const t0 = Date.now();
-  const elapsed = () => `${Date.now() - t0}ms`;
-
   mkdirSync(dataDir, { recursive: true });
 
   if (demo === null) {
@@ -99,10 +97,14 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     ensureGitignore(process.cwd());
   }
 
-  console.error(`[init-project ${elapsed()}] initializing DB...`);
+  // HS-8704 — the DB init below is the only UNBOUNDED await on the pre-server
+  // path (PGLite open / integrity-probe / §73 snapshot auto-restore), so it's
+  // the prime hang suspect. Marking it on either side pins the stall to this
+  // phase in the persisted startup log.
+  startupMark('init-project: initializing DB');
   setDataDir(dataDir);
   const db = await getDb();
-  console.error(`[init-project ${elapsed()}] DB ready`);
+  startupMark('init-project: DB ready');
 
   if (demo !== null) {
     await seedDemoData(demo);
@@ -111,10 +113,10 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
   if (demo === null) {
     const { runWithDataDir } = await import('./db/connection.js');
     // Migrate project settings from DB to settings.json (idempotent)
-    console.error(`[init-project ${elapsed()}] migrating settings...`);
+    startupMark('init-project: migrating settings');
     const { migrateDbSettingsToFile } = await import('./migrate-settings.js');
     await runWithDataDir(dataDir, () => migrateDbSettingsToFile(dataDir));
-    console.error(`[init-project ${elapsed()}] cleaning up attachments...`);
+    startupMark('init-project: cleaning up attachments');
     await runWithDataDir(dataDir, () => cleanupAttachments());
     // HS-8154 — telemetry retention sweep. No-op when telemetry hasn't
     // been used (the tables exist but stay empty). HS-8607 — sweep every
@@ -124,7 +126,7 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     // wrapper — `cleanupAllProjectsTelemetry` resolves the shared DB via
     // `getTelemetryDb()` itself.
     await cleanupAllProjectsTelemetry(dataDir);
-    console.error(`[init-project ${elapsed()}] done`);
+    startupMark('init-project: done');
   }
 
   console.log(`  Data directory: ${dataDir}`);
@@ -187,24 +189,21 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
  * Post-startup tasks: backup scheduling, project restore, instance file, browser open.
  */
 async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
-  const t0 = Date.now();
-  const elapsed = () => `${Date.now() - t0}ms`;
-
   if (demo === null) {
     initBackupScheduler(dataDir);
     initSnapshotScheduler(dataDir);
     addToProjectList(dataDir);
-    console.error(`[post-startup ${elapsed()}] restoring previous projects...`);
+    startupMark('post-startup: restoring previous projects');
     await restorePreviousProjects(dataDir, actualPort);
-    console.error(`[post-startup ${elapsed()}] migrating global config...`);
+    startupMark('post-startup: migrating global config');
     await migrateGlobalConfig();
-    console.error(`[post-startup ${elapsed()}] cleaning up stale channels...`);
+    startupMark('post-startup: cleaning up stale channels');
     await cleanupStaleChannels();
-    console.error(`[post-startup ${elapsed()}] setting up skills and channels...`);
+    startupMark('post-startup: setting up skills and channels');
     await setupSkillsAndChannels(actualPort);
-    console.error(`[post-startup ${elapsed()}] setting up instance lifecycle...`);
+    startupMark('post-startup: setting up instance lifecycle');
     await setupInstanceLifecycle(actualPort);
-    console.error(`[post-startup ${elapsed()}] done`);
+    startupMark('post-startup: done');
   }
 
   if (!noOpen) {
@@ -431,24 +430,23 @@ async function handleExistingInstance(
   dataDir: string,
   noOpen: boolean,
   replace: boolean,
-  elapsed: () => string,
 ): Promise<boolean> {
-  console.error(`[startup ${elapsed()}] cleaning up stale instances...`);
+  startupMark('existing-instance: cleaning up stale instances');
   await cleanupStaleInstance();
-  console.error(`[startup ${elapsed()}] stale cleanup done`);
+  startupMark('existing-instance: stale cleanup done');
 
   const instance = readInstanceFile();
   if (instance === null) return false;
 
-  console.error(`[startup ${elapsed()}] checking if instance on port ${instance.port} is running...`);
+  startupMark(`existing-instance: checking if instance on port ${instance.port} is running`);
   const running = await isInstanceRunning(instance.port);
-  console.error(`[startup ${elapsed()}] instance check: running=${running}`);
+  startupMark(`existing-instance: instance check running=${running}`);
   if (!running) return false;
 
   if (replace) {
-    console.error(`[startup ${elapsed()}] --replace: shutting down instance on port ${instance.port}...`);
+    startupMark(`existing-instance: --replace shutting down instance on port ${instance.port}`);
     await shutdownRunningInstance(instance.port);
-    console.error(`[startup ${elapsed()}] --replace: previous instance shut down`);
+    startupMark('existing-instance: --replace previous instance shut down');
     return false;
   }
 
@@ -471,6 +469,12 @@ async function handleExistingInstance(
       const rawJson: unknown = await res.json();
       const parsed = ProjectNameOnlySchema.safeParse(rawJson);
       const name = parsed.success ? parsed.data.name : 'unknown';
+      // HS-8704 — LOAD-BEARING log line. The Tauri shell (`src-tauri/src/lib.rs`)
+      // greps sidecar stdout for the exact substring `running instance on port `
+      // and slices the port out after it to navigate the WebView off the
+      // "Starting Hot Sheet…" splash when this process joined an existing
+      // instance instead of starting its own. Reword this and the installed app
+      // hangs on the splash forever. Pinned by `src/launchReadinessContract.test.ts`.
       console.log(`  Registered project "${name}" with running instance on port ${instance.port}`);
     } else {
       const rawErr: unknown = await res.json().catch(() => ({}));
@@ -484,8 +488,11 @@ async function handleExistingInstance(
 }
 
 async function main() {
-  const t0 = Date.now();
-  const elapsed = () => `${Date.now() - t0}ms`;
+  // HS-8704 — open the persisted startup log FIRST so every phase marker below
+  // survives a GUI launch (Dock / Spotlight), which has no terminal to print
+  // to. See `src/startup-log.ts` for the full rationale.
+  initStartupLog();
+  startupMark('main: entered');
 
   // HS-8096: install signal handlers before any HTTP listener can respond,
   // so a SIGINT arriving between `tryServe`'s listen-callback firing and
@@ -493,12 +500,18 @@ async function main() {
   // instead of hitting Node's default-handler exit-with-130.
   registerSignalHandlersEarly();
 
-  // Watchdog: dump diagnostic if startup takes too long
-  const watchdog = setTimeout(() => {
-    console.error(`[startup] WARNING: startup has taken ${elapsed()} — still not ready`);
-    console.error('[startup] This may indicate a hang in DB init, network check, or project restore.');
-    console.error('[startup] Check the timing logs above to identify the stuck phase.');
-  }, 10_000);
+  // HS-8704 — escalating watchdog that NAMES the stuck phase. Pre-fix this was
+  // a single 10s one-shot with no phase info, invisible on a GUI launch. Now
+  // it keeps stamping the durable startup log (10s / 20s / 30s / then every
+  // 30s) so a wedged launch points straight at the culprit phase.
+  const watchdog = createStartupWatchdog({
+    getElapsedMs: () => getElapsedMs(),
+    getCurrentPhase,
+    log: (m) => startupLog(m),
+    schedule: (fn, ms) => setTimeout(fn, ms),
+    cancel: (h) => { clearTimeout(h); },
+  });
+  watchdog.start();
 
   const parsed = parseArgs(process.argv);
   if (!parsed) {
@@ -509,13 +522,13 @@ async function main() {
   const { port, demo, forceUpdateCheck, noOpen, strictPort, replace } = parsed;
   let { dataDir } = parsed;
 
-  console.error(`[startup ${elapsed()}] parsed args`);
+  startupMark('parsed args');
 
   await handleEarlyFlags(parsed);
 
-  console.error(`[startup ${elapsed()}] checking for updates...`);
+  startupMark('checking for updates');
   await checkForUpdates(forceUpdateCheck);
-  console.error(`[startup ${elapsed()}] update check done`);
+  startupMark('update check done');
 
   if (demo !== null) {
     // HS-8612 — flag the process as demo so the page shell can stamp
@@ -524,28 +537,28 @@ async function main() {
     setDemoMode(true);
     dataDir = resolveDemoDataDir(demo);
   } else {
-    await handleExistingInstance(dataDir, noOpen, replace, elapsed);
+    await handleExistingInstance(dataDir, noOpen, replace);
   }
 
-  console.error(`[startup ${elapsed()}] initializing project...`);
+  startupMark('initializing project');
   const db = await initializeProject(dataDir, demo);
-  console.error(`[startup ${elapsed()}] project initialized`);
+  startupMark('project initialized');
   if (demo !== null) {
     writeFileSettings(dataDir, { appName: 'Hot Sheet Demo' });
   }
-  console.error(`[startup ${elapsed()}] starting server...`);
+  startupMark('starting server');
   const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort);
-  console.error(`[startup ${elapsed()}] server started on port ${actualPort}`);
+  startupMark(`server started on port ${actualPort}`);
   registerExistingProject(dataDir, secret, db);
   // Eager-spawn non-lazy terminals for the primary project (HS-6310).
   const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
   eagerSpawnTerminals(secret, dataDir);
-  console.error(`[startup ${elapsed()}] running post-startup tasks...`);
+  startupMark('running post-startup tasks');
   await postStartup(dataDir, actualPort, demo, noOpen);
-  console.error(`[startup ${elapsed()}] post-startup complete`);
+  startupMark('post-startup complete');
 
-  clearTimeout(watchdog);
-  console.error(`[startup ${elapsed()}] startup finished`);
+  watchdog.stop();
+  startupMark('startup finished');
 
   // Multi-project demo: register additional projects after server is running
   if (demo !== null) {
@@ -599,6 +612,11 @@ const isEntryPoint = computeIsEntryPoint(process.argv[1], import.meta.url);
 
 if (isEntryPoint) {
   main().catch((err: unknown) => {
+    // HS-8704 — a thrown error is a crash, not a hang, but it's just as
+    // invisible on a GUI launch. Record the message in the durable startup
+    // log (right after the last phase marker, so the timeline shows exactly
+    // where it died) before dumping the full stack to stderr.
+    startupLog(`[startup] FATAL: ${getErrorMessage(err)}`);
     console.error(err);
     process.exit(1);
   });

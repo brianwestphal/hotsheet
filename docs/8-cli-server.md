@@ -152,3 +152,20 @@ Behaviour:
 - **Logged on success** as `Process priority: macOS QoS class set to user-interactive` in the boot output, paralleling the existing `Data directory: …` line.
 
 Testing: pure helpers `shouldBumpProcessPriority(platform)` + `buildTaskpolicyArgs(pid, qosClass?)` are unit-tested in `src/processPriority.test.ts` (8 cases — platform gate × 6, argv builder × 4 incl. default-class constant pin). The actual `spawnSync` call is exercised in real macOS boots; mocking it adds no fidelity over the pure helpers.
+
+### 8.11 Self-Diagnosing Launch / Startup Log (HS-8704)
+
+The installed (Tauri) beta app could hang forever on the "Starting Hot Sheet…" splash, and the hang reproduced **only** on a GUI launch (`open -a 'Hot Sheet'` / Dock / Spotlight) — launching the binary straight from a terminal worked. The difference is the controlling terminal: a GUI launch gives the process none, so every `console.error` phase marker the sidecar emitted went to a pipe nobody was reading, and the Tauri shell's own `eprintln\!` markers vanished too. There was no record of *where* startup stalled.
+
+The fix persists the launch timeline to a file that survives a GUI launch:
+
+- **Module:** `src/startup-log.ts` (Node sidecar) + `src-tauri/src/lib.rs::startup_log` (Tauri shell). Both append to the SAME file, so the two processes interleave by ISO timestamp into one timeline.
+- **Location:** `~/.hotsheet/startup.log`. Overridable with the `HOTSHEET_STARTUP_LOG` env var (full path) for support escalations and tests.
+- **Header per launch:** timestamp, pid, platform, Node version, argv, cwd, and whether stderr is a TTY (the GUI-launch tell).
+- **Phase markers:** `main()` calls `startupMark(phase)` at each milestone (parsed args → update check → existing-instance handling → init-project sub-phases incl. the DB-init prime suspect → server started → post-startup sub-phases → finished). Each marker is mirrored to stderr (so terminal launches + the live Tauri sidecar-stderr reader are unchanged) **and** the log, and updates a current-phase tracker.
+- **Escalating watchdog:** `createStartupWatchdog(...)` replaces the old single 10 s one-shot. It fires at 10 s / 20 s / 30 s, then every 30 s, each time **naming the phase startup is stuck in** and stamping the durable log — so a wedged launch points straight at the culprit. Pure factory (timers + clock injected) like `createSignalHandler`.
+- **Fatal errors:** the top-level `main().catch` writes `[startup] FATAL: <message>` to the log right after the last phase marker, so a crash (vs. a hang) is equally visible.
+- **Size cap:** ~1 MB; the file is truncated on `initStartupLog` when it exceeds the cap, so it can't grow without bound across launches.
+- **Best-effort:** any filesystem error silently disables file logging — diagnostics can never themselves break startup.
+
+The cross-language "leave the splash" handshake (the `running at ` / `running instance on port ` stdout substrings the Tauri shell greps for) is separately pinned by `src/launchReadinessContract.test.ts`; the startup-log behaviors are unit-tested in `src/startup-log.test.ts`.

@@ -222,6 +222,11 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   }
 
   const url = `http://localhost:${actualPort}`;
+  // HS-8704 — LOAD-BEARING log line. The Tauri shell (`src-tauri/src/lib.rs`)
+  // greps sidecar stdout for the exact substring `running at ` and slices the
+  // URL out after it to navigate the WebView off the "Starting Hot Sheet…"
+  // splash. Reword this and the installed app hangs on the splash forever.
+  // The coupling is pinned by `src/launchReadinessContract.test.ts`.
   console.log(`\n  Hot Sheet running at ${url}\n`);
 
   // Open browser (unless suppressed for Tauri sidecar mode)
