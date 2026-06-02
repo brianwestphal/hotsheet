@@ -37,15 +37,19 @@ async function insertCostMetric(opts: {
   model?: string;
   source?: string;
   cost: number;
+  // HS-8708 — optional OTLP temporality columns. Omitted ⇒ NULL (the legacy
+  // pre-HS-8600 shape Hot Sheet's own delta-forcing spawn env always produced).
+  temporality?: 'delta' | 'cumulative';
+  isMonotonic?: boolean;
 }): Promise<void> {
   const db = await getDb();
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   if (opts.source !== undefined) attrs['query.source'] = opts.source;
   await db.query(
-    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-    [opts.ts, opts.projectSecret, 'session-1', 'claude_code.cost.usage', JSON.stringify(attrs), JSON.stringify({ asDouble: opts.cost })],
+    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+    [opts.ts, opts.projectSecret, 'session-1', 'claude_code.cost.usage', JSON.stringify(attrs), JSON.stringify({ asDouble: opts.cost }), opts.temporality ?? null, opts.isMonotonic ?? null],
   );
 }
 
@@ -55,15 +59,18 @@ async function insertTokenMetric(opts: {
   model?: string;
   type?: string;
   tokens: number;
+  // HS-8708 — see insertCostMetric.
+  temporality?: 'delta' | 'cumulative';
+  isMonotonic?: boolean;
 }): Promise<void> {
   const db = await getDb();
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   if (opts.type !== undefined) attrs.type = opts.type;
   await db.query(
-    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-    [opts.ts, opts.projectSecret, 'session-1', 'claude_code.token.usage', JSON.stringify(attrs), JSON.stringify({ asInt: opts.tokens })],
+    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+    [opts.ts, opts.projectSecret, 'session-1', 'claude_code.token.usage', JSON.stringify(attrs), JSON.stringify({ asInt: opts.tokens }), opts.temporality ?? null, opts.isMonotonic ?? null],
   );
 }
 
@@ -1316,6 +1323,76 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       // Distinct prompt ids across both spellings → 2 recent prompts, count 2.
       expect(await getRecentPrompts(SECRET_A, 10)).toHaveLength(2);
       expect((await getWindowTotals(SECRET_A, null)).promptCount).toBe(2);
+    });
+  });
+
+  // HS-8708 — a CUMULATIVE monotonic cost/token counter (a foreign telemetry
+  // source — Hot Sheet's own spawn env forces delta) reports the running TOTAL
+  // on every export, so summing those rows re-inflates the dashboards (the
+  // 18-60× HS-8599 overcount). HS-8600 records each row's temporality; these
+  // tests prove the SUM aggregations now EXCLUDE cumulative monotonic rows while
+  // still counting delta + legacy-NULL rows.
+  describe('cumulative monotonic exclusion (HS-8708)', () => {
+    it('getWindowTotals excludes a cumulative monotonic cost row but keeps delta + legacy rows', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 }); // legacy NULL temporality
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.25, temporality: 'delta', isMonotonic: true });
+      // The poison row: a running-total snapshot that would balloon the SUM.
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 999, temporality: 'cumulative', isMonotonic: true });
+
+      const totals = await getWindowTotals(SECRET_A, null);
+      // 0.5 + 0.25 only — the $999 cumulative row is dropped.
+      expect(totals.cost).toBeCloseTo(0.75);
+    });
+
+    it('getWindowTotals excludes a cumulative monotonic token row', async () => {
+      const now = new Date();
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 1000 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 9_000_000, temporality: 'cumulative', isMonotonic: true });
+
+      const totals = await getWindowTotals(SECRET_A, null);
+      expect(totals.tokens).toBe(1000);
+      expect(totals.inputTokens).toBe(1000);
+    });
+
+    it('a NON-monotonic cumulative row is still counted (only monotonic counters re-inflate)', async () => {
+      const now = new Date();
+      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5, temporality: 'cumulative', isMonotonic: false });
+      const totals = await getWindowTotals(SECRET_A, null);
+      // is_monotonic=false ⇒ not the re-inflating shape ⇒ kept.
+      expect(totals.cost).toBeCloseTo(0.5);
+    });
+
+    it('getTodayCost, getCostByProject, getCostByModel, getCostOverTime + heatmap all drop the cumulative row', async () => {
+      const t = new Date('2026-05-18T10:30:00Z'); // Monday 10:00 UTC
+      await insertCostMetric({ ts: t, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5, temporality: 'delta', isMonotonic: true });
+      await insertCostMetric({ ts: t, projectSecret: SECRET_A, model: 'sonnet', cost: 999, temporality: 'cumulative', isMonotonic: true });
+      await insertTokenMetric({ ts: t, projectSecret: SECRET_A, model: 'sonnet', type: 'input', tokens: 100 });
+      await insertTokenMetric({ ts: t, projectSecret: SECRET_A, model: 'sonnet', type: 'input', tokens: 9_000_000, temporality: 'cumulative', isMonotonic: true });
+
+      // getTodayCost keys off today's midnight, so seed a today-row for it.
+      const today = new Date();
+      await insertCostMetric({ ts: today, projectSecret: SECRET_B, cost: 1.0, temporality: 'delta', isMonotonic: true });
+      await insertCostMetric({ ts: today, projectSecret: SECRET_B, cost: 555, temporality: 'cumulative', isMonotonic: true });
+      expect(await getTodayCost(SECRET_B)).toBeCloseTo(1.0);
+
+      const byProject = await getCostByProject(null);
+      const a = byProject.find(r => r.projectSecret === SECRET_A);
+      expect(a?.cost).toBeCloseTo(0.5);
+      expect(a?.tokens).toBe(100);
+
+      const byModel = await getCostByModel(SECRET_A, null);
+      const sonnet = byModel.find(m => m.model === 'sonnet');
+      expect(sonnet?.cost).toBeCloseTo(0.5);
+      expect(sonnet?.tokens).toBe(100);
+
+      const series = await getCostOverTime(null, SECRET_A, 'UTC', new Date('2026-05-19T00:00:00Z'));
+      const sonnetTotal = series.filter(p => p.projectSecret === SECRET_A).reduce((s, p) => s + p.cost, 0);
+      expect(sonnetTotal).toBeCloseTo(0.5);
+
+      const cells = await getHourlyActivityHeatmap(null, 'UTC');
+      // Monday DOW 1, hour 10 → index 34. $0.50 delta, NOT $999.50.
+      expect(cells[34].cost).toBeCloseTo(0.5);
     });
   });
 });

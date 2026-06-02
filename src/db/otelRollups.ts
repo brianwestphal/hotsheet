@@ -174,6 +174,40 @@ const CACHE_READ_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheRead', 'ca
 const CACHE_CREATION_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheCreation', 'cache_creation')";
 
 /**
+ * HS-8708 — exclude CUMULATIVE monotonic cost/token rows from SUM aggregations.
+ * The dashboards SUM `claude_code.cost.usage` / `claude_code.token.usage`
+ * data-point values, which is only correct for DELTA temporality (each row is
+ * the increment since the last export). A CUMULATIVE monotonic counter reports
+ * the running total on every export, so summing those rows re-inflates totals
+ * 18-60× (the HS-8599 overcount). HS-8600 added the `aggregation_temporality` +
+ * `is_monotonic` columns and a stderr warning when such a row arrives; this
+ * predicate is what actually keeps those rows OUT of the totals so the dashboards
+ * self-heal instead of needing a manual `DELETE`.
+ *
+ * Hot Sheet's own spawn env forces delta
+ * (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`, HS-8599), so this
+ * is a no-op on Hot-Sheet-spawned data; it only drops rows from a FOREIGN
+ * telemetry source (an externally-launched `claude`, a different version/config)
+ * that landed as `aggregation_temporality='cumulative' AND is_monotonic=true`.
+ *
+ * Null-safe via `IS DISTINCT FROM` / `IS NOT TRUE` so every row we MUST keep
+ * passes:
+ *   - delta counters (`temporality='delta'`),
+ *   - non-monotonic points (gauges, `is_monotonic=false`),
+ *   - legacy pre-HS-8600 rows (both columns NULL — already correct, since the
+ *     delta-forcing spawn env predates the columns; existing seeded test rows
+ *     hit this branch).
+ *
+ * Pure literal predicate (no bind params), safe to append with ` AND ${...}` to
+ * any `otel_metrics` WHERE clause without disturbing `$N` indices — same
+ * contract as `REAL_WORK_TOKEN_TYPE_SQL`. Only valid against `otel_metrics` (the
+ * columns don't exist on `otel_events` / `otel_spans`), so it is appended per
+ * metric query rather than inside the shared `buildProjectAndWindowClauses`
+ * helper, which also serves event/span queries.
+ */
+const EXCLUDE_CUMULATIVE_MONOTONIC_SQL = "(aggregation_temporality IS DISTINCT FROM 'cumulative' OR is_monotonic IS NOT TRUE)";
+
+/**
  * HS-8639 — Claude Code's OTLP log records carry event names WITHOUT a
  * `claude_code.` prefix on current Claude Code versions (the native OTLP
  * `eventName` field — e.g. `user_prompt`, `tool_result`, `api_request`),
@@ -231,7 +265,7 @@ export async function getWindowTotals(
   const costResult = await db.query<{ total: string | null }>(
     `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $1${metricsClause.clauses}`,
+     WHERE metric_name = $1 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${metricsClause.clauses}`,
     ['claude_code.cost.usage', ...metricsClause.params],
   );
   // HS-8627 — `total` is input + output (excludes cacheRead / cacheCreation).
@@ -245,7 +279,7 @@ export async function getWindowTotals(
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${CACHE_READ_TOKEN_TYPE_SQL}) AS cache_read,
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${CACHE_CREATION_TOKEN_TYPE_SQL}) AS cache_creation
      FROM otel_metrics
-     WHERE metric_name = $1${metricsClause.clauses}`,
+     WHERE metric_name = $1 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${metricsClause.clauses}`,
     ['claude_code.token.usage', ...metricsClause.params],
   );
 
@@ -343,6 +377,11 @@ export async function getTelemetryDebugInfo(projectSecret: string | null): Promi
     ev.params,
   );
   const mt = buildProjectAndWindowClauses(projectSecret, null, 'ts', 1);
+  // HS-8708 — this diagnostic deliberately does NOT apply
+  // `EXCLUDE_CUMULATIVE_MONOTONIC_SQL`: `_debug` exists to show what is ACTUALLY
+  // in the table (including any cumulative-temporality rows from a foreign
+  // source), which is exactly what you want to see when diagnosing why a total
+  // looks inflated. The dashboard rollups exclude those rows; this view doesn't.
   const tokenTypes = await db.query<{ typ: string | null; points: bigint | number; toks: string | null }>(
     `SELECT COALESCE(attributes_json->>'type', '(none)') AS typ, COUNT(*) AS points,
             SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS toks
@@ -417,7 +456,7 @@ export async function getCostByModel(
         SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${OUTPUT_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS output_tokens,
         COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
-     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
+     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage') AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${clauses.clauses}
      GROUP BY attributes_json->>'model'
      ORDER BY cost DESC`,
     clauses.params,
@@ -484,7 +523,7 @@ export async function getQuerySourceRollup(
         SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${REAL_WORK_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
         COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
      FROM otel_metrics
-     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')${clauses.clauses}
+     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage') AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${clauses.clauses}
      GROUP BY attributes_json->>'query.source'
      ORDER BY cost DESC`,
     clauses.params,
@@ -546,7 +585,7 @@ export async function getTodayCost(projectSecret: string): Promise<number> {
   const result = await db.query<{ total: string | null }>(
     `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $1 AND project_secret = $2 AND ts >= $3`,
+     WHERE metric_name = $1 AND project_secret = $2 AND ts >= $3 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}`,
     ['claude_code.cost.usage', projectSecret, midnight],
   );
   return Number(result.rows[0]?.total ?? 0);
@@ -825,7 +864,7 @@ export async function getTodayCostByProject(): Promise<Record<string, number>> {
   const result = await db.query<{ project_secret: string; total: string | null }>(
     `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $1 AND ts >= $2
+     WHERE metric_name = $1 AND ts >= $2 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
      GROUP BY project_secret
      HAVING SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) > 0`,
     ['claude_code.cost.usage', midnight],
@@ -882,7 +921,7 @@ export async function getCostByProject(
     db.query<{ project_secret: string; total: string | null }>(
       `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${secretsClause}
+       WHERE metric_name = $1${tsClause}${secretsClause} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
        GROUP BY project_secret`,
       ['claude_code.cost.usage', ...tsParams, ...secrets.params],
     ),
@@ -890,7 +929,7 @@ export async function getCostByProject(
       // HS-8627 — input + output only (exclude cacheRead / cacheCreation).
       `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${secretsClause} AND ${REAL_WORK_TOKEN_TYPE_SQL}
+       WHERE metric_name = $1${tsClause}${secretsClause} AND ${REAL_WORK_TOKEN_TYPE_SQL} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
        GROUP BY project_secret`,
       ['claude_code.token.usage', ...tsParams, ...secrets.params],
     ),
@@ -1010,7 +1049,7 @@ export async function getHourlyActivityHeatmap(
         EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $1${tsClause}${secretsClause}
+     WHERE metric_name = $1${tsClause}${secretsClause} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
      GROUP BY dow, hour`,
     ['claude_code.cost.usage', timezone, ...tsParams, ...secrets.params],
   );
@@ -1153,7 +1192,7 @@ export async function getCostOverTime(
         COALESCE(attributes_json->>'model', '(unknown)') AS model,
         SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
      FROM otel_metrics
-     WHERE metric_name = $2${projectClause}${windowClause}${secretsClause}
+     WHERE metric_name = $2${projectClause}${windowClause}${secretsClause} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
      GROUP BY 1, 2, 3
      ORDER BY 1 ASC`,
     params,
