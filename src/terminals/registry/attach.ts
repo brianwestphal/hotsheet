@@ -137,7 +137,13 @@ export function writeInput(
   terminalId: string = DEFAULT_TERMINAL_ID,
 ): void {
   const s = sessions.get(sessionKey(secret, terminalId));
-  if (s?.pty) s.pty.write(data);
+  // The PTY fd can close (shell exit) before node-pty's onExit nulls `s.pty`.
+  // A write landing in that window throws EBADF synchronously; swallow it —
+  // a dead PTY has nothing to receive, and an uncaught throw here crashes
+  // the whole server (HS-8708 e2e crash: ioctl/write on a stale fd).
+  if (s?.pty) {
+    try { s.pty.write(data); } catch { /* PTY already exited — nothing to write to */ }
+  }
 }
 
 export function resizeTerminal(
@@ -150,5 +156,13 @@ export function resizeTerminal(
   if (!s) return;
   s.cols = cols;
   s.rows = rows;
-  if (s.pty) s.pty.resize(cols, rows);
+  // Same race as writeInput: the PTY fd can already be closed (shell exit)
+  // while `s.pty` is still set, before node-pty's onExit fires. resize() then
+  // throws `ioctl(2) failed, EBADF` synchronously — and because this is
+  // reached from an untrusted WS control frame (websocket.ts handleControl)
+  // with no guard upstream, the uncaught throw killed the entire Node process
+  // mid-e2e-run and cascaded every later test into ERR_CONNECTION_REFUSED.
+  if (s.pty) {
+    try { s.pty.resize(cols, rows); } catch { /* PTY already exited — nothing to resize */ }
+  }
 }

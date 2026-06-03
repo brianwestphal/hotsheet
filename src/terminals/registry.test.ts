@@ -207,6 +207,31 @@ describe('TerminalRegistry', () => {
     expect(getTerminalStatus('secret-1', dir).rows).toBe(40);
   });
 
+  // HS-8708 — the PTY fd can close (shell exit) before node-pty's onExit nulls
+  // `s.pty`. A resize/write landing in that window throws `ioctl(2) failed,
+  // EBADF` synchronously. Reached from an untrusted WS control frame with no
+  // upstream guard, the throw crashed the entire server mid-e2e-run and
+  // cascaded every later test into ERR_CONNECTION_REFUSED. resizeTerminal /
+  // writeInput must swallow it: a just-dead PTY has nothing to resize/write.
+  it('resizeTerminal swallows an EBADF from a PTY whose fd died before onExit fired', () => {
+    const dir = tmpDataDir();
+    const { sub } = makeSub();
+    attach('secret-1', dir, sub);
+    FakePty.lastSpawned!.resize = () => { throw new Error('ioctl(2) failed, EBADF'); };
+    expect(() => resizeTerminal('secret-1', 100, 30)).not.toThrow();
+    // Cached dims still update even though the underlying resize blew up.
+    expect(getTerminalStatus('secret-1', dir).cols).toBe(100);
+    expect(getTerminalStatus('secret-1', dir).rows).toBe(30);
+  });
+
+  it('writeInput swallows an EBADF from a PTY whose fd died before onExit fired', () => {
+    const dir = tmpDataDir();
+    const { sub } = makeSub();
+    attach('secret-1', dir, sub);
+    FakePty.lastSpawned!.write = () => { throw new Error('ioctl(2) failed, EBADF'); };
+    expect(() => writeInput('secret-1', 'ls\n')).not.toThrow();
+  });
+
   it('transitions to `exited` state when the process exits and notifies subscribers', () => {
     const dir = tmpDataDir();
     const { sub, getExitCode } = makeSub();
