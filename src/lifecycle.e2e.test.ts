@@ -17,7 +17,7 @@
  * (shared with the HS-8588 snapshot crash-recovery suite).
  */
 import { rmSync } from 'fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   canRunServerSpawnTests,
@@ -27,6 +27,16 @@ import {
   spawnHotSheet,
   waitForExit,
 } from './spawnTestServer.js';
+
+// HS-8720 — these cases spawn a REAL `tsx src/cli.ts` child (tsx compile +
+// PGLite init on boot) and wait on its lifecycle. In isolation that's fast, but
+// under the full merged-coverage run (200+ files in parallel + V8 instrumentation)
+// CPU starvation slows the child's startup well past vitest's 30s default —
+// surfacing as "Test timed out in 30000ms" before the SIGINT/shutdown logic even
+// runs. Scope generous timeouts to THIS file (same mitigation as backup.test.ts /
+// snapshotRestore.test.ts) rather than bumping the global config + masking real
+// hangs elsewhere.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 let activeChildren: SpawnedHotSheet[] = [];
 
@@ -112,7 +122,7 @@ describe.skipIf(!canRunServerSpawnTests)('graceful shutdown e2e (HS-7934) (skipp
     // Allow generous slack — CI machines + tsx startup add jitter. The
     // contract is "doesn't hang", not "always under 3s".
     expect(elapsed).toBeLessThan(10_000);
-  }, 30_000);
+  }, 60_000);
 
   // HS-7939 — deterministic double-SIGINT escalation. The earlier attempt
   // at proving the contract through a spawned-tsx child was racy because the
@@ -163,7 +173,7 @@ describe.skipIf(!canRunServerSpawnTests)('graceful shutdown e2e (HS-7934) (skipp
     // already have rejected, but aborting belt-and-braces is harmless.
     longPollAbort.abort();
     await longPoll;
-  }, 30_000);
+  }, 60_000);
 
   it('concurrent /api/shutdown + SIGINT collapse to a single shutdown (idempotence)', async () => {
     const child = spawnTracked();
@@ -178,5 +188,5 @@ describe.skipIf(!canRunServerSpawnTests)('graceful shutdown e2e (HS-7934) (skipp
     await httpShutdown;
     const exit = await waitForExit(child.proc, 15_000);
     expect(exit.code).toBe(0);
-  }, 30_000);
+  }, 60_000);
 });
