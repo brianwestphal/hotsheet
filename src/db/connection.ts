@@ -153,6 +153,49 @@ export function clearRecoveryMarker(dataDir: string): void {
   try { rmSync(path, { force: true }); } catch { /* ignore */ }
 }
 
+// HS-8717 — "pending recovery" marker. Written when a corrupt-open recovery
+// CANNOT preserve `db/` aside in-process: on Windows the just-failed PGLite
+// instance holds file handles under `db/` for the PROCESS LIFETIME, so
+// `renameSync` (and any delete) EPERMs and no in-process retry helps. Rather
+// than abort with no self-heal, recovery drops this marker and lets the process
+// exit; the NEXT startup — a fresh process with no handles — completes the
+// preserve+restore BEFORE opening (`completeDeferredRecovery`). On POSIX the
+// in-process rename succeeds, so this marker is never written and the deferred
+// path is a pure no-op.
+const PENDING_RECOVERY_FILENAME = '.db-pending-recovery.json';
+const MAX_DEFERRED_RECOVERY_ATTEMPTS = 3;
+
+function pendingRecoveryPath(dataDir: string): string {
+  return join(dataDir, PENDING_RECOVERY_FILENAME);
+}
+
+/** Read the pending-recovery marker (or null). A present-but-unparseable marker
+ *  still counts as "pending" (attempts=1) — better to attempt recovery than to
+ *  ignore a known-corrupt cluster. */
+function readPendingRecovery(dataDir: string): { attempts: number } | null {
+  const path = pendingRecoveryPath(dataDir);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const result = z.object({ attempts: z.number() }).loose().safeParse(parsed);
+    return { attempts: result.success ? result.data.attempts : 1 };
+  } catch {
+    return { attempts: 1 };
+  }
+}
+
+function writePendingRecovery(dataDir: string, attempts: number): void {
+  try {
+    writeFileSync(pendingRecoveryPath(dataDir), JSON.stringify({ attempts, requestedAt: new Date().toISOString() }, null, 2));
+  } catch (writeErr: unknown) {
+    console.error('Could not write pending-recovery marker:', getErrorMessage(writeErr));
+  }
+}
+
+function clearPendingRecovery(dataDir: string): void {
+  try { rmSync(pendingRecoveryPath(dataDir), { force: true }); } catch { /* ignore */ }
+}
+
 // Per-dataDir database instances
 const databases = new Map<string, PGlite>();
 
@@ -174,7 +217,13 @@ export function runWithDataDir<T>(dataDir: string, fn: () => T): T {
 export function getDataDir(): string {
   const contextDataDir = requestDataDir.getStore();
   if (contextDataDir !== undefined) return contextDataDir;
-  if (defaultDbPath !== null) return defaultDbPath.replace(/\/db$/, '');
+  // HS-8718 — strip the trailing `db` segment with a separator-agnostic regex
+  // so it works on Windows too (`defaultDbPath` ends in `\db` there). A
+  // forward-slash-only `/\/db$/` left `\db` attached on win32, so the no-context
+  // path returned `<dataDir>\db` instead of `<dataDir>` — and file-based
+  // settings (auto_order / auto_context, via readProjectSettings/writeProjectSettings)
+  // were then read/written under the wrong directory.
+  if (defaultDbPath !== null) return defaultDbPath.replace(/[\\/]db$/, '');
   throw new Error('Data directory not available. Call setDataDir() or use runWithDataDir().');
 }
 
@@ -307,6 +356,13 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
   const existing = databases.get(dbPath);
   if (existing) return existing;
 
+  // HS-8717 — complete any recovery a previous launch had to defer because it
+  // couldn't move the corrupt `db/` aside in-process (Windows handle lock). This
+  // runs BEFORE the open, in a fresh process with no handles, so the rename
+  // succeeds. No-op (returns null) when there's no pending marker.
+  const recovered = await completeDeferredRecovery(dbPath);
+  if (recovered !== null) return recovered;
+
   let db: PGlite;
   try {
     db = await openAndCacheDb(dbPath);
@@ -331,8 +387,16 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
 
 async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlite> {
   const db = createPglite(dbPath, loadDataDir !== undefined ? { loadDataDir } : {});
-  await db.waitReady;
-  await initSchema(db);
+  try {
+    await db.waitReady;
+    await initSchema(db);
+  } catch (err) {
+    // HS-8717 — close the just-failed instance so its file handles release
+    // before the caller's recovery tries to move the `db/` dir aside. Best
+    // effort (a half-initialized PGLite may throw from close()).
+    try { await db.close(); } catch { /* half-initialized — best effort */ }
+    throw err;
+  }
   databases.set(dbPath, db);
   return db;
 }
@@ -387,6 +451,76 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
   return null;
 }
 
+/**
+ * HS-8717 — rename a directory aside, retrying a few times on transient
+ * Windows sharing-violation errors (antivirus / indexer / a sibling instance
+ * mid-exit). Does NOT help the corrupt-open case on Windows — there the failed
+ * PGLite instance holds `db/` for the whole process lifetime, so we give up
+ * fast and let the caller DEFER to the next startup. POSIX succeeds on attempt 1.
+ */
+async function renameDirWithRetry(from: string, to: string): Promise<void> {
+  const maxAttempts = 5;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (renameErr: unknown) {
+      const code = (renameErr as NodeJS.ErrnoException).code;
+      const retryable = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'ENOTEMPTY';
+      if (!retryable || attempt >= maxAttempts) throw renameErr;
+      await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+    }
+  }
+}
+
+/**
+ * HS-8717 — complete a deferred (Windows) recovery on startup, BEFORE any
+ * PGLite open. A prior launch that hit a corrupt cluster it couldn't preserve
+ * in-process left a pending-recovery marker and exited. This launch is a fresh
+ * process with NO handles on `db/`, so the preserve-aside rename now succeeds:
+ * move the corrupt `db/` aside, then restore the newest Snapshot-Protection
+ * source into a clean `db/` (reusing `tryRestoreFromSources`). Returns the
+ * restored (cached) PGlite, or null to let the caller open normally (no marker
+ * / gave up / rename still blocked / no restore source). No-op on POSIX.
+ */
+async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> {
+  const dataDir = dbPath.replace(/[\\/]db$/, '');
+  const pending = readPendingRecovery(dataDir);
+  if (pending === null) return null; // fast path — always on POSIX + the normal case
+
+  if (pending.attempts > MAX_DEFERRED_RECOVERY_ATTEMPTS) {
+    console.error(`[db] deferred recovery gave up after ${String(pending.attempts)} attempts; leaving the corrupt cluster for manual rescue.`);
+    clearPendingRecovery(dataDir);
+    return null;
+  }
+  if (!existsSync(dbPath)) { clearPendingRecovery(dataDir); return null; }
+
+  console.error('[db] completing deferred recovery — a prior launch could not move the corrupt database aside in-process (Windows handle lock)…');
+  const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
+  try {
+    await renameDirWithRetry(dbPath, corruptPath);
+  } catch (renameErr: unknown) {
+    writePendingRecovery(dataDir, pending.attempts + 1);
+    console.error(`[db] deferred recovery could not move db/ yet: ${getErrorMessage(renameErr)}`);
+    return null;
+  }
+
+  const restored = await tryRestoreFromSources(dbPath, dataDir);
+  writeRecoveryMarker(dataDir, {
+    corruptPath,
+    recoveredAt: new Date().toISOString(),
+    errorMessage: 'Database was corrupt and could not be preserved in-process (Windows handle lock); recovered on the next restart.',
+    ...(restored !== null ? { restoredFrom: restored.label, restoredTicketCount: restored.ticketCount } : {}),
+  });
+  clearPendingRecovery(dataDir);
+  if (restored !== null) {
+    console.error(`[db] deferred recovery restored from ${restored.label} (${String(restored.ticketCount)} tickets).`);
+    return restored.db;
+  }
+  console.error('[db] deferred recovery: no snapshot/backup could be loaded; starting with a fresh empty database.');
+  return null;
+}
+
 async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover: boolean): Promise<PGlite> {
   const message = getErrorMessage(err);
   const stack = err instanceof Error ? err.stack : undefined;
@@ -427,19 +561,25 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   // the disaster-recovery runbook (docs/7-backup-restore.md §7.8). Never
   // auto-delete — the data may be 100% recoverable with out-of-band tools,
   // as proven by the 2026-04-27 incident which restored 639/639 tickets.
+  const dataDir = dbPath.replace(/[\\/]db$/, '');
   const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
   console.error(`Database appears to be corrupt. Preserving as ${corruptPath} ...`);
   try {
-    renameSync(dbPath, corruptPath);
+    await renameDirWithRetry(dbPath, corruptPath);
   } catch (renameErr: unknown) {
     const renameMessage = getErrorMessage(renameErr);
-    // Previous behavior was to rmSync the live data on rename failure —
-    // pure data loss. Surface the original error instead so the user can
-    // intervene manually.
-    console.error(`Could not preserve corrupt database directory: ${renameMessage}. Aborting auto-recreate to avoid data loss.`);
+    // HS-8717 — on Windows the just-failed PGLite open holds `db/` file handles
+    // for the PROCESS LIFETIME, so it can't be renamed/deleted in-process and no
+    // retry helps. Instead of aborting (FATAL, no self-heal) or deleting (data
+    // loss), DEFER: drop a pending-recovery marker and let the process exit. The
+    // NEXT startup runs `completeDeferredRecovery` BEFORE opening — a fresh
+    // process with no handles, so the preserve+restore succeeds. On POSIX the
+    // rename above succeeds, so this branch never runs.
+    const prev = readPendingRecovery(dataDir);
+    writePendingRecovery(dataDir, (prev?.attempts ?? 0) + 1);
+    console.error(`Could not preserve corrupt database directory in-process: ${renameMessage}. Wrote a pending-recovery marker — Hot Sheet will auto-recover from the latest snapshot on the next restart.`);
     throw err;
   }
-  const dataDir = dbPath.replace(/[\\/]db$/, '');
 
   // HS-8587 — Snapshot Protection (§73): before falling back to an empty
   // cluster, auto-restore from the canonical snapshot, then the §7 backup

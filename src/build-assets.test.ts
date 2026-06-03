@@ -41,14 +41,21 @@ describe('xterm stylesheet inclusion (HS-6799)', () => {
     expect(cfg).toMatch(/appendFileSync\s*\(\s*['"]dist\/client\/styles\.css['"]/);
   });
 
-  it('package.json build:client script appends xterm.css', () => {
+  it('build:client (scripts/build-client.mjs) appends xterm.css', () => {
+    // HS-8714 — `build:client` is now `node scripts/build-client.mjs` (a
+    // cross-platform Node script) rather than the old Unix-shell one-liner that
+    // `cat`-appended xterm.css. The append step moved into that script; assert
+    // it's still there so the Tauri sidecar bundle can't regress to broken CSS.
     const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
       scripts: Record<string, string>;
     };
-    const script = pkg.scripts['build:client'];
-    expect(script).toBeDefined();
-    expect(script).toContain('@xterm/xterm/css/xterm.css');
-    expect(script).toContain('>> dist/client/styles.css');
+    expect(pkg.scripts['build:client']).toBe('node scripts/build-client.mjs');
+    const buildScript = readFileSync(join(repoRoot, 'scripts', 'build-client.mjs'), 'utf8');
+    // The script references xterm's packaged CSS (path built via `join` segments)
+    // and APPENDS it (not overwrites) onto the compiled styles.css.
+    expect(buildScript).toContain('@xterm');
+    expect(buildScript).toContain('xterm.css');
+    expect(buildScript).toMatch(/appendFileSync/);
   });
 
   it('if a built styles.css exists, it includes the xterm helper-textarea rule', () => {

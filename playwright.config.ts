@@ -25,10 +25,13 @@ export default defineConfig({
   ...(useWebServer
     ? {
         webServer: {
-          // Use isolated HOME so global files (instance.json, projects.json, config.json)
-          // don't interfere with any running Hot Sheet instance
-          command:
-            `export HOME=$(mktemp -d) && export PLUGINS_ENABLED=${process.env.PLUGINS_ENABLED ?? 'true'} && npm run build:client && npx tsx src/cli.ts --data-dir /tmp/hotsheet-e2e-$(date +%s%N) --no-open --port 4190 --strict-port`,
+          // HS-8714 — cross-platform Node launcher (scripts/e2e-server.mjs):
+          // isolates the global home (so the E2E server never touches a real
+          // ~/.hotsheet), picks a unique temp data dir, builds the client, and
+          // spawns the server via `node --import tsx`. Replaces the old Unix-only
+          // shell command so E2E runs on Windows too. PLUGINS_ENABLED flows
+          // through the environment.
+          command: 'node scripts/e2e-server.mjs',
           port: 4190,
           reuseExistingServer: false,
           timeout: 30_000,

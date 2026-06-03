@@ -226,15 +226,13 @@ describe('open tickets sync', () => {
   });
 });
 
-// HS-8713 / HS-8718 — skipped on Windows. These tests assert the worklist
-// reflects a just-written DB SETTING (auto_context / auto_order). On the
-// Windows vitest runner the debounced markdown sync resolves a separate
-// db-module instance than the test's writes (an ESM module-duplication /
-// path-resolution quirk specific to win32 — the test's own reads see the
-// correct state, but the sync writes a stale worklist). It is NOT a product
-// bug (production runs a single module instance) and reproduces only here;
-// tracked as HS-8718. Un-skip when that lands.
-describe.skipIf(process.platform === 'win32')('auto-context in worklist', () => {
+// HS-8718 — these assert the worklist reflects a just-written FILE setting
+// (auto_context / auto_order, which live in <dataDir>/settings.json, not the
+// DB). They failed on Windows until the `getDataDir()` separator-agnostic fix:
+// the no-context write path returned `<dataDir>\db` instead of `<dataDir>`, so
+// the test wrote settings under `\db\settings.json` while the debounced sync
+// (request-context path) read the correct `\settings.json`. Now green on win32.
+describe('auto-context in worklist', () => {
   it('includes auto_context content in ticket details', async () => {
     const autoContext = JSON.stringify([
       { type: 'category', key: 'bug', text: 'AUTO_CONTEXT_BUG_INFO: Always check regression tests.' },
@@ -298,10 +296,9 @@ describe.skipIf(process.platform === 'win32')('auto-context in worklist', () => 
   });
 });
 
-// HS-8713 / HS-8718 — skipped on Windows for the same reason as the
-// auto-context block above (the debounced sync reads a stale db-module
-// instance on the win32 vitest runner). Tracked as HS-8718.
-describe.skipIf(process.platform === 'win32')('auto_order disabled', () => {
+// HS-8718 — same root cause + fix as the auto-context block above (the
+// `getDataDir()` separator-agnostic fix); now green on Windows.
+describe('auto_order disabled', () => {
   it('shows "No items" message instead of auto-prioritize when auto_order is false', async () => {
     const db = await getDb();
     // Disable auto_order

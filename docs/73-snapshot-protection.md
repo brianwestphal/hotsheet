@@ -131,6 +131,19 @@ Key points:
 - **Preserve-aside always runs first**, so even an auto-restore never destroys the
   corrupt cluster — it's renamed to `db-corrupt-<ts>` for out-of-band rescue, exactly
   as today.
+- **Windows deferred recovery (HS-8717).** On Windows a just-failed PGLite open holds
+  file handles on `db/` for the *process lifetime*, so the preserve-aside `renameSync`
+  can't run in-process (it `EPERM`s, and no close/retry releases the handles). Instead of
+  aborting (the server would FATAL with no self-heal), recovery writes a
+  `.db-pending-recovery.json` marker and lets the process exit; the **next** startup —
+  a fresh process with no handles — runs `completeDeferredRecovery` *before* opening,
+  performs the preserve-aside + restore (now the rename succeeds), then proceeds. A
+  boot-loop guard (`MAX_DEFERRED_RECOVERY_ATTEMPTS`) bails to the blocking banner if it
+  can't heal after a few tries. Net effect: Windows self-heals one restart later than
+  POSIX (which heals in-process on the first launch). Validated end-to-end against the
+  real server on Windows; the unit-test suite for this path is POSIX-only (a vitest
+  process can't model a real process exit — the PGLite WASM module stays resident, so
+  the in-test "fresh process" still contends with the prior handles).
 
 ## 73.5 The integrity probe
 
