@@ -10439,6 +10439,19 @@ label.detail-details-label {
   // Reuses `.reader-mode-overlay` for the 90vw / 90vh shell.
 }
 
+// HS-8710 — the dialog (`.telemetry-drilldown-dialog` / `.reader-mode-dialog`)
+// is a fixed-height flex column with `overflow: hidden`, and the header above
+// is `flex-shrink: 0`. This content body must therefore own the scroll —
+// without `flex: 1; min-height: 0; overflow-y: auto` a long prompt timeline
+// (the common case: dozens of events) overflowed the 90vh dialog and was
+// clipped with no way to reach the lower rows. Mirrors `.reader-mode-body`'s
+// scroll-bounding contract (the sister overlay this chrome is modeled on).
+.telemetry-drilldown-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .telemetry-drilldown-header-meta {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);

@@ -185,9 +185,20 @@ async function getThroughputTimeline(db: PGlite, since: Date, sinceStr: string):
 }
 
 async function getCycleTimes(db: PGlite, sinceStr: string): Promise<{ ticket_number: string; title: string; completed_at: string; hours: number }[]> {
+  // HS-8712 — key off `completed_at` alone, NOT current status. The sibling
+  // metrics (throughput in `getThroughputTimeline`, the KPIs in `computeKPIs`)
+  // all count a completion by `completed_at IS NOT NULL` with no status filter.
+  // The archive/backlog transitions (db/tickets.ts) preserve `completed_at`,
+  // and cleanup.ts auto-archives verified tickets after a horizon — so the old
+  // `status IN ('completed','verified')` filter dropped every archived-but-once-
+  // completed ticket, leaving the chart empty on active projects even while
+  // throughput was full. A ticket that has a `completed_at` still has a valid
+  // created→completed cycle time regardless of where it sits now. `deleted` is
+  // excluded explicitly (its transition also nulls `completed_at`, so this is
+  // belt-and-suspenders).
   const result = await db.query<{ ticket_number: string; title: string; completed_at: string; created_at: string }>(
     `SELECT ticket_number, title, completed_at, created_at FROM tickets
-     WHERE completed_at >= $1 AND completed_at IS NOT NULL AND status IN ('completed', 'verified')
+     WHERE completed_at >= $1 AND completed_at IS NOT NULL AND status != 'deleted'
      ORDER BY completed_at ASC`,
     [sinceStr]
   );

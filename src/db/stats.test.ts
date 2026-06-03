@@ -184,6 +184,36 @@ describe('getDashboardStats', () => {
     expect(cycleEntry!.hours).toBeLessThanOrEqual(25);
   });
 
+  // HS-8712 — a ticket completed then archived (manually, or auto-archived by
+  // cleanup.ts after the verified horizon) keeps its `completed_at` but moves
+  // out of completed/verified status. Cycle time must still count it, matching
+  // throughput + the KPIs which key off `completed_at` alone. The old
+  // `status IN ('completed','verified')` filter dropped these and left the
+  // chart showing "No completed tickets" on active projects.
+  it('includes archived-after-completion tickets in cycle time', async () => {
+    const db = await getDb();
+
+    const t = await createTicket('Stats cycle time archived');
+    // Completed 48 hours after creation, then archived — completed_at survives
+    // the archive transition (db/tickets.ts), status is now 'archive'.
+    await db.query(
+      `UPDATE tickets SET
+        status = 'archive',
+        created_at = NOW() - INTERVAL '48 hours',
+        completed_at = NOW() - INTERVAL '24 hours'
+      WHERE id = $1`,
+      [t.id]
+    );
+
+    const stats = await getDashboardStats(30);
+
+    const cycleEntry = stats.cycleTime.find(c => c.ticket_number === t.ticket_number);
+    expect(cycleEntry).toBeDefined();
+    // created→completed span is ~24 hours (48h ago → 24h ago).
+    expect(cycleEntry!.hours).toBeGreaterThanOrEqual(23);
+    expect(cycleEntry!.hours).toBeLessThanOrEqual(25);
+  });
+
   it('includes category breakdown for open tickets', async () => {
     await createTicket('Stats cat bug', { category: 'bug' });
     await createTicket('Stats cat feature', { category: 'feature' });

@@ -220,7 +220,7 @@ Each built-in view has an icon to the left of the label:
   - **Created vs Completed**: Dual-line chart showing inflow vs outflow
   - **Cumulative Flow Diagram**: Stacked area chart by status (not_started, started, completed, verified) — the gold standard for continuous workflows
   - **Category Breakdown**: Donut chart of open tickets by category
-  - **Cycle Time Scatter**: Dot plot on a logarithmic Y-axis with 50th/85th percentile lines. Y-axis uses smart duration labels (e.g. "15m", "2.5h", "1.2d", "2w") for sub-day precision
+  - **Cycle Time Scatter**: Dot plot on a logarithmic Y-axis with 50th/85th percentile lines. Y-axis uses smart duration labels (e.g. "15m", "2.5h", "1.2d", "2w") for sub-day precision. Counts every ticket with a `completed_at` in the window regardless of its current status (a ticket later moved to archive/backlog keeps its completion timestamp and still has a valid created→completed cycle time) — consistent with the Throughput chart and the Completed KPIs, which also key off `completed_at` alone. Only `deleted` tickets are excluded.
 - Charts rendered as inline SVG (no external library).
 - Historical data stored in `stats_snapshots` table (daily status counts). Backfilled from ticket history on server start.
 - API: `GET /api/dashboard?days=30`
