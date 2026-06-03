@@ -122,6 +122,9 @@ describe('buildOtelEnv (HS-8145 / §67.3)', () => {
   it('encodes the dataDir into OTEL_RESOURCE_ATTRIBUTES (working_dir)', () => {
     const d = dir({ secret: 'abc', port: 4174, telemetry_enabled: true });
     const env = buildOtelEnv(d);
-    expect(env.OTEL_RESOURCE_ATTRIBUTES).toMatch(/working_dir=\//);
+    // HS-8713 — assert the actual dataDir is encoded, not that it begins with
+    // `/`. On Windows the dataDir is a `C:\...` path with no leading slash, so
+    // the old `/working_dir=\//` regex failed there.
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toContain(`working_dir=${d}`);
   });
 });

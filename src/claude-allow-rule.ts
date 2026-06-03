@@ -43,9 +43,12 @@ export function claudeAllowRulePattern(dataDir: string): string {
 
 /** Resolve the project root (parent of `.hotsheet/`). Mirrors the same
  *  helper in `channel-config.ts` — kept local so this module doesn't
- *  depend on a private function in another file. */
+ *  depend on a private function in another file. HS-8715 — the separator
+ *  class accepts BOTH `/` and `\` so it strips `.hotsheet` on Windows too;
+ *  a forward-slash-only regex left the segment attached and `.claude/` was
+ *  looked up under the dataDir instead of the project root. */
 function projectRoot(dataDir: string): string {
-  return dataDir.replace(/\/\.hotsheet\/?$/, '');
+  return dataDir.replace(/[\\/]\.hotsheet[\\/]?$/, '');
 }
 
 function claudeDir(dataDir: string): string {

@@ -7,6 +7,7 @@
  * filesystem `.git/index` mtime nudges live in the e2e suite; this
  * one pins the pure-state-machine half of the module.
  */
+import { join } from 'path';
 import { afterEach,beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -19,6 +20,12 @@ import {
   getGitChangeVersion,
   subscribeToGitChanges,
 } from './watcher.js';
+
+// HS-8713 — the watcher builds paths with `path.join`, so on Windows the
+// targets are `...\.git\index` (backslashes). Assert against `join(...)`
+// rather than hardcoded POSIX strings so these tests are OS-portable.
+const gitIndexPath = join('/tmp/proj', '.git', 'index');
+const gitHeadPath = join('/tmp/proj', '.git', 'HEAD');
 
 // --- Mocks ---
 
@@ -152,18 +159,18 @@ describe('ensureGitWatcher — idempotent wire-up', () => {
     arrangeRepo();
     ensureGitWatcher('/tmp/proj');
     expect(mockFsWatch).toHaveBeenCalledTimes(2);
-    expect(mockFsWatch.mock.calls[0][0]).toBe('/tmp/proj/.git/index');
-    expect(mockFsWatch.mock.calls[1][0]).toBe('/tmp/proj/.git/HEAD');
+    expect(mockFsWatch.mock.calls[0][0]).toBe(gitIndexPath);
+    expect(mockFsWatch.mock.calls[1][0]).toBe(gitHeadPath);
   });
 
   it('skips a missing per-file target (e.g. fresh repo without HEAD yet)', () => {
     mockIsGitRepo.mockReturnValue(true);
     mockGetGitRoot.mockReturnValue('/tmp/proj');
     // .git dir + .git/index exist; .git/HEAD does NOT
-    mockExistsSync.mockImplementation((p: string) => p !== '/tmp/proj/.git/HEAD');
+    mockExistsSync.mockImplementation((p: string) => p !== gitHeadPath);
     ensureGitWatcher('/tmp/proj');
     expect(mockFsWatch).toHaveBeenCalledTimes(1);
-    expect(mockFsWatch.mock.calls[0][0]).toBe('/tmp/proj/.git/index');
+    expect(mockFsWatch.mock.calls[0][0]).toBe(gitIndexPath);
   });
 
   it('swallows fs.watch errors per-file (degraded mode on FUSE / SMB)', () => {

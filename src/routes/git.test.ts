@@ -19,6 +19,7 @@
  * tests.
  */
 import { Hono } from 'hono';
+import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppEnv } from '../types.js';
@@ -256,7 +257,10 @@ describe('POST /git/reveal', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockOpenInFileManager).toHaveBeenCalledWith('/tmp/proj/src/foo.ts');
+    // HS-8713 — the route does `join(gitRoot, rel)`, so the native separator
+    // is correct (the OS file manager needs a native path). Build the expected
+    // value with `join` rather than a hardcoded POSIX string.
+    expect(mockOpenInFileManager).toHaveBeenCalledWith(join('/tmp/proj', 'src/foo.ts'));
   });
 
   it('falls back to the project root when getGitRoot returns null (non-git project)', async () => {
@@ -268,6 +272,6 @@ describe('POST /git/reveal', () => {
       body: JSON.stringify({ path: 'README.md' }),
     });
     expect(res.status).toBe(200);
-    expect(mockOpenInFileManager).toHaveBeenCalledWith('/tmp/fallback/README.md');
+    expect(mockOpenInFileManager).toHaveBeenCalledWith(join('/tmp/fallback', 'README.md'));
   });
 });

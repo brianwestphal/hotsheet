@@ -33,7 +33,10 @@ describe('channelRegistry — registerSelf / unregisterSelf', () => {
     const all = listAliveEntries(dataDir, () => true);
     expect(all).toHaveLength(1);
     expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z' });
-    expect(path.endsWith('/channel-ports.d/12345.json')).toBe(true);
+    // HS-8713 — build the expected suffix with `join` so the separator is
+    // the platform's (`\` on Windows); a hardcoded `/channel-ports.d/...`
+    // never matched the backslash path on Windows.
+    expect(path.endsWith(join('channel-ports.d', '12345.json'))).toBe(true);
   });
 
   it('overwrites an existing entry (idempotent self-heal)', () => {

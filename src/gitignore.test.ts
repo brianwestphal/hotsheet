@@ -1,10 +1,19 @@
 import { execSync } from 'child_process';
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { addHotsheetToGitignore, getGitRoot, isGitRepo, isHotsheetGitignored } from './gitignore.js';
+
+// HS-8713 — compare two resolved paths for same-location equality in an
+// OS-portable way. A bare `===` fails on Windows because `realpathSync` /
+// `git rev-parse` disagree on drive-letter + dir casing (`C:\Windows\Temp`
+// vs `C:\WINDOWS\TEMP`). `path.relative` is case-insensitive on win32 and
+// returns '' for identical locations on every platform.
+function samePath(a: string, b: string): boolean {
+  return relative(a, b) === '';
+}
 
 function createTempDir(): string {
   const dir = join(tmpdir(), `hs-gitignore-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -54,7 +63,7 @@ describe('getGitRoot', () => {
     initGitRepo(tempDir);
     const root = getGitRoot(tempDir);
     // Resolve both paths since macOS /tmp is a symlink to /private/tmp
-    expect(realpathSync(root!)).toBe(realpathSync(tempDir));
+    expect(samePath(realpathSync(root!), realpathSync(tempDir))).toBe(true);
   });
 
   it('returns the root from a subdirectory', () => {
@@ -63,7 +72,7 @@ describe('getGitRoot', () => {
     const subDir = join(tempDir, 'sub', 'dir');
     mkdirSync(subDir, { recursive: true });
     const root = getGitRoot(subDir);
-    expect(realpathSync(root!)).toBe(realpathSync(tempDir));
+    expect(samePath(realpathSync(root!), realpathSync(tempDir))).toBe(true);
   });
 
   it('returns null for a non-git directory', () => {

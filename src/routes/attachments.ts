@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
-import { basename, extname, join, resolve } from 'path';
+import { basename, extname, join, resolve, sep } from 'path';
 
 import { promoteDraftAttachments } from '../db/attachments.js';
 import {
@@ -151,8 +151,11 @@ attachmentRoutes.get('/attachments/file/*', (c) => {
   const attachDir = resolve(join(dataDir, 'attachments'));
   const fullPath = resolve(join(attachDir, filePath));
 
-  // Prevent directory traversal — resolved path must stay within attachments dir
-  if (!fullPath.startsWith(attachDir + '/') && fullPath !== attachDir) {
+  // Prevent directory traversal — resolved path must stay within attachments dir.
+  // HS-8716 — use the platform separator (`sep`), not a hardcoded `/`: on Windows
+  // `resolve()` returns backslash paths, so `attachDir + '/'` never prefix-matched
+  // and every valid attachment was rejected with 403.
+  if (!fullPath.startsWith(attachDir + sep) && fullPath !== attachDir) {
     return c.json({ error: 'Invalid path' }, 403);
   }
 

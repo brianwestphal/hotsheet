@@ -1,9 +1,18 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { dirname, join } from 'path';
+import { dirname, join, relative } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { claudeWithChannelCommand, resolveTerminalCommand, resolveTerminalCwd } from './resolveCommand.js';
+
+// HS-8713 — same-location compare that ignores separator + drive-resolution
+// differences. The cwd resolver returns native (`\`) or token-expanded
+// (mixed-separator) paths on Windows, and the HS-7991 cases use POSIX literal
+// project roots; `path.relative` resolves both to absolute and is
+// case-insensitive on win32, returning '' for identical locations everywhere.
+function samePath(a: string, b: string): boolean {
+  return relative(a, b) === '';
+}
 
 function makeDataDir(settings: Record<string, unknown> = {}): string {
   const root = mkdtempSync(join(tmpdir(), 'hs-resolve-'));
@@ -111,7 +120,7 @@ describe('resolveTerminalCommand', () => {
       isClaudeOnPath: () => true,
       channelEnabledOverride: false,
     });
-    expect(cwd).toBe(join(dirname(dataDir), 'scratch'));
+    expect(samePath(cwd, join(dirname(dataDir), 'scratch'))).toBe(true);
   });
 
   it('resolves relative paths against the project root', () => {
@@ -160,14 +169,14 @@ describe('resolveTerminalCwd (HS-7991)', () => {
   });
 
   it('resolves bare relative paths against the project root', () => {
-    expect(resolveTerminalCwd('foo', PROJECT)).toBe('/abs/project/foo');
+    expect(samePath(resolveTerminalCwd('foo', PROJECT), '/abs/project/foo')).toBe(true);
   });
 
   it('resolves ./relative paths against the project root', () => {
-    expect(resolveTerminalCwd('./foo', PROJECT)).toBe('/abs/project/foo');
+    expect(samePath(resolveTerminalCwd('./foo', PROJECT), '/abs/project/foo')).toBe(true);
   });
 
   it('resolves ../parent paths against the project root', () => {
-    expect(resolveTerminalCwd('../sibling', PROJECT)).toBe('/abs/sibling');
+    expect(samePath(resolveTerminalCwd('../sibling', PROJECT), '/abs/sibling')).toBe(true);
   });
 });

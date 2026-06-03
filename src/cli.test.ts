@@ -7,6 +7,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { computeIsEntryPoint } from './cli.js';
@@ -172,18 +173,24 @@ describe.skipIf(!canRunServerSpawnTests)('CLI — instance file and lock cleanup
 // the space (`%20`) while `process.argv[1]` keeps it raw — so main() never
 // ran and the sidecar exited silently with code 0.
 describe('computeIsEntryPoint', () => {
+  // HS-8713 — derive the `import.meta.url` fixture from the argv path via
+  // `pathToFileURL` instead of hardcoding a `file://` string. On Windows
+  // `pathToFileURL('/Users/...')` resolves against the current drive
+  // (`file:///C:/Users/...`), so a hardcoded POSIX URL never matched. Deriving
+  // it keeps the test cross-platform while still guarding the original bug:
+  // the space case below verifies a raw-space argv matches the %20-encoded URL
+  // (a regression to raw `file://${argv1}` concatenation would still fail it).
   it('matches a plain bundled path', () => {
-    expect(computeIsEntryPoint(
-      '/Users/dev/Documents/hotsheet/dist/cli.js',
-      'file:///Users/dev/Documents/hotsheet/dist/cli.js',
-    )).toBe(true);
+    const argv1 = '/Users/dev/Documents/hotsheet/dist/cli.js';
+    expect(computeIsEntryPoint(argv1, pathToFileURL(argv1).href)).toBe(true);
   });
 
   it('matches when the path contains a space (e.g. /Applications/Hot Sheet.app/...)', () => {
-    expect(computeIsEntryPoint(
-      '/Applications/Hot Sheet.app/Contents/Resources/server/cli.js',
-      'file:///Applications/Hot%20Sheet.app/Contents/Resources/server/cli.js',
-    )).toBe(true);
+    const argv1 = '/Applications/Hot Sheet.app/Contents/Resources/server/cli.js';
+    const url = pathToFileURL(argv1).href;
+    // The URL form percent-encodes the space; argv1 keeps it raw.
+    expect(url).toContain('Hot%20Sheet.app');
+    expect(computeIsEntryPoint(argv1, url)).toBe(true);
   });
 
   it('matches tsx invocation by basename when both ends are cli.ts', () => {
@@ -212,13 +219,16 @@ describe('computeIsEntryPoint', () => {
   // ran, and the CLI exited cleanly with code 0 and no output — caught
   // for the first time by the smoke tests against v0.17.0-rc.1.
   it('matches an npm-installed symlink (argv[1] is the bin shim)', () => {
+    const realPath = '/usr/local/lib/node_modules/hotsheet/dist/cli.js';
     const fakeRealpath = (p: string): string => {
-      if (p === '/usr/local/bin/hotsheet') return '/usr/local/lib/node_modules/hotsheet/dist/cli.js';
+      if (p === '/usr/local/bin/hotsheet') return realPath;
       return p;
     };
+    // import.meta.url is the resolved REAL path; argv[1] is the shim. Derived
+    // via pathToFileURL so it's the right drive-rooted URL on Windows too.
     expect(computeIsEntryPoint(
       '/usr/local/bin/hotsheet',
-      'file:///usr/local/lib/node_modules/hotsheet/dist/cli.js',
+      pathToFileURL(realPath).href,
       fakeRealpath,
     )).toBe(true);
   });

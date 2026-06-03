@@ -62,9 +62,14 @@ function getChannelServerPath(): { command: string; args: string[] } {
   return { command: process.execPath, args: [distPath] };
 }
 
-/** Get the project root directory (parent of .hotsheet/) */
+/** Get the project root directory (parent of .hotsheet/).
+ *  HS-8715 — the `.hotsheet` separator class must accept BOTH `/` and `\`
+ *  so this works on Windows (where dataDir uses backslashes). Mirrors the
+ *  separator-agnostic regex already used by `slugifyDataDir` above. A
+ *  forward-slash-only regex left `.hotsheet` attached on Windows, so
+ *  `.mcp.json` was written inside the dataDir instead of the project root. */
 function projectRoot(dataDir: string): string {
-  return dataDir.replace(/\/.hotsheet\/?$/, '');
+  return dataDir.replace(/[\\/]\.hotsheet[\\/]?$/, '');
 }
 
 /** Register the channel server in .mcp.json for a specific project.

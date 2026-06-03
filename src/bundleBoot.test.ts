@@ -49,10 +49,14 @@ function ensureBundlesBuilt(): void {
   const newestSource = Math.max(...sources.filter(existsSync).map(s => statSync(s).mtimeMs));
   const fresh = [cliBundle, channelBundle].every(b => existsSync(b) && statSync(b).mtimeMs >= newestSource);
   if (fresh) return;
+  // HS-8713 — `shell: true` so Windows resolves `npx` to `npx.cmd` via the
+  // shell. A bare `execFileSync('npx', …)` throws `spawnSync npx ENOENT` on
+  // win32 (only `npx.cmd`/`npx.ps1` exist on PATH, not a bare `npx`).
   execFileSync('npx', ['tsup', '--config', 'tsup.config.ts'], {
     cwd: repoRoot,
     timeout: 180_000,
     stdio: 'ignore',
+    shell: true,
   });
 }
 
