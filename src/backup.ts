@@ -111,10 +111,14 @@ export async function withGlobalBackupLock<T>(fn: () => Promise<T>): Promise<T> 
   }
 }
 
-/** **TEST ONLY** — drop the global lock state. Used between cases so a
- *  prior test's leaked lock doesn't strand the next case. */
+/** **TEST ONLY** — drop the global lock state AND every per-project gate.
+ *  Used between cases so a prior test's leaked global lock OR a lingering
+ *  per-project `backupInProgress` flag can't strand the next case. (HS-8720:
+ *  under CI coverage starvation a prior backup's `finally` reset can lag, so
+ *  clear `backupStates` too — not just the global `activeBackup`.) */
 export function _resetGlobalBackupLockForTesting(): void {
   activeBackup = null;
+  backupStates.clear();
 }
 
 function backupsDir(dataDir: string): string {

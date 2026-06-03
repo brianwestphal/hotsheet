@@ -14,6 +14,17 @@ vi.mock('../sync/markdown.js', () => ({
   initMarkdownSync: vi.fn(),
 }));
 
+// HS-8720 — these route cases drive REAL PGLite backup work through the handlers
+// (CHECKPOINT + dumpDataDir + fsync per tier). In isolation that's fast, but
+// under the full merged-coverage run (200+ files in parallel + V8 instrumentation)
+// CPU starvation can push a single /create body past vitest's 30s default. When
+// the first case times out mid-backup, the still-running promise keeps the
+// per-project `backupInProgress` gate held, so every later /create returns 409 —
+// a one-timeout-into-many-409s cascade. Scope generous timeouts to THIS file
+// (same mitigation as backup.test.ts) rather than bumping the global config and
+// masking real hangs elsewhere.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
+
 let tempDir: string;
 let app: Hono<AppEnv>;
 
