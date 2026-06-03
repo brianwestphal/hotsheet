@@ -29,6 +29,26 @@ import { join } from 'path';
 export type FsyncFn = (fd: number) => void;
 
 /**
+ * HS-8719 — on Windows, `fs.fsync` (which maps to `FlushFileBuffers`) fails with
+ * `EPERM` on the read-only handles we open here, and some files (postmaster.pid,
+ * lock/config files, special files) can't be flushed at all. Those failures are
+ * EXPECTED on win32, not real errors: the per-file flush is best-effort, NodeFS
+ * already writes through, and PGLite's durability story is the §73 snapshot
+ * tarball, not this OS-cache flush. So on win32 we swallow these codes silently
+ * — otherwise every close/backup spams the log with a flood of per-file EPERMs
+ * and inflates the error count. Pure; `platform` is injectable for tests.
+ *
+ * (POSIX is unaffected: fsync on a read-only fd works there, so this returns
+ * false and real failures still log + count.)
+ */
+const WIN32_UNFLUSHABLE_CODES = new Set(['EPERM', 'EACCES', 'ENOTSUP', 'EINVAL']);
+export function isUnsupportedFsyncError(err: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform !== 'win32') return false;
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code !== undefined && WIN32_UNFLUSHABLE_CODES.has(code);
+}
+
+/**
  * Async counterpart of `FsyncFn` — HS-8351 added async variants of `fsyncDir`
  * / `fsyncDbDir` so the fsync syscalls run on libuv's threadpool instead
  * of the main event loop. Tests inject a stub of this shape.
@@ -85,8 +105,12 @@ function walkAndFsync(dir: string, counters: { filesFlushed: number; errors: num
         fsyncFn(fd);
         counters.filesFlushed++;
       } catch (err) {
-        console.error(`[fsyncWrap] fsync ${p} failed:`, err);
-        counters.errors++;
+        // HS-8719 — win32 can't fsync these (read-only-handle FlushFileBuffers /
+        // unflushable files); that's expected, so skip silently there.
+        if (!isUnsupportedFsyncError(err)) {
+          console.error(`[fsyncWrap] fsync ${p} failed:`, err);
+          counters.errors++;
+        }
       } finally {
         if (fd !== null) {
           try { closeSync(fd); } catch { /* fd already invalid */ }
@@ -159,8 +183,12 @@ async function walkAndFsyncAsync(dir: string, counters: { filesFlushed: number; 
         await fsyncFn(handle);
         counters.filesFlushed++;
       } catch (err) {
-        console.error(`[fsyncWrap] fsync ${p} failed:`, err);
-        counters.errors++;
+        // HS-8719 — see the sync variant: win32 fsync failures on these handles
+        // are expected; swallow them silently there instead of spamming the log.
+        if (!isUnsupportedFsyncError(err)) {
+          console.error(`[fsyncWrap] fsync ${p} failed:`, err);
+          counters.errors++;
+        }
       } finally {
         if (handle !== null) {
           try { await handle.close(); } catch { /* handle already invalid */ }

@@ -19,7 +19,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AsyncFsyncFn } from './fsyncWrap.js';
-import { fsyncDbDir, fsyncDbDirAsync, fsyncDir, fsyncDirAsync } from './fsyncWrap.js';
+import { fsyncDbDir, fsyncDbDirAsync, fsyncDir, fsyncDirAsync, isUnsupportedFsyncError } from './fsyncWrap.js';
 
 let tempRoot: string;
 
@@ -323,5 +323,33 @@ describe('fsyncDbDirAsync (HS-8351 convenience wrapper)', () => {
     const fsyncFn = vi.fn<AsyncFsyncFn>(() => Promise.resolve());
     const stats = await fsyncDbDirAsync(tempRoot, fsyncFn);
     expect(stats).toEqual({ filesFlushed: 0, errors: 0 });
+  });
+});
+
+describe('isUnsupportedFsyncError (HS-8719)', () => {
+  const errWith = (code: string): NodeJS.ErrnoException => Object.assign(new Error(code), { code });
+
+  it('treats EPERM / EACCES / ENOTSUP / EINVAL as benign on win32 (read-only-handle FlushFileBuffers / unflushable files)', () => {
+    for (const code of ['EPERM', 'EACCES', 'ENOTSUP', 'EINVAL']) {
+      expect(isUnsupportedFsyncError(errWith(code), 'win32')).toBe(true);
+    }
+  });
+
+  it('does NOT swallow the same codes on POSIX — there fsync on a read-only fd works, so a failure is real', () => {
+    for (const platform of ['darwin', 'linux'] as const) {
+      expect(isUnsupportedFsyncError(errWith('EPERM'), platform)).toBe(false);
+      expect(isUnsupportedFsyncError(errWith('EACCES'), platform)).toBe(false);
+    }
+  });
+
+  it('does NOT swallow unrelated error codes even on win32 (e.g. ENOENT / EIO are real problems)', () => {
+    expect(isUnsupportedFsyncError(errWith('ENOENT'), 'win32')).toBe(false);
+    expect(isUnsupportedFsyncError(errWith('EIO'), 'win32')).toBe(false);
+  });
+
+  it('returns false for a non-error / code-less value', () => {
+    expect(isUnsupportedFsyncError(new Error('no code'), 'win32')).toBe(false);
+    expect(isUnsupportedFsyncError(null, 'win32')).toBe(false);
+    expect(isUnsupportedFsyncError('oops', 'win32')).toBe(false);
   });
 });
