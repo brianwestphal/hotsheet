@@ -224,6 +224,27 @@ HS-8725 (3) / HS-8726 (4) / HS-8727 (5).
    stays deferred under HS-8728 (needs the DB inside the worker — a larger change;
    not a heartbeat blocker in practice).
 
+### 75.6.1 Follow-up — startup project-restore on the scheduler (2026-06-04)
+
+A post-epic regression surfaced the one heavy fan-out the epic never migrated:
+**startup restoration of the previous session's projects**. `restorePreviousProjects`
+(`src/cli.ts`) registered each saved project with a bare serial `await` loop, and
+each `registerProject` now does substantial partly-synchronous work (PGLite WASM
+init + the §73 snapshot integrity probe + per-project backup/snapshot schedulers +
+git watchers + eager terminals). A user with 9 saved projects saw every launch hang
+for ~3 minutes (`post-startup: restoring previous projects` measured at 171 s in the
+startup log) — the server was already listening, but the serial blast saturated the
+event loop so the UI never became reachable. Same failure class as §75.1, on the
+startup path.
+
+Fix: the restore loop now submits each project's registration to the **P2 background
+scheduler** (`PRIORITY.PROJECT_RESTORE`, highest tier so tabs lead, `deferUnderLag`
+on so it yields to the loop). Concurrency is bounded (cap 2) and lag-gated, so the
+fan-out can't saturate the loop — the server stays responsive (verified: HTTP 200 in
+~9 ms during a 3-project restore) while tabs fill in progressively (`notifyChange`
+per project as it lands). The surviving list is rebuilt in original order, since
+scheduler jobs complete out of order. Tests: `src/cli.restorePreviousProjects.test.ts`.
+
 ## 75.7 Honest limitations
 
 This does not make a single overloaded machine *fast* — it makes Hot Sheet *stay

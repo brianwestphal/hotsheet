@@ -39,6 +39,14 @@ import { getRecentEventLoopLagMs } from '../diagnostics/freezeLogger.js';
 /** Priority tiers — lower runs first. Mirrors §75.3 P2's ordering
  *  (request handling is never queued here; it's the loop's foreground). */
 export const PRIORITY = {
+  /** Startup restoration of the previous session's projects (load-resilience
+   *  epic HS-8722, docs/75 — the startup restore path). Highest
+   *  priority because each restored project is a user-visible tab — they should
+   *  fill in ahead of routine git/markdown/backup churn — but still bounded by
+   *  the scheduler's concurrency cap + lag backpressure so the serial fan-out
+   *  of N projects can't saturate the event loop on launch (the HS-8721 freeze,
+   *  on the one path never migrated onto the scheduler). */
+  PROJECT_RESTORE: 5,
   GIT_STATUS: 10,
   MARKDOWN_SYNC: 20,
   SNAPSHOT: 30,

@@ -8,6 +8,7 @@ import { initSnapshotScheduler } from './db/snapshot.js';
 import { ensureSecret, readFileSettings, writeFileSettings } from './file-settings.js';
 import { acquireLock } from './lock.js';
 import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
+import { startupLog } from './startup-log.js';
 import { getSyncState, initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
@@ -40,8 +41,14 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
     if (existing) return existing;
   }
 
-  // Initialize PGLite database for this dataDir (creates if needed)
+  // Initialize PGLite database for this dataDir (creates if needed).
+  // Timed: getDbForDir is the one variable-cost step in registration (PGLite
+  // WASM open + the §73 snapshot integrity probe + any auto-restore), so a slow
+  // launch shows up here in the startup log.
+  const dbT0 = Date.now();
   const db = await getDbForDir(absDataDir);
+  const dbMs = Date.now() - dbT0;
+  if (dbMs > 500) startupLog(`[restore-step] getDbForDir took ${String(dbMs)}ms for ${absDataDir}`);
 
   // Migrate project settings from DB to settings.json (idempotent)
   const { migrateDbSettingsToFile } = await import('./migrate-settings.js');

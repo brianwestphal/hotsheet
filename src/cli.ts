@@ -231,8 +231,11 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
  */
 async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
   if (demo === null) {
+    startupMark('post-startup: init backup scheduler');
     initBackupScheduler(dataDir);
+    startupMark('post-startup: init snapshot scheduler');
     initSnapshotScheduler(dataDir);
+    startupMark('post-startup: add to project list');
     addToProjectList(dataDir);
     startupMark('post-startup: restoring previous projects');
     await restorePreviousProjects(dataDir, actualPort);
@@ -256,25 +259,70 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
   }
 }
 
-/** Restore projects from the previous session's project list. */
-async function restorePreviousProjects(dataDir: string, actualPort: number): Promise<void> {
+/** Restore projects from the previous session's project list.
+ *
+ * Load resilience (epic HS-8722, docs/75) — each prior project is registered through
+ * the central background scheduler instead of a bare serial `await` loop. The
+ * old loop fanned PGLite WASM init + the §73 snapshot integrity probe +
+ * backup/snapshot schedulers + git watchers + eager terminals back-to-back onto
+ * the single event loop; with a real-world list (the reporter had 9 projects)
+ * that saturated the loop for ~3 minutes on every launch, so the already-
+ * listening server never became responsive — the HS-8721 freeze, on the one
+ * code path the load-resilience epic never migrated onto the scheduler. The
+ * scheduler caps concurrency (2) and honors event-loop-lag backpressure
+ * (`deferUnderLag`), so the loop keeps breathing and the UI is reachable while
+ * projects fill in progressively; each tab surfaces (`notifyChange`) the moment
+ * its registration lands. We still await all registrations before returning so
+ * the downstream post-startup steps (channel + skills setup) see every project.
+ */
+export async function restorePreviousProjects(dataDir: string, actualPort: number): Promise<void> {
   const previousProjects = readProjectList();
   const absDataDir = resolve(dataDir);
-  const validProjects: string[] = [];
 
   const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
-  for (const prevDir of previousProjects) {
-    if (prevDir === absDataDir) { validProjects.push(prevDir); continue; }
-    if (!existsSync(prevDir)) continue;
-    try {
-      const ctx = await registerProject(prevDir, actualPort);
-      validProjects.push(prevDir);
-      // Eager-spawn non-lazy terminals for each restored project (HS-6310).
-      eagerSpawnTerminals(ctx.secret, prevDir);
-    } catch (e: unknown) {
-      console.warn(`[startup] Failed to restore project ${prevDir}: ${getErrorMessage(e)}`);
-    }
-  }
+  const { getBackgroundScheduler, PRIORITY } = await import('./scheduler/backgroundScheduler.js');
+  const { notifyChange } = await import('./routes/notify.js');
+  const scheduler = getBackgroundScheduler();
+
+  // Track which dirs registered successfully so the surviving list can be
+  // rebuilt in the ORIGINAL list order — restore jobs complete out of order, so
+  // we must not derive tab order from completion order.
+  const registeredOk = new Set<string>();
+
+  await Promise.all(previousProjects.map(prevDir => {
+    if (prevDir === absDataDir) return Promise.resolve(); // primary already registered
+    if (!existsSync(prevDir)) return Promise.resolve();   // dropped from the list below
+    return scheduler.submit({
+      key: `project-restore:${prevDir}`,
+      projectKey: prevDir,
+      priority: PRIORITY.PROJECT_RESTORE,
+      // deferUnderLag MUST be false: restore is user-visible work that has to
+      // make progress. Deferring it under lag starves it — and each restore job
+      // itself spikes lag (PGLite WASM init), so a true `deferUnderLag` makes
+      // the whole restore crawl (observed: 403s for 8 projects).
+      deferUnderLag: false,
+      run: async () => {
+        const t0 = Date.now();
+        startupLog(`[restore-timing] START ${prevDir}`);
+        try {
+          const ctx = await registerProject(prevDir, actualPort);
+          registeredOk.add(prevDir);
+          // Eager-spawn non-lazy terminals for each restored project (HS-6310).
+          eagerSpawnTerminals(ctx.secret, prevDir);
+          // Surface the newly-restored project's tab as soon as it lands.
+          notifyChange();
+          startupLog(`[restore-timing] ${prevDir} registered in ${String(Date.now() - t0)}ms`);
+        } catch (e: unknown) {
+          console.warn(`[startup] Failed to restore project ${prevDir}: ${getErrorMessage(e)}`);
+        }
+      },
+    });
+  }));
+
+  // Rebuild the surviving project list in original order (primary always kept).
+  const validProjects = previousProjects.filter(
+    prevDir => prevDir === absDataDir || registeredOk.has(prevDir),
+  );
 
   if (validProjects.length !== previousProjects.length) {
     const { reorderProjectList } = await import('./project-list.js');
@@ -288,7 +336,6 @@ async function restorePreviousProjects(dataDir: string, actualPort: number): Pro
       .map(dir => getByDir(dir)?.secret)
       .filter((s): s is string => s !== undefined);
     if (secrets.length > 1) reorder(secrets);
-    const { notifyChange } = await import('./routes/notify.js');
     notifyChange();
   }
 }
