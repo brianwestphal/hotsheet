@@ -267,9 +267,10 @@ function isManifestEntry(raw: unknown): raw is AttachmentManifestEntry {
  * across the whole backup window. Each individual `hashFile` still blocks
  * the loop for ITS chunk-hash duration (streaming SHA-256's `update(chunk)`
  * is on-loop work between async I/O yields) — option 2 of the HS-8359
- * decision; HS-8364 captures the option-1 worker-thread design for the
+ * decision; HS-8728 captures the option-1 worker-thread design for the
  * full-fix follow-up if measurement post-deploy shows option 2 is
- * insufficient.
+ * insufficient. (Earlier revisions cited HS-8364 here — that ticket is
+ * actually the kerfjs-0.6.0 upgrade; the reference was stale.)
  */
 function yieldToEventLoop(): Promise<void> {
   return new Promise<void>(resolve => setImmediate(resolve));
@@ -335,7 +336,6 @@ function basename(path: string): string {
  * HS-8093 — see `ensureBlobInStore` for the `async`-without-await
  * rationale; the same evolving-pipeline argument applies here.
  */
-// eslint-disable-next-line @typescript-eslint/require-await
 export async function runAttachmentGc(backupRoot: string): Promise<{
   deleted: number;
   bytesReclaimed: number;
@@ -350,6 +350,7 @@ export async function runAttachmentGc(backupRoot: string): Promise<{
   const manifestPaths = collectManifestPaths(backupRoot);
   const liveShas = new Set<string>();
   let parseFailure = false;
+  let scanned = 0;
   for (const p of manifestPaths) {
     const m = readManifest(p);
     if (m === null) {
@@ -358,6 +359,9 @@ export async function runAttachmentGc(backupRoot: string): Promise<{
       break;
     }
     for (const e of m.entries) liveShas.add(e.sha);
+    // HS-8727 (load resilience, docs/75 §75.6 Phase 5) — yield between manifests
+    // so building the live-sha reference set can't starve the loop.
+    if (++scanned % 25 === 0) await yieldToEventLoop();
   }
   if (parseFailure) {
     return { deleted: 0, bytesReclaimed: 0, scannedManifests: manifestPaths.length, skippedDueToParseFailure: true };
@@ -365,14 +369,22 @@ export async function runAttachmentGc(backupRoot: string): Promise<{
 
   let deleted = 0;
   let bytesReclaimed = 0;
-  for (const name of readdirSync(blobsDir)) {
+  // HS-8727 — the manifest BUILD already yields between files (HS-8359); this
+  // closes the matching gap on the GC delete side. Async `readdir` + per-blob
+  // `stat`/`rm` run on libuv's threadpool, and a periodic `yieldToEventLoop()`
+  // flushes the heartbeat / WS frames / HTTP handlers, so sweeping a blob store
+  // with thousands of orphans can't block the event loop.
+  const blobNames = await fsp.readdir(blobsDir);
+  let iterated = 0;
+  for (const name of blobNames) {
+    if (++iterated % 500 === 0) await yieldToEventLoop();
     if (name.endsWith('.tmp')) continue; // in-flight write; leave alone
     if (liveShas.has(name)) continue;
     const p = join(blobsDir, name);
     let size = 0;
-    try { size = statSync(p).size; } catch { /* ignore */ }
+    try { size = (await fsp.stat(p)).size; } catch { /* ignore */ }
     try {
-      rmSync(p, { force: true });
+      await fsp.rm(p, { force: true });
       deleted++;
       bytesReclaimed += size;
     } catch (err) {

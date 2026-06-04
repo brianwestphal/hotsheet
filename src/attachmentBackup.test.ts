@@ -281,6 +281,23 @@ describe('runAttachmentGc (HS-7929)', () => {
     expect(existsSync(join(attachmentBlobsDir(backupRoot), 'sha-orphan-2'))).toBe(false);
   });
 
+  it('HS-8727: sweeps a large orphan set correctly across the yield boundary (>500 blobs)', async () => {
+    // Exercises the periodic `yieldToEventLoop()` in the GC blob loop: more than
+    // the 500-iteration yield interval, mixing kept + orphaned blobs.
+    const liveShas: string[] = [];
+    for (let i = 0; i < 5; i++) { const s = `live-${i.toString()}`; blobAt(s); liveShas.push(s); }
+    for (let i = 0; i < 600; i++) blobAt(`orphan-${i.toString()}`);
+    await writeManifestUnder('5min', 'backup-1.attachments.json', liveShas);
+
+    const stats = await runAttachmentGc(backupRoot);
+    expect(stats.deleted).toBe(600);
+    expect(stats.skippedDueToParseFailure).toBe(false);
+    const blobsDir = attachmentBlobsDir(backupRoot);
+    for (const s of liveShas) expect(existsSync(join(blobsDir, s))).toBe(true);
+    expect(existsSync(join(blobsDir, 'orphan-0'))).toBe(false);
+    expect(existsSync(join(blobsDir, 'orphan-599'))).toBe(false);
+  });
+
   it('aborts (no deletions) when ANY manifest fails to parse', async () => {
     blobAt('sha-A');
     blobAt('sha-orphan');

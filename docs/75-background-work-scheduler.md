@@ -8,14 +8,15 @@ Theme: **Load resilience.** Every ticket spawned from this design carries the
 > is, even for a long time. Background work degrades (runs late); it never starves
 > the foreground.**
 
-> **Status: Phases 1–3 shipped; Phases 4–5 pending.** Phase 1 (off-loop git
+> **Status: Phases 1–3 & 5 shipped; Phase 4 pending.** Phase 1 (off-loop git
 > status, HS-8723) is the contained fix for the reported freeze. Phase 2 (HS-8724)
 > added the central `backgroundScheduler` and migrated every background consumer
 > onto it (Option A — backups + snapshots coordinated but never deferred;
 > git-refresh + markdown-sync + GC deferrable under load). Phase 3 (HS-8725) added
 > active-project tracking so a background tab's `.git` nudge no longer fans out into
-> proactive refresh — the scaling lever. Phases 4–5 generalize the mechanism further
-> as machine load grows.
+> proactive refresh — the scaling lever. Phase 5 (HS-8727) took the chunk-with-yields
+> path for the heavy attachment paths (the worker-thread full offload is deferred to
+> HS-8728). Phase 4 (wake-aware re-staggering) is the last remaining piece.
 
 ## 75.1 Why this exists — the incident
 
@@ -196,9 +197,18 @@ HS-8725 (3) / HS-8726 (4) / HS-8727 (5).
 4. **Phase 4 (HS-8726) — Wake-aware re-staggering.** Detect suspend via the heartbeat `hrtime`
    gap; on wake, re-stagger overdue periodic work with jitter (drain mode) instead of
    a simultaneous fire.
-5. **Phase 5 (HS-8727) — Heavy hashing/gzip off-loop.** Move attachment-manifest hashing and
-   snapshot/backup dump+gzip to a worker thread (or chunked yields) so they can't
-   block the loop even at large attachment counts.
+5. **Phase 5 (HS-8727) — Heavy hashing/gzip off-loop. ✅ shipped (chunk-with-yields path).**
+   The attachment-manifest BUILD + rebuild already yield between files (streamed
+   SHA-256, HS-8359); HS-8727 closed the matching gap on the GC delete sweep —
+   `runAttachmentGc` is now async (`fsp.readdir`/`stat`/`rm` on the libuv threadpool)
+   and yields every 500 blobs, so sweeping thousands of orphans can't block the loop.
+   The snapshot/backup dump+gzip is an opaque `db.dumpDataDir('gzip')` PGLite/WASM
+   call (~150–400 ms in the incident logs, never a heartbeat blocker) — it can't be
+   chunked and can't be offloaded without the DB living in the worker. The fuller
+   worker-thread offload (hashing CPU + PGLite dump) is deferred to **HS-8728**,
+   measurement-gated: the HS-8721 incident's heartbeat blocks were all synchronous
+   git, never hashing or gzip, so option-2 (yields) is sufficient until proven
+   otherwise.
 
 ## 75.7 Honest limitations
 
