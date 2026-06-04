@@ -41,6 +41,7 @@ import { join } from 'path';
 
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
+import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 import { getDbForDir } from './connection.js';
 
 /** Default debounce after the last mutation before a snapshot fires. */
@@ -127,7 +128,7 @@ export function initSnapshotScheduler(dataDir: string): void {
   const state = getOrCreateState(dataDir);
   if (state.safetyTimer !== null) return;
   state.safetyTimer = setInterval(() => {
-    if (state.dirty && !state.inProgress) void writeSnapshotNow(dataDir);
+    if (state.dirty && !state.inProgress) void submitSnapshotJob(dataDir);
   }, numericSetting(dataDir, 'db_snapshot_safety_interval_ms', DEFAULT_SAFETY_INTERVAL_MS));
   // Don't keep the event loop alive just for the safety floor.
   state.safetyTimer.unref();
@@ -147,8 +148,28 @@ export function scheduleSnapshot(dataDir?: string): void {
   if (state.debounceTimer) clearTimeout(state.debounceTimer);
   state.debounceTimer = setTimeout(() => {
     state.debounceTimer = null;
-    void writeSnapshotNow(dir);
+    void submitSnapshotJob(dir);
   }, numericSetting(dir, 'db_snapshot_debounce_ms', DEFAULT_DEBOUNCE_MS));
+}
+
+/**
+ * HS-8724 — submit the snapshot write to the central background scheduler so it
+ * shares the process-wide concurrency budget + fairness pool with backups and
+ * the other projects' snapshots. Coalesces by `snapshot:<dataDir>` (a burst of
+ * debounce/safety fires collapses to one write) and uses `deferUnderLag: false`
+ * — a snapshot is durability work, so it must run even under sustained
+ * event-loop lag (deferring it would widen the data-loss window). Returns the
+ * scheduler's awaitable so the shutdown flush can wait for completion.
+ * `writeSnapshotNow` stays the worker (also callable directly, e.g. in tests).
+ */
+function submitSnapshotJob(dataDir: string): Promise<void> {
+  return getBackgroundScheduler().submit({
+    key: `snapshot:${dataDir}`,
+    priority: PRIORITY.SNAPSHOT,
+    projectKey: dataDir,
+    deferUnderLag: false,
+    run: async () => { await writeSnapshotNow(dataDir); },
+  });
 }
 
 /**
@@ -208,7 +229,10 @@ export async function snapshotAllForShutdown(): Promise<void> {
   for (const dir of dirs) {
     if (!isSnapshotProtectionEnabled(dir)) continue;
     try {
-      await writeSnapshotNow(dir);
+      // HS-8724 — go through the scheduler (awaitable) so a snapshot already
+      // in flight for this project coalesces and we wait for the freshest
+      // write rather than bailing on its `inProgress` guard.
+      await submitSnapshotJob(dir);
     } catch (err) {
       console.error(`[snapshot] shutdown snapshot failed for ${dir}:`, err);
     }

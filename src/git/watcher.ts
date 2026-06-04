@@ -2,6 +2,7 @@ import { existsSync, type FSWatcher, watch as fsWatch } from 'fs';
 import { join } from 'path';
 
 import { getGitRoot, isGitRepo } from '../gitignore.js';
+import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 import { getGitStatus,type GitStatus } from './status.js';
 
 /**
@@ -166,6 +167,20 @@ export function ensureGitWatcher(projectRoot: string): void {
       for (const sub of subscribers) {
         try { sub(projectRoot); } catch { /* swallow */ }
       }
+      // HS-8724 (load resilience, docs/75 §75.6 Phase 2) — submit the cache
+      // pre-warm through the central scheduler so the refresh runs under the
+      // shared concurrency/fairness budget at GIT_STATUS priority. Deferrable:
+      // a stale chip for a beat under load is fine. The in-flight coalescing
+      // (HS-8723) means a client poll that arrives mid-warm shares this same git
+      // run rather than spawning its own. (Phase 3 / HS-8725 will scope the
+      // pre-warm to the foreground project so background tabs don't refresh.)
+      void getBackgroundScheduler().submit({
+        key: `git-refresh:${projectRoot}`,
+        priority: PRIORITY.GIT_STATUS,
+        projectKey: projectRoot,
+        deferUnderLag: true,
+        run: () => getCachedGitStatus(projectRoot).then(() => undefined),
+      });
     }, WATCHER_DEBOUNCE_MS);
   };
 

@@ -10,6 +10,7 @@ import { readFileSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
 // to keep the local call sites readable.
 import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_DEBOUNCE_MS as WORKLIST_DEBOUNCE } from '../limits.js';
+import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 // HS-8671 — zod-validated DB-JSON parsing (drops the blind `as` casts).
 import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { Ticket } from '../types.js';
@@ -50,12 +51,21 @@ export function scheduleWorklistSync(dir?: string) {
   if (!state) return;
   if (state.worklistTimeout) clearTimeout(state.worklistTimeout);
   state.worklistTimeout = setTimeout(() => {
+    state.worklistTimeout = null;
     // Run with the correct project's DB context (sync runs outside HTTP request scope).
     // HS-8360 — instrument so freeze.log attributes any stall to this exact pass
     // instead of leaving it in the anonymous server-heartbeat bucket. Markdown
     // sync fires on every ticket mutation (500 ms debounce) and iterates every
     // Up Next ticket through `formatTicket` + auto-context lookup.
-    void runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncWorklist', () => syncWorklist(state)));
+    // HS-8724 — submit through the central scheduler (deferrable: a derived
+    // markdown export is safe to hold a beat under load; coalesced per project).
+    void getBackgroundScheduler().submit({
+      key: `markdown-worklist:${state.dataDir}`,
+      priority: PRIORITY.MARKDOWN_SYNC,
+      projectKey: state.dataDir,
+      deferUnderLag: true,
+      run: () => runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncWorklist', () => syncWorklist(state))),
+    });
   }, WORKLIST_DEBOUNCE);
 }
 
@@ -64,11 +74,19 @@ export function scheduleOpenTicketsSync(dir?: string) {
   if (!state) return;
   if (state.openTicketsTimeout) clearTimeout(state.openTicketsTimeout);
   state.openTicketsTimeout = setTimeout(() => {
+    state.openTicketsTimeout = null;
     // HS-8360 — instrument; the open-tickets sync iterates every open ticket
     // (potentially hundreds) through `formatTicket` so it's a likely culprit on
     // projects with large open-ticket sets. 5 s debounce means it fires less
     // frequently than worklist sync but each pass does more work.
-    void runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncOpenTickets', () => syncOpenTickets(state)));
+    // HS-8724 — submit through the central scheduler (deferrable + coalesced).
+    void getBackgroundScheduler().submit({
+      key: `markdown-opentickets:${state.dataDir}`,
+      priority: PRIORITY.MARKDOWN_SYNC,
+      projectKey: state.dataDir,
+      deferUnderLag: true,
+      run: () => runWithDataDir(state.dataDir, () => instrumentAsync(state.dataDir, 'markdown.syncOpenTickets', () => syncOpenTickets(state))),
+    });
   }, OPEN_TICKETS_DEBOUNCE);
 }
 

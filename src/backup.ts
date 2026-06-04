@@ -16,6 +16,7 @@ import { createPglite } from './db/pglite.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
 import { instrumentAsync } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
+import { _resetDefaultSchedulerForTests, getBackgroundScheduler, PRIORITY } from './scheduler/backgroundScheduler.js';
 
 export interface BackupInfo {
   tier: '5min' | 'hourly' | 'daily';
@@ -69,55 +70,56 @@ function getOrCreateState(dataDir: string): BackupState {
 const activePreviews = new Map<string, PGlite>();
 
 /**
- * HS-8229 — process-global async mutex. Wraps `createBackup`'s body so
- * at most one project's backup runs at a time across the whole Hot Sheet
- * process, regardless of which project's timer fired. Pre-fix each
- * project's `BackupState.backupInProgress` flag only prevented same-
- * project tier collisions; with N registered projects on similar
- * cadences, up to N backups could run concurrently — contending for
- * libuv threadpool + disk bandwidth + Google Drive sync rate limits
- * (HS-8174).
- *
- * The natural FIFO produced by the await-loop is round-robin enough for
- * v1 — projects join the queue in arrival order. The per-dataDir
- * `backupInProgress` flag stays as a per-project early-return so
- * same-project tier collisions don't pile up in the queue.
+ * HS-8229 / HS-8724 — run a backup body under the process-global "at most one
+ * backup at a time" guarantee. Originally a bespoke await-loop mutex (HS-8229);
+ * now a thin wrapper over the central `backgroundScheduler` (HS-8724). At most
+ * one backup runs at a time across the whole process — the original concern was
+ * N registered projects on similar cadences contending for libuv threadpool +
+ * disk bandwidth + Google Drive sync rate limits (HS-8174). The per-dataDir
+ * `backupInProgress` flag stays as a same-project early-return so a single
+ * project's tier collisions bail before reaching the scheduler.
  *
  * Exported for unit tests; production callers go through `createBackup`.
  */
-let activeBackup: Promise<unknown> | null = null;
+// HS-8724 (load resilience, docs/75 §75.6 Phase 2) — backups now run through
+// the central `backgroundScheduler` instead of a bespoke mutex. The scheduler's
+// `exclusiveGroup: 'backup'` preserves HS-8229's guarantee that at most one
+// backup runs at a time across the whole process (Google-Drive rate limits +
+// disk contention, HS-8174) while letting a backup overlap a snapshot under the
+// shared concurrency budget. `deferUnderLag: false` — backups are durability
+// work and must run even under sustained event-loop lag. Each call gets a
+// unique key so backups queue FIFO (no coalescing) and every caller's result
+// is its own.
+let backupLockSeq = 0;
+const BACKUP_EXCLUSIVE_GROUP = 'backup';
 
-export async function withGlobalBackupLock<T>(fn: () => Promise<T>): Promise<T> {
-  // Wait for any predecessor to release. Loop because by the time we wake
-  // up another caller might have grabbed the slot first; we just keep
-  // waiting until we observe a free slot. Predecessor failures are
-  // swallowed here — they're the predecessor's caller's problem; ours is
-  // simply to wait until the slot is free.
-  while (activeBackup !== null) {
-    try {
-      await activeBackup;
-    } catch {
-      /* predecessor failed — caller already saw the rejection; we just need to wait */
-    }
-  }
-  const p = (async () => fn())();
-  activeBackup = p;
-  try {
-    return await p;
-  } finally {
-    // Clear only if we still own the slot — defensive against unexpected
-    // re-entry or forced reset paths.
-    if (activeBackup === p) activeBackup = null;
-  }
+export function withGlobalBackupLock<T>(fn: () => Promise<T>): Promise<T> {
+  // The job settles this deferred so the caller's promise mirrors fn's outcome
+  // exactly (resolve OR reject) — preserving `withGlobalBackupLock`'s
+  // propagate-on-throw contract. The scheduler's own awaitable never rejects, so
+  // we route the result through `out` instead and fire-and-forget the submit.
+  let settle!: (value: T) => void;
+  let fail!: (error: unknown) => void;
+  const out = new Promise<T>((resolve, reject) => { settle = resolve; fail = reject; });
+  void getBackgroundScheduler().submit({
+    key: `backup:${++backupLockSeq}`,
+    priority: PRIORITY.BACKUP,
+    exclusiveGroup: BACKUP_EXCLUSIVE_GROUP,
+    deferUnderLag: false,
+    run: async () => {
+      try { settle(await fn()); } catch (e) { fail(e); }
+    },
+  });
+  return out;
 }
 
-/** **TEST ONLY** — drop the global lock state AND every per-project gate.
- *  Used between cases so a prior test's leaked global lock OR a lingering
- *  per-project `backupInProgress` flag can't strand the next case. (HS-8720:
- *  under CI coverage starvation a prior backup's `finally` reset can lag, so
- *  clear `backupStates` too — not just the global `activeBackup`.) */
+/** **TEST ONLY** — reset the scheduler (drops any queued/serialized backups)
+ *  AND every per-project gate. Used between cases so a prior test's leaked
+ *  scheduler state OR a lingering per-project `backupInProgress` flag can't
+ *  strand the next case. (HS-8720: under CI coverage starvation a prior
+ *  backup's `finally` reset can lag, so clear `backupStates` too.) */
 export function _resetGlobalBackupLockForTesting(): void {
-  activeBackup = null;
+  _resetDefaultSchedulerForTests();
   backupStates.clear();
 }
 
@@ -570,13 +572,21 @@ export function initBackupScheduler(dataDir: string): void {
   }, 30_000);
   state.attachmentGcInterval = setInterval(() => {
     // HS-8353 — instrument daily orphan GC. Same shape as the startup
-    // run but recurring every 24 h.
-    void instrumentAsync(dataDir, 'attachmentBackup.orphanGc:daily', () => runAttachmentGc(backupsDir(dataDir))).then(stats => {
-      if (stats.deleted > 0) {
-        console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
-      }
-    }).catch((err: unknown) => {
-      console.error('[attachmentBackup] GC daily run failed:', err);
+    // run but recurring every 24 h. HS-8724 — submitted through the central
+    // scheduler at GC priority + `deferUnderLag: true`: GC is the lowest-value
+    // background work, so it yields to everything else and waits out lag spikes.
+    void getBackgroundScheduler().submit({
+      key: `attachment-gc:${dataDir}`,
+      priority: PRIORITY.GC,
+      projectKey: dataDir,
+      deferUnderLag: true,
+      run: () => instrumentAsync(dataDir, 'attachmentBackup.orphanGc:daily', () => runAttachmentGc(backupsDir(dataDir))).then(stats => {
+        if (stats.deleted > 0) {
+          console.log(`[attachmentBackup] GC: reclaimed ${stats.deleted} blob(s), ${(stats.bytesReclaimed / 1024 / 1024).toFixed(2)} MB`);
+        }
+      }).catch((err: unknown) => {
+        console.error('[attachmentBackup] GC daily run failed:', err);
+      }),
     });
   }, 24 * 60 * 60 * 1000);
 }

@@ -197,6 +197,13 @@ async function rotateIfNeeded(path: string, pendingBytes: number): Promise<void>
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastHeartbeatNs = 0n;
+// HS-8724 — most-recent observed event-loop lag (ms), updated EVERY heartbeat
+// tick (not just when it crosses the freeze-log threshold). This is the
+// backpressure signal the background-work scheduler reads via
+// `getRecentEventLoopLagMs()` to decide whether to hold back deferrable
+// low-priority jobs. 0 until the heartbeat starts (so callers degrade to "no
+// backpressure" rather than throttling on a stale reading).
+let lastEventLoopLagMs = 0;
 // HS-8674 — single-instance assumption: there is ONE event-loop heartbeat per
 // Node process (the timer is idempotent), and it attributes every stall to the
 // dataDir of the FIRST `startServerEventLoopHeartbeat` caller. On a
@@ -229,6 +236,9 @@ export function startServerEventLoopHeartbeat(dataDir: string): void {
     const elapsedMs = Number(now - lastHeartbeatNs) / 1_000_000;
     lastHeartbeatNs = now;
     const blockMs = elapsedMs - HEARTBEAT_INTERVAL_MS;
+    // HS-8724 — record the lag on every tick for the scheduler's backpressure
+    // read, clamped at 0 (a slightly-early timer fire yields a small negative).
+    lastEventLoopLagMs = blockMs > 0 ? blockMs : 0;
     if (blockMs >= LONG_TASK_THRESHOLD_MS && heartbeatDataDir !== null) {
       void appendFreezeLog(heartbeatDataDir, {
         ts: new Date().toISOString(),
@@ -241,6 +251,17 @@ export function startServerEventLoopHeartbeat(dataDir: string): void {
   // Don't keep the process alive for the heartbeat alone — if every
   // other handle is gone, the process should exit cleanly.
   heartbeatTimer.unref();
+}
+
+/**
+ * HS-8724 — the most recent event-loop lag (ms) observed by the heartbeat,
+ * refreshed every `HEARTBEAT_INTERVAL_MS`. The background-work scheduler reads
+ * this to apply backpressure: when lag is high, deferrable low-priority jobs
+ * (backups, GC) are held back so foreground request handling keeps the loop.
+ * Returns 0 when the heartbeat hasn't started (no signal → no throttling).
+ */
+export function getRecentEventLoopLagMs(): number {
+  return lastEventLoopLagMs;
 }
 
 /**
@@ -309,5 +330,6 @@ export function _resetForTesting(): void {
   }
   heartbeatDataDir = null;
   lastHeartbeatNs = 0n;
+  lastEventLoopLagMs = 0;
   appendQueue.clear();
 }

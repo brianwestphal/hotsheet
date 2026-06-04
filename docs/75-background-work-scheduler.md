@@ -8,9 +8,12 @@ Theme: **Load resilience.** Every ticket spawned from this design carries the
 > is, even for a long time. Background work degrades (runs late); it never starves
 > the foreground.**
 
-> **Status: Design + phased implementation in progress.** Phase 1 (off-loop git
-> status) is the contained fix for the reported freeze; Phases 2–5 generalize the
-> mechanism so the property holds as tab count and machine load grow.
+> **Status: Phases 1 & 2 shipped; Phases 3–5 pending.** Phase 1 (off-loop git
+> status, HS-8723) is the contained fix for the reported freeze. Phase 2 (HS-8724)
+> added the central `backgroundScheduler` and migrated every background consumer
+> onto it (Option A — backups + snapshots coordinated but never deferred;
+> git-refresh + markdown-sync + GC deferrable under load). Phases 3–5 generalize the
+> mechanism further as tab count and machine load grow.
 
 ## 75.1 Why this exists — the incident
 
@@ -163,11 +166,19 @@ HS-8725 (3) / HS-8726 (4) / HS-8727 (5).
    in-flight reads per project; make `GET /api/git/status` + `POST /api/git/fetch`
    await. Removes the only synchronous-blocking background path. Contained to
    `src/git/*` + `src/routes/git.ts` + tests.
-2. **Phase 2 (HS-8724) — Central background-work scheduler.** New
+2. **Phase 2 (HS-8724) — Central background-work scheduler. ✅ shipped.** New
    `src/scheduler/backgroundScheduler.ts` generalizing `withGlobalBackupLock`:
-   bounded concurrency, per-(project,kind) coalescing, round-robin fairness, priority
-   tiers, and event-loop-lag backpressure sourced from the heartbeat. Migrate
-   backups, snapshots, markdown sync, and the git refresh trigger onto it.
+   bounded concurrency (default 2), per-`key` coalescing, round-robin fairness,
+   priority tiers, `exclusiveGroup` mutual-exclusion (≤1 per group — backups keep
+   their HS-8229 serialization), and event-loop-lag backpressure (`deferUnderLag`,
+   sourced from `freezeLogger.getRecentEventLoopLagMs()`). `submit()` is awaitable
+   so durability callers (manual backup, shutdown snapshot flush) can wait.
+   **Option A migration (user-chosen):** backups (`exclusiveGroup:'backup'`) and
+   snapshots run with `deferUnderLag:false` (coordinated by the shared budget but
+   never held back — durability first); git-refresh pre-warm, markdown sync, and
+   attachment GC run with `deferUnderLag:true`. The markdown `flushPendingSyncs`
+   path stays direct (immediate). The git-refresh pre-warm is process-wide for now;
+   Phase 3 scopes it to the foreground project.
 3. **Phase 3 (HS-8725) — Foreground-scoped refresh.** Client reports the active project;
    server gives the active project live refresh and background projects lazy refresh,
    collapsing the `notify.ts` fan-out.

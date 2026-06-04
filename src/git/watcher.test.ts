@@ -10,6 +10,7 @@
 import { join } from 'path';
 import { afterEach,beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _resetDefaultSchedulerForTests } from '../scheduler/backgroundScheduler.js';
 import {
   _resetGitStatusCacheForTests,
   disposeAllGitWatchers,
@@ -51,6 +52,7 @@ vi.mock('fs', () => ({
 
 beforeEach(() => {
   _resetGitStatusCacheForTests();
+  _resetDefaultSchedulerForTests(); // HS-8724 — isolate the global scheduler the watcher's pre-warm submits to
   disposeAllGitWatchers();
   mockGetGitStatus.mockReset();
   mockIsGitRepo.mockReset();
