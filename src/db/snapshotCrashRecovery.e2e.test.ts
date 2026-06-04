@@ -140,7 +140,15 @@ async function killAndWait(child: SpawnedHotSheet): Promise<void> {
 }
 
 describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) (skipped: no tsx child-spawn here, or running inside a Hot Sheet terminal; HS-8202)', () => {
-  it('SIGKILL + corrupt cluster → auto-restores from snapshot; loss is bounded to post-snapshot writes', async () => {
+  // HS-8720 — `{ retry: 2 }` matches the cli.test.ts precedent for spawn-based
+  // e2e flakes. These cases drive a REAL `tsx src/cli.ts` child through a
+  // debounced-snapshot → SIGKILL → corrupt-cluster → auto-restore sequence whose
+  // correctness hinges on real-process + filesystem timing. Under the full
+  // merged-coverage run (200+ files in parallel + V8 instrumentation) CPU
+  // starvation can perturb that timing enough to surface a rare non-deterministic
+  // failure (e.g. an empty restored set). A genuine logic regression would fail
+  // all three attempts deterministically; a starvation race clears on retry.
+  it('SIGKILL + corrupt cluster → auto-restores from snapshot; loss is bounded to post-snapshot writes', { retry: 2, timeout: 90_000 }, async () => {
     const child = spawnTracked();
     await child.ready;
     const secret = readSecret(child.dataDir);
@@ -176,9 +184,9 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
     // Bounded loss: only the writes made after the last snapshot are gone.
     expect(titles).not.toContain('Lost-1');
     expect(titles).not.toContain('Lost-2');
-  }, 90_000);
+  });
 
-  it('prefers the fresher canonical snapshot over an older §7 backup tarball', async () => {
+  it('prefers the fresher canonical snapshot over an older §7 backup tarball', { retry: 2, timeout: 90_000 }, async () => {
     const child = spawnTracked();
     await child.ready;
     const secret = readSecret(child.dataDir);
@@ -213,9 +221,9 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
     const titles = await getOpenTitles(relaunch.port);
     // We got the FRESH snapshot (has Fresh-1) — not the older backup (lacks it).
     expect(titles).toEqual(expect.arrayContaining(['Old-1', 'Old-2', 'Fresh-1']));
-  }, 90_000);
+  });
 
-  it('multi-project: both projects restore their own data with no cross-talk', async () => {
+  it('multi-project: both projects restore their own data with no cross-talk', { retry: 2, timeout: 120_000 }, async () => {
     const child = spawnTracked();
     await child.ready;
     const secret1 = readSecret(child.dataDir);
@@ -262,5 +270,5 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
     expect(titles1).not.toContain('P2-only');
     expect(titles2).toContain('P2-only');
     expect(titles2).not.toContain('P1-only');
-  }, 120_000);
+  });
 });

@@ -26,7 +26,7 @@ import type { AppEnv } from '../types.js';
  */
 export const gitRoutes = new Hono<AppEnv>();
 
-gitRoutes.get('/git/status', (c) => {
+gitRoutes.get('/git/status', async (c) => {
   const dataDir = c.get('dataDir');
   const projectRoot = projectRootFromDataDir(dataDir);
 
@@ -43,7 +43,7 @@ gitRoutes.get('/git/status', (c) => {
   // poll wakes pick up the new state.
   ensureGitWatcher(projectRoot);
 
-  const status = getCachedGitStatus(projectRoot);
+  const status = await getCachedGitStatus(projectRoot);
   if (status === null) return c.json(null);
 
   // HS-7956 — Phase 3 popover requests `?files=true` to additionally pull
@@ -53,7 +53,7 @@ gitRoutes.get('/git/status', (c) => {
   // popover is open (rare event vs. every poll bump). Adds one extra `git
   // status -z` shell-out per click.
   if (c.req.query('files') === 'true') {
-    const files = getGitStatusFiles(projectRoot);
+    const files = await getGitStatusFiles(projectRoot);
     return c.json({ ...status, files });
   }
   return c.json(status);
@@ -73,14 +73,14 @@ export function projectRootFromDataDir(dataDir: string): string {
 // status cache on success so the next /git/status call sees the new
 // ahead/behind numbers. Always returns 200 — the `ok` field carries the
 // success signal so the client doesn't have to special-case HTTP status.
-gitRoutes.post('/git/fetch', (c) => {
+gitRoutes.post('/git/fetch', async (c) => {
   const dataDir = c.get('dataDir');
   const projectRoot = projectRootFromDataDir(dataDir);
   const settings = readFileSettings(dataDir);
   if (settings.git_tracking_enabled === false) {
     return c.json({ ok: false, lastFetchedAt: null, error: 'git tracking disabled in settings' });
   }
-  const result = runGitFetch(projectRoot);
+  const result = await runGitFetch(projectRoot);
   if (result.ok) dropGitStatusCache(projectRoot);
   return c.json(result);
 });

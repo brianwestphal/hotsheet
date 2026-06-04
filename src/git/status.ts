@@ -1,11 +1,30 @@
-import { spawnSync } from 'child_process';
+import { execFile } from 'child_process';
 import { join } from 'path';
+import { promisify } from 'util';
 
 // HS-8522 — wire shapes inferred from the typed-API-layer schemas
 // (`src/api/git.ts`), the single source of truth shared with the client.
 import type { FetchResult, GitStatus, GitStatusFiles } from '../api/git.js';
-import { instrumentSync } from '../diagnostics/freezeLogger.js';
+import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { getGitRoot, isGitRepo } from '../gitignore.js';
+
+// HS-8723 (load resilience, docs/75 §75.6 Phase 1) — the whole git-status read
+// path used to be `spawnSync`, which blocks the single shared Node event loop
+// for the full duration of each `git` invocation (up to 5 serialized per
+// status read). With many project tabs open, those synchronous blocks
+// saturated the loop and froze tab-switching (HS-8721). Everything here now
+// shells out asynchronously via `execFile` so a slow / contended `git` never
+// stalls request handling — it just resolves late.
+const execFileAsync = promisify(execFile);
+
+/** execFile on a non-zero exit, timeout, or missing-binary REJECTS rather than
+ *  returning a status code. Coerce whatever it carries (stdout/stderr may be a
+ *  string or Buffer depending on the failure mode) into a plain string. */
+function bufToStr(v: string | Buffer | undefined): string {
+  if (typeof v === 'string') return v;
+  if (v !== undefined) return v.toString();
+  return '';
+}
 
 export type { FetchResult, GitStatus, GitStatusFiles };
 
@@ -27,8 +46,17 @@ export type { FetchResult, GitStatus, GitStatusFiles };
 
 const SPAWN_TIMEOUT_MS = 2_000;
 
-/** Spawn options shared across every git invocation in this module. */
-type GitInvoker = (args: string[], cwd: string) => { stdout: string; status: number | null };
+/** Spawn options shared across every git invocation in this module. Async
+ *  (HS-8723) — resolves with the captured stdout (+ optionally stderr) and the
+ *  process exit status. Never rejects: a non-zero exit / timeout / missing
+ *  binary resolves with `status: null` (or the numeric exit code) so callers
+ *  keep their existing `status === 0` checks and conservative fallbacks. */
+type GitInvoker = (args: string[], cwd: string) => Promise<{ stdout: string; status: number | null }>;
+
+// `git status` output for a large dirty tree (or many untracked files) can run
+// well past execFile's 1 MB default before the per-bucket 200-entry cap is
+// applied during parsing. 32 MB is generous headroom without being unbounded.
+const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 
 /**
  * Build a `git` invoker. HS-8674 — single factory shared by the status reads
@@ -36,22 +64,42 @@ type GitInvoker = (args: string[], cwd: string) => { stdout: string; status: num
  * folded for UI surfacing). The env block is identical for both: HS-7954 —
  * never block the server on a credential prompt; never fight the user's
  * interactive terminal for `.git/index.lock`.
+ *
+ * HS-8723 — async via `execFile`. On a non-zero exit / timeout / missing
+ * binary, `execFileAsync` rejects with an error that still carries `stdout` /
+ * `stderr` (and a numeric `code` on a clean non-zero exit, or a string like
+ * `'ENOENT'` when `git` isn't on PATH). We fold that back into the same
+ * `{ stdout, status }` shape the synchronous version returned, so the callers
+ * downstream are unchanged.
  */
 function makeGitInvoker({ timeoutMs, includeStderr = false }: { timeoutMs: number; includeStderr?: boolean }): GitInvoker {
-  return (args, cwd) => {
-    const res = spawnSync('git', args, {
+  return async (args, cwd) => {
+    const opts = {
       cwd,
-      encoding: 'utf-8',
+      encoding: 'utf-8' as const,
       timeout: timeoutMs,
+      maxBuffer: GIT_MAX_BUFFER,
       env: {
         ...process.env,
         GIT_TERMINAL_PROMPT: '0',
         GIT_OPTIONAL_LOCKS: '0',
       },
-    });
-    const stdout = typeof res.stdout === 'string' ? res.stdout : '';
-    const stderr = typeof res.stderr === 'string' ? res.stderr : '';
-    return { stdout: includeStderr ? stdout + stderr : stdout, status: res.status };
+    };
+    try {
+      const { stdout, stderr } = await execFileAsync('git', args, opts);
+      const out = bufToStr(stdout);
+      const err = bufToStr(stderr);
+      return { stdout: includeStderr ? out + err : out, status: 0 };
+    } catch (e) {
+      const errObj = e as { code?: number | string; stdout?: string | Buffer; stderr?: string | Buffer };
+      const out = bufToStr(errObj.stdout);
+      const err = bufToStr(errObj.stderr);
+      // A numeric `code` is the git exit status (e.g. 1 from `git status` is
+      // normal); a string `code` (ENOENT / ETIMEDOUT) means git never ran or
+      // was killed — surface that as `null`, matching the old spawnSync path.
+      const status = typeof errObj.code === 'number' ? errObj.code : null;
+      return { stdout: includeStderr ? out + err : out, status };
+    }
   };
 }
 
@@ -66,23 +114,23 @@ const defaultInvoker: GitInvoker = makeGitInvoker({ timeoutMs: SPAWN_TIMEOUT_MS 
  * The `invoker` parameter is a test seam — production callers omit it and
  * get the real `spawnSync` shell-out.
  */
-export function getGitStatus(projectRoot: string, invoker: GitInvoker = defaultInvoker): GitStatus | null {
+export async function getGitStatus(projectRoot: string, invoker: GitInvoker = defaultInvoker): Promise<GitStatus | null> {
   if (!isGitRepo(projectRoot)) return null;
-  // HS-8362 — instrument the spawnSync chain (up to 5 git invocations
-  // serialized, each a synchronous block while git runs). `dataDir` is
-  // derived from `projectRoot` by the standard `<projectRoot>/.hotsheet`
-  // convention; non-Hot-Sheet projectRoots silently no-op the freeze.log
-  // append because `freezeLogger.appendFreezeLog` catches the directory-
-  // missing error and warns to console without throwing. The label is
-  // `git.getStatus` (no per-project suffix — projectRoot is captured
-  // implicitly by the dataDir routing).
-  return instrumentSync(join(projectRoot, '.hotsheet'), 'git.getStatus', () => getGitStatusUnwrapped(projectRoot, invoker));
+  // HS-8362 / HS-8723 — instrument the (now async) git-invocation chain (up to
+  // 5 serialized invocations). Switched from `instrumentSync` to
+  // `instrumentAsync` because the chain no longer blocks the event loop; the
+  // freeze.log entry now records wall-clock latency, not a loop stall. `dataDir`
+  // is derived from `projectRoot` by the standard `<projectRoot>/.hotsheet`
+  // convention; non-Hot-Sheet projectRoots silently no-op the freeze.log append
+  // because `appendFreezeLog` catches the directory-missing error. Label stays
+  // `git.getStatus` (projectRoot captured implicitly by the dataDir routing).
+  return instrumentAsync(join(projectRoot, '.hotsheet'), 'git.getStatus', () => getGitStatusUnwrapped(projectRoot, invoker));
 }
 
-function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): GitStatus | null {
+async function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): Promise<GitStatus | null> {
   const root = getGitRoot(projectRoot) ?? projectRoot;
 
-  const branchRes = invoker(['symbolic-ref', '--short', 'HEAD'], root);
+  const branchRes = await invoker(['symbolic-ref', '--short', 'HEAD'], root);
   let branch: string;
   let detached = false;
   if (branchRes.status === 0 && branchRes.stdout.trim() !== '') {
@@ -91,11 +139,11 @@ function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): GitSta
     // Detached HEAD — use the short SHA. If even that fails (corrupt repo),
     // fall back to a literal '(detached)' so the chip still renders.
     detached = true;
-    const sha = invoker(['rev-parse', '--short', 'HEAD'], root);
+    const sha = await invoker(['rev-parse', '--short', 'HEAD'], root);
     branch = sha.status === 0 && sha.stdout.trim() !== '' ? sha.stdout.trim() : '(detached)';
   }
 
-  const porcelain = invoker(['status', '--porcelain=v1', '--no-renames'], root);
+  const porcelain = await invoker(['status', '--porcelain=v1', '--no-renames'], root);
   const counts = porcelain.status === 0
     ? bucketPorcelain(porcelain.stdout)
     : { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 };
@@ -106,15 +154,15 @@ function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): GitSta
   let ahead = 0;
   let behind = 0;
   if (!detached) {
-    const upRes = invoker(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
+    const upRes = await invoker(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
     if (upRes.status === 0 && upRes.stdout.trim() !== '') {
       upstream = upRes.stdout.trim();
-      const aheadRes = invoker(['rev-list', '--count', '@{u}..HEAD'], root);
+      const aheadRes = await invoker(['rev-list', '--count', '@{u}..HEAD'], root);
       if (aheadRes.status === 0) {
         const n = Number.parseInt(aheadRes.stdout.trim(), 10);
         if (Number.isFinite(n)) ahead = n;
       }
-      const behindRes = invoker(['rev-list', '--count', 'HEAD..@{u}'], root);
+      const behindRes = await invoker(['rev-list', '--count', 'HEAD..@{u}'], root);
       if (behindRes.status === 0) {
         const n = Number.parseInt(behindRes.stdout.trim(), 10);
         if (Number.isFinite(n)) behind = n;
@@ -152,7 +200,7 @@ function getLastFetchedAt(projectRoot: string): number | null {
 /** Run `git fetch --quiet --no-write-fetch-head` against the upstream of
  *  the current branch. Returns `ok: true` + the new timestamp on success;
  *  `ok: false` + the captured stderr on failure. 30s timeout. */
-export function runGitFetch(projectRoot: string, invoker: GitInvoker = makeGitInvoker({ timeoutMs: 30_000, includeStderr: true })): FetchResult {
+export async function runGitFetch(projectRoot: string, invoker: GitInvoker = makeGitInvoker({ timeoutMs: 30_000, includeStderr: true })): Promise<FetchResult> {
   if (!isGitRepo(projectRoot)) {
     return { ok: false, lastFetchedAt: null, error: 'Not a git repository' };
   }
@@ -160,11 +208,11 @@ export function runGitFetch(projectRoot: string, invoker: GitInvoker = makeGitIn
   // Check for an upstream first — `git fetch` against a branch with no
   // upstream is a no-op-ish (fetches every remote) which isn't what the
   // user clicked the button for. Surface a clear error instead.
-  const upRes = invoker(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
+  const upRes = await invoker(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
   if (upRes.status !== 0 || upRes.stdout.trim() === '') {
     return { ok: false, lastFetchedAt: null, error: 'No upstream branch — set one with `git push -u <remote> <branch>`.' };
   }
-  const fetchRes = invoker(['fetch', '--quiet', '--no-write-fetch-head'], root);
+  const fetchRes = await invoker(['fetch', '--quiet', '--no-write-fetch-head'], root);
   if (fetchRes.status === 0) {
     const now = Date.now();
     lastFetchedAt.set(projectRoot, now);
@@ -226,16 +274,15 @@ const FILES_PER_BUCKET_CAP = 200;
  *  each bucket at 200 entries — beyond that the popover gets unusable and
  *  the user is better off in `git status` directly. Returns `null` when not
  *  a git repo or git fails. */
-export function getGitStatusFiles(projectRoot: string, invoker: GitInvoker = defaultInvoker): GitStatusFiles | null {
+export async function getGitStatusFiles(projectRoot: string, invoker: GitInvoker = defaultInvoker): Promise<GitStatusFiles | null> {
   if (!isGitRepo(projectRoot)) return null;
-  // HS-8362 — single spawnSync (smaller surface than `getGitStatus`'s
-  // 5-call chain), still wrapped for completeness so freeze.log can show
-  // whether the expanded-popover file-list endpoint is contributing to
-  // any observed stall. Triggered on demand by the gitStatusChip popover
-  // click in the sidebar.
-  return instrumentSync(join(projectRoot, '.hotsheet'), 'git.getStatusFiles', () => {
+  // HS-8362 / HS-8723 — single (now async) git invocation, smaller surface than
+  // `getGitStatus`'s 5-call chain. Still wrapped so freeze.log can show whether
+  // the expanded-popover file-list endpoint contributes to any observed
+  // latency. Triggered on demand by the gitStatusChip popover click.
+  return instrumentAsync(join(projectRoot, '.hotsheet'), 'git.getStatusFiles', async () => {
     const root = getGitRoot(projectRoot) ?? projectRoot;
-    const res = invoker(['status', '--porcelain=v1', '--no-renames', '-z'], root);
+    const res = await invoker(['status', '--porcelain=v1', '--no-renames', '-z'], root);
     if (res.status !== 0) return null;
     return bucketPorcelainFiles(res.stdout);
   });

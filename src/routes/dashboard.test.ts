@@ -37,6 +37,9 @@ vi.mock('../global-config.js', () => ({
 
 vi.mock('child_process', () => ({
   execFileSync: vi.fn(),
+  // HS-8723 — git/status.ts (pulled in transitively) now `promisify`s
+  // `execFile` at module load, so the mock must expose it as a function.
+  execFile: vi.fn(),
   spawn: vi.fn(() => ({ unref: vi.fn() })),
 }));
 

@@ -38,33 +38,57 @@ interface CachedEntry {
 
 const cache = new Map<string, CachedEntry>();
 
+/** HS-8723 — in-flight de-duplication. The (now async) `getGitStatus` shells
+ *  out to git over several hundred ms. A single `.git` change wakes the poll
+ *  for EVERY open tab, and each tab refetches `/api/git/status` for its
+ *  project; without this map, N concurrent reads of the same project would
+ *  each spawn their own git chain. Keying the pending Promise here collapses
+ *  that burst to ONE git run per project — the rest await the same result. */
+const inFlight = new Map<string, Promise<GitStatus | null>>();
+
 /**
  * Cached read of the git status. Within `CACHE_TTL_MS` of the last
- * resolution, returns the cached value. Otherwise re-runs `getGitStatus`
- * and caches the result.
+ * resolution, returns the cached value synchronously. Otherwise awaits a
+ * single in-flight `getGitStatus` (shared across concurrent callers) and
+ * caches the result.
  */
-export function getCachedGitStatus(projectRoot: string): GitStatus | null {
+export async function getCachedGitStatus(projectRoot: string): Promise<GitStatus | null> {
   const entry = cache.get(projectRoot);
   const now = Date.now();
   if (entry !== undefined && now - entry.resolvedAt < CACHE_TTL_MS) {
     return entry.status;
   }
-  const status = getGitStatus(projectRoot);
-  cache.set(projectRoot, { status, resolvedAt: now });
-  return status;
+  // Coalesce concurrent misses onto one git run.
+  const pending = inFlight.get(projectRoot);
+  if (pending !== undefined) return pending;
+  const p = (async () => {
+    try {
+      const status = await getGitStatus(projectRoot);
+      cache.set(projectRoot, { status, resolvedAt: Date.now() });
+      return status;
+    } finally {
+      inFlight.delete(projectRoot);
+    }
+  })();
+  inFlight.set(projectRoot, p);
+  return p;
 }
 
 /** Test-only — clear the cache so each test starts from a clean slate. */
 export function _resetGitStatusCacheForTests(): void {
   cache.clear();
+  inFlight.clear();
 }
 
 /** HS-7955 — drop the cached entry for one project. Called from the
  *  `POST /api/git/fetch` route after a successful fetch so the next
  *  `/git/status` read picks up the updated ahead/behind numbers
- *  immediately rather than serving the pre-fetch cached value. */
+ *  immediately rather than serving the pre-fetch cached value. HS-8723 —
+ *  also drop any in-flight read so a pre-fetch result can't repopulate the
+ *  cache with stale ahead/behind after the drop. */
 export function dropGitStatusCache(projectRoot: string): void {
   cache.delete(projectRoot);
+  inFlight.delete(projectRoot);
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +161,7 @@ export function ensureGitWatcher(projectRoot: string): void {
       if (e2 === undefined) return;
       e2.debounce = null;
       cache.delete(projectRoot);
+      inFlight.delete(projectRoot); // HS-8723 — a read in flight when git changed is pre-change; force a fresh run
       e2.version++;
       for (const sub of subscribers) {
         try { sub(projectRoot); } catch { /* swallow */ }
@@ -170,6 +195,7 @@ export function disposeGitWatcher(projectRoot: string): void {
     watchers.delete(projectRoot);
   }
   cache.delete(projectRoot);
+  inFlight.delete(projectRoot);
 }
 
 /** Tear down EVERY watcher. Called from the graceful-shutdown pipeline. */

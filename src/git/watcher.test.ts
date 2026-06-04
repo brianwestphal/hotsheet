@@ -66,59 +66,70 @@ afterEach(() => {
 });
 
 describe('getCachedGitStatus — 500ms result cache', () => {
-  it('returns the underlying getGitStatus result on first call', () => {
+  it('returns the underlying getGitStatus result on first call', async () => {
     const status = { branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true };
     mockGetGitStatus.mockReturnValue(status);
-    expect(getCachedGitStatus('/tmp/proj')).toEqual(status);
+    expect(await getCachedGitStatus('/tmp/proj')).toEqual(status);
     expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('returns cached result on a second call within the TTL', () => {
+  it('returns cached result on a second call within the TTL', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0, 0));
     mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     vi.advanceTimersByTime(100); // well under 500ms
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('re-resolves after the TTL elapses', () => {
+  it('re-resolves after the TTL elapses', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0, 0));
     mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     vi.advanceTimersByTime(600); // past 500ms TTL
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('caches `null` results too — a non-git project doesn\'t re-shell on every poll', () => {
+  it('caches `null` results too — a non-git project doesn\'t re-shell on every poll', async () => {
     mockGetGitStatus.mockReturnValue(null);
-    getCachedGitStatus('/tmp/not-git');
-    getCachedGitStatus('/tmp/not-git');
+    await getCachedGitStatus('/tmp/not-git');
+    await getCachedGitStatus('/tmp/not-git');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('caches per-project (different roots get separate entries)', () => {
+  it('caches per-project (different roots get separate entries)', async () => {
     mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
-    getCachedGitStatus('/tmp/A');
-    getCachedGitStatus('/tmp/B');
+    await getCachedGitStatus('/tmp/A');
+    await getCachedGitStatus('/tmp/B');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
     expect(mockGetGitStatus).toHaveBeenNthCalledWith(1, '/tmp/A');
     expect(mockGetGitStatus).toHaveBeenNthCalledWith(2, '/tmp/B');
   });
+
+  it('coalesces concurrent misses for the same project onto one git run (HS-8723)', async () => {
+    mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
+    // Two reads fired before the first resolves must share a single git run.
+    const [a, b] = await Promise.all([
+      getCachedGitStatus('/tmp/proj'),
+      getCachedGitStatus('/tmp/proj'),
+    ]);
+    expect(a).toEqual(b);
+    expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('dropGitStatusCache', () => {
-  it('forces a re-resolve on the next read for the dropped project only', () => {
+  it('forces a re-resolve on the next read for the dropped project only', async () => {
     mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
-    getCachedGitStatus('/tmp/A');
-    getCachedGitStatus('/tmp/B');
+    await getCachedGitStatus('/tmp/A');
+    await getCachedGitStatus('/tmp/B');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
     dropGitStatusCache('/tmp/A');
-    getCachedGitStatus('/tmp/A');
-    getCachedGitStatus('/tmp/B'); // B is still cached
+    await getCachedGitStatus('/tmp/A');
+    await getCachedGitStatus('/tmp/B'); // B is still cached
     expect(mockGetGitStatus).toHaveBeenCalledTimes(3);
   });
 
@@ -192,7 +203,7 @@ describe('ensureGitWatcher — idempotent wire-up', () => {
 });
 
 describe('debounced fire — fs.watch callback', () => {
-  it('bumps the per-project version + drops the cache + fans out to subscribers (debounced)', () => {
+  it('bumps the per-project version + drops the cache + fans out to subscribers (debounced)', async () => {
     vi.useFakeTimers();
     mockIsGitRepo.mockReturnValue(true);
     mockGetGitRoot.mockReturnValue('/tmp/proj');
@@ -207,7 +218,7 @@ describe('debounced fire — fs.watch callback', () => {
 
     // Seed a cache entry so we can confirm the watcher tear-down drops it
     mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
 
     ensureGitWatcher('/tmp/proj');
@@ -231,7 +242,7 @@ describe('debounced fire — fs.watch callback', () => {
     expect(heard).toEqual(['/tmp/proj']);
 
     // Cache was dropped — next read re-resolves.
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
 
     unsub();
@@ -300,7 +311,7 @@ describe('getGitChangeVersion', () => {
 });
 
 describe('disposeGitWatcher + disposeAllGitWatchers', () => {
-  it('closes the per-project watcher handles + drops the cache entry', () => {
+  it('closes the per-project watcher handles + drops the cache entry', async () => {
     const close = vi.fn();
     mockIsGitRepo.mockReturnValue(true);
     mockGetGitRoot.mockReturnValue('/tmp/proj');
@@ -309,13 +320,13 @@ describe('disposeGitWatcher + disposeAllGitWatchers', () => {
     mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
 
     ensureGitWatcher('/tmp/proj');
-    getCachedGitStatus('/tmp/proj'); // seed cache
+    await getCachedGitStatus('/tmp/proj'); // seed cache
     expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
 
     disposeGitWatcher('/tmp/proj');
     expect(close).toHaveBeenCalledTimes(2); // index + HEAD
     // Cache dropped — next read re-resolves.
-    getCachedGitStatus('/tmp/proj');
+    await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
   });
 
