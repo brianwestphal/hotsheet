@@ -8,12 +8,14 @@ Theme: **Load resilience.** Every ticket spawned from this design carries the
 > is, even for a long time. Background work degrades (runs late); it never starves
 > the foreground.**
 
-> **Status: Phases 1 & 2 shipped; Phases 3–5 pending.** Phase 1 (off-loop git
+> **Status: Phases 1–3 shipped; Phases 4–5 pending.** Phase 1 (off-loop git
 > status, HS-8723) is the contained fix for the reported freeze. Phase 2 (HS-8724)
 > added the central `backgroundScheduler` and migrated every background consumer
 > onto it (Option A — backups + snapshots coordinated but never deferred;
-> git-refresh + markdown-sync + GC deferrable under load). Phases 3–5 generalize the
-> mechanism further as tab count and machine load grow.
+> git-refresh + markdown-sync + GC deferrable under load). Phase 3 (HS-8725) added
+> active-project tracking so a background tab's `.git` nudge no longer fans out into
+> proactive refresh — the scaling lever. Phases 4–5 generalize the mechanism further
+> as machine load grows.
 
 ## 75.1 Why this exists — the incident
 
@@ -179,9 +181,18 @@ HS-8725 (3) / HS-8726 (4) / HS-8727 (5).
    attachment GC run with `deferUnderLag:true`. The markdown `flushPendingSyncs`
    path stays direct (immediate). The git-refresh pre-warm is process-wide for now;
    Phase 3 scopes it to the foreground project.
-3. **Phase 3 (HS-8725) — Foreground-scoped refresh.** Client reports the active project;
-   server gives the active project live refresh and background projects lazy refresh,
-   collapsing the `notify.ts` fan-out.
+3. **Phase 3 (HS-8725) — Foreground-scoped refresh. ✅ shipped.** New
+   `src/activeProjects.ts` tracks which projects a client is actively viewing,
+   signalled implicitly by the `/api/poll` long-poll (always scoped to the shown
+   project) + the `/api/git/status` chip fetch — no new endpoint or client change
+   needed. The git watcher's debounced fire still busts the cache + bumps the
+   version for EVERY project (so a tab-switch refetches fresh), but the **proactive**
+   work — waking the poll (`notify.ts` fan-out) and the Phase-2 git pre-warm — now
+   runs only for the actively-viewed project. A background project refreshes lazily
+   on switch via the chip's on-demand `getCachedGitStatus`. Recency-based (90 s TTL)
+   so it's the natural union of every connected client's view (forward-compatible
+   with §46 multi-client). Safe default: until any project reports, all are treated
+   active (no regression).
 4. **Phase 4 (HS-8726) — Wake-aware re-staggering.** Detect suspend via the heartbeat `hrtime`
    gap; on wake, re-stagger overdue periodic work with jitter (drain mode) instead of
    a simultaneous fire.

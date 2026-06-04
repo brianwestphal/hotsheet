@@ -10,6 +10,7 @@
 import { join } from 'path';
 import { afterEach,beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _resetActiveProjectsForTests, markProjectActive } from '../activeProjects.js';
 import { _resetDefaultSchedulerForTests } from '../scheduler/backgroundScheduler.js';
 import {
   _resetGitStatusCacheForTests,
@@ -53,6 +54,7 @@ vi.mock('fs', () => ({
 beforeEach(() => {
   _resetGitStatusCacheForTests();
   _resetDefaultSchedulerForTests(); // HS-8724 — isolate the global scheduler the watcher's pre-warm submits to
+  _resetActiveProjectsForTests(); // HS-8725 — empty ⇒ isProjectActive defaults true, so existing assertions hold
   disposeAllGitWatchers();
   mockGetGitStatus.mockReset();
   mockIsGitRepo.mockReset();
@@ -246,6 +248,36 @@ describe('debounced fire — fs.watch callback', () => {
     // Cache was dropped — next read re-resolves.
     await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
+
+    unsub();
+  });
+
+  it('HS-8725: a background (inactive) project busts cache + bumps version but does NOT notify or pre-warm', async () => {
+    vi.useFakeTimers();
+    mockIsGitRepo.mockReturnValue(true);
+    mockGetGitRoot.mockReturnValue('/tmp/proj');
+    mockExistsSync.mockReturnValue(true);
+    mockGetGitStatus.mockReturnValue({ branch: 'main', dirty: 0, ahead: 0, behind: 0, hasUpstream: true });
+    let watcherCb: ((event: string, filename: string | null) => void) | null = null;
+    mockFsWatch.mockImplementation((_p, cb) => { watcherCb = cb; return { close: vi.fn() }; });
+    const heard: string[] = [];
+    const unsub = subscribeToGitChanges((root) => { heard.push(root); });
+
+    // Mark a DIFFERENT project active, so /tmp/proj is now a background tab.
+    markProjectActive(join('/tmp/other', '.hotsheet'));
+
+    await getCachedGitStatus('/tmp/proj'); // seed cache — getGitStatus call #1
+    expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
+
+    ensureGitWatcher('/tmp/proj');
+    watcherCb!('change', 'index');
+    vi.advanceTimersByTime(300);
+
+    // Cache bust + version bump still happen (so a switch-to refetches fresh)...
+    expect(getGitChangeVersion('/tmp/proj')).toBe(1);
+    // ...but NO subscriber notify and NO pre-warm git run for the background tab.
+    expect(heard).toEqual([]);
+    expect(mockGetGitStatus).toHaveBeenCalledTimes(1); // no pre-warm fired
 
     unsub();
   });

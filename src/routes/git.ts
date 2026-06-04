@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { join } from 'path';
 
+import { markProjectActive } from '../activeProjects.js';
 // HS-8522 — request schema shared with the client typed caller
 // (`apis.gitReveal`). HS-8567 — path is optional so the downstream "Invalid
 // path" branch still fires when it's missing.
@@ -28,6 +29,11 @@ export const gitRoutes = new Hono<AppEnv>();
 
 gitRoutes.get('/git/status', async (c) => {
   const dataDir = c.get('dataDir');
+  // HS-8725 — `/git/status` is only fetched for the project the user is viewing
+  // (poll-driven chip refresh + on tab-switch), so it's a foreground signal too.
+  // Marking here makes a freshly-switched-to tab "active" immediately rather than
+  // waiting for its first `/poll` to land.
+  markProjectActive(dataDir);
   const projectRoot = projectRootFromDataDir(dataDir);
 
   // HS-7954 — `git_tracking_enabled` opt-out lives in per-project settings

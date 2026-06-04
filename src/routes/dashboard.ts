@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { homedir, tmpdir } from 'os';
 import { join, relative, resolve } from 'path';
 
+import { markProjectActive } from '../activeProjects.js';
 import { getTicketStats } from '../db/queries.js';
 import { getDashboardStats, getSnapshots } from '../db/stats.js';
 import { ensureGitignore, isGitRepo, isHotsheetGitignored } from '../gitignore.js';
@@ -19,6 +20,10 @@ export const dashboardRoutes = new Hono<AppEnv>();
 // --- Long-poll ---
 
 dashboardRoutes.get('/poll', async (c) => {
+  // HS-8725 — the poll is always scoped to the project the webview is showing,
+  // so each wake marks that project "active" (foreground). The git watcher reads
+  // this to skip proactive refresh for background projects (docs/75 §75.3 P3).
+  markProjectActive(c.get('dataDir'));
   const clientVersion = Math.max(0, parseInt(c.req.query('version') ?? '0', 10) || 0);
   const changeVersion = getChangeVersion();
   if (changeVersion > clientVersion) {
