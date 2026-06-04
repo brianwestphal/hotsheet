@@ -6,357 +6,252 @@ A lightweight, locally-running project management tool for developers. Launched 
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20+
-- **Language**: TypeScript (strict mode)
+- **Runtime**: Node.js 20+ · **Language**: TypeScript (strict mode)
 - **Server**: Hono framework with `@hono/node-server`
-- **Database**: PGLite (embedded PostgreSQL) — data stored in `.hotsheet/`
-- **Rendering**: Custom JSX runtime (no React) — produces HTML strings via `SafeHtml` class (shared by server and client)
-- **Build**: tsup (server CLI + client JS bundles) + sass (SCSS → CSS)
-- **Dev**: tsx for direct TypeScript execution (client assets pre-built)
+- **Database**: PGLite (embedded PostgreSQL), raw SQL (no ORM) — data in `.hotsheet/`
+- **Rendering**: Custom JSX runtime (no React) — produces HTML strings via `SafeHtml`, shared by server and client
+- **Build**: tsup (server CLI + client JS) + sass (SCSS → CSS) · **Dev**: tsx (client assets pre-built)
 
 ## Architecture
 
-The app is a single-entry CLI (`src/cli.ts`) that:
-1. Creates the `.hotsheet/` data directory
-2. Initializes PGLite and runs schema migrations
-3. Starts a Hono HTTP server on port 4174
-4. Syncs markdown worklists to `.hotsheet/worklist.md` and `.hotsheet/open-tickets.md`
-5. Runs cleanup for old trash/completed items
+Single-entry CLI (`src/cli.ts`) that: (1) creates `.hotsheet/`, (2) initializes PGLite + runs schema migrations, (3) starts a Hono HTTP server on port 4174, (4) syncs markdown worklists, (5) runs cleanup for old trash/completed items.
 
 ### Key Files
 
 - `src/cli.ts` — CLI entry point, arg parsing
 - `src/server.ts` — Hono app setup, static file serving
-- `src/routes/api.ts` — JSON API (tickets CRUD, batch operations, attachments, settings)
-- `src/routes/pages.tsx` — Server-rendered HTML page
-- `src/components/layout.tsx` — HTML layout shell
-- `src/db/connection.ts` — PGLite setup and schema initialization (raw SQL, no ORM)
-- `src/db/queries.ts` — All database operations
-- `src/sync/markdown.ts` — Syncs worklist.md and open-tickets.md on ticket changes
-- `src/cleanup.ts` — Auto-cleanup of old trash/completed tickets and orphaned attachments
-- `src/gitignore.ts` — Ensures `.hotsheet/` is in `.gitignore`
-- `src/jsx-runtime.ts` — Custom JSX runtime (HTML string generation, shared by server and client)
-- `src/types.ts` — Shared types (Ticket, TicketCategory, TicketPriority, AppEnv)
+- `src/routes/api.ts` — JSON API (tickets CRUD, batch ops, attachments, settings)
+- `src/routes/pages.tsx` — Server-rendered HTML page · `src/components/layout.tsx` — layout shell
+- `src/db/connection.ts` — PGLite setup + schema init · `src/db/queries.ts` — all DB operations
+- `src/sync/markdown.ts` — syncs worklist.md and open-tickets.md on ticket changes
+- `src/cleanup.ts` — auto-cleanup of old trash/completed tickets + orphaned attachments
+- `src/gitignore.ts` — ensures `.hotsheet/` is gitignored
+- `src/jsx-runtime.ts` — custom JSX runtime (shared by server + client)
+- `src/types.ts` — shared types (Ticket, TicketCategory, TicketPriority, AppEnv)
 
-### Client-Side Code
-
-- `src/client/app.ts` — Entry point, binds all UI interactions
-- `src/client/state.ts` — Shared state, types, settings
-- `src/client/dom.ts` — `toElement()` helper for converting JSX to DOM elements
-- `src/client/api.tsx` — API helper, file upload, network error popup
-- `src/client/ticketList.tsx` — Ticket list rendering, row creation, data loading
-- `src/client/dropdown.tsx` — Context menu dropdowns (category, priority)
-- `src/client/detail.tsx` — Detail panel, resize, stats
-- `src/client/styles.scss` — All styles in a single SCSS file
+**Client** (`src/client/`): `app.ts` (entry, binds UI), `state.ts` (shared state/settings), `dom.ts` (`toElement()` JSX→DOM), `api.tsx` (API helper, upload, network error popup), `ticketList.tsx` (list rendering), `dropdown.tsx` (context menus), `detail.tsx` (detail panel), `styles.scss` (all styles).
 
 ### JSX Runtime
 
-The project uses a custom JSX runtime (`src/jsx-runtime.ts`) instead of React. It renders JSX to HTML strings via the `SafeHtml` class. This runtime is shared by both the server-side components and client-side modules. Configured via:
-- `tsconfig.json`: `"jsx": "react-jsx"`, `"jsxImportSource": "#jsx"`
-- `package.json` imports map: `"#jsx/jsx-runtime": "./src/jsx-runtime.ts"`
-- `tsup.config.ts`: esbuild alias resolves `#jsx/jsx-runtime` at build time (both server and client configs)
+Custom JSX runtime (`src/jsx-runtime.ts`) instead of React — renders JSX to HTML strings via `SafeHtml`, shared server + client. Configured via `tsconfig.json` (`"jsx": "react-jsx"`, `"jsxImportSource": "#jsx"`), the `package.json` imports map (`#jsx/jsx-runtime`), and a `tsup.config.ts` esbuild alias.
 
-When writing TSX components, they return `SafeHtml` (which is `JSX.Element`). Use `raw()` to inject pre-escaped HTML strings. All string children are auto-escaped. In client code, convert JSX to DOM elements with `toElement()` from `src/client/dom.ts`, or to string for `innerHTML` with `.toString()`.
+TSX components return `SafeHtml` (= `JSX.Element`). Use `raw()` to inject pre-escaped HTML; all string children are auto-escaped. In client code, convert to DOM with `toElement()`, or to string for `innerHTML` with `.toString()`.
 
 ### Database
 
-Raw PGLite queries (no ORM). Tables:
-- `tickets` — ticket records (title, details, category, priority, status, up_next)
-- `attachments` — file attachments linked to tickets
-- `settings` — key-value pairs for app configuration
+Tables: `tickets` (title, details, category, priority, status, up_next), `attachments` (linked to tickets), `settings` (key-value config).
 
 ### Ticket Types
 
-- `issue` — General issues that need attention
-- `bug` — Bugs that should be fixed in the codebase
-- `feature` — New features to be implemented
-- `requirement_change` — Changes to existing requirements
-- `task` — General tasks to complete
-- `investigation` — Items requiring research or analysis
+`issue`, `bug`, `feature`, `requirement_change`, `task`, `investigation`.
 
 ### Markdown Sync
 
-Ticket changes trigger debounced syncs of two markdown files:
-- `worklist.md` — "Up Next" tickets sorted by priority, for AI tool consumption
-- `open-tickets.md` — All open tickets grouped by status
+Ticket changes trigger debounced syncs of `worklist.md` ("Up Next" tickets by priority, for AI tools) and `open-tickets.md` (all open tickets grouped by status).
 
 ## Build
 
 ```bash
 npm run build          # tsup -> dist/cli.js + dist/client/app.js + dist/client/styles.css
-npm run build:client   # Build only client assets (JS + CSS) into dist/client/
-npm run dev            # Build client assets, then run via tsx
+npm run build:client   # client assets only (JS + CSS) into dist/client/
+npm run dev            # build client assets, then run via tsx
 ```
 
-The build produces:
-- `dist/cli.js` — Server ESM bundle with Node shebang. External deps (`@electric-sql/pglite`, `hono`, `@hono/node-server`) are kept external.
-- `dist/client/app.js` — Client JS bundle (IIFE, minified, es2020 target)
-- `dist/client/styles.css` — Compiled and compressed CSS from SCSS
+Produces `dist/cli.js` (server ESM bundle w/ Node shebang; `@electric-sql/pglite`, `hono`, `@hono/node-server` kept external), `dist/client/app.js` (IIFE, minified, es2020), `dist/client/styles.css` (compiled + compressed from SCSS).
 
 ## Testing
 
 ```bash
-npm test              # Unit tests with coverage (vitest)
-npm run test:watch    # Unit tests in watch mode
+npm test              # unit tests with coverage (vitest)
+npm run test:watch    # unit tests in watch mode
 npm run test:e2e      # E2E browser tests (Playwright)
-npm run test:fast     # Unit tests + fast E2E (skips GitHub plugin / live integration tests)
-npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration tests
-npm run test:e2e:docker # E2E in the CI Linux/Chromium container (reproduces CI faithfully; needs Docker). Forwards args: npm run test:e2e:docker -- e2e/foo.spec.ts
-npm run test:all      # Unified coverage: unit + E2E server + E2E browser, merged report
-npm run test:all-including-plugins  # Same as test:all but includes plugin tests in coverage
+npm run test:fast     # unit + fast E2E (skips GitHub plugin / live integration)
+npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration
+npm run test:e2e:docker # E2E in the CI Linux/Chromium container (needs Docker). Forwards args: -- e2e/foo.spec.ts
+npm run test:all      # unified coverage: unit + E2E server + E2E browser, merged
+npm run test:all-including-plugins  # test:all + plugin tests in coverage
 ```
 
-The `test:fast` and `test:e2e:fast` scripts exclude tests that require GitHub API credentials (plugin sync, live integration). These are the scripts that should run in CI (GitHub Actions) by default. The full `test:e2e` suite including live GitHub integration tests should only run locally when credentials are configured.
+`test:fast` / `test:e2e:fast` exclude tests needing GitHub API credentials (plugin sync, live integration) — these run in CI by default. The full `test:e2e` suite (live GitHub integration) runs locally only when credentials are configured.
 
 ### Testing Philosophy
 
-- **Double coverage**: Every feature should be covered by both unit tests AND E2E tests. Unit tests verify logic in isolation; E2E tests verify real user flows through the actual running application with minimal mocking.
-- **Unit tests** (`src/**/*.test.ts`): Use vitest. Mock external dependencies (filesystem, network) but test real logic. Use `setupTestDb`/`cleanupTestDb` from `test-helpers.ts` for database tests.
-- **E2E tests** (`e2e/*.spec.ts`): Use Playwright with Chromium. Start a real Hot Sheet server with a temp data directory. Test through the browser — create tickets, click buttons, verify UI state. Minimize mocks; the whole point is exercising the real stack.
-- **Coverage target**: Maximize coverage from both test types. The `npm run test:all` script merges unit + E2E server + E2E browser coverage into a single report. Files showing low coverage should get both more unit tests AND more E2E test flows.
-- **Coverage collection**: Unit coverage via `@vitest/coverage-v8`. E2E server coverage via `NODE_V8_COVERAGE` with `node --import tsx`. E2E browser coverage via Playwright's `page.coverage.startJSCoverage()`, source-mapped from the esbuild bundle back to individual `.tsx` files.
-- **Manual test plan** (`docs/manual-test-plan.md`): Lists features that can't be reliably automated (drag-and-drop, platform-specific behavior, Tauri desktop, Claude Channel UI, visual styling). **Keep this document up to date** — when adding features that involve drag-and-drop, platform-specific behavior, real-time timing, or visual appearance that automated tests can't cover, add them to the manual test plan. When adding automated test coverage for a previously-manual item, remove it from the manual plan and note it in the "Automated Coverage Summary" section.
+- **Double coverage**: every feature covered by both unit tests AND E2E tests. Unit = logic in isolation; E2E = real user flows through the running app with minimal mocking.
+- **Unit tests** (`src/**/*.test.ts`): vitest. Mock external deps (filesystem, network), test real logic. Use `setupTestDb`/`cleanupTestDb` from `test-helpers.ts` for DB tests.
+- **E2E tests** (`e2e/*.spec.ts`): Playwright + Chromium. Start a real server with a temp data dir; test through the browser. Minimize mocks.
+- **Coverage**: `npm run test:all` merges unit + E2E server + E2E browser into one report. Low-coverage files should get more of both test types.
+- **Manual test plan** (`docs/manual-test-plan.md`): features that can't be reliably automated (drag-and-drop, platform-specific behavior, Tauri desktop, Claude Channel UI, visual styling). **Keep it up to date** — add such features here; when you add automated coverage for a previously-manual item, remove it and note it in the "Automated Coverage Summary".
 
 ## Code Quality Gates
 
-- **Always fix lint and type errors before finishing work.** Run `npx tsc --noEmit` and `npm run lint` before handing work back to the user. Both must pass with zero errors. Fix issues as you go rather than batching them up — if you introduce a lint or type error, fix it immediately.
-- **Plugin tests** live in `plugins/*/src/*.test.ts` and are only run when explicitly targeted (`npx vitest run plugins/*/src/*.test.ts`) or via `npm run test:all-including-plugins`. They are NOT included in `npm test`.
+- **Always fix lint and type errors before finishing.** Run `npx tsc --noEmit` and `npm run lint` — both must pass with zero errors. Fix as you go, don't batch.
+- **Plugin tests** (`plugins/*/src/*.test.ts`) run only when explicitly targeted (`npx vitest run plugins/*/src/*.test.ts`) or via `npm run test:all-including-plugins`. NOT in `npm test`.
 
 ## Git
 
-- **NEVER create git commits unless the user explicitly asks.** Do not commit after completing work, do not commit as part of a workflow, do not commit "for convenience." Only run `git add` or `git commit` when the user says words like "commit this" or "make a commit." This is a strict, non-negotiable rule.
+- **NEVER create git commits unless the user explicitly asks** ("commit this" / "make a commit"). Do not commit after completing work, as part of a workflow, or "for convenience." Strict, non-negotiable.
 
 ## Ticket-Driven Work
 
-When the user gives you work directly via the CLI (not via MCP channel or Hot Sheet events), analyze the request and create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work. This keeps work visible, trackable, and consistent with the Hot Sheet workflow.
+When the user gives you work directly via the CLI (not via MCP channel or Hot Sheet events), create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work.
 
-- **Do create tickets** for: feature implementation, bug fixes, refactoring, multi-step tasks, anything that involves changing code.
-- **Don't create tickets** for: simple questions, git commits, quick lookups, trivial one-line changes.
-- **When in doubt, create the tickets.** The overhead is minimal and the tracking value is high.
-- Use the Hot Sheet API to create tickets, mark them as Up Next, then work through them normally (set status to "started", implement, set to "completed" with notes).
-- **Always create follow-up tickets** for work that isn't completed in the current session: unfinished implementation steps, open design questions needing answers, known gaps discovered during work, features designed but not yet built (e.g., a requirements doc without implementation). Never leave follow-up work undocumented — if it's not in a ticket, it will be forgotten.
-- **Incomplete work checklist** — before marking a ticket as completed, verify:
-  1. **No placeholder text in the UI** (e.g., "coming soon", "coming in a future update") without a corresponding follow-up ticket
-  2. **No TODO/FIXME comments** in the code without a corresponding follow-up ticket
-  3. **No requirements doc items** that were documented but not implemented without follow-up tickets
-  4. **No empty/stub functions** that return mock data or do nothing without follow-up tickets
-  If any of the above exist, create the follow-up tickets BEFORE marking the current ticket as completed.
-- **Use FEEDBACK NEEDED before deferring or asking about follow-up tickets.** When you're about to (a) defer a ticket because it needs more work, (b) ask the user whether to file follow-up tickets, or (c) close a ticket with a question buried in the notes ("let me know if you want X" / "happy to do Y if you want"), DO NOT close it that way. Instead, leave the ticket in `started` status and add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), then signal channel done and wait for the user. Closing with an unanswered question buries the question and the user can't easily see it. The FEEDBACK NEEDED mechanism is the only way to reliably get attention on a question.
+- **Do create tickets** for: features, bug fixes, refactoring, multi-step tasks, anything changing code. **Don't** for: simple questions, git commits, quick lookups, trivial one-liners. **When in doubt, create them.**
+- Create via the Hot Sheet API (prefer the `hotsheet_*` MCP tools), mark Up Next, then work through them: set status `started` → implement → set `completed` with notes.
+- **Always create follow-up tickets** for incomplete work (unfinished steps, open design questions, known gaps, designed-but-unbuilt features). If it's not in a ticket, it's forgotten.
+- **Incomplete-work checklist** — before marking a ticket `completed`, file follow-ups for any: (1) UI placeholder text ("coming soon"), (2) TODO/FIXME comments, (3) documented-but-unimplemented requirements, (4) empty/stub functions returning mock data.
+- **Use FEEDBACK NEEDED before deferring or asking about follow-ups.** When about to (a) defer a ticket needing more work, (b) ask whether to file follow-ups, or (c) close with a question buried in notes — DON'T. Leave the ticket `started`, add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), signal channel done, and wait. It's the only reliable way to surface a question.
 
 ## Conventions
 
-- ESM modules (`"type": "module"` in package.json)
-- Import paths use `.js` extension (TypeScript convention for ESM)
-- No ORM — raw SQL queries via PGLite's `query()` method
-- Ticket numbers use `HS-` prefix (e.g. `HS-1`, `HS-42`)
-- Hono context variables typed via `AppEnv` in `src/types.ts`
-- Server-rendered HTML for initial page load; client JS for interactivity
-- Client CSS and JS are built separately and served as static files
-- **`CHANNEL_VERSION`** in `src/channel.ts` AND `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` — bump both integers (they must match) when changing the channel server's capabilities (new endpoints, protocol changes, new MCP features). The main server compares the running server's version against the expected version and warns the user to reconnect via `/mcp` in Claude Code if they don't match. Always increment both when modifying `src/channel.ts` in ways that affect the HTTP API or MCP behavior.
+- ESM modules (`"type": "module"`); import paths use `.js` extension (TS ESM convention).
+- No ORM — raw SQL via PGLite's `query()`.
+- Ticket numbers use `HS-` prefix (e.g. `HS-1`). Hono context vars typed via `AppEnv` in `src/types.ts`.
+- Server-rendered HTML for initial load; client JS for interactivity. Client CSS/JS built separately, served static.
+- **`CHANNEL_VERSION`** (`src/channel.ts`) AND **`EXPECTED_CHANNEL_VERSION`** (`src/channel-config.ts`) — bump both integers together (they must match) whenever changing the channel server's HTTP API / MCP behavior (new endpoints, protocol changes, new MCP features). The main server warns the user to reconnect via `/mcp` on mismatch.
 
 ### Ticket numbers in prose
 
-Hot Sheet tickets are local to the maintainer's machine — the `HS-NNNN` numbering only resolves against the `.hotsheet/` database, which lives outside the repo. A bare `HS-1234` reference is meaningless to anyone reading prose **outside** Hot Sheet.
+Tickets are local to the maintainer's machine — `HS-NNNN` only resolves against the local `.hotsheet/` DB, which lives outside the repo. This rule applies to prose stored **outside** the DB (orientation doc, `docs/**`, code comments, commit messages, `docs/ai/**`); it does NOT apply to prose stored inside Hot Sheet (ticket details/notes/completion notes — readers there can click through).
 
-**Scope.** This rule applies to prose stored outside the local ticket DB: the orientation doc, requirements docs (`docs/**`), code comments, commit messages, AI summaries (`docs/ai/**`). It does **not** apply to prose stored inside Hot Sheet itself (ticket details, ticket notes, completion notes) — anyone reading those already has Hot Sheet open and can resolve a bare reference with one click, so bare `HS-NNNN` references are fine there.
-
-Rules (out-of-DB prose only):
-
-- **Never tell a reader to look in `.hotsheet/`** for ticket context. That directory is local-only.
-- **It's fine to mention a ticket number** — but ALWAYS pair it with a short self-contained summary that conveys the meaning without needing the ticket. The summary may be very different from the ticket's actual title; aim for what a fresh reader needs to understand the change. Example: ✅ `HS-8380 — client search filter mirrors the server's five-column ILIKE`; ❌ `Per HS-8380`.
-- When opportunistically editing out-of-DB prose that contains a bare ticket number, add the short summary if you can.
-
-Audience: assume the reader has the repo but not the local ticket DB.
+For out-of-DB prose:
+- **Never tell a reader to look in `.hotsheet/`** — it's local-only.
+- **Mentioning a number is fine, but always pair it with a short self-contained summary** of what a fresh reader needs. ✅ `HS-8380 — client search filter mirrors the server's five-column ILIKE`; ❌ `Per HS-8380`.
+- Add the summary opportunistically when editing prose with a bare number.
 
 ### Spelling and grammar (American English)
 
-All prose written for this project — code comments, commit messages, completion notes, requirements docs, AI summaries, user-visible strings — uses **American English** spelling and grammar. This applies to new writing AND to existing text you happen to be editing.
-
-Common swaps to watch for (British → American):
-
-- `centralised` / `centralisation` → `centralized` / `centralization`
-- `optimise` / `optimisation` → `optimize` / `optimization`
-- `behaviour` → `behavior`
-- `colour` → `color`
-- `recognise` → `recognize`
-- `organise` / `organisation` → `organize` / `organization`
-- `analyse` → `analyze`
-- `synchronisation` → `synchronization`
-- `customise` → `customize`
-- `prioritise` → `prioritize`
-- `standardise` → `standardize`
-- `emphasise` → `emphasize`
-- `practise` (verb) → `practice`
-- `licence` (noun) → `license`
-- `defence` → `defense`
-- `grey` → `gray`
-- `labelled` / `modelled` / `travelled` → `labeled` / `modeled` / `traveled`
-- `cancelled` / `cancelling` are acceptable in American English but `canceled` / `canceling` is preferred
-- `whilst` → `while`
-- `amongst` → `among`
-
-When you notice British spelling in a file you're already editing for another reason, fix it opportunistically. Don't open a separate change just to convert spelling across the whole codebase — there's a dedicated sweep ticket for that.
+All prose for this project (comments, commit messages, completion notes, docs, AI summaries, user-visible strings) uses **American English**, in new writing AND existing text you edit. Common British→American swaps: `-ise/-isation`→`-ize/-ization` (optimise, organise, recognise, analyse, synchronise, customise, prioritise, standardise, emphasise, centralise), `behaviour`→`behavior`, `colour`→`color`, `practise`(v)→`practice`, `licence`(n)→`license`, `defence`→`defense`, `grey`→`gray`, `labelled/modelled/travelled`→single-l, `cancelled`→`canceled` (preferred), `whilst`→`while`, `amongst`→`among`. Fix opportunistically when editing a file for another reason — there's a dedicated sweep ticket for a full pass.
 
 ### Tauri-unsafe browser APIs (client code)
 
-The app ships in Tauri's WKWebView, which silently no-ops several standard browser dialog/navigation APIs. Calls appear to "do nothing" in the desktop build — and because Playwright runs in Chromium where these APIs work natively, tests can pass while the real app is broken. **Never use these in client code (`src/client/**`, `plugins/*/src/**`).** Use the in-app equivalents instead:
+The app ships in Tauri's WKWebView, which silently no-ops several standard dialog/navigation APIs (they appear to "do nothing" in the desktop build). Playwright runs in Chromium where these work natively, so tests can pass while the real app is broken. **Never use these in client code (`src/client/**`, `plugins/*/src/**`)** — use the in-app equivalents:
 
-- `window.confirm(...)` → `confirmDialog({message, ...})` from `src/client/confirm.tsx`. Returns `Promise<boolean>`. Supports `title`, `confirmLabel`, `cancelLabel`, `danger`.
-- `window.alert(...)` → render an in-app toast / overlay. There is no generic alert helper yet — build the UI inline, or extend `confirm.tsx` with a one-button variant.
-- `window.prompt(...)` → build an in-app input overlay (pattern: see `openEditor` in `terminalsSettings.tsx`).
-- `window.open(url, ...)` in Tauri → use `invoke('open_external_url', { url })` via `getTauriInvoke()` from `src/client/tauriIntegration.tsx`, and fall back to `window.open` only when `getTauriInvoke()` returns null.
-- File downloads via `<a download>` — unreliable; prefer a Tauri `save_file`-style command when running in Tauri.
+- `window.confirm(...)` → `confirmDialog({message, ...})` from `src/client/confirm.tsx` (returns `Promise<boolean>`; supports `title`, `confirmLabel`, `cancelLabel`, `danger`).
+- `window.alert(...)` → in-app toast/overlay (no generic helper yet — build inline or extend `confirm.tsx`).
+- `window.prompt(...)` → in-app input overlay (pattern: `openEditor` in `terminalsSettings.tsx`).
+- `window.open(url, ...)` → `invoke('open_external_url', { url })` via `getTauriInvoke()` from `src/client/tauriIntegration.tsx`; fall back to `window.open` only when `getTauriInvoke()` is null.
+- File downloads via `<a download>` — unreliable; prefer a Tauri `save_file`-style command in Tauri.
 
-**When writing e2e tests for any prompt flow**, click the in-app overlay's buttons. Do **not** rely on Playwright's `page.on('dialog')` handler — that masks the exact Tauri-silent-no-op regression class this rule exists to catch. If an e2e test finds itself registering a native dialog handler for client code, that client code is the bug.
+**E2E tests for any prompt flow** must click the in-app overlay's buttons. Do NOT use Playwright's `page.on('dialog')` handler — it masks the exact Tauri-silent-no-op regression class this rule exists to catch.
 
 ### Type assertions (`as`) and runtime validation
 
-HS-8567 — the `as` operator is an unchecked assertion. The TypeScript compiler takes our word that the value matches the asserted type, then forgets to check at runtime. When the upstream API changes shape (HS-8562: kerfjs 0.12.0 widened `toElement`'s return type from `HTMLElement` to `Element | DocumentFragment`), every `as HTMLElement` callsite kept compiling and shipped a runtime crash.
+The `as` operator is an unchecked assertion — the compiler trusts it and forgets to check at runtime, so an upstream shape change ships a runtime crash while everything still compiles (HS-8567).
 
-**Default to NOT writing `as`.** Reach for it only when none of the safer alternatives fit:
+**Default to NOT writing `as`.** Prefer, in order:
+1. **`instanceof` / type predicate** for element/class identity (`if (el instanceof HTMLButtonElement)`).
+2. **zod** when the value crosses a trust boundary (wire, file, DB JSON column). Schemas: `src/schemas.ts` (cross-cutting) or `src/routes/validation.ts` (server-only HTTP bodies). Use `parseJson(Schema, raw)` / `parseJsonOrNull(Schema, raw)` to replace `JSON.parse(x) as Foo`.
+3. **`schema` param** on `api<T>(path, { schema })` / `apiWithSecret` / `apiUpload` for response validation (new code SHOULD pass one).
+4. **Raw `fetch`**: `const raw: unknown = await res.json()` then `MySchema.safeParse(raw)`.
 
-1. **Narrow with a type predicate or `instanceof`** when checking element / class identity. `if (el instanceof HTMLButtonElement)` is both safer and more readable than `(el as HTMLButtonElement)`.
-2. **Validate with zod** when the value crosses a trust boundary (wire, file, DB JSON column). Schemas live in `src/schemas.ts` (cross-cutting) or `src/routes/validation.ts` (server-only HTTP bodies). Use `parseJson(Schema, raw)` / `parseJsonOrNull(Schema, raw)` from `src/schemas.ts` to replace `JSON.parse(x) as Foo`.
-3. **Pass the `schema` parameter** to `api<T>(path, { schema: MySchema })` / `apiWithSecret<T>` / `apiUpload<T>` for response validation. The legacy unvalidated path (no `schema`) still works for not-yet-migrated callers but new code SHOULD pass a schema.
-4. **For raw `fetch(...)` calls**, do `const raw: unknown = await res.json()` then `MySchema.safeParse(raw)`.
+When you genuinely need `as`, require an **adjacent runtime check or comment** justifying it — the reader should verify the invariant without leaving the screen.
 
-When you genuinely need `as`, the rule is: **adjacent runtime check or adjacent comment justifying why the type is provably correct**. The reader of the code should be able to verify the invariant without leaving the screen.
+The `no-restricted-syntax` ESLint rule flags the three highest-risk patterns: `JSON.parse(x) as Y`, `res.json() as Y`, `await res.json() as Y` (`as unknown` is allowed — intentional erasure before a downstream check). NOT flagged but still subject to the preference: `as HTMLXxxElement` after `closest()`/`querySelector()`, `as Record<string, unknown>` (opportunistic migration welcome, not required). Pure type-level forms (`as const`, `as keyof X`) have no runtime concern.
 
-**The ESLint rule (`no-restricted-syntax` in `eslint.config.mjs`) catches the three highest-risk patterns automatically**:
+**DB JSON column reads** — every `JSON.parse(row.someJsonColumn)` goes through a zod schema. Existing: `NotesArraySchema` (`tickets.notes`), `TagsArraySchema` (`tickets.tags`), `CategoryDefArraySchema` (`settings.categories`), `SnapshotDataSchema` (`daily_stats.data`), `PluginConflictDataSchema` (`sync_records.conflict_data`). Add new ones to `src/schemas.ts` with new JSON columns.
 
-- `JSON.parse(x) as Y` — file/DB read without validation
-- `res.json() as Y` and `await res.json() as Y` — wire boundary without validation
-- Exception: `as unknown` is allowed (intentional erasure prior to a downstream shape check)
+### Typed API layer (`src/api/`)
 
-**Patterns NOT flagged by the lint rule** (because they have valid use cases) but still subject to the "no bare `as`" preference:
+Each HTTP endpoint's wire shape (request + response) is defined ONCE as zod schemas in `src/api/<resource>.ts`, shared by client callers and server handlers — single source of truth. Each module exports schemas (+ inferred types) AND typed caller functions (e.g. `getGitStatus()`); `src/api/index.ts` aggregates them. `src/api/_runner.ts` is **server-safe** (imports only `zod`; fetch is done by a client-injected transport via `setApiTransport`/`setApiUploadTransport` at boot) and **must never import client-only DOM-touching modules**.
 
-- `as HTMLXxxElement` after `closest()` / `querySelector()` — 183 existing callsites; opportunistic migration to `instanceof` checks is welcome but not required by any single change
-- `as Record<string, unknown>` for local object-key narrowing — 58 existing callsites; same story
-- `as const` — pure type-level narrowing, no runtime concern
-- `as keyof X` / `as Foo[key]` — compiler key-of-type narrowing
-
-**DB JSON column reads** — every `JSON.parse(row.someJsonColumn)` should go through a zod schema. The existing schemas: `NotesArraySchema` (`tickets.notes`), `TagsArraySchema` (`tickets.tags`), `CategoryDefArraySchema` (`settings.categories`), `SnapshotDataSchema` (`daily_stats.data`), `PluginConflictDataSchema` (`sync_records.conflict_data`). Add new ones to `src/schemas.ts` when adding new JSON columns.
-
-### Typed API layer (`src/api/`) — HS-8522 (complete)
-
-The wire shape of each HTTP endpoint (request + response) is defined ONCE as zod schemas in `src/api/<resource>.ts` and shared by both the client callers and the server handlers — the single source of truth. This replaces inline `api<{ … }>(path)` type literals at the call site AND hand-duplicated `interface` declarations kept in sync across client/server by hand. See `docs/9-api.md` §9.0.3 and `docs/ai/code-summary.md` §3 (`src/api/`). The pattern mirrors the sister project glassbox's `src/api/` (GB-798 / GB-804).
-
-Each resource module exports the request/response schemas (+ inferred types) AND the typed caller functions (e.g. `getGitStatus()`); `src/api/index.ts` aggregates them into named exports + a flat `apis` namespace. `src/api/_runner.ts` is **server-safe** (imports only `zod`) — the fetch is performed by a client-injected transport (`setApiTransport` / `setApiUploadTransport` at boot), so route files can import schemas from `src/api/*` without pulling the DOM-bound client `api()` runtime into the Node bundle. **`_runner.ts` must never import client-only (DOM-touching) modules.**
-
-The migration is **complete** (HS-8638 closeout): every client call site goes through a typed caller, and the raw `api()` / `apiWithSecret()` / `apiUpload()` helpers in `src/client/api.tsx` are now used ONLY as the transport target wired in `app.tsx`. Resource modules: git, tickets, feedbackDrafts, terminal, telemetry, backups, db, channel, projects, plugins, attachments, settings, shell, commandLog, dashboard, diagnostics.
-
-**When adding a new endpoint:** define its request + response schema + typed caller in `src/api/<resource>.ts`, validate the request server-side against that schema, and call the typed function from the client. Do NOT add new inline `api<{…}>(path)` type literals, and do NOT call `api()` / `apiWithSecret()` / `apiUpload()` directly (they are the transport target only). **git** is the reference implementation.
+Migration is complete: every client call site goes through a typed caller; the raw `api()` / `apiWithSecret()` / `apiUpload()` helpers are now ONLY the transport target wired in `app.tsx`. **When adding an endpoint:** define request + response schema + typed caller in `src/api/<resource>.ts`, validate the request server-side against it, call the typed function from the client. Do NOT add inline `api<{…}>(path)` literals or call the raw helpers directly. **git** is the reference implementation. See `docs/9-api.md` §9.0.3.
 
 ### Requirements Documentation
 
-The `docs/` folder contains numbered requirements documents that describe the application's features and behavior. These are the source of truth for what the app does and should do.
+The `docs/` folder holds numbered requirements documents — the source of truth for what the app does. **Keep them up to date** in the same change as the code (add/remove/modify a requirement → update its doc). **Create new docs** for major new functional areas (`N-area-name.md`), renumbering as needed. Each doc uses `N.X` section numbers; cross-reference with relative markdown links (e.g. `[3-ticket-management.md](3-ticket-management.md) §3.7`).
 
-- **Keep docs up to date** — when implementing a feature, fixing a bug, or changing behavior, update the relevant requirements document to reflect the change. If a requirement is added, removed, or modified in code, the corresponding doc must be updated in the same change.
-- **Create new documents** — when a new major functional area is added that doesn't fit naturally into an existing document, create a new numbered document following the naming convention (`N-area-name.md`). Renumber subsequent files if needed to maintain a logical reading order.
-- **Reading order** — documents are numbered for linear reading, from high-level overview to specific subsystems:
-  1. `1-overview.md` — Tech stack, architecture, non-functional requirements
-  2. `2-data-storage.md` — Database, settings, lock file, gitignore
-  3. `3-ticket-management.md` — Core domain model, CRUD, statuses, batch ops
-  4. `4-user-interface.md` — Views, layouts, detail panel, keyboard shortcuts
-  5. `5-attachments.md` — File upload, serving, reveal in finder
-  6. `6-markdown-sync.md` — Worklist export, AI tool skill generation
-  7. `7-backup-restore.md` — Auto-backup, preview, restore
-  8. `8-cli-server.md` — CLI args, startup, demo mode
-  9. `9-api.md` — REST API endpoint reference
-  10. `10-desktop-app.md` — Tauri wrapper, updater, CLI installer
-  12. `12-claude-channel.md` — Claude Channel integration, play button, auto mode
-  13. `13-app-icon.md` — Dynamic app icon variants, settings UI, cross-platform switching
-  14. `14-commands-log.md` — Log viewer for Claude channel + shell command history
-  15. `15-shell-commands.md` — Shell command targets for custom commands, execution API
-  16. `16-command-groups.md` — Custom command groups, collapsible sidebar, outline settings editor
-  17. `17-share.md` — Share prompt, toolbar button, timing criteria
-  18. `18-plugins.md` — Plugin system, sync engine, UI extensions, conflict resolution
-  19. `19-demo-plugin.md` — Demo plugin: exercises all plugin features (settings types, UI locations, labels, validation)
-  20. `20-secure-storage.md` — Keychain integration for plugin secrets with file/DB fallback
-  21. `21-feedback.md` — Feedback needed notes, dialog, auto-select, channel notification, tab indicator
-  22. `22-terminal.md` — Embedded terminal in footer drawer (per-project PTY, tabs alongside Commands Log)
-  23. `23-terminal-titles-and-bell.md` — Title-change escape sequences + bell-character indicator on terminal tabs
-  24. `24-cross-project-bell.md` — Cross-project bell surfacing (Phase 2 of HS-6473): server-side `\x07` detection + project-tab indicator
-  25. `25-terminal-dashboard.md` — Terminal dashboard view (HS-6272): full-window grid of every terminal across every project, zoom / dedicated view, tile-level bell indicators
-  26. `26-shell-integration-osc133.md` — OSC 133 shell-integration protocol design spike (HS-7265): prompt/command/output marks, gutter glyphs, copy-last-output, Ask-Claude-about-this
-  27. `27-osc9-desktop-notifications.md` — OSC 9 desktop notifications (HS-7264): shell-initiated toast messages reusing the bell-state long-poll + shared toast helper
-  28. `28-osc8-hyperlinks.md` — OSC 8 clickable hyperlinks (HS-7263): xterm `linkHandler` + Tauri-safe `openExternalUrl` routing, also fixes plain-URL click no-op in WKWebView
-  29. `29-osc7-cwd-tracking.md` — OSC 7 shell CWD tracking (HS-7262): terminal-toolbar chip showing the shell's current working directory with click-to-open-in-file-manager
-  30. `30-osc9-native-notifications.md` — OSC 9 native OS notifications (HS-7272): Tauri `tauri-plugin-notification` wrapper that fires a system banner alongside the toast when the app is backgrounded
-  31. `31-osc133-copy-last-output.md` — OSC 133 Phase 1b copy-last-output (HS-7268): toolbar button copies the most recent command's output range to the clipboard using `computeLastOutputRange` over the Phase 1a marker ring
-  32. `32-osc133-jump-and-popover.md` — OSC 133 Phase 2 jump shortcuts + hover popover (HS-7269): Cmd/Ctrl+Up/Down jumps to prev/next prompt marker; hover any gutter glyph → popover with Copy command / Copy output / Rerun; Settings → Terminal "Enable shell integration UI" toggle gates the whole Phase 2 UI
-  33. `33-osc133-ask-claude.md` — OSC 133 Phase 3 Ask Claude (HS-7270): fourth popover button gated on `isChannelAlive()` that dispatches `{command, output, exitCode, cwd}` to the Claude Channel via `buildAskClaudePrompt` + `triggerChannelAndMarkBusy`
-  34. `34-terminal-search.md` — Terminal find widget (HS-7331): collapsible `SearchAddon`-backed find box in the drawer toolbar + dashboard dedicated view, Cmd/Ctrl+F routes to the most recently active terminal search, match count chip + prev/next + incremental typing, amber highlight palette so matches stay distinct from the accent-tinted selection
-  35. `35-terminal-themes.md` — Terminal theme + font (HS-6307): 11-theme registry + 11 Google-Fonts monospaced faces + per-terminal gear-button popover + project-default panel in Settings → Terminal; appearance resolves from session override > configured override > project default > fallback, applied to drawer / dashboard tile / dashboard dedicated view alike
-  36. `36-drawer-terminal-grid.md` — Drawer terminal grid view (HS-6311): per-project tile grid inside the drawer. Toggle in the drawer toolbar (disabled with ≤1 terminal); slider + click-to-center + double-click-dedicated mirror §25. State is per-project + session-only; reuses the §25 sizing math + bell flow
-  37. `37-quit-confirm.md` — Quit confirmation when terminals are running (HS-7591 spec, HS-7596 implementation): macOS Terminal.app-style "Always / Never / Only-with-non-exempt-processes" per-project setting, with one-level-deeper foreground-process inspection so an idle login shell never prompts but a `claude` running inside zsh does. Gates all four quit paths (⌘Q, traffic-light close, `hotsheet --close`, /api/shutdown — except stale-instance cleanup which is intentionally exempt)
-  38. `38-terminal-visibility.md` — Persisted terminal visibility (HS-7825): configured-terminal hidden state survives reload + relaunch via the per-project `hidden_terminals` file-settings key. Dynamic terminals (`dyn-*`) remain session-only. Hydrate on app boot, debounced PATCH on toggle.
-  39. `39-visibility-groupings.md` — Visibility groupings (HS-7826): named visibility configurations per project. Show / Hide Terminals dialog gains a tab bar (Default tab always present; +button to add; right-click rename/delete; drag-to-reorder). Grouping selector `<select>` next to the eye icon (dashboard + drawer-grid) when more than one grouping exists. Persisted alongside §38's `hidden_terminals` (which mirrors the active grouping's ids for back-compat).
-  40. `40-search-include-rows.md` — Search "include archive + backlog" rows (HS-7756): when search has matches in normally-hidden buckets, gray "Include {N} ..." rows appear under the multi-select toolbar. Click to mix into the result set. Auto-switches column view → list view; reverts on clear. New `GET /api/tickets/search-counts` endpoint + `include_backlog` / `include_archive` flags on `GET /api/tickets`.
-  41. `41-backup-json-cosave.md` — Backup JSON co-save (HS-7893): every scheduled backup writes a versioned `backup-<ts>.json.gz` next to the PGLite `backup-<ts>.tar.gz`, holding every row of every table (paths-only for attachments). Atomic write via tmp+rename+fsync. Pure escape hatch — no restore UI; rescue path documented in §7.8. `SCHEMA_VERSION` constant in `src/db/connection.ts` is bumped manually on `initSchema` shape changes.
-  42. `42-repair-database.md` — Database Repair (HS-7897): Settings → Backups → Database Repair subsection. Status pill (healthy / recovered, sourced from the HS-7899 marker). "Find a working backup" iterates tarballs newest-first and surfaces the first one that loads cleanly. "Run pg_resetwal…" does a cross-platform binary probe (macOS / Linux / Windows install candidates) and either runs the repair (copies corruptPath aside, runs `pg_resetwal -f`, dumps a fresh `.tar.gz` into the 5-min tier) or shows a platform-aware install dialog. Auto-mitigation stays at the postmaster.pid drop + retry from HS-7888; everything else is user-initiated.
-  43. `43-attachment-backups.md` — Attachment backups (HS-7900 design / HS-7929 implementation): hash-addressed centralized store under `<backupRoot>/attachments/<sha256>` + per-backup `backup-<TS>.attachments.json` manifest sibling. Daily orphan GC. Closes the gap left by §7 (tarball) and §41 (JSON co-save), neither of which carries the attachment binaries themselves.
-  44. `44-wasm-pg-resetwal.md` — WASM `pg_resetwal` design spike (HS-7901): four-option survey for shipping our own WASM-compiled `pg_resetwal` so §42's repair flow no longer depends on a system Postgres install. Verdict: defer; keep §42's system-binary path until PGLite upstream ships utility-binary support OR a user hits the no-admin / Tauri-only wall. If we have to act sooner, Option 2 (standalone lazy-loaded WASM) is the recommended path.
-  45. `45-pglite-robustness.md` — PGLite cleaner-shutdown design (HS-7902): every shutdown path today (`process.exit` after SIGINT/SIGTERM/`/api/shutdown`) skips `db.close()`, leaving stale `postmaster.pid` for HS-7888 to mop up. Design proposes a shared `gracefulShutdown(reason)` helper that (1) closes HTTP, (2) destroys PTYs, (3) awaits `db.close()` per cached PGLite instance (which CHECKPOINTs + removes the pid), (4) removes `hotsheet.lock`. Also documents the live-cluster CHECKPOINT cadence (the 5-min backup tier already provides it — no extra timer needed). Implementation tracked in HS-7931 (graceful close), HS-7932 (fsync verification spike — see `45-pglite-robustness-fsync-spike.md`), HS-7933 (checkpoint-timeout benchmark — see `45-pglite-robustness-checkpoint-spike.md`).
-  46. `46-service-client-decoupling.md` — Service / client decoupling design spike (HS-7938): detach the Hot Sheet service (HTTP + dataDir + plugins + backups + channel + terminal PTYs) from the Tauri desktop client so multiple clients (desktop browser, Tauri shell, mobile browser, future iOS app) can connect simultaneously to a single service instance. WebSocket-based push synchronization replaces today's `/api/poll` long-poll model. Conflict resolution = last-write-wins for scalars + append-only for notes + optimistic concurrency for risky ops. Tauri shell becomes co-located (default, today's behavior) OR remote (`--service-url`). Service-only mode (`--service-only`) for headless deployment. Implementation phased: HS-7940 (`--bind` + `isTrustedOrigin` + GET-secret enforcement), HS-7944 (service-only + remote shell), HS-7945 (WebSocket push), HS-7946 (conflict UX), HS-7941 (PWA + mobile responsive), HS-7942 (Tailscale UX sugar).
-  47. `47-richer-permission-overlay.md` — Richer permission overlay design (HS-6703 follow-up to HS-6602): two scoped enhancements to the Claude permission popup (§12.10). (1) Edit-tool diff preview — render `old_string` vs `new_string` as inline unified diff inside the popup, replacing today's flat-JSON dump. (2) Per-project allow-list — `permission_allow_rules: [{tool, pattern}]` in `<dataDir>/settings.json`, gated server-side in main server (not channel server) with auto-allow logged to command log; "Always allow" overlay shortcut + Settings → Permissions management UI. Implementation phased: HS-7951 (diff preview), HS-7952 (allow-list server gate), HS-7953 (allow-list UI).
-  48. `48-git-status-tracker.md` — Git status tracker design (HS-7598): sidebar chip showing branch + dirty count + ahead/behind upstream. Auto-detected (silent no-op for non-git projects); core feature, NOT a plugin (the plugin system is for ticketing-backend integrations). Server: `src/git/status.ts` + `GET /api/git/status` + `POST /api/git/fetch` + chokidar watcher on `.git/index` + `.git/HEAD` with 500ms cache. Client: chip in sidebar between channel commands and Views, tint precedence conflict > behind > ahead > dirty > clean, click → expanded popover with file lists. Settings: `git_tracking_enabled`, `git_chip_show_clean`, `git_auto_fetch_interval_ms`. Implementation phased: HS-7954 (Phase 1 — branch + working-tree dirty), HS-7955 (Phase 2 — ahead/behind + manual fetch + auto-fetch timer), HS-7956 (Phase 3 — expanded popover with file-row interactions).
-  49. `49-reader-mode.md` — Reader mode for notes + Details (HS-7957): almost-full-viewport overlay (90vw / 90vh, max-width 960px) renders a single note's body or a ticket's Details as read-only markdown for distraction-free reading. Lucide `book-open-text` trigger button on every non-empty note's `.note-timestamp-row` (left of the megaphone when shown) AND on the Details `<label>` flex row. Dismissal via X / Escape / backdrop. Read-only — editing happens in the detail panel. Single client module `readerOverlay.tsx` shared by both surfaces. Implementation tracked in HS-7961.
-  50. `50-upgrade-nudge.md` — Installable-version upgrade nudge (HS-7962): throttled (≤ once / 30 days, localStorage-tracked) overlay shown on app boot for npm-launched users encouraging the switch to the Tauri build for the embedded terminal + auto-updates + native-OS integration. Suppressed entirely when `getTauriInvoke() !== null`. Per-platform CTA deep-links to the GitHub Releases asset matching the user's OS (lazy `api.github.com/.../releases/latest` fetch + `pickPlatformAsset` matcher); falls back to `/releases/latest` on any failure. Don't-show-again link writes `Number.MAX_SAFE_INTEGER` sentinel; X / backdrop write `Date.now()`.
-  51. `51-shell-history.md` — Per-(project, terminal-id) shell history scoping (HS-7964 design / HS-7965 impl): each Hot Sheet terminal gets its own up-arrow history pool. Pre-fix every shell shared the user's global history. Generated per-terminal init files use each shell's override hook so the user's normal rc loads FIRST and our HISTFILE override runs AFTER (works around macOS-default zsh's `/etc/zshrc_Apple_Terminal` clobber): bash uses `--rcfile` CLI rewrite, zsh uses `ZDOTDIR` env, fish uses `XDG_CONFIG_HOME` env. Storage: `<dataDir>/.hotsheet/shell_init/<terminalId>/` + `<dataDir>/.hotsheet/shell_history/<terminalId>` (gitignored). Settings: `terminal_history_scope: 'per-terminal' | 'inherit'` (default per-terminal). Other shells (sh / dash / pwsh / cmd) skipped — no equivalent override mechanism worth implementing.
-  53. `53-streaming-shell-output.md` — Streaming shell-command output (HS-7981 design / HS-7982–7984 implementation): server-side per-command partial-output buffer in `routes/shell.ts` (4 MB cap, head-truncation marker), `GET /api/shell/running` extended to return `{ ids, outputs: Record<id, string> }` so the existing 2 s sidebar poll drives both completion detection and live output, Commands Log entry renders a twin-pre running-shell row (preview + full, click-to-expand) hydrated by the same poll loop. Per-project `shell_streaming_enabled` setting (default true) under Settings → Experimental gates the client render only — server still buffers when off so re-enabling mid-run picks up at the next chunk. HS-8015 removed the original sidebar partial-preview duplicate per user feedback.
-  54. `54-terminal-checkout.md` — Global terminal checkout / xterm stack design (HS-7969 follow-up): one xterm.js instance per `(projectSecret, terminalId)` lives in a new `terminalCheckout.tsx` client module. Every consumer (drawer pane, dashboard tile + dedicated, drawer-grid tile + dedicated, quit-confirm preview pane) calls `checkout(...)` to claim it, gets a `release()` handle. LIFO stack — most recent caller renders the live xterm; bumped consumers get a plain "Terminal in use elsewhere" placeholder; resize is skipped when cols/rows match the previous owner. Empty stack disposes the xterm + closes the WebSocket; the PTY survives on the server and the next checkout re-attaches with scrollback replay. Solves HS-7969's "real terminal in the quit-confirm preview" ask + makes dashboard virtualization memory-safe across projects. Phased: HS-8031 Phase 1 (infrastructure + tests, no UI consumers wired), HS-8032 Phase 2 (migrate every consumer + delete the §37 ANSI-spans preview path) — both Phase 1 and every Phase 2 sub-ticket (HS-8041 / 8042 / 8043 / 8044 / 8045 / 8048) shipped.
-  55. `55-ticket-cross-references.md` — Ticket cross-references (HS-8036): `HS-NNNN`-style references inside markdown-rendered text (notes, details, reader-mode body) become clickable links that open a stacking modal showing the referenced ticket. Each click on a reference inside an open dialog pushes a new dialog onto the stack with a 30 px visual offset; backdrop click + Escape pop the top one; "Open in detail panel" CTA closes the stack and switches the main detail view. Read-only in v1 (full editable behavior deferred to a follow-up). Prefix detection scans the DB for distinct ticket-number prefixes + the project's `ticketPrefix` setting + an `HS` fallback. Self-references skipped. Stale references show a toast.
-  56. `56-magnified-grid-nav.md` — Magnified terminal-grid navigation (HS-8028): while a tile is centered (single-click overlay) or dedicated (double-click full-pane) in the §25 dashboard or §36 drawer-grid, **Shift+Cmd+Arrow** (macOS) / **Shift+Ctrl+Arrow** (Linux/Windows) switches the magnified target to the next tile in the indicated direction. Strict grid-neighbour algorithm: candidate must overlap with `from` along the perpendicular axis (same row for left/right, same column for up/down) AND lie strictly in the indicated half-plane; smallest edge-gap wins. When no candidate qualifies, the chord is a no-op (no row-jumping). Capture-phase document keydown listener bound on `centerTile` / `enterDedicatedView`, unbound on the last-magnified-state exit. Skips non-alive tiles.
-  57. `57-shell-command-button-spinner.md` — Shell custom-command-button spinner & stop (HS-8056): when a §15 Shell-target command is running, the button itself surfaces an absolute-positioned spinner with stop icon at the right edge (background: inherit so it visually punches the button color, no reflow). Clicking the running button opens a confirm dialog → `POST /api/shell/kill`. Multiple commands can run simultaneously; per-button state tracked via a module-private `runningButtons: Map<commandKey, logId>` that the existing `/api/shell/running` poll keeps in sync.
-  59. `59-reader-note-navigation.md` — Reader-mode note navigation (HS-8233): optional `navigation` slot on `OpenReaderOverlayOptions` adds chevron-up / chevron-down buttons in the §49 reader overlay header + ArrowUp / ArrowDown keyboard shortcuts so the user can step through every non-empty note on a ticket without re-clicking the book icon. Buttons disable at list boundaries; the Details reader keeps the single-entry shape (no navigation buttons rendered).
-  60. `60-reactivity-primitive.md` — Fine-grained reactivity primitive (HS-8166): adopt `kerfjs` (sister project at `~/Documents/kerf`; covers §60 + §61 + §62 deliverables in one dependency) behind a thin `src/client/reactive.ts` re-export, ship `bindText` / `bindAttr` / `bindList` keyed-binding helpers in `src/client/reactive-bind.ts`. Phase 1 (HS-8235) shipped 2026-05-09 — primitive + helpers + project-tab trial in `projectTabs.tsx`. Phase 2 (HS-8236) sub-tickets (HS-8311 / 8312 / 8313 / 8314) for high-traffic surfaces; Phase 3 (HS-8237) opportunistic. `jsx-runtime.ts` + `toElement` unchanged in Phase 1; signals only decide WHEN to re-mount. The earlier §63 reactivity-demo plan (parallel `morphdom` infrastructure) was retired under HS-8315 in favour of kerf.
-  61. `61-composable-stores.md` — Composable testable stores design (HS-8167): `defineStore({initial, actions})` factory layered on top of §60's signals primitive, plus a global `resetAllStores()` hook fired on project switch. Convention: one consumer = signal, two+ consumers = store. Phase 1 trial = project-tab attention dot (HS-8238); Phase 2 atomic = `ticketsStore` (HS-8239); Phase 3 long tail = `projectsStore` / `terminalsStore` / `commandLogStore` / `channelStore` (HS-8240). Hard dependency on HS-8166 landing first.
-  62. `62-unified-jsx-render-targets.md` — Unified JSX render targets via shared AST (HS-8168): replace today's `SafeHtml.toString() → innerHTML → querySelector` round-trip on the client with a tiny internal AST + two consumers — `astToHtml` (server, today's semantics) + `astToDom` (client, builds DOM directly via `createElementNS` for SVG, no `innerHTML` round-trip). Permanently closes the SVG-namespace / entity / custom-attr / whitespace divergence bug class. Phases: HS-8241 AST + dual consumers + corpus, HS-8242 flip `toElement` → `astToDom`, HS-8243 equivalence harness in CI.
-  63. `63-mcp-tools.md` — MCP tool surface for AI agents (HS-8344 design): add `tools/list` + `tools/call` handlers to `src/channel.ts` exposing `hotsheet_update_ticket` / `create_ticket` / `get_ticket` / `delete_ticket` / `restore_ticket` / `toggle_up_next` / `duplicate_tickets` / `batch` / `edit_note` / `delete_note` / `add_attachment` / `signal_done` / `request_feedback` / `query_tickets`. Each tool internally proxies to the local Hot Sheet HTTP API using `port` + `secret` from `<dataDir>/settings.json` — single source of truth, no duplicated handler tree. Soft-cutover migration: worklist + skills list MCP form first, curl form right below as fallback for non-Claude AI agents and human terminal callers. Phases tracked under HS-8344: Phase 1 5-tool core (HS-8346), Phase 2 full coverage (HS-8347), Phase 3 worklist + skills rewrite (HS-8348), Phase 4 multi-project tool naming deferred (HS-8349), Phase 5 doc rollout (HS-8350).
-  64. `64-claude-allow-rule.md` — Auto-allow Hot Sheet MCP tools in `.claude/settings.local.json` (HS-8376 design): when a project's `.claude/` directory exists, `registerChannel(dataDir)` also writes the `mcp__hotsheet-channel-<slug>__*` wildcard rule into `.claude/settings.local.json`'s `permissions.allow` array so Claude Code accepts every `hotsheet_*` MCP tool call without per-call permission prompts. Slug is `slugifyDataDir(dataDir)` per HS-8349. Idempotent + non-disruptive (no reformat / reorder of other entries). Failure-open on parse errors. Per-project `claude_auto_allow_rule` boolean (default `true`) in `<dataDir>/settings.json` lets power users opt out. `unregisterChannel` removes the rule symmetrically. Implementation tracked as a follow-up sub-ticket of HS-8376.
-  65. `65-read-latest-note-menu.md` — Read Latest Note context-menu item (HS-8401): right-click on a ticket row / column-view card surfaces a `book-open-text` "Read Latest Note" menu item that opens the most recent non-empty note in the §49 reader overlay. Single-selection only; disabled (greyed-out) when the ticket has no non-empty notes. Pure helper `findLatestNonEmptyNote(notesJson)` walks the notes array from the end to skip placeholder / whitespace-only rows; `addActionItem` extended with a `disabled?: boolean` option that adds the `.disabled` class and skips click-listener attachment.
-  66. `66-move-to-open-menu.md` — Move to Open context-menu item (HS-8408): when every selected ticket is in `status: backlog`, the ticket context menu surfaces an inbox-icon **Move to Open** item directly above **Move to Backlog**, setting the ticket(s) back to `not_started` so they re-enter the sidebar's Open view. Inverse-pair of Move to Backlog; backlog-only per user direction (archive tickets do not get the symmetric item).
-  67. `67-telemetry.md` — Claude Code OpenTelemetry integration (HS-8142 + 13 sibling tickets HS-8143…HS-8155): per-project opt-in spawn-env injection (`CLAUDE_CODE_ENABLE_TELEMETRY=1` + OTLP exporter vars + `OTEL_RESOURCE_ATTRIBUTES=hotsheet_project=<secret>`) so a `claude` running inside a Hot Sheet terminal exports to the existing Hono server's new `/v1/{metrics,logs,traces}` OTLP routes (same-port topology — sibling-port reserved for future scale); three new PGLite tables (`otel_metrics` / `otel_events` / `otel_spans`) with JSONB attribute bags + per-project + per-session + per-prompt indexes; UI surfaces include a per-project tab cost chip, footer drawer Telemetry tab, per-prompt timeline drilldown, beta trace waterfall, per-tool latency histograms, cross-project dashboard, and a per-ticket cost rollup (HS-8152 prompt-marker correlation + HS-8730 time-window/started-interval correlation — see §67.11; new `ticket_work_intervals` table). Localhost-bind + `hotsheet_project` resource-attribute routing for security; 30-day default retention via the existing §2 cleanup sweep.
-  68. `68-telemetry-traces.md` — Beta enhanced tracing + span-tree + waterfall (HS-8155 design): when `telemetry_traces_enabled === true` the §67.3 spawn-env adds `OTEL_TRACES_EXPORTER=otlp` + `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` (already wired); the §67.10.3 per-prompt drilldown switches to a parent-child span-tree render in place of the flat events when `spans.length > 0` (events fold under the deepest enclosing span); a collapsible inline waterfall panel above the tree shows each span as a horizontal `<rect>` positioned by start_ts + duration, click-a-bar scrolls the tree to the matching row with a 600ms flash. `BETA` chip on the Settings sub-toggle + waterfall summary row. Implementation phased: HS-8475 (backend + `spanTree.ts` helper), HS-8476 (drilldown tree render), HS-8477 (waterfall + BETA badge), HS-8478 (histogram source upgrade).
-  69. `69-telemetry-dashboard.md` — Cross-project telemetry dashboard (HS-8153 design). Historical context only — **superseded in full by §70 + §71 (HS-8503 reshape, shipped 2026-05-21)**. Original design was a conditional sidebar entry → full-window view with chips + cost-by-project table + cost-by-model donut + 7×24 heatmap + top-10 expensive prompts. The HS-8503 reshape moved the cross-project surface to a header-bar icon (§70), moved per-project rollups to the analytics dashboard (§71), and dropped the top-10 expensive prompts list entirely. Pre-reshape implementation tickets (HS-8479–8483) shipped 2026-05-21 and were then reshaped 2026-05-21 by HS-8505–8509.
-  70. `70-cross-project-stats.md` — Cross-project stats page (HS-8507 / HS-8503 Phase 3): renamed + reshaped surface that replaces §69's sidebar-launched dashboard. New header-bar `#cross-project-stats-toggle` button next to `#terminal-dashboard-toggle`, same `anyProjectHasTelemetryEnabled()` visibility gate but applied to the header button (legacy sidebar entry stays alive in parallel during the Phase 3 / 4 / 5 migration). Page layout: header row with title + window selector → window-total chips (Today / Week / Month / All time) → cost-over-time chart (§70.5 shared with the per-project section coming in HS-8508) → cost-by-project sortable table → cost-by-model donut → hourly heatmap. **No top-10 expensive prompts list** (removed per user feedback). Cost-by-project row click routes to the drawer Telemetry tab as a transitional fallback; HS-8509 rewires to the per-project analytics-dashboard section once HS-8508 lands.
-  71. `71-analytics-dashboard-telemetry.md` — Analytics-dashboard telemetry sections (HS-8508 / HS-8503 Phase 4): per-project "Claude usage" sub-region appended below the existing ticket-charts grid on the analytics dashboard (opened by the sidebar widget). Layout: "Claude usage" header + window selector (today / week / month / 90d / all, independent of the dashboard's ticket time-range buttons) → 3 chips (Today / This week / All time) → cost-over-time chart (single-project slice — chart's mode toggle is hidden automatically) → cost-by-model donut → per-tool latency histograms → 10 most recent prompts (ts DESC, click → drilldown modal). Empty-state placeholder rendered inline when the active project has telemetry off or no rows — the ticket charts above keep rendering normally. Three shared render modules were extracted under HS-8508 (`telemetryModelDonut.tsx`, `telemetryToolHistogram.tsx`, `telemetryRecentPromptsList.tsx`) so the cross-project page (§70), the drawer Telemetry tab (until HS-8509 retires it), and this section all use the same renderers.
-  72. `72-snapshot-persistence.md` — Memory-primary snapshot persistence design spike (HS-8575): answers the standing "DB corrupts regularly even on clean shutdown — can it run in-memory + persist atomically?" ask. Run PGLite in-memory (`memory://`), seed at boot via `loadDataDir`, persist by `CHECKPOINT` → `dumpDataDir('gzip')` → single tarball written atomically (`tmp` + `fsync` + `rename`) on a debounced post-write hook + the §45.3 `gracefulShutdown` final snapshot + a periodic safety timer. The atomic rename makes the multi-file-cluster corruption class (and the HS-7888 stale-pid class) structurally impossible; reuses the already-proven backup dump/load + `writeJsonExportAtomically` machinery. Trade-offs: crash-loss window = writes since last snapshot (clean exit = zero loss), whole DB in RAM (the §67 telemetry tables are the variable to measure — argues for splitting telemetry into a separate file-backed disposable DB). §72.6 (RAM follow-up) audits PGLite 0.3.16's actual options: its only journaled VFS (`opfs-ahp`) is browser-only, `nodefs` (ours) is already the low-RAM mode, and introduces the low-RAM "Option D" (now §73) + the "Option B′" telemetry-split end-state. Verdict: pursue, phased + behind a `db_persistence_mode: 'file' | 'snapshot'` setting, measure before default flip. **Phases 1 & 3 done (HS-8577 §72.7 benchmark, HS-8579 §72.8 split decision):** the benchmark shows whole-cluster memory-primary is prohibitive with telemetry on (+915 MB RSS / +2.1 GB WASM + ~6 s/76 MB dump at 200k events); HS-8579 = **GO on Option B′** (memory-primary for the small durable set only, telemetry in a lazily-opened second `nodefs` `db-otel/` — zero cross-DB JOINs, 3-module blast radius, §72.8 has the sketch). The naive global open-path was intentionally not built; **Phases 2 & 4 (HS-8578/8580 impl) were closed WON'T FIX on 2026-05-25 — the memory-primary track is dropped** because §73 already makes corruption non-fatal at zero RAM, leaving memory-primary only a corruption-PROOF upgrade not worth its ~+243 MB/project second-instance cost. The §72 investigation (Phases 1 & 3) stays as the design record.
-  73. `73-snapshot-protection.md` — Snapshot Protection: NodeFS live + atomic snapshot + auto-restore (HS-8583, the greenlit low-RAM "Option D" from §72.6). Keeps today's low-RAM on-disk `nodefs` cluster but stops trusting it as the source of truth: maintains one atomically-written `<dataDir>/.hotsheet/snapshot.tar.gz` (CHECKPOINT → `dumpDataDir('gzip')` → `tmp`+`fsync`+`rename`, debounced ~2 s off `scheduleAllSync` + a `gracefulShutdown` final snapshot + a dirty-gated 120 s safety timer), and on startup runs an integrity probe (`SELECT count(*) FROM tickets` + catalog-corruption catch) → on failure **auto-restores**: preserve the corrupt `db/` aside (HS-7889), `loadDataDir` the newest good source (canonical snapshot → §7 5min/hourly/daily tier fallback), write the HS-7899 marker, surface a toast + command-log line (no blocking banner). Three confirmed decisions: dedicated fresh **local** snapshot (not the slow `backupDir`), **auto-restore + notify** (zero clicks), **on by default** (`db_snapshot_protection: true`, Settings → Backups toggle). Honest limit: makes corruption non-fatal + self-healing with seconds-bounded loss, NOT impossible (that's §72's `memoryfs` guarantee). **Shipped (fully implemented)**: HS-8586 (writer+setting) / HS-8587 (probe+auto-restore) / HS-8594 (Settings toggle + status line + `GET /api/db/snapshot-status`) / HS-8588 (SIGKILL crash-recovery e2e).
-  74. `74-clear-telemetry-data.md` — Clear telemetry data (HS-8606): Settings → Telemetry → Retention "Clear telemetry data…" button + danger confirm that permanently deletes every `otel_metrics` / `otel_events` / `otel_spans` row for the active project (all time, secret-scoped). Server `DELETE /api/telemetry/project-data` → `clearProjectTelemetry(secret)` against the shared telemetry DB (`getTelemetryDb`, §67.6). Complements the automatic age-based retention sweep with an explicit manual wipe; per-project only, 400 (no delete) when no secret resolves.
-  75. `75-background-work-scheduler.md` — Load resilience: off-loop execution + central background-work scheduler (design + phased impl). Theme tag `load-resilience`. Came out of the 2026-06-04 freeze where switching project tabs died because synchronous `spawnSync` git status (fanned to all tabs on any `.git` change), across 9 open projects, saturated the single shared event loop — worsened by a sleep→wake thundering herd. Diagnosis: per-project *state* is fine, per-project *execution* is not. Four principles: (P1) nothing heavy runs synchronously on the loop — `spawnSync`→async `spawn`, hashing/gzip→worker; (P2) one process-wide load-aware scheduler generalizing `withGlobalBackupLock` (bounded concurrency + coalescing + fairness + priority + event-loop-lag backpressure sourced from the `freezeLogger` heartbeat); (P3) foreground-scoped refresh so background tabs don't fan out; (P4) wake-aware re-staggering via the heartbeat `hrtime` gap. Incident bug HS-8721; epic HS-8722; phases HS-8723 off-loop git status (fixes the freeze) / HS-8724 central scheduler / HS-8725 foreground-scoping / HS-8726 wake re-stagger / HS-8727 heavy hashing/gzip off-loop.
-- `docs/tauri-architecture.md` — Tauri v2 sidecar model, launch flows, CLI launchers, build pipeline, CI/CD signing
-- `docs/tauri-setup.md` — Tauri build prerequisites, updater signing keys, macOS code signing, release workflow
-- `docs/dependency-security.md` — Dependency auditing posture: the `security-audit.yml` workflow (npm + cargo audit), Dependabot config, and the reachability-triage rule for production advisories
-- `docs/plugin-development-guide.md` — AI-focused guide for building plugins (ticketing backends and non-ticketing plugins). **Keep this guide up to date** whenever the plugin system changes — new interfaces, new manifest fields, new PluginContext methods, new UI extension points, or changes to the sync engine behavior. An AI reading this guide should be able to build a working plugin without looking at the source code.
-- **Section numbering** — each document uses `N.X` section numbers matching its file number (e.g., `3-ticket-management.md` uses §3.1, §3.2, etc.)
-- **Cross-references** — use relative markdown links between docs (e.g., `[3-ticket-management.md](3-ticket-management.md) §3.7`)
+Reading order (high-level → specific) — full synthesized detail lives in `docs/ai/requirements-summary.md`:
+
+1. `1-overview.md` — tech stack, architecture, non-functional requirements
+2. `2-data-storage.md` — database, settings, lock file, gitignore
+3. `3-ticket-management.md` — domain model, CRUD, statuses, batch ops
+4. `4-user-interface.md` — views, layouts, detail panel, keyboard shortcuts
+5. `5-attachments.md` — file upload, serving, reveal in finder
+6. `6-markdown-sync.md` — worklist export, AI tool skill generation
+7. `7-backup-restore.md` — auto-backup, preview, restore
+8. `8-cli-server.md` — CLI args, startup, demo mode
+9. `9-api.md` — REST API endpoint reference
+10. `10-desktop-app.md` — Tauri wrapper, updater, CLI installer
+12. `12-claude-channel.md` — Claude Channel integration, play button, auto mode
+13. `13-app-icon.md` — dynamic app icon variants, settings UI
+14. `14-commands-log.md` — log viewer for channel + shell command history
+15. `15-shell-commands.md` — shell command targets, execution API
+16. `16-command-groups.md` — custom command groups, collapsible sidebar
+17. `17-share.md` — share prompt, toolbar button, timing criteria
+18. `18-plugins.md` — plugin system, sync engine, UI extensions, conflict resolution
+19. `19-demo-plugin.md` — demo plugin exercising all plugin features
+20. `20-secure-storage.md` — keychain integration for plugin secrets
+21. `21-feedback.md` — feedback-needed notes, dialog, channel notification, tab indicator
+22. `22-terminal.md` — embedded terminal in footer drawer (per-project PTY, tabs)
+23. `23-terminal-titles-and-bell.md` — title-change escape sequences + bell indicator
+24. `24-cross-project-bell.md` — cross-project bell surfacing
+25. `25-terminal-dashboard.md` — full-window grid of every terminal, zoom/dedicated view
+26. `26-shell-integration-osc133.md` — OSC 133 protocol design spike
+27. `27-osc9-desktop-notifications.md` — OSC 9 shell-initiated toast messages
+28. `28-osc8-hyperlinks.md` — OSC 8 clickable hyperlinks (Tauri-safe routing)
+29. `29-osc7-cwd-tracking.md` — OSC 7 shell CWD tracking chip
+30. `30-osc9-native-notifications.md` — OSC 9 native OS notifications (Tauri)
+31. `31-osc133-copy-last-output.md` — copy-last-output toolbar button
+32. `32-osc133-jump-and-popover.md` — jump shortcuts + hover popover
+33. `33-osc133-ask-claude.md` — Ask Claude popover button → channel
+34. `34-terminal-search.md` — terminal find widget
+35. `35-terminal-themes.md` — terminal theme + font registry, per-terminal override
+36. `36-drawer-terminal-grid.md` — per-project tile grid inside the drawer
+37. `37-quit-confirm.md` — quit confirmation when terminals are running
+38. `38-terminal-visibility.md` — persisted terminal visibility
+39. `39-visibility-groupings.md` — named visibility configurations per project
+40. `40-search-include-rows.md` — search "include archive + backlog" rows
+41. `41-backup-json-cosave.md` — versioned JSON co-save next to each backup tarball
+42. `42-repair-database.md` — Settings → Backups database repair (find backup, pg_resetwal)
+43. `43-attachment-backups.md` — hash-addressed centralized attachment store + manifests
+44. `44-wasm-pg-resetwal.md` — WASM pg_resetwal design spike (verdict: defer)
+45. `45-pglite-robustness.md` — cleaner-shutdown design (`gracefulShutdown` helper)
+46. `46-service-client-decoupling.md` — service/client decoupling design spike (WebSocket push)
+47. `47-richer-permission-overlay.md` — permission popup diff preview + per-project allow-list
+48. `48-git-status-tracker.md` — sidebar chip: branch + dirty count + ahead/behind
+49. `49-reader-mode.md` — reader-mode overlay for notes + Details
+50. `50-upgrade-nudge.md` — throttled npm→Tauri upgrade nudge overlay
+51. `51-shell-history.md` — per-(project, terminal) shell history scoping
+53. `53-streaming-shell-output.md` — streaming shell-command output buffer + UI
+54. `54-terminal-checkout.md` — global terminal checkout / xterm stack
+55. `55-ticket-cross-references.md` — clickable `HS-NNNN` refs → stacking modal
+56. `56-magnified-grid-nav.md` — Shift+Cmd/Ctrl+Arrow magnified-tile navigation
+57. `57-shell-command-button-spinner.md` — running shell-command button spinner + stop
+59. `59-reader-note-navigation.md` — reader-mode prev/next note navigation
+60. `60-reactivity-primitive.md` — fine-grained reactivity primitive (`kerfjs`)
+61. `61-composable-stores.md` — composable testable stores (`defineStore`)
+62. `62-unified-jsx-render-targets.md` — shared AST: `astToHtml` (server) + `astToDom` (client)
+63. `63-mcp-tools.md` — MCP tool surface for AI agents (`tools/list` + `tools/call`)
+64. `64-claude-allow-rule.md` — auto-allow MCP tools in `.claude/settings.local.json`
+65. `65-read-latest-note-menu.md` — "Read Latest Note" context-menu item
+66. `66-move-to-open-menu.md` — "Move to Open" context-menu item (backlog→open)
+67. `67-telemetry.md` — Claude Code OpenTelemetry integration (opt-in, OTLP routes, cost UIs)
+68. `68-telemetry-traces.md` — beta enhanced tracing + span-tree + waterfall
+69. `69-telemetry-dashboard.md` — cross-project dashboard (superseded by §70 + §71)
+70. `70-cross-project-stats.md` — header-bar cross-project stats page
+71. `71-analytics-dashboard-telemetry.md` — per-project "Claude usage" dashboard sections
+72. `72-snapshot-persistence.md` — memory-primary snapshot design spike (memory-primary track dropped; §73 chosen)
+73. `73-snapshot-protection.md` — NodeFS live + atomic snapshot + auto-restore (shipped)
+74. `74-clear-telemetry-data.md` — manual "Clear telemetry data" button + confirm
+75. `75-background-work-scheduler.md` — load resilience: off-loop execution + central scheduler
+
+Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source).
 
 ### AI Summaries (`docs/ai/`)
 
-Two synthesis docs live under `docs/ai/` — read them at the start of a fresh session to orient quickly without opening every file. **These are maintained docs, not scratchpads** — keep them in sync with reality.
+Two synthesis docs to read at the start of a fresh session. **Maintained docs, not scratchpads** — keep in sync with reality (source doc/code wins on conflict). Prefer small targeted edits over rewrites.
 
-- `docs/ai/code-summary.md` — codebase map (directory tree, API routes, DB schema, client bundle, plugin system, channel/Tauri, build, tests, settings, a "where do I look for X" reverse index).
-- `docs/ai/requirements-summary.md` — synthesized view of every requirements doc with per-entry status markers (Shipped / Partial / Design only / Deferred) and an at-a-glance implementation dashboard.
-
-**Update `docs/ai/code-summary.md` in the same change whenever** you: (1) add a file or subdirectory under `src/`, (2) add a route file or endpoint, (3) change the DB schema (`CREATE TABLE` / `ALTER TABLE` in `src/db/connection.ts`), (4) add a new command-log event type or channel endpoint (remember to bump `CHANNEL_VERSION` + `EXPECTED_CHANNEL_VERSION`), (5) add a client module under `src/client/`, (6) add a tsup bundle output, (7) add/change a plugin UI location, preference type, or `TicketingBackend` method, (8) add a Tauri `#[tauri::command]`, (9) add a new `.hotsheet/` or `~/.hotsheet/` file, (10) add a user- or plugin-facing setting key. See §17 of the code summary for the full trigger list.
-
-**Update `docs/ai/requirements-summary.md` in the same change whenever** you: (1) add a new requirements doc under `docs/` (also add it to the Reading order above), (2) ship a Design-only feature or defer/regress a Shipped one (update both the entry and the dashboard in §14), (3) supersede or rename a doc, (4) add a significant new sub-phase or feature to an existing doc. See §15 of the requirements summary for the full trigger list.
-
-Prefer small, targeted edits to either file over rewrites — they only earn their keep if they stay approachable. If the AI summary ever conflicts with the source doc or code, treat the source as authoritative and update the summary.
+- `docs/ai/code-summary.md` — codebase map (directory tree, API routes, DB schema, client bundle, plugins, channel/Tauri, build, tests, settings, "where do I look for X" index). **Update in the same change** when you: add a file/subdir under `src/`, add a route/endpoint, change the DB schema, add a command-log event type or channel endpoint (bump both channel versions), add a client module, add a tsup output, add/change a plugin UI location/preference type/`TicketingBackend` method, add a Tauri `#[tauri::command]`, add a `.hotsheet/` or `~/.hotsheet/` file, or add a setting key. See its §17 for the full trigger list.
+- `docs/ai/requirements-summary.md` — synthesized view of every requirements doc with status markers (Shipped / Partial / Design only / Deferred) + dashboard. **Update in the same change** when you: add a requirements doc (also add to the Reading order above), ship a Design-only feature or defer/regress a Shipped one, supersede/rename a doc, or add a significant sub-phase. See its §15 for the full trigger list.
 
 ### Code Organization
 
-- **One primary export per file** — each file should have one main exported function/concept, with supporting private (non-exported) functions as needed
-- **Files should not be excessively long** — break up large files by concern into smaller, focused modules
-- **Use sub-folders for specialization** — group related modules under descriptive directories (e.g., `sidebar/`, `diff/`, `annotations/`, `review/`)
-- **SCSS uses partials** — split into `_partial.scss` files by concern, imported from a single entry point
-- **Use TSX/SafeHtml for HTML building** — client-side code that builds HTML strings should use the JSX runtime (`.tsx` files) rather than manual string concatenation. Use `raw()` for pre-rendered HTML strings in JSX
-- **Use `toElement()` instead of `document.createElement()`** — when creating DOM elements in client code, use the `toElement()` helper from `dom.ts` with JSX: `toElement(<div className="foo">bar</div>)`. Resolve JSX to DOM elements only at the last moment. Never use `document.createElement()` directly. The intentional exceptions are: `src/client/dom.ts::toElement` itself (the helper's implementation), `src/client/terminalCheckout.tsx` orphaned-xterm parking sink (xterm.js owns the element lifecycle), `src/client/terminalFonts.ts` `<link>` stylesheet injection (must construct a real `HTMLLinkElement` for the `load`/`error` events), `src/client/terminalWebgl.ts` WebGL-support probe (needs a real `<canvas>` to call `getContext('webgl2')`), and `src/client/scrollbarPref.ts` scrollbar-width probe (needs a real laid-out `<div>` to measure `offsetWidth − clientWidth`).
-- **Don't write new `xxx.innerHTML = yyy` assignments in client code** — `toElement` (now routed through `kerfjs::toElement` per HS-8241 / §62) handles SVG-namespace + entity + custom-attr correctness; direct `innerHTML` assignments bypass that and reintroduce the bug class §62 closed. Use one of three forms:
-  1. **`morph(el, toElement(<jsx />))` or `morph(el, htmlString)`** — preferred when the content updates in place and the user may be focused / scrolled / mid-selection inside `el`. Reconciles the live tree against the template, preserving focused inputs, text-input values + selection ranges, focused `[contenteditable]` subtrees, `<details open>` / `<dialog open>` state, and scroll position on matched children. Honors `data-morph-skip` / `data-morph-skip-children` / `data-morph-preserve`. Imported from `src/client/reactive.js`. Only works cleanly when listener attachment uses delegation on `el` rather than per-element — otherwise stale listeners survive on preserved elements when the template's underlying data shifted (HS-8365 captures this trade-off).
-  2. **`el.replaceChildren(toElement(<jsx />))`** — the default when `morph()`'s preservation guarantees aren't relevant: structural transitions where the live tree is wholly different from the template, lists with per-element index-captured listeners that can't safely survive a reorder, sites where the user can't have focus during the rebuild (popovers that dismiss on blur, sidebar variant switches that move focus away). Equivalent semantics to `innerHTML = ''` + append, single DOM mutation.
-  3. **`el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))`** — escape hatch for raw-HTML escape (e.g. server-rendered markdown HTML the client wants to display).
-  
-  The `no-restricted-syntax` ESLint rule (HS-8243) flags new `innerHTML =` assignments outside an explicit file-path allowlist — see `eslint.config.mjs`. When you touch one of those files for unrelated reasons, opportunistically migrate the existing `innerHTML` callsite and remove the file from the allowlist so it gets full protection going forward. Test files (`**/*.test.{ts,tsx}`) are exempt — `document.body.innerHTML = '<...>'` is the standard happy-dom setup pattern.
+- **One primary export per file**, with supporting private functions as needed. Break up excessively long files by concern. Use sub-folders for specialization (`sidebar/`, `diff/`, `review/`). SCSS uses `_partial.scss` files imported from one entry point.
+- **Use TSX/SafeHtml for HTML building** (not string concatenation); `raw()` for pre-rendered HTML.
+- **Use `toElement()` from `dom.ts`, never `document.createElement()`** — resolve JSX to DOM at the last moment. Intentional exceptions: `dom.ts::toElement` itself, `terminalCheckout.tsx` orphaned-xterm sink, `terminalFonts.ts` `<link>` injection, `terminalWebgl.ts` WebGL probe, `scrollbarPref.ts` scrollbar-width probe.
+- **Don't write new `xxx.innerHTML = yyy` in client code** — `toElement` (routed through `kerfjs::toElement`, §62) handles SVG-namespace/entity/custom-attr correctness; raw `innerHTML` bypasses it. Use one of:
+  1. **`morph(el, toElement(<jsx />))` / `morph(el, htmlString)`** (from `src/client/reactive.js`) — preferred for in-place updates where the user may be focused/scrolled/selecting. Reconciles the live tree, preserving focused inputs + selection, `[contenteditable]`, `<details/dialog open>`, and scroll. Honors `data-morph-skip`/`-skip-children`/`-preserve`. Needs listener delegation on `el` (per-element listeners can survive staleley — HS-8365).
+  2. **`el.replaceChildren(toElement(<jsx />))`** — default when morph's preservation isn't relevant: wholly-different trees, lists with index-captured per-element listeners, or sites where the user can't be focused during rebuild.
+  3. **`el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))`** — escape hatch for raw-HTML (e.g. server-rendered markdown).
+
+  The `no-restricted-syntax` ESLint rule (§62) flags new `innerHTML =` outside an allowlist in `eslint.config.mjs`. When you touch an allowlisted file, opportunistically migrate its `innerHTML` callsite and remove it from the allowlist. Test files are exempt.
