@@ -217,85 +217,89 @@ export interface TicketRollup {
   totalDurationSeconds: number;
 }
 
-export async function getPerTicketRollup(ticketNumber: string): Promise<TicketRollup> {
+export async function getPerTicketRollup(ticketNumber: string, secret?: string): Promise<TicketRollup> {
   const db = await getTelemetryDb();
 
-  // The marker substring we LIKE for. Same format the client
-  // injects in `channelUI.tsx::tagMessageWithActiveTicket`.
+  // The marker substring we LIKE for. Same format the client injects in
+  // `channelUI.tsx::tagMessageWithActiveTicket`.
   const marker = `hotsheet:ticket=${ticketNumber}`;
+  const secretParam = secret !== undefined && secret !== '' ? secret : null;
 
-  // Find every prompt id whose user_prompt event body carries the
-  // marker. Body_json is JSONB; LIKE on the cast-to-text matches
-  // anywhere in the serialized form (including inside the body
-  // string field).
-  const tagged = await db.query<{ prompt_id: string }>(
-    `SELECT DISTINCT prompt_id FROM otel_events
-     WHERE ${eventNameMatchSql('event_name', 'user_prompt')}
-       AND prompt_id IS NOT NULL
-       AND body_json::text LIKE $1`,
-    [`%${marker}%`],
-  );
-
-  if (tagged.rows.length === 0) {
-    return { ticketNumber, promptCount: 0, totalCost: 0, totalTokens: 0, totalDurationSeconds: 0 };
-  }
-
-  const promptIds = tagged.rows.map(r => r.prompt_id);
-
-  // Sum cost + tokens from api_request events for the tagged prompts.
-  // The per-LLM-call attributes Claude Code emits on api_request
-  // include `cost` (USD) and `tokens` (total). Different versions of
-  // Claude Code may name them differently; this query is permissive +
-  // tries common variants via COALESCE.
+  // HS-8730 — attribute api_request cost via the UNION of two sources, deduped
+  // at the EVENT level (each otel_events row is counted at most once):
+  //   (a) MARKER path — prompts whose `user_prompt` body carries the
+  //       `<!-- hotsheet:ticket=HS-N -->` marker (HS-8151 Option 3). Covers the
+  //       "open the ticket, then trigger" flow.
+  //   (b) TIME-WINDOW path — api_request events whose `ts` falls inside a
+  //       `ticket_work_intervals` window for this (project_secret, ticket) — i.e.
+  //       the periods the ticket was `started`. Covers the agentic worklist flow
+  //       where Claude marks each ticket started→completed itself. Skipped when
+  //       no `secret` is supplied (back-compat: marker-only).
   //
-  // HS-8600 reconciliation: this per-ticket rollup sums `claude_code.api_request`
-  // EVENTS — a deliberately DIFFERENT source than the `claude_code.cost.usage`
-  // METRIC the window/model/dashboard rollups SUM. That's safe on both axes:
-  // (1) **no cumulative-overcount risk** — `api_request` events are emitted
-  // once per LLM call carrying THAT call's cost/tokens (inherently per-call
-  // deltas; log events aren't counters, so the OTLP aggregation-temporality
-  // concern that motivated HS-8599/HS-8600 doesn't apply here); (2) **no
-  // double-count** — the events path feeds only the per-ticket detail-panel
-  // figure, the metric path feeds only the dashboards; the two are never
-  // added together in a single displayed number.
-  const sumsResult = await db.query<{ total_cost: string | null; total_tokens: string | null }>(
-    `SELECT
-        SUM(COALESCE(
-          (attributes_json->>'cost')::numeric,
-          (attributes_json->>'cost_usd')::numeric,
-          0
-        )) AS total_cost,
-        SUM(COALESCE(
-          (attributes_json->>'tokens')::numeric,
-          (attributes_json->>'total_tokens')::numeric,
-          (attributes_json->>'input_tokens')::numeric + (attributes_json->>'output_tokens')::numeric,
-          0
-        )) AS total_tokens
-     FROM otel_events
-     WHERE ${eventNameMatchSql('event_name', 'api_request')}
-       AND prompt_id = ANY($1::text[])`,
-    [promptIds],
+  // HS-8600 reconciliation (unchanged): this sums `api_request` EVENTS, a
+  // deliberately different source than the `cost.usage` METRIC the dashboards
+  // sum. api_request events are per-call deltas (not counters), so there's no
+  // cumulative-overcount risk, and the two figures are never added together in
+  // one displayed number. Cost/token attribute names vary by Claude Code
+  // version, so COALESCE over common variants.
+  const result = await db.query<{
+    prompt_count: string | null;
+    total_cost: string | null;
+    total_tokens: string | null;
+    total_seconds: string | null;
+  }>(
+    `WITH marker_prompts AS (
+       SELECT DISTINCT prompt_id FROM otel_events
+       WHERE ${eventNameMatchSql('event_name', 'user_prompt')}
+         AND prompt_id IS NOT NULL
+         AND body_json::text LIKE $1
+     ),
+     matched AS (
+       SELECT
+         e.prompt_id,
+         e.ts,
+         COALESCE(
+           (e.attributes_json->>'cost')::numeric,
+           (e.attributes_json->>'cost_usd')::numeric,
+           0
+         ) AS cost,
+         COALESCE(
+           (e.attributes_json->>'tokens')::numeric,
+           (e.attributes_json->>'total_tokens')::numeric,
+           (e.attributes_json->>'input_tokens')::numeric + (e.attributes_json->>'output_tokens')::numeric,
+           0
+         ) AS tokens
+       FROM otel_events e
+       WHERE ${eventNameMatchSql('e.event_name', 'api_request')}
+         AND (
+           e.prompt_id IN (SELECT prompt_id FROM marker_prompts)
+           OR (
+             $2::text IS NOT NULL AND e.project_secret = $2 AND EXISTS (
+               SELECT 1 FROM ticket_work_intervals i
+               WHERE i.project_secret = $2 AND i.ticket_number = $3
+                 AND e.ts >= i.started_at AND e.ts <= COALESCE(i.ended_at, NOW())
+             )
+           )
+         )
+     )
+     SELECT
+       (SELECT COUNT(DISTINCT prompt_id) FROM matched) AS prompt_count,
+       (SELECT COALESCE(SUM(cost), 0) FROM matched) AS total_cost,
+       (SELECT COALESCE(SUM(tokens), 0) FROM matched) AS total_tokens,
+       (SELECT COALESCE(SUM(dur), 0) FROM (
+          SELECT EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) AS dur
+          FROM matched WHERE prompt_id IS NOT NULL GROUP BY prompt_id
+        ) per_prompt) AS total_seconds`,
+    [`%${marker}%`, secretParam, ticketNumber],
   );
 
-  // Per-prompt wall-clock duration (last event ts - first event ts),
-  // summed across every tagged prompt.
-  const durationsResult = await db.query<{ total_seconds: string | null }>(
-    `SELECT SUM(EXTRACT(EPOCH FROM (max_ts - min_ts))) AS total_seconds
-     FROM (
-       SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts
-       FROM otel_events
-       WHERE prompt_id = ANY($1::text[])
-       GROUP BY prompt_id
-     ) AS per_prompt`,
-    [promptIds],
-  );
-
+  const row = result.rows[0];
   return {
     ticketNumber,
-    promptCount: promptIds.length,
-    totalCost: Number(sumsResult.rows[0]?.total_cost ?? 0),
-    totalTokens: Number(sumsResult.rows[0]?.total_tokens ?? 0),
-    totalDurationSeconds: Number(durationsResult.rows[0]?.total_seconds ?? 0),
+    promptCount: Number(row.prompt_count ?? 0),
+    totalCost: Number(row.total_cost ?? 0),
+    totalTokens: Number(row.total_tokens ?? 0),
+    totalDurationSeconds: Number(row.total_seconds ?? 0),
   };
 }
 

@@ -128,7 +128,10 @@ telemetryRoutes.get('/telemetry/prompt/:id', async (c) => {
  */
 telemetryRoutes.get('/telemetry/ticket/:number', async (c) => {
   const ticketNumber = c.req.param('number');
-  const rollup = await getPerTicketRollup(ticketNumber);
+  // HS-8730 — pass the project secret so the rollup can include the
+  // time-window (started→completed) attribution, not just the prompt marker.
+  const secret = c.get('projectSecret');
+  const rollup = await getPerTicketRollup(ticketNumber, secret);
   return c.json(rollup);
 });
 

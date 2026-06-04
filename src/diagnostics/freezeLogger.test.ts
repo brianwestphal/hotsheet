@@ -10,14 +10,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _resetForTesting,
+  _simulateHeartbeatGapForTesting,
   appendFreezeLog,
   FREEZE_LOG_FILENAME,
   FREEZE_LOG_MAX_BYTES,
   FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE,
+  getRecentEventLoopLagMs,
   instrumentAsync,
   instrumentSync,
+  onServerWake,
   startServerEventLoopHeartbeat,
   stopServerEventLoopHeartbeat,
+  WAKE_GAP_THRESHOLD_MS,
 } from './freezeLogger.js';
 
 let tmpDir: string;
@@ -39,6 +43,44 @@ async function readFreezeLog(): Promise<string[]> {
     return [];
   }
 }
+
+describe('wake detection (HS-8726)', () => {
+  it('a suspend-sized gap fires onServerWake and resets the backpressure lag reading', () => {
+    const seen: number[] = [];
+    const unsub = onServerWake((gap) => { seen.push(gap); });
+    _simulateHeartbeatGapForTesting(WAKE_GAP_THRESHOLD_MS + 5_000);
+    expect(seen).toEqual([WAKE_GAP_THRESHOLD_MS + 5_000]);
+    expect(getRecentEventLoopLagMs()).toBe(0); // the sleep gap must NOT poison backpressure
+    unsub();
+  });
+
+  it('a normal block does NOT fire wake and DOES record the lag', () => {
+    const seen: number[] = [];
+    const unsub = onServerWake((gap) => { seen.push(gap); });
+    _simulateHeartbeatGapForTesting(500); // a real 500ms block — below the suspend threshold
+    expect(seen).toEqual([]);
+    expect(getRecentEventLoopLagMs()).toBe(500);
+    unsub();
+  });
+
+  it('unsubscribe stops further wake notifications', () => {
+    const seen: number[] = [];
+    const unsub = onServerWake((gap) => { seen.push(gap); });
+    unsub();
+    _simulateHeartbeatGapForTesting(WAKE_GAP_THRESHOLD_MS + 1);
+    expect(seen).toEqual([]);
+  });
+
+  it('logs a `server-wake` entry (not a misleading event-loop-blocked) when a dataDir is attached', async () => {
+    startServerEventLoopHeartbeat(tmpDir); // attaches heartbeatDataDir = tmpDir
+    _simulateHeartbeatGapForTesting(WAKE_GAP_THRESHOLD_MS + 60_000);
+    stopServerEventLoopHeartbeat();
+    await new Promise(r => setTimeout(r, 20)); // let the async append flush
+    const lines = await readFreezeLog();
+    expect(lines.some(l => l.includes('"source":"server-wake"'))).toBe(true);
+    expect(lines.some(l => l.includes('"source":"server-heartbeat"'))).toBe(false);
+  });
+});
 
 describe('appendFreezeLog (HS-8054 v3)', () => {
   it('appends a JSONL line under <dataDir>/freeze.log', async () => {

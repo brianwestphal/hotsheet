@@ -1,9 +1,11 @@
 import type { PGlite } from '@electric-sql/pglite';
 
+import { readFileSettings } from '../file-settings.js';
 import { isExactTicketIdSearch } from '../ticketNumber.js';
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
-import { getDb } from './connection.js';
+import { getDataDir, getDb } from './connection.js';
 import { generateNoteId, normalizeNotesAppend, parseNotes } from './notes.js';
+import { recordTicketWorkTransition } from './ticketWorkIntervals.js';
 
 /** Escape SQL ILIKE wildcard characters so they match literally. */
 function escapeIlike(value: string): string {
@@ -203,7 +205,24 @@ export async function updateTicket(id: number, updates: Partial<{
     `UPDATE tickets SET ${sets.join(', ')} WHERE id = $${paramIdx} RETURNING *`,
     values
   );
-  return result.rows[0] ?? null;
+  const updated = result.rows[0] ?? null;
+
+  // HS-8730 — record the status transition for per-ticket cost attribution
+  // (time-window correlation). Fire-and-forget + fully guarded so cost
+  // bookkeeping can never break or slow a ticket update. Only status changes
+  // matter (started opens a work window; anything else closes it). The
+  // `updated.ticket_number` access is inside the try, so a no-row update
+  // (updated effectively null at runtime) is swallowed.
+  if (updates.status !== undefined) {
+    try {
+      const secret = readFileSettings(getDataDir()).secret;
+      if (secret !== undefined && secret !== '') {
+        void recordTicketWorkTransition(secret, updated.ticket_number, updates.status);
+      }
+    } catch { /* cost attribution is best-effort; never disturb the update */ }
+  }
+
+  return updated;
 }
 
 export async function deleteTicket(id: number): Promise<void> {

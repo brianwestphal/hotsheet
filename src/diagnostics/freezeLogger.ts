@@ -73,6 +73,14 @@ function truncateMarkerLine(ts: string, beforeBytes: number, afterBytes: number)
  *  trivial overhead under any realistic Node load. */
 const HEARTBEAT_INTERVAL_MS = 50;
 
+/** HS-8726 — a heartbeat gap at or above this is a system suspend/resume, not a
+ *  real event-loop block. No genuine on-loop task runs for 10 s; a gap this
+ *  large means the process was frozen by the OS (laptop sleep, `kill -STOP`,
+ *  VM pause). We classify it as a wake event instead of logging a misleading
+ *  multi-minute/hour "event-loop blocked" entry, and use it to re-stagger
+ *  background work. */
+export const WAKE_GAP_THRESHOLD_MS = 10_000;
+
 export interface FreezeEntry {
   /** ISO-8601 timestamp at the moment the block was OBSERVED (i.e. the
    *  end of the long task — the recorded `ts` is always after the block
@@ -90,6 +98,7 @@ export interface FreezeEntry {
     | 'server-heartbeat'       // 50 ms setInterval on the Node process
     | 'server-instrument-sync' // wrapped synchronous block
     | 'server-instrument-async' // wrapped async block
+    | 'server-wake'            // HS-8726 — process resumed from suspend (gap ≫ a real block)
     | 'freeze.log-truncated';  // HS-8163 — marker for the head-dropped sentinel
   /** Block duration in ms. */
   durationMs: number;
@@ -215,12 +224,72 @@ let lastEventLoopLagMs = 0;
 // path (`appendFreezeLog` from the `/api/diagnostics/freeze` route) is correctly
 // per-project; only this process-wide heartbeat is single-attribution.
 let heartbeatDataDir: string | null = null;
+// HS-8726 — listeners notified when the heartbeat detects a system suspend/
+// resume (a gap ≥ WAKE_GAP_THRESHOLD_MS). The scheduler registers one to open
+// its post-wake stagger window. Process-lifetime; never grows unbounded.
+const wakeListeners = new Set<(gapMs: number) => void>();
+
+/**
+ * HS-8726 — subscribe to system-wake events. The listener fires with the
+ * observed gap (ms) when the process resumes from a suspend. Returns an
+ * unsubscribe function. Wired from `cli.ts` to `backgroundScheduler.noteWake`.
+ */
+export function onServerWake(listener: (gapMs: number) => void): () => void {
+  wakeListeners.add(listener);
+  return () => { wakeListeners.delete(listener); };
+}
+
+/**
+ * Process one heartbeat gap (`blockMs` = observed inter-tick gap minus the
+ * expected interval). Extracted from the interval callback so the wake-vs-block
+ * classification is unit-testable without a real timer.
+ *
+ * HS-8726 — a gap ≥ `WAKE_GAP_THRESHOLD_MS` is a suspend/resume, not an
+ * event-loop block: log it as `server-wake` (NOT a misleading multi-hour
+ * "event-loop blocked"), do NOT let the sleep gap poison the backpressure lag
+ * reading, and fire the wake listeners so the scheduler can re-stagger.
+ */
+function handleHeartbeatGap(blockMs: number): void {
+  if (blockMs >= WAKE_GAP_THRESHOLD_MS) {
+    lastEventLoopLagMs = 0; // the suspend gap is not real event-loop lag
+    if (heartbeatDataDir !== null) {
+      void appendFreezeLog(heartbeatDataDir, {
+        ts: new Date().toISOString(),
+        source: 'server-wake',
+        durationMs: Math.round(blockMs),
+        context: `resumed from suspend after ~${Math.round(blockMs / 1000).toString()}s`,
+      });
+    }
+    for (const listener of wakeListeners) {
+      try { listener(blockMs); } catch { /* a wake listener must never break the heartbeat */ }
+    }
+    return;
+  }
+  // HS-8724 — record the lag on every tick for the scheduler's backpressure
+  // read, clamped at 0 (a slightly-early timer fire yields a small negative).
+  lastEventLoopLagMs = blockMs > 0 ? blockMs : 0;
+  if (blockMs >= LONG_TASK_THRESHOLD_MS && heartbeatDataDir !== null) {
+    void appendFreezeLog(heartbeatDataDir, {
+      ts: new Date().toISOString(),
+      source: 'server-heartbeat',
+      durationMs: Math.round(blockMs),
+      context: 'event-loop blocked',
+    });
+  }
+}
+
+/** Test-only — drive the gap handler directly (no real timer) to exercise the
+ *  wake-vs-block classification + listener fan-out. */
+export function _simulateHeartbeatGapForTesting(blockMs: number): void {
+  handleHeartbeatGap(blockMs);
+}
 
 /**
  * Start the server-side event-loop heartbeat. Idempotent — second + later
  * calls are no-ops (single timer per Node process). When the gap between
  * heartbeats exceeds `HEARTBEAT_INTERVAL_MS + LONG_TASK_THRESHOLD_MS`,
- * appends a `source: 'server-heartbeat'` entry to freeze.log.
+ * appends a `source: 'server-heartbeat'` entry to freeze.log (or `server-wake`
+ * for a suspend-sized gap — see `handleHeartbeatGap`).
  *
  * Uses `process.hrtime.bigint()` for monotonic high-resolution timing —
  * `Date.now()` would jitter on NTP slew, and `performance.now()` isn't
@@ -235,18 +304,7 @@ export function startServerEventLoopHeartbeat(dataDir: string): void {
     const now = process.hrtime.bigint();
     const elapsedMs = Number(now - lastHeartbeatNs) / 1_000_000;
     lastHeartbeatNs = now;
-    const blockMs = elapsedMs - HEARTBEAT_INTERVAL_MS;
-    // HS-8724 — record the lag on every tick for the scheduler's backpressure
-    // read, clamped at 0 (a slightly-early timer fire yields a small negative).
-    lastEventLoopLagMs = blockMs > 0 ? blockMs : 0;
-    if (blockMs >= LONG_TASK_THRESHOLD_MS && heartbeatDataDir !== null) {
-      void appendFreezeLog(heartbeatDataDir, {
-        ts: new Date().toISOString(),
-        source: 'server-heartbeat',
-        durationMs: Math.round(blockMs),
-        context: 'event-loop blocked',
-      });
-    }
+    handleHeartbeatGap(elapsedMs - HEARTBEAT_INTERVAL_MS);
   }, HEARTBEAT_INTERVAL_MS);
   // Don't keep the process alive for the heartbeat alone — if every
   // other handle is gone, the process should exit cleanly.
@@ -331,5 +389,6 @@ export function _resetForTesting(): void {
   heartbeatDataDir = null;
   lastHeartbeatNs = 0n;
   lastEventLoopLagMs = 0;
+  wakeListeners.clear();
   appendQueue.clear();
 }

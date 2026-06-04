@@ -8,15 +8,17 @@ Theme: **Load resilience.** Every ticket spawned from this design carries the
 > is, even for a long time. Background work degrades (runs late); it never starves
 > the foreground.**
 
-> **Status: Phases 1–3 & 5 shipped; Phase 4 pending.** Phase 1 (off-loop git
-> status, HS-8723) is the contained fix for the reported freeze. Phase 2 (HS-8724)
-> added the central `backgroundScheduler` and migrated every background consumer
-> onto it (Option A — backups + snapshots coordinated but never deferred;
-> git-refresh + markdown-sync + GC deferrable under load). Phase 3 (HS-8725) added
-> active-project tracking so a background tab's `.git` nudge no longer fans out into
-> proactive refresh — the scaling lever. Phase 5 (HS-8727) took the chunk-with-yields
-> path for the heavy attachment paths (the worker-thread full offload is deferred to
-> HS-8728). Phase 4 (wake-aware re-staggering) is the last remaining piece.
+> **Status: all five phases shipped.** Phase 1 (off-loop git status, HS-8723) is the
+> contained fix for the reported freeze. Phase 2 (HS-8724) added the central
+> `backgroundScheduler` and migrated every background consumer onto it (Option A —
+> backups + snapshots coordinated but never deferred; git-refresh + markdown-sync +
+> GC deferrable under load). Phase 3 (HS-8725) added active-project tracking so a
+> background tab's `.git` nudge no longer fans out into proactive refresh — the
+> scaling lever. Phase 5 (HS-8727) took the chunk-with-yields path for the heavy
+> attachment paths (worker-thread full offload deferred to HS-8728). Phase 4 (HS-8726)
+> added wake detection + a post-wake drain-stagger so a resume-from-suspend doesn't
+> fire every project's overdue timers at once. Remaining: only the optional,
+> measurement-gated HS-8728 (worker-thread offload).
 
 ## 75.1 Why this exists — the incident
 
@@ -194,9 +196,16 @@ HS-8725 (3) / HS-8726 (4) / HS-8727 (5).
    so it's the natural union of every connected client's view (forward-compatible
    with §46 multi-client). Safe default: until any project reports, all are treated
    active (no regression).
-4. **Phase 4 (HS-8726) — Wake-aware re-staggering.** Detect suspend via the heartbeat `hrtime`
-   gap; on wake, re-stagger overdue periodic work with jitter (drain mode) instead of
-   a simultaneous fire.
+4. **Phase 4 (HS-8726) — Wake-aware re-staggering. ✅ shipped.** `freezeLogger`
+   classifies a heartbeat gap ≥ `WAKE_GAP_THRESHOLD_MS` (10 s) as a suspend/resume
+   rather than an event-loop block: it logs a `server-wake` entry (instead of a
+   misleading multi-hour "event-loop blocked"), resets the backpressure lag reading
+   so the sleep gap doesn't poison it, and fires `onServerWake` listeners. `cli.ts`
+   wires that to `backgroundScheduler.noteWake()`, which opens a post-wake stagger
+   window (default 15 s): during it the scheduler caps effective concurrency at 1 and
+   spaces job starts by `wakeStaggerStepMs` (250 ms), so N projects' overdue
+   backup/snapshot/GC timers drain gently into a just-woken machine instead of
+   bursting. Outside the window behavior is unchanged.
 5. **Phase 5 (HS-8727) — Heavy hashing/gzip off-loop. ✅ shipped (chunk-with-yields path).**
    The attachment-manifest BUILD + rebuild already yield between files (streamed
    SHA-256, HS-8359); HS-8727 closed the matching gap on the GC delete sweep —

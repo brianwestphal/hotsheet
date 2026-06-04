@@ -172,8 +172,14 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   // file, paste-ready, lets us see whether the freeze the user reports
   // is in the browser, the Node process, or neither (which would point
   // at the WS / PTY layer the user suspected on 2026-05-04).
-  const { startServerEventLoopHeartbeat } = await import('./diagnostics/freezeLogger.js');
+  const { startServerEventLoopHeartbeat, onServerWake } = await import('./diagnostics/freezeLogger.js');
   startServerEventLoopHeartbeat(dataDir);
+  // HS-8726 (load resilience, docs/75 §75.6 Phase 4) — on resume from a system
+  // suspend, open the scheduler's post-wake stagger window so every project's
+  // overdue periodic timers (backups / snapshots / GC) drain gently instead of
+  // firing as a thundering herd into a just-woken machine.
+  const { getBackgroundScheduler } = await import('./scheduler/backgroundScheduler.js');
+  onServerWake(() => { getBackgroundScheduler().noteWake(); });
 
   initMarkdownSync(dataDir, actualPort);
   scheduleAllSync(dataDir);

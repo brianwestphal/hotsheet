@@ -7,6 +7,7 @@ import { listAliveEntries } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
+import { closeOpenTicketIntervalsForProject } from '../db/ticketWorkIntervals.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
@@ -295,7 +296,13 @@ channelRoutes.post('/channel/permission/dismiss', async (c) => {
 
 channelRoutes.post('/channel/done', (_c) => {
   const secret = _c.get('projectSecret');
-  if (secret) channelDoneFlags.set(secret, true);
+  if (secret) {
+    channelDoneFlags.set(secret, true);
+    // HS-8730 — the work session ended; close any ticket work interval left
+    // open (e.g. a FEEDBACK NEEDED hand-off that left a ticket `started`) so it
+    // can't keep accruing unrelated future cost.
+    void closeOpenTicketIntervalsForProject(secret);
+  }
   addLogEntry('done', 'incoming', 'Claude finished', '').catch(() => {});
   notifyChange(); // Triggers long-poll so client picks up the done state
   return _c.json({ ok: true });

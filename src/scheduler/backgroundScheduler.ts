@@ -84,6 +84,17 @@ export interface BackgroundSchedulerOptions {
   reDrainDelayMs?: number;
   /** Called when a job's `run()` rejects. Default: console.warn. */
   onError?: (key: string, err: unknown) => void;
+  /** HS-8726 — monotonic-ish clock for the post-wake stagger window. Default
+   *  `Date.now`. Injectable so tests can control the window deterministically. */
+  now?: () => number;
+  /** HS-8726 — duration of the post-wake drain-stagger window after `noteWake()`.
+   *  Default 15 000 ms. During the window the scheduler starts one job at a time
+   *  spaced by `wakeStaggerStepMs`, so N projects' overdue periodic timers firing
+   *  together on resume don't all start at once. */
+  wakeStaggerWindowMs?: number;
+  /** HS-8726 — minimum gap between job STARTS during the post-wake window.
+   *  Default 250 ms. */
+  wakeStaggerStepMs?: number;
 }
 
 export interface BackgroundScheduler {
@@ -102,6 +113,11 @@ export interface BackgroundScheduler {
   /** Resolves when the queue is fully drained (nothing running, nothing
    *  pending). Useful for shutdown flush + tests. */
   onIdle: () => Promise<void>;
+  /** HS-8726 — signal that the machine just resumed from suspend. Opens the
+   *  post-wake stagger window so the backlog of overdue periodic jobs drains
+   *  one-at-a-time, spaced, instead of bursting. Wired from the freeze-logger
+   *  wake detector (`onServerWake`). */
+  noteWake: () => void;
   /** Drop all pending jobs + cancel the re-drain timer. In-flight runs are
    *  left to finish. For shutdown / tests. */
   clear: () => void;
@@ -116,6 +132,9 @@ export function createBackgroundScheduler(opts: BackgroundSchedulerOptions = {})
   const lagProvider = opts.lagProvider ?? getRecentEventLoopLagMs;
   const lagThresholdMs = opts.lagThresholdMs ?? 200;
   const reDrainDelayMs = opts.reDrainDelayMs ?? 250;
+  const now = opts.now ?? (() => Date.now());
+  const wakeStaggerWindowMs = opts.wakeStaggerWindowMs ?? 15_000;
+  const wakeStaggerStepMs = opts.wakeStaggerStepMs ?? 250;
   const onError = opts.onError ?? ((key, err) => {
     console.warn('[hotsheet backgroundScheduler] job failed:', key, err instanceof Error ? err.message : String(err));
   });
@@ -140,6 +159,14 @@ export function createBackgroundScheduler(opts: BackgroundSchedulerOptions = {})
   const lastServedSeq = new Map<string, number>();
   let reDrainTimer: ReturnType<typeof setTimeout> | null = null;
   const idleWaiters: Array<() => void> = [];
+  // HS-8726 — post-wake stagger window. `staggerUntil` is the timestamp the
+  // window closes; while `now() < staggerUntil` the drain starts ≤1 job at a
+  // time spaced by `wakeStaggerStepMs`. `lastStartAt` is the last job-start
+  // timestamp (persists across the wake so the FIRST post-wake job starts
+  // promptly, then subsequent ones are spaced).
+  let staggerUntil = 0;
+  let lastStartAt = Number.NEGATIVE_INFINITY; // -∞ ⇒ "never started" (sinceLast = ∞ ⇒ first post-wake job starts promptly)
+  let staggerTimer: ReturnType<typeof setTimeout> | null = null;
 
   function projectKeyOf(job: BackgroundJob): string {
     return job.projectKey ?? job.key;
@@ -181,8 +208,21 @@ export function createBackgroundScheduler(opts: BackgroundSchedulerOptions = {})
 
   function drain(): void {
     const highLag = lagProvider() > lagThresholdMs;
+    const t = now();
+    // HS-8726 — during the post-wake window, cap effective concurrency at 1 and
+    // space starts by `wakeStaggerStepMs` so the burst of overdue periodic jobs
+    // drains gently instead of all firing at resume.
+    const inStagger = t < staggerUntil;
+    const cap = inStagger ? 1 : concurrency;
     let armReDrain = false;
-    while (running.size < concurrency) {
+    while (running.size < cap) {
+      if (inStagger) {
+        const sinceLast = t - lastStartAt;
+        if (sinceLast < wakeStaggerStepMs) {
+          scheduleStaggerDrain(wakeStaggerStepMs - sinceLast);
+          break;
+        }
+      }
       const { job, lagDeferred } = pickNext(highLag);
       if (job === null) { armReDrain = lagDeferred; break; }
       pending.delete(job.key);
@@ -193,6 +233,7 @@ export function createBackgroundScheduler(opts: BackgroundSchedulerOptions = {})
       runningAwaiters.set(job.key, awaiters.get(job.key) ?? []);
       awaiters.delete(job.key);
       lastServedSeq.set(projectKeyOf(job), ++seq);
+      lastStartAt = t;
       void runJob(job);
     }
     if (armReDrain) scheduleReDrain();
@@ -227,6 +268,18 @@ export function createBackgroundScheduler(opts: BackgroundSchedulerOptions = {})
     reDrainTimer.unref();
   }
 
+  /** HS-8726 — schedule the next drain pass `delayMs` out so post-wake job
+   *  starts stay spaced. Single pending timer (a later, shorter request
+   *  replaces a longer one so the spacing stays tight). */
+  function scheduleStaggerDrain(delayMs: number): void {
+    if (staggerTimer !== null) clearTimeout(staggerTimer);
+    staggerTimer = setTimeout(() => {
+      staggerTimer = null;
+      drain();
+    }, Math.max(0, delayMs));
+    staggerTimer.unref();
+  }
+
   return {
     submit(job) {
       pending.set(job.key, job); // coalesce: latest wins
@@ -244,9 +297,15 @@ export function createBackgroundScheduler(opts: BackgroundSchedulerOptions = {})
       if (running.size === 0 && pending.size === 0) return Promise.resolve();
       return new Promise<void>((resolve) => { idleWaiters.push(resolve); });
     },
+    noteWake() {
+      staggerUntil = now() + wakeStaggerWindowMs;
+      drain();
+    },
     clear() {
       pending.clear();
       if (reDrainTimer !== null) { clearTimeout(reDrainTimer); reDrainTimer = null; }
+      if (staggerTimer !== null) { clearTimeout(staggerTimer); staggerTimer = null; }
+      staggerUntil = 0;
       // Resolve awaiters of the dropped pending jobs so their callers don't hang
       // (the work was cancelled, not failed — they get a clean resolve).
       const orphaned = [...awaiters.values()].flat();

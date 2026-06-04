@@ -370,7 +370,7 @@ Same source as the (now-removed) per-project drawer tab with the project filter 
 
 ### 67.10.7 Per-ticket cost rollup (HS-8152)
 
-Once the prompt ↔ ticket correlation investigation (HS-8151) lands, attach a "Claude usage" stats block to each ticket showing aggregate cost / tokens / prompt count / total duration spent on that ticket.
+A "Claude usage" stats block on each ticket showing aggregate cost / tokens / prompt count / total duration spent on it. Correlation shipped via the marker (HS-8152) + time-window union (HS-8730) — see §67.11.
 
 Locations:
 
@@ -378,19 +378,21 @@ Locations:
 - **Ticket row** — optional dollar-amount chip when usage > $0.50 (configurable threshold).
 - **Reader mode** — included in the §49 read-only overlay.
 
-Source: JOIN `otel_events` (or wherever the correlation tag lives — TBD by HS-8151) on the active ticket id, GROUP BY ticket_id.
+Source: `getPerTicketRollup(ticketNumber, secret)` in `otelDashboard.ts` — the UNION of the marker path and the time-window path (see §67.11), deduped per `otel_events` row, GROUP BY prompt for duration.
 
-## 67.11 Open question: prompt → ticket correlation
+## 67.11 Prompt → ticket correlation (HS-8151 investigation → HS-8730 implementation)
 
-Captured separately as HS-8151 (investigation ticket). Five options the investigation evaluates:
+Captured separately as HS-8151 (investigation). Five options were evaluated:
 
 1. **`HOTSHEET_ACTIVE_TICKET` env at spawn.** Works only when the active ticket is known at spawn time; doesn't follow within-session ticket switches.
 2. **Live-update via `OTEL_RESOURCE_ATTRIBUTES`.** Env vars can't update for a running shell — collapses to option 1's limitation.
-3. **Tag prompts via the `/hotsheet` skill / channel-trigger flow.** When Hot Sheet triggers Claude with an active ticket, prepend a magic header in the prompt text that we parse out of `claude_code.user_prompt`'s body. Survives within-session ticket switches. The cleanest fit with existing flows.
-4. **Time-window heuristic.** Any prompt fired within N seconds of the user clicking a ticket is attributed to that ticket. Lossy + zero-coupling — fine for a v1.
-5. **Inject via Claude SDK MCP server context.** If Hot Sheet is the MCP channel server, it sees every prompt and can stamp the active-ticket id there. Highest coupling, highest accuracy.
+3. **Tag prompts via the `/hotsheet` skill / channel-trigger flow.** When Hot Sheet triggers Claude with an active ticket, prepend a `<!-- hotsheet:ticket=HS-NNNN -->` marker in the prompt text that we parse out of `claude_code.user_prompt`'s body (`tagMessageWithActiveTicket`). Survives within-session ticket switches.
+4. **Time-window heuristic.** Attribute api_request cost to whichever ticket was being worked at the event's timestamp.
+5. **Inject via Claude SDK MCP server context.** Highest coupling, highest accuracy.
 
-HS-8151 recommends a strategy + files the implementation ticket. Per-ticket rollup (§67.10.7) blocks on that.
+**Shipped: options 3 + a precise variant of 4, unioned (HS-8730).** Option 3 alone (the original HS-8152 implementation) only ever tagged the ONE ticket open in the detail panel at channel-trigger time, so the agentic worklist flow — where Claude pulls tickets off Up Next and marks each `started`→`completed` itself — left most tickets with no cost (HS-8729). HS-8730 adds the time-window source done *precisely*, not heuristically: the `updateTicket` status-transition hook records real `[started, ended]` work intervals into `ticket_work_intervals` (telemetry DB, keyed by `project_secret`), and `getPerTicketRollup` attributes any `api_request` whose `ts` falls inside an interval for that (project, ticket). The two sources are unioned and deduped at the event level. `POST /channel/done` closes any still-open interval so a `started` ticket left hanging (e.g. a FEEDBACK NEEDED hand-off) can't accrue unrelated future cost.
+
+Honest limits: work done while **no** ticket is `started` stays project-level only (nothing to attribute it to); two Claude sessions in the **same project** working different tickets at the same time can cross-attribute by time (we don't get Claude's OTEL session-id on the ticket-update side) — rare, scoped by `project_secret`. The full-precision per-session correlation is not pursued unless this proves insufficient.
 
 ## 67.12 Out of scope
 
@@ -425,8 +427,9 @@ The full feature decomposed into 14 tickets:
 | HS-8150 | UI | Per-tool latency histograms |
 | HS-8153 | UI | Cross-project dashboard view |
 | HS-8155 | UI (beta) | Trace waterfall + span-tree |
-| HS-8151 | Investigation | Prompt ↔ ticket correlation |
-| HS-8152 | UI (blocked) | Per-ticket cost rollup |
+| HS-8151 | Investigation | Prompt ↔ ticket correlation (→ HS-8730) |
+| HS-8152 | UI | Per-ticket cost rollup (marker correlation) |
+| HS-8730 | Backend | Per-ticket cost time-window correlation (started→completed intervals); §67.11 |
 | HS-8154 | Maintenance | Retention + auto-GC |
 
 Foundations are the unblockers for everything else. Within Foundation, the order is: HS-8144 (schema) → HS-8143 (receiver) → HS-8145 (spawn-env) → HS-8146 (Settings UI). HS-8142 + HS-8144 + HS-8143 are shipping together as the first wave; the rest follow incrementally.

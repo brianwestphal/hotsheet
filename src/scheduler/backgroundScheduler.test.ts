@@ -223,6 +223,36 @@ describe('error isolation', () => {
   });
 });
 
+describe('noteWake — post-wake drain stagger (HS-8726)', () => {
+  it('caps effective concurrency to 1 during the post-wake window even though concurrency is higher', async () => {
+    const order: string[] = [];
+    scheduler = createBackgroundScheduler({ concurrency: 3, wakeStaggerWindowMs: 300, wakeStaggerStepMs: 30 });
+    scheduler.noteWake();
+    void scheduler.submit(autoJob('a', order));
+    void scheduler.submit(autoJob('b', order));
+    void scheduler.submit(autoJob('c', order));
+
+    // Without the wake window, concurrency 3 would start all three at once;
+    // during the window only ONE runs at a time.
+    expect(scheduler.runningCount()).toBe(1);
+    expect(scheduler.pendingCount()).toBe(2);
+
+    // The staggered drain still completes every job (spaced ~30ms apart).
+    await scheduler.onIdle();
+    expect([...order].sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('does not stagger when no wake has been signalled (normal concurrency)', async () => {
+    const order: string[] = [];
+    scheduler = createBackgroundScheduler({ concurrency: 3, wakeStaggerWindowMs: 300, wakeStaggerStepMs: 30 });
+    void scheduler.submit(autoJob('a', order));
+    void scheduler.submit(autoJob('b', order));
+    void scheduler.submit(autoJob('c', order));
+    expect(scheduler.runningCount()).toBe(3); // full concurrency, no wake window open
+    await scheduler.onIdle();
+  });
+});
+
 describe('exclusiveGroup', () => {
   it('runs at most one job per group even when the concurrency cap allows more', async () => {
     const order: string[] = [];

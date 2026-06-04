@@ -733,6 +733,68 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(result.promptCount).toBe(0);
       expect(result.totalCost).toBe(0);
     });
+
+    // --- HS-8730: time-window (started→completed interval) attribution ---
+
+    async function insertInterval(secret: string, ticketNumber: string, startedAt: Date, endedAt: Date | null): Promise<void> {
+      const db = await getDb();
+      await db.query(
+        `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1, $2, $3, $4)`,
+        [secret, ticketNumber, startedAt, endedAt],
+      );
+    }
+
+    it('attributes cost by time window — api_request events inside a started→ended interval, no marker needed', async () => {
+      const start = new Date('2026-05-21T10:00:00Z');
+      const end = new Date('2026-05-21T10:30:00Z');
+      await insertInterval(SECRET_A, 'HS-5000', start, end);
+      // Two api_request events INSIDE the window (bare + dotted name), no marker.
+      await insertEventWithBody({ ts: new Date(start.getTime() + 60_000), projectSecret: SECRET_A, promptId: 'pw1', eventName: 'claude_code.api_request', attrs: { cost: 0.4, tokens: 800 } });
+      await insertEventWithBody({ ts: new Date(start.getTime() + 120_000), projectSecret: SECRET_A, promptId: 'pw1', eventName: 'api_request', attrs: { cost: 0.1, tokens: 200 } });
+      // One OUTSIDE the window — must be excluded.
+      await insertEventWithBody({ ts: new Date(end.getTime() + 60_000), projectSecret: SECRET_A, promptId: 'pw2', eventName: 'claude_code.api_request', attrs: { cost: 9.0, tokens: 9000 } });
+
+      const result = await getPerTicketRollup('HS-5000', SECRET_A);
+      expect(result.totalCost).toBeCloseTo(0.5, 6);
+      expect(result.totalTokens).toBe(1000);
+      expect(result.promptCount).toBe(1);
+    });
+
+    it('an open interval (ended_at NULL) counts events up to now', async () => {
+      const start = new Date(Date.now() - 60_000);
+      await insertInterval(SECRET_A, 'HS-5001', start, null);
+      await insertEventWithBody({ ts: new Date(Date.now() - 30_000), projectSecret: SECRET_A, promptId: 'po1', eventName: 'claude_code.api_request', attrs: { cost: 0.2, tokens: 300 } });
+      const result = await getPerTicketRollup('HS-5001', SECRET_A);
+      expect(result.totalCost).toBeCloseTo(0.2, 6);
+    });
+
+    it('time-window attribution is ignored when no secret is passed (marker-only back-compat)', async () => {
+      const start = new Date('2026-05-21T10:00:00Z');
+      await insertInterval(SECRET_A, 'HS-5002', start, new Date(start.getTime() + 1_800_000));
+      await insertEventWithBody({ ts: new Date(start.getTime() + 60_000), projectSecret: SECRET_A, promptId: 'pn1', eventName: 'claude_code.api_request', attrs: { cost: 0.4, tokens: 800 } });
+      const result = await getPerTicketRollup('HS-5002'); // no secret → marker-only
+      expect(result.totalCost).toBe(0);
+      expect(result.promptCount).toBe(0);
+    });
+
+    it('time-window attribution is scoped by project_secret', async () => {
+      const start = new Date('2026-05-21T10:00:00Z');
+      await insertInterval(SECRET_A, 'HS-5003', start, new Date(start.getTime() + 1_800_000));
+      // Event belongs to a DIFFERENT project — must not be attributed to SECRET_A's ticket.
+      await insertEventWithBody({ ts: new Date(start.getTime() + 60_000), projectSecret: SECRET_B, promptId: 'px1', eventName: 'claude_code.api_request', attrs: { cost: 7.0, tokens: 7000 } });
+      const result = await getPerTicketRollup('HS-5003', SECRET_A);
+      expect(result.totalCost).toBe(0);
+    });
+
+    it('an event matching BOTH the marker and an interval is counted once (dedup)', async () => {
+      const t = new Date('2026-05-21T11:00:00Z');
+      await insertInterval(SECRET_A, 'HS-5004', new Date(t.getTime() - 1_000), new Date(t.getTime() + 60_000));
+      await insertEventWithBody({ ts: t, projectSecret: SECRET_A, promptId: 'pb1', eventName: 'claude_code.user_prompt', body: { body: '<!-- hotsheet:ticket=HS-5004 -->\n\nx' } });
+      await insertEventWithBody({ ts: new Date(t.getTime() + 1_000), projectSecret: SECRET_A, promptId: 'pb1', eventName: 'claude_code.api_request', attrs: { cost: 0.3, tokens: 300 } });
+      const result = await getPerTicketRollup('HS-5004', SECRET_A);
+      expect(result.totalCost).toBeCloseTo(0.3, 6); // counted once, not 0.6
+      expect(result.promptCount).toBe(1);
+    });
   });
 
   describe('getCostByProject (HS-8480 / §69.3.2)', () => {

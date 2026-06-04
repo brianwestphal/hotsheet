@@ -15,7 +15,7 @@ import { createPglite } from './pglite.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5; // HS-8730 — added ticket_work_intervals table
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -852,6 +852,22 @@ async function initSchema(db: PGlite): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_otel_spans_session_ts ON otel_spans(session_id, start_ts);
     CREATE INDEX IF NOT EXISTS idx_otel_spans_prompt ON otel_spans(prompt_id);
     CREATE INDEX IF NOT EXISTS idx_otel_spans_trace ON otel_spans(trace_id);
+
+    -- HS-8730 (per-ticket cost, time-window correlation) — records when each
+    -- ticket was actively being worked (its status was 'started'), so the
+    -- per-ticket rollup can attribute api_request cost by timestamp instead of
+    -- only the channelUI prompt marker. Lives in the telemetry DB (this is the
+    -- default/primary project's DB per getTelemetryDb) so the rollup join with
+    -- otel_events is single-DB. Keyed by project_secret (matching otel_events).
+    CREATE TABLE IF NOT EXISTS ticket_work_intervals (
+      id SERIAL PRIMARY KEY,
+      project_secret TEXT NOT NULL,
+      ticket_number TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL,
+      ended_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_twi_secret_ticket ON ticket_work_intervals(project_secret, ticket_number);
+    CREATE INDEX IF NOT EXISTS idx_twi_open ON ticket_work_intervals(project_secret, ticket_number, ended_at);
   `);
 
   // Migration: ensure all existing notes have stable persisted IDs
