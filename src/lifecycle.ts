@@ -84,6 +84,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await killShellCommands();
   await destroyTerminals();
   await disposeGitWatchers();
+  await terminateHashWorkerStep();
   await snapshotDatabases();
   await closeDatabases();
   stopFreezeHeartbeat();
@@ -135,6 +136,18 @@ async function disposeGitWatchers(): Promise<void> {
     disposeAllGitWatchers();
   } catch (err) {
     console.error('[lifecycle] disposeAllGitWatchers error:', err);
+  }
+}
+
+/** HS-8728 — terminate the attachment-hash worker thread. It's `unref()`-ed so
+ *  it never blocks exit, but tearing it down explicitly keeps the shutdown
+ *  envelope clean (no lingering worker across a multi-shutdown test run). */
+async function terminateHashWorkerStep(): Promise<void> {
+  try {
+    const { terminateHashWorker } = await import('./hashWorker.js');
+    await terminateHashWorker();
+  } catch (err) {
+    console.error('[lifecycle] terminateHashWorker error:', err);
   }
 }
 

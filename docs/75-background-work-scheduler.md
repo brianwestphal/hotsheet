@@ -213,11 +213,16 @@ HS-8725 (3) / HS-8726 (4) / HS-8727 (5).
    and yields every 500 blobs, so sweeping thousands of orphans can't block the loop.
    The snapshot/backup dump+gzip is an opaque `db.dumpDataDir('gzip')` PGLite/WASM
    call (~150–400 ms in the incident logs, never a heartbeat blocker) — it can't be
-   chunked and can't be offloaded without the DB living in the worker. The fuller
-   worker-thread offload (hashing CPU + PGLite dump) is deferred to **HS-8728**,
-   measurement-gated: the HS-8721 incident's heartbeat blocks were all synchronous
-   git, never hashing or gzip, so option-2 (yields) is sufficient until proven
-   otherwise.
+   chunked and can't be offloaded without the DB living in the worker.
+   **HS-8728 (2026-06-04) — attachment-hashing worker shipped:** `src/hashWorker.ts`
+   moves SHA-256 hashing fully off the main thread via a single long-lived
+   `worker_threads` worker (spawned with `{ eval: true }` from an inline source
+   string, so there's no separate bundler entry / path-resolution concern), with an
+   in-process streaming fallback when no worker is available + a crash-counter that
+   gives up on the worker after 3 failures. `attachmentBackup.ts::hashFile`
+   delegates to it; terminated in `gracefulShutdown`. The **PGLite dump/gzip** half
+   stays deferred under HS-8728 (needs the DB inside the worker — a larger change;
+   not a heartbeat blocker in practice).
 
 ## 75.7 Honest limitations
 

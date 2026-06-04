@@ -15,10 +15,8 @@
  * All filesystem helpers are streaming to keep memory bounded — a 200 MB
  * attachment must never blow up the heap.
  */
-import { createHash } from 'crypto';
 import {
   copyFileSync,
-  createReadStream,
   existsSync,
   mkdirSync,
   promises as fsp,
@@ -29,9 +27,10 @@ import {
 } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { join } from 'path';
-import { pipeline } from 'stream/promises';
 import { gunzipSync } from 'zlib';
 import { z } from 'zod';
+
+import { hashFileOffThread } from './hashWorker.js';
 
 /**
  * Manifest schema version. Incremented when the manifest's shape changes
@@ -85,29 +84,16 @@ export function manifestSiblingFilename(tarballFilename: string): string {
 }
 
 /**
- * Stream-hash a file → `{ sha, size }`. Pure function over the filesystem.
- * `pipeline(createReadStream, hash)` keeps memory bounded regardless of
- * blob size — a 200 MB attachment hashes through a Node stream and never
- * lands in a single ArrayBuffer.
+ * Hash a file → `{ sha, size }`. HS-8728 — delegates to a worker thread
+ * (`hashFileOffThread`) so the SHA-256 CPU + file read run OFF the main event
+ * loop entirely; it falls back to an in-process streaming hash when no worker is
+ * available. Streaming on both paths keeps memory bounded regardless of blob
+ * size — a 200 MB attachment never lands in a single ArrayBuffer. (Pre-HS-8728
+ * this was the in-process streaming implementation, now `hashFileInProcess` in
+ * `hashWorker.ts`.)
  */
 export async function hashFile(path: string): Promise<{ sha: string; size: number }> {
-  const hash = createHash('sha256');
-  let size = 0;
-  await pipeline(
-    createReadStream(path),
-    async function* (source) {
-      for await (const chunk of source as AsyncIterable<Buffer>) {
-        size += chunk.length;
-        hash.update(chunk);
-        yield chunk;
-      }
-    },
-    // Sink: just consume the bytes; pipeline needs a writable end.
-    async function (source) {
-      for await (const _ of source) { /* drain */ }
-    },
-  );
-  return { sha: hash.digest('hex'), size };
+  return hashFileOffThread(path);
 }
 
 /**
