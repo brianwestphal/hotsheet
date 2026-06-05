@@ -11,6 +11,7 @@ import { readFileSettings } from './file-settings.js';
 import { gracefulShutdown, registerHttpServerForShutdown } from './lifecycle.js';
 import { getMimeType } from './mime-types.js';
 import { getProjectBySecret } from './projects.js';
+import { announcerRoutes } from './routes/announcer.js';
 import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
@@ -148,6 +149,10 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/api/projects', projectRoutes);
   // HS-7954 — git status chip. `GET /api/git/status` returns `GitStatus | null`.
   app.route('/api', gitRoutes);
+
+  // §78 Announcer (HS-8745) — `/api/announcer/*`: opt-in toggle, key storage,
+  // derived-summary generation, entries, and the listen cursor.
+  app.route('/api', announcerRoutes);
 
   // HS-8143 — Claude Code OTLP/HTTP receiver (§67.5). Three routes on
   // `/v1/{metrics,logs,traces}`. NOT under `/api/*` so the

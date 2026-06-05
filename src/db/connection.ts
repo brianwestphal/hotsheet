@@ -868,6 +868,23 @@ async function initSchema(db: PGlite): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_twi_secret_ticket ON ticket_work_intervals(project_secret, ticket_number);
     CREATE INDEX IF NOT EXISTS idx_twi_open ON ticket_work_intervals(project_secret, ticket_number, ended_at);
+
+    -- §78 Announcer (HS-8745). Persisted "announcement" entries: AI-generated
+    -- narrated summaries of work done in a window, played back as audio (and
+    -- later A/V). Per-project (lives in each project's own DB). covers_from/to
+    -- record which signal time-range the entry summarizes so the reel is
+    -- reconstructable; dismissed marks "mark uninteresting" (Phase 2).
+    CREATE TABLE IF NOT EXISTS announcements (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      covers_from TIMESTAMPTZ,
+      covers_to TIMESTAMPTZ,
+      title TEXT NOT NULL,
+      script TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      dismissed BOOLEAN NOT NULL DEFAULT false
+    );
+    CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(dismissed, position, id);
   `);
 
   // Migration: ensure all existing notes have stable persisted IDs

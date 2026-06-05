@@ -22,6 +22,7 @@
 // Resource modules are added here as each domain is migrated (HS-8522
 // sub-tickets). Today: git, tickets, feedbackDrafts, terminal.
 //
+import * as announcer from './announcer.js';
 import * as attachments from './attachments.js';
 import * as backups from './backups.js';
 import * as channel from './channel.js';
@@ -39,6 +40,7 @@ import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
 import * as tickets from './tickets.js';
 
+export * from './announcer.js';
 export * from './attachments.js';
 export * from './backups.js';
 export * from './channel.js';
@@ -70,6 +72,7 @@ export const apis = {
   ...projects,
   ...plugins,
   ...attachments,
+  ...announcer,
   ...settings,
   ...shell,
   ...commandLog,

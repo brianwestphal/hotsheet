@@ -1,3 +1,4 @@
+export * from './announcer.js';
 export * from './attachments.js';
 export * from './commandLog.js';
 export * from './notes.js';

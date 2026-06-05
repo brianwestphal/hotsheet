@@ -23,7 +23,7 @@ export async function addLogEntry(
   return result.rows[0];
 }
 
-function buildLogWhereClause(filters?: { eventType?: string; search?: string }): { where: string; params: (string | number)[]; nextParamIdx: number } {
+function buildLogWhereClause(filters?: { eventType?: string; search?: string; since?: string }): { where: string; params: (string | number)[]; nextParamIdx: number } {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
   let paramIdx = 1;
@@ -38,6 +38,12 @@ function buildLogWhereClause(filters?: { eventType?: string; search?: string }):
     params.push(`%${escaped}%`);
     paramIdx++;
   }
+  // HS-8744/HS-8745 — delta polling: only entries at or after a timestamp. Used
+  // by the §78 Announcer to collect "work since the last listen cursor."
+  if (filters?.since !== undefined && filters.since !== '') {
+    conditions.push(`created_at >= $${paramIdx++}`);
+    params.push(filters.since);
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   return { where, params, nextParamIdx: paramIdx };
@@ -48,6 +54,7 @@ export async function getLogEntries(options?: {
   offset?: number;
   eventType?: string;
   search?: string;
+  since?: string;
 }): Promise<CommandLogEntry[]> {
   const db = await getDb();
   const { where, params, nextParamIdx } = buildLogWhereClause(options);

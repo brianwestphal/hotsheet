@@ -476,6 +476,8 @@ All API calls require header `X-Hotsheet-Secret: <settings.secret>` for non-loca
 
 **Settings:** `GET|PUT /api/categories`, `GET /api/category-presets`, `GET /api/tags`, `GET|PATCH /api/settings` (DB, plugin-only), `GET|PATCH /api/file-settings`.
 
+**Announcer (§78 / HS-8745, Phase 1a):** `GET /api/announcer/status`; `POST /api/announcer/generate` (opt-in + key gated; collect work signals since the cursor → Anthropic summarize → persist); `GET /api/announcer/entries`; `POST /api/announcer/{cursor,enabled,clear}`; `PUT /api/announcer/key`; `POST /api/announcer/dismiss/:id`. Routes in `src/routes/announcer.ts` (mounted at `/api`); typed wire schemas + callers in `src/api/announcer.ts`. Engine: `src/announcer/collectSignals.ts` (`collectWorkSignals(since)` — notes + completions + §14 command-log via new `getLogEntries({ since })`), `src/announcer/summarize.ts` (`summarizeWork` — `@anthropic-ai/sdk` Messages API, structured JSON output, default `claude-opus-4-8` / `ANNOUNCER_MODEL`), `src/announcer/key.ts` (env → keychain). Persistence: `announcements` per-project table + `src/db/announcer.ts`. Settings keys `announcer_enabled` / `announcer_last_listened_at`; AI key in the keychain (§20). New dep `@anthropic-ai/sdk`. **Phase 1b** (client PIP/playback/TTS) = HS-8745b.
+
 **Dashboard/poll:** `GET /api/poll` (long-poll), `/api/stats`, `/api/dashboard`, `/api/worklist-info`, `/api/browse`, `/api/global-config`.
 
 **Channel / MCP:** `GET /api/channel/status`, `POST /api/channel/trigger`, `GET /api/channel/heartbeat`, `GET /api/channel/claude-check`, `GET /api/channel/permission`, `POST /api/channel/permission/{respond,dismiss,notify}`, `POST /api/channel/done`.
