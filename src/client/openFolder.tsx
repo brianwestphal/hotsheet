@@ -1,9 +1,17 @@
-import { browse, type BrowseResult, registerProject } from '../api/index.js';
+import { browse, type BrowseResult, type RegisteredProject,registerProject } from '../api/index.js';
 import { showErrorPopup } from './api.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER, ICON_FOLDER_OPEN } from './icons.js';
 import { refreshProjectTabs, switchProject } from './projectTabs.js';
 import { getTauriInvoke } from './tauriIntegration.js';
+
+/** HS-8663 — optional callback run after a folder is successfully registered
+ *  as a project, BEFORE the dialog switches to it. The drop-onto-"+"-button
+ *  flow uses this to copy/move the dragged tickets into the new project. Held
+ *  at module scope because the browser-overlay path resolves on a later
+ *  Select-button click, not inline. Cleared on every dialog open, on cancel,
+ *  and after it runs (so a plain "+" click or menu open never re-fires it). */
+let pendingOnRegistered: ((project: RegisteredProject) => void | Promise<void>) | null = null;
 
 function renderBreadcrumb(path: string) {
   const container = byId('open-folder-breadcrumb');
@@ -79,6 +87,12 @@ async function openSelectedFolder(path: string) {
     const project = await registerProject(hotsheetPath);
     byId('open-folder-overlay').style.display = 'none';
     await refreshProjectTabs();
+    // HS-8663 — run the post-register callback (e.g. transfer dropped tickets
+    // into the new project) BEFORE switching, so a "move" deletes from the
+    // still-active source project. One-shot: cleared whether it throws or not.
+    const cb = pendingOnRegistered;
+    pendingOnRegistered = null;
+    if (cb !== null) await cb(project);
     await switchProject(project);
   } catch (err) {
     if (err instanceof Error && err.message !== '') {
@@ -88,8 +102,13 @@ async function openSelectedFolder(path: string) {
   }
 }
 
-/** Open a folder using native Tauri dialog, or fall back to the browser directory browser. */
-export function showOpenFolderDialog() {
+/**
+ * Open a folder using the native Tauri dialog, or fall back to the in-app
+ * browser directory browser. `opts.onRegistered` (HS-8663) runs once after a
+ * folder is registered as a project and before the dialog switches to it.
+ */
+export function showOpenFolderDialog(opts: { onRegistered?: (project: RegisteredProject) => void | Promise<void> } = {}) {
+  pendingOnRegistered = opts.onRegistered ?? null;
   const invoke = getTauriInvoke();
   if (invoke) {
     void (async () => {
@@ -97,6 +116,9 @@ export function showOpenFolderDialog() {
         const selected = (await invoke('pick_folder')) as string | null;
         if (selected !== null && selected !== '') {
           await openSelectedFolder(selected);
+        } else {
+          // User canceled the native picker — drop the one-shot callback.
+          pendingOnRegistered = null;
         }
       } catch {
         // Fallback to browser dialog
@@ -115,12 +137,17 @@ function showBrowserDialog() {
 }
 
 export function bindOpenFolder() {
-  // Dialog close
+  // Dialog close — canceling drops any pending HS-8663 transfer callback so a
+  // later plain Open Folder can't inherit it.
   byIdOrNull('open-folder-close')?.addEventListener('click', () => {
+    pendingOnRegistered = null;
     byId('open-folder-overlay').style.display = 'none';
   });
   byIdOrNull('open-folder-overlay')?.addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) (e.currentTarget as HTMLElement).style.display = 'none';
+    if (e.target === e.currentTarget) {
+      pendingOnRegistered = null;
+      (e.currentTarget as HTMLElement).style.display = 'none';
+    }
   });
 
   // Select button

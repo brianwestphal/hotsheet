@@ -24,6 +24,7 @@ import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
+import { bindPasteAttachmentListener } from './pasteAttachments.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
@@ -338,6 +339,7 @@ async function init() {
     void initChannel();
 
     bindFileDropListeners();
+    bindPasteAttachmentListener();
     initDrawerAndDashboard();
 
     // Auto-focus the draft input on load.

@@ -357,7 +357,10 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       setDraggedTicketIds([ticket.id]);
     }
     e.dataTransfer!.setData('text/plain', JSON.stringify(draggedTicketIds));
-    e.dataTransfer!.effectAllowed = 'move';
+    // HS-8663 — `copyMove` (not `move`) so a project-tab drop can offer copy
+    // (default) as well as move (Alt). Existing move targets (column status
+    // drop) set `dropEffect = 'move'` explicitly, so their cursor is unchanged.
+    e.dataTransfer!.effectAllowed = 'copyMove';
   });
 
   // Row-level click: select ticket and open detail panel (HS-2147)

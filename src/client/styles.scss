@@ -175,8 +175,46 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
     opacity: 0.4;
   }
 
+  // HS-8663 — lit while a ticket drag hovers this tab (copy/move target).
+  &.drag-over {
+    border-color: var(--accent, #3b82f6);
+    background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+    color: var(--text);
+  }
+
   .project-tab-name {
     line-height: 1;
+  }
+}
+
+// HS-8664 — add-project "+" button at the end of the tab strip. Mirrors the
+// drawer's add-terminal button (`.drawer-tab-add`) but pill-shaped to match
+// the project tabs it sits beside.
+.project-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+  &:hover {
+    color: var(--accent);
+    border-color: var(--border);
+  }
+
+  // HS-8663 — highlighted while a ticket drag hovers it (drop-to-new-project).
+  &.drag-over {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
   }
 }
 

@@ -15,7 +15,8 @@ The interface is divided into:
 
 ### 4.2 Project Tabs
 
-- A tab bar appears above the main content when 2 or more projects are registered in the instance. Hidden for a single project.
+- A tab bar appears above the main content whenever at least one project is registered (HS-8664 — always-tabbed, even for a single project; the plain `<h1>` title only shows in the genuinely-empty no-projects state). Each registered project is a pill-shaped tab.
+- An "add project" **"+" button** sits at the end of the tab strip (HS-8664). It is styled to match the bottom drawer's add-terminal "+" button (Lucide `plus` glyph). Clicking it opens the same folder picker the "Open Folder" menu uses (`showOpenFolderDialog` — native Tauri `pick_folder` dialog, or the in-app `#open-folder-overlay` browser fallback), registering the chosen folder as a new project.
 - Clicking a tab name switches the active project, reloading all data (tickets, settings, views).
 - Each project has independent settings (detail position, sort, etc.) that are restored on switch.
 - The active sidebar view (All, Up Next, category filter, custom view, etc.) is remembered per project and restored on switch. If a saved view references a custom view that doesn't exist in the target project, it falls back to "All".

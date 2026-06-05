@@ -8,8 +8,10 @@
  *    list helper — DOM identity preserved for surviving rows.
  * 3. Active-secret signal flips the `.active` class on existing rows
  *    without re-mounting them.
- * 4. Single ↔ multi transition tears down the bindList cleanly + paints
- *    the h1 header.
+ * 4. HS-8664 — the strip is always tabbed (even one project is a tab);
+ *    only the genuinely-empty project list tears the bindList down and
+ *    paints the plain "Hot Sheet" h1. A trailing "+" add-project button
+ *    survives every reconcile.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -144,7 +146,7 @@ describe('projectTabs trial migration (HS-8235)', () => {
     expect(rowB.classList.contains('active')).toBe(true);
   });
 
-  it('multi → single transition tears down the bindList + paints the h1', () => {
+  it('multi → single keeps the tab strip (HS-8664 always-tabbed) — no h1', () => {
     makeTitleArea();
     _setProjectsForTesting([A, B], A.secret);
     _renderTabsForTesting();
@@ -153,17 +155,69 @@ describe('projectTabs trial migration (HS-8235)', () => {
     _setProjectsForTesting([A], A.secret);
     _renderTabsForTesting();
 
+    // HS-8664 — a single project still renders as a tab (not an h1), and the
+    // bindList strip stays mounted. The lone tab is shown active.
+    expect(document.querySelector('.project-tabs-inner')).not.toBeNull();
+    expect(document.querySelector('#app-title-area h1')).toBeNull();
+    expect(tabSecrets()).toEqual(['sec-a']);
+    expect(activeTabSecret()).toBe('sec-a');
+  });
+
+  it('tabbed → empty transition tears down the bindList + paints the h1', () => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B], A.secret);
+    _renderTabsForTesting();
+    expect(document.querySelector('.project-tabs-inner')).not.toBeNull();
+
+    // Only the genuinely-empty project list falls back to the plain h1.
+    _setProjectsForTesting([], null);
+    _renderTabsForTesting();
+
     expect(document.querySelector('.project-tabs-inner')).toBeNull();
     const h1 = document.querySelector<HTMLElement>('#app-title-area h1');
     expect(h1).not.toBeNull();
-    expect(h1?.textContent).toBe('A');
+    expect(h1?.textContent).toBe('Hot Sheet');
+  });
+
+  it('single project renders the tab strip + add-project button (HS-8664)', () => {
+    makeTitleArea();
+    _setProjectsForTesting([A], A.secret);
+    _renderTabsForTesting();
+
+    expect(document.querySelector('#app-title-area h1')).toBeNull();
+    expect(tabSecrets()).toEqual(['sec-a']);
+    const addBtn = document.querySelector<HTMLElement>('#add-project-btn');
+    expect(addBtn).not.toBeNull();
+    expect(addBtn?.classList.contains('project-tab-add')).toBe(true);
+    // The button is the LAST child of the strip, after the tab row.
+    const inner = document.querySelector<HTMLElement>('.project-tabs-inner');
+    expect(inner?.lastElementChild).toBe(addBtn);
+  });
+
+  it('add-project button survives reconcile when projects are added (HS-8664)', () => {
+    makeTitleArea();
+    _setProjectsForTesting([A], A.secret);
+    _renderTabsForTesting();
+    const addBtn = document.querySelector<HTMLElement>('#add-project-btn');
+
+    _setProjectsForTesting([A, B, C], A.secret);
+    _renderTabsForTesting();
+
+    // Same button instance, still last, still exactly one of them.
+    expect(document.querySelectorAll('#add-project-btn').length).toBe(1);
+    expect(document.querySelector('#add-project-btn')).toBe(addBtn);
+    const inner = document.querySelector<HTMLElement>('.project-tabs-inner');
+    expect(inner?.lastElementChild).toBe(addBtn);
+    expect(tabSecrets()).toEqual(['sec-a', 'sec-b', 'sec-c']);
   });
 
   it('single → multi transition wires the bindList + mounts every project', () => {
     makeTitleArea();
     _setProjectsForTesting([A], A.secret);
     _renderTabsForTesting();
-    expect(document.querySelector('#app-title-area h1')).not.toBeNull();
+    // HS-8664 — even one project is now a tab strip, not an h1.
+    expect(document.querySelector('#app-title-area h1')).toBeNull();
+    expect(tabSecrets()).toEqual(['sec-a']);
 
     _setProjectsForTesting([A, B, C], A.secret);
     _renderTabsForTesting();

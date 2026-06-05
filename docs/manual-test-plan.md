@@ -26,9 +26,23 @@ This document lists features that require manual verification before each releas
 - [ ] Drop one or more files — uploads sequentially, attachments list refreshes
 - [ ] Outline disappears on drag leave
 
+### Clipboard Paste Attachments (HS-8662) — needs a real OS clipboard
+- [ ] Copy an image (e.g. a screenshot to clipboard) with **1 ticket selected**, press Cmd/Ctrl+V → the image attaches to that ticket; toast "Attached 1 file".
+- [ ] Same with **no ticket selected** → a new "Attachment" ticket is created with the image attached (multiple files → titled "Attachments").
+- [ ] Same with **2+ tickets selected** → nothing happens except a toast "Pasting attachments to multiple tickets at once isn't supported".
+- [ ] Paste an image while the **new-ticket draft input is focused** → still becomes an attachment (a text field can't hold a file).
+- [ ] Paste **plain text** (no files) while a text field is focused → normal text paste, NO attachment created.
+- [ ] Copy a file in the OS file manager and paste into Hot Sheet → attaches like an image.
+
 ### Project Tabs
 - [ ] Drag a tab to reorder — drop indicator shows insertion point
 - [ ] Release — tab order persists across reload
+- [ ] HS-8664: Even with a single project registered, the project tab strip shows (not a plain title) with a trailing "+" button; clicking "+" opens the folder picker; picking a folder registers + switches to a new project.
+- [ ] HS-8663: Select one or more tickets, drag onto **another** project's tab — the hovered tab highlights (accent), the cursor shows a **copy** (+) badge; release → toast "Copied N ticket(s) to <project>", tickets appear in that project, originals remain.
+- [ ] HS-8663 move: Repeat holding **Option/Alt** — cursor shows a **move** badge; release → toast "Moved N…", originals disappear from the source project (in Trash) and appear in the target.
+- [ ] HS-8663 no-op: Drag tickets onto the source project's **own** tab — no highlight, nothing happens.
+- [ ] HS-8663 "+"-drop: Drag tickets onto the "+" button → folder picker opens; pick a folder → tickets copied/moved into the new project and the app switches to it. **Cancel** the picker → nothing changes (no new project, originals untouched).
+- [ ] HS-8663: Attachments are NOT yet carried across projects (known gap) — verify a moved ticket's attachments are absent in the target (documents current behavior until the follow-up ships).
 - [ ] HS-8542: Click the sidebar dashboard widget to open the per-project analytics dashboard; then click the active project's own tab → dashboard dismisses, regular ticket view returns (the previously-active view's items are visible, sidebar item gets the `.active` class)
 - [ ] HS-8626: Open the analytics dashboard (sidebar widget) → header controls (search box, list/column toggle, sort dropdown, detail-position toggle) are hidden. Then click the cross-project-stats header button (requires telemetry data on some project so the button shows) → cross-project page takes over. Close it (second click on the button / project-tab click) → back in the normal ticket view, **all four header controls are visible again** (pre-fix the analytics dashboard's inline `display:none` survived the cross-project takeover and left them missing).
 

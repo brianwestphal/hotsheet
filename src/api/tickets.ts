@@ -95,9 +95,10 @@ export async function getTicketPrefixes(): Promise<string[]> {
   return r.prefixes;
 }
 
-/** POST `/tickets` → create a ticket. */
-export async function createTicket(req: CreateTicketReq): Promise<z.infer<typeof TicketSchema>> {
-  return apiCall(TicketSchema, '/tickets', { method: 'POST', body: req });
+/** POST `/tickets` → create a ticket. `opts.secret` routes cross-project
+ *  (HS-8663 — drag-copy/move a ticket into another project's tab). */
+export async function createTicket(req: CreateTicketReq, opts: Pick<ApiCallOpts, 'secret'> = {}): Promise<z.infer<typeof TicketSchema>> {
+  return apiCall(TicketSchema, '/tickets', { method: 'POST', body: req, secret: opts.secret });
 }
 
 /** GET `/tickets/by-number/:number` → look up a ticket by its `HS-NNNN` number. */
@@ -145,9 +146,9 @@ export async function deleteTicket(id: number, opts: Pick<ApiCallOpts, 'secret'>
  *  HS-8629's migration mistakenly validated the response against
  *  `NotesArraySchema`, which threw `response shape mismatch` at runtime and
  *  tripped the strict-error e2e gate (detail.spec). */
-export async function putTicketNotesBulk(id: number, notes: string): Promise<{ ok: true }> {
+export async function putTicketNotesBulk(id: number, notes: string, opts: Pick<ApiCallOpts, 'secret'> = {}): Promise<{ ok: true }> {
   const body: NotesBulkReq = { notes };
-  return apiCall(OkResponseSchema, `/tickets/${id}/notes-bulk`, { method: 'PUT', body });
+  return apiCall(OkResponseSchema, `/tickets/${id}/notes-bulk`, { method: 'PUT', body, secret: opts.secret });
 }
 
 /** PATCH `/tickets/:id/notes/:noteId` → edit a single note's text. */

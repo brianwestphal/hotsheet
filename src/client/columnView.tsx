@@ -528,7 +528,9 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
       setDraggedTicketIds([ticket.id]);
     }
     e.dataTransfer!.setData('text/plain', JSON.stringify(draggedTicketIds));
-    e.dataTransfer!.effectAllowed = 'move';
+    // HS-8663 — `copyMove` so a project-tab drop can copy (default) or move
+    // (Alt); the in-column status-drop target sets `dropEffect = 'move'`.
+    e.dataTransfer!.effectAllowed = 'copyMove';
   });
   card.addEventListener('dragend', () => { setDraggedTicketIds([]); });
 

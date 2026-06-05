@@ -234,6 +234,8 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 73. `73-snapshot-protection.md` — NodeFS live + atomic snapshot + auto-restore (shipped)
 74. `74-clear-telemetry-data.md` — manual "Clear telemetry data" button + confirm
 75. `75-background-work-scheduler.md` — load resilience: off-loop execution + central scheduler
+76. `76-cross-project-ticket-drag.md` — drag tickets onto project tabs / "+" to copy (or Option-move) across projects
+77. `77-paste-attachments.md` — paste files/images from the clipboard to create attachments
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source).
 

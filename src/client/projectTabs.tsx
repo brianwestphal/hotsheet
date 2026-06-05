@@ -10,7 +10,10 @@ import { confirmCloseProjects } from './quitConfirm.js';
 import { computed, effect } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import type { ProjectInfo } from './state.js';
-import { clearPerProjectSessionState, getActiveProject, setActiveProject } from './state.js';
+import { clearPerProjectSessionState, getActiveProject, setActiveProject, state } from './state.js';
+import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
+import { transferTicketsToProject } from './ticketTransfer.js';
+import { showToast } from './toast.js';
 
 /** Callback to reload all app data after switching projects. Set by app.tsx during init. */
 let reloadCallback: (() => Promise<void>) | null = null;
@@ -107,6 +110,13 @@ const projectsListSignal = computed(() => projectsStore.state.value.projects);
  * Must be called before any other API calls so activeProject is set.
  */
 export async function initProjectTabs(): Promise<void> {
+  // HS-8663 — clear any lingering ticket-drop highlight if a drag ends without
+  // dropping on a tab / the "+" button (e.g. released over empty space). Bound
+  // once; `dragend` fires on the drag source but bubbles to the document.
+  if (!ticketDragCleanupBound) {
+    ticketDragCleanupBound = true;
+    document.addEventListener('dragend', () => setTicketDropTarget(null));
+  }
   try {
     // HS-8085 — first call before `setActiveProject`, so the api helper
     // emits a plain GET with no `?project=` query (no active project to
@@ -441,6 +451,69 @@ function handleDragStart(e: DragEvent, project: ProjectInfo) {
   (e.target as HTMLElement).classList.add('dragging');
 }
 
+// --- Ticket drag onto a project tab / "+" button (HS-8663) ---
+
+/** Whether the in-flight drag carries tickets (rather than a tab reorder).
+ *  A tab reorder sets `dragSecret` on `dragstart`; a ticket drag leaves it
+ *  null and populates `draggedTicketIds` (set by the row / card `dragstart`
+ *  in `ticketRow.tsx` / `columnView.tsx`). */
+function isTicketDrag(): boolean {
+  return dragSecret === null && draggedTicketIds.length > 0;
+}
+
+/** The tab / "+" button currently lit as a ticket-drop target. Single-slot
+ *  so the highlight follows the cursor between targets without flicker. */
+let ticketDropTargetEl: HTMLElement | null = null;
+/** Guards the one-time document `dragend` highlight-cleanup binding. */
+let ticketDragCleanupBound = false;
+function setTicketDropTarget(el: HTMLElement | null): void {
+  if (ticketDropTargetEl === el) return;
+  ticketDropTargetEl?.classList.remove('drag-over');
+  el?.classList.add('drag-over');
+  ticketDropTargetEl = el;
+}
+
+/** Shared `dragleave` for tabs + the "+" button: clear the highlight only
+ *  when the cursor actually leaves the element (not when crossing into one
+ *  of its own children, which also fires `dragleave`). */
+function handleTicketDragLeave(e: DragEvent): void {
+  if (!isTicketDrag()) return;
+  const el = e.currentTarget as HTMLElement;
+  const related = e.relatedTarget as Node | null;
+  if ((related === null || !el.contains(related)) && ticketDropTargetEl === el) {
+    setTicketDropTarget(null);
+  }
+}
+
+/** Copy / move the dragged tickets into `target` and surface the result.
+ *  Default = copy; Alt/Option held = move (delete the source originals). */
+async function dropTicketsOntoProject(
+  ids: readonly number[],
+  target: ProjectInfo,
+  move: boolean,
+  sourceSecret: string | undefined,
+): Promise<void> {
+  const tickets = state.tickets.filter(t => ids.includes(t.id));
+  if (tickets.length === 0) return;
+  try {
+    await transferTicketsToProject(tickets, target.secret, { move, sourceSecret });
+  } catch (err) {
+    console.error('ticket transfer failed:', err);
+    showToast('Failed to transfer tickets', { variant: 'warning' });
+    return;
+  }
+  const n = tickets.length;
+  showToast(`${move ? 'Moved' : 'Copied'} ${n} ticket${n === 1 ? '' : 's'} to ${target.name}`, { variant: 'success' });
+  if (move) {
+    // The originals were soft-deleted from the (still-active) source project —
+    // reload so they drop out of the visible list and clear their selection.
+    const { loadTickets, renderTicketList } = await import('./ticketList.js');
+    state.selectedIds.clear();
+    await loadTickets();
+    renderTicketList();
+  }
+}
+
 /** HS-8432 — translate `(hovered tab, cursor side)` into a single gap
  *  index in the visible tab strip. The strip is the source of truth so
  *  every cursor position over a given gap (whether by hovering the
@@ -458,6 +531,20 @@ function computeInsertIdx(el: HTMLElement, clientX: number, tabs: HTMLElement[])
 }
 
 function handleDragOver(e: DragEvent) {
+  // HS-8663 — ticket drag onto a project tab: copy (default) / move (Alt).
+  if (isTicketDrag()) {
+    const tab = e.currentTarget as HTMLElement;
+    // Dropping onto the source project's own tab is a no-op — don't light it
+    // up or accept the drop.
+    if (tab.dataset.secret === getActiveProject()?.secret) {
+      if (ticketDropTargetEl === tab) setTicketDropTarget(null);
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = e.altKey ? 'move' : 'copy';
+    setTicketDropTarget(tab);
+    return;
+  }
   e.preventDefault();
   e.dataTransfer!.dropEffect = 'move';
   const el = e.currentTarget as HTMLElement;
@@ -474,7 +561,20 @@ function handleDragOver(e: DragEvent) {
   positionIndicator(tabs, insertIdx);
 }
 
-function handleDrop(e: DragEvent, _targetProject: ProjectInfo) {
+function handleDrop(e: DragEvent, targetProject: ProjectInfo) {
+  // HS-8663 — ticket drop onto a project tab (copy / move across projects).
+  if (isTicketDrag()) {
+    e.preventDefault();
+    setTicketDropTarget(null);
+    const sourceSecret = getActiveProject()?.secret;
+    const ids = [...draggedTicketIds];
+    setDraggedTicketIds([]);
+    // No-op when dropped onto the source project's own tab.
+    if (targetProject.secret === sourceSecret) return;
+    void dropTicketsOntoProject(ids, targetProject, e.altKey, sourceSecret);
+    return;
+  }
+
   e.preventDefault();
   const insertIdx = dropInsertIdx;
   hideIndicator();
@@ -678,6 +778,62 @@ function setupScrollObserver() {
   resizeObserver.observe(container);
 }
 
+// --- Add-project button (HS-8664) ---
+
+// Lucide `plus` glyph — mirrors the drawer's add-terminal button
+// (`#drawer-add-terminal-btn` in `pages.tsx`) so the two "add" affordances
+// read as the same concept.
+const ADD_PROJECT_ICON: SafeHtml =
+  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14" /><path d="M12 5v14" /></svg>;
+
+/** HS-8664 — build the "+" button that lives at the end of the project tab
+ *  strip. Clicking it opens the existing folder picker to register / create
+ *  a new project. The `openFolder` module imports back from this one
+ *  (`refreshProjectTabs` / `switchProject`), so we lazy-import it inside the
+ *  handler to avoid a static import cycle. */
+function createAddProjectButton(): HTMLElement {
+  const btn = toElement(
+    <button className="project-tab-add" id="add-project-btn" title="Add project">
+      {ADD_PROJECT_ICON}
+    </button>,
+  );
+  btn.addEventListener('click', () => {
+    void import('./openFolder.js').then(m => { m.showOpenFolderDialog(); });
+  });
+
+  // HS-8663 — dropping tickets onto the "+" button opens the folder picker and,
+  // on register, copies / moves the dragged tickets into the new project.
+  btn.addEventListener('dragover', (e) => {
+    if (!isTicketDrag()) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = e.altKey ? 'move' : 'copy';
+    setTicketDropTarget(btn);
+  });
+  btn.addEventListener('dragleave', (e) => handleTicketDragLeave(e));
+  btn.addEventListener('drop', (e) => {
+    if (!isTicketDrag()) return;
+    e.preventDefault();
+    setTicketDropTarget(null);
+    const ids = [...draggedTicketIds];
+    const move = e.altKey;
+    const sourceSecret = getActiveProject()?.secret;
+    setDraggedTicketIds([]);
+    const tickets = state.tickets.filter(t => ids.includes(t.id));
+    if (tickets.length === 0) return;
+    void import('./openFolder.js').then(m => {
+      m.showOpenFolderDialog({
+        onRegistered: async (project) => {
+          await transferTicketsToProject(tickets, project.secret, { move, sourceSecret });
+          const n = tickets.length;
+          showToast(`${move ? 'Moved' : 'Copied'} ${n} ticket${n === 1 ? '' : 's'} to ${project.name}`, { variant: 'success' });
+        },
+      });
+    });
+  });
+
+  return btn;
+}
+
 // --- Render ---
 
 /** **HS-8235** — the multi-tab strip is wired through `bindList` against
@@ -798,6 +954,7 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
   row.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, p));
   row.addEventListener('dragstart', (e) => handleDragStart(e, p));
   row.addEventListener('dragover', (e) => handleDragOver(e));
+  row.addEventListener('dragleave', (e) => handleTicketDragLeave(e));
   row.addEventListener('drop', (e) => handleDrop(e, p));
   row.addEventListener('dragend', (e) => handleDragEnd(e));
 
@@ -808,27 +965,27 @@ function renderTabs() {
   const titleArea = byIdOrNull('app-title-area');
   if (!titleArea) return;
 
-  if (projectsStore.state.value.projects.length < 2) {
-    // Single project — show the project name as h1. Imperative because
-    // the bindList path doesn't apply (one row, no keyed reconcile to
-    // do); also tear down any previous multi-tab state so the inner
-    // container's per-row effects don't keep firing against detached
-    // nodes if we just transitioned multi → single.
+  if (projectsStore.state.value.projects.length < 1) {
+    // No projects registered (only the initial-empty edge case — the
+    // launching project always exists in practice, and `removeProject`
+    // refuses to drop the last tab). Show the plain "Hot Sheet" h1 and
+    // tear down any previous tab strip so detached per-row effects stop
+    // firing.
     tearDownMultiTabState();
-    const name = projectsStore.state.value.projects.length === 1 ? projectsStore.state.value.projects[0].name : 'Hot Sheet';
     titleArea.innerHTML = '';
-    titleArea.appendChild(toElement(<h1>{name}</h1>));
+    titleArea.appendChild(toElement(<h1>Hot Sheet</h1>));
     titleArea.classList.remove('has-tabs');
     return;
   }
 
-  // Multi-tab path. Idempotent — set up the bindList exactly once per
-  // single→multi transition, then return early on every subsequent
-  // `renderTabs()` call. The bindList itself drives reconciliation off
-  // every `projectsStore.state.value.projects = ...` write; we don't need the
-  // pre-HS-8235 fingerprint short-circuit because the bindList only
-  // mutates the DOM when keys actually change, and per-row effects
-  // own their own attribute updates.
+  // Tabbed path. HS-8664 — always render the tab strip, even with a single
+  // project, plus a trailing "+" add-project button. Idempotent: set up the
+  // bindList exactly once per empty→tabbed transition, then return early on
+  // every subsequent `renderTabs()` call. The bindList drives reconciliation
+  // off every `projectsStore.state.value.projects = ...` write; we don't need
+  // the pre-HS-8235 fingerprint short-circuit because the bindList only
+  // mutates the DOM when keys actually change, and per-row effects own their
+  // own attribute updates.
   if (multiTabState === null || !multiTabState.parent.isConnected) {
     if (multiTabState !== null) tearDownMultiTabState();
     titleArea.classList.add('has-tabs');
@@ -836,6 +993,11 @@ function renderTabs() {
     const inner = toElement(<div className="project-tabs-inner"></div>);
     titleArea.appendChild(inner);
     const dispose = bindList(inner, projectsListSignal, (p) => p.secret, renderTabRow);
+    // HS-8664 — append the add-project button as the LAST child of the
+    // strip. `bindList` only positions its keyed tab rows at indices
+    // [0, tabCount) and only removes keys it owns, so this trailing
+    // non-keyed button survives every reconcile and stays after the tabs.
+    inner.appendChild(createAddProjectButton());
     multiTabState = { dispose, parent: inner };
   }
 

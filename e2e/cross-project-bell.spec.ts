@@ -54,9 +54,9 @@ test.describe('Cross-project bell indicator', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
-    // Single-project sessions skip rendering .project-tabs-inner, so the
-    // handler has nothing to mark. Inject a standalone .project-tab for
-    // both a fake "other" project (should gain .has-bell) and a fake
+    // A single-project session renders only its own active tab (HS-8664),
+    // which the suppress rule keeps bell-free. Inject standalone .project-tab
+    // nodes for a fake "other" project (should gain .has-bell) and a fake
     // "active" project (should NOT gain .has-bell, via the suppress rule).
     // updateProjectBellIndicators iterates document.querySelectorAll so it
     // doesn't require the .project-tabs-inner wrapper.
