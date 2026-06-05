@@ -8,13 +8,23 @@
  * (`runWithDataDir`); only `dataDir` (for the markdown-sync notify) and
  * `projectSecret` (for usage accounting) are threaded in explicitly.
  */
-import { getLatestCoversTo, insertAnnouncements } from '../db/announcer.js';
+import { getActiveAnnouncements, getLatestCoversTo, insertAnnouncements } from '../db/announcer.js';
 import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { getSettings } from '../db/queries.js';
 import { notifyMutation } from '../routes/notify.js';
 import { collectWorkSignals } from './collectSignals.js';
+import { getDismissedTopics } from './dismissedTopics.js';
 import { DEFAULT_ANNOUNCER_MODEL } from './models.js';
-import { summarizeWork } from './summarize.js';
+import { type Compression, summarizeWork } from './summarize.js';
+
+/** Above this many unplayed (active) entries the live generator compresses
+ *  harder so narration can catch up (HS-8768). */
+export const BACKLOG_HIGH_THRESHOLD = 6;
+
+/** Map the current unplayed backlog to a summarization altitude. */
+export function backlogCompressionLevel(activeCount: number): Compression {
+  return activeCount >= BACKLOG_HIGH_THRESHOLD ? 'high' : 'normal';
+}
 
 export const ANNOUNCER_ENABLED_KEY = 'announcer_enabled';
 export const ANNOUNCER_CURSOR_KEY = 'announcer_last_listened_at';
@@ -43,6 +53,9 @@ export interface GenerateOnceArgs {
   model: string;
   /** Override the "since" cursor; default = `effectiveSince()`. */
   since?: string;
+  /** Last gate before the (paid) summarize call — return false to skip it
+   *  (HS-8770 live-mode call budget). Checked only when there ARE signals. */
+  canSummarize?: () => boolean;
 }
 
 /**
@@ -57,7 +70,19 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
   const signals = await collectWorkSignals(since);
   if (signals.count === 0) return { rows: [], generatedCount: 0 };
 
-  const result = await summarizeWork(signals.material, { apiKey: args.apiKey, model: args.model });
+  // HS-8770 — the live-mode call budget gates the paid summarize; over budget,
+  // skip and let the work roll into the next (larger) batch.
+  if (args.canSummarize !== undefined && !args.canSummarize()) return { rows: [], generatedCount: 0 };
+
+  // HS-8768 — compress harder when the unplayed backlog is large; HS-8769 —
+  // omit topics the listener has marked uninteresting.
+  const [backlog, dismissedTopics] = await Promise.all([getActiveAnnouncements(), getDismissedTopics()]);
+  const result = await summarizeWork(signals.material, {
+    apiKey: args.apiKey,
+    model: args.model,
+    compression: backlogCompressionLevel(backlog.length),
+    dismissedTopics,
+  });
 
   if (result.usage !== null) {
     await recordAnnouncerUsage({

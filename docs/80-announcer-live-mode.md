@@ -1,10 +1,11 @@
 # 80. Announcer Live Mode
 
-**Status: Phase 2a (server generator) + 2b (client consumer) SHIPPED (HS-8750 +
-HS-8767, 2026-06-05).** The producer + consumer of the §78.4.1 live-mode design
-— near-live narration of work *as it happens*. The richer policies are deferred
-follow-ups (see §80.6). This doc captures the shipped architecture; the full
-design rationale lives in [78-announcer.md](78-announcer.md) §78.4.1.
+**Status: SHIPPED end-to-end (2026-06-05).** Server generator (HS-8750 2a) +
+client consumer (HS-8767 2b) + all four refinements — adaptive compression
+(HS-8768), learn-from-skips (HS-8769), cost budget + disclosure (HS-8770), and
+the hybrid `hotsheet_announce` MCP tool (HS-8771). Near-live narration of work
+*as it happens*. This doc captures the shipped architecture; the full design
+rationale lives in [78-announcer.md](78-announcer.md) §78.4.1.
 
 ## 80.1 Premise
 
@@ -112,15 +113,53 @@ stop drops lease, hidden-window pause, multi-project), `e2e/announcer.spec.ts`
 (Live toggle → lease + presence + skip-to-live shown → a new generated entry is
 tailed into the player → toggle off drops the lease).
 
-## 80.6 Deferred follow-ups
+## 80.5.2 Adaptive compression + learn-from-skips (HS-8768 / HS-8769, shipped)
 
-Tracked as sibling tickets, all building on the 2a generator + 2b consumer:
+Two generator-prompt refinements, applied by `generateAnnouncementsOnce` before
+each summarize:
 
-- **Adaptive backlog compression** — raise summarization altitude when the
-  unplayed backlog grows (HS-8768).
-- **"Mark uninteresting" → learn-from-skips** — per-project dismissed-topics list
-  injected into the generator prompt (HS-8769).
-- **Cost/rate budget + spend & privacy disclosure** — per-minute/session call
-  budget; live-mode-specific disclosure (HS-8770).
-- **Hybrid generation: `hotsheet_announce` MCP tool** — curated, queue-preempting
-  highlights layered on the derived baseline (HS-8771).
+- **Backlog compression (HS-8768).** When the unplayed backlog (active,
+  undismissed `announcements`) crosses `BACKLOG_HIGH_THRESHOLD` (6), the
+  generator raises altitude — `buildSystemPrompt({compression: 'high'})` tells
+  the model to produce at most 1–2 maximally-merged entries so narration catches
+  up instead of falling further behind. `backlogCompressionLevel(count)` is the
+  pure threshold map.
+- **Learn-from-skips (HS-8769).** Skipping an entry records its title in the
+  per-project `announcer_dismissed_topics` list (`src/announcer/dismissedTopics.ts`,
+  trimmed / case-insensitively deduped / capped to 30). That list is injected
+  into every prompt (`buildSystemPrompt({dismissedTopics})` → "OMIT anything
+  similar") so future batches drop it — which also shrinks the backlog. The list
+  is editable from Settings → Experimental → Announcer (`GET`/`PUT
+  /api/announcer/dismissed-topics`).
+
+## 80.5.3 Cost/rate budget + disclosure (HS-8770, shipped)
+
+- **Call budget.** `src/announcer/callBudget.ts` caps actual summarize calls to
+  `LIVE_MAX_CALLS_PER_WINDOW` (6) per rolling `LIVE_WINDOW_MS` (60 s) **per
+  project**. The live loop passes `canSummarize: () => tryConsumeCall(secret,
+  now)` into `generateAnnouncementsOnce`, which gates the paid call *after*
+  confirming there are signals. Over budget → skip; the cursor doesn't advance,
+  so the deferred work rolls into the next (larger, more-compressed §80.5.2)
+  batch rather than being lost. The manual Listen path passes no budget.
+- **Spend + privacy disclosure.** Enabling Live for the first time shows a
+  one-time `confirmDialog` ("…continuously sends this project's notes + activity
+  to Anthropic using your API key…"); declining aborts. Remembered in
+  `localStorage` (`hotsheet:announcer-live-disclosed`). Running spend is already
+  visible via the §70/§71 Announcer cost surfaces (HS-8766).
+
+## 80.5.4 Hybrid generation: `hotsheet_announce` MCP tool (HS-8771, shipped)
+
+A 15th MCP tool (`src/channel.tools.ts`, `CHANNEL_VERSION` → 10) lets the working
+agent push a **curated** highlight at a notable milestone, layered on the derived
+baseline: `hotsheet_announce({ title, highlight })` → `POST
+/api/announcer/announce`, which inserts a `announcements` row directly (no AI
+call) so it appears with low latency. No-op when the project hasn't enabled the
+Announcer (so it can't create entries the user never sees). The live consumer
+(§80.5.1) tails it like any other entry.
+
+## 80.6 Live mode — complete
+
+All of HS-8750 (2a) + HS-8767 (2b) + HS-8768/8769/8770/8771 (refinements +
+hybrid) shipped 2026-06-05. The remaining design-only Announcer work is the
+A/V visuals (§78.5 tier 2/3 — code-diffs, charts) and a resizable PIP, tracked
+under HS-8749 (§78.5) and the Phase 3/4 follow-ups.

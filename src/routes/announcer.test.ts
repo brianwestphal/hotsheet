@@ -142,6 +142,37 @@ describe('announcer routes (HS-8745)', () => {
     expect((await post('/api/announcer/live', { nope: 1 })).status).toBe(400);
   });
 
+  // HS-8771 — the curated announce endpoint (hotsheet_announce MCP tool).
+  it('announce inserts a curated entry when enabled, no-ops when disabled', async () => {
+    await post('/api/announcer/enabled', { enabled: false });
+    expect(((await (await post('/api/announcer/announce', { title: 'T', highlight: 'H' })).json()) as { inserted: number }).inserted).toBe(0);
+
+    await post('/api/announcer/enabled', { enabled: true });
+    expect(((await (await post('/api/announcer/announce', { title: 'Shipped', highlight: 'It shipped.' })).json()) as { inserted: number }).inserted).toBe(1);
+    const entries = await (await app.request('/api/announcer/entries')).json() as { entries: { title: string }[] };
+    expect(entries.entries.some(e => e.title === 'Shipped')).toBe(true);
+
+    expect((await post('/api/announcer/announce', { title: 'x' })).status).toBe(400); // missing highlight
+  });
+
+  // HS-8769 — skipping an entry records its title; the list is editable.
+  it('dismiss records the title as a dismissed topic; topics get/put', async () => {
+    const ins = await (await getDb()).query<{ id: number }>(
+      `INSERT INTO announcements (title, script, position) VALUES ('Noisy lint run', 'x', 1) RETURNING id`,
+    );
+    expect((await post(`/api/announcer/dismiss/${String(ins.rows[0].id)}`)).status).toBe(200);
+
+    const got = await (await app.request('/api/announcer/dismissed-topics')).json() as { topics: string[] };
+    expect(got.topics).toContain('Noisy lint run');
+
+    // PUT replaces + normalizes (dedupe/blank-drop).
+    const putRes = await app.request('/api/announcer/dismissed-topics', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topics: ['only this', '', 'only this'] }),
+    });
+    expect((await putRes.json() as { topics: string[] }).topics).toEqual(['only this']);
+  });
+
   // HS-8762 — cross-project overview: only enabled projects, with their key +
   // entry-count read in each project's own DB context.
   it('overview lists only enabled projects with key + entry-count', async () => {

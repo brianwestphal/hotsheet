@@ -10,7 +10,7 @@
  * event) so adding a key in the Keys tab shows up here immediately.
  */
 import { ANNOUNCER_MODEL_IDS } from '../announcer/models.js';
-import { getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
+import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { showToast } from './toast.js';
@@ -96,6 +96,22 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
       });
     });
     byId('settings-btn').addEventListener('click', syncModel);
+  }
+
+  // HS-8769 — the editable "uninteresting" topics list (loaded on open, saved on blur).
+  const dismissedEl = byIdOrNull<HTMLTextAreaElement>('settings-announcer-dismissed');
+  if (dismissedEl !== null) {
+    const loadTopics = (): void => {
+      void getAnnouncerDismissedTopics().then((topics) => { dismissedEl.value = topics.join('\n'); }).catch(() => { /* leave as-is */ });
+    };
+    loadTopics();
+    dismissedEl.addEventListener('blur', () => {
+      const topics = dismissedEl.value.split('\n');
+      void setAnnouncerDismissedTopics(topics).then((saved) => { dismissedEl.value = saved.join('\n'); }).catch(() => {
+        showToast('Could not save the topics.', { variant: 'warning' });
+      });
+    });
+    byId('settings-btn').addEventListener('click', loadTopics);
   }
 
   // Refresh status whenever the settings dialog opens.

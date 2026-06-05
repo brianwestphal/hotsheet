@@ -243,8 +243,10 @@ test('announcer live mode tails new entries (HS-8767)', async ({ page }) => {
   await expect(pip).toBeVisible({ timeout: 8000 });
   await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
 
-  // Go live → registers a lease, presence line appears, skip-to-live shows.
+  // Go live → accept the one-time spend/privacy disclosure (HS-8770) → registers
+  // a lease, presence line appears, skip-to-live shows.
   await pip.locator('.announcer-pip-live').click();
+  await page.locator('.confirm-dialog-confirm').click();
   await expect(pip.locator('.announcer-pip-live')).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => liveCalls).toContain(true);
   await expect(pip.locator('.announcer-pip-presence')).toBeVisible();

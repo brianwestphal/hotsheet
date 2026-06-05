@@ -57,7 +57,8 @@ import { HotsheetSettingsSchema } from './schemas.js';
 // routed to whichever won the duel, not to the Claude the user was
 // looking at.
 // `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
-export const CHANNEL_VERSION = 9;
+// v10 (HS-8771) — added the `hotsheet_announce` MCP tool (15 tools total).
+export const CHANNEL_VERSION = 10;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';

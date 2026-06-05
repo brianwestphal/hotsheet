@@ -60,21 +60,41 @@ Rules:
 - Lead with the most significant work. Skip noise (routine status pings, trivial log lines) — if nothing meaningful happened, return an empty entries array.
 - Be accurate to the signals; do not invent work that isn't described. Concise and plain over engaging and breathless — the listener wants the gist fast, not a recap.`;
 
+/** Summarization "altitude" — `high` is the catch-up compression used by live
+ *  mode when the listener has fallen behind (HS-8768). */
+export type Compression = 'normal' | 'high';
+
+/** Build the system prompt, layering the live-mode directives (HS-8768 backlog
+ *  compression + HS-8769 learn-from-skips) onto the base brevity rules. */
+export function buildSystemPrompt(opts: { compression?: Compression; dismissedTopics?: readonly string[] } = {}): string {
+  let prompt = SYSTEM_PROMPT;
+  if (opts.compression === 'high') {
+    prompt += `\n\nBACKLOG: the listener has fallen behind and narration must catch up. Be maximally terse — produce AT MOST 1 or 2 entries, merging everything into the highest-level summary. Favor one broad sentence ("finished the export feature and its tests") over any per-item detail.`;
+  }
+  const topics = opts.dismissedTopics?.filter(t => t.trim() !== '') ?? [];
+  if (topics.length > 0) {
+    prompt += `\n\nThe listener has marked these topics as uninteresting — OMIT anything similar and do not narrate it: ${topics.map(t => `"${t}"`).join(', ')}.`;
+  }
+  return prompt;
+}
+
 /**
  * Summarize the assembled `material` into narrated entries. Returns an empty
  * array when there's nothing meaningful (or on a malformed response). The caller
- * supplies the resolved API key and may override the model.
+ * supplies the resolved API key and may override the model. Live mode passes a
+ * `compression` altitude (HS-8768) and the per-project `dismissedTopics` omit
+ * list (HS-8769).
  */
 export async function summarizeWork(
   material: string,
-  opts: { apiKey: string; model?: string },
+  opts: { apiKey: string; model?: string; compression?: Compression; dismissedTopics?: readonly string[] },
 ): Promise<SummarizeResult> {
   if (material.trim() === '') return { entries: [], usage: null };
   const client = new Anthropic({ apiKey: opts.apiKey });
   const res = await client.messages.create({
     model: opts.model ?? ANNOUNCER_MODEL,
     max_tokens: 4096,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(opts),
     messages: [{ role: 'user', content: material }],
     output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
   });

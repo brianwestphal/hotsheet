@@ -19,6 +19,7 @@
 import { runWithDataDir } from '../db/connection.js';
 import { readGlobalConfig } from '../global-config.js';
 import { addPollWaiter } from '../routes/notify.js';
+import { tryConsumeCall } from './callBudget.js';
 import { CoalescingTrigger } from './coalescingTrigger.js';
 import { DEFAULT_ANNOUNCER_MODEL, generateAnnouncementsOnce, isAnnouncerEnabled } from './generate.js';
 import { resolveAnnouncerKey } from './key.js';
@@ -101,7 +102,10 @@ async function runGenerationPass(): Promise<void> {
         const apiKey = await resolveAnnouncerKey();
         if (apiKey === null) return;
         const model = readGlobalConfig().announcerModel ?? DEFAULT_ANNOUNCER_MODEL;
-        await generateAnnouncementsOnce({ dataDir, projectSecret: secret, apiKey, model });
+        await generateAnnouncementsOnce({
+          dataDir, projectSecret: secret, apiKey, model,
+          canSummarize: () => tryConsumeCall(secret, Date.now()), // HS-8770 budget
+        });
       });
     } catch (err) {
       // A live pass must never crash the loop — log and move on.

@@ -53,11 +53,12 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // ---------------------------------------------------------------------------
 
 describe('listTools (HS-8346 + HS-8347)', () => {
-  it('returns the 14 tools by name (Phase 1 + Phase 2)', () => {
+  it('returns the 15 tools by name (Phase 1 + Phase 2 + HS-8771 announce)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
       'hotsheet_add_attachment',
+      'hotsheet_announce',
       'hotsheet_batch',
       'hotsheet_create_ticket',
       'hotsheet_delete_note',
@@ -86,7 +87,23 @@ describe('listTools (HS-8346 + HS-8347)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(14);
+    expect(_toolsForTesting).toHaveLength(15);
+  });
+
+  // HS-8771 — the announce tool proxies to the announcer endpoint.
+  it('hotsheet_announce proxies title + highlight to /api/announcer/announce', async () => {
+    let captured: { url: string; init?: { method?: string; body?: string | FormData } } | undefined;
+    const fetchFn = fakeFetch((url, init) => { captured = { url, init }; return { ok: true, status: 200, text: '{"inserted":1}' }; });
+    const result = await callTool('hotsheet_announce', { title: 'Shipped export', highlight: 'CSV export is live.' }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeFalsy();
+    expect(captured?.url).toContain('/api/announcer/announce');
+    expect(captured?.init?.method).toBe('POST');
+    expect(JSON.parse(captured?.init?.body as string)).toEqual({ title: 'Shipped export', highlight: 'CSV export is live.' });
+  });
+
+  it('hotsheet_announce rejects a missing highlight', async () => {
+    const result = await callTool('hotsheet_announce', { title: 'x' }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
   });
 });
 

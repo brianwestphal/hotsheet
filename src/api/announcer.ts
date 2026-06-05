@@ -68,6 +68,11 @@ export const SetAnnouncerEnabledReqSchema = z.object({ enabled: z.boolean() });
 export const AdvanceCursorReqSchema = z.object({ at: z.string().optional() });
 // HS-8750 — register/renew (true) or drop (false) a live-listen lease.
 export const SetAnnouncerLiveReqSchema = z.object({ enabled: z.boolean() });
+// HS-8769 — replace the per-project "uninteresting" topic list.
+export const SetDismissedTopicsReqSchema = z.object({ topics: z.array(z.string()) });
+export const DismissedTopicsResSchema = z.object({ topics: z.array(z.string()) });
+// HS-8771 — a curated announcement pushed by the working agent (hotsheet_announce).
+export const AnnounceReqSchema = z.object({ title: z.string().min(1), highlight: z.string().min(1) });
 
 // --- Typed callers (used by the Phase 1b client) ---
 
@@ -110,6 +115,15 @@ export async function setAnnouncerLive(enabled: boolean, secret?: string): Promi
 
 export async function dismissAnnouncement(id: number, secret?: string): Promise<{ ok: true }> {
   return apiCall(OkResponseSchema, `/announcer/dismiss/${String(id)}`, { method: 'POST', secret });
+}
+
+// HS-8769 — the per-project "uninteresting" topic list (Settings editor).
+export async function getAnnouncerDismissedTopics(): Promise<string[]> {
+  return (await apiCall(DismissedTopicsResSchema, '/announcer/dismissed-topics')).topics;
+}
+
+export async function setAnnouncerDismissedTopics(topics: string[]): Promise<string[]> {
+  return (await apiCall(DismissedTopicsResSchema, '/announcer/dismissed-topics', { method: 'PUT', body: { topics } })).topics;
 }
 
 export async function clearAnnouncements(): Promise<{ ok: true }> {

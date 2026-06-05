@@ -77,6 +77,7 @@ All tools live under the `hotsheet_` prefix so they sort together in the agent's
 | Tool | REST equivalent | Purpose |
 |------|-----------------|---------|
 | `hotsheet_query_tickets` | `POST /api/tickets/query` | Custom-view-style query over `{logic, conditions, sort_by?, sort_dir?, required_tag?, include_archived?}`. For agents that need to dig deeper than the worklist provides |
+| `hotsheet_announce` (HS-8771) | `POST /api/announcer/announce` | Push a curated §80 Announcer highlight (`{title, highlight}`) for a notable moment — pre-empts the derived narration queue with a low-latency entry (no AI summarization). No-op if the project hasn't enabled the Announcer. (15th tool; `CHANNEL_VERSION` → 10.) |
 
 **Deliberately not exposed:** `GET /api/tickets` (list), `GET /api/tags`, `GET /api/stats`, `GET /api/dashboard`, all settings/backups/projects/channel-management/gitignore/glassbox endpoints. The worklist file already gives the agent everything it needs for the standard flow; surfacing `list_tickets` trains agents to bypass the worklist. Agents that genuinely need these endpoints can `curl` them through the documented fallback path.
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ANNOUNCER_MODEL, summarizeWork } from './summarize.js';
+import { ANNOUNCER_MODEL, buildSystemPrompt, summarizeWork } from './summarize.js';
 
 interface CreateArgs { model: string; system?: string; output_config?: unknown }
 interface FakeMessage { content: { type: string; text?: string }[]; usage: { input_tokens: number; output_tokens: number } }
@@ -65,6 +65,23 @@ describe('summarizeWork (HS-8745)', () => {
 
   it('defaults to the cheapest model (HS-8764)', () => {
     expect(ANNOUNCER_MODEL).toBe('claude-haiku-4-5');
+  });
+
+  // HS-8768 — backlog compression directive.
+  it('buildSystemPrompt adds the catch-up directive only at high compression', () => {
+    expect(buildSystemPrompt({})).not.toContain('BACKLOG');
+    expect(buildSystemPrompt({ compression: 'normal' })).not.toContain('BACKLOG');
+    expect(buildSystemPrompt({ compression: 'high' })).toContain('BACKLOG');
+  });
+
+  // HS-8769 — learn-from-skips: inject the omit-list.
+  it('buildSystemPrompt injects the dismissed topics (omitting blanks)', () => {
+    const p = buildSystemPrompt({ dismissedTopics: ['lint runs', '   ', 'test output'] });
+    expect(p).toContain('uninteresting');
+    expect(p).toContain('"lint runs"');
+    expect(p).toContain('"test output"');
+    expect(buildSystemPrompt({ dismissedTopics: [] })).not.toContain('uninteresting');
+    expect(buildSystemPrompt({ dismissedTopics: ['  '] })).not.toContain('uninteresting');
   });
 
   it('honors a model override (e.g. a more capable model)', async () => {

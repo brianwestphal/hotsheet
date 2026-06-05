@@ -846,6 +846,13 @@ pageRoutes.get('/', (c) => {
                   </select>
                   <span className="settings-hint">Which Anthropic model writes the narration. Cheaper models cost less per listen; the default (Haiku) is plenty for short summaries.</span>
                 </div>
+                {/* HS-8769 — "uninteresting" topics: skipping an entry adds its title here,
+                    and future narration omits similar material. Editable. */}
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Uninteresting topics</label>
+                  <textarea id="settings-announcer-dismissed" rows={3} placeholder="One topic per line — the Announcer skips these" autoComplete="off" style="width:100%;box-sizing:border-box;font-size:13px"></textarea>
+                  <span className="settings-hint">When you skip an entry, its title is added here, and future narration omits similar topics. Edit freely (one per line); blank lines are ignored.</span>
+                </div>
               </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the
                   former per-project UI-hang-toast toggle into a single

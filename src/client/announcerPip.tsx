@@ -24,6 +24,7 @@ import { anchoredPosition, clampPosition, type Point } from './announcerPipPosit
 import { AnnouncerPlayer, type PlayerState } from './announcerPlayer.js';
 import { getAnnouncerSpeechRate, RATE_STEPS, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { getProjectBusySecrets } from './channelUI.js';
+import { confirmDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { createSpeechEngine } from './tts.js';
 
@@ -245,6 +246,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   // --- Live mode (HS-8767): tail work as it happens, with a "still working"
   //     presence line + a skip-to-live control. ---
   let liveSession: LiveSession | null = null;
+  let liveStarting = false; // guards the async disclosure window against double-clicks
   const liveSecrets = (): string[] => currentContext === ALL_PROJECTS
     ? opts.projects.filter(p => p.hasKey).map(p => p.secret)
     : [currentContext];
@@ -257,6 +259,26 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     presenceEl.classList.toggle('is-working', busy);
   };
   const startLive = async (): Promise<void> => {
+    if (liveStarting || liveSession !== null) return;
+    liveStarting = true;
+    try { await startLiveInner(); } finally { liveStarting = false; }
+  };
+  const startLiveInner = async (): Promise<void> => {
+    // HS-8770 — one-time spend + privacy disclosure: live mode continuously
+    // sends work to Anthropic on the user's key. Remembered once accepted.
+    const DISCLOSED_KEY = 'hotsheet:announcer-live-disclosed';
+    let disclosed = false;
+    try { disclosed = window.localStorage.getItem(DISCLOSED_KEY) !== null; } catch { /* private mode */ }
+    if (!disclosed) {
+      const ok = await confirmDialog({
+        title: 'Go live?',
+        message: 'Live mode continuously sends this project’s notes + activity to Anthropic using your API key as work happens — so it spends while it runs (a departure from Hot Sheet’s local-only default). It pauses when this window is in the background. Continue?',
+        confirmLabel: 'Go live',
+        cancelLabel: 'Cancel',
+      });
+      if (!ok) return;
+      try { window.localStorage.setItem(DISCLOSED_KEY, '1'); } catch { /* private mode */ }
+    }
     liveSession = new LiveSession({
       projectSecrets: liveSecrets(),
       fetchEntries: fetchReel,

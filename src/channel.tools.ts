@@ -225,6 +225,12 @@ const QueryTicketsInputSchema = z.object({
   include_archived: z.boolean().optional(),
 });
 
+// HS-8771 — push a curated Announcer highlight (§80 hybrid generation).
+const AnnounceInputSchema = z.object({
+  title: z.string().min(1).describe('A few words naming the moment (e.g. "Fixed the data-loss bug").'),
+  highlight: z.string().min(1).describe('One or two short sentences of natural spoken English to read aloud — what happened and why it matters.'),
+});
+
 // ---------------------------------------------------------------------------
 // Tool dispatcher. Each branch validates its input via the per-tool
 // schema, maps to the appropriate REST endpoint shape, and proxies via
@@ -389,6 +395,14 @@ async function dispatchDeleteNote(args: unknown, settings: ChannelSettings, fetc
   return await proxyRequest(settings, `/api/tickets/${String(ticket_id)}/notes/${encodeURIComponent(note_id)}`, { method: 'DELETE' }, fetchFn);
 }
 
+async function dispatchAnnounce(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = AnnounceInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_announce — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/announcer/announce', { method: 'POST', body: parsed.data }, fetchFn);
+}
+
 async function dispatchQueryTickets(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
   const parsed = QueryTicketsInputSchema.safeParse(args);
   if (!parsed.success) {
@@ -493,6 +507,13 @@ const TOOLS: ToolEntry[] = [
     description: 'Run a custom-view-style query: combine field/operator/value conditions via AND (logic="all") or OR (logic="any"), with optional sort_by / sort_dir / required_tag / include_archived. Returns the matching tickets. For agents that need to dig deeper than the worklist provides.',
     inputSchema: QueryTicketsInputSchema,
     call: dispatchQueryTickets,
+  },
+  // HS-8771 — hybrid Announcer generation (§80).
+  {
+    name: 'hotsheet_announce',
+    description: 'Push a curated Announcer highlight for a genuinely notable moment ("fixed a data-loss bug", "shipped the export"). It pre-empts the derived narration queue with a low-latency, high-intent entry (no AI summarization). Use sparingly, only for moments worth interrupting for. No-op if the project hasn\'t enabled the Announcer.',
+    inputSchema: AnnounceInputSchema,
+    call: dispatchAnnounce,
   },
 ];
 

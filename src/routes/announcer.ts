@@ -10,6 +10,7 @@
  */
 import { Hono } from 'hono';
 
+import { addDismissedTopic, getDismissedTopics, setDismissedTopics } from '../announcer/dismissedTopics.js';
 import {
   ANNOUNCER_CURSOR_KEY, ANNOUNCER_ENABLED_KEY, DEFAULT_ANNOUNCER_MODEL,
   generateAnnouncementsOnce, isAnnouncerEnabled,
@@ -17,11 +18,12 @@ import {
 import { getAnnouncerKeyId, hasAnnouncerKey, resolveAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
 import { registerLiveListener, unregisterLiveListener } from '../announcer/liveGenerator.js';
 import {
-  AdvanceCursorReqSchema, GenerateAnnouncementsReqSchema,
+  AdvanceCursorReqSchema, AnnounceReqSchema, GenerateAnnouncementsReqSchema,
   SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema, SetAnnouncerLiveReqSchema,
+  SetDismissedTopicsReqSchema,
 } from '../api/announcer.js';
 import {
-  clearAnnouncements, dismissAnnouncement, getActiveAnnouncements,
+  clearAnnouncements, dismissAnnouncement, getActiveAnnouncements, insertAnnouncements,
 } from '../db/announcer.js';
 import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
@@ -114,6 +116,21 @@ announcerRoutes.post('/announcer/live', async (c) => {
   return c.json({ ok: true });
 });
 
+// POST /api/announcer/announce — HS-8771. A curated, agent-pushed highlight
+// (via the `hotsheet_announce` MCP tool) that pre-empts the derived queue with a
+// low-latency, high-intent entry. No AI call — the agent supplies the title +
+// script. No-op when the project isn't opted in (so it can't create entries the
+// user never sees).
+announcerRoutes.post('/announcer/announce', async (c) => {
+  if (!(await isAnnouncerEnabled())) return c.json({ entries: [], inserted: 0 });
+  const raw: unknown = await c.req.json().catch(() => null);
+  const parsed = AnnounceReqSchema.safeParse(raw);
+  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
+  const rows = await insertAnnouncements([{ title: parsed.data.title, script: parsed.data.highlight }], null, null);
+  notifyMutation(c.get('dataDir'));
+  return c.json({ entries: rows, inserted: rows.length });
+});
+
 // GET /api/announcer/entries — active (undismissed) entries in playback order.
 announcerRoutes.get('/announcer/entries', async (c) => {
   return c.json({ entries: await getActiveAnnouncements() });
@@ -148,13 +165,29 @@ announcerRoutes.post('/announcer/key-selection', async (c) => {
 });
 
 // POST /api/announcer/dismiss/:id — "mark uninteresting" a single entry.
+// HS-8769 — also records the entry's title as a dismissed topic so future
+// live-mode batches omit similar material.
 announcerRoutes.post('/announcer/dismiss/:id', async (c) => {
   const id = parseIntParam(c, 'id');
   if (id === null) return c.json({ error: 'Invalid id' }, 400);
   const row = await dismissAnnouncement(id);
   if (row === null) return c.json({ error: 'Not found' }, 404);
+  await addDismissedTopic(row.title);
   notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
+});
+
+// GET /api/announcer/dismissed-topics — the editable "uninteresting" list (HS-8769).
+announcerRoutes.get('/announcer/dismissed-topics', async (c) => {
+  return c.json({ topics: await getDismissedTopics() });
+});
+
+// PUT /api/announcer/dismissed-topics — replace the list (Settings editor).
+announcerRoutes.put('/announcer/dismissed-topics', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => null);
+  const parsed = SetDismissedTopicsReqSchema.safeParse(raw);
+  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
+  return c.json({ topics: await setDismissedTopics(parsed.data.topics) });
 });
 
 // POST /api/announcer/clear — wipe the reel for this project.
