@@ -14,7 +14,7 @@
 import { expect, test } from './coverage-fixture.js';
 
 const ENTRIES = [
-  { id: 101, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'Shipped the export feature', script: 'You finished the CSV export and wrote its tests.', position: 0, dismissed: false },
+  { id: 101, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'Shipped the export feature', script: 'You finished the CSV export and wrote its tests.', emphasis: ['CSV export'], position: 0, dismissed: false },
   { id: 102, created_at: '2026-06-05T00:05:00.000Z', covers_from: null, covers_to: null, title: 'Fixed the tag leak', script: 'Cross-project tag bleed is now resolved.', position: 1, dismissed: false },
 ];
 
@@ -80,6 +80,22 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await expect(pip.locator('.announcer-pip-title')).toHaveText('Shipped the export feature');
   await expect(pip.locator('.announcer-pip-script')).toContainText('CSV export');
   await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 2');
+
+  // HS-8749 — tier-1 emphasis: the key phrase is wrapped in .announcer-em, and
+  // the full script text is still intact.
+  await expect(pip.locator('.announcer-pip-script .announcer-em')).toHaveText('CSV export');
+  await expect(pip.locator('.announcer-pip-script')).toHaveText('You finished the CSV export and wrote its tests.');
+
+  // HS-8749 — the expand (resize) toggle widens the panel and is remembered.
+  const expandBtn = pip.locator('.announcer-pip-expand');
+  await expect(expandBtn).toHaveAttribute('aria-pressed', 'false');
+  await expandBtn.click();
+  await expect(pip).toHaveClass(/is-expanded/);
+  await expect(expandBtn).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => window.localStorage.getItem('hotsheet:announcer-pip-expanded'))).not.toBeNull();
+  await expandBtn.click();
+  await expect(pip).not.toHaveClass(/is-expanded/);
+  expect(await page.evaluate(() => window.localStorage.getItem('hotsheet:announcer-pip-expanded'))).toBeNull();
 
   // Next → second entry.
   await pip.locator('.announcer-pip-next').click();

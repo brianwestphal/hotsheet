@@ -68,6 +68,14 @@ export type Ticket = z.infer<typeof TicketSchema>;
 export const TagsArraySchema = z.array(z.string());
 
 // ---------------------------------------------------------------------------
+// Announcer emphasis — `announcements.emphasis` is a JSON-encoded array of key
+// phrases (verbatim substrings of the spoken script) the PIP renders
+// emphasized (HS-8749, §78.5 tier 1).
+// ---------------------------------------------------------------------------
+
+export const EmphasisArraySchema = z.array(z.string());
+
+// ---------------------------------------------------------------------------
 // Auto-context entries — the `auto_context` setting is a JSON-encoded array of
 // per-category / per-tag preamble blocks injected into the worklist export.
 // ---------------------------------------------------------------------------

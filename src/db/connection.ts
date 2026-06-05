@@ -885,6 +885,10 @@ async function initSchema(db: PGlite): Promise<void> {
       dismissed BOOLEAN NOT NULL DEFAULT false
     );
     CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(dismissed, position, id);
+    -- HS-8749 — tier-1 text+emphasis visuals: a JSON array of key phrases
+    -- (verbatim substrings of the script) the PIP renders emphasized; defaults
+    -- to an empty array for older rows and curated hotsheet_announce entries.
+    ALTER TABLE announcements ADD COLUMN IF NOT EXISTS emphasis TEXT NOT NULL DEFAULT '[]';
 
     -- HS-8766 — Announcer summarization token usage + cost (the user's own
     -- Anthropic API spend). Lives in the SHARED telemetry DB keyed by

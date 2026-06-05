@@ -264,11 +264,24 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
   permission popup (§47, `permissionDialogShell.tsx`) for a draggable,
   minimizable, non-modal floating panel. The announcer PIP is essentially a
   persistent, draggable, resizable variant.
+- **Resizable PIP (shipped, HS-8749).** An expand/collapse toggle in the PIP
+  header (`.announcer-pip-expand`) widens the panel for long scripts
+  (`.announcer-pip.is-expanded`, ~520 px + a taller scrollable body); the state
+  is remembered in `localStorage` (`hotsheet:announcer-pip-expanded`) and
+  re-applied on open. Toggling re-clamps the position so a grown panel never
+  spills off-screen. (The original 240×180 ↔ 960×720 sketch was simplified to a
+  single roomier preset; per-project sizing wasn't worth the storage.)
 - **Content tiers (build in this order):**
-  1. **Text + emphasis** — the spoken script with tasteful gradient/foreground
-     emphasis on the key phrase(s). Cheap, immediately useful.
-  2. **Code diffs** — reuse the diff rendering already built for the §47
-     permission preview. The most genuinely useful "visual."
+  1. **Text + emphasis (shipped, HS-8749).** The spoken script with tasteful
+     gradient emphasis on the key phrase(s). The summarizer returns an optional
+     `emphasis` string array per entry — each a *verbatim* substring of the
+     `script` — persisted in `announcements.emphasis` (JSON, `EmphasisArraySchema`)
+     and rendered by `src/client/announcerEmphasis.tsx` (`renderScript` wraps
+     each phrase in `<strong class="announcer-em">`; the spoken text is
+     unchanged). Falls back to plain text when there's no emphasis.
+  2. **Code diffs (design only)** — reuse the diff rendering already built for
+     the §47 permission preview. The most genuinely useful "visual"; needs an
+     announcement to reference a diff. Larger piece, tracked as a follow-up.
   3. **Charts / before-after screenshots / diagrams** — Phase 3, expensive and
      unreliable; defer until the core proves out.
 

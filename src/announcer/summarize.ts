@@ -18,7 +18,13 @@ import { DEFAULT_ANNOUNCER_MODEL } from './models.js';
  */
 export const ANNOUNCER_MODEL: string = DEFAULT_ANNOUNCER_MODEL;
 
-const EntrySchema = z.object({ title: z.string(), script: z.string() });
+const EntrySchema = z.object({
+  title: z.string(),
+  script: z.string(),
+  // HS-8749 (§78.5 tier 1) — 0–2 key phrases, each a VERBATIM substring of
+  // `script`, that the PIP renders emphasized. Optional; absent → no emphasis.
+  emphasis: z.array(z.string()).optional(),
+});
 const EntriesSchema = z.object({ entries: z.array(EntrySchema) });
 export type GeneratedEntry = z.infer<typeof EntrySchema>;
 
@@ -40,6 +46,7 @@ const OUTPUT_SCHEMA = {
         properties: {
           title: { type: 'string' },
           script: { type: 'string' },
+          emphasis: { type: 'array', items: { type: 'string' } },
         },
         required: ['title', 'script'],
         additionalProperties: false,
@@ -58,7 +65,8 @@ Rules:
 - Produce 1 to 4 entries. Strongly prefer FEWER, broader entries: group related signals into one (e.g. "fixed the export bug and added tests" is one entry, not three). Two or three tight entries usually beats five.
 - Each entry has a short "title" (a few words) and a "script". Keep the script to ONE or at most two short sentences — aim for under 30 words. It's spoken aloud, so be terse: lead with what changed, drop preamble ("I went ahead and…", "It looks like…"), filler, and hedging. No markdown, no code blocks, no bullet symbols, no ticket-number jargon unless it genuinely aids clarity.
 - Lead with the most significant work. Skip noise (routine status pings, trivial log lines) — if nothing meaningful happened, return an empty entries array.
-- Be accurate to the signals; do not invent work that isn't described. Concise and plain over engaging and breathless — the listener wants the gist fast, not a recap.`;
+- Be accurate to the signals; do not invent work that isn't described. Concise and plain over engaging and breathless — the listener wants the gist fast, not a recap.
+- Optionally include an "emphasis" array of 0 to 2 short key phrases per entry — the single most important noun or action in the script (e.g. "export bug", "added tests"). Each MUST be a verbatim substring of that entry's script (exact characters, same case), so it can be visually highlighted. Omit it (or use an empty array) when nothing clearly stands out; never emphasize a whole sentence.`;
 
 /** Summarization "altitude" — `high` is the catch-up compression used by live
  *  mode when the listener has fallen behind (HS-8768). */

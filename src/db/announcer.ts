@@ -4,6 +4,7 @@
  * `getDb()`). Entries are persisted so the reel is seekable / replayable rather
  * than a transient stream.
  */
+import { EmphasisArraySchema } from '../schemas.js';
 import { getDb } from './connection.js';
 
 export interface Announcement {
@@ -15,12 +16,31 @@ export interface Announcement {
   script: string;
   position: number;
   dismissed: boolean;
+  /** Key phrases (verbatim substrings of `script`) the PIP emphasizes (HS-8749). */
+  emphasis: string[];
 }
 
 /** One generated entry before persistence. */
 export interface NewAnnouncement {
   title: string;
   script: string;
+  emphasis?: string[];
+}
+
+/** The raw `announcements` row — `emphasis` is a JSON-encoded TEXT column. */
+interface AnnouncementRow extends Omit<Announcement, 'emphasis'> {
+  emphasis: string;
+}
+
+/** Parse a raw row into a domain `Announcement` (decoding the emphasis JSON). */
+function toAnnouncement(row: AnnouncementRow): Announcement {
+  let emphasis: string[] = [];
+  try {
+    const parsed = EmphasisArraySchema.safeParse(JSON.parse(row.emphasis));
+    if (parsed.success) emphasis = parsed.data;
+  } catch { /* corrupt/legacy → no emphasis */ }
+  const { emphasis: _raw, ...rest } = row;
+  return { ...rest, emphasis };
 }
 
 /**
@@ -39,12 +59,12 @@ export async function insertAnnouncements(
   let pos = (maxRow.rows[0]?.max ?? 0) + 1;
   const out: Announcement[] = [];
   for (const e of entries) {
-    const res = await db.query<Announcement>(
-      `INSERT INTO announcements (covers_from, covers_to, title, script, position)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [coversFrom, coversTo, e.title, e.script, pos],
+    const res = await db.query<AnnouncementRow>(
+      `INSERT INTO announcements (covers_from, covers_to, title, script, position, emphasis)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [coversFrom, coversTo, e.title, e.script, pos, JSON.stringify(e.emphasis ?? [])],
     );
-    out.push(res.rows[0]);
+    out.push(toAnnouncement(res.rows[0]));
     pos++;
   }
   return out;
@@ -66,20 +86,20 @@ export async function getLatestCoversTo(): Promise<string | null> {
 /** List the active (non-dismissed) entries in playback order. */
 export async function getActiveAnnouncements(): Promise<Announcement[]> {
   const db = await getDb();
-  const res = await db.query<Announcement>(
+  const res = await db.query<AnnouncementRow>(
     `SELECT * FROM announcements WHERE dismissed = false ORDER BY position ASC, id ASC`,
   );
-  return res.rows;
+  return res.rows.map(toAnnouncement);
 }
 
 /** Mark a single entry dismissed ("mark uninteresting"). Returns the row, or null. */
 export async function dismissAnnouncement(id: number): Promise<Announcement | null> {
   const db = await getDb();
-  const res = await db.query<Announcement>(
+  const res = await db.query<AnnouncementRow>(
     `UPDATE announcements SET dismissed = true WHERE id = $1 RETURNING *`,
     [id],
   );
-  return res.rows[0] ?? null;
+  return res.rows.map(toAnnouncement)[0] ?? null;
 }
 
 /** Delete every announcement (the "clear / reset the reel" path). Returns the count removed. */

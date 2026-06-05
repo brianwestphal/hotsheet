@@ -12051,6 +12051,15 @@ label.detail-details-label {
   &.is-playing {
     border-color: var(--accent, #3b82f6);
   }
+
+  // HS-8749 — the expand (resize) toggle gives long scripts more room.
+  &.is-expanded {
+    width: 520px;
+
+    .announcer-pip-body {
+      max-height: min(60vh, 460px);
+    }
+  }
 }
 
 .announcer-pip-header {
@@ -12090,7 +12099,8 @@ label.detail-details-label {
 }
 
 .announcer-pip-close,
-.announcer-pip-min {
+.announcer-pip-min,
+.announcer-pip-expand {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -12194,6 +12204,16 @@ label.detail-details-label {
   line-height: 1.55;
   color: var(--text);
   white-space: pre-wrap;
+
+  // HS-8749 (§78.5 tier 1) — emphasized key phrase(s). A tasteful gradient
+  // foreground rather than a heavy highlight, so it reads as accent, not alarm.
+  .announcer-em {
+    font-weight: 700;
+    background: linear-gradient(90deg, var(--accent, #3b82f6), var(--accent-2, #8b5cf6));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 .announcer-pip-footer {

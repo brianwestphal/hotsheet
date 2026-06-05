@@ -67,6 +67,20 @@ describe('summarizeWork (HS-8745)', () => {
     expect(ANNOUNCER_MODEL).toBe('claude-haiku-4-5');
   });
 
+  // HS-8749 — tier-1 emphasis: the model may return an `emphasis` array, which
+  // is parsed through and preserved on the entry.
+  it('parses the optional emphasis array (HS-8749)', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [{ title: 'Fixed it', script: 'fixed the export bug', emphasis: ['export bug'] }] }));
+    const res = await summarizeWork('m', { apiKey: 'sk-test' });
+    expect(res.entries[0].emphasis).toEqual(['export bug']);
+  });
+
+  it('instructs the model about the emphasis field (HS-8749)', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [] }));
+    await summarizeWork('m', { apiKey: 'sk-test' });
+    expect((createMock.mock.calls[0][0].system ?? '').toLowerCase()).toContain('emphasis');
+  });
+
   // HS-8768 — backlog compression directive.
   it('buildSystemPrompt adds the catch-up directive only at high compression', () => {
     expect(buildSystemPrompt({})).not.toContain('BACKLOG');

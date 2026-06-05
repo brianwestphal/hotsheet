@@ -16,6 +16,9 @@ export const AnnouncementSchema = z.object({
   covers_to: z.string().nullable(),
   title: z.string(),
   script: z.string(),
+  // HS-8749 — key phrases (verbatim substrings of `script`) the PIP emphasizes.
+  // Defaults to [] for legacy/curated rows the server may omit.
+  emphasis: z.array(z.string()).default([]),
   position: z.number(),
   dismissed: z.boolean(),
 }).loose();

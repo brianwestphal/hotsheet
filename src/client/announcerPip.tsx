@@ -19,6 +19,7 @@
  */
 import type { Announcement, AnnouncerProjectInfo } from '../api/announcer.js';
 import { advanceAnnouncerCursor, dismissAnnouncement, getAnnouncerEntries, setAnnouncerLive } from '../api/index.js';
+import { renderScript } from './announcerEmphasis.js';
 import { LiveSession } from './announcerLive.js';
 import { anchoredPosition, clampPosition, type Point } from './announcerPipPosition.js';
 import { AnnouncerPlayer, type PlayerState } from './announcerPlayer.js';
@@ -51,6 +52,12 @@ const CLOSE_ICON = <svg {...LUCIDE}><path d="M18 6 6 18"/><path d="m6 6 12 12"/>
 const LIVE_ICON = <svg {...LUCIDE}><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>;
 // lucide "fast-forward" — skip-catch-up (jump to the newest entry).
 const SKIP_LIVE_ICON = <svg {...LUCIDE}><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>;
+// lucide "maximize-2" / "minimize-2" — the expand/collapse (resize) toggle.
+const EXPAND_ICON = <svg {...LUCIDE}><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" x2="14" y1="3" y2="10"/><line x1="3" x2="10" y1="21" y2="14"/></svg>;
+const COLLAPSE_ICON = <svg {...LUCIDE}><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" x2="21" y1="10" y2="3"/><line x1="3" x2="10" y1="21" y2="14"/></svg>;
+
+/** Remembered expand (resize) state (HS-8749). */
+const EXPANDED_KEY = 'hotsheet:announcer-pip-expanded';
 
 /** Remembered dragged position (HS-8756). localStorage so it survives reloads
  *  without a server round-trip — it's a pure UI preference. */
@@ -142,6 +149,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       <div className="announcer-pip-header">
         <span className="announcer-pip-eyebrow">Announcer</span>
         <span className="announcer-pip-title"></span>
+        <button className="announcer-pip-expand" type="button" title="Expand" aria-label="Expand announcer" aria-pressed="false">{EXPAND_ICON}</button>
         <button className="announcer-pip-min" type="button" title="Minimize (keeps playing)" aria-label="Minimize announcer">{MINIMIZE_ICON}</button>
         <button className="announcer-pip-close" type="button" title="Close" aria-label="Close announcer">{CLOSE_ICON}</button>
       </div>
@@ -191,6 +199,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const presenceEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-presence');
   const skipLiveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-skip-live');
   const header = requireChild<HTMLDivElement>(panel, '.announcer-pip-header');
+  const expandBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-expand');
 
   let closed = false;
   let minimized = false;
@@ -201,7 +210,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const player = new AnnouncerPlayer<ReelEntry>(entries, engine, {
     onEntryChange(index, entry, total) {
       titleEl.textContent = entry.title;
-      scriptEl.textContent = entry.script;
+      renderScript(scriptEl, entry.script, entry.emphasis);
       positionEl.textContent = `${String(index + 1)} / ${String(total)}`;
       // Show which project the entry is about, but only in "All Projects" mode
       // (in a single-project context it's redundant). HS-8762.
@@ -381,6 +390,32 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   header.addEventListener('pointermove', onPointerMove);
   header.addEventListener('pointerup', onPointerUp);
 
+  // --- Expand/collapse (HS-8749): a roomier panel for long scripts. The
+  //     expanded size lives in SCSS (`.announcer-pip.is-expanded`); toggling it
+  //     grows the box, so re-clamp the position to keep it fully on screen. ---
+  const loadExpanded = (): boolean => {
+    try { return window.localStorage.getItem(EXPANDED_KEY) !== null; } catch { return false; }
+  };
+  const applyExpanded = (expanded: boolean): void => {
+    panel.classList.toggle('is-expanded', expanded);
+    expandBtn.replaceChildren(toElement(expanded ? COLLAPSE_ICON : EXPAND_ICON));
+    expandBtn.title = expanded ? 'Collapse' : 'Expand';
+    expandBtn.setAttribute('aria-label', expanded ? 'Collapse announcer' : 'Expand announcer');
+    expandBtn.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+    // The size just changed — re-clamp from the current top-left so a grown
+    // panel doesn't spill off the viewport.
+    const rect = panel.getBoundingClientRect();
+    applyPosition({ left: rect.left, top: rect.top });
+  };
+  expandBtn.addEventListener('click', () => {
+    const next = !panel.classList.contains('is-expanded');
+    try {
+      if (next) window.localStorage.setItem(EXPANDED_KEY, '1');
+      else window.localStorage.removeItem(EXPANDED_KEY);
+    } catch { /* private mode — still toggle for this session */ }
+    applyExpanded(next);
+  });
+
   const close = (): void => {
     if (closed) return;
     closed = true;
@@ -428,6 +463,15 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   document.addEventListener('keydown', onKeydown, true);
 
   document.body.appendChild(panel);
+  // Restore the remembered expanded state before placing, so placeInitial clamps
+  // against the right (possibly larger) size.
+  if (loadExpanded()) {
+    panel.classList.add('is-expanded');
+    expandBtn.replaceChildren(toElement(COLLAPSE_ICON));
+    expandBtn.title = 'Collapse';
+    expandBtn.setAttribute('aria-label', 'Collapse announcer');
+    expandBtn.setAttribute('aria-pressed', 'true');
+  }
   placeInitial();
 
   const handle: AnnouncerPipHandle = { close, minimize, restore, isMinimized: () => minimized };

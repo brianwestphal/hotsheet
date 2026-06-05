@@ -50,6 +50,23 @@ describe('announcements DB (HS-8745)', () => {
     expect(latest).toBe('2026-06-05T03:00:00.000Z');
   });
 
+  it('round-trips the emphasis phrase list (HS-8749)', async () => {
+    const [row] = await insertAnnouncements(
+      [{ title: 'A', script: 'fixed the export bug', emphasis: ['export bug'] }],
+      null, null,
+    );
+    expect(row.emphasis).toEqual(['export bug']);
+    const [active] = await getActiveAnnouncements();
+    expect(active.emphasis).toEqual(['export bug']);
+  });
+
+  it('defaults emphasis to an empty array when omitted', async () => {
+    const [row] = await insertAnnouncements([{ title: 'A', script: 'a' }], null, null);
+    expect(row.emphasis).toEqual([]);
+    const [active] = await getActiveAnnouncements();
+    expect(active.emphasis).toEqual([]);
+  });
+
   it('clear wipes all entries', async () => {
     await insertAnnouncements([{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }], null, null);
     expect(await clearAnnouncements()).toBe(2);

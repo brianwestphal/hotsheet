@@ -160,6 +160,8 @@ Announcer (so it can't create entries the user never sees). The live consumer
 ## 80.6 Live mode — complete
 
 All of HS-8750 (2a) + HS-8767 (2b) + HS-8768/8769/8770/8771 (refinements +
-hybrid) shipped 2026-06-05. The remaining design-only Announcer work is the
-A/V visuals (§78.5 tier 2/3 — code-diffs, charts) and a resizable PIP, tracked
-under HS-8749 (§78.5) and the Phase 3/4 follow-ups.
+hybrid) shipped 2026-06-05. HS-8749 then shipped the tractable PIP enrichment —
+a resizable PIP (expand toggle) and tier-1 text emphasis (§78.5). The remaining
+design-only Announcer work is the A/V visuals (§78.5 tier 2/3 — code-diffs →
+HS-8772, charts) and the 10s audio-timeline seeks (blocked on Phase 3 cached
+audio), plus the Phase 3/4 follow-ups.
