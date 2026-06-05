@@ -22,6 +22,11 @@ const EntrySchema = z.object({ title: z.string(), script: z.string() });
 const EntriesSchema = z.object({ entries: z.array(EntrySchema) });
 export type GeneratedEntry = z.infer<typeof EntrySchema>;
 
+/** Token usage from one summarization (HS-8766) — captured even when parsing
+ *  the response fails, since the API call (and its cost) already happened. */
+export interface SummarizeUsage { inputTokens: number; outputTokens: number }
+export interface SummarizeResult { entries: GeneratedEntry[]; usage: SummarizeUsage | null }
+
 /** JSON Schema for `output_config.format` — a raw schema (not the SDK's zod
  *  helper) to stay independent of the zod-v4 ↔ helper compatibility surface;
  *  the response text is still validated with `EntriesSchema` below. */
@@ -63,8 +68,8 @@ Rules:
 export async function summarizeWork(
   material: string,
   opts: { apiKey: string; model?: string },
-): Promise<GeneratedEntry[]> {
-  if (material.trim() === '') return [];
+): Promise<SummarizeResult> {
+  if (material.trim() === '') return { entries: [], usage: null };
   const client = new Anthropic({ apiKey: opts.apiKey });
   const res = await client.messages.create({
     model: opts.model ?? ANNOUNCER_MODEL,
@@ -73,6 +78,13 @@ export async function summarizeWork(
     messages: [{ role: 'user', content: material }],
     output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
   });
+
+  // HS-8766 — capture usage regardless of whether parsing succeeds; the call
+  // (and its cost) already happened.
+  const usage: SummarizeUsage = {
+    inputTokens: res.usage.input_tokens,
+    outputTokens: res.usage.output_tokens,
+  };
 
   let text = '';
   for (const block of res.content) {
@@ -83,8 +95,8 @@ export async function summarizeWork(
   try {
     raw = JSON.parse(text);
   } catch {
-    return [];
+    return { entries: [], usage };
   }
   const parsed = EntriesSchema.safeParse(raw);
-  return parsed.success ? parsed.data.entries : [];
+  return { entries: parsed.success ? parsed.data.entries : [], usage };
 }

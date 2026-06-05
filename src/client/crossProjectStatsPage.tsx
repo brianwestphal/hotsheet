@@ -115,6 +115,17 @@ type DashboardWindow = 'today' | 'week' | 'month' | '90d' | 'all';
  * payload type. Exported so unit tests can construct fixtures
  * without re-declaring the shape.
  */
+// HS-8766 — Announcer narration spend (the user's own Anthropic API usage).
+interface AnnouncerUsageTotals {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  generations: number;
+}
+interface AnnouncerUsageByProjectRow extends AnnouncerUsageTotals {
+  projectSecret: string;
+}
+
 export interface DashboardPayload {
   window: DashboardWindow;
   windowTotals: { today: WindowTotals; week: WindowTotals; month: WindowTotals; allTime: WindowTotals };
@@ -122,6 +133,7 @@ export interface DashboardPayload {
   costByModel: ModelRollup[];
   hourlyActivity: HourlyActivityCell[];
   costOverTime: CostOverTimePoint[];
+  announcer?: { total: AnnouncerUsageTotals; byProject: AnnouncerUsageByProjectRow[] };
 }
 
 // HS-8524 — `hideToolbar` + `TOOLBAR_HIDDEN_IDS` removed. The page is
@@ -460,7 +472,9 @@ function isEmptyDashboardPayload(payload: DashboardPayload): boolean {
     payload.costByProject.length > 0
     || payload.costByModel.length > 0
     || payload.hourlyActivity.length > 0
-    || payload.costOverTime.length > 0;
+    || payload.costOverTime.length > 0
+    // HS-8766 — announcer spend alone is enough to render the page.
+    || (payload.announcer?.total.generations ?? 0) > 0;
   return !anyWindowHasData && !anySectionHasData;
 }
 
@@ -541,6 +555,42 @@ function wireWindowSelector(root: HTMLElement, container: HTMLElement): void {
   });
 }
 
+/** HS-8766 — populate the cross-project Announcer-spend section: a totals row +
+ *  a per-project breakdown. Leaves the "No Announcer usage" placeholder when
+ *  there's been no generation in the window. */
+function populateAnnouncer(root: HTMLElement, announcer: DashboardPayload['announcer']): void {
+  const slot = root.querySelector<HTMLElement>('#telemetry-dashboard-announcer');
+  if (slot === null || announcer === undefined || announcer.total.generations === 0) return;
+  const t = announcer.total;
+  const summary = toElement(
+    <div className="announcer-usage-stats">
+      <div className="announcer-usage-stat"><div className="announcer-usage-value">{formatCost(t.cost)}</div><div className="announcer-usage-label">total cost</div></div>
+      <div className="announcer-usage-stat"><div className="announcer-usage-value">{formatTokens(t.inputTokens + t.outputTokens)}</div><div className="announcer-usage-label">tokens</div></div>
+      <div className="announcer-usage-stat"><div className="announcer-usage-value">{String(t.generations)}</div><div className="announcer-usage-label">{t.generations === 1 ? 'generation' : 'generations'}</div></div>
+    </div>
+  );
+  const table = toElement(
+    <table className="telemetry-dashboard-project-table announcer-usage-table">
+      <thead>
+        <tr><th>Project</th><th className="align-right">Cost</th><th className="align-right">Tokens</th><th className="align-right">Generations</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  );
+  const tbody = table.querySelector('tbody');
+  for (const row of announcer.byProject) {
+    tbody?.appendChild(toElement(
+      <tr>
+        <td>{resolveProjectName(row.projectSecret)}</td>
+        <td className="align-right">{formatCost(row.cost)}</td>
+        <td className="align-right">{formatTokens(row.inputTokens + row.outputTokens)}</td>
+        <td className="align-right">{String(row.generations)}</td>
+      </tr>
+    ));
+  }
+  slot.replaceChildren(summary, table);
+}
+
 export function renderShell(payload: DashboardPayload, container: HTMLElement): void {
   container.replaceChildren();
   if (isEmptyDashboardPayload(payload)) {
@@ -600,6 +650,13 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
             <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
           </div>
         </section>
+        {/* HS-8766 — Announcer narration spend (the user's own Anthropic key). */}
+        <section className="telemetry-dashboard-section" data-section="announcer">
+          <h3>Announcer spend</h3>
+          <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-announcer">
+            <p className="telemetry-dashboard-section-placeholder">No Announcer usage for this window.</p>
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -619,6 +676,7 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   populateCostByProject(root, payload.costByProject);
   populateCostByModel(root, payload.costByModel);
   populateHeatmap(root, payload.hourlyActivity);
+  populateAnnouncer(root, payload.announcer);
   wireWindowSelector(root, container);
 
   container.appendChild(root);

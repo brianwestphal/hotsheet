@@ -525,6 +525,22 @@ PIP gains a **context dropdown**: "All Projects" + each enabled project.
   call) — it's a persistent singleton that keeps playing across tab/project
   changes.
 
+**Token + cost tracking (HS-8766).** Each `generate` captures the Anthropic
+response `usage` (input/output tokens) and records a row in a new
+`announcer_usage` table — stored in the **shared telemetry DB** keyed by
+`project_secret` (like `otel_metrics`, via `getTelemetryDb`), so both stats
+pages aggregate it with the same project filter. Per-model pricing
+(`ANNOUNCER_PRICING` / `announcerCost` in `src/announcer/models.ts`; Haiku
+$1/$5, Sonnet $3/$15, Opus $5/$25 per 1M in/out) turns tokens into a dollar
+cost. The **per-project analytics dashboard** (§71) gains an "Announcer" card
+(cost / tokens / generations for the window); the **cross-project stats page**
+(§70) gains an "Announcer spend" section (window total + per-project breakdown).
+This is the user's **real Anthropic spend on their own key**, so it is *always*
+shown as real dollars — it does **not** respect the `telemetryCostMode`
+api/subscription toggle (that governs Claude Code's telemetry display).
+`src/db/announcerUsage.ts` owns the CRUD + rollups; the payloads ride on
+`getProjectRollupPayload` / `getDashboardPayload`.
+
 **Summarization model (HS-8764).** A global setting (`announcerModel` in
 `~/.hotsheet/config.json`) picks which Anthropic model writes the narration,
 **defaulting to the cheapest** (Haiku 4.5 — $1/$5 per 1M in/out tokens) rather

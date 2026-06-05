@@ -29,3 +29,20 @@ export type AnnouncerModelId = typeof ANNOUNCER_MODEL_IDS[number];
 
 /** The cheapest model — the default when the user hasn't chosen one. */
 export const DEFAULT_ANNOUNCER_MODEL: AnnouncerModelId = ANNOUNCER_MODEL_IDS[0];
+
+/** Per-model price in US dollars per 1M input / output tokens (HS-8766).
+ *  Typed as a plain `Record<string, …>` so an unknown model id is a safe miss
+ *  (falls back to the default model's pricing) rather than a type error. */
+export interface ModelPricing { inputPerMTok: number; outputPerMTok: number }
+export const ANNOUNCER_PRICING: Record<string, ModelPricing> = {
+  'claude-haiku-4-5': { inputPerMTok: 1, outputPerMTok: 5 },
+  'claude-sonnet-4-6': { inputPerMTok: 3, outputPerMTok: 15 },
+  'claude-opus-4-8': { inputPerMTok: 5, outputPerMTok: 25 },
+};
+
+/** Dollar cost of one summarization given the model + token counts. Unknown
+ *  models fall back to the default model's pricing. */
+export function announcerCost(model: string, inputTokens: number, outputTokens: number): number {
+  const p = ANNOUNCER_PRICING[model] ?? ANNOUNCER_PRICING[DEFAULT_ANNOUNCER_MODEL];
+  return (inputTokens / 1_000_000) * p.inputPerMTok + (outputTokens / 1_000_000) * p.outputPerMTok;
+}

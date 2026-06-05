@@ -12,6 +12,10 @@
  * facade preserving the original import surface, mirroring the HS-8189
  * registry split pattern.
  */
+import {
+  type AnnouncerUsageByProjectRow, type AnnouncerUsageTotals,
+  getAnnouncerUsageByProject, getAnnouncerUsageTotals,
+} from './announcerUsage.js';
 import { getTelemetryDb } from './connection.js';
 import {
   type CostOverTimePoint,
@@ -60,6 +64,9 @@ export interface DashboardPayload {
    *  Stacked / Overlay cost-over-time chart. One point per
    *  (date, project, model) tuple in the window. */
   costOverTime: CostOverTimePoint[];
+  /** HS-8766 — cross-project Announcer spend (the user's own Anthropic API
+   *  usage), window total + per-project breakdown. */
+  announcer: { total: AnnouncerUsageTotals; byProject: AnnouncerUsageByProjectRow[] };
 }
 
 export interface PromptTimelineEntry {
@@ -328,7 +335,7 @@ export async function getDashboardPayload(
   // `getAllProjects().map(p => p.secret)`); null means "every project"
   // (back-compat / tests). Threaded into all eight sub-queries so totals,
   // cost-by-project, donut, heatmap, and cost-over-time agree.
-  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime] = await Promise.all([
+  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, announcerByProject] = await Promise.all([
     getWindowTotals(null, midnight, allowedSecrets),
     getWindowTotals(null, weekStart, allowedSecrets),
     getWindowTotals(null, monthStart, allowedSecrets),
@@ -337,6 +344,7 @@ export async function getDashboardPayload(
     getCostByModel(null, windowSinceTs, allowedSecrets),
     getHourlyActivityHeatmap(windowSinceTs, timezone, allowedSecrets),
     getCostOverTime(windowSinceTs, null, timezone, now, allowedSecrets),
+    getAnnouncerUsageByProject(allowedSecrets, windowSinceTs),
   ]);
 
   return {
@@ -346,7 +354,18 @@ export async function getDashboardPayload(
     costByModel,
     hourlyActivity,
     costOverTime,
+    announcer: { total: sumAnnouncerUsage(announcerByProject), byProject: announcerByProject },
   };
+}
+
+/** Sum a per-project Announcer breakdown into one totals object (HS-8766). */
+function sumAnnouncerUsage(rows: AnnouncerUsageByProjectRow[]): AnnouncerUsageTotals {
+  return rows.reduce<AnnouncerUsageTotals>((acc, r) => ({
+    cost: acc.cost + r.cost,
+    inputTokens: acc.inputTokens + r.inputTokens,
+    outputTokens: acc.outputTokens + r.outputTokens,
+    generations: acc.generations + r.generations,
+  }), { cost: 0, inputTokens: 0, outputTokens: 0, generations: 0 });
 }
 
 /**
@@ -373,6 +392,8 @@ export interface ProjectRollupPayload {
   toolLatencyHistogram: ToolLatencyHistogram[];
   recentPrompts: RecentPrompt[];
   costOverTime: CostOverTimePoint[];
+  /** HS-8766 — Announcer token usage + cost for this project in the window. */
+  announcer: AnnouncerUsageTotals;
 }
 
 export async function getProjectRollupPayload(
@@ -384,7 +405,7 @@ export async function getProjectRollupPayload(
   const { midnight, weekStart, monthStart } = windowBoundaries(now);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
-  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime] = await Promise.all([
+  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime, announcer] = await Promise.all([
     getWindowTotals(projectSecret, midnight),
     getWindowTotals(projectSecret, weekStart),
     getWindowTotals(projectSecret, monthStart),
@@ -396,6 +417,7 @@ export async function getProjectRollupPayload(
     // `getRecentPrompts` already).
     getRecentPrompts(projectSecret, 10),
     getCostOverTime(windowSinceTs, projectSecret, timezone, now),
+    getAnnouncerUsageTotals(projectSecret, windowSinceTs),
   ]);
 
   return {
@@ -405,5 +427,6 @@ export async function getProjectRollupPayload(
     toolLatencyHistogram,
     recentPrompts,
     costOverTime,
+    announcer,
   };
 }

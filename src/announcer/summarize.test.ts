@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ANNOUNCER_MODEL, summarizeWork } from './summarize.js';
 
 interface CreateArgs { model: string; system?: string; output_config?: unknown }
-interface FakeMessage { content: { type: string; text?: string }[] }
+interface FakeMessage { content: { type: string; text?: string }[]; usage: { input_tokens: number; output_tokens: number } }
 
 const ctorMock = vi.fn<(opts: { apiKey: string }) => void>();
 const createMock = vi.fn<(args: CreateArgs) => Promise<FakeMessage>>();
@@ -15,8 +15,9 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }));
 
-function textResponse(obj: unknown): FakeMessage {
-  return { content: [{ type: 'text', text: JSON.stringify(obj) }] };
+// HS-8766 — fake responses carry a `usage` block (the SDK always does).
+function textResponse(obj: unknown, usage = { input_tokens: 100, output_tokens: 40 }): FakeMessage {
+  return { content: [{ type: 'text', text: JSON.stringify(obj) }], usage };
 }
 
 beforeEach(() => { ctorMock.mockReset(); createMock.mockReset(); });
@@ -30,22 +31,26 @@ describe('summarizeWork (HS-8745)', () => {
     const args = createMock.mock.calls[0][0];
     expect(args.model).toBe(ANNOUNCER_MODEL);
     expect(args.output_config).toBeDefined();
-    expect(res).toEqual([{ title: 'Fixed it', script: 'I fixed the bug.' }]);
+    expect(res.entries).toEqual([{ title: 'Fixed it', script: 'I fixed the bug.' }]);
+    // HS-8766 — usage is returned for cost accounting.
+    expect(res.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
   });
 
   it('empty / whitespace material short-circuits without an API call', async () => {
-    expect(await summarizeWork('   ', { apiKey: 'sk-test' })).toEqual([]);
+    expect(await summarizeWork('   ', { apiKey: 'sk-test' })).toEqual({ entries: [], usage: null });
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it('malformed JSON in the response → empty (no throw)', async () => {
-    createMock.mockResolvedValue({ content: [{ type: 'text', text: 'not json at all' }] });
-    expect(await summarizeWork('m', { apiKey: 'sk-test' })).toEqual([]);
+  it('malformed JSON → empty entries but usage still captured (HS-8766)', async () => {
+    createMock.mockResolvedValue({ content: [{ type: 'text', text: 'not json at all' }], usage: { input_tokens: 7, output_tokens: 3 } });
+    const res = await summarizeWork('m', { apiKey: 'sk-test' });
+    expect(res.entries).toEqual([]);
+    expect(res.usage).toEqual({ inputTokens: 7, outputTokens: 3 });
   });
 
-  it('schema-mismatched JSON → empty', async () => {
+  it('schema-mismatched JSON → empty entries', async () => {
     createMock.mockResolvedValue(textResponse({ entries: [{ title: 123 }] }));
-    expect(await summarizeWork('m', { apiKey: 'sk-test' })).toEqual([]);
+    expect((await summarizeWork('m', { apiKey: 'sk-test' })).entries).toEqual([]);
   });
 
   // HS-8755 — the narration should be concise; guard the brevity directive so a

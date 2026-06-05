@@ -81,6 +81,18 @@ All three are pure render helpers; their opts accept callable formatters (`forma
 - **`src/db/otelQueries.ts::getProjectRollupPayload`** — bundles the per-project payload (unchanged from HS-8505).
 - **`src/client/styles.scss`** — `.analytics-telemetry-*` rules under the "HS-8508 / §71" section header.
 
+## 71.7.1 Announcer usage (HS-8766)
+
+Below the Claude-usage sections, the dashboard shows an **"Announcer"** card —
+the §78 Announcer's narration spend on the user's own Anthropic key (cost /
+tokens / generations for the selected window). Fed by `getAnnouncerUsageTotals`
+(`src/db/announcerUsage.ts`) on the `ProjectRollupPayload`'s new optional
+`announcer` field; rendered by `renderAnnouncerSection` in
+`analyticsTelemetrySection.tsx`. The section's presence also counts toward the
+"has data" gate, so a project that *only* uses the Announcer (no Claude Code
+telemetry) still renders it. **Always real dollars** — it does not respect the
+`telemetryCostMode` toggle.
+
 ## 71.8 Status
 
 **Shipped (full reshape complete 2026-05-21):**

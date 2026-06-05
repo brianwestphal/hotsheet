@@ -78,6 +78,14 @@ interface ModelRollupRow {
   promptCount: number;
 }
 
+// HS-8766 — Announcer usage view-model (always real $$; the user's own key).
+interface AnnouncerUsageTotals {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  generations: number;
+}
+
 interface ProjectRollupPayload {
   window: TelemetryWindow;
   windowTotals: { today: WindowTotals; week: WindowTotals; month: WindowTotals; allTime: WindowTotals };
@@ -85,6 +93,7 @@ interface ProjectRollupPayload {
   toolLatencyHistogram: ToolLatencyHistogramRow[];
   recentPrompts: RecentPromptRow[];
   costOverTime: CostOverTimePoint[];
+  announcer?: AnnouncerUsageTotals;
 }
 
 let currentWindow: TelemetryWindow = 'month';
@@ -188,7 +197,11 @@ function renderErrorBlock(message: string): HTMLElement {
  * fetching, no module-state mutation beyond the rendered tree.
  */
 function renderBody(payload: ProjectRollupPayload, activeSecret: string | null): HTMLElement {
-  const hasData = payload.windowTotals.allTime.promptCount > 0 || payload.windowTotals.allTime.cost > 0;
+  // HS-8766 — announcer usage counts as data too, so a project that only uses
+  // the Announcer (no Claude Code telemetry) still renders its spend.
+  const hasData = payload.windowTotals.allTime.promptCount > 0
+    || payload.windowTotals.allTime.cost > 0
+    || (payload.announcer?.generations ?? 0) > 0;
   if (!hasData) {
     return renderEmptyPlaceholder();
   }
@@ -263,7 +276,37 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
     body.appendChild(section);
   }
 
+  // HS-8766 — Announcer token + cost for this project (the user's own
+  // Anthropic API spend; always real $$, independent of the subscription-mode
+  // toggle). Only shown when there's been at least one generation in the window.
+  if (payload.announcer !== undefined && payload.announcer.generations > 0) {
+    body.appendChild(renderAnnouncerSection(payload.announcer));
+  }
+
   return body;
+}
+
+/** HS-8766 — the per-project "Announcer" usage card. */
+function renderAnnouncerSection(a: AnnouncerUsageTotals): HTMLElement {
+  return toElement(
+    <section className="telemetry-section analytics-telemetry-section-block" data-section="announcer">
+      <h3>Announcer <span className="announcer-usage-sub">narration spend (your API key)</span></h3>
+      <div className="announcer-usage-stats">
+        <div className="announcer-usage-stat">
+          <div className="announcer-usage-value">{formatCost(a.cost)}</div>
+          <div className="announcer-usage-label">cost</div>
+        </div>
+        <div className="announcer-usage-stat">
+          <div className="announcer-usage-value">{formatTokens(a.inputTokens + a.outputTokens)}</div>
+          <div className="announcer-usage-label">{`tokens · ${formatTokens(a.inputTokens)} in / ${formatTokens(a.outputTokens)} out`}</div>
+        </div>
+        <div className="announcer-usage-stat">
+          <div className="announcer-usage-value">{String(a.generations)}</div>
+          <div className="announcer-usage-label">{a.generations === 1 ? 'generation' : 'generations'}</div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 /**

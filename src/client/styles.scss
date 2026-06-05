@@ -11944,6 +11944,54 @@ label.detail-details-label {
 // when no anchor/stored position applies. Resizable is still a later phase.
 // =============================================================================
 
+// HS-8766 — Announcer token + cost stat blocks on the stats dashboards.
+.announcer-usage-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  padding: 4px 0 12px;
+}
+
+.announcer-usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.announcer-usage-value {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.announcer-usage-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.announcer-usage-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.announcer-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  th, td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+
+  .align-right {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
 // HS-8757 — the Listen button glows while a session is minimized into it
 // (playback continues in the background), mirroring the project-tab
 // pending-permission pulse so it reads as "there's live narration here".

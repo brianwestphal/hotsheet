@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { summarizeWork } from '../announcer/summarize.js';
+import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { getDb, runWithDataDir } from '../db/connection.js';
 import type { ProjectContext } from '../projects.js';
 import { getAllProjects } from '../projects.js';
@@ -20,10 +21,13 @@ vi.mock('../sync/markdown.js', () => ({
 }));
 vi.mock('../announcer/summarize.js', () => ({
   ANNOUNCER_MODEL: 'claude-opus-4-8',
-  summarizeWork: vi.fn(() => Promise.resolve([
-    { title: 'Did stuff', script: 'I did some stuff.' },
-    { title: 'More stuff', script: 'And some more.' },
-  ])),
+  summarizeWork: vi.fn(() => Promise.resolve({
+    entries: [
+      { title: 'Did stuff', script: 'I did some stuff.' },
+      { title: 'More stuff', script: 'And some more.' },
+    ],
+    usage: { inputTokens: 1200, outputTokens: 80 },
+  })),
 }));
 vi.mock('../announcer/key.js', () => ({
   resolveAnnouncerKey: vi.fn(() => Promise.resolve('sk-test')),
@@ -36,6 +40,9 @@ vi.mock('../announcer/key.js', () => ({
 vi.mock('../projects.js', () => ({ getAllProjects: vi.fn(() => []) }));
 // HS-8764 — generate reads the global summarization model from the global config.
 vi.mock('../global-config.js', () => ({ readGlobalConfig: vi.fn(() => ({ announcerModel: 'claude-sonnet-4-6' })) }));
+// HS-8766 — usage recording goes to the shared telemetry DB; mock it so the
+// route test stays decoupled from that store (covered by announcerUsage.test.ts).
+vi.mock('../db/announcerUsage.js', () => ({ recordAnnouncerUsage: vi.fn(() => Promise.resolve()) }));
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -77,6 +84,11 @@ describe('announcer routes (HS-8745)', () => {
     expect(vi.mocked(summarizeWork)).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ apiKey: 'sk-test', model: 'claude-sonnet-4-6' }),
+    );
+
+    // HS-8766 — the generation's token usage is recorded (model + tokens).
+    expect(vi.mocked(recordAnnouncerUsage)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-sonnet-4-6', inputTokens: 1200, outputTokens: 80 }),
     );
 
     const entriesRes = await app.request('/api/announcer/entries');

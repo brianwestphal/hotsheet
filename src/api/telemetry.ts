@@ -105,6 +105,22 @@ export const CostOverTimePointSchema = z.object({
 });
 export type CostOverTimePoint = z.infer<typeof CostOverTimePointSchema>;
 
+// HS-8766 — Announcer token usage + cost. Always real $$ (the user's own
+// Anthropic key) — independent of the `telemetryCostMode` api/subscription
+// toggle that governs Claude Code's cost display.
+export const AnnouncerUsageTotalsSchema = z.object({
+  cost: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  generations: z.number(),
+});
+export type AnnouncerUsageTotals = z.infer<typeof AnnouncerUsageTotalsSchema>;
+
+export const AnnouncerUsageByProjectRowSchema = AnnouncerUsageTotalsSchema.extend({
+  projectSecret: z.string(),
+});
+export type AnnouncerUsageByProjectRow = z.infer<typeof AnnouncerUsageByProjectRowSchema>;
+
 export const TicketRollupSchema = z.object({
   ticketNumber: z.string(),
   promptCount: z.number(),
@@ -161,6 +177,13 @@ const WindowTotalsBundleSchema = z.object({
   allTime: WindowTotalsSchema,
 });
 
+// HS-8766 — cross-project Announcer spend: window total + per-project rows.
+export const AnnouncerDashboardSchema = z.object({
+  total: AnnouncerUsageTotalsSchema,
+  byProject: z.array(AnnouncerUsageByProjectRowSchema),
+});
+export type AnnouncerDashboard = z.infer<typeof AnnouncerDashboardSchema>;
+
 export const DashboardPayloadSchema = z.object({
   window: DashboardWindowSchema,
   windowTotals: WindowTotalsBundleSchema,
@@ -168,6 +191,9 @@ export const DashboardPayloadSchema = z.object({
   costByModel: z.array(ModelRollupSchema),
   hourlyActivity: z.array(HourlyActivityCellSchema),
   costOverTime: z.array(CostOverTimePointSchema),
+  // Optional so pre-HS-8766 fixtures/clients still validate (matches the
+  // cacheReadTokens precedent on WindowTotals).
+  announcer: AnnouncerDashboardSchema.optional(),
 });
 export type DashboardPayload = z.infer<typeof DashboardPayloadSchema>;
 
@@ -178,6 +204,8 @@ export const ProjectRollupPayloadSchema = z.object({
   toolLatencyHistogram: z.array(ToolLatencyHistogramSchema),
   recentPrompts: z.array(RecentPromptSchema),
   costOverTime: z.array(CostOverTimePointSchema),
+  // HS-8766 — Announcer usage for this project (optional for back-compat).
+  announcer: AnnouncerUsageTotalsSchema.optional(),
 });
 export type ProjectRollupPayload = z.infer<typeof ProjectRollupPayloadSchema>;
 

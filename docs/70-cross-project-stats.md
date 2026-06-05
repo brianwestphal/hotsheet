@@ -112,6 +112,19 @@ The pre-HS-8524 `restoreTicketList`-via-`bindSidebar` reverse path is GONE — t
 - **`src/routes/telemetry.ts`** — `GET /api/telemetry/dashboard` + `GET /api/telemetry/enabled-anywhere` routes.
 - **`src/db/otelQueries.ts`** — `getDashboardPayload` returns the post-HS-8509 shape (cost-over-time densified series, no `topExpensivePrompts`).
 
+## 70.8.1 Announcer spend (HS-8766)
+
+The page also surfaces an **"Announcer spend"** section — the user's Anthropic
+API cost for the §78 Announcer's narration, which is separate from Claude Code's
+telemetry. Fed by `getAnnouncerUsageByProject` (`src/db/announcerUsage.ts`) on
+the `getDashboardPayload` payload's new optional `announcer` field (window total
++ per-project breakdown), rendered by `populateAnnouncer` in
+`crossProjectStatsPage.tsx`. The data lives in the shared telemetry DB
+(`announcer_usage`, keyed by `project_secret`) so it scopes to `allowedSecrets`
+exactly like the otel rollups. **Always real dollars** — independent of the
+`telemetryCostMode` api/subscription toggle (that only affects Claude Code's
+cost display, not the user's own announcer API key).
+
 ## 70.9 Status
 
 **Shipped (full reshape complete 2026-05-21):**

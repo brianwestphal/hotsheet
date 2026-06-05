@@ -885,6 +885,22 @@ async function initSchema(db: PGlite): Promise<void> {
       dismissed BOOLEAN NOT NULL DEFAULT false
     );
     CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(dismissed, position, id);
+
+    -- HS-8766 — Announcer summarization token usage + cost (the user's own
+    -- Anthropic API spend). Lives in the SHARED telemetry DB keyed by
+    -- project_secret (like otel_metrics, via getTelemetryDb) so the per-project
+    -- analytics dashboard (§71) and the cross-project stats page (§70) can
+    -- aggregate it with the same project filter. One row per generate call.
+    CREATE TABLE IF NOT EXISTS announcer_usage (
+      id SERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+      project_secret TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cost NUMERIC NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_announcer_usage_project_ts ON announcer_usage(project_secret, ts DESC);
   `);
 
   // Migration: ensure all existing notes have stable persisted IDs

@@ -12,6 +12,7 @@ import { Hono } from 'hono';
 
 import { collectWorkSignals } from '../announcer/collectSignals.js';
 import { getAnnouncerKeyId, hasAnnouncerKey, resolveAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
+import { DEFAULT_ANNOUNCER_MODEL } from '../announcer/models.js';
 import { summarizeWork } from '../announcer/summarize.js';
 import {
   AdvanceCursorReqSchema, GenerateAnnouncementsReqSchema,
@@ -21,6 +22,7 @@ import {
   clearAnnouncements, dismissAnnouncement, getActiveAnnouncements,
   getLatestCoversTo, insertAnnouncements,
 } from '../db/announcer.js';
+import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
 import { readGlobalConfig } from '../global-config.js';
@@ -95,17 +97,29 @@ announcerRoutes.post('/announcer/generate', async (c) => {
   const signals = await collectWorkSignals(since);
   if (signals.count === 0) return c.json({ entries: [], generated: 0 });
 
-  let generated;
+  // HS-8764 — model comes from the global setting (defaults to the cheapest
+  // model inside `summarizeWork` when unset).
+  const model = readGlobalConfig().announcerModel ?? DEFAULT_ANNOUNCER_MODEL;
+  let result;
   try {
-    // HS-8764 — model comes from the global setting (defaults to the cheapest
-    // model inside `summarizeWork` when unset).
-    generated = await summarizeWork(signals.material, { apiKey, model: readGlobalConfig().announcerModel });
+    result = await summarizeWork(signals.material, { apiKey, model });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'summarization failed';
     return c.json({ error: `Summarization failed: ${message}` }, 502);
   }
 
-  const rows = await insertAnnouncements(generated, signals.coversFrom, signals.coversTo);
+  // HS-8766 — record token usage + cost for the stats dashboards (the call
+  // happened even if it produced 0 usable entries).
+  if (result.usage !== null) {
+    await recordAnnouncerUsage({
+      projectSecret: c.get('projectSecret'),
+      model,
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+    });
+  }
+
+  const rows = await insertAnnouncements(result.entries, signals.coversFrom, signals.coversTo);
   notifyMutation(c.get('dataDir'));
   return c.json({ entries: rows, generated: rows.length });
 });
