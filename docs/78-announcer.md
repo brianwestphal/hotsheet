@@ -121,6 +121,13 @@ visual references) is where the user's **AI API key** is used (§78.6).
   omit similar material. Keep it simple (a dismissed-category/keyword list) to
   avoid overfitting; surface it as an editable list in settings.
 
+> **Phase 2a SHIPPED (HS-8750, 2026-06-05) — the server-side generator.** The
+> producer loop, coalescing, the off-unless-listening lease, and the
+> command-log-on-the-fast-signal wiring (caveat b) are implemented; see
+> **[80-announcer-live-mode.md](80-announcer-live-mode.md)**. The consumer (PIP
+> drain + catch-up + presence) and the richer policies (adaptive compression,
+> learn-from-skips, cost budget, hybrid MCP tool) are tracked as follow-ups.
+
 ### 78.4.1 Live mode — detailed design
 
 **The core tension: narration is slower than the work.** Work lands in bursts

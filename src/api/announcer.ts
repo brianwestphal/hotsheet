@@ -66,6 +66,8 @@ export const EntriesResSchema = z.object({ entries: z.array(AnnouncementSchema) 
 export const SelectAnnouncerKeyReqSchema = z.object({ keyId: z.string().nullable() });
 export const SetAnnouncerEnabledReqSchema = z.object({ enabled: z.boolean() });
 export const AdvanceCursorReqSchema = z.object({ at: z.string().optional() });
+// HS-8750 — register/renew (true) or drop (false) a live-listen lease.
+export const SetAnnouncerLiveReqSchema = z.object({ enabled: z.boolean() });
 
 // --- Typed callers (used by the Phase 1b client) ---
 
@@ -98,6 +100,12 @@ export async function selectAnnouncerKey(keyId: string | null): Promise<{ ok: tr
 
 export async function setAnnouncerEnabled(enabled: boolean): Promise<{ ok: true }> {
   return apiCall(OkResponseSchema, '/announcer/enabled', { method: 'POST', body: { enabled } });
+}
+
+// HS-8750 — register/renew or drop this project's live-listen lease. `secret`
+// targets a specific project (so the client can keep a non-active project live).
+export async function setAnnouncerLive(enabled: boolean, secret?: string): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, '/announcer/live', { method: 'POST', body: { enabled }, secret });
 }
 
 export async function dismissAnnouncement(id: number, secret?: string): Promise<{ ok: true }> {

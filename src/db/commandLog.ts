@@ -1,3 +1,4 @@
+import { notifyChange } from '../routes/notify.js';
 import { getDb } from './connection.js';
 
 export interface CommandLogEntry {
@@ -20,6 +21,12 @@ export async function addLogEntry(
     `INSERT INTO command_log (event_type, direction, summary, detail) VALUES ($1, $2, $3, $4) RETURNING *`,
     [eventType, direction, summary, detail],
   );
+  // HS-8750 — channel/shell command-log events (trigger / permission / done)
+  // were fire-and-forget and did NOT ride the change-version, so the §78 live
+  // generator + the §12 command-log UI couldn't see them on the fast signal.
+  // Waking poll waiters here puts every log event on the same path as ticket
+  // mutations (the spike's "cleaner fix").
+  notifyChange();
   return result.rows[0];
 }
 

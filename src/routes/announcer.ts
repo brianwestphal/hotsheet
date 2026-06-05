@@ -10,19 +10,19 @@
  */
 import { Hono } from 'hono';
 
-import { collectWorkSignals } from '../announcer/collectSignals.js';
+import {
+  ANNOUNCER_CURSOR_KEY, ANNOUNCER_ENABLED_KEY, DEFAULT_ANNOUNCER_MODEL,
+  generateAnnouncementsOnce, isAnnouncerEnabled,
+} from '../announcer/generate.js';
 import { getAnnouncerKeyId, hasAnnouncerKey, resolveAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
-import { DEFAULT_ANNOUNCER_MODEL } from '../announcer/models.js';
-import { summarizeWork } from '../announcer/summarize.js';
+import { registerLiveListener, unregisterLiveListener } from '../announcer/liveGenerator.js';
 import {
   AdvanceCursorReqSchema, GenerateAnnouncementsReqSchema,
-  SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema,
+  SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema, SetAnnouncerLiveReqSchema,
 } from '../api/announcer.js';
 import {
   clearAnnouncements, dismissAnnouncement, getActiveAnnouncements,
-  getLatestCoversTo, insertAnnouncements,
 } from '../db/announcer.js';
-import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
 import { readGlobalConfig } from '../global-config.js';
@@ -32,24 +32,6 @@ import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 
 export const announcerRoutes = new Hono<AppEnv>();
-
-const ENABLED_KEY = 'announcer_enabled';
-const CURSOR_KEY = 'announcer_last_listened_at';
-
-async function isEnabled(): Promise<boolean> {
-  return (await getSettings())[ENABLED_KEY] === 'true';
-}
-
-/** Latest of (last-listened cursor, last-generated covers_to) — so a re-generate
- *  picks up where it left off rather than re-covering unheard work. */
-async function effectiveSince(override?: string): Promise<string | null> {
-  if (override !== undefined && override !== '') return override;
-  const cursor = (await getSettings())[CURSOR_KEY];
-  const latest = await getLatestCoversTo();
-  const candidates = [cursor, latest].filter((v): v is string => typeof v === 'string' && v !== '');
-  if (candidates.length === 0) return null;
-  return candidates.reduce((a, b) => (a > b ? a : b));
-}
 
 // GET /api/announcer/overview — HS-8762/8758. Cross-project: every project with
 // the announcer enabled, plus the active project's secret so the client can
@@ -61,7 +43,7 @@ announcerRoutes.get('/announcer/overview', async (c) => {
   const projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] = [];
   for (const p of getAllProjects()) {
     const info = await runWithDataDir(p.dataDir, async () => {
-      if ((await getSettings())[ENABLED_KEY] !== 'true') return null;
+      if ((await getSettings())[ANNOUNCER_ENABLED_KEY] !== 'true') return null;
       return { hasKey: await hasAnnouncerKey(), entryCount: (await getActiveAnnouncements()).length };
     });
     if (info !== null) {
@@ -76,52 +58,60 @@ announcerRoutes.get('/announcer/status', async (c) => {
   const settings = await getSettings();
   const entries = await getActiveAnnouncements();
   return c.json({
-    enabled: settings[ENABLED_KEY] === 'true',
+    enabled: settings[ANNOUNCER_ENABLED_KEY] === 'true',
     hasKey: await hasAnnouncerKey(),
     selectedKeyId: await getAnnouncerKeyId(),
     entryCount: entries.length,
-    lastListenedAt: settings[CURSOR_KEY] ?? null,
+    lastListenedAt: settings[ANNOUNCER_CURSOR_KEY] ?? null,
   });
 });
 
 // POST /api/announcer/generate — collect since cursor → summarize → persist.
+// Shares the generate core with the live-mode loop (HS-8750, `generate.ts`).
 announcerRoutes.post('/announcer/generate', async (c) => {
-  if (!(await isEnabled())) return c.json({ error: 'Announcer is not enabled for this project' }, 400);
+  if (!(await isAnnouncerEnabled())) return c.json({ error: 'Announcer is not enabled for this project' }, 400);
   const apiKey = await resolveAnnouncerKey();
   if (apiKey === null) return c.json({ error: 'No Anthropic API key configured' }, 400);
 
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = GenerateAnnouncementsReqSchema.safeParse(raw);
-  const since = await effectiveSince(parsed.success ? parsed.data.since : undefined);
-
-  const signals = await collectWorkSignals(since);
-  if (signals.count === 0) return c.json({ entries: [], generated: 0 });
-
-  // HS-8764 — model comes from the global setting (defaults to the cheapest
-  // model inside `summarizeWork` when unset).
+  // HS-8764 — model from the global setting (summarizeWork defaults to cheapest).
   const model = readGlobalConfig().announcerModel ?? DEFAULT_ANNOUNCER_MODEL;
-  let result;
   try {
-    result = await summarizeWork(signals.material, { apiKey, model });
+    const { rows, generatedCount } = await generateAnnouncementsOnce({
+      dataDir: c.get('dataDir'),
+      projectSecret: c.get('projectSecret'),
+      apiKey,
+      model,
+      since: parsed.success ? parsed.data.since : undefined,
+    });
+    return c.json({ entries: rows, generated: generatedCount });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'summarization failed';
     return c.json({ error: `Summarization failed: ${message}` }, 502);
   }
+});
 
-  // HS-8766 — record token usage + cost for the stats dashboards (the call
-  // happened even if it produced 0 usable entries).
-  if (result.usage !== null) {
-    await recordAnnouncerUsage({
-      projectSecret: c.get('projectSecret'),
-      model,
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-    });
+// POST /api/announcer/live — HS-8750. Register/renew (enabled:true) or drop
+// (enabled:false) this project's live-listen lease. While the lease is live, the
+// server-side generator (`liveGenerator.ts`) produces entries as work happens;
+// the lease expires if the client stops renewing, so generation is OFF unless
+// someone is actively listening (no silent background API spend).
+announcerRoutes.post('/announcer/live', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => null);
+  const parsed = SetAnnouncerLiveReqSchema.safeParse(raw);
+  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
+  const secret = c.get('projectSecret');
+  if (parsed.data.enabled) {
+    // Only honor a live lease for an opted-in + keyed project.
+    if (!(await isAnnouncerEnabled()) || !(await hasAnnouncerKey())) {
+      return c.json({ error: 'Announcer is not enabled / configured for this project' }, 400);
+    }
+    registerLiveListener(secret, c.get('dataDir'));
+  } else {
+    unregisterLiveListener(secret);
   }
-
-  const rows = await insertAnnouncements(result.entries, signals.coversFrom, signals.coversTo);
-  notifyMutation(c.get('dataDir'));
-  return c.json({ entries: rows, generated: rows.length });
+  return c.json({ ok: true });
 });
 
 // GET /api/announcer/entries — active (undismissed) entries in playback order.
@@ -134,7 +124,7 @@ announcerRoutes.post('/announcer/cursor', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = AdvanceCursorReqSchema.safeParse(raw);
   const at = parsed.success && parsed.data.at !== undefined ? parsed.data.at : new Date().toISOString();
-  await updateSetting(CURSOR_KEY, at);
+  await updateSetting(ANNOUNCER_CURSOR_KEY, at);
   return c.json({ ok: true });
 });
 
@@ -143,7 +133,7 @@ announcerRoutes.post('/announcer/enabled', async (c) => {
   const raw: unknown = await c.req.json().catch(() => null);
   const parsed = SetAnnouncerEnabledReqSchema.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
-  await updateSetting(ENABLED_KEY, parsed.data.enabled ? 'true' : 'false');
+  await updateSetting(ANNOUNCER_ENABLED_KEY, parsed.data.enabled ? 'true' : 'false');
   return c.json({ ok: true });
 });
 

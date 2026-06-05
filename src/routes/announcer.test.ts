@@ -6,6 +6,7 @@
 import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { registerLiveListener, unregisterLiveListener } from '../announcer/liveGenerator.js';
 import { summarizeWork } from '../announcer/summarize.js';
 import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { getDb, runWithDataDir } from '../db/connection.js';
@@ -43,6 +44,11 @@ vi.mock('../global-config.js', () => ({ readGlobalConfig: vi.fn(() => ({ announc
 // HS-8766 — usage recording goes to the shared telemetry DB; mock it so the
 // route test stays decoupled from that store (covered by announcerUsage.test.ts).
 vi.mock('../db/announcerUsage.js', () => ({ recordAnnouncerUsage: vi.fn(() => Promise.resolve()) }));
+// HS-8750 — the /live route just registers a lease; mock the generator so the
+// real change-version loop isn't started here (covered by liveGenerator.test.ts).
+vi.mock('../announcer/liveGenerator.js', () => ({
+  registerLiveListener: vi.fn(), unregisterLiveListener: vi.fn(),
+}));
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -110,6 +116,30 @@ describe('announcer routes (HS-8745)', () => {
     await post('/api/announcer/cursor', { at: '2026-06-05T09:00:00.000Z' });
     const status = await (await app.request('/api/announcer/status')).json() as { lastListenedAt: string | null };
     expect(status.lastListenedAt).toBe('2026-06-05T09:00:00.000Z');
+  });
+
+  // HS-8750 — live-listen lease registration, gated on opt-in + key.
+  it('live registration requires opt-in, then registers/unregisters the lease', async () => {
+    vi.mocked(registerLiveListener).mockClear();
+    vi.mocked(unregisterLiveListener).mockClear();
+
+    // Explicitly disabled (set via the route — getSettings is cached, so the
+    // raw beforeEach DELETE alone wouldn't flip it) → 400, no registration.
+    await post('/api/announcer/enabled', { enabled: false });
+    expect((await post('/api/announcer/live', { enabled: true })).status).toBe(400);
+    expect(registerLiveListener).not.toHaveBeenCalled();
+
+    // Enable → register a live lease.
+    await post('/api/announcer/enabled', { enabled: true });
+    expect((await post('/api/announcer/live', { enabled: true })).status).toBe(200);
+    expect(registerLiveListener).toHaveBeenCalledTimes(1);
+
+    // Disable the lease.
+    expect((await post('/api/announcer/live', { enabled: false })).status).toBe(200);
+    expect(unregisterLiveListener).toHaveBeenCalledTimes(1);
+
+    // Bad body → 400.
+    expect((await post('/api/announcer/live', { nope: 1 })).status).toBe(400);
   });
 
   // HS-8762 — cross-project overview: only enabled projects, with their key +
