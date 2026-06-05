@@ -11836,3 +11836,168 @@ label.detail-details-label {
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+// =============================================================================
+// HS-8747 / §78 — Announcer transcript PIP
+//
+// A non-modal, corner-docked floating panel (NOT a backdrop modal like the
+// reader overlay). Stacking: z-index 2200 sits above normal chrome but below
+// the reader overlay (2400), the feedback dialog (2500), and the permission
+// popup, so a dialog/permission prompt is never obscured by the PIP (§78.5).
+// Draggable/resizable is a later phase; this is fixed bottom-right.
+// =============================================================================
+
+.announcer-pip {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 340px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  z-index: 2200;
+  overflow: hidden;
+
+  // A subtle accent ring while a voice is actively speaking.
+  &.is-playing {
+    border-color: var(--accent, #3b82f6);
+  }
+}
+
+.announcer-pip-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.announcer-pip-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.announcer-pip-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.announcer-pip-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border);
+  }
+}
+
+.announcer-pip-body {
+  padding: 14px 16px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.announcer-pip-script {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.announcer-pip-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.announcer-pip-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.announcer-pip-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  &:hover:not(:disabled) {
+    background: var(--bg-hover);
+    border-color: var(--accent, #3b82f6);
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  // The central play/pause control reads as the primary action.
+  &.announcer-pip-playpause {
+    width: 40px;
+    height: 40px;
+    color: var(--accent, #3b82f6);
+  }
+}
+
+.announcer-pip-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.announcer-pip-position {
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.announcer-pip-hint {
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -577,6 +577,32 @@ The dialog is heavily visual — rendered markdown pills, in-between hover-to-re
 
 ---
 
+## 15. Announcer — audio narration (HS-8747, §78)
+
+Playback *logic* (state machine, controls, cursor advance) is covered by unit + e2e tests (`announcerPlayer.test.ts`, `tts.test.ts`, `e2e/announcer.spec.ts` with `speechSynthesis` stubbed). What can't be auto-verified — real audio output and the Tauri OS-voice path — is manual. Requires an Anthropic API key.
+
+### Setup + opt-in (any build)
+- [ ] Settings → Experimental → Announcer: the section shows a BETA chip, the privacy/cost disclosure ("sends this project's notes + activity log to Anthropic using your own API key"), an enable toggle (off by default), and a password key field with a "Save key" button. The header has no "Listen" button yet.
+- [ ] Paste an Anthropic key, click Save key: a success toast fires, the field clears, and the status line reads "API key configured · N entries in the reel." Toggle Enable on. The header "Listen" button (audio-lines icon) appears.
+- [ ] Toggle Enable off → the Listen button disappears. Toggle back on → it returns.
+
+### Generate + transcript PIP
+- [ ] With some recent completed tickets / notes, click Listen. The button shows a busy state, then a corner-docked PIP appears (bottom-right) with the first entry's title + spoken script and a "1 / N" position. The transcript reads as a coherent spoken summary of recent work (not raw notes).
+- [ ] Click Listen with no new work since last listen → a "Nothing new to announce yet" toast; no PIP.
+- [ ] PIP stacking: open a feedback dialog / permission popup while the PIP is open — the dialog/popup renders ABOVE the PIP (never obscured).
+
+### Audio playback — browser build (`npm run dev`, open in Chrome/Safari)
+- [ ] On Listen, the browser voice speaks the first entry aloud and auto-advances to the next when it finishes (position increments, title/script update).
+- [ ] Play/pause: the central button pauses mid-sentence and resumes from where it left off (browser `speechSynthesis` true pause). Prev/Next jump entries and start speaking the target. Skip (thumbs-down) dismisses the current entry (it won't reappear next Listen) and advances.
+- [ ] Close the PIP (× or Escape while focused): audio stops immediately and the listened cursor advances (a subsequent Listen with no new work says "nothing new").
+
+### Audio playback — Tauri desktop build
+- [ ] On Listen, the macOS system voice (`say`) speaks aloud (NOT the browser path — confirm by checking it uses the OS voice). Auto-advance works.
+- [ ] Pause/Skip/Next/Prev/Close all interrupt the current utterance promptly (the `tts_stop` command kills the `say` child). On a non-resumable OS voice, resume re-speaks the current entry from the start (expected).
+- [ ] No orphaned `say` processes remain after closing the PIP or quitting the app.
+
+---
+
 ## Automated Coverage Summary
 
 For reference, here's what IS covered by automated tests (no manual check needed):
@@ -608,3 +634,4 @@ For reference, here's what IS covered by automated tests (no manual check needed
 - OSC 133 Phase 3 Ask Claude (channel alive: failing command's gutter glyph popover surfaces Ask Claude button, click POSTs canonical prompt with command + exit code + output to /api/channel/trigger; channel dead: button absent from popover) — `e2e/terminal-osc133-ask-claude.spec.ts` (HS-7332)
 - Terminal renderer selection under WebGL: with WebGL re-enabled (SwiftShader), every scaled dashboard tile (grid + magnified, including the drawer-active project's terminal) uses the DOM renderer (no `<canvas>`) while the non-scaled drawer pane uses WebGL — `e2e/dashboard-tile-webgl-dom-renderer.spec.ts` (HS-8619); the drawer-active tile still converges to ≈4:3 — `e2e/dashboard-drawer-active-tile-sizing.spec.ts` (HS-8619). Visual crispness on a real GPU stays manual.
 - Checkout `handle.resize` top-of-stack gate: a bumped-down consumer cannot resize the shared term; the top consumer can; a restored consumer can resize again — `src/client/terminalCheckout.test.ts` (HS-8619)
+- Announcer (§78 / HS-8747) playback: state machine (sequential play, pause/resume on resumable + non-resumable backends, prev/next, skip+dismiss, stale-resolution guard, transcript-only `none` backend) — `src/client/announcerPlayer.test.ts`; TTS backend selection + each engine's `ended`/`cancelled`/`error` contract — `src/client/tts.test.ts`; client UX (Listen-button opt-in gate → PIP renders → next/prev/skip/close → cursor advance) with announcer routes intercepted + `speechSynthesis` stubbed — `e2e/announcer.spec.ts`. Real audio output + the Tauri `say` voice path stay manual (§15).

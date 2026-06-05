@@ -2,6 +2,8 @@ import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
 import { createTicket, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
+import { initAnnouncer, refreshAnnouncerVisibility, teardownAnnouncer } from './announcer.js';
+import { bindAnnouncerSettings } from './announcerSettings.js';
 import { api, apiUpload, apiWithSecret } from './api.js';
 import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
@@ -124,6 +126,10 @@ async function reloadAppState() {
   void initChannel();
   // Reload plugin UI for the new project
   void reloadPluginToolbar();
+  // HS-8747 / §78 — close any open announcer PIP (it played the previous
+  // project's reel) and re-evaluate the Listen button for the new project.
+  teardownAnnouncer();
+  void refreshAnnouncerVisibility();
 }
 
 async function loadInitialState(): Promise<void> {
@@ -197,6 +203,11 @@ function bindAllUiHandlers(): void {
   bindGlassbox();
   initCustomViews(() => { void loadTickets(); });
   initResize();
+  // HS-8747 / §78 — wire the header Listen button + the Announcer settings
+  // section. The settings binding refreshes the Listen button's visibility
+  // after an opt-in / key change.
+  initAnnouncer();
+  bindAnnouncerSettings(() => { void refreshAnnouncerVisibility(); });
 }
 
 function bindAppLevelDocumentListeners(): void {

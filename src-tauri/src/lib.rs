@@ -22,6 +22,13 @@ struct SidecarPid(Mutex<Option<u32>>);
 /// Holds the version string of a pending update, if any.
 struct PendingUpdate(Mutex<Option<String>>);
 
+/// §78 Announcer (HS-8747) — holds the PID of the currently-speaking `say`
+/// child so `tts_stop` can interrupt it (play/pause/skip in the announcer
+/// PIP). Only one announcer utterance plays at a time, so a single slot is
+/// enough; `tts_speak` overwrites it (killing any prior child first) and
+/// clears it when the child exits.
+struct TtsChild(Mutex<Option<u32>>);
+
 /// HS-7596 / §37 — quit-confirm gate. The CloseRequested handler intercepts
 /// every quit attempt (⌘Q, traffic-light close, Alt+F4) and emits a
 /// `quit-confirm-requested` event to the JS frontend. The JS frontend runs
@@ -776,6 +783,114 @@ async fn quicklook(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// §78 Announcer (HS-8747) — speak `text` aloud using the OS text-to-speech
+/// voice, resolving only when the utterance finishes (or is interrupted by
+/// `tts_stop`). This is the desktop-primary TTS path chosen by the HS-8744
+/// spike: it uses the OS voice directly rather than depending on WKWebView
+/// `speechSynthesis`, whose reliability in this Tauri build is unverified
+/// (it's the same browser-API class as the Tauri-unsafe `confirm`). The
+/// browser build falls back to `speechSynthesis` (see `src/client/tts.ts`).
+///
+/// macOS uses `/usr/bin/say`; Linux uses `spd-say --wait` when present;
+/// Windows uses PowerShell's `System.Speech` synthesizer. The child PID is
+/// stored so `tts_stop` can interrupt mid-utterance. Resolving on child exit
+/// is what lets the client play entries sequentially (await one, then speak
+/// the next).
+#[tauri::command]
+async fn tts_speak(
+    state: tauri::State<'_, TtsChild>,
+    text: String,
+    voice: Option<String>,
+    rate: Option<u32>,
+) -> Result<(), String> {
+    // Interrupt anything already speaking before starting the new utterance.
+    stop_tts_child(&state);
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = std::process::Command::new("say");
+        if let Some(v) = voice.as_deref().filter(|v| !v.is_empty()) {
+            c.arg("-v").arg(v);
+        }
+        if let Some(r) = rate {
+            c.arg("-r").arg(r.to_string());
+        }
+        c.arg(&text);
+        c
+    };
+
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        // `spd-say --wait` blocks until speech completes. `voice`/`rate`
+        // are best-effort: spd-say takes `-r` as a -100..100 relative rate,
+        // so we don't map the macOS word-per-minute scale here.
+        let _ = (&voice, &rate);
+        let mut c = std::process::Command::new("spd-say");
+        c.arg("--wait").arg(&text);
+        c
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let _ = (&voice, &rate);
+        // Drive the .NET speech synthesizer from PowerShell. Pass the text via
+        // an environment variable so quotes/specials in `text` don't need
+        // shell escaping inside the script.
+        let mut c = std::process::Command::new("powershell");
+        c.arg("-NoProfile").arg("-Command").arg(
+            "Add-Type -AssemblyName System.Speech; \
+             $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
+             $s.Speak($env:HOTSHEET_TTS_TEXT)",
+        );
+        c.env("HOTSHEET_TTS_TEXT", &text);
+        c
+    };
+
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    // Record the PID so `tts_stop` can kill this utterance.
+    {
+        let mut slot = state.0.lock().map_err(|e| e.to_string())?;
+        *slot = Some(child.id());
+    }
+    let status = child.wait().map_err(|e| e.to_string());
+    // Clear the slot if it still points at us (a concurrent `tts_stop` or a
+    // newer `tts_speak` may have already replaced it).
+    if let Ok(mut slot) = state.0.lock() {
+        if *slot == Some(child.id()) {
+            *slot = None;
+        }
+    }
+    status.map(|_| ())
+}
+
+/// §78 Announcer (HS-8747) — interrupt the currently-speaking utterance, if
+/// any. Used by play/pause, skip, prev/next, and PIP close.
+#[tauri::command]
+fn tts_stop(state: tauri::State<'_, TtsChild>) -> Result<(), String> {
+    stop_tts_child(&state);
+    Ok(())
+}
+
+/// Kill the tracked `say` child (if any) and clear the slot. Best-effort —
+/// a missing/already-exited PID is not an error.
+fn stop_tts_child(state: &tauri::State<'_, TtsChild>) {
+    let pid = state.0.lock().ok().and_then(|mut slot| slot.take());
+    let Some(pid) = pid else { return };
+    #[cfg(unix)]
+    {
+        // SIGTERM the say/spd-say process so it stops at once.
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F", "/T"])
+            .status();
+    }
+}
+
 #[tauri::command]
 async fn pick_folder() -> Result<Option<String>, String> {
     let handle = rfd::AsyncFileDialog::new()
@@ -943,6 +1058,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(SidecarPid(Mutex::new(None)))
         .manage(PendingUpdate(Mutex::new(None)))
+        .manage(TtsChild(Mutex::new(None)))
         .manage(QuitConfirmed(AtomicBool::new(false)))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1112,6 +1228,8 @@ pub fn run() {
             show_native_notification,
             quicklook,
             confirm_quit,
+            tts_speak,
+            tts_stop,
             #[cfg(not(debug_assertions))]
             open_project
         ])

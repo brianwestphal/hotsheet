@@ -94,6 +94,12 @@ pageRoutes.get('/', (c) => {
               <button className="layout-btn active" data-position="side" title="Detail panel on side"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg></button>
             </div>
             <button className="glassbox-btn" id="glassbox-btn" title="Open Glassbox" style="display:none"><img id="glassbox-icon" alt="Glassbox" /></button>
+            {/* HS-8747 / §78 — Announcer "Listen" button. Hidden until the
+                project opts in AND has an API key (refreshAnnouncerVisibility
+                in announcer.tsx queries /api/announcer/status). Click →
+                generate + play the reel through the transcript PIP. Lucide
+                `audio-lines` glyph. */}
+            <button className="settings-btn announcer-listen-btn" id="announcer-listen-btn" title="Listen to recent work" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg></button>
             <button className="settings-btn print-btn" id="print-btn" title="Print"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/></svg></button>
             <button className="settings-btn" id="settings-btn" title="Project Settings"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </div>
@@ -768,6 +774,30 @@ pageRoutes.get('/', (c) => {
                     <label><input type="checkbox" id="settings-shell-streaming-enabled" defaultChecked /> Stream shell command output as it arrives</label>
                     <span className="settings-hint">When on, the sidebar shows the trailing 1–2 lines of output under a running custom shell command's button, and the Commands Log entry updates in place as chunks arrive. Turn off if the live trickle is distracting.</span>
                   </div>
+                </div>
+              </div>
+              {/* HS-8747 / §78 — Announcer. Per-project opt-in narration of
+                  recent work. The enable toggle + API key both gate the
+                  header Listen button (announcer.tsx). The key is write-only
+                  (stored in the OS keychain server-side via setAnnouncerKey);
+                  the input stays blank and the status line reports whether one
+                  is configured. */}
+              <div className="settings-section" style="margin-top:16px">
+                <div className="settings-section-header">
+                  <h3>Announcer <span className="settings-beta-chip" title="The Announcer is an experimental, opt-in feature.">BETA</span></h3>
+                </div>
+                <span className="settings-hint">Narrates recent work in this project aloud — a spoken summary of completion notes and activity since you last listened. <strong>Privacy &amp; cost:</strong> enabling sends this project's notes + activity log to Anthropic using your own API key (a departure from Hot Sheet's local-only default). Code and ticket details are never sent — only the notes you and your AI tools already write.</span>
+                <div className="settings-field settings-field-checkbox" style="margin-top:12px">
+                  <label><input type="checkbox" id="settings-announcer-enabled" /> Enable the Announcer for this project</label>
+                  <span className="settings-hint">When on, a “Listen” button appears in the header toolbar (once an API key is set).</span>
+                </div>
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Anthropic API key</label>
+                  <div className="settings-inline-row">
+                    <input type="password" id="settings-announcer-key" placeholder="sk-ant-…" autoComplete="off" style="width: 320px" />
+                    <button type="button" className="btn btn-sm" id="settings-announcer-key-save">Save key</button>
+                  </div>
+                  <span className="settings-hint" id="settings-announcer-status" role="status" aria-live="polite">No API key configured yet — add one below to enable narration.</span>
                 </div>
               </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the

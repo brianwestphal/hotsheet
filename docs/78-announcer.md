@@ -1,7 +1,9 @@
 # 78. Announcer — A/V Narration of Project Work (Design Exploration)
 
 **Status: design exploration, with Phase 1a (server generation backbone) SHIPPED
-(HS-8745, 2026-06-05 — see §78.11).** The rest of this document is the design for
+(HS-8745, 2026-06-05 — see §78.11) and Phase 1b (the after-the-fact audio client:
+settings + transcript PIP + playback + TTS) SHIPPED (HS-8747, 2026-06-05 — see
+§78.12).** The rest of this document is the design for
 an opt-in audio/visual "announcer" that narrates the work being done on a
 project — what changed, what the AI is doing now, what happened while you were
 away. It captures the value proposition, an honest assessment of what's useful
@@ -358,11 +360,14 @@ being deferred with the speculative visuals.
   §78.11 for the implementation. Remaining for Phase 1b: the client (settings
   section, transcript PIP, playback controls, TTS abstraction + the `tts_speak`
   Tauri command).
-- **Phase 1 — after-the-fact core.** After-the-fact, **audio-only**, built-in
-  TTS, opt-in per project. Persisted `announcements` + `announcer_last_listened_at`.
-  Simple transcript PIP (text + emphasis). Core playback controls (play/pause,
-  prev, next, skip, 10s seeks). Keychain-backed AI key + settings section. This
-  is the shared pipeline live mode builds on.
+- **Phase 1 — after-the-fact core (SHIPPED 2026-06-05 — HS-8745 §78.11 server +
+  HS-8747 §78.12 client).** After-the-fact, **audio-only**, built-in TTS, opt-in
+  per project. Persisted `announcements` + `announcer_last_listened_at`. Simple
+  transcript PIP (text). Core playback controls (play/pause, prev, next, skip).
+  Keychain-backed AI key + settings section. This is the shared pipeline live
+  mode builds on. *Deferred to follow-ups:* the 10s audio-timeline seeks (need
+  cached audio — a Phase 3 cloud-TTS artifact), text emphasis markup, and a
+  draggable/resizable PIP.
 - **Phase 2 — live mode.** The §78.4.1 producer/consumer loop: server-side
   generator on the long-poll `change-version`, debounce + coalesce, adaptive
   backlog compression, catch-up + skip-catch-up, the "still working" presence
@@ -441,3 +446,62 @@ filtering + chronological order against a temp DB), `announcer/summarize.test.ts
 `api/announcer.test.ts` (caller URLs + schemas), `routes/announcer.test.ts`
 (opt-in gate, generate→persist with the summarizer mocked, cursor). 27 tests.
 A new `@anthropic-ai/sdk` dependency was added (server-side).
+
+## 78.12 Phase 1b implementation — after-the-fact audio client (HS-8747, shipped)
+
+The user-facing half of the after-the-fact MVP, built on the Phase 1a typed
+callers (`src/api/announcer.ts`). Audio-only, opt-in per project, transcript
+PIP. The real audio (`say` voice / browser `speechSynthesis`) and the Tauri
+path need a desktop/manual pass — see the manual test plan — but the wiring,
+playback state machine, and UI are automated.
+
+**TTS abstraction (`src/client/tts.ts`).** One `SpeechEngine` interface, two
+backends chosen at runtime per the HS-8744 spike: **Tauri desktop primary** —
+the `tts_speak` / `tts_stop` Rust commands (`src-tauri/src/lib.rs`) drive the
+OS voice (`say` on macOS; `spd-say --wait` on Linux; PowerShell `System.Speech`
+on Windows), sidestepping the unverified WKWebView `speechSynthesis` risk;
+**browser** — the Web Speech API (`speechSynthesis`), the only backend that can
+pause/resume mid-utterance. `speak()` resolves a discriminated `'ended' |
+'cancelled' | 'error'` so the player can tell a natural finish (auto-advance)
+from an interruption. The engine is injectable, so the state machine is
+unit-tested with a fake.
+
+**Playback state machine (`src/client/announcerPlayer.ts`).** DOM-free,
+unit-tested. Sequential narration with play/pause, prev/next entry, and skip
+(remove + dismiss). A monotonic `utteranceToken` guards against a stale
+`speak()` resolution landing after an interrupting action. Pause is true
+mid-utterance pause on the browser backend; on the OS-voice backend (no native
+pause) it stops and re-speaks the entry from the start on resume.
+
+**Transcript PIP (`src/client/announcerPip.tsx`).** A non-modal, corner-docked
+floating panel (z-index 2200 — above chrome, below the reader overlay 2400, the
+feedback dialog 2500, and the permission popup, so a dialog/prompt is never
+obscured). Shows the entry title + spoken script + position (N/M) and the
+playback controls. Draggable/resizable, code-diff visuals, the 10s
+audio-timeline seeks, and playback-speed are later phases (see the follow-up
+tickets).
+
+**Settings + Listen affordance.** `announcerSettings.tsx` binds the "Announcer"
+section under Settings → Experimental: a per-project enable toggle
+(`setAnnouncerEnabled`), a write-only Anthropic API key field
+(`setAnnouncerKey` → OS keychain; the input stays blank and a status line
+reports whether one is configured), and an explicit privacy/cost disclosure.
+`announcer.tsx` owns the header "Listen" button — hidden unless the project is
+opted in AND has a key (`getAnnouncerStatus`) — which generates the latest
+batch and plays the full active reel through the PIP, advancing the listened
+cursor (`advanceAnnouncerCursor`) when the PIP closes.
+
+**Promotes §78.5 (content tier 1 — text transcript) and §78.6 (settings UI +
+TTS providers: Tauri `say` desktop primary, browser `speechSynthesis`) from
+design to shipped.** Code-diff visuals (§78.5 tier 2), draggable/resizable PIP,
+the 10s audio-timeline seeks, "mark uninteresting" learning, and Google Cloud
+TTS remain later-phase.
+
+**Tests.** `client/announcerPlayer.test.ts` (sequential play, pause/resume on
+both backend kinds, nav, skip/dismiss, the stale-resolution guard, the
+transcript-only `none` backend) + `client/tts.test.ts` (backend selection +
+each engine's `ended`/`cancelled`/`error` contract) = 20 unit tests.
+`e2e/announcer.spec.ts` drives the real client (Listen-button gate → PIP →
+next/prev/skip/close → cursor advance) with the announcer routes intercepted
+and `speechSynthesis` stubbed, so it's hermetic (no live API, no keychain, no
+real audio).
