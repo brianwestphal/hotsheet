@@ -783,6 +783,116 @@ async fn quicklook(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// §78 Announcer (HS-8747) — the host OS, for selecting the TTS / kill command.
+/// A plain enum (not `#[cfg]`) so the command builders below are pure functions
+/// testable for every platform on any host (`build_tts_command` /
+/// `build_kill_command` unit tests). `current_tts_platform()` resolves the
+/// real host via `cfg!`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TtsPlatform {
+    MacOs,
+    Linux,
+    Windows,
+}
+
+fn current_tts_platform() -> TtsPlatform {
+    // `cfg!` compiles every arm but evaluates to the host's value, so this
+    // stays correct cross-platform without `#[cfg]` blocks fragmenting the fn.
+    if cfg!(target_os = "macos") {
+        TtsPlatform::MacOs
+    } else if cfg!(target_os = "windows") {
+        TtsPlatform::Windows
+    } else {
+        // Linux + any other Unix fall back to the speech-dispatcher path.
+        TtsPlatform::Linux
+    }
+}
+
+/// A fully-resolved external command: program, argv, and any env to set. Pure
+/// data so the per-platform construction can be asserted in tests without
+/// spawning anything.
+#[derive(Debug, PartialEq, Eq)]
+struct CommandSpec {
+    program: String,
+    args: Vec<String>,
+    /// Env pairs to set on the child (Windows passes the utterance text via an
+    /// env var so quotes/specials don't need shell escaping).
+    env: Vec<(String, String)>,
+}
+
+/// Build the OS text-to-speech command for `platform`. macOS uses `say`
+/// (honoring `voice` / `rate`); Linux uses `spd-say --wait` (voice/rate are
+/// best-effort and not mapped — spd-say's `-r` is a -100..100 relative scale,
+/// not macOS words-per-minute); Windows drives the .NET `System.Speech`
+/// synthesizer from PowerShell with the text passed via `HOTSHEET_TTS_TEXT`.
+fn build_tts_command(
+    platform: TtsPlatform,
+    text: &str,
+    voice: Option<&str>,
+    rate: Option<u32>,
+) -> CommandSpec {
+    match platform {
+        TtsPlatform::MacOs => {
+            let mut args: Vec<String> = Vec::new();
+            if let Some(v) = voice.filter(|v| !v.is_empty()) {
+                args.push("-v".to_string());
+                args.push(v.to_string());
+            }
+            if let Some(r) = rate {
+                args.push("-r".to_string());
+                args.push(r.to_string());
+            }
+            args.push(text.to_string());
+            CommandSpec { program: "say".to_string(), args, env: Vec::new() }
+        }
+        TtsPlatform::Linux => CommandSpec {
+            program: "spd-say".to_string(),
+            args: vec!["--wait".to_string(), text.to_string()],
+            env: Vec::new(),
+        },
+        TtsPlatform::Windows => CommandSpec {
+            program: "powershell".to_string(),
+            args: vec![
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Add-Type -AssemblyName System.Speech; \
+                 $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
+                 $s.Speak($env:HOTSHEET_TTS_TEXT)"
+                    .to_string(),
+            ],
+            env: vec![("HOTSHEET_TTS_TEXT".to_string(), text.to_string())],
+        },
+    }
+}
+
+/// Build the command that interrupts a running TTS child by PID. Unix SIGTERMs
+/// via `kill`; Windows force-kills the tree via `taskkill`.
+fn build_kill_command(platform: TtsPlatform, pid: u32) -> CommandSpec {
+    match platform {
+        TtsPlatform::Windows => CommandSpec {
+            program: "taskkill".to_string(),
+            args: vec!["/PID".to_string(), pid.to_string(), "/F".to_string(), "/T".to_string()],
+            env: Vec::new(),
+        },
+        // macOS + Linux are both Unix — SIGTERM via `kill`.
+        TtsPlatform::MacOs | TtsPlatform::Linux => CommandSpec {
+            program: "kill".to_string(),
+            args: vec![pid.to_string()],
+            env: Vec::new(),
+        },
+    }
+}
+
+/// Turn a `CommandSpec` into a runnable `std::process::Command`.
+fn spec_to_command(spec: &CommandSpec) -> std::process::Command {
+    let mut c = std::process::Command::new(&spec.program);
+    c.args(&spec.args);
+    for (k, v) in &spec.env {
+        c.env(k, v);
+    }
+    c
+}
+
 /// §78 Announcer (HS-8747) — speak `text` aloud using the OS text-to-speech
 /// voice, resolving only when the utterance finishes (or is interrupted by
 /// `tts_stop`). This is the desktop-primary TTS path chosen by the HS-8744
@@ -806,47 +916,8 @@ async fn tts_speak(
     // Interrupt anything already speaking before starting the new utterance.
     stop_tts_child(&state);
 
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut c = std::process::Command::new("say");
-        if let Some(v) = voice.as_deref().filter(|v| !v.is_empty()) {
-            c.arg("-v").arg(v);
-        }
-        if let Some(r) = rate {
-            c.arg("-r").arg(r.to_string());
-        }
-        c.arg(&text);
-        c
-    };
-
-    #[cfg(target_os = "linux")]
-    let mut command = {
-        // `spd-say --wait` blocks until speech completes. `voice`/`rate`
-        // are best-effort: spd-say takes `-r` as a -100..100 relative rate,
-        // so we don't map the macOS word-per-minute scale here.
-        let _ = (&voice, &rate);
-        let mut c = std::process::Command::new("spd-say");
-        c.arg("--wait").arg(&text);
-        c
-    };
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let _ = (&voice, &rate);
-        // Drive the .NET speech synthesizer from PowerShell. Pass the text via
-        // an environment variable so quotes/specials in `text` don't need
-        // shell escaping inside the script.
-        let mut c = std::process::Command::new("powershell");
-        c.arg("-NoProfile").arg("-Command").arg(
-            "Add-Type -AssemblyName System.Speech; \
-             $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
-             $s.Speak($env:HOTSHEET_TTS_TEXT)",
-        );
-        c.env("HOTSHEET_TTS_TEXT", &text);
-        c
-    };
-
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let spec = build_tts_command(current_tts_platform(), &text, voice.as_deref(), rate);
+    let mut child = spec_to_command(&spec).spawn().map_err(|e| e.to_string())?;
     // Record the PID so `tts_stop` can kill this utterance.
     {
         let mut slot = state.0.lock().map_err(|e| e.to_string())?;
@@ -876,19 +947,7 @@ fn tts_stop(state: tauri::State<'_, TtsChild>) -> Result<(), String> {
 fn stop_tts_child(state: &tauri::State<'_, TtsChild>) {
     let pid = state.0.lock().ok().and_then(|mut slot| slot.take());
     let Some(pid) = pid else { return };
-    #[cfg(unix)]
-    {
-        // SIGTERM the say/spd-say process so it stops at once.
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
-    }
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F", "/T"])
-            .status();
-    }
+    let _ = spec_to_command(&build_kill_command(current_tts_platform(), pid)).status();
 }
 
 #[tauri::command]
@@ -1514,4 +1573,88 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tts_command_tests {
+    //! §78 Announcer (HS-8747) — per-platform TTS / kill command construction.
+    //!
+    //! `build_tts_command` and `build_kill_command` are pure (platform is a
+    //! parameter, not `#[cfg]`), so every OS branch is asserted here regardless
+    //! of the host running `cargo test`. This is the only automated coverage of
+    //! the Linux/Windows voice paths until they get a real desktop pass
+    //! (HS-8748) — the macOS `say` path is the only one exercised live in dev.
+    use super::*;
+
+    #[test]
+    fn macos_say_includes_voice_and_rate_when_provided() {
+        let spec = build_tts_command(TtsPlatform::MacOs, "hello world", Some("Samantha"), Some(180));
+        assert_eq!(spec.program, "say");
+        assert_eq!(spec.args, vec!["-v", "Samantha", "-r", "180", "hello world"]);
+        assert!(spec.env.is_empty());
+    }
+
+    #[test]
+    fn macos_say_omits_voice_and_rate_when_absent() {
+        let spec = build_tts_command(TtsPlatform::MacOs, "just text", None, None);
+        assert_eq!(spec.program, "say");
+        // Only the text — no -v / -r flags.
+        assert_eq!(spec.args, vec!["just text"]);
+    }
+
+    #[test]
+    fn macos_say_treats_empty_voice_as_absent() {
+        let spec = build_tts_command(TtsPlatform::MacOs, "x", Some(""), None);
+        assert_eq!(spec.args, vec!["x"]);
+    }
+
+    #[test]
+    fn linux_uses_spd_say_wait_and_ignores_voice_rate() {
+        let spec = build_tts_command(TtsPlatform::Linux, "from linux", Some("ignored"), Some(99));
+        assert_eq!(spec.program, "spd-say");
+        assert_eq!(spec.args, vec!["--wait", "from linux"]);
+        assert!(spec.env.is_empty());
+    }
+
+    #[test]
+    fn windows_passes_text_via_env_not_argv() {
+        let spec = build_tts_command(TtsPlatform::Windows, "windows speech", None, None);
+        assert_eq!(spec.program, "powershell");
+        assert_eq!(spec.args[0], "-NoProfile");
+        assert_eq!(spec.args[1], "-Command");
+        // The script references the env var; the literal text must NOT appear
+        // in argv (that's the whole point — no shell-escaping of the utterance).
+        assert!(spec.args[2].contains("System.Speech"));
+        assert!(spec.args[2].contains("$env:HOTSHEET_TTS_TEXT"));
+        assert!(!spec.args.iter().any(|a| a.contains("windows speech")));
+        assert_eq!(spec.env, vec![("HOTSHEET_TTS_TEXT".to_string(), "windows speech".to_string())]);
+    }
+
+    #[test]
+    fn kill_command_is_taskkill_on_windows() {
+        let spec = build_kill_command(TtsPlatform::Windows, 4321);
+        assert_eq!(spec.program, "taskkill");
+        assert_eq!(spec.args, vec!["/PID", "4321", "/F", "/T"]);
+    }
+
+    #[test]
+    fn kill_command_is_kill_on_unix() {
+        for platform in [TtsPlatform::MacOs, TtsPlatform::Linux] {
+            let spec = build_kill_command(platform, 4321);
+            assert_eq!(spec.program, "kill");
+            assert_eq!(spec.args, vec!["4321"]);
+        }
+    }
+
+    #[test]
+    fn current_platform_matches_the_host() {
+        let platform = current_tts_platform();
+        if cfg!(target_os = "macos") {
+            assert_eq!(platform, TtsPlatform::MacOs);
+        } else if cfg!(target_os = "windows") {
+            assert_eq!(platform, TtsPlatform::Windows);
+        } else {
+            assert_eq!(platform, TtsPlatform::Linux);
+        }
+    }
 }

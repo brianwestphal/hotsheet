@@ -41,6 +41,7 @@
     "test:e2e:fast": "playwright test --grep-invert 'live integration|GitHub credentials|GITHUB_PLUGIN|hasGithubCreds|ATTACHMENT_REPO|PLUGINS_ENABLED'",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:docker": "bash scripts/test-e2e-docker.sh",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "lint": "eslint src/",
     "capture-demos": "tsx scripts/capture-demos.ts",
     "clean": "rm -rf dist node_modules/.cache",

@@ -505,3 +505,15 @@ each engine's `ended`/`cancelled`/`error` contract) = 20 unit tests.
 next/prev/skip/close → cursor advance) with the announcer routes intercepted
 and `speechSynthesis` stubbed, so it's hermetic (no live API, no keychain, no
 real audio).
+
+**Cross-platform Rust tests.** The per-platform OS-voice/kill command
+construction in `src-tauri/src/lib.rs` was refactored from `#[cfg(target_os)]`
+blocks into pure, platform-parameterized functions (`build_tts_command` /
+`build_kill_command`, taking a `TtsPlatform` enum) so **all three platforms are
+unit-tested on any host** — `cargo test` (`npm run test:rust`) asserts the
+macOS `say` argv (with/without voice+rate, empty-voice handling), the Linux
+`spd-say --wait` argv, the Windows PowerShell `System.Speech` form (text passed
+via the `HOTSHEET_TTS_TEXT` env var, never argv), and the unix `kill` vs Windows
+`taskkill` interrupt commands (8 tests). This is the only automated coverage of
+the Linux/Windows voice paths until the desktop pass (HS-8748); actual process
+spawning + audio output still needs that manual pass.

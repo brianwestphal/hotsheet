@@ -70,7 +70,10 @@ npm run test:e2e:fast # E2E only, skipping GitHub plugin / live integration
 npm run test:e2e:docker # E2E in the CI Linux/Chromium container (needs Docker). Forwards args: -- e2e/foo.spec.ts
 npm run test:all      # unified coverage: unit + E2E server + E2E browser, merged
 npm run test:all-including-plugins  # test:all + plugin tests in coverage
+npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tauri/) — needs the Rust toolchain
 ```
+
+`npm test` (vitest) does NOT run the Rust tests — run `npm run test:rust` for `src-tauri/` (`#[cfg(test)]` modules in `src/lib.rs`, e.g. the per-platform TTS command construction). Platform-specific Rust (`#[cfg(target_os)]` branches) should be refactored to pure, platform-parameterized functions so every OS branch is testable on any host (see `build_tts_command` / `build_kill_command`).
 
 `test:fast` / `test:e2e:fast` exclude tests needing GitHub API credentials (plugin sync, live integration) — these run in CI by default. The full `test:e2e` suite (live GitHub integration) runs locally only when credentials are configured.
 
