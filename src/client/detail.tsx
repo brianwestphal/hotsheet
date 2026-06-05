@@ -180,6 +180,16 @@ export function openDetail(id: number) {
   void loadDetail(id);
 }
 
+/** HS-8742 — make `id` the sole selection AND open its detail panel. Used after
+ *  a paste/drop creates a brand-new "Attachment(s)" ticket so the user lands on
+ *  it ready to retitle and see the freshly-attached files. Callers reload the
+ *  ticket list afterward so the row renders selected. */
+export function selectAndOpenDetail(id: number) {
+  state.selectedIds.clear();
+  state.selectedIds.add(id);
+  openDetail(id);
+}
+
 /** Open detail and, after notes render, scroll to and focus a specific note. */
 export function openDetailAndFocusNote(id: number, noteId: string) {
   // HS-8054 — context for the longtask observer.

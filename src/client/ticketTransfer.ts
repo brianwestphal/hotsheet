@@ -1,4 +1,4 @@
-import { createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
+import { copyTicketAttachments, createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
 import { TicketSchema } from '../schemas.js';
 import type { Ticket } from './state.js';
 
@@ -57,6 +57,20 @@ export async function transferTicketsToProject(
 
     if (source.notes && source.notes !== '' && source.notes !== '[]') {
       await putTicketNotesBulk(created.id, source.notes, { secret: targetSecret });
+    }
+
+    // HS-8739 — carry the source ticket's attachments into the new ticket. The
+    // server copies the files between project dirs (target ticket authed via
+    // `targetSecret`, source named by `sourceSecret`). Best-effort: an
+    // attachment-copy failure must not abort the whole transfer — the ticket
+    // itself already landed. Needs the source secret (always present for the
+    // drag/"+" flows); skipped if absent.
+    if (opts.sourceSecret !== undefined && opts.sourceSecret !== '') {
+      try {
+        await copyTicketAttachments(created.id, { sourceSecret: opts.sourceSecret, sourceTicketId: source.id }, { secret: targetSecret });
+      } catch (err) {
+        console.error(`attachment copy failed for source ticket ${String(source.id)}:`, err);
+      }
     }
 
     createdIds.push(created.id);

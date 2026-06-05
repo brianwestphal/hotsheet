@@ -74,7 +74,17 @@ export function bindDetailTagInput(): void {
   }
 
   tagInput.addEventListener('input', () => { showAutocomplete(); });
-  tagInput.addEventListener('focus', () => { showAutocomplete(); });
+  tagInput.addEventListener('focus', () => {
+    // HS-8737 / HS-8738 — refresh the known-tag cache on focus so the
+    // autocomplete always reflects the CURRENT project's live, non-deleted tag
+    // set — the same source the Tags dialog fetches fresh on open. Without
+    // this the module-level `allKnownTags` cache (seeded once at app init in
+    // `bindDetailTagInput`, never refreshed on project switch, and only ever
+    // pushed to in `addCurrentTag`) drifts: it leaks the previous project's
+    // tags after a switch and keeps tags that were removed from every ticket.
+    // Refresh-then-show so the first dropdown already reflects reality.
+    void refreshAllKnownTags().then(() => { showAutocomplete(); });
+  });
   tagInput.addEventListener('blur', () => { closeAutocomplete(); });
   tagInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {

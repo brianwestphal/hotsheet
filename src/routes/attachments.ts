@@ -2,16 +2,20 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { basename, extname, join, resolve, sep } from 'path';
 
+import { CopyAttachmentsReqSchema } from '../api/attachments.js';
 import { promoteDraftAttachments } from '../db/attachments.js';
+import { runWithDataDir } from '../db/connection.js';
 import {
   addAttachment,
   addDraftAttachment,
   deleteAttachment,
   getAttachment,
+  getAttachments,
   getTicket,
 } from '../db/queries.js';
 import { getMimeType } from '../mime-types.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
+import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
@@ -117,6 +121,63 @@ attachmentRoutes.post('/tickets/:id/feedback-drafts/:draftId/promote-attachments
   const promoted = await promoteDraftAttachments(draftId);
   notifyMutation(c.get('dataDir'));
   return c.json({ promoted: promoted.length, attachments: promoted });
+});
+
+/**
+ * HS-8739 — POST /api/tickets/:id/attachments/copy-from. Server-side copy of
+ * all of a source ticket's non-draft attachments into target ticket `:id`.
+ * `:id` is in the TARGET project (resolved from the request's auth context);
+ * the source project is named by `sourceSecret` in the body. The bytes are
+ * read from the source project's files (their absolute `stored_path`) and
+ * re-written into the target project's attachments dir — never round-tripping
+ * through the browser. Powers cross-project ticket copy/move (§76 drag + §3
+ * clipboard paste): without it, a move silently lost the originals' files.
+ */
+attachmentRoutes.post('/tickets/:id/attachments/copy-from', async (c) => {
+  const targetId = parseIntParam(c, 'id');
+  if (targetId === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const targetTicket = await getTicket(targetId);
+  if (!targetTicket) return c.json({ error: 'Ticket not found' }, 404);
+
+  const raw: unknown = await c.req.json().catch(() => null);
+  const parsed = CopyAttachmentsReqSchema.safeParse(raw);
+  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
+  const { sourceSecret, sourceTicketId } = parsed.data;
+
+  const sourceProject = getProjectBySecret(sourceSecret);
+  if (!sourceProject) return c.json({ error: 'Source project not found' }, 400);
+
+  // Read the source ticket's (non-draft) attachment rows from the SOURCE
+  // project's DB by temporarily binding its dataDir; back to the target context
+  // (the outer middleware's) for every write below.
+  const sourceAttachments = await runWithDataDir(sourceProject.dataDir, () => getAttachments(sourceTicketId));
+
+  const targetDataDir = c.get('dataDir');
+  const attachDir = join(targetDataDir, 'attachments');
+  mkdirSync(attachDir, { recursive: true });
+
+  const copied = [];
+  for (const att of sourceAttachments) {
+    // Skip a row whose on-disk file vanished rather than failing the whole copy.
+    if (!existsSync(att.stored_path)) continue;
+    const ext = extname(att.original_filename);
+    const base = basename(att.original_filename, ext);
+    let storedName = `${targetTicket.ticket_number}_${base}${ext}`;
+    let storedPath = join(attachDir, storedName);
+    // Don't clobber an existing target file (duplicate names within the batch
+    // or a pre-existing attachment on the target ticket) — suffix until unique.
+    let n = 1;
+    while (existsSync(storedPath)) {
+      storedName = `${targetTicket.ticket_number}_${base}_${String(n)}${ext}`;
+      storedPath = join(attachDir, storedName);
+      n++;
+    }
+    writeFileSync(storedPath, readFileSync(att.stored_path));
+    copied.push(await addAttachment(targetId, att.original_filename, storedPath));
+  }
+
+  notifyMutation(targetDataDir);
+  return c.json({ copied: copied.length, attachments: copied });
 });
 
 attachmentRoutes.delete('/attachments/:id', async (c) => {

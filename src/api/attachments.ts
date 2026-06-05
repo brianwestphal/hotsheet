@@ -12,7 +12,7 @@
  */
 import { z } from 'zod';
 
-import { apiCall, apiUploadCall, type OkResponse, OkResponseSchema } from './_runner.js';
+import { apiCall, type ApiCallOpts, apiUploadCall, type OkResponse, OkResponseSchema } from './_runner.js';
 
 /** A persisted attachment row (the upload endpoints' 201 body). Matches the
  *  `Attachment` shape in `src/types.ts`; `.loose()` tolerates any future
@@ -40,6 +40,38 @@ export async function uploadAttachment(ticketId: number, file: File): Promise<At
  *  from the ticket's main attachment list until the draft is promoted. */
 export async function uploadDraftAttachment(ticketId: number, draftId: string, file: File): Promise<AttachmentRecord> {
   return apiUploadCall(AttachmentSchema, `/tickets/${ticketId}/feedback-drafts/${encodeURIComponent(draftId)}/attachments`, file);
+}
+
+/** Request body for the cross-project attachment copy (HS-8739). */
+export const CopyAttachmentsReqSchema = z.object({
+  /** Secret of the project the source ticket lives in. */
+  sourceSecret: z.string().min(1),
+  /** The source ticket whose (non-draft) attachments are copied. */
+  sourceTicketId: z.number().int(),
+});
+export type CopyAttachmentsReq = z.infer<typeof CopyAttachmentsReqSchema>;
+
+export const CopyAttachmentsResSchema = z.object({
+  copied: z.number(),
+  attachments: z.array(AttachmentSchema),
+});
+export type CopyAttachmentsRes = z.infer<typeof CopyAttachmentsResSchema>;
+
+/**
+ * POST `/tickets/:id/attachments/copy-from` (HS-8739) — server-side copy of all
+ * of a source ticket's non-draft attachments into target ticket `:id`. `:id` is
+ * in the TARGET project (authed via `opts.secret` — the active project when
+ * omitted); the source project is named by `req.sourceSecret` in the body. The
+ * server reads the source rows from the source project's DB and copies the
+ * files into the target project's attachments dir, so the bytes never round-trip
+ * through the browser. Used by cross-project ticket copy/move (drag + clipboard).
+ */
+export async function copyTicketAttachments(
+  targetTicketId: number,
+  req: CopyAttachmentsReq,
+  opts: Pick<ApiCallOpts, 'secret'> = {},
+): Promise<CopyAttachmentsRes> {
+  return apiCall(CopyAttachmentsResSchema, `/tickets/${targetTicketId}/attachments/copy-from`, { method: 'POST', body: req, secret: opts.secret });
 }
 
 /** DELETE `/attachments/:id` → delete an attachment + its file on disk. */

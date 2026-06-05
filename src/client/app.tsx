@@ -12,7 +12,7 @@ import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from '.
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
 import { initDbRecoveryBanner } from './dbRecoveryBanner.js';
-import { closeDetail, initResize, refreshDetail } from './detail.js';
+import { closeDetail, initResize, refreshDetail, selectAndOpenDetail } from './detail.js';
 // HS-8553 — `bindDetailPanel` + the position-toggle pair moved to
 // `./detailBindings/` so app.tsx isn't carrying 16 sibling top-level
 // functions.
@@ -35,7 +35,7 @@ import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestor
 import { initShare } from './share.js';
 import { bindKeyboardShortcuts } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls, syncSearchInputFromState, syncSidebarActiveState } from './sidebar.js';
-import { state } from './state.js';
+import { refreshAllKnownTags, state } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
 import { loadTelemetryCostMode } from './telemetryCostMode.js';
@@ -85,6 +85,10 @@ async function reloadAppState() {
   updateDetailPositionToggle();
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
+  // HS-8737 / HS-8738 — re-seed the shared known-tag cache for the new project
+  // so the detail-panel tag autocomplete + custom-view tag filter don't keep
+  // showing the previous project's tags after a switch.
+  void refreshAllKnownTags();
   // If the restored view is a custom view that doesn't exist in this project, fall back to 'all'
   if (state.view.startsWith('custom:')) {
     const viewId = state.view.slice(7);
@@ -248,28 +252,35 @@ function bindFileDropListeners(): void {
     setFileDropRow(null);
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
-    const ticketId = await resolveDropTicketId(target, findRowUnder);
+    const { id: ticketId, createdNew } = await resolveDropTicketId(target, findRowUnder);
     for (const file of Array.from(files)) {
       await uploadAttachment(ticketId, file);
     }
+    // HS-8742 — when the drop created a fresh "Attachment" ticket (no row under
+    // the cursor, no single selection), select + open it so the user lands on
+    // it ready to retitle and see the attached files. Mirrors the paste flow.
+    if (createdNew) selectAndOpenDetail(ticketId);
     void loadTickets();
   });
 }
 
-async function resolveDropTicketId(target: HTMLElement, findRowUnder: (el: HTMLElement) => HTMLElement | null): Promise<number> {
+async function resolveDropTicketId(
+  target: HTMLElement,
+  findRowUnder: (el: HTMLElement) => HTMLElement | null,
+): Promise<{ id: number; createdNew: boolean }> {
   // Row/card drop target takes precedence over selection — a user dropping
   // a file on a specific ticket obviously intends to attach to that ticket.
   const rowEl = findRowUnder(target);
   const rowId = rowEl?.dataset.id;
-  if (rowId !== undefined && rowId !== '') return parseInt(rowId, 10);
-  if (state.selectedIds.size === 1) return Array.from(state.selectedIds)[0];
+  if (rowId !== undefined && rowId !== '') return { id: parseInt(rowId, 10), createdNew: false };
+  if (state.selectedIds.size === 1) return { id: Array.from(state.selectedIds)[0], createdNew: false };
   // Create a new ticket — use draft input text if available.
   const draftInput = document.querySelector<HTMLInputElement>('.draft-input');
   const title = draftInput?.value.trim() ?? '';
   const res = await createTicket({ title: title || 'Attachment' });
   if (draftInput && title !== '') draftInput.value = '';
   void loadTickets();
-  return res.id;
+  return { id: res.id, createdNew: true };
 }
 
 function initDrawerAndDashboard(): void {

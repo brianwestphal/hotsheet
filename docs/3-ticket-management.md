@@ -15,7 +15,7 @@ Each ticket has the following properties:
 - **Priority** — One of five levels: Highest, High, Default, Low, Lowest.
 - **Status** — One of seven states (see §3.3).
 - **Up Next** — Boolean flag marking the ticket as a priority work item.
-- **Tags** — User-defined tags stored as a JSON array of normalized strings in the `tags` column (default `[]`). The full list of available tags is derived from all non-deleted tickets.
+- **Tags** — User-defined tags stored as a JSON array of normalized strings in the `tags` column (default `[]`). The full list of available tags is derived from all non-deleted tickets **in the current project** (`getAllTags` → `GET /api/tags`, scoped to the active project's DB). The **Tags dialog** and the **detail-panel autocomplete** both draw from this single source so they always agree (HS-8737 / HS-8738): the dialog fetches fresh on open, and the autocomplete re-fetches on tag-input focus and on project switch so its `allKnownTags` cache can't drift (leak the previous project's tags or retain tags removed from every ticket).
   - **Normalization**: All tags are normalized on input — non-alphanumeric character runs are collapsed to a single space, leading/trailing whitespace is trimmed, and the result is stored in lowercase. Example: `"  This  is --- a TAG  "` → `"this is a tag"`.
   - **Display**: Tags are rendered in Title Case everywhere (chips, autocomplete, markdown sync). Example: `"this is a tag"` → `"This Is A Tag"`.
   - **Deduplication**: Case-insensitive — `"Admin"` and `"admin"` are treated as the same tag.
@@ -36,7 +36,7 @@ Each ticket has the following properties:
 - **Soft Delete** — Sets status to `deleted` and records `deleted_at`. The ticket remains in the database and can be restored.
 - **Hard Delete** — Permanently removes the ticket record and cleans up associated attachment files from disk.
 - **Restore** — Returns a deleted ticket to `not_started` status, clearing deletion metadata.
-- **Copy / Cut / Paste** — Tickets can be copied or cut and pasted within or across projects. Paste creates new tickets with new numbers, copying title, details, category, priority, status, up_next, tags, and notes. Title deduplication appends " (Copy)", " (Copy 2)", etc. when a matching title exists. Cut deletes the originals after a successful paste. See [4-user-interface.md](4-user-interface.md) §4.12 for full details.
+- **Copy / Cut / Paste** — Tickets can be copied or cut and pasted within or across projects. Paste creates new tickets with new numbers, copying title, details, category, priority, status, up_next, tags, notes, and **attachments** (HS-8739 — server-side `POST /api/tickets/:id/attachments/copy-from`, §5; also carried by the §76 cross-project drag). Title deduplication appends " (Copy)", " (Copy 2)", etc. when a matching title exists. Cut deletes the originals after a successful paste. See [4-user-interface.md](4-user-interface.md) §4.12 for full details.
 
 ### 3.3 Status Lifecycle
 

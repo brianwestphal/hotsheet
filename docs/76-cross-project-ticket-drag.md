@@ -72,14 +72,22 @@ The typed callers `createTicket` and `putTicketNotesBulk` gained an optional
 `{ secret }` argument (HS-8663) to route cross-project, matching `updateTicket` /
 `deleteTicket` which already had it.
 
-### 76.4.1 Known gap — attachments are not carried
+### 76.4.1 Attachments are carried (HS-8739)
 
-`transferTicketsToProject` does **not** copy a ticket's attachments to the target
-project — the same gap the existing cross-project clipboard paste
-(`clipboard.ts::pasteTickets`) has. For a **move**, this means the originals'
-attachments are lost when the source is trashed (and later cleaned up). Tracked
-as a follow-up to carry hash-addressed attachments across projects for both the
-clipboard-paste and drag paths.
+Both `transferTicketsToProject` (drag) and `clipboard.ts::pasteTickets`
+(copy/cut/paste) copy a ticket's attachments to the target project via the
+server endpoint **`POST /api/tickets/:id/attachments/copy-from`** (typed caller
+`copyTicketAttachments(targetId, { sourceSecret, sourceTicketId }, { secret })`).
+The target ticket `:id` is authed with the target secret; the source project is
+named in the body. The server reads the source ticket's non-draft attachment
+rows from the source project's DB (`runWithDataDir(sourceDataDir, …)`) and copies
+the files (by their absolute `stored_path`) into the target project's
+`attachments/` dir — the bytes never round-trip through the browser. Duplicate
+target filenames are suffixed (`_1`, `_2`, …) so a copy never clobbers an
+existing file; draft attachments are skipped; a vanished source file is skipped
+rather than failing the batch. The copy is best-effort: a failure logs and is
+swallowed so the ticket transfer itself still succeeds. This closes the prior
+move-loses-attachments gap.
 
 ## 76.5 Testing
 
@@ -89,6 +97,23 @@ clipboard-paste and drag paths.
   active project). `projectTabsTicketDrop.test.ts` (drop onto another tab calls
   the transfer with the right secret + copy/move flag, Option threads move,
   drop onto the source tab is a no-op, a tab reorder doesn't transfer).
-- **Manual** — the real OS drag-and-drop gesture, the Option-key copy↔move
-  cursor, and the "+"-button-drop → folder-picker → transfer flow are in the
-  manual test plan (drag-and-drop is not reliably automatable end-to-end).
+- **E2E** (HS-8740) — `e2e/cross-project-drag.spec.ts` registers a real second
+  project against a throwaway temp dir and synthesizes the drag (`dragstart` on
+  the row → `dragover` + `drop` on the destination tab, `altKey` for move):
+  copy lands a duplicate in B with the original kept in A; Alt-move removes the
+  original from A and lands it in B; dropping onto the source's own tab is a
+  no-op; and (HS-8739) a copy carries the ticket's attachment into B. The temp
+  project is unregistered in `afterEach` (its data dir is left for the OS to
+  reap — removing it mid-run panics PGLite's next checkpoint).
+- **Attachment copy** (HS-8739) — `src/routes/attachmentCopyCrossProject.test.ts`
+  drives the `copy-from` route across two project DBs (file copied into the
+  target dir with content preserved, source untouched, dedup-suffix on duplicate
+  names, draft attachments excluded, 400 on unknown source / malformed body);
+  `ticketTransfer.test.ts` asserts the transfer calls `copyTicketAttachments`
+  with the right ids + secrets (and skips it without a source secret);
+  `api/attachments.test.ts` pins the typed caller's URL/body + the request
+  schema.
+- **Manual** — the real OS drag-and-drop gesture (native drag image), the
+  Option-key copy↔move cursor badge, and the "+"-button-drop → folder-picker →
+  transfer flow remain in the manual test plan (Playwright can't drive the
+  native drag image / modifier cursor or the OS folder dialog).

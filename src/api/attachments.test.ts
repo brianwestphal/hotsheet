@@ -12,7 +12,8 @@ import {
   setApiTransport, setApiUploadTransport,
 } from './_runner.js';
 import {
-  AttachmentSchema, deleteAttachment, revealAttachment, uploadAttachment, uploadDraftAttachment,
+  AttachmentSchema, CopyAttachmentsReqSchema,
+copyTicketAttachments,   deleteAttachment, revealAttachment, uploadAttachment, uploadDraftAttachment,
 } from './attachments.js';
 
 const attachment = {
@@ -83,6 +84,22 @@ describe('attachments callers (HS-8633)', () => {
     stubJson({ ok: true });
     await revealAttachment(7);
     expect(lastCall).toEqual({ path: '/attachments/7/reveal', opts: { method: 'POST' } });
+  });
+
+  it('copyTicketAttachments → POST /tickets/:id/attachments/copy-from with the target secret + source body (HS-8739)', async () => {
+    stubJson({ copied: 2, attachments: [attachment, attachment] });
+    const res = await copyTicketAttachments(99, { sourceSecret: 'src', sourceTicketId: 5 }, { secret: 'tgt' });
+    expect(res.copied).toBe(2);
+    expect(lastCall).toEqual({
+      path: '/tickets/99/attachments/copy-from',
+      opts: { method: 'POST', body: { sourceSecret: 'src', sourceTicketId: 5 }, secret: 'tgt' },
+    });
+  });
+
+  it('CopyAttachmentsReqSchema rejects an empty source secret / non-int ticket id (HS-8739)', () => {
+    expect(CopyAttachmentsReqSchema.safeParse({ sourceSecret: 's', sourceTicketId: 5 }).success).toBe(true);
+    expect(CopyAttachmentsReqSchema.safeParse({ sourceSecret: '', sourceTicketId: 5 }).success).toBe(false);
+    expect(CopyAttachmentsReqSchema.safeParse({ sourceSecret: 's', sourceTicketId: 1.5 }).success).toBe(false);
   });
 
   it('apiUploadCall throws a clear error when no upload transport is wired', async () => {

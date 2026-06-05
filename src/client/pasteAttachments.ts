@@ -73,6 +73,7 @@ export async function handlePastedFiles(files: File[]): Promise<number | null> {
   }
 
   let ticketId: number;
+  const createdNew = selectedCount === 0;
   if (selectedCount === 1) {
     ticketId = Array.from(state.selectedIds)[0];
   } else {
@@ -82,6 +83,12 @@ export async function handlePastedFiles(files: File[]): Promise<number | null> {
 
   for (const file of files) {
     await uploadAttachment(ticketId, file);
+  }
+  // HS-8742 — when we created a fresh "Attachment(s)" ticket, select + open it
+  // so the user lands on it ready to retitle and see the attached files.
+  if (createdNew) {
+    const { selectAndOpenDetail } = await import('./detail.js');
+    selectAndOpenDetail(ticketId);
   }
   void loadTickets();
   showToast(`Attached ${String(files.length)} file${files.length === 1 ? '' : 's'}`, { variant: 'success' });

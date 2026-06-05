@@ -46,7 +46,7 @@ jobs:
             echo "## Download"
             echo ""
             echo "### macOS"
-            echo "- [Apple Silicon (.dmg)](${BASE}/HotSheet-${VERSION}-macOS-Apple-Silicon.dmg) — M1/M2/M3 Macs"
+            echo "- [Apple Silicon (.dmg)](${BASE}/HotSheet-${VERSION}-macOS-Apple-Silicon.dmg) — M-series Macs"
             echo "- [Intel (.dmg)](${BASE}/HotSheet-${VERSION}-macOS-Intel.dmg) — older Macs"
             echo ""
             echo "### Linux"

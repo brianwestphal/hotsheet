@@ -50,7 +50,10 @@ test.describe('Paste-to-attachment (HS-8662)', () => {
 
     const newRow = page.locator('.ticket-row[data-id]').filter({ has: page.locator('.ticket-title-input[value="Attachment"]') });
     await expect(newRow).toBeVisible({ timeout: 5000 });
-    await newRow.locator('.ticket-number').click();
+    // HS-8742 — the new ticket is auto-selected and its detail panel auto-opens
+    // (no manual click), showing the attachment so the user can retitle it.
+    await expect(newRow).toHaveClass(/selected/, { timeout: 5000 });
+    await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('#detail-attachments .attachment-item').filter({ hasText: 'pasted.txt' })).toBeVisible({ timeout: 5000 });
   });
 

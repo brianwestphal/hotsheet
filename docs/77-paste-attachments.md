@@ -43,12 +43,15 @@ After a successful paste the ticket list reloads and a toast confirms
 back to file-kind `clipboardData.items` (some browsers populate only the latter
 for a pasted screenshot).
 
-## 77.4 Known gap — same as drag/drop fallback
+## 77.4 New-ticket discoverability (HS-8742)
 
-The 0-selected path creates a bare `Attachment` ticket exactly like the
-dropped-image fallback; it is not auto-opened or auto-titled beyond
-"Attachment(s)". A follow-up may improve discoverability (auto-select / open the
-new ticket so the user can title it).
+When the 0-selected path creates a bare `Attachment` / `Attachments` ticket, it
+is **auto-selected and its detail panel auto-opens** (`selectAndOpenDetail` in
+`detail.tsx`), so the user lands on the new ticket ready to retitle it and see
+the just-attached files. The drag-drop new-ticket fallback
+(`app.tsx::resolveDropTicketId`) does the same for consistency — it now reports
+whether it created a ticket so the drop handler opens it after the upload
+completes.
 
 ## 77.5 Testing
 

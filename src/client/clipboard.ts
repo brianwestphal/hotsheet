@@ -1,4 +1,4 @@
-import { createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
+import { copyTicketAttachments, createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
 import { TicketSchema } from '../schemas.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, signal } from './reactive.js';
@@ -119,6 +119,21 @@ export async function pasteTickets(): Promise<void> {
     // Copy notes if the source had any
     if (source.notes && source.notes !== '' && source.notes !== '[]') {
       await putTicketNotesBulk(created.id, source.notes);
+    }
+
+    // HS-8739 — carry the source ticket's attachments into the pasted copy. The
+    // new ticket lives in the ACTIVE (paste-target) project, so no target secret
+    // is needed; the source project is `sourceProjectSecret` (the same project
+    // for a same-project copy/paste, another for a cross-project one). The
+    // server copies the files between project dirs. Best-effort — a copy failure
+    // must not abort the paste.
+    const srcSecret = snapshot.sourceProjectSecret;
+    if (srcSecret !== undefined && srcSecret !== '') {
+      try {
+        await copyTicketAttachments(created.id, { sourceSecret: srcSecret, sourceTicketId: source.id });
+      } catch (err) {
+        console.error(`attachment copy failed for source ticket ${String(source.id)}:`, err);
+      }
     }
 
     createdIds.push(created.id);

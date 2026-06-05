@@ -22,10 +22,16 @@
 
 - Files dragged over a ticket in the list view (`.ticket-row[data-id]`) or a card in the column view (`.column-card[data-id]`) highlight that row / card as the drop target via the `.file-drop-target` class — same accent-tinted dashed outline as the detail-body drop style, so the two drop surfaces read as one affordance.
 - Dropping one or more files on a ticket row / card attaches them to THAT ticket, regardless of which ticket (if any) is currently selected. Row / card drop target takes precedence over the selection because the user's intent is explicit: they dropped on a specific ticket.
-- If the drop lands outside any row / card, the pre-existing behavior applies — attach to the single selected ticket, else create a new "Attachment" ticket (or use the draft-input value as the title if set) and attach to it.
+- If the drop lands outside any row / card, the pre-existing behavior applies — attach to the single selected ticket, else create a new "Attachment" ticket (or use the draft-input value as the title if set) and attach to it. When a new ticket is created this way, it is auto-selected and its detail panel auto-opens (HS-8742) so the user can immediately retitle it and see the attachment — matching the clipboard paste flow (§77).
 - Trashed rows (`.trash-row`) are deliberately excluded as drop targets — attachments on trashed tickets would be silently removed by the next auto-cleanup sweep.
 - Only activates when `Files` are present in the drag data. The column-view ticket-reorder drag carries `text/plain` instead of `Files`, so its own `.column-drop-target` highlight (reorder-by-status) and the HS-7492 file-drop highlight are mutually exclusive — a reorder drag never lights up a file-drop target, and a file drag never lights up the whole column.
 - Playwright e2e coverage in `e2e/ticket-row-drop.spec.ts`: (1) select ticket B, dispatch a synthetic file drop on ticket A's row, assert the attachment lands on A and NOT on B; (2) drop outside any row with no selection creates a new "Attachment" ticket with the file (fallback regression).
+
+### 5.2.1 Cross-project copy (HS-8739)
+
+- `POST /api/tickets/:id/attachments/copy-from` copies all of a source ticket's non-draft attachments into target ticket `:id`. The target ticket is in the request's (active) project; the body names the source project + ticket: `{ sourceSecret, sourceTicketId }`.
+- The server resolves the source project via `getProjectBySecret`, reads its attachment rows from the source DB (`runWithDataDir`), and copies each file (by its absolute `stored_path`) into the target project's `attachments/` dir — bytes never round-trip through the browser. Duplicate target filenames are suffixed; missing source files and draft attachments are skipped.
+- Used by cross-project ticket copy/move: the §76 drag (`transferTicketsToProject`) and the §3 clipboard copy/cut/paste (`clipboard.ts::pasteTickets`), via the typed caller `copyTicketAttachments`.
 
 ### 5.3 File Serving
 

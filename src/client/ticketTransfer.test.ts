@@ -9,7 +9,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
+import { copyTicketAttachments, createTicket, putTicketNotesBulk, updateTicket } from '../api/index.js';
 import type { Ticket } from './state.js';
 import { transferTicketsToProject } from './ticketTransfer.js';
 
@@ -17,11 +17,13 @@ vi.mock('../api/index.js', () => ({
   createTicket: vi.fn(),
   putTicketNotesBulk: vi.fn(),
   updateTicket: vi.fn(),
+  copyTicketAttachments: vi.fn(),
 }));
 
 const createTicketMock = vi.mocked(createTicket);
 const putNotesMock = vi.mocked(putTicketNotesBulk);
 const updateTicketMock = vi.mocked(updateTicket);
+const copyAttachmentsMock = vi.mocked(copyTicketAttachments);
 
 function makeTicket(over: Partial<Ticket> & { id: number }): Ticket {
   return {
@@ -56,6 +58,7 @@ beforeEach(() => {
   );
   putNotesMock.mockReset().mockResolvedValue({ ok: true });
   updateTicketMock.mockReset().mockResolvedValue(created(0));
+  copyAttachmentsMock.mockReset().mockResolvedValue({ copied: 0, attachments: [] });
 });
 
 describe('transferTicketsToProject (HS-8663)', () => {
@@ -70,6 +73,18 @@ describe('transferTicketsToProject (HS-8663)', () => {
     // No move → no delete.
     expect(updateTicketMock).not.toHaveBeenCalled();
     expect(ids).toEqual([9001]);
+    // HS-8739 — attachments carried to the created ticket, with the source
+    // ticket id + source secret, authed against the target project.
+    expect(copyAttachmentsMock).toHaveBeenCalledExactlyOnceWith(
+      9001,
+      { sourceSecret: 'src-secret', sourceTicketId: 1 },
+      { secret: 'target-secret' },
+    );
+  });
+
+  it('skips attachment copy when no sourceSecret is available', async () => {
+    await transferTicketsToProject([makeTicket({ id: 1 })], 'target-secret', { move: false });
+    expect(copyAttachmentsMock).not.toHaveBeenCalled();
   });
 
   it('move creates in the target AND soft-deletes the source with the SOURCE secret', async () => {

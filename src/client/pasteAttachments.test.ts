@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTicket, uploadAttachment } from '../api/index.js';
+import { selectAndOpenDetail } from './detail.js';
 import { extractClipboardFiles, handlePastedFiles } from './pasteAttachments.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -20,11 +21,13 @@ vi.mock('../api/index.js', () => ({
 }));
 vi.mock('./ticketList.js', () => ({ loadTickets: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
+vi.mock('./detail.js', () => ({ selectAndOpenDetail: vi.fn() }));
 
 const createTicketMock = vi.mocked(createTicket);
 const uploadAttachmentMock = vi.mocked(uploadAttachment);
 const loadTicketsMock = vi.mocked(loadTickets);
 const showToastMock = vi.mocked(showToast);
+const selectAndOpenDetailMock = vi.mocked(selectAndOpenDetail);
 
 function file(name: string): File {
   return new File(['x'], name, { type: 'image/png' });
@@ -35,6 +38,7 @@ beforeEach(() => {
   uploadAttachmentMock.mockReset().mockResolvedValue({} as unknown as Awaited<ReturnType<typeof uploadAttachment>>);
   loadTicketsMock.mockReset().mockResolvedValue(undefined);
   showToastMock.mockReset();
+  selectAndOpenDetailMock.mockReset();
   state.selectedIds.clear();
 });
 
@@ -47,14 +51,18 @@ describe('handlePastedFiles (HS-8662)', () => {
     expect(createTicketMock).not.toHaveBeenCalled();
     expect(uploadAttachmentMock).toHaveBeenCalledExactlyOnceWith(7, expect.any(File));
     expect(loadTicketsMock).toHaveBeenCalled();
+    // Attaching to the already-selected ticket must NOT hijack the detail panel.
+    expect(selectAndOpenDetailMock).not.toHaveBeenCalled();
   });
 
-  it('0 selected → creates a new "Attachment" ticket (singular) and attaches', async () => {
+  it('0 selected → creates a new "Attachment" ticket (singular), attaches, and opens it', async () => {
     const id = await handlePastedFiles([file('a.png')]);
 
     expect(id).toBe(4242);
     expect(createTicketMock).toHaveBeenCalledExactlyOnceWith({ title: 'Attachment' });
     expect(uploadAttachmentMock).toHaveBeenCalledExactlyOnceWith(4242, expect.any(File));
+    // HS-8742 — the freshly-created ticket is selected + opened in the detail panel.
+    expect(selectAndOpenDetailMock).toHaveBeenCalledExactlyOnceWith(4242);
   });
 
   it('0 selected, multiple files → new ticket titled "Attachments" (plural), one upload each', async () => {
