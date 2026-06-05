@@ -88,7 +88,7 @@ A new **Settings → "API Keys"** tab (a global-setting section, `keysSettings.t
 - Mutations broadcast `hotsheet:keys-changed` so dependent selectors refresh
   live — notably the announcer's selector in the same dialog.
 
-The **announcer settings** (Settings → Experimental, §78.12) replaces its former
+The **announcer settings** (Settings → Announcer, §78.12) replaces its former
 key input with a dropdown of Anthropic keys by name + a "Default — first
 Anthropic key" option.
 

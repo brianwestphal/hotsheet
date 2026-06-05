@@ -129,7 +129,7 @@ each summarize:
   trimmed / case-insensitively deduped / capped to 30). That list is injected
   into every prompt (`buildSystemPrompt({dismissedTopics})` → "OMIT anything
   similar") so future batches drop it — which also shrinks the backlog. The list
-  is editable from Settings → Experimental → Announcer (`GET`/`PUT
+  is editable from Settings → Announcer (`GET`/`PUT
   /api/announcer/dismissed-topics`).
 
 ## 80.5.3 Cost/rate budget + disclosure (HS-8770, shipped)

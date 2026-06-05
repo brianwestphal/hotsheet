@@ -52,7 +52,7 @@ describe('loadAndRenderTicketTelemetry (HS-8152 / HS-8648)', () => {
     await loadAndRenderTicketTelemetry('HS-1');
 
     expect(container().querySelector('.ticket-telemetry-label')?.textContent)
-      .toBe('Claude usage on this ticket');
+      .toBe('Claude Usage on This Ticket');
     expect(container().querySelectorAll('.ticket-telemetry-stat')).toHaveLength(4);
   });
 

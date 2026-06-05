@@ -192,7 +192,7 @@ function renderAddButton(): HTMLElement {
 
 async function deleteRule(rule: AllowRule): Promise<void> {
   const ok = await confirmDialog({
-    title: 'Delete allow rule?',
+    title: 'Delete Allow Rule?',
     message: `Tool: ${rule.tool}\nPattern: ${rule.pattern}\n\nFuture matching permission requests will require manual approval again.`,
     confirmLabel: 'Delete',
     danger: true,

@@ -159,7 +159,7 @@ async function handleDelete(index: number): Promise<void> {
   } catch { /* drawer preview is best-effort */ }
 
   const confirmed = await confirmDialog({
-    title: 'Remove terminal?',
+    title: 'Remove Terminal?',
     message: `Remove terminal "${displayName}"? Its running process (if any) will be stopped.`,
     confirmLabel: 'Remove',
     danger: true,

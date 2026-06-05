@@ -180,7 +180,7 @@ function buildPopoverElement(opts: AppearancePopoverOptions): HTMLElement {
         </div>
       </div>
       <div className="terminal-appearance-actions">
-        <button className="terminal-appearance-reset" type="button">Reset to project default</button>
+        <button className="terminal-appearance-reset" type="button">Reset to Project Default</button>
       </div>
     </div>
   );

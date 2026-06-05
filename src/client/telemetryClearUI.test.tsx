@@ -34,7 +34,7 @@ describe('bindClearTelemetryButton (HS-8606)', () => {
     document.body.replaceChildren(
       toElement(
         <div>
-          <button type="button" id="settings-telemetry-clear-btn">Clear telemetry data…</button>
+          <button type="button" id="settings-telemetry-clear-btn">Clear Telemetry Data…</button>
           <span id="settings-telemetry-clear-status"></span>
         </div>,
       ),

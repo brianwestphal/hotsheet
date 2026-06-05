@@ -868,9 +868,9 @@ export async function closeFocusedTabOrProjectTab(): Promise<void> {
     if (active === null) return;
     const { confirmDialog } = await import('./confirm.js');
     const ok = await confirmDialog({
-      title: 'Close tab?',
+      title: 'Close Tab?',
       message: `Close the "${active.name}" project tab? Its terminals will be stopped.`,
-      confirmLabel: 'Close tab',
+      confirmLabel: 'Close Tab',
       cancelLabel: 'Cancel',
       danger: true,
     });

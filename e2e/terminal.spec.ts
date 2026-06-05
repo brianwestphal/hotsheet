@@ -423,7 +423,7 @@ test.describe('Embedded terminal drawer', () => {
 
     const overlay = page.locator('.confirm-dialog-overlay');
     await expect(overlay).toBeVisible({ timeout: 3000 });
-    await expect(overlay).toContainText('Close terminal');
+    await expect(overlay).toContainText('Close Terminal');
     await overlay.locator('.confirm-dialog-cancel').click();
     await expect(overlay).toBeHidden();
     await expect(dyn).toBeVisible();
@@ -464,7 +464,7 @@ test.describe('Embedded terminal drawer', () => {
 
     const overlay = page.locator('.confirm-dialog-overlay');
     await expect(overlay).toBeVisible({ timeout: 3000 });
-    await expect(overlay).toContainText('Stop all running terminals?');
+    await expect(overlay).toContainText('Stop All Running Terminals?');
     // Two bullet-listed names in the body.
     await expect(overlay.locator('.confirm-dialog-body')).toContainText('•');
 

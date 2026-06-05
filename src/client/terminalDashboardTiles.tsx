@@ -185,7 +185,7 @@ async function closeDashboardTile(
   if (isAlive) {
     const { confirmDialog } = await import('./confirm.js');
     const confirmed = await confirmDialog({
-      title: 'Close terminal?',
+      title: 'Close Terminal?',
       message: `Close terminal "${entry.label}"? Its running process will be stopped.`,
       confirmLabel: 'Close',
       danger: true,

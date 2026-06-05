@@ -56,7 +56,7 @@ export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promis
 
   container.replaceChildren(toElement(
     <div className="ticket-telemetry-block">
-      <h4 className="ticket-telemetry-label">Claude usage on this ticket</h4>
+      <h4 className="ticket-telemetry-label">Claude Usage on This Ticket</h4>
       <div className="ticket-telemetry-stats-grid">
         <div className="ticket-telemetry-stat">
           <span className="ticket-telemetry-stat-label">Cost</span>

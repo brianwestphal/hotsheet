@@ -46,7 +46,7 @@ export function loadAndWireHiddenTerminalsReset(): void {
     const count = countHiddenForProject(scope, project.secret);
     if (count === 0) return;
     const ok = await confirmDialog({
-      title: 'Reset terminal visibility?',
+      title: 'Reset Terminal Visibility?',
       message: count === 1
         ? 'Show the 1 hidden terminal in this project again? Hidden state will also be cleared from settings.json.'
         : `Show all ${count} hidden terminals in this project again? Hidden state will also be cleared from settings.json.`,

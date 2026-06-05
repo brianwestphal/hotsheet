@@ -95,7 +95,7 @@ describe('fetchAndRender — cache behavior', () => {
     void _testingHS8572.fetchAndRender(container, 'month');
 
     expect(container.querySelector('.telemetry-dashboard-loading')).toBeNull();
-    expect(container.querySelector('.telemetry-dashboard-title')?.textContent).toBe('Cross-project stats');
+    expect(container.querySelector('.telemetry-dashboard-title')?.textContent).toBe('Cross-Project Stats');
   });
 
   it('keeps per-window cache entries independent', async () => {

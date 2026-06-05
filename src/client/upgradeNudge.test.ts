@@ -156,9 +156,9 @@ describe('showUpgradeNudgeDialog (HS-7962)', () => {
     expect(cta?.textContent).toContain('Download for macOS');
   });
 
-  it('header reads "Get the desktop app"', () => {
+  it('header reads "Get the Desktop App"', () => {
     showUpgradeNudgeDialog({ platform: 'Linux', label: 'Download for Linux', downloadUrl: 'https://x' });
-    expect(document.querySelector('.upgrade-nudge-title')?.textContent).toBe('Get the desktop app');
+    expect(document.querySelector('.upgrade-nudge-title')?.textContent).toBe('Get the Desktop App');
   });
 
   it('clicking the X removes the overlay', () => {

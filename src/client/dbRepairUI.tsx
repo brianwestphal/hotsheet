@@ -103,7 +103,7 @@ async function onFindWorkingBackup(): Promise<void> {
           ✓ Found <strong>{b.filename}</strong> ({b.tier}, {b.ticketCount} tickets, created {new Date(b.createdAt).toLocaleString()})
         </div>
         <div className="db-repair-result-actions">
-          <button className="btn btn-sm btn-danger" id="db-repair-restore-found-btn">Restore from this backup</button>
+          <button className="btn btn-sm btn-danger" id="db-repair-restore-found-btn">Restore from This Backup</button>
         </div>
       </div>
     ));
@@ -122,7 +122,7 @@ async function onFindWorkingBackup(): Promise<void> {
 
 async function doRestoreFromFoundBackup(tier: string, filename: string): Promise<void> {
   const ok = await confirmDialog({
-    title: 'Restore from backup',
+    title: 'Restore from Backup',
     message: `This will replace your current database with the contents of ${filename}. A safety backup of the current state will be created first.\n\nContinue?`,
     confirmLabel: 'Restore',
     danger: true,
@@ -204,7 +204,7 @@ async function onRunPgResetwal(): Promise<void> {
           ✓ Repaired tarball created: <strong>{res.filename}</strong> ({res.ticketCount} tickets)
         </div>
         <div className="db-repair-result-actions">
-          <button className="btn btn-sm btn-danger" id="db-repair-restore-resetwal-btn">Restore from this tarball</button>
+          <button className="btn btn-sm btn-danger" id="db-repair-restore-resetwal-btn">Restore from This Tarball</button>
         </div>
       </div>
     ));

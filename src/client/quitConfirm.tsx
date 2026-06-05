@@ -226,9 +226,9 @@ export async function confirmCloseProjects(secrets: string[]): Promise<boolean> 
 
   const multi = secrets.length > 1;
   return confirmDialog({
-    title: multi ? 'Close tabs?' : 'Close tab?',
+    title: multi ? 'Close Tabs?' : 'Close Tab?',
     message: buildCloseConfirmMessage(decision.contributing),
-    confirmLabel: multi ? 'Close tabs' : 'Close tab',
+    confirmLabel: multi ? 'Close Tabs' : 'Close Tab',
     cancelLabel: 'Cancel',
     danger: true,
   });

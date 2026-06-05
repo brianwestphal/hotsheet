@@ -75,7 +75,7 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
     const container = document.createElement('div');
     renderShell(makePayload(), container);
     const title = container.querySelector('.telemetry-dashboard-title');
-    expect(title?.textContent).toBe('Cross-project stats');
+    expect(title?.textContent).toBe('Cross-Project Stats');
   });
 
   it('marks the page root with the cross-project-stats-page class', () => {
@@ -135,7 +135,7 @@ describe('renderShell (HS-8507 cross-project stats page)', () => {
     }), container);
     const empty = container.querySelector('.telemetry-dashboard-empty');
     expect(empty).not.toBeNull();
-    expect(empty?.querySelector('h3')?.textContent).toBe('Cross-project stats');
+    expect(empty?.querySelector('h3')?.textContent).toBe('Cross-Project Stats');
     expect(container.querySelector('.telemetry-dashboard-chips')).toBeNull();
     expect(container.querySelector('#telemetry-dashboard-cost-over-time')).toBeNull();
   });

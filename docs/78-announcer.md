@@ -327,8 +327,8 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
   - *(Still worth a 2-minute empirical check in the desktop app — see the
     HS-8744 findings note for the one-line console snippet — but the go/no-go no
     longer hinges on it, since `say` is the desktop primary.)*
-- **Settings UI:** a new "Announcer" settings section (or under Experimental,
-  `experimentalSettings.tsx`) with: per-project enable toggle, AI provider + key,
+- **Settings UI:** a dedicated "Announcer" settings tab (HS-8777 — shipped as
+  its own tab; was briefly a section under Experimental) with: per-project enable toggle, AI provider + key,
   TTS provider + key, default playback mode, and the "uninteresting" dismiss
   list. The `secret: true` input convention already renders password fields.
 
@@ -581,7 +581,7 @@ api/subscription toggle (that governs Claude Code's telemetry display).
 than Opus, since this is high-frequency, lightweight summarization. The model
 list + default live in `src/announcer/models.ts` (ordered cheapest-first, the
 single source of truth shared by the wire schema, the server summarizer, and the
-Settings → Experimental → Announcer dropdown). `summarizeWork` falls back to the
+Settings → Announcer dropdown). `summarizeWork` falls back to the
 cheapest model when the setting is unset; the generate route reads the global
 config and passes the chosen model. "Least expensive for the AI tool" is
 future-proofed by the cheapest-first ordering — a future provider supplies its
@@ -592,14 +592,15 @@ in `~/.hotsheet/config.json`, default 1×, clamped 0.5×–2×) drives the TTS r
 the browser engine sets `SpeechSynthesisUtterance.rate`; the Tauri engine maps
 it to macOS `say -r` words-per-minute (`rateToMacWpm`, base 175 WPM). It's
 adjustable from a **speed select in the PIP** *and* a **global control under
-Settings → Experimental → Announcer** — both write the cached
+Settings → Announcer** — both write the cached
 `announcerSpeechRate.ts` value and broadcast `hotsheet:announcer-rate-changed`
 so the two stay in sync. Changing speed mid-utterance cancels and re-speaks the
 current entry at the new rate. Linux/Windows OS voices don't map rate yet
 (best-effort, same as `voice`).
 
 **Settings + Listen affordance.** `announcerSettings.tsx` binds the "Announcer"
-section under Settings → Experimental: a per-project enable toggle
+tab (HS-8777 — promoted from a section under Settings → Experimental to its own
+tab, whose label carries a blue rounded "Beta" chip): a per-project enable toggle
 (`setAnnouncerEnabled`), an **Anthropic key selector** (HS-8751 — a dropdown of
 named keys from the global registry, §79, filtered to type
 `anthropic_api_key`, plus a "Default — first Anthropic key" option;

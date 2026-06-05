@@ -179,6 +179,7 @@ Each built-in view has an icon to the left of the label:
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
   - **Context** (FileText icon) — Auto-context configuration for categories and tags (see §4.18).
   - **Plugins** (Plug icon) — Plugin management, configuration, sync controls, and conflict resolution (see [18-plugins.md](18-plugins.md) §18.10).
+  - **Announcer** (AudioLines icon) — Per-project narration of recent work; promoted from a section under Experimental to its own tab (HS-8777). The tab label carries a blue rounded "Beta" chip centered beneath it. See [78-announcer.md](78-announcer.md).
   - **Experimental** (Flask icon) — Claude Channel integration and custom commands (see [12-claude-channel.md](12-claude-channel.md)).
   - **Updates** (Download icon) — Software updates, shown only in the Tauri desktop app.
 - Tabs persist their selection while the dialog is open; resets to General when reopened.

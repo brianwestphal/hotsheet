@@ -4546,6 +4546,21 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   }
 }
 
+// HS-8777 — blue rounded "Beta" chip centered beneath a settings tab's label
+// (the column-flex `.settings-tab` already centers it). Distinct from the
+// inline `.settings-beta-chip` used next to in-panel headings.
+.settings-tab-beta {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  text-transform: uppercase;
+}
+
 .settings-body {
   padding: 20px;
   overflow-y: auto;

@@ -199,7 +199,7 @@ describe('renderAnalyticsTelemetrySection (mount shell)', () => {
   it('renders the section header with the "Claude usage" title and no window selector (HS-8512)', () => {
     const root = renderAnalyticsTelemetrySection();
     const title = root.querySelector('.analytics-telemetry-title');
-    expect(title?.textContent).toBe('Claude usage');
+    expect(title?.textContent).toBe('Claude Usage');
     // HS-8512 — the in-section window selector was removed; the
     // dashboard's top-level 7/30/90 day range bar drives the
     // telemetry window now.

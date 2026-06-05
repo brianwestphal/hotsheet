@@ -48,13 +48,18 @@ test('API Keys tab: add a key → it lists → Announcer selector picks it up (H
   await expect(panel).toBeVisible();
   await expect(panel.locator('.settings-keys-list')).toContainText('No keys yet');
 
-  // Add an Anthropic key through the "Add a key…" dialog (HS-8761).
+  // Add an Anthropic key through the "Add Key…" dialog (HS-8761; HS-8773 title).
   await panel.locator('#settings-key-add-btn').click();
   const dialog = page.locator('.settings-key-dialog');
   await expect(dialog).toBeVisible();
-  await dialog.locator('.settings-key-dialog-input').nth(0).fill('Personal'); // Name
-  await dialog.locator('.settings-key-dialog-input').nth(1).fill('sk-ant-secret'); // Value
-  await dialog.getByRole('button', { name: 'Add key' }).click();
+  // HS-8774 — the first field is a disabled Type dropdown preselected to the
+  // only choice; Name + Value follow.
+  const typeSelect = dialog.locator('select.settings-key-dialog-input');
+  await expect(typeSelect).toBeDisabled();
+  await expect(typeSelect).toHaveValue('anthropic_api_key');
+  await dialog.locator('input.settings-key-dialog-input').nth(0).fill('Personal'); // Name
+  await dialog.locator('input.settings-key-dialog-input').nth(1).fill('sk-ant-secret'); // Value
+  await dialog.getByRole('button', { name: 'Add Key' }).click();
 
   // The row appears: name editable, type is a static label (HS-8759), and a
   // "Created …" provenance label replaces the old value field (HS-8760).
@@ -64,8 +69,8 @@ test('API Keys tab: add a key → it lists → Announcer selector picks it up (H
   await expect(row.locator('.settings-key-type-label')).toHaveText('Anthropic API Key');
   await expect(row.locator('.settings-key-meta')).toContainText('Created');
 
-  // Switch to Experimental → the Announcer key selector now offers the new key.
-  await page.locator('.settings-tab[data-tab="experimental"]').click();
+  // Switch to the Announcer tab → the key selector now offers the new key.
+  await page.locator('.settings-tab[data-tab="announcer"]').click();
   const select = page.locator('#settings-announcer-key-select');
   await expect(select.locator('option')).toContainText(['Default', 'Personal']);
 

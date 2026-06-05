@@ -459,7 +459,7 @@ export function openPromptDrilldown(promptId: string): void {
     <div className="telemetry-drilldown-overlay reader-mode-overlay" role="dialog" aria-modal="true" aria-label={`Prompt ${promptId} timeline`}>
       <div className="telemetry-drilldown-dialog reader-mode-dialog">
         <div className="telemetry-drilldown-header reader-mode-header">
-          <span className="telemetry-drilldown-title reader-mode-title">Prompt timeline</span>
+          <span className="telemetry-drilldown-title reader-mode-title">Prompt Timeline</span>
           <div className="reader-mode-header-actions">
             <button className="telemetry-drilldown-close reader-mode-close" type="button" title="Close" aria-label="Close drilldown">×</button>
           </div>

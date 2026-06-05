@@ -298,9 +298,9 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     try { disclosed = window.localStorage.getItem(DISCLOSED_KEY) !== null; } catch { /* private mode */ }
     if (!disclosed) {
       const ok = await confirmDialog({
-        title: 'Go live?',
+        title: 'Go Live?',
         message: 'Live mode continuously sends this project’s notes + activity to Anthropic using your API key as work happens — so it spends while it runs (a departure from Hot Sheet’s local-only default). It pauses when this window is in the background. Continue?',
-        confirmLabel: 'Go live',
+        confirmLabel: 'Go Live',
         cancelLabel: 'Cancel',
       });
       if (!ok) return;

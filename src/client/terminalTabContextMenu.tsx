@@ -137,7 +137,7 @@ async function closeTabs(ids: string[]): Promise<void> {
     .map(n => `  • ${n}`)
     .join('\n');
   const confirmed = await confirmDialog({
-    title: 'Stop all running terminals?',
+    title: 'Stop All Running Terminals?',
     message: `The following terminals have running processes that will be stopped:\n\n${names}`,
     confirmLabel: 'Stop All',
     danger: true,

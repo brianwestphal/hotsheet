@@ -179,7 +179,7 @@ function renderEmptyPlaceholder(): HTMLElement {
 }
 
 function renderLoadingPlaceholder(): HTMLElement {
-  return toElement(<div className="analytics-telemetry-loading">Loading Claude usage…</div>);
+  return toElement(<div className="analytics-telemetry-loading">Loading Claude Usage…</div>);
 }
 
 function renderErrorBlock(message: string): HTMLElement {
@@ -227,7 +227,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   if (payload.costOverTime.length > 0) {
     const section = toElement(
       <section className="telemetry-section analytics-telemetry-section-block" data-section="cost-over-time">
-        <h3>Cost over time</h3>
+        <h3>Cost Over Time</h3>
       </section>
     );
     section.appendChild(renderCostOverTimeChart(payload.costOverTime, {
@@ -242,7 +242,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   if (payload.costByModel.length > 0) {
     const section = toElement(
       <section className="telemetry-section analytics-telemetry-section-block" data-section="cost-by-model">
-        <h3>Cost by model</h3>
+        <h3>Cost by Model</h3>
       </section>
     );
     section.appendChild(renderCostByModelDonut(payload.costByModel, { formatCost }));
@@ -253,7 +253,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   if (payload.toolLatencyHistogram.length > 0) {
     const section = toElement(
       <section className="telemetry-section analytics-telemetry-section-block" data-section="tool-latency">
-        <h3>Tool latency distribution</h3>
+        <h3>Tool Latency Distribution</h3>
         <div className="telemetry-histograms" id="analytics-telemetry-histograms"></div>
       </section>
     );
@@ -269,7 +269,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   if (payload.recentPrompts.length > 0) {
     const section = toElement(
       <section className="telemetry-section analytics-telemetry-section-block" data-section="recent-prompts">
-        <h3>Recent prompts</h3>
+        <h3>Recent Prompts</h3>
       </section>
     );
     section.appendChild(renderRecentPromptsList(payload.recentPrompts));
@@ -449,7 +449,7 @@ export function renderAnalyticsTelemetrySection(days?: number): HTMLElement {
   const root = toElement(
     <div className="analytics-telemetry-section">
       <div className="analytics-telemetry-header">
-        <h2 className="analytics-telemetry-title">Claude usage</h2>
+        <h2 className="analytics-telemetry-title">Claude Usage</h2>
       </div>
       <div className="analytics-telemetry-body-slot" id="analytics-telemetry-body"></div>
     </div>

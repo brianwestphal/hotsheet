@@ -192,7 +192,7 @@ function showFileContextMenu(row: HTMLElement, e: MouseEvent): void {
   const path = row.dataset.path ?? '';
   const menu = toElement(
     <div className="git-popover-file-menu" style={`left:${e.clientX}px;top:${e.clientY}px`}>
-      <button className="git-popover-file-menu-item" type="button" data-action="copy">Copy path</button>
+      <button className="git-popover-file-menu-item" type="button" data-action="copy">Copy Path</button>
     </div>
   );
   menu.querySelector<HTMLButtonElement>('[data-action="copy"]')!.addEventListener('click', () => {

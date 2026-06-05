@@ -190,7 +190,7 @@ function openSettingsTelemetry(): void {
 function renderEmptyState(): HTMLElement {
   const card = toElement(
     <div className="telemetry-dashboard-empty">
-      <h3>Cross-project stats</h3>
+      <h3>Cross-Project Stats</h3>
       <p>
         No usage recorded yet. To start collecting, open Settings → Telemetry in any project,
         enable the master toggle, then run <code>claude</code> in a Hot Sheet terminal.
@@ -605,7 +605,7 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   const root = toElement(
     <div className="telemetry-dashboard cross-project-stats-page">
       <div className="telemetry-dashboard-header">
-        <h2 className="telemetry-dashboard-title">Cross-project stats</h2>
+        <h2 className="telemetry-dashboard-title">Cross-Project Stats</h2>
         {/* HS-8515 — same 7d/30d/90d button group the analytics
             dashboard uses (`.dashboard-range-bar`). Dropped the
             today / all-time options the dropdown had; the
@@ -627,32 +627,32 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
       <div className="telemetry-dashboard-chips" id="telemetry-dashboard-chips"></div>
       <div className="telemetry-dashboard-sections">
         <section className="telemetry-dashboard-section" data-section="cost-over-time">
-          <h3>Cost over time</h3>
+          <h3>Cost Over Time</h3>
           <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-cost-over-time">
             <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
           </div>
         </section>
         <section className="telemetry-dashboard-section" data-section="cost-by-project">
-          <h3>Cost by project</h3>
+          <h3>Cost by Project</h3>
           <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-cost-by-project">
             <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
           </div>
         </section>
         <section className="telemetry-dashboard-section" data-section="cost-by-model">
-          <h3>Cost by model</h3>
+          <h3>Cost by Model</h3>
           <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-cost-by-model">
             <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
           </div>
         </section>
         <section className="telemetry-dashboard-section" data-section="heatmap">
-          <h3>Hourly activity (last 90 days)</h3>
+          <h3>Hourly Activity (Last 90 Days)</h3>
           <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-heatmap">
             <p className="telemetry-dashboard-section-placeholder">No data for this window.</p>
           </div>
         </section>
         {/* HS-8766 — Announcer narration spend (the user's own Anthropic key). */}
         <section className="telemetry-dashboard-section" data-section="announcer">
-          <h3>Announcer spend</h3>
+          <h3>Announcer Spend</h3>
           <div className="telemetry-dashboard-section-body" id="telemetry-dashboard-announcer">
             <p className="telemetry-dashboard-section-placeholder">No Announcer usage for this window.</p>
           </div>

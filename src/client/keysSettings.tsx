@@ -12,8 +12,9 @@
  *  - Each row has an **edit** button (opens a value dialog) and a lucide **trash**
  *    button; the old inline "Replace value…" field is gone, replaced by a
  *    "Created …/Updated …" provenance label (HS-8760).
- *  - "Add a key" is a button that opens a dialog with full-width Name + Value
- *    fields (HS-8761).
+ *  - "Add Key" is a button that opens a dialog with a disabled Type dropdown
+ *    (Anthropic-only today, HS-8774) plus full-width Name + Value fields
+ *    (HS-8761; HS-8773 renamed the button/title from "Add a key").
  */
 import { createKey, deleteKey, type KeyType, listKeys, type SecretKeyMeta, updateKey } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
@@ -58,7 +59,8 @@ function provenanceLabel(key: SecretKeyMeta): string {
   return '';
 }
 
-interface KeyFieldSpec {
+interface KeyTextFieldSpec {
+  kind?: 'input';
   label: string;
   type: 'text' | 'password';
   placeholder?: string;
@@ -66,10 +68,23 @@ interface KeyFieldSpec {
   required: boolean;
 }
 
+/** A non-editable (or single-option) dropdown — e.g. the fixed key "Type"
+ *  field in the Add Key dialog (HS-8774). Its value still flows through the
+ *  returned array, by index, like any other field. */
+interface KeySelectFieldSpec {
+  kind: 'select';
+  label: string;
+  options: { value: string; label: string }[];
+  initial?: string;
+  disabled?: boolean;
+}
+
+type KeyFieldSpec = KeyTextFieldSpec | KeySelectFieldSpec;
+
 /**
  * A small in-app form dialog (Tauri-safe; never `window.prompt`). Renders one
- * input per field, returns the trimmed values keyed by label on submit, or null
- * on cancel. Modeled on `confirm.tsx`.
+ * control per field, returns the trimmed values keyed by index on submit, or
+ * null on cancel. Modeled on `confirm.tsx`.
  */
 function openKeyFormDialog(opts: {
   title: string;
@@ -80,13 +95,24 @@ function openKeyFormDialog(opts: {
     const fieldRows: SafeHtml[] = opts.fields.map(f => (
       <div className="settings-key-dialog-field">
         <label>{f.label}</label>
-        <input
-          type={f.type}
-          className="settings-key-dialog-input"
-          placeholder={f.placeholder ?? ''}
-          value={f.initial ?? ''}
-          autoComplete="off"
-        />
+        {f.kind === 'select'
+          ? (
+            <select
+              className="settings-key-dialog-input"
+              disabled={f.disabled === true}
+            >
+              {f.options.map(o => <option value={o.value} selected={o.value === (f.initial ?? f.options[0]?.value)}>{o.label}</option>)}
+            </select>
+          )
+          : (
+            <input
+              type={f.type}
+              className="settings-key-dialog-input"
+              placeholder={f.placeholder ?? ''}
+              value={f.initial ?? ''}
+              autoComplete="off"
+            />
+          )}
       </div>
     ));
 
@@ -104,7 +130,8 @@ function openKeyFormDialog(opts: {
     );
 
     const inputs = [...overlay.querySelectorAll('.settings-key-dialog-input')]
-      .filter((el): el is HTMLInputElement => el instanceof HTMLInputElement);
+      .filter((el): el is HTMLInputElement | HTMLSelectElement =>
+        el instanceof HTMLInputElement || el instanceof HTMLSelectElement);
 
     let settled = false;
     const finish = (result: string[] | null): void => {
@@ -118,8 +145,10 @@ function openKeyFormDialog(opts: {
     const submit = (): void => {
       const values = inputs.map(inp => inp.value.trim());
       for (let i = 0; i < opts.fields.length; i++) {
-        if (opts.fields[i].required && values[i] === '') {
-          showToast(`${opts.fields[i].label} is required.`, { variant: 'warning' });
+        const field = opts.fields[i];
+        const required = field.kind !== 'select' && field.required;
+        if (required && values[i] === '') {
+          showToast(`${field.label} is required.`, { variant: 'warning' });
           inputs[i].focus();
           return;
         }
@@ -181,7 +210,7 @@ function renderRow(key: SecretKeyMeta, onChanged: () => void): HTMLElement {
     void (async () => {
       const result = await openKeyFormDialog({
         title: `Edit “${key.name}”`,
-        confirmLabel: 'Set value',
+        confirmLabel: 'Update Value',
         fields: [{ label: 'New value', type: 'password', placeholder: 'sk-ant-…', required: true }],
       });
       if (result === null) return;
@@ -201,7 +230,7 @@ function renderRow(key: SecretKeyMeta, onChanged: () => void): HTMLElement {
     void (async () => {
       const ok = await confirmDialog({
         message: `Delete the key "${key.name}"? Projects using it will fall back to the first key of its type.`,
-        title: 'Delete key',
+        title: 'Delete Key',
         confirmLabel: 'Delete',
         danger: true,
       });
@@ -237,18 +266,23 @@ async function refreshList(): Promise<void> {
   list.replaceChildren(...keys.map(k => renderRow(k, () => { void refreshList(); })));
 }
 
-/** The "Add a key" flow — a dialog with full-width Name + Value fields (HS-8761). */
+/** The "Add Key" flow — a dialog with a (disabled, single-option) Type
+ *  dropdown plus full-width Name + Value fields (HS-8761; HS-8773 title;
+ *  HS-8774 type dropdown). */
 async function openAddKeyDialog(): Promise<void> {
   const result = await openKeyFormDialog({
-    title: 'Add a key',
-    confirmLabel: 'Add key',
+    title: 'Add Key',
+    confirmLabel: 'Add Key',
     fields: [
+      // HS-8774 — type is fixed today (only Anthropic), so the dropdown is
+      // disabled with the single option preselected.
+      { kind: 'select', label: 'Type', disabled: true, initial: DEFAULT_KEY_TYPE, options: [{ value: DEFAULT_KEY_TYPE, label: TYPE_LABELS[DEFAULT_KEY_TYPE] }] },
       { label: 'Name', type: 'text', placeholder: 'e.g. Personal', required: true },
       { label: 'Value', type: 'password', placeholder: 'sk-ant-…', required: true },
     ],
   });
   if (result === null) return;
-  const [name, value] = result;
+  const [, name, value] = result;
   try {
     await createKey({ type: DEFAULT_KEY_TYPE, name, value });
     showToast('Key added.', { variant: 'success' });

@@ -344,9 +344,9 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
 
   if (alive && inst.stopRequested) {
     const confirmed = await confirmDialog({
-      title: 'Force quit terminal?',
+      title: 'Force Quit Terminal?',
       message: 'The terminal process has not stopped. Force quit (SIGKILL) the process?',
-      confirmLabel: 'Force quit',
+      confirmLabel: 'Force Quit',
       danger: true,
     });
     if (!confirmed) return;
@@ -463,7 +463,7 @@ export async function closeDynamicTerminal(
     const mod = await import('./commandLog.js');
     const restoreDrawer = mod.previewDrawerTab(`terminal:${id}`);
     const confirmed = await confirmDialog({
-      title: 'Close terminal?',
+      title: 'Close Terminal?',
       message: `Close terminal "${name}"? Its running process will be stopped.`,
       confirmLabel: 'Close',
       danger: true,

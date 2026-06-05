@@ -193,7 +193,7 @@ export function showUpgradeNudgeDialog(resolved: PlatformResolved): void {
     <div className="upgrade-nudge-overlay" role="dialog" aria-modal="true" aria-label="Get the desktop app">
       <div className="upgrade-nudge-dialog">
         <div className="upgrade-nudge-header">
-          <span className="upgrade-nudge-title">Get the desktop app</span>
+          <span className="upgrade-nudge-title">Get the Desktop App</span>
           <button className="upgrade-nudge-close" type="button" title="Close" aria-label="Close">
             {CLOSE_ICON_SVG}
           </button>

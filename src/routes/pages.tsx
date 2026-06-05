@@ -117,7 +117,7 @@ pageRoutes.get('/', (c) => {
         <div id="db-recovery-banner" className="db-recovery-banner" style="display:none">
           <span id="db-recovery-banner-label">Database recovery occurred.</span>
           <div className="db-recovery-banner-actions">
-            <button id="db-recovery-restore-btn" className="btn btn-sm btn-accent">Restore from backup…</button>
+            <button id="db-recovery-restore-btn" className="btn btn-sm btn-accent">Restore from Backup…</button>
             <button id="db-recovery-dismiss-btn" className="btn btn-sm">Dismiss</button>
           </div>
         </div>
@@ -149,7 +149,7 @@ pageRoutes.get('/', (c) => {
           <span>Enjoying Hot Sheet? Share it with others!</span>
           <div className="share-banner-actions">
             <button id="share-banner-share" className="btn btn-sm btn-share">Share</button>
-            <button id="share-banner-dismiss" className="btn btn-sm">Not now</button>
+            <button id="share-banner-dismiss" className="btn btn-sm">Not Now</button>
           </div>
         </div>
 
@@ -509,6 +509,14 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
               <span>Telemetry</span>
             </button>
+            {/* HS-8777 — Announcer gets its own tab (was a section under
+                Experimental). The beta status is shown as a blue rounded chip
+                centered beneath the tab label. */}
+            <button className="settings-tab" data-tab="announcer" id="settings-tab-announcer">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
+              <span>Announcer</span>
+              <span className="settings-tab-beta">Beta</span>
+            </button>
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
@@ -624,7 +632,7 @@ pageRoutes.get('/', (c) => {
                   Toggle is bound to the `db_snapshot_protection` file-setting (default on);
                   the status line is fed by GET /api/db/snapshot-status. */}
               <div className="settings-section-header" style="margin-top:24px">
-                <h3>Snapshot protection</h3>
+                <h3>Snapshot Protection</h3>
               </div>
               <p className="settings-hint">Keeps one atomically-written snapshot of this project's database and auto-restores it on startup if the live database is found corrupt. The snapshot is refreshed shortly after each change, on a periodic safety timer, and on a clean shutdown.</p>
               <div className="settings-field settings-field-checkbox">
@@ -636,7 +644,7 @@ pageRoutes.get('/', (c) => {
               </div>
               <div id="db-repair-status" className="db-repair-status">Checking database health…</div>
               <div className="db-repair-actions">
-                <button className="btn btn-sm" id="db-repair-find-working-btn">Find a working backup</button>
+                <button className="btn btn-sm" id="db-repair-find-working-btn">Find a Working Backup</button>
                 <button className="btn btn-sm" id="db-repair-pg-resetwal-btn">Run pg_resetwal…</button>
               </div>
               <div id="db-repair-result" className="db-repair-result"></div>
@@ -669,7 +677,7 @@ pageRoutes.get('/', (c) => {
                 `permissionAllowListUI.tsx::loadAndRenderAllowList`. */}
             <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel">
               <div className="settings-section-header">
-                <h3>Auto-allow rules</h3>
+                <h3>Auto-Allow Rules</h3>
               </div>
               <p className="settings-hint">Permission requests that match a rule below are auto-allowed without showing the popup. Patterns are JS regex anchored with <code>^…$</code> so <code>git status</code> matches <code>git status</code> exactly, not <code>cd /tmp &amp;&amp; git status</code>. Edit / Write requests are never allow-listable — file path alone doesn't capture diff intent.</p>
               {/* HS-8026 — the inline +Add form was replaced by an
@@ -701,7 +709,7 @@ pageRoutes.get('/', (c) => {
                 {/* HS-8761 — "Add a key" opens a dialog (full-width Name + Value);
                     the row dialog code lives in keysSettings.tsx. */}
                 <div className="settings-field" style="margin-top:14px">
-                  <button type="button" className="btn btn-sm" id="settings-key-add-btn">Add a key…</button>
+                  <button type="button" className="btn btn-sm" id="settings-key-add-btn">Add Key…</button>
                 </div>
                 <span className="settings-hint" id="settings-keys-status" role="status" aria-live="polite"></span>
               </div>
@@ -716,7 +724,7 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint">When off, no telemetry env vars are injected when spawning terminals — Claude Code runs without exporters. Default off.</span>
               </div>
               <div className="settings-section-header">
-                <h3>Signals to collect</h3>
+                <h3>Signals to Collect</h3>
               </div>
               <div className="settings-field settings-field-checkbox">
                 <label><input type="checkbox" id="settings-telemetry-metrics-enabled" /> Metrics</label>
@@ -762,56 +770,22 @@ pageRoutes.get('/', (c) => {
               <div className="settings-field">
                 <label>Clear telemetry data</label>
                 <div className="settings-inline-row">
-                  <button type="button" className="btn btn-sm btn-danger" id="settings-telemetry-clear-btn">Clear telemetry data…</button>
+                  <button type="button" className="btn btn-sm btn-danger" id="settings-telemetry-clear-btn">Clear Telemetry Data…</button>
                   <span className="settings-status" id="settings-telemetry-clear-status" role="status" aria-live="polite"></span>
                 </div>
                 <span className="settings-hint">Permanently deletes every metric, event, and trace recorded for <strong>this project</strong> (all time). Other projects are unaffected. This cannot be undone.</span>
               </div>
             </div>
-            <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
-              <div className="settings-field">
-                <label className="settings-checkbox-label">
-                  <input type="checkbox" id="settings-channel-enabled" />
-                  Enable Claude Channel integration <span className="global-setting-badge">Global Setting</span>
-                </label>
-                <span className="settings-hint" id="settings-channel-hint">Push worklist events to a running Claude Code session via MCP channels.</span>
-                <div id="settings-channel-instructions" style="display:none">
-                  <div className="settings-hint" style="margin-top:8px">Launch Claude Code with channel support:</div>
-                  <div className="settings-channel-command">
-                    <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel-…</code>
-                    <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
-                  </div>
-                </div>
-              </div>
-              <div id="settings-custom-commands-section" style="display:none">
-                <div className="settings-section" style="margin-top:16px">
-                  <div className="settings-section-header">
-                    <h3>Custom Commands</h3>
-                  </div>
-                  <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
-                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
-                  {/* HS-7984 — per-project toggle for the §53 streaming
-                      shell-output behavior. When off, the server still
-                      buffers (cheap; no point in conditional buffering
-                      complexity) but the client gates rendering, so the
-                      sidebar preview stays hidden and the Commands Log
-                      entry stays at the pre-completion empty state until
-                      the final detail lands. Default true — see §53.8. */}
-                  <div className="settings-field settings-field-checkbox" style="margin-top:12px">
-                    <label><input type="checkbox" id="settings-shell-streaming-enabled" defaultChecked /> Stream shell command output as it arrives</label>
-                    <span className="settings-hint">When on, the sidebar shows the trailing 1–2 lines of output under a running custom shell command's button, and the Commands Log entry updates in place as chunks arrive. Turn off if the live trickle is distracting.</span>
-                  </div>
-                </div>
-              </div>
-              {/* HS-8747 / §78 — Announcer. Per-project opt-in narration of
-                  recent work. The enable toggle + a resolvable Anthropic key
-                  both gate the header Listen button (announcer.tsx). HS-8751 —
-                  the key is no longer entered here: it's chosen from the global
-                  "API Keys" registry via the selector below (or defaults to the
-                  first Anthropic key). */}
-              <div className="settings-section" style="margin-top:16px">
+            {/* HS-8777 / §78 — Announcer. Promoted from a section under
+                Experimental to its own tab. Per-project opt-in narration of
+                recent work; the enable toggle + a resolvable Anthropic key both
+                gate the header Listen button (announcer.tsx). HS-8751 — the key
+                is chosen from the global "API Keys" registry via the selector
+                below (or defaults to the first Anthropic key). */}
+            <div className="settings-tab-panel" data-panel="announcer" id="settings-announcer-panel">
+              <div className="settings-section">
                 <div className="settings-section-header">
-                  <h3>Announcer <span className="settings-beta-chip" title="The Announcer is an experimental, opt-in feature.">BETA</span></h3>
+                  <h3>Announcer</h3>
                 </div>
                 <span className="settings-hint">Narrates recent work in this project aloud — a spoken summary of completion notes and activity since you last listened. <strong>Privacy &amp; cost:</strong> enabling sends this project's notes + activity log to Anthropic using your own API key (a departure from Hot Sheet's local-only default). Code and ticket details are never sent — only the notes you and your AI tools already write.</span>
                 <div className="settings-field settings-field-checkbox" style="margin-top:12px">
@@ -852,6 +826,42 @@ pageRoutes.get('/', (c) => {
                   <label>Uninteresting topics</label>
                   <textarea id="settings-announcer-dismissed" rows={3} placeholder="One topic per line — the Announcer skips these" autoComplete="off" style="width:100%;box-sizing:border-box;font-size:13px"></textarea>
                   <span className="settings-hint">When you skip an entry, its title is added here, and future narration omits similar topics. Edit freely (one per line); blank lines are ignored.</span>
+                </div>
+              </div>
+            </div>
+            <div className="settings-tab-panel" data-panel="experimental" id="settings-experimental-panel">
+              <div className="settings-field">
+                <label className="settings-checkbox-label">
+                  <input type="checkbox" id="settings-channel-enabled" />
+                  Enable Claude Channel integration <span className="global-setting-badge">Global Setting</span>
+                </label>
+                <span className="settings-hint" id="settings-channel-hint">Push worklist events to a running Claude Code session via MCP channels.</span>
+                <div id="settings-channel-instructions" style="display:none">
+                  <div className="settings-hint" style="margin-top:8px">Launch Claude Code with channel support:</div>
+                  <div className="settings-channel-command">
+                    <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel-…</code>
+                    <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
+                  </div>
+                </div>
+              </div>
+              <div id="settings-custom-commands-section" style="display:none">
+                <div className="settings-section" style="margin-top:16px">
+                  <div className="settings-section-header">
+                    <h3>Custom Commands</h3>
+                  </div>
+                  <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
+                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
+                  {/* HS-7984 — per-project toggle for the §53 streaming
+                      shell-output behavior. When off, the server still
+                      buffers (cheap; no point in conditional buffering
+                      complexity) but the client gates rendering, so the
+                      sidebar preview stays hidden and the Commands Log
+                      entry stays at the pre-completion empty state until
+                      the final detail lands. Default true — see §53.8. */}
+                  <div className="settings-field settings-field-checkbox" style="margin-top:12px">
+                    <label><input type="checkbox" id="settings-shell-streaming-enabled" defaultChecked /> Stream shell command output as it arrives</label>
+                    <span className="settings-hint">When on, the sidebar shows the trailing 1–2 lines of output under a running custom shell command's button, and the Commands Log entry updates in place as chunks arrive. Turn off if the live trickle is distracting.</span>
+                  </div>
                 </div>
               </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the
@@ -915,7 +925,7 @@ pageRoutes.get('/', (c) => {
                 <div className="settings-field" style="margin-top:12px">
                   <label>Hidden terminals</label>
                   <span className="settings-hint" style="margin-bottom:6px;display:block" id="settings-hidden-terminals-status">No terminals hidden for this project.</span>
-                  <button type="button" id="settings-hidden-terminals-reset" className="btn btn-sm" disabled>Reset visibility</button>
+                  <button type="button" id="settings-hidden-terminals-reset" className="btn btn-sm" disabled>Reset Visibility</button>
                 </div>
                 <div className="settings-field">
                   <label htmlFor="settings-terminal-scrollback">Scrollback (bytes)</label>
@@ -944,7 +954,7 @@ pageRoutes.get('/', (c) => {
                       `settings-link-action` class drops the border + uses the
                       muted secondary text color. */}
                   <div className="settings-quit-confirm-reset-row">
-                    <button type="button" id="settings-quit-confirm-reset" className="settings-link-action">Reset exempt list to defaults</button>
+                    <button type="button" id="settings-quit-confirm-reset" className="settings-link-action">Reset Exempt List to Defaults</button>
                   </div>
                 </div>
               </div>

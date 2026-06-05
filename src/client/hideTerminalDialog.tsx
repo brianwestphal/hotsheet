@@ -292,7 +292,7 @@ async function confirmDeleteGrouping(
   grouping: VisibilityGrouping,
 ): Promise<void> {
   const ok = await confirmDialog({
-    title: 'Delete grouping?',
+    title: 'Delete Grouping?',
     message: `Delete the "${grouping.name}" visibility grouping? Any hidden-state in this grouping will be lost. The Default grouping will become active.`,
     confirmLabel: 'Delete',
     danger: true,

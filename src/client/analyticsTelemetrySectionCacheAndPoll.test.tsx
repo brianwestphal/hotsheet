@@ -99,7 +99,7 @@ describe('fetchAndPopulate — cache behavior', () => {
 
     void _testing.fetchAndPopulate(bodySlot, 'month');
 
-    expect(bodySlot.querySelector('.analytics-telemetry-loading')?.textContent).toBe('Loading Claude usage…');
+    expect(bodySlot.querySelector('.analytics-telemetry-loading')?.textContent).toBe('Loading Claude Usage…');
   });
 
   it('caches the payload after a successful fetch — keyed by (projectSecret, window)', async () => {

@@ -182,10 +182,10 @@ function renderButton(cmd: CustomCommand) {
  */
 async function confirmStopShellCommand(cmd: CustomCommand, runningLogId: number): Promise<void> {
   const ok = await confirmDialog({
-    title: 'Stop running command?',
+    title: 'Stop Running Command?',
     message: `"${cmd.name}" is still running. Stop it now?`,
     confirmLabel: 'Stop',
-    cancelLabel: 'Keep running',
+    cancelLabel: 'Keep Running',
     danger: true,
   });
   if (!ok) return;
