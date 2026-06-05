@@ -24,6 +24,8 @@ export type Announcement = z.infer<typeof AnnouncementSchema>;
 export const AnnouncerStatusSchema = z.object({
   enabled: z.boolean(),
   hasKey: z.boolean(),
+  /** HS-8751 — the registry key id this project selected (null = use default). */
+  selectedKeyId: z.string().nullable(),
   entryCount: z.number(),
   lastListenedAt: z.string().nullable(),
 });
@@ -42,7 +44,9 @@ export const GenerateAnnouncementsResSchema = z.object({
 
 export const EntriesResSchema = z.object({ entries: z.array(AnnouncementSchema) });
 
-export const SetAnnouncerKeyReqSchema = z.object({ key: z.string().min(1) });
+// HS-8751 — pick which registry key (by id) the announcer uses for this
+// project; null clears the selection (falls back to the first Anthropic key).
+export const SelectAnnouncerKeyReqSchema = z.object({ keyId: z.string().nullable() });
 export const SetAnnouncerEnabledReqSchema = z.object({ enabled: z.boolean() });
 export const AdvanceCursorReqSchema = z.object({ at: z.string().optional() });
 
@@ -64,8 +68,8 @@ export async function advanceAnnouncerCursor(at?: string): Promise<{ ok: true }>
   return apiCall(OkResponseSchema, '/announcer/cursor', { method: 'POST', body: { at } });
 }
 
-export async function setAnnouncerKey(key: string): Promise<{ ok: true }> {
-  return apiCall(OkResponseSchema, '/announcer/key', { method: 'PUT', body: { key } });
+export async function selectAnnouncerKey(keyId: string | null): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, '/announcer/key-selection', { method: 'POST', body: { keyId } });
 }
 
 export async function setAnnouncerEnabled(enabled: boolean): Promise<{ ok: true }> {

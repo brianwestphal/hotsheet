@@ -4886,6 +4886,46 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   flex-wrap: wrap;
 }
 
+/* HS-8751 — API Keys tab: one editable row per registry key. */
+.settings-keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-key-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.02));
+}
+
+.settings-key-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .settings-key-name {
+    flex: 1 1 auto;
+    min-width: 120px;
+  }
+
+  .settings-key-type {
+    flex: 0 0 auto;
+  }
+
+  .settings-key-delete {
+    margin-left: auto;
+  }
+}
+
+.settings-key-value-row .settings-key-value {
+  flex: 1 1 220px;
+}
+
 .settings-status {
   font-size: 13px;
   color: var(--text-muted);

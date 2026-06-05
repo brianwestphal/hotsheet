@@ -11,11 +11,11 @@
 import { Hono } from 'hono';
 
 import { collectWorkSignals } from '../announcer/collectSignals.js';
-import { hasAnnouncerKey, resolveAnnouncerKey, setAnnouncerKey } from '../announcer/key.js';
+import { getAnnouncerKeyId, hasAnnouncerKey, resolveAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
 import { summarizeWork } from '../announcer/summarize.js';
 import {
   AdvanceCursorReqSchema, GenerateAnnouncementsReqSchema,
-  SetAnnouncerEnabledReqSchema, SetAnnouncerKeyReqSchema,
+  SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema,
 } from '../api/announcer.js';
 import {
   clearAnnouncements, dismissAnnouncement, getActiveAnnouncements,
@@ -53,6 +53,7 @@ announcerRoutes.get('/announcer/status', async (c) => {
   return c.json({
     enabled: settings[ENABLED_KEY] === 'true',
     hasKey: await hasAnnouncerKey(),
+    selectedKeyId: await getAnnouncerKeyId(),
     entryCount: entries.length,
     lastListenedAt: settings[CURSOR_KEY] ?? null,
   });
@@ -107,13 +108,13 @@ announcerRoutes.post('/announcer/enabled', async (c) => {
   return c.json({ ok: true });
 });
 
-// PUT /api/announcer/key — store the Anthropic API key in the OS keychain.
-announcerRoutes.put('/announcer/key', async (c) => {
+// POST /api/announcer/key-selection — choose which registry key (by id) this
+// project uses (null = fall back to the first Anthropic key). HS-8751.
+announcerRoutes.post('/announcer/key-selection', async (c) => {
   const raw: unknown = await c.req.json().catch(() => null);
-  const parsed = SetAnnouncerKeyReqSchema.safeParse(raw);
+  const parsed = SelectAnnouncerKeyReqSchema.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
-  const ok = await setAnnouncerKey(parsed.data.key);
-  if (!ok) return c.json({ error: 'Failed to store key in the OS keychain' }, 500);
+  await setAnnouncerKeyId(parsed.data.keyId);
   return c.json({ ok: true });
 });
 

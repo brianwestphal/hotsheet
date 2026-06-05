@@ -267,9 +267,10 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
 ## 78.6 Secrets — AI + TTS API keys
 
 - Reuse **`src/keychain.ts`** (§20): `keychainGet/Set/Delete(pluginId, key)`,
-  `isKeychainAvailable()`. Use `pluginId: 'announcer'` so keys live under
-  `com.hotsheet.plugin.announcer` (macOS `security` / Linux `secret-tool`; file
-  fallback on Windows / browser).
+  `isKeychainAvailable()`. **As of HS-8751 the announcer no longer stores its own
+  key** — keys live in the global registry (§79, `docs/79-api-keys.md`, keychain
+  plugin id `keys`) and the project selects one. The original design below
+  (`pluginId: 'announcer'`) was the Phase-1b implementation, superseded by §79.
 - Mirror the **glassbox 3-tier resolution** (`~/Documents/glassbox/src/ai/`):
   **env var → keychain → config file**, with a `{ key, source }` result so the
   UI can show where a key came from. Apply the same chain to both the **AI
@@ -412,7 +413,13 @@ Phase 1b.
   completions, §14 command-log events through the new `getLogEntries({ since })`
   filter), de-dups, orders chronologically, and renders a plain-text block. No
   AI here, so it's fully unit-tested. Attachments / raw code are deliberately
-  excluded (privacy; the notes are already summaries).
+  excluded (privacy; the notes are already summaries). **The block is bounded to
+  a safe input-token budget** (`capMaterial`, `MAX_INPUT_TOKENS = 600_000`,
+  ~3 chars/token) — keeping the most recent signals behind an elision marker and
+  dropping older ones — so a long-history project can't blow the Anthropic 1M
+  input-token limit (HS-8752: a from-scratch generate once assembled ~1.67M
+  tokens and the whole "Listen" failed with "prompt is too long"). This is the
+  static form of §78.4.1's "adaptive compression under backlog".
 - `src/announcer/summarize.ts` — `summarizeWork(material, { apiKey, model? })`
   calls the Anthropic Messages API (official `@anthropic-ai/sdk`) with a
   structured-output JSON schema → guaranteed-valid `{ title, script }[]`,
@@ -483,9 +490,14 @@ tickets).
 
 **Settings + Listen affordance.** `announcerSettings.tsx` binds the "Announcer"
 section under Settings → Experimental: a per-project enable toggle
-(`setAnnouncerEnabled`), a write-only Anthropic API key field
-(`setAnnouncerKey` → OS keychain; the input stays blank and a status line
-reports whether one is configured), and an explicit privacy/cost disclosure.
+(`setAnnouncerEnabled`), an **Anthropic key selector** (HS-8751 — a dropdown of
+named keys from the global registry, §79, filtered to type
+`anthropic_api_key`, plus a "Default — first Anthropic key" option;
+`selectAnnouncerKey` records the choice in the per-project `announcer_ai_key_id`
+setting, and the dropdown repopulates live on the `hotsheet:keys-changed`
+event), and an explicit privacy/cost disclosure. *(Pre-HS-8751 this was a
+write-only key field stored under the announcer keychain id; keys now live in
+the shared "API Keys" tab and the announcer just picks one.)*
 `announcer.tsx` owns the header "Listen" button — hidden unless the project is
 opted in AND has a key (`getAnnouncerStatus`) — which generates the latest
 batch and plays the full active reel through the PIP, advancing the listened

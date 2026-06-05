@@ -16,6 +16,7 @@ import { apiRoutes } from './routes/api.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
 import { gitRoutes } from './routes/git.js';
+import { keysRoutes } from './routes/keys.js';
 import { otelRoutes } from './routes/otel.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
@@ -150,9 +151,13 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   // HS-7954 — git status chip. `GET /api/git/status` returns `GitStatus | null`.
   app.route('/api', gitRoutes);
 
-  // §78 Announcer (HS-8745) — `/api/announcer/*`: opt-in toggle, key storage,
+  // §78 Announcer (HS-8745) — `/api/announcer/*`: opt-in toggle, key selection,
   // derived-summary generation, entries, and the listen cursor.
   app.route('/api', announcerRoutes);
+
+  // HS-8751 — global API-key registry. `/api/keys` CRUD over the machine-wide
+  // named-secret list the announcer (and future TTS) selects from.
+  app.route('/api', keysRoutes);
 
   // HS-8143 — Claude Code OTLP/HTTP receiver (§67.5). Three routes on
   // `/v1/{metrics,logs,traces}`. NOT under `/api/*` so the

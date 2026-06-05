@@ -40,7 +40,7 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   // Opted-in + key configured so the Listen button shows.
   await page.route('**/api/announcer/status**', (route) => route.fulfill({
     status: 200, contentType: 'application/json',
-    body: JSON.stringify({ enabled: true, hasKey: true, entryCount: ENTRIES.length, lastListenedAt: null }),
+    body: JSON.stringify({ enabled: true, hasKey: true, selectedKeyId: null, entryCount: ENTRIES.length, lastListenedAt: null }),
   }));
   // Generation is a no-op success — the reel comes from /entries.
   await page.route('**/api/announcer/generate**', (route) => route.fulfill({

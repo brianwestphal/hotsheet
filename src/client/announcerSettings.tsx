@@ -1,27 +1,55 @@
 /**
  * §78 Announcer (HS-8747) — the "Announcer" settings section (under Settings →
- * Experimental). Per-project opt-in toggle + the Anthropic API key input
- * (stored in the OS keychain via `setAnnouncerKey`) + a privacy/cost
- * disclosure and a live status line.
+ * Experimental). Per-project opt-in toggle + an **Anthropic key selector** +
+ * a privacy/cost disclosure and a live status line.
  *
- * The key field is write-only: the server never returns the stored key (it
- * lives in the keychain), so the input stays blank and shows a "configured"
- * status instead. Saving a new value overwrites it.
+ * HS-8751: the key is no longer entered here. The user manages named keys in
+ * the global "API Keys" tab; this section just picks which Anthropic key this
+ * project uses (or "Default — first Anthropic key" when none is chosen). The
+ * dropdown repopulates when keys change elsewhere (the `hotsheet:keys-changed`
+ * event) so adding a key in the Keys tab shows up here immediately.
  */
-import { getAnnouncerStatus, setAnnouncerEnabled, setAnnouncerKey } from '../api/index.js';
-import { byId, byIdOrNull } from './dom.js';
+import { getAnnouncerStatus, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerEnabled } from '../api/index.js';
+import { byId, byIdOrNull, toElement } from './dom.js';
 import { showToast } from './toast.js';
+
+const ANTHROPIC: KeyType = 'anthropic_api_key';
+
+/** Repopulate the key <select> from the registry, preserving the project's
+ *  current selection. Returns whether any Anthropic key exists. */
+async function populateKeySelect(select: HTMLSelectElement, selectedId: string | null): Promise<boolean> {
+  let keys: SecretKeyMeta[];
+  try {
+    keys = (await listKeys()).filter(k => k.type === ANTHROPIC);
+  } catch {
+    keys = [];
+  }
+  select.replaceChildren(
+    toElement(<option value="">Default — first Anthropic key</option>),
+    ...keys.map(k => toElement(<option value={k.id}>{k.name}</option>)),
+  );
+  // Restore selection (falls back to the default option when the id is gone).
+  select.value = selectedId ?? '';
+  if (select.value !== (selectedId ?? '')) select.value = '';
+  return keys.length > 0;
+}
 
 async function refreshStatus(
   enabledCb: HTMLInputElement,
+  select: HTMLSelectElement,
   statusEl: HTMLElement,
 ): Promise<void> {
   try {
     const status = await getAnnouncerStatus();
     enabledCb.checked = status.enabled;
-    statusEl.textContent = status.hasKey
-      ? `API key configured · ${String(status.entryCount)} ${status.entryCount === 1 ? 'entry' : 'entries'} in the reel.`
-      : 'No API key configured yet — add one below to enable narration.';
+    const hasAnthropicKey = await populateKeySelect(select, status.selectedKeyId);
+    if (!hasAnthropicKey) {
+      statusEl.textContent = 'No Anthropic keys yet — add one in the “API Keys” tab to enable narration.';
+    } else if (status.hasKey) {
+      statusEl.textContent = `Key configured · ${String(status.entryCount)} ${status.entryCount === 1 ? 'entry' : 'entries'} in the reel.`;
+    } else {
+      statusEl.textContent = 'Select an Anthropic key to enable narration.';
+    }
   } catch {
     statusEl.textContent = 'Could not load announcer status.';
   }
@@ -33,13 +61,17 @@ async function refreshStatus(
  */
 export function bindAnnouncerSettings(onStatusChange?: () => void): void {
   const enabledCb = byIdOrNull<HTMLInputElement>('settings-announcer-enabled');
-  const keyInput = byIdOrNull<HTMLInputElement>('settings-announcer-key');
-  const saveKeyBtn = byIdOrNull<HTMLButtonElement>('settings-announcer-key-save');
+  const keySelect = byIdOrNull<HTMLSelectElement>('settings-announcer-key-select');
   const statusEl = byIdOrNull('settings-announcer-status');
-  if (enabledCb === null || keyInput === null || saveKeyBtn === null || statusEl === null) return;
+  if (enabledCb === null || keySelect === null || statusEl === null) return;
 
   // Refresh status whenever the settings dialog opens.
-  byId('settings-btn').addEventListener('click', () => { void refreshStatus(enabledCb, statusEl); });
+  byId('settings-btn').addEventListener('click', () => { void refreshStatus(enabledCb, keySelect, statusEl); });
+
+  // Repopulate when keys are added/edited/removed in the Keys tab.
+  document.addEventListener('hotsheet:keys-changed', () => {
+    void refreshStatus(enabledCb, keySelect, statusEl);
+  });
 
   enabledCb.addEventListener('change', () => {
     void (async () => {
@@ -54,27 +86,17 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     })();
   });
 
-  saveKeyBtn.addEventListener('click', () => {
+  keySelect.addEventListener('change', () => {
     void (async () => {
-      const key = keyInput.value.trim();
-      if (key === '') {
-        showToast('Enter an Anthropic API key first.', { variant: 'warning' });
-        return;
-      }
-      saveKeyBtn.disabled = true;
       try {
-        await setAnnouncerKey(key);
-        keyInput.value = '';
-        showToast('Announcer API key saved to the keychain.', { variant: 'success' });
-        await refreshStatus(enabledCb, statusEl);
+        await selectAnnouncerKey(keySelect.value === '' ? null : keySelect.value);
+        await refreshStatus(enabledCb, keySelect, statusEl);
         onStatusChange?.();
       } catch {
-        showToast('Could not save the API key.', { variant: 'warning' });
-      } finally {
-        saveKeyBtn.disabled = false;
+        showToast('Could not save the key selection.', { variant: 'warning' });
       }
     })();
   });
 
-  void refreshStatus(enabledCb, statusEl);
+  void refreshStatus(enabledCb, keySelect, statusEl);
 }

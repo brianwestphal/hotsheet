@@ -199,6 +199,21 @@ export const DashboardConfigSchema = z.object({
   activeVisibilityGroupingIdByScope: z.record(z.string(), z.string()).optional(),
 }).strict();
 
+// HS-8751 — global API-key registry. Key *metadata* (id, type, name) lives in
+// `~/.hotsheet/config.json` (machine-global, shared across every project); the
+// secret *value* lives in the OS keychain keyed by `id` (never in config / git).
+// A project selects a key by id (per-project `announcer_ai_key_id` setting),
+// defaulting to the first key of the matching type. See docs/79-api-keys.md.
+export const KeyTypeSchema = z.enum(['anthropic_api_key', 'google_tts_key']);
+export type KeyType = z.infer<typeof KeyTypeSchema>;
+
+export const SecretKeyMetaSchema = z.object({
+  id: z.string(),
+  type: KeyTypeSchema,
+  name: z.string(),
+});
+export type SecretKeyMeta = z.infer<typeof SecretKeyMetaSchema>;
+
 export const GlobalConfigSchema = z.object({
   channelEnabled: z.boolean().optional(),
   shareTotalSeconds: z.number().optional(),
@@ -212,6 +227,8 @@ export const GlobalConfigSchema = z.object({
   // HS-8497 — billing model for telemetry cost display. See
   // `global-config.ts` for the contract.
   telemetryCostMode: z.enum(['api', 'subscription']).optional(),
+  // HS-8751 — global API-key registry (metadata only; values in the keychain).
+  keys: z.array(SecretKeyMetaSchema).optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that

@@ -228,6 +228,17 @@ This document lists features that require manual verification before each releas
 - [ ] If Keychain is locked/unavailable, falls back to file storage silently
 - [ ] On Linux: `secret-tool lookup service com.hotsheet.plugin.github-issues account token` returns the value
 
+### API Keys registry (HS-8751, §79) — needs a real OS keychain
+
+E2E stubs the `/api/keys` routes, so the real keychain round-trip is manual.
+
+- [ ] Settings → API Keys → add an Anthropic key (type + name + value) → it appears as a row; the value field is empty (write-only).
+- [ ] Verify the value landed in the keychain: macOS `security find-generic-password -s com.hotsheet.plugin.keys -a <id> -w` (the `<id>` is the `data-key-id` on the row); Linux `secret-tool lookup service com.hotsheet.plugin.keys account <id>`.
+- [ ] Verify the metadata (id/type/name, NO value) is in `~/.hotsheet/config.json` under `keys`.
+- [ ] "Set value" on a row overwrites the keychain secret; renaming / changing type persists across a restart.
+- [ ] Delete a row → both the config metadata and the keychain secret are gone.
+- [ ] Settings → Experimental → Announcer: the key dropdown lists the named keys; selecting one and restarting keeps the choice (`announcer_ai_key_id`); with no selection it uses the first Anthropic key; the Listen button enables once a key resolves.
+
 ## 12. Embedded Terminal
 
 See [22-terminal.md](22-terminal.md). Requires `terminal_enabled: true` in `.hotsheet/settings.json` or via Settings → Experimental → Embedded Terminal.

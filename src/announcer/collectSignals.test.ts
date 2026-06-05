@@ -3,7 +3,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../db/connection.js';
 import { createTicket } from '../db/tickets.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { collectWorkSignals } from './collectSignals.js';
+import { capMaterial, collectWorkSignals, MAX_INPUT_TOKENS } from './collectSignals.js';
+
+// Mirror of the module's internal char budget (MAX_INPUT_TOKENS * CHARS_PER_TOKEN,
+// CHARS_PER_TOKEN = 3). The cap exists so the assembled material never blows the
+// Anthropic 1M-token input limit (HS-8752).
+const MAX_MATERIAL_CHARS = MAX_INPUT_TOKENS * 3;
 
 let tempDir: string;
 const OLD = '2026-06-05T10:00:00.000Z';
@@ -66,5 +71,51 @@ describe('collectWorkSignals (HS-8745)', () => {
     const { material, count } = await collectWorkSignals('2027-01-01T00:00:00.000Z');
     expect(material).toBe('');
     expect(count).toBe(0);
+  });
+
+  it('bounds the assembled material so a long-history project never blows the token limit (HS-8752)', async () => {
+    const db = await getDb();
+    // A single ticket carrying a note far larger than the whole budget — the
+    // real-world shape that produced the 1.67M-token 400 on a from-scratch
+    // generate. (One giant note ⇒ one giant signal line.)
+    const t = await createTicket('Huge history');
+    const giant = 'word '.repeat(Math.ceil(MAX_MATERIAL_CHARS / 5) + 1000); // > budget
+    const notes = JSON.stringify([{ id: 'big', text: giant, created_at: NEW }]);
+    await db.query(`UPDATE tickets SET notes = $1, updated_at = $2 WHERE id = $3`, [notes, NEW, t.id]);
+
+    const { material, count } = await collectWorkSignals(null);
+    expect(count).toBe(1);
+    // The whole point: the payload sent to the summarizer fits the budget.
+    expect(material.length).toBeLessThanOrEqual(MAX_MATERIAL_CHARS);
+    // A single over-budget line is tail-truncated, so we still narrate something.
+    expect(material.length).toBeGreaterThan(0);
+  });
+});
+
+describe('capMaterial (HS-8752)', () => {
+  it('returns the full join unchanged when under budget', () => {
+    expect(capMaterial(['a', 'b', 'c'])).toBe('a\nb\nc');
+  });
+
+  it('keeps the newest lines and drops the oldest when over budget', () => {
+    // 30 lines × 100k chars = 3M chars, well over the 1.8M budget. Each line is
+    // uniquely tagged so we can see which survived.
+    const block = 'x'.repeat(100_000);
+    const texts = Array.from({ length: 30 }, (_, i) => `LINE_${i} ${block}`);
+
+    const out = capMaterial(texts);
+    expect(out.length).toBeLessThanOrEqual(MAX_MATERIAL_CHARS);
+    // The oldest line is gone; the newest is kept; an elision marker is prepended.
+    expect(out).toContain('older work omitted');
+    expect(out).toContain('LINE_29');
+    expect(out).not.toContain('LINE_0 '); // trailing space avoids matching LINE_29's prefix-free token
+  });
+
+  it('tail-truncates a single line larger than the whole budget', () => {
+    const huge = 'y'.repeat(MAX_MATERIAL_CHARS * 2);
+    const out = capMaterial([huge]);
+    expect(out.length).toBeLessThanOrEqual(MAX_MATERIAL_CHARS);
+    expect(out).toContain('older work omitted');
+    expect(out.length).toBeGreaterThan(0);
   });
 });

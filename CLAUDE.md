@@ -240,6 +240,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 76. `76-cross-project-ticket-drag.md` — drag tickets onto project tabs / "+" to copy (or Option-move) across projects
 77. `77-paste-attachments.md` — paste files/images from the clipboard to create attachments
 78. `78-announcer.md` — A/V narration of project work (Phase 1a server generation backbone shipped; client + later phases pending)
+79. `79-api-keys.md` — global API-key registry (named Anthropic/Google-TTS keys; projects select by name)
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source).
 

@@ -9,8 +9,8 @@ import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.
 import {
   advanceAnnouncerCursor, AnnouncementSchema, clearAnnouncements, dismissAnnouncement,
   generateAnnouncements, getAnnouncerEntries, getAnnouncerStatus,
-  setAnnouncerEnabled,   SetAnnouncerEnabledReqSchema, setAnnouncerKey,
-SetAnnouncerKeyReqSchema,
+  selectAnnouncerKey, SelectAnnouncerKeyReqSchema,
+  setAnnouncerEnabled, SetAnnouncerEnabledReqSchema,
 } from './announcer.js';
 
 let lastCall: { path: string; opts: ApiCallOpts } | undefined;
@@ -32,8 +32,9 @@ describe('announcer schemas (HS-8745)', () => {
     expect(AnnouncementSchema.safeParse({ ...sampleEntry, id: 'x' }).success).toBe(false);
   });
   it('request schemas validate', () => {
-    expect(SetAnnouncerKeyReqSchema.safeParse({ key: 'sk' }).success).toBe(true);
-    expect(SetAnnouncerKeyReqSchema.safeParse({ key: '' }).success).toBe(false);
+    expect(SelectAnnouncerKeyReqSchema.safeParse({ keyId: 'abc' }).success).toBe(true);
+    expect(SelectAnnouncerKeyReqSchema.safeParse({ keyId: null }).success).toBe(true);
+    expect(SelectAnnouncerKeyReqSchema.safeParse({ keyId: 5 }).success).toBe(false);
     expect(SetAnnouncerEnabledReqSchema.safeParse({ enabled: true }).success).toBe(true);
     expect(SetAnnouncerEnabledReqSchema.safeParse({ enabled: 'yes' }).success).toBe(false);
   });
@@ -41,7 +42,7 @@ describe('announcer schemas (HS-8745)', () => {
 
 describe('announcer callers (HS-8745)', () => {
   it('getAnnouncerStatus → GET /announcer/status', async () => {
-    stub({ enabled: true, hasKey: false, entryCount: 2, lastListenedAt: null });
+    stub({ enabled: true, hasKey: false, selectedKeyId: null, entryCount: 2, lastListenedAt: null });
     expect((await getAnnouncerStatus()).entryCount).toBe(2);
     expect(lastCall).toEqual({ path: '/announcer/status', opts: {} });
   });
@@ -65,10 +66,16 @@ describe('announcer callers (HS-8745)', () => {
     expect(lastCall).toEqual({ path: '/announcer/cursor', opts: { method: 'POST', body: { at: '2026-06-05T02:00:00Z' } } });
   });
 
-  it('setAnnouncerKey → PUT /announcer/key', async () => {
+  it('selectAnnouncerKey → POST /announcer/key-selection', async () => {
     stub({ ok: true });
-    await setAnnouncerKey('sk-xyz');
-    expect(lastCall).toEqual({ path: '/announcer/key', opts: { method: 'PUT', body: { key: 'sk-xyz' } } });
+    await selectAnnouncerKey('key-id-1');
+    expect(lastCall).toEqual({ path: '/announcer/key-selection', opts: { method: 'POST', body: { keyId: 'key-id-1' } } });
+  });
+
+  it('selectAnnouncerKey(null) clears the selection', async () => {
+    stub({ ok: true });
+    await selectAnnouncerKey(null);
+    expect(lastCall).toEqual({ path: '/announcer/key-selection', opts: { method: 'POST', body: { keyId: null } } });
   });
 
   it('setAnnouncerEnabled → POST /announcer/enabled', async () => {

@@ -8,6 +8,7 @@ import { loadBackupList } from './backups.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
+import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
 import type { NotifyLevel } from './state.js';
@@ -40,6 +41,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindExperimentalSettings();
   bindCategorySettings(rebuildCategoryUI);
   bindCliToolSettings();
+  bindKeysSettings();
 }
 
 // --- Tab switching + dialog open/close ---

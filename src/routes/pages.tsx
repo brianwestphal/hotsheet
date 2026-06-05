@@ -497,6 +497,12 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               <span>Permissions</span>
             </button>
+            {/* HS-8751 — API Keys tab. Machine-global named-secret registry
+                (Anthropic / Google TTS keys) that projects select from. */}
+            <button className="settings-tab" data-tab="keys" id="settings-tab-keys">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
+              <span>API Keys</span>
+            </button>
             {/* HS-8146 — Telemetry tab. Master toggle + per-signal sub-toggles + retention picker for the §67 Claude Code telemetry integration. */}
             <button className="settings-tab" data-tab="telemetry" id="settings-tab-telemetry">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
@@ -679,6 +685,42 @@ pageRoutes.get('/', (c) => {
                 telemetry_retention_days (retention window). Default off
                 so no spawn-env injection happens until the user opts
                 in. See docs/67-telemetry.md §67.9 for the contract. */}
+            {/* HS-8751 — API Keys panel. A machine-global list of named secrets
+                (Anthropic / Google TTS). Metadata lives in
+                `~/.hotsheet/config.json`; values live in the OS keychain and are
+                write-only here. Projects select a key by name (e.g. the
+                Announcer). The list rows are rendered by keysSettings.tsx. */}
+            <div className="settings-tab-panel" data-panel="keys" id="settings-keys-panel">
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <h3>API Keys <span className="global-setting-badge" title="These keys are shared across every project on this machine.">Global Setting</span></h3>
+                </div>
+                <span className="settings-hint">Named API keys shared across every project on this machine. <strong>Values are stored in your OS keychain</strong> — never in the database, config file, or git. Each project picks a key by name (for example, the Announcer's Anthropic key under Experimental); with no choice it defaults to the first key of that type.</span>
+                <div id="settings-keys-list" className="settings-keys-list" style="margin-top:12px"></div>
+                <div className="settings-section-header" style="margin-top:18px">
+                  <h3>Add a key</h3>
+                </div>
+                <div className="settings-field">
+                  <label>Type</label>
+                  <select id="settings-key-add-type" style="max-width:240px">
+                    <option value="anthropic_api_key">Anthropic API Key</option>
+                    <option value="google_tts_key">Google TTS Key</option>
+                  </select>
+                </div>
+                <div className="settings-field">
+                  <label>Name</label>
+                  <input type="text" id="settings-key-add-name" placeholder="e.g. Personal" autoComplete="off" style="max-width:240px" />
+                </div>
+                <div className="settings-field">
+                  <label>Value</label>
+                  <div className="settings-inline-row">
+                    <input type="password" id="settings-key-add-value" placeholder="sk-ant-…" autoComplete="off" style="width:320px" />
+                    <button type="button" className="btn btn-sm" id="settings-key-add-btn">Add key</button>
+                  </div>
+                </div>
+                <span className="settings-hint" id="settings-keys-status" role="status" aria-live="polite"></span>
+              </div>
+            </div>
             <div className="settings-tab-panel" data-panel="telemetry" id="settings-telemetry-panel">
               <div className="settings-section-header">
                 <h3>Claude Code Telemetry</h3>
@@ -777,11 +819,11 @@ pageRoutes.get('/', (c) => {
                 </div>
               </div>
               {/* HS-8747 / §78 — Announcer. Per-project opt-in narration of
-                  recent work. The enable toggle + API key both gate the
-                  header Listen button (announcer.tsx). The key is write-only
-                  (stored in the OS keychain server-side via setAnnouncerKey);
-                  the input stays blank and the status line reports whether one
-                  is configured. */}
+                  recent work. The enable toggle + a resolvable Anthropic key
+                  both gate the header Listen button (announcer.tsx). HS-8751 —
+                  the key is no longer entered here: it's chosen from the global
+                  "API Keys" registry via the selector below (or defaults to the
+                  first Anthropic key). */}
               <div className="settings-section" style="margin-top:16px">
                 <div className="settings-section-header">
                   <h3>Announcer <span className="settings-beta-chip" title="The Announcer is an experimental, opt-in feature.">BETA</span></h3>
@@ -793,11 +835,10 @@ pageRoutes.get('/', (c) => {
                 </div>
                 <div className="settings-field" style="margin-top:12px">
                   <label>Anthropic API key</label>
-                  <div className="settings-inline-row">
-                    <input type="password" id="settings-announcer-key" placeholder="sk-ant-…" autoComplete="off" style="width: 320px" />
-                    <button type="button" className="btn btn-sm" id="settings-announcer-key-save">Save key</button>
-                  </div>
-                  <span className="settings-hint" id="settings-announcer-status" role="status" aria-live="polite">No API key configured yet — add one below to enable narration.</span>
+                  <select id="settings-announcer-key-select" style="max-width:340px">
+                    <option value="">Default — first Anthropic key</option>
+                  </select>
+                  <span className="settings-hint" id="settings-announcer-status" role="status" aria-live="polite">Manage keys in the “API Keys” tab, then pick one here.</span>
                 </div>
               </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the

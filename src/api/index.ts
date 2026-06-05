@@ -32,6 +32,7 @@ import * as db from './db.js';
 import * as diagnostics from './diagnostics.js';
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
+import * as keys from './keys.js';
 import * as plugins from './plugins.js';
 import * as projects from './projects.js';
 import * as settings from './settings.js';
@@ -50,6 +51,7 @@ export * from './db.js';
 export * from './diagnostics.js';
 export * from './feedbackDrafts.js';
 export * from './git.js';
+export * from './keys.js';
 export * from './plugins.js';
 export * from './projects.js';
 export * from './settings.js';
@@ -71,6 +73,7 @@ export const apis = {
   ...channel,
   ...projects,
   ...plugins,
+  ...keys,
   ...attachments,
   ...announcer,
   ...settings,

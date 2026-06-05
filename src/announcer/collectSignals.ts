@@ -39,6 +39,54 @@ interface TimedLine {
 }
 
 /**
+ * Cap on the assembled material handed to the summarizer. The Anthropic Messages
+ * API rejects prompts over 1,000,000 input tokens with a 400 — HS-8752: a
+ * project with a long history produced ~1.67M tokens of signals on a
+ * from-scratch (`since === null`) generate, so the whole "Listen" failed with
+ * "Summarization failed: prompt is too long". We bound the material well under
+ * that limit, keeping the MOST RECENT signals (an after-the-fact briefing cares
+ * about what just happened) and dropping older ones behind an explicit elision
+ * marker so the summarizer knows the window was trimmed. This is the static form
+ * of §78.4.1's "adaptive compression under backlog".
+ *
+ * ~3 chars/token deliberately OVER-estimates tokens for typical prose (~4
+ * chars/token), so the char budget never undershoots the real token count even
+ * for denser code/identifier text.
+ */
+export const MAX_INPUT_TOKENS = 600_000;
+const CHARS_PER_TOKEN = 3;
+const MAX_MATERIAL_CHARS = MAX_INPUT_TOKENS * CHARS_PER_TOKEN;
+const ELISION_MARKER = '[…older work omitted to fit the summarization budget; the signals below are the most recent…]';
+
+/**
+ * Join the (chronological, oldest→newest) signal texts into the material block,
+ * bounding it to `MAX_MATERIAL_CHARS`. Under budget → the full join. Over budget
+ * → keep the newest lines that fit, prefixed with `ELISION_MARKER`. A single
+ * line larger than the whole budget is itself tail-truncated so we always emit
+ * something narratable.
+ */
+export function capMaterial(texts: string[]): string {
+  const full = texts.join('\n');
+  if (full.length <= MAX_MATERIAL_CHARS) return full;
+
+  const budget = MAX_MATERIAL_CHARS - ELISION_MARKER.length - 1;
+  const kept: string[] = [];
+  let used = 0;
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const cost = texts[i].length + 1; // + the joining newline
+    if (used + cost > budget) {
+      // The newest single line alone overflows the budget: keep its tail so the
+      // material isn't just the marker. Otherwise we've kept all we can fit.
+      if (kept.length === 0) kept.unshift(texts[i].slice(-budget));
+      break;
+    }
+    used += cost;
+    kept.unshift(texts[i]);
+  }
+  return [ELISION_MARKER, ...kept].join('\n');
+}
+
+/**
  * Gather work signals since `since` (ISO string; null = all non-deleted tickets'
  * notes + the full command log) and render them as a chronological text block.
  */
@@ -89,6 +137,6 @@ export async function collectWorkSignals(since: string | null): Promise<Collecte
 
   lines.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
-  const material = lines.map(l => l.text).join('\n');
+  const material = capMaterial(lines.map(l => l.text));
   return { material, count: lines.length, coversFrom: since, coversTo };
 }

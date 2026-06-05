@@ -25,8 +25,8 @@ vi.mock('../announcer/summarize.js', () => ({
 vi.mock('../announcer/key.js', () => ({
   resolveAnnouncerKey: vi.fn(() => Promise.resolve('sk-test')),
   hasAnnouncerKey: vi.fn(() => Promise.resolve(true)),
-  setAnnouncerKey: vi.fn(() => Promise.resolve(true)),
-  deleteAnnouncerKey: vi.fn(() => Promise.resolve(true)),
+  getAnnouncerKeyId: vi.fn(() => Promise.resolve(null)),
+  setAnnouncerKeyId: vi.fn(() => Promise.resolve()),
 }));
 
 let tempDir: string;
@@ -69,8 +69,8 @@ describe('announcer routes (HS-8745)', () => {
     expect((await entriesRes.json() as { entries: unknown[] }).entries).toHaveLength(2);
 
     const statusRes = await app.request('/api/announcer/status');
-    const status = await statusRes.json() as { enabled: boolean; entryCount: number; hasKey: boolean };
-    expect(status).toMatchObject({ enabled: true, entryCount: 2, hasKey: true });
+    const status = await statusRes.json() as { enabled: boolean; entryCount: number; hasKey: boolean; selectedKeyId: string | null };
+    expect(status).toMatchObject({ enabled: true, entryCount: 2, hasKey: true, selectedKeyId: null });
   });
 
   it('generate with no new signals returns generated:0', async () => {
