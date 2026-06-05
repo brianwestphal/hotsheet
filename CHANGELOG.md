@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.19.0] - 2026-06-05
+
+
+
+- Per-ticket cost correlation: Claude usage costs now attribute precisely to individual tickets.
+
+
+- Prompt-timeline drilldown in the analytics dashboard is now scrollable.
+
+
+- Fixed the analytics dashboard cycle-time chart rendering.
+- A resize or write to a just-exited terminal no longer crashes the server.
+- Windows: fixed two path-resolution bugs that broke startup and file handling.
+- Windows: deferred database auto-recovery now runs correctly on launch.
+- Windows: stopped the log from spamming expected per-file fsync failures.
+
+
+- Fixed a startup hang when restoring many projects at once; the restore fan-out is now bounded and un-throttled.
+- Attachment SHA-256 hashing moved to a worker, keeping the main thread responsive.
+- Git status and git refresh moved off the event loop; background tabs no longer fan out refreshes.
+- Attachment garbage-collection sweep now yields, avoiding event-loop stalls.
+- New central background-work scheduler coordinates all deferred work, with wake-aware re-staggering after sleep.
+
 ## [0.18.0] - 2026-06-03
 
 
