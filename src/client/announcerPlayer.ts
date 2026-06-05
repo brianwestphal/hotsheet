@@ -67,6 +67,42 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
       this.speakCurrent();
     }
   }
+
+  /** Append new entries to the END of the reel (HS-8767 live tailing) without
+   *  disturbing the current position. If the reel had already finished ('done'),
+   *  resume into the first newly-appended entry; otherwise the player reaches
+   *  them naturally as it advances. */
+  appendEntries(entries: T[]): void {
+    if (entries.length === 0) return;
+    const wasDone = this.state === 'done' || (this.state === 'idle' && this.entries.length === 0);
+    const resumeIndex = this.entries.length;
+    this.entries.push(...entries);
+    if (!wasDone) {
+      // Still playing/paused — just refresh the position label (N / M grew).
+      this.emitEntryChange();
+      return;
+    }
+    this.index = resumeIndex;
+    if (this.engine.backend === 'none') {
+      this.setState('paused');
+      this.emitEntryChange();
+    } else {
+      this.speakCurrent();
+    }
+  }
+
+  /** Skip the backlog and jump to the newest entry (HS-8767 skip-catch-up). */
+  jumpToLast(): void {
+    if (this.entries.length === 0) return;
+    this.interrupt();
+    this.index = this.entries.length - 1;
+    if (this.engine.backend === 'none') {
+      this.setState('paused');
+      this.emitEntryChange();
+    } else {
+      this.speakCurrent();
+    }
+  }
   getBackend(): SpeechEngine['backend'] { return this.engine.backend; }
   /** True when the active backend can pause/resume mid-utterance (browser). */
   canPauseResume(): boolean { return this.engine.supportsPauseResume; }

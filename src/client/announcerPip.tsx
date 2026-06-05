@@ -18,10 +18,12 @@
  * second click on the button restores the panel.
  */
 import type { Announcement, AnnouncerProjectInfo } from '../api/announcer.js';
-import { dismissAnnouncement } from '../api/index.js';
+import { advanceAnnouncerCursor, dismissAnnouncement, getAnnouncerEntries, setAnnouncerLive } from '../api/index.js';
+import { LiveSession } from './announcerLive.js';
 import { anchoredPosition, clampPosition, type Point } from './announcerPipPosition.js';
 import { AnnouncerPlayer, type PlayerState } from './announcerPlayer.js';
 import { getAnnouncerSpeechRate, RATE_STEPS, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
+import { getProjectBusySecrets } from './channelUI.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { createSpeechEngine } from './tts.js';
 
@@ -44,6 +46,10 @@ const PAUSE_ICON = <svg {...LUCIDE}><rect x="14" y="4" width="4" height="16" rx=
 const SKIP_ICON = <svg {...LUCIDE}><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>;
 const MINIMIZE_ICON = <svg {...LUCIDE}><path d="M5 12h14"/></svg>;
 const CLOSE_ICON = <svg {...LUCIDE}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+// lucide "radio" — the Live (tail work as it happens) toggle.
+const LIVE_ICON = <svg {...LUCIDE}><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>;
+// lucide "fast-forward" — skip-catch-up (jump to the newest entry).
+const SKIP_LIVE_ICON = <svg {...LUCIDE}><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>;
 
 /** Remembered dragged position (HS-8756). localStorage so it survives reloads
  *  without a server round-trip — it's a pure UI preference. */
@@ -143,6 +149,9 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
           <option value={ALL_PROJECTS}>All Projects</option>
           {opts.projects.map(p => <option value={p.secret}>{p.name}</option>)}
         </select>
+        {/* HS-8767 — Live toggle: tail work as it happens. */}
+        <button className="announcer-pip-live" type="button" title="Live — narrate work as it happens" aria-pressed="false">{LIVE_ICON}<span>Live</span></button>
+        <span className="announcer-pip-presence" hidden aria-live="polite"></span>
       </div>
       <div className="announcer-pip-body">
         <span className="announcer-pip-project-chip" hidden></span>
@@ -154,6 +163,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
           <button className="announcer-pip-btn announcer-pip-playpause" type="button" title="Play" aria-label="Play">{PLAY_ICON}</button>
           <button className="announcer-pip-btn announcer-pip-next" type="button" title="Next entry" aria-label="Next entry">{NEXT_ICON}</button>
           <button className="announcer-pip-btn announcer-pip-skip" type="button" title="Not interested — skip and dismiss" aria-label="Skip and dismiss entry">{SKIP_ICON}</button>
+          <button className="announcer-pip-btn announcer-pip-skip-live" type="button" hidden title="Skip to live — jump to the newest entry" aria-label="Skip to live">{SKIP_LIVE_ICON}</button>
         </div>
         <div className="announcer-pip-meta">
           <span className="announcer-pip-position" aria-live="polite"></span>
@@ -176,10 +186,16 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const rateSelect = requireChild<HTMLSelectElement>(panel, '.announcer-pip-rate');
   const contextSelect = requireChild<HTMLSelectElement>(panel, '.announcer-pip-context-select');
   const chipEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-project-chip');
+  const liveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-live');
+  const presenceEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-presence');
+  const skipLiveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-skip-live');
   const header = requireChild<HTMLDivElement>(panel, '.announcer-pip-header');
 
   let closed = false;
   let minimized = false;
+  // The reel currently in the player — kept in sync so the live session can seed
+  // its dedup set + the consumer knows what's already shown (HS-8767).
+  let currentEntries: ReelEntry[] = [...entries];
 
   const player = new AnnouncerPlayer<ReelEntry>(entries, engine, {
     onEntryChange(index, entry, total) {
@@ -219,11 +235,66 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     void (opts.onContextChange?.(next) ?? Promise.resolve<ReelEntry[]>([]))
       .then((reel) => {
         currentContext = next;
+        currentEntries = reel;
         player.setEntries(reel);
       })
       .catch(() => { contextSelect.value = currentContext; })
       .finally(() => { contextSelect.disabled = false; });
   });
+
+  // --- Live mode (HS-8767): tail work as it happens, with a "still working"
+  //     presence line + a skip-to-live control. ---
+  let liveSession: LiveSession | null = null;
+  const liveSecrets = (): string[] => currentContext === ALL_PROJECTS
+    ? opts.projects.filter(p => p.hasKey).map(p => p.secret)
+    : [currentContext];
+  const projectNameOf = (secret: string): string => opts.projects.find(p => p.secret === secret)?.name ?? '';
+  const fetchReel = async (secret: string): Promise<ReelEntry[]> =>
+    (await getAnnouncerEntries(secret)).map(e => ({ ...e, projectSecret: secret, projectName: projectNameOf(secret) }));
+  const setPresence = (busy: boolean): void => {
+    presenceEl.hidden = false;
+    presenceEl.textContent = busy ? '● working…' : '✓ idle';
+    presenceEl.classList.toggle('is-working', busy);
+  };
+  const startLive = async (): Promise<void> => {
+    liveSession = new LiveSession({
+      projectSecrets: liveSecrets(),
+      fetchEntries: fetchReel,
+      setLive: (enabled, secret) => setAnnouncerLive(enabled, secret),
+      isBusy: (ss) => { const busy = getProjectBusySecrets(); return ss.some(s => busy.has(s)); },
+      onNewEntries: (es) => { currentEntries.push(...es); player.appendEntries(es); },
+      onPresence: setPresence,
+    });
+    liveSession.seed(currentEntries);
+    panel.classList.add('is-live');
+    liveBtn.setAttribute('aria-pressed', 'true');
+    skipLiveBtn.hidden = false;
+    contextSelect.disabled = true; // live tails the current context
+    await liveSession.start();
+  };
+  const stopLive = async (): Promise<void> => {
+    const session = liveSession;
+    liveSession = null;
+    panel.classList.remove('is-live');
+    liveBtn.setAttribute('aria-pressed', 'false');
+    skipLiveBtn.hidden = true;
+    presenceEl.hidden = true;
+    contextSelect.disabled = false;
+    await session?.stop();
+  };
+  liveBtn.addEventListener('click', () => {
+    if (liveSession === null) void startLive();
+    else void stopLive();
+  });
+  skipLiveBtn.addEventListener('click', () => {
+    player.jumpToLast();
+    for (const secret of liveSecrets()) advanceAnnouncerCursor(undefined, secret).catch(() => { /* best-effort */ });
+  });
+  // Catch up immediately when the window returns to the foreground.
+  const onVisibilityChange = (): void => {
+    if (liveSession !== null && document.visibilityState === 'visible') void liveSession.poll();
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   // --- Speed control (HS-8754): seed from the global rate, write back on change,
   //     and stay in sync if it's changed from the settings panel meanwhile. ---
@@ -291,9 +362,11 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const close = (): void => {
     if (closed) return;
     closed = true;
+    if (liveSession !== null) void stopLive();
     player.dispose();
     document.removeEventListener('keydown', onKeydown, true);
     document.removeEventListener('hotsheet:announcer-rate-changed', onRateChanged);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     panel.remove();
     if (openHandle === handle) openHandle = null;
     opts.onClose?.(currentContext);

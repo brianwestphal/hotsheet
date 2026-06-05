@@ -105,6 +105,41 @@ describe('AnnouncerPlayer', () => {
     expect(player.getCount()).toBe(1);
   });
 
+  // HS-8767 — live tailing: append + skip-to-live.
+  it('appendEntries resumes a finished reel into the new entry', async () => {
+    const engine = new FakeEngine();
+    const player = new AnnouncerPlayer([entry(1, 'A', 'a')], engine);
+    player.play();
+    engine.finishCurrent();
+    await flush();
+    expect(player.getState()).toBe('done');
+
+    player.appendEntries([entry(2, 'B', 'b')]);
+    expect(engine.spoken).toEqual(['a', 'b']);
+    expect(player.getState()).toBe('playing');
+    expect(player.getCount()).toBe(2);
+    expect(player.getIndex()).toBe(1);
+  });
+
+  it('appendEntries while playing just extends the queue (no restart)', () => {
+    const engine = new FakeEngine();
+    const player = new AnnouncerPlayer([entry(1, 'A', 'a')], engine);
+    player.play();
+    player.appendEntries([entry(2, 'B', 'b')]);
+    expect(player.getCount()).toBe(2);
+    expect(engine.spoken).toEqual(['a']); // current utterance untouched
+    expect(player.getIndex()).toBe(0);
+  });
+
+  it('jumpToLast skips the backlog to the newest entry', () => {
+    const engine = new FakeEngine();
+    const player = new AnnouncerPlayer(ENTRIES, engine); // 3 entries
+    player.play();
+    player.jumpToLast();
+    expect(player.getIndex()).toBe(2);
+    expect(engine.spoken).toEqual(['one', 'three']); // jumped past 'two'
+  });
+
   it('plays entries sequentially and completes at the end', async () => {
     const engine = new FakeEngine();
     const states: PlayerState[] = [];

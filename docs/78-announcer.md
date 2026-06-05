@@ -121,12 +121,13 @@ visual references) is where the user's **AI API key** is used (§78.6).
   omit similar material. Keep it simple (a dismissed-category/keyword list) to
   avoid overfitting; surface it as an editable list in settings.
 
-> **Phase 2a SHIPPED (HS-8750, 2026-06-05) — the server-side generator.** The
-> producer loop, coalescing, the off-unless-listening lease, and the
-> command-log-on-the-fast-signal wiring (caveat b) are implemented; see
-> **[80-announcer-live-mode.md](80-announcer-live-mode.md)**. The consumer (PIP
-> drain + catch-up + presence) and the richer policies (adaptive compression,
-> learn-from-skips, cost budget, hybrid MCP tool) are tracked as follow-ups.
+> **Phase 2a + 2b SHIPPED (HS-8750 + HS-8767, 2026-06-05) — live mode is
+> working end-to-end.** Server generator (producer loop, coalescing,
+> off-unless-listening lease, command-log-on-the-fast-signal) + client consumer
+> (PIP Live toggle, lease renewal, entry tailing, skip-catch-up, "still working"
+> presence); see **[80-announcer-live-mode.md](80-announcer-live-mode.md)**. The
+> richer policies (adaptive compression, learn-from-skips, cost budget, hybrid
+> MCP tool) are tracked as follow-ups (HS-8768–8771).
 
 ### 78.4.1 Live mode — detailed design
 

@@ -12113,17 +12113,56 @@ label.detail-details-label {
 }
 
 // HS-8762 — context dropdown ("All Projects" / a specific project).
+// HS-8767 — + the Live toggle and the "still working" presence line.
 .announcer-pip-context {
   display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 
   .announcer-pip-context-select {
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 12px;
     padding: 3px 6px;
   }
+}
+
+.announcer-pip-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  svg { width: 13px; height: 13px; }
+
+  &:hover { color: var(--text); }
+
+  &[aria-pressed="true"] {
+    color: #fff;
+    background: var(--danger, #d33);
+    border-color: var(--danger, #d33);
+    animation: announcer-btn-glow 1.8s ease-in-out infinite;
+  }
+}
+
+.announcer-pip-presence {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+
+  &.is-working { color: var(--accent, #3b82f6); }
+
+  &[hidden] { display: none; }
 }
 
 .announcer-pip-body {

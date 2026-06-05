@@ -206,3 +206,59 @@ test('announcer "All Projects" interleaves entries with project chips (HS-8762)'
   await expect(pip.locator('.announcer-pip-title')).toHaveText('Alpha work');
   await expect(pip.locator('.announcer-pip-project-chip')).toHaveText('Alpha');
 });
+
+// HS-8767 — live mode: the Live toggle registers a lease, shows the presence
+// line, and tails newly-generated entries into the player.
+test('announcer live mode tails new entries (HS-8767)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+  });
+
+  const liveCalls: boolean[] = [];
+  // The generator's output grows over time; the live poll picks up the new one.
+  let liveEntries = [
+    { id: 1, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'First thing', script: 'a', position: 0, dismissed: false },
+  ];
+
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'proj-a', projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: 1 }] }),
+  }));
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: liveEntries }) }));
+  await page.route('**/api/announcer/live**', (route) => {
+    liveCalls.push((route.request().postDataJSON() as { enabled: boolean }).enabled);
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  await page.locator('#announcer-listen-btn').click();
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
+
+  // Go live → registers a lease, presence line appears, skip-to-live shows.
+  await pip.locator('.announcer-pip-live').click();
+  await expect(pip.locator('.announcer-pip-live')).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => liveCalls).toContain(true);
+  await expect(pip.locator('.announcer-pip-presence')).toBeVisible();
+  await expect(pip.locator('.announcer-pip-skip-live')).toBeVisible();
+
+  // The generator produces a second entry → the live poll appends it.
+  liveEntries = [
+    ...liveEntries,
+    { id: 2, created_at: '2026-06-05T00:01:00.000Z', covers_from: null, covers_to: null, title: 'Second thing', script: 'b', position: 1, dismissed: false },
+  ];
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 2', { timeout: 8000 });
+
+  // Stop live → drops the lease.
+  await pip.locator('.announcer-pip-live').click();
+  await expect(pip.locator('.announcer-pip-live')).toHaveAttribute('aria-pressed', 'false');
+  await expect.poll(() => liveCalls).toContain(false);
+});

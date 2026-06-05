@@ -1,11 +1,10 @@
 # 80. Announcer Live Mode
 
-**Status: Phase 2a (server generator) SHIPPED (HS-8750, 2026-06-05).** The
-producer half of the §78.4.1 live-mode design — near-live narration of work *as
-it happens*. The consumer (the PIP draining new entries, catch-up, the "still
-working" presence line) is **HS-8767 (2b)**; the richer policies are deferred
-follow-ups (see §80.6). This doc captures the shipped server architecture; the
-full design rationale lives in [78-announcer.md](78-announcer.md) §78.4.1.
+**Status: Phase 2a (server generator) + 2b (client consumer) SHIPPED (HS-8750 +
+HS-8767, 2026-06-05).** The producer + consumer of the §78.4.1 live-mode design
+— near-live narration of work *as it happens*. The richer policies are deferred
+follow-ups (see §80.6). This doc captures the shipped architecture; the full
+design rationale lives in [78-announcer.md](78-announcer.md) §78.4.1.
 
 ## 80.1 Premise
 
@@ -80,11 +79,43 @@ command-log UI) on the same fast path as ticket mutations.
   + register/unregister). The change-version → ping → pass wiring is integration
   glue verified by the 2b e2e.
 
+## 80.5.1 Client consumer (2b — HS-8767)
+
+`src/client/announcerLive.ts` (`LiveSession`) is the consumer, wired into the PIP
+(`announcerPip.tsx`):
+
+- **Live toggle** in the PIP context bar. On → create a `LiveSession` for the
+  current context's enabled projects, seed its dedup set with the entries already
+  on screen (the catch-up reel from "Listen"), and start. Off → stop.
+- **Lease renewal.** The session renews the lease (`setAnnouncerLive(true,
+  secret)`) every 30 s (under the 90 s TTL). It **pauses renew + poll while the
+  window is hidden** (`document.visibilityState`), so a backgrounded window lets
+  its lease lapse → server generation stops → and resumes (with an immediate
+  catch-up poll on `visibilitychange`) when refocused.
+- **Tailing.** Every 3 s it fetches the queue (`getAnnouncerEntries(secret)` per
+  live project), dedupes by `projectSecret:id` against what's already shown, and
+  appends genuinely-new entries oldest-first via the new
+  `AnnouncerPlayer.appendEntries` (resumes a finished reel into the new entry, or
+  just extends the queue while playing).
+- **Skip-catch-up.** A fast-forward control jumps the player to the newest entry
+  (`AnnouncerPlayer.jumpToLast`) and advances the listened cursor for the live
+  projects (drops the backlog).
+- **"Still working" presence.** A presence line ("● working…" / "✓ idle") driven
+  by the §12 channel busy state (`getProjectBusySecrets`), distinct from the
+  entry being narrated.
+- The context dropdown is disabled while live (live tails the current context).
+  Closing/minimizing the PIP stops the session (drops the leases).
+
+Tests: `client/announcerPlayer.test.ts` (`appendEntries` resume/extend +
+`jumpToLast`), `client/announcerLive.test.ts` (lease renew, tail + dedup + sort,
+stop drops lease, hidden-window pause, multi-project), `e2e/announcer.spec.ts`
+(Live toggle → lease + presence + skip-to-live shown → a new generated entry is
+tailed into the player → toggle off drops the lease).
+
 ## 80.6 Deferred follow-ups
 
-Tracked as sibling tickets, all building on this 2a generator:
+Tracked as sibling tickets, all building on the 2a generator + 2b consumer:
 
-- **2b — client consumer + catch-up + "still working" presence** (HS-8767).
 - **Adaptive backlog compression** — raise summarization altitude when the
   unplayed backlog grows (HS-8768).
 - **"Mark uninteresting" → learn-from-skips** — per-project dismissed-topics list
