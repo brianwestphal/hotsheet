@@ -6,7 +6,10 @@
 import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { summarizeWork } from '../announcer/summarize.js';
 import { getDb, runWithDataDir } from '../db/connection.js';
+import type { ProjectContext } from '../projects.js';
+import { getAllProjects } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { announcerRoutes } from './announcer.js';
@@ -28,6 +31,11 @@ vi.mock('../announcer/key.js', () => ({
   getAnnouncerKeyId: vi.fn(() => Promise.resolve(null)),
   setAnnouncerKeyId: vi.fn(() => Promise.resolve()),
 }));
+// HS-8762 — the overview endpoint enumerates registered projects; mock the
+// registry so a single fake project points at this test's temp DB.
+vi.mock('../projects.js', () => ({ getAllProjects: vi.fn(() => []) }));
+// HS-8764 — generate reads the global summarization model from the global config.
+vi.mock('../global-config.js', () => ({ readGlobalConfig: vi.fn(() => ({ announcerModel: 'claude-sonnet-4-6' })) }));
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -65,6 +73,12 @@ describe('announcer routes (HS-8745)', () => {
     expect(genRes.status).toBe(200);
     expect((await genRes.json() as { generated: number }).generated).toBe(2);
 
+    // HS-8764 — the global summarization model is forwarded to the summarizer.
+    expect(vi.mocked(summarizeWork)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ apiKey: 'sk-test', model: 'claude-sonnet-4-6' }),
+    );
+
     const entriesRes = await app.request('/api/announcer/entries');
     expect((await entriesRes.json() as { entries: unknown[] }).entries).toHaveLength(2);
 
@@ -84,5 +98,26 @@ describe('announcer routes (HS-8745)', () => {
     await post('/api/announcer/cursor', { at: '2026-06-05T09:00:00.000Z' });
     const status = await (await app.request('/api/announcer/status')).json() as { lastListenedAt: string | null };
     expect(status.lastListenedAt).toBe('2026-06-05T09:00:00.000Z');
+  });
+
+  // HS-8762 — cross-project overview: only enabled projects, with their key +
+  // entry-count read in each project's own DB context.
+  it('overview lists only enabled projects with key + entry-count', async () => {
+    const fakeProject = { secret: 'sec1', name: 'Proj One', dataDir: tempDir } as unknown as ProjectContext;
+    vi.mocked(getAllProjects).mockReturnValue([fakeProject]);
+
+    // Enable + seed two entries → overview includes the project.
+    await post('/api/announcer/enabled', { enabled: true });
+    await (await getDb()).query(`INSERT INTO announcements (title, script, position) VALUES ('A','a',1), ('B','b',2)`);
+
+    let overview = await (await app.request('/api/announcer/overview')).json() as { activeSecret: string; projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] };
+    expect(overview.projects).toEqual([
+      { secret: 'sec1', name: 'Proj One', enabled: true, hasKey: true, entryCount: 2 },
+    ]);
+
+    // Disabled → excluded from the overview.
+    await post('/api/announcer/enabled', { enabled: false });
+    overview = await (await app.request('/api/announcer/overview')).json() as { activeSecret: string; projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] };
+    expect(overview.projects).toHaveLength(0);
   });
 });

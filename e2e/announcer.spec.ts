@@ -37,7 +37,12 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
     }
   });
 
-  // Opted-in + key configured so the Listen button shows.
+  // Opted-in + key configured so the Listen button shows. HS-8762 — the button
+  // gate + default context come from the cross-project overview.
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'proj-a', projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: ENTRIES.length }] }),
+  }));
   await page.route('**/api/announcer/status**', (route) => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ enabled: true, hasKey: true, selectedKeyId: null, entryCount: ENTRIES.length, lastListenedAt: null }),
@@ -65,6 +70,10 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await expect(listen).toBeVisible({ timeout: 8000 });
   await listen.click();
 
+  // HS-8753 — clicking gives immediate feedback (a toast) that the click
+  // registered, even before generation resolves.
+  await expect(page.locator('.hs-toast')).toContainText('Preparing your narration');
+
   // PIP mounts and plays the first entry.
   const pip = page.locator('.announcer-pip');
   await expect(pip).toBeVisible({ timeout: 8000 });
@@ -87,8 +96,113 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
   await expect.poll(() => dismissed).toContain(101);
 
+  // HS-8757 — minimize hides the panel back into the button (which glows) while
+  // playback continues; the PIP element stays mounted (just display:none), and
+  // clicking the button again restores it (no regeneration).
+  await pip.locator('.announcer-pip-min').click();
+  await expect(pip).toBeHidden();
+  await expect(listen).toHaveClass(/is-active/);
+  await listen.click();
+  await expect(pip).toBeVisible();
+  await expect(listen).not.toHaveClass(/is-active/);
+
   // Close → PIP tears down and the listened cursor advances.
   await pip.locator('.announcer-pip-close').click();
   await expect(pip).toHaveCount(0);
   await expect.poll(() => cursorAdvanced).toBe(true);
+});
+
+// HS-8756 — the PIP anchors near the Listen button on open and is draggable by
+// its header, with the dragged position remembered across sessions.
+test('announcer PIP is draggable and remembers its position (HS-8756)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+  });
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'proj-a', projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: ENTRIES.length }] }),
+  }));
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: ENTRIES }) }));
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  await page.locator('#announcer-listen-btn').click();
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+
+  // Drag the header to a known spot.
+  const header = pip.locator('.announcer-pip-header');
+  const box = await header.boundingBox();
+  if (box === null) throw new Error('no header box');
+  await page.mouse.move(box.x + 30, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 30 + 120, box.y + 10 + 90, { steps: 6 });
+  await page.mouse.up();
+
+  // Position is now driven by left/top (not the bottom-right default) and is
+  // persisted to localStorage.
+  const movedLeft = await pip.evaluate((el) => el.style.left);
+  expect(movedLeft).not.toBe('');
+  const stored = await page.evaluate(() => window.localStorage.getItem('hotsheet:announcer-pip-pos'));
+  expect(stored).not.toBeNull();
+});
+
+// HS-8762 — the context dropdown: switching to "All Projects" aggregates every
+// enabled project's entries, interleaved chronologically, each tagged with a
+// project chip; dismiss targets the entry's own project.
+test('announcer "All Projects" interleaves entries with project chips (HS-8762)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+  });
+
+  // Two enabled projects; Alpha is active.
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'sec-a', projects: [
+      { secret: 'sec-a', name: 'Alpha', enabled: true, hasKey: true, entryCount: 1 },
+      { secret: 'sec-b', name: 'Beta', enabled: true, hasKey: true, entryCount: 1 },
+    ] }),
+  }));
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }));
+  // Entries differ per project — keyed off the X-Hotsheet-Secret header the
+  // per-project caller sets. Beta's entry is older so it sorts first in "All".
+  await page.route('**/api/announcer/entries**', (route) => {
+    const secret = route.request().headers()['x-hotsheet-secret'];
+    const entries = secret === 'sec-b'
+      ? [{ id: 1, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'Beta work', script: 'Beta did things.', position: 0, dismissed: false }]
+      : [{ id: 1, created_at: '2026-06-05T01:00:00.000Z', covers_from: null, covers_to: null, title: 'Alpha work', script: 'Alpha did things.', position: 0, dismissed: false }];
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries }) });
+  });
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  await page.locator('#announcer-listen-btn').click();
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+
+  // Default context = the active project (Alpha): single entry, no chip.
+  await expect(pip.locator('.announcer-pip-title')).toHaveText('Alpha work');
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
+  await expect(pip.locator('.announcer-pip-project-chip')).toBeHidden();
+
+  // Switch to "All Projects": both entries, interleaved by time (Beta first),
+  // each with its project chip.
+  await pip.locator('.announcer-pip-context-select').selectOption('all');
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 2');
+  await expect(pip.locator('.announcer-pip-title')).toHaveText('Beta work');
+  await expect(pip.locator('.announcer-pip-project-chip')).toHaveText('Beta');
+  await pip.locator('.announcer-pip-next').click();
+  await expect(pip.locator('.announcer-pip-title')).toHaveText('Alpha work');
+  await expect(pip.locator('.announcer-pip-project-chip')).toHaveText('Alpha');
 });

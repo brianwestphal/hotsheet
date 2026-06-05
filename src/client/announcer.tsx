@@ -1,16 +1,23 @@
 /**
- * §78 Announcer (HS-8747) — the header "Listen" affordance and the
- * generate→play flow that ties the typed API callers (`src/api/announcer.ts`)
- * to the transcript PIP (`announcerPip.tsx`).
+ * §78 Announcer — the header "Listen" affordance and the generate→play flow
+ * that ties the typed API callers (`src/api/announcer.ts`) to the transcript
+ * PIP (`announcerPip.tsx`).
  *
- * The button is hidden unless the project has opted in AND has an API key
- * configured (`getAnnouncerStatus`). Clicking it generates a fresh batch of
- * announcements since the listened cursor, then plays the full active reel;
- * the listened cursor advances when the PIP closes so the next session only
- * narrates new work.
+ * HS-8762/8758 — the announcer is now **cross-project**:
+ *  - The Listen button is shown whenever *any* project has the announcer
+ *    enabled + keyed (`getAnnouncerOverview`), on every tab — not just when the
+ *    active project is configured.
+ *  - The PIP has a **context dropdown** ("All Projects" + each enabled project).
+ *    Default context = the active project when launched from a project tab, or
+ *    "All Projects" from a global surface (terminal dashboard / cross-project
+ *    stats). "All Projects" aggregates each enabled project's already-generated
+ *    entries, interleaved chronologically, with a per-entry project chip.
+ *  - Only a *specific-project* launch generates a fresh batch (one Anthropic
+ *    round-trip for that project); "All Projects" aggregates existing entries
+ *    only. The listened cursor advances per relevant project when the PIP closes.
  */
-import { advanceAnnouncerCursor, generateAnnouncements, getAnnouncerEntries, getAnnouncerStatus } from '../api/index.js';
-import { closeAnnouncerPip, openAnnouncerPip } from './announcerPip.js';
+import { advanceAnnouncerCursor, type AnnouncerProjectInfo, generateAnnouncements, getAnnouncerEntries, getAnnouncerOverview } from '../api/index.js';
+import { ALL_PROJECTS, getAnnouncerPipHandle, openAnnouncerPip, type ReelEntry } from './announcerPip.js';
 import { byIdOrNull } from './dom.js';
 import { showToast } from './toast.js';
 
@@ -18,47 +25,122 @@ function listenButton(): HTMLButtonElement | null {
   return byIdOrNull<HTMLButtonElement>('announcer-listen-btn');
 }
 
-/** Show/hide the Listen button based on the per-project opt-in + key state.
- *  Called at init, after settings changes, and on project switch. */
+/** Are we on a global surface (no single active project in focus)? Then the
+ *  announcer defaults to "All Projects" rather than a specific project. */
+function isGlobalContext(): boolean {
+  return document.body.classList.contains('terminal-dashboard-active')
+    || document.body.classList.contains('cross-project-stats-active');
+}
+
+/** Show/hide the Listen button. Visible whenever ANY project has the announcer
+ *  enabled + configured (HS-8758). Called at init, after settings changes, and
+ *  on project switch. */
 export async function refreshAnnouncerVisibility(): Promise<void> {
   const btn = listenButton();
   if (btn === null) return;
   try {
-    const status = await getAnnouncerStatus();
-    btn.style.display = status.enabled && status.hasKey ? '' : 'none';
+    const overview = await getAnnouncerOverview();
+    btn.style.display = overview.projects.some(p => p.hasKey) ? '' : 'none';
   } catch {
     btn.style.display = 'none';
   }
 }
 
+/** Glow + relabel the Listen button while a session is minimized (HS-8757). */
+function setMinimizedState(btn: HTMLButtonElement, minimized: boolean): void {
+  btn.classList.toggle('is-active', minimized);
+  btn.title = minimized ? 'Show announcer (still playing)' : 'Listen to recent work';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+/** Build the reel for a context from already-generated entries (HS-8762).
+ *  "All Projects" unions every enabled project's entries, interleaved by time. */
+async function loadReel(context: string, projects: AnnouncerProjectInfo[]): Promise<ReelEntry[]> {
+  if (context === ALL_PROJECTS) {
+    const perProject = await Promise.all(projects.map(async (p) => {
+      try {
+        return (await getAnnouncerEntries(p.secret)).map(e => ({ ...e, projectSecret: p.secret, projectName: p.name }));
+      } catch { return []; }
+    }));
+    return perProject.flat().sort((a, b) => a.created_at.localeCompare(b.created_at));
+  }
+  const name = projects.find(p => p.secret === context)?.name ?? '';
+  try {
+    return (await getAnnouncerEntries(context)).map(e => ({ ...e, projectSecret: context, projectName: name }));
+  } catch { return []; }
+}
+
+/** Advance the listened cursor for the project(s) the closed reel covered. */
+function advanceCursors(context: string, projects: AnnouncerProjectInfo[]): void {
+  const targets = context === ALL_PROJECTS ? projects.map(p => p.secret) : [context];
+  for (const secret of targets) advanceAnnouncerCursor(undefined, secret).catch(() => { /* best-effort */ });
+}
+
 async function startListening(btn: HTMLButtonElement): Promise<void> {
+  // HS-8757 — if a session is already running (minimized into this button),
+  // clicking the button restores the panel rather than starting a new reel.
+  const existing = getAnnouncerPipHandle();
+  if (existing !== null) {
+    if (existing.isMinimized()) existing.restore();
+    return;
+  }
   if (btn.classList.contains('is-busy')) return;
   btn.classList.add('is-busy');
   btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  // HS-8753 — generation can take several seconds (an Anthropic round-trip), so
+  // give immediate feedback that the click registered. The button also shows a
+  // spinner via `.is-busy` (styles.scss) for the whole wait.
+  showToast('Preparing your narration…', { variant: 'info', durationMs: 2500 });
   try {
-    // Generate the latest batch (may produce 0 if nothing new — that's fine,
-    // the existing reel still plays). Surface a hard failure but keep going to
-    // play whatever is already persisted.
-    try {
-      await generateAnnouncements();
-    } catch {
-      showToast('Announcer: could not generate new entries (check your API key).', { variant: 'warning', durationMs: 5000 });
+    const overview = await getAnnouncerOverview();
+    const projects = overview.projects;
+    if (projects.length === 0) {
+      showToast('No projects have the Announcer enabled.', { durationMs: 4000 });
+      return;
     }
-    const entries = await getAnnouncerEntries();
-    if (entries.length === 0) {
+
+    // Default context: the active project from a project tab; "All Projects"
+    // from a global surface (dashboard / stats).
+    let context = ALL_PROJECTS;
+    if (!isGlobalContext() && overview.activeSecret !== null
+      && projects.some(p => p.secret === overview.activeSecret)) {
+      context = overview.activeSecret;
+    }
+
+    // Generate fresh work ONLY for a specific-project launch (per the design,
+    // "All Projects" aggregates existing entries without new generation).
+    if (context !== ALL_PROJECTS && (projects.find(p => p.secret === context)?.hasKey ?? false)) {
+      try {
+        await generateAnnouncements({}, context);
+      } catch {
+        showToast('Announcer: could not generate new entries (check your API key).', { variant: 'warning', durationMs: 5000 });
+      }
+    }
+
+    const reel = await loadReel(context, projects);
+    if (reel.length === 0) {
       showToast('Nothing new to announce yet — do some work and try again.', { durationMs: 4000 });
       return;
     }
-    openAnnouncerPip(entries, {
-      onClose: () => {
-        // Mark "listened up to now" so the next generate doesn't re-cover this.
-        advanceAnnouncerCursor().catch(() => { /* best-effort */ });
+
+    openAnnouncerPip(reel, {
+      context,
+      projects,
+      anchorEl: btn,
+      onContextChange: (ctx) => loadReel(ctx, projects),
+      onMinimize: () => { setMinimizedState(btn, true); },
+      onRestore: () => { setMinimizedState(btn, false); },
+      onClose: (finalContext) => {
+        setMinimizedState(btn, false);
+        advanceCursors(finalContext, projects);
         void refreshAnnouncerVisibility();
       },
     });
   } finally {
     btn.classList.remove('is-busy');
     btn.disabled = false;
+    btn.removeAttribute('aria-busy');
   }
 }
 
@@ -68,9 +150,4 @@ export function initAnnouncer(): void {
   if (btn === null) return;
   btn.addEventListener('click', () => { void startListening(btn); });
   void refreshAnnouncerVisibility();
-}
-
-/** Tear down any open PIP — call on project switch before reloading state. */
-export function teardownAnnouncer(): void {
-  closeAnnouncerPip();
 }

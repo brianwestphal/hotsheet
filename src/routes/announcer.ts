@@ -21,7 +21,10 @@ import {
   clearAnnouncements, dismissAnnouncement, getActiveAnnouncements,
   getLatestCoversTo, insertAnnouncements,
 } from '../db/announcer.js';
+import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
+import { readGlobalConfig } from '../global-config.js';
+import { getAllProjects } from '../projects.js';
 import type { AppEnv } from '../types.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
@@ -45,6 +48,26 @@ async function effectiveSince(override?: string): Promise<string | null> {
   if (candidates.length === 0) return null;
   return candidates.reduce((a, b) => (a > b ? a : b));
 }
+
+// GET /api/announcer/overview — HS-8762/8758. Cross-project: every project with
+// the announcer enabled, plus the active project's secret so the client can
+// default the context dropdown ("All Projects" vs a specific project). Each
+// project's enabled/key/entry-count is read in that project's own DB context
+// via `runWithDataDir` (mirrors the §70 cross-project stats enumeration).
+announcerRoutes.get('/announcer/overview', async (c) => {
+  const activeSecret = c.get('projectSecret');
+  const projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] = [];
+  for (const p of getAllProjects()) {
+    const info = await runWithDataDir(p.dataDir, async () => {
+      if ((await getSettings())[ENABLED_KEY] !== 'true') return null;
+      return { hasKey: await hasAnnouncerKey(), entryCount: (await getActiveAnnouncements()).length };
+    });
+    if (info !== null) {
+      projects.push({ secret: p.secret, name: p.name, enabled: true, hasKey: info.hasKey, entryCount: info.entryCount });
+    }
+  }
+  return c.json({ activeSecret, projects });
+});
 
 // GET /api/announcer/status — opt-in + key + entry-count + cursor.
 announcerRoutes.get('/announcer/status', async (c) => {
@@ -74,7 +97,9 @@ announcerRoutes.post('/announcer/generate', async (c) => {
 
   let generated;
   try {
-    generated = await summarizeWork(signals.material, { apiKey });
+    // HS-8764 — model comes from the global setting (defaults to the cheapest
+    // model inside `summarizeWork` when unset).
+    generated = await summarizeWork(signals.material, { apiKey, model: readGlobalConfig().announcerModel });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'summarization failed';
     return c.json({ error: `Summarization failed: ${message}` }, 502);

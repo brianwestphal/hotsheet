@@ -31,7 +31,8 @@ export function listKeyMetas(): SecretKeyMeta[] {
 /** Create a key: generate an id, persist metadata + store the value in the
  *  keychain. Returns the new metadata (never the value). */
 export async function createKey(type: KeyType, name: string, value: string): Promise<SecretKeyMeta> {
-  const meta: SecretKeyMeta = { id: randomUUID(), type, name };
+  const now = new Date().toISOString();
+  const meta: SecretKeyMeta = { id: randomUUID(), type, name, created_at: now, updated_at: now };
   writeGlobalConfig({ keys: [...listKeyMetas(), meta] });
   await keychainSet(KEYS_PLUGIN_ID, meta.id, value);
   return meta;
@@ -53,6 +54,8 @@ export async function updateKey(
     ...keys[idx],
     ...(updates.type !== undefined ? { type: updates.type } : {}),
     ...(updates.name !== undefined ? { name: updates.name } : {}),
+    // HS-8760 — any edit (rename or value replacement) bumps the "Updated …" stamp.
+    updated_at: new Date().toISOString(),
   };
   const next = [...keys];
   next[idx] = updated;
@@ -89,6 +92,10 @@ export async function resolveKeyValueByType(
   type: KeyType,
   selectedId?: string,
 ): Promise<{ value: string; meta: SecretKeyMeta } | null> {
+  // The filter stays type-general even though `KeyType` is a single value today
+  // (HS-8763 dropped Google TTS); re-adding a type is a one-line enum change and
+  // this resolver should keep working unchanged.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   const ofType = listKeyMetas().filter(k => k.type === type);
   if (ofType.length === 0) return null;
   const chosen = (selectedId !== undefined && ofType.find(k => k.id === selectedId)) || ofType[0];

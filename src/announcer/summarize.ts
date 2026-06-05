@@ -8,13 +8,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
+import { DEFAULT_ANNOUNCER_MODEL } from './models.js';
+
 /**
- * Default model. Per the Anthropic API skill, the default is `claude-opus-4-8`
- * unless the user names another. Exposed as a constant (and overridable per
- * call) so a cost-conscious user can switch to e.g. `claude-haiku-4-5` for this
- * high-frequency, lightweight summarization without touching call sites.
+ * Default model when the caller passes none. HS-8764 — defaults to the
+ * **cheapest** model (Haiku) rather than Opus, since this is a high-frequency,
+ * lightweight summarization; the user can opt up via the global `announcerModel`
+ * setting (resolved in `src/routes/announcer.ts`). See `models.ts`.
  */
-export const ANNOUNCER_MODEL = 'claude-opus-4-8';
+export const ANNOUNCER_MODEL: string = DEFAULT_ANNOUNCER_MODEL;
 
 const EntrySchema = z.object({ title: z.string(), script: z.string() });
 const EntriesSchema = z.object({ entries: z.array(EntrySchema) });
@@ -48,10 +50,10 @@ const SYSTEM_PROMPT = `You are the "Announcer" for Hot Sheet, a local project-ma
 You are given a chronological list of raw work signals: completion/ticket notes the AI wrote when it finished tickets, status changes, and activity-log events. Turn them into a short sequence of narrated entries to be read aloud by text-to-speech.
 
 Rules:
-- Produce 1 to 5 entries. Group related signals into one coherent entry rather than one entry per signal (e.g. "fixed the export bug and added tests" is one entry, not three).
-- Each entry has a short "title" (a few words, what it's about) and a "script" (1-3 sentences of natural spoken English to be read aloud — no markdown, no code blocks, no bullet symbols, no ticket-number jargon unless it aids clarity; spell out what changed and why it matters).
+- Produce 1 to 4 entries. Strongly prefer FEWER, broader entries: group related signals into one (e.g. "fixed the export bug and added tests" is one entry, not three). Two or three tight entries usually beats five.
+- Each entry has a short "title" (a few words) and a "script". Keep the script to ONE or at most two short sentences — aim for under 30 words. It's spoken aloud, so be terse: lead with what changed, drop preamble ("I went ahead and…", "It looks like…"), filler, and hedging. No markdown, no code blocks, no bullet symbols, no ticket-number jargon unless it genuinely aids clarity.
 - Lead with the most significant work. Skip noise (routine status pings, trivial log lines) — if nothing meaningful happened, return an empty entries array.
-- Be accurate to the signals; do not invent work that isn't described. Be concise and engaging, not breathless.`;
+- Be accurate to the signals; do not invent work that isn't described. Concise and plain over engaging and breathless — the listener wants the gist fast, not a recap.`;
 
 /**
  * Summarize the assembled `material` into narrated entries. Returns an empty

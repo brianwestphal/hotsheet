@@ -1,9 +1,10 @@
 # 79. Global API-Key Registry
 
 **Status: Shipped (HS-8751, 2026-06-05).** A single, machine-global list of
-named API keys (Anthropic, Google TTS) that every project selects from, instead
-of re-entering a secret per project. Replaces the announcer's former
-per-project key field (§78.12). From HS-8751.
+named API keys (Anthropic) that every project selects from, instead of
+re-entering a secret per project. Replaces the announcer's former per-project
+key field (§78.12). From HS-8751. **UI revised by HS-8759/8760/8761/8763
+(2026-06-05)** — see §79.5.
 
 ## 79.1 Motivation
 
@@ -16,14 +17,20 @@ introduces a global registry the projects choose from by name.
 
 ## 79.2 Model
 
-A **key** has three fields:
+A **key** has these fields:
 
-- **type** — a fixed enum (`anthropic_api_key`, `google_tts_key`). Extending the
-  list is a one-line change to `KeyTypeSchema` (`src/routes/validation.ts`) +
-  the client label map (`keysSettings.tsx`).
+- **type** — a fixed enum. **Only `anthropic_api_key` today** — Google Cloud TTS
+  (`google_tts_key`) was registerable but had no consumer, so HS-8763 dropped it
+  "for now". Re-adding a type is a one-line change to `KeyTypeSchema`
+  (`src/routes/validation.ts`) + the client label map (`keysSettings.tsx`). A
+  key's type is **fixed at creation** — the UI never lets you change it after the
+  fact (HS-8759); with a single type it renders as a static label, not a select.
 - **name** — free-text label the user types (e.g. "Personal", "Work").
 - **value** — the secret itself, **write-only**: sent on create/update, never
   returned over the wire or shown in the UI.
+- **created_at / updated_at** — ISO timestamps (HS-8760), stamped on create and
+  bumped on every edit; surfaced as a "Created …/Updated …" label in the row.
+  Optional in the schema for back-compat with keys created before HS-8760.
 
 **Per-project selection.** A project picks a key *by id* (the UI shows it by
 name). With no selection, it **defaults to the first key of the matching type**.
@@ -33,7 +40,7 @@ setting.
 
 ## 79.3 Storage (split, so secrets never hit config/git)
 
-- **Metadata** `{ id, type, name }` → `~/.hotsheet/config.json` under `keys`
+- **Metadata** `{ id, type, name, created_at, updated_at }` → `~/.hotsheet/config.json` under `keys`
   (the global config, `src/global-config.ts`; schema `SecretKeyMetaSchema` in
   `src/routes/validation.ts`). Machine-global, shared across every project.
 - **Value** → the OS keychain (`src/keychain.ts`), plugin id `keys`, account =
@@ -67,18 +74,23 @@ project's choice, and `GET /api/announcer/status` now also returns
 
 A new **Settings → "API Keys"** tab (a global-setting section, `keysSettings.tsx`):
 
-- A list of editable rows — name (debounced rename), type (select), a write-only
-  "Replace value…" field with an explicit "Set value" button, and a delete
-  button (Tauri-safe `confirmDialog`, never `window.confirm`).
-- An "Add a key" form (type / name / value).
+- A list of editable rows — name (debounced rename), a **static type label**
+  (HS-8759; never a select, since type is immutable and single-valued), an
+  **edit** button (pencil icon) that opens a value dialog, and a lucide **trash**
+  delete button (Tauri-safe `confirmDialog`, never `window.confirm`). A
+  "Created …/Updated …" provenance label sits where the old inline "Replace
+  value…" field used to be (HS-8760).
+- An **"Add a key…" button** that opens a dialog with full-width **Name** and
+  **Value** fields (HS-8761). With a single type there's no type picker; new keys
+  are `anthropic_api_key`. Both the add and the edit-value dialogs are in-app
+  overlays built on the `confirm.tsx` shell (`openKeyFormDialog`), never
+  `window.prompt`.
 - Mutations broadcast `hotsheet:keys-changed` so dependent selectors refresh
   live — notably the announcer's selector in the same dialog.
 
 The **announcer settings** (Settings → Experimental, §78.12) replaces its former
 key input with a dropdown of Anthropic keys by name + a "Default — first
-Anthropic key" option, filtered to `anthropic_api_key`. `google_tts_key` is
-registerable now but has no consumer until Google Cloud TTS ships (§78.6
-Phase 3).
+Anthropic key" option.
 
 ## 79.6 Tests
 
@@ -98,7 +110,10 @@ Real-keychain persistence + cross-restart survival of the value is a manual item
 
 ## 79.7 Scope / follow-ups
 
-This round covers **AI + TTS keys only**, by explicit decision (HS-8751). Folding
-existing **plugin secrets** (§20, e.g. the GitHub plugin token) into the same
-registry is deliberately out of scope — they have a different per-plugin shape —
-and is left as a possible later unification.
+This round covers **Anthropic AI keys only**. Google Cloud TTS keys
+(`google_tts_key`) were registerable in the first cut but had no consumer; HS-8763
+dropped the type until Google Cloud TTS actually ships (§78.6 Phase 3), at which
+point re-adding it is a one-line enum + label-map change. Folding existing
+**plugin secrets** (§20, e.g. the GitHub plugin token) into the same registry is
+deliberately out of scope — they have a different per-plugin shape — and is left
+as a possible later unification.

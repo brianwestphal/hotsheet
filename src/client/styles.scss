@@ -4913,17 +4913,72 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     min-width: 120px;
   }
 
-  .settings-key-type {
+  // HS-8759/8763 — type is a static, non-editable label (single type, immutable).
+  .settings-key-type-label {
     flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    padding: 0 4px;
   }
 
-  .settings-key-delete {
+  // HS-8760 — edit (pencil) + lucide trash icon buttons.
+  .icon-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 5px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+
+    &:hover {
+      color: var(--text);
+      background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+    }
+  }
+
+  .settings-key-edit {
     margin-left: auto;
+  }
+
+  .settings-key-delete:hover {
+    color: var(--danger, #d33);
+    border-color: var(--danger, #d33);
   }
 }
 
-.settings-key-value-row .settings-key-value {
-  flex: 1 1 220px;
+// HS-8760 — "Created …/Updated …" provenance, where the value field used to be.
+.settings-key-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+// HS-8760/8761 — the add/edit key form dialog (built on the confirm-dialog shell).
+.settings-key-dialog {
+  .settings-key-dialog-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+
+    & + .settings-key-dialog-field {
+      margin-top: 14px;
+    }
+
+    label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+  }
+
+  .settings-key-dialog-input {
+    width: 100%;
+    box-sizing: border-box;
+  }
 }
 
 .settings-status {
@@ -11884,8 +11939,49 @@ label.detail-details-label {
 // reader overlay). Stacking: z-index 2200 sits above normal chrome but below
 // the reader overlay (2400), the feedback dialog (2500), and the permission
 // popup, so a dialog/permission prompt is never obscured by the PIP (§78.5).
-// Draggable/resizable is a later phase; this is fixed bottom-right.
+// HS-8756 — opens anchored under the Listen button and is draggable (position
+// remembered in localStorage); the right/bottom values below are the fallback
+// when no anchor/stored position applies. Resizable is still a later phase.
 // =============================================================================
+
+// HS-8757 — the Listen button glows while a session is minimized into it
+// (playback continues in the background), mirroring the project-tab
+// pending-permission pulse so it reads as "there's live narration here".
+@keyframes announcer-btn-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6); }
+  50%      { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }
+}
+
+.announcer-listen-btn.is-active {
+  color: #3b82f6;
+  border-radius: var(--radius, 6px);
+  animation: announcer-btn-glow 1.8s ease-in-out infinite;
+}
+
+// HS-8753 — busy spinner while the Listen button generates a batch (an Anthropic
+// round-trip that can take several seconds). The equalizer icon fades out and a
+// spinning ring takes its place so the click visibly "does something".
+.announcer-listen-btn.is-busy {
+  position: relative;
+  cursor: progress;
+
+  svg {
+    opacity: 0;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 15px;
+    height: 15px;
+    margin: auto;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent, var(--text));
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+}
 
 .announcer-pip {
   position: fixed;
@@ -11916,6 +12012,14 @@ label.detail-details-label {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
+  // HS-8756 — the header is the drag handle.
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.announcer-pip.is-dragging .announcer-pip-header {
+  cursor: grabbing;
 }
 
 .announcer-pip-eyebrow {
@@ -11937,7 +12041,8 @@ label.detail-details-label {
   text-overflow: ellipsis;
 }
 
-.announcer-pip-close {
+.announcer-pip-close,
+.announcer-pip-min {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -11959,10 +12064,41 @@ label.detail-details-label {
   }
 }
 
+// HS-8762 — context dropdown ("All Projects" / a specific project).
+.announcer-pip-context {
+  display: flex;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+
+  .announcer-pip-context-select {
+    width: 100%;
+    font-size: 12px;
+    padding: 3px 6px;
+  }
+}
+
 .announcer-pip-body {
   padding: 14px 16px;
   max-height: 220px;
   overflow-y: auto;
+}
+
+// HS-8762 — which project an entry is about (shown only in "All Projects").
+.announcer-pip-project-chip {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+
+  &[hidden] {
+    display: none;
+  }
 }
 
 .announcer-pip-script {
@@ -12033,6 +12169,19 @@ label.detail-details-label {
 .announcer-pip-position {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+// HS-8754 — playback-speed control in the PIP footer.
+.announcer-pip-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+
+  select {
+    font-size: 11px;
+    padding: 1px 4px;
+  }
 }
 
 .announcer-pip-hint {

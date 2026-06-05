@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.js';
 import {
   advanceAnnouncerCursor, AnnouncementSchema, clearAnnouncements, dismissAnnouncement,
-  generateAnnouncements, getAnnouncerEntries, getAnnouncerStatus,
+  generateAnnouncements, getAnnouncerEntries, getAnnouncerOverview, getAnnouncerStatus,
   selectAnnouncerKey, SelectAnnouncerKeyReqSchema,
   setAnnouncerEnabled, SetAnnouncerEnabledReqSchema,
 } from './announcer.js';
@@ -88,6 +88,33 @@ describe('announcer callers (HS-8745)', () => {
     stub({ ok: true });
     await dismissAnnouncement(7);
     expect(lastCall).toEqual({ path: '/announcer/dismiss/7', opts: { method: 'POST' } });
+  });
+
+  // HS-8762 — cross-project overview + per-project targeting via `secret`.
+  it('getAnnouncerOverview → GET /announcer/overview', async () => {
+    stub({ activeSecret: 'sec-active', projects: [{ secret: 'sec1', name: 'P1', enabled: true, hasKey: true, entryCount: 3 }] });
+    const overview = await getAnnouncerOverview();
+    expect(overview.activeSecret).toBe('sec-active');
+    expect(overview.projects[0]).toMatchObject({ secret: 'sec1', entryCount: 3 });
+    expect(lastCall?.path).toBe('/announcer/overview');
+  });
+
+  it('callers forward a project secret so the transport targets that project', async () => {
+    stub({ entries: [sampleEntry] });
+    await getAnnouncerEntries('sec-b');
+    expect(lastCall?.opts.secret).toBe('sec-b');
+
+    stub({ entries: [sampleEntry], generated: 1 });
+    await generateAnnouncements({}, 'sec-c');
+    expect(lastCall?.opts.secret).toBe('sec-c');
+
+    stub({ ok: true });
+    await dismissAnnouncement(9, 'sec-d');
+    expect(lastCall).toEqual({ path: '/announcer/dismiss/9', opts: { method: 'POST', secret: 'sec-d' } });
+
+    stub({ ok: true });
+    await advanceAnnouncerCursor(undefined, 'sec-e');
+    expect(lastCall?.opts.secret).toBe('sec-e');
   });
 
   it('clearAnnouncements → POST /announcer/clear', async () => {

@@ -21,6 +21,23 @@ export const AnnouncementSchema = z.object({
 }).loose();
 export type Announcement = z.infer<typeof AnnouncementSchema>;
 
+// HS-8762/8758 — cross-project overview for the context dropdown + the
+// "any project enabled" button gate.
+export const AnnouncerProjectInfoSchema = z.object({
+  secret: z.string(),
+  name: z.string(),
+  enabled: z.boolean(),
+  hasKey: z.boolean(),
+  entryCount: z.number(),
+});
+export type AnnouncerProjectInfo = z.infer<typeof AnnouncerProjectInfoSchema>;
+
+export const AnnouncerOverviewSchema = z.object({
+  activeSecret: z.string().nullable(),
+  projects: z.array(AnnouncerProjectInfoSchema),
+});
+export type AnnouncerOverview = z.infer<typeof AnnouncerOverviewSchema>;
+
 export const AnnouncerStatusSchema = z.object({
   enabled: z.boolean(),
   hasKey: z.boolean(),
@@ -52,20 +69,27 @@ export const AdvanceCursorReqSchema = z.object({ at: z.string().optional() });
 
 // --- Typed callers (used by the Phase 1b client) ---
 
+export async function getAnnouncerOverview(): Promise<AnnouncerOverview> {
+  return apiCall(AnnouncerOverviewSchema, '/announcer/overview');
+}
+
 export async function getAnnouncerStatus(): Promise<AnnouncerStatus> {
   return apiCall(AnnouncerStatusSchema, '/announcer/status');
 }
 
-export async function generateAnnouncements(req: GenerateAnnouncementsReq = {}): Promise<z.infer<typeof GenerateAnnouncementsResSchema>> {
-  return apiCall(GenerateAnnouncementsResSchema, '/announcer/generate', { method: 'POST', body: req });
+// HS-8762 — `secret` targets a specific project (routes through `apiWithSecret`)
+// so the context dropdown can generate/read/dismiss/advance a project other than
+// the active one. Omitted → the active project (the existing behavior).
+export async function generateAnnouncements(req: GenerateAnnouncementsReq = {}, secret?: string): Promise<z.infer<typeof GenerateAnnouncementsResSchema>> {
+  return apiCall(GenerateAnnouncementsResSchema, '/announcer/generate', { method: 'POST', body: req, secret });
 }
 
-export async function getAnnouncerEntries(): Promise<Announcement[]> {
-  return (await apiCall(EntriesResSchema, '/announcer/entries')).entries;
+export async function getAnnouncerEntries(secret?: string): Promise<Announcement[]> {
+  return (await apiCall(EntriesResSchema, '/announcer/entries', { secret })).entries;
 }
 
-export async function advanceAnnouncerCursor(at?: string): Promise<{ ok: true }> {
-  return apiCall(OkResponseSchema, '/announcer/cursor', { method: 'POST', body: { at } });
+export async function advanceAnnouncerCursor(at?: string, secret?: string): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, '/announcer/cursor', { method: 'POST', body: { at }, secret });
 }
 
 export async function selectAnnouncerKey(keyId: string | null): Promise<{ ok: true }> {
@@ -76,8 +100,8 @@ export async function setAnnouncerEnabled(enabled: boolean): Promise<{ ok: true 
   return apiCall(OkResponseSchema, '/announcer/enabled', { method: 'POST', body: { enabled } });
 }
 
-export async function dismissAnnouncement(id: number): Promise<{ ok: true }> {
-  return apiCall(OkResponseSchema, `/announcer/dismiss/${String(id)}`, { method: 'POST' });
+export async function dismissAnnouncement(id: number, secret?: string): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, `/announcer/dismiss/${String(id)}`, { method: 'POST', secret });
 }
 
 export async function clearAnnouncements(): Promise<{ ok: true }> {

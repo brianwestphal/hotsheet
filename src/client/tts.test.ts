@@ -5,7 +5,15 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createBrowserEngine, createNoneEngine, createTauriEngine, pickBackend } from './tts.js';
+import { createBrowserEngine, createNoneEngine, createTauriEngine, pickBackend, rateToMacWpm } from './tts.js';
+
+describe('rateToMacWpm (HS-8754)', () => {
+  it('scales the macOS base WPM by the multiplier', () => {
+    expect(rateToMacWpm(1)).toBe(175);
+    expect(rateToMacWpm(2)).toBe(350);
+    expect(rateToMacWpm(0.5)).toBe(88); // round(87.5)
+  });
+});
 
 describe('pickBackend', () => {
   it('prefers Tauri when invoke is available', () => {
@@ -34,6 +42,13 @@ describe('createTauriEngine', () => {
     expect(engine.backend).toBe('tauri');
   });
 
+  it('forwards a rate multiplier as macOS words-per-minute (HS-8754)', async () => {
+    const calls: [string, Record<string, unknown> | undefined][] = [];
+    const invoke = vi.fn((cmd: string, args?: Record<string, unknown>) => { calls.push([cmd, args]); return Promise.resolve(undefined); });
+    await createTauriEngine(invoke).speak('hi', 1.5);
+    expect(calls[0]).toEqual(['tts_speak', { text: 'hi', rate: rateToMacWpm(1.5) }]);
+  });
+
   it('resolves "cancelled" when cancel() interrupts a speaking child', async () => {
     let resolveSpeak: () => void = () => { /* set below */ };
     const invoke = vi.fn((cmd: string) => {
@@ -58,6 +73,7 @@ describe('createTauriEngine', () => {
 describe('createBrowserEngine', () => {
   class FakeUtterance {
     text: string;
+    rate = 1;
     onend: (() => void) | null = null;
     onerror: (() => void) | null = null;
     constructor(text: string) { this.text = text; }
@@ -102,6 +118,14 @@ describe('createBrowserEngine', () => {
     // Even if the engine then fires onend, the cancelled flag wins.
     synth.queue[0].onend?.();
     await expect(p).resolves.toBe('cancelled');
+  });
+
+  it('sets the utterance rate from the multiplier (HS-8754)', () => {
+    // @ts-expect-error — stub the global constructor.
+    globalThis.SpeechSynthesisUtterance = FakeUtterance;
+    const synth = fakeSynth();
+    void createBrowserEngine(synth as unknown as SpeechSynthesis).speak('spoken', 1.5);
+    expect(synth.queue[0].rate).toBe(1.5);
   });
 
   it('routes pause/resume to the synthesizer', () => {

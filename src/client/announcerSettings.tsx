@@ -9,7 +9,9 @@
  * dropdown repopulates when keys change elsewhere (the `hotsheet:keys-changed`
  * event) so adding a key in the Keys tab shows up here immediately.
  */
-import { getAnnouncerStatus, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerEnabled } from '../api/index.js';
+import { ANNOUNCER_MODEL_IDS } from '../announcer/models.js';
+import { getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
+import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { showToast } from './toast.js';
 
@@ -20,6 +22,8 @@ const ANTHROPIC: KeyType = 'anthropic_api_key';
 async function populateKeySelect(select: HTMLSelectElement, selectedId: string | null): Promise<boolean> {
   let keys: SecretKeyMeta[];
   try {
+    // Type-general filter; `KeyType` is a single value today (HS-8763) but may grow.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     keys = (await listKeys()).filter(k => k.type === ANTHROPIC);
   } catch {
     keys = [];
@@ -64,6 +68,35 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
   const keySelect = byIdOrNull<HTMLSelectElement>('settings-announcer-key-select');
   const statusEl = byIdOrNull('settings-announcer-status');
   if (enabledCb === null || keySelect === null || statusEl === null) return;
+
+  // HS-8754 — global playback-speed select (kept in sync with the PIP's control).
+  const rateSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-rate');
+  if (rateSelect !== null) {
+    const syncRate = (): void => { rateSelect.value = String(getAnnouncerSpeechRate()); };
+    syncRate();
+    rateSelect.addEventListener('change', () => { void setAnnouncerSpeechRate(Number(rateSelect.value)); });
+    document.addEventListener('hotsheet:announcer-rate-changed', syncRate);
+    byId('settings-btn').addEventListener('click', syncRate);
+  }
+
+  // HS-8764 — global summarization-model select (defaults to the cheapest).
+  const modelSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-model');
+  if (modelSelect !== null) {
+    const syncModel = (): void => {
+      void getGlobalConfig().then((cfg) => {
+        modelSelect.value = cfg.announcerModel ?? ANNOUNCER_MODEL_IDS[0];
+      }).catch(() => { /* leave the default-selected first option */ });
+    };
+    syncModel();
+    modelSelect.addEventListener('change', () => {
+      const model = ANNOUNCER_MODEL_IDS.find(id => id === modelSelect.value);
+      if (model === undefined) return;
+      void updateGlobalConfig({ announcerModel: model }).catch(() => {
+        showToast('Could not save the model choice.', { variant: 'warning' });
+      });
+    });
+    byId('settings-btn').addEventListener('click', syncModel);
+  }
 
   // Refresh status whenever the settings dialog opens.
   byId('settings-btn').addEventListener('click', () => { void refreshStatus(enabledCb, keySelect, statusEl); });

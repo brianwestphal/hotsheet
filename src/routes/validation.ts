@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ANNOUNCER_MODEL_IDS } from '../announcer/models.js';
+
 // --- Enums ---
 
 export const TicketPrioritySchema = z.enum(['highest', 'high', 'default', 'low', 'lowest']);
@@ -204,13 +206,20 @@ export const DashboardConfigSchema = z.object({
 // secret *value* lives in the OS keychain keyed by `id` (never in config / git).
 // A project selects a key by id (per-project `announcer_ai_key_id` setting),
 // defaulting to the first key of the matching type. See docs/79-api-keys.md.
-export const KeyTypeSchema = z.enum(['anthropic_api_key', 'google_tts_key']);
+// HS-8763 — Google Cloud TTS was registerable but had no consumer; support is
+// dropped "for now", leaving a single key type. Re-adding a type is a one-line
+// change to this enum + the client label map (`keysSettings.tsx`).
+export const KeyTypeSchema = z.enum(['anthropic_api_key']);
 export type KeyType = z.infer<typeof KeyTypeSchema>;
 
 export const SecretKeyMetaSchema = z.object({
   id: z.string(),
   type: KeyTypeSchema,
   name: z.string(),
+  // HS-8760 — provenance shown in the API Keys row ("Created/Updated …").
+  // Optional for back-compat with keys created before HS-8760.
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
 });
 export type SecretKeyMeta = z.infer<typeof SecretKeyMetaSchema>;
 
@@ -229,6 +238,12 @@ export const GlobalConfigSchema = z.object({
   telemetryCostMode: z.enum(['api', 'subscription']).optional(),
   // HS-8751 — global API-key registry (metadata only; values in the keychain).
   keys: z.array(SecretKeyMetaSchema).optional(),
+  // HS-8754 — Announcer playback speed multiplier (1 = normal). Global because
+  // it's a listening preference, not project-specific. Clamped 0.5×–2×.
+  announcerSpeechRate: z.number().min(0.5).max(2).optional(),
+  // HS-8764 — Announcer summarization model. Global; defaults to the cheapest
+  // (Haiku) when unset. See `src/announcer/models.ts`.
+  announcerModel: z.enum(ANNOUNCER_MODEL_IDS).optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that

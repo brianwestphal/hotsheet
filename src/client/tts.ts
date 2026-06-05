@@ -19,6 +19,16 @@ import { getTauriInvoke } from './tauriIntegration.js';
 
 export type SpeakResult = 'ended' | 'cancelled' | 'error';
 
+/** macOS `say` default speaking rate (words per minute) — the baseline a `rate`
+ *  multiplier scales (HS-8754). `say -r` takes WPM; the browser takes a 1×
+ *  multiplier directly. */
+const MACOS_BASE_WPM = 175;
+
+/** Map a 1×-style speed multiplier to macOS `say -r` words-per-minute. */
+export function rateToMacWpm(rate: number): number {
+  return Math.round(MACOS_BASE_WPM * rate);
+}
+
 export interface SpeechEngine {
   /** Which concrete backend is in use. `'none'` means no speech is available
    *  (old browser); the player falls back to transcript-only (no auto-advance). */
@@ -26,8 +36,9 @@ export interface SpeechEngine {
   /** True only for backends that can pause/resume mid-utterance (browser).
    *  For the rest, the player models pause as stop + re-speak-from-start. */
   readonly supportsPauseResume: boolean;
-  /** Speak `text`, resolving when the utterance finishes or is cancelled. */
-  speak(text: string): Promise<SpeakResult>;
+  /** Speak `text` at an optional speed multiplier (1 = normal; HS-8754),
+   *  resolving when the utterance finishes or is cancelled. */
+  speak(text: string, rate?: number): Promise<SpeakResult>;
   /** Interrupt the current utterance. The in-flight `speak()` resolves
    *  `'cancelled'`. */
   cancel(): void;
@@ -59,13 +70,16 @@ export function createTauriEngine(invoke: Invoke): SpeechEngine {
   return {
     backend: 'tauri',
     supportsPauseResume: false,
-    async speak(text: string): Promise<SpeakResult> {
+    async speak(text: string, rate?: number): Promise<SpeakResult> {
       flag.cancelled = false;
       try {
         // Resolves when the OS voice finishes — or early when `tts_stop`
         // kills the child (the Rust command still resolves Ok in that case,
-        // so the `cancelled` flag is what distinguishes the two).
-        await invoke('tts_speak', { text });
+        // so the `cancelled` flag is what distinguishes the two). `rate` maps
+        // to macOS `say -r` words-per-minute (HS-8754); omitted → natural speed.
+        const args: Record<string, unknown> = { text };
+        if (rate !== undefined) args.rate = rateToMacWpm(rate);
+        await invoke('tts_speak', args);
       } catch {
         return 'error';
       }
@@ -87,10 +101,13 @@ export function createBrowserEngine(synth: SpeechSynthesis): SpeechEngine {
   return {
     backend: 'browser',
     supportsPauseResume: true,
-    speak(text: string): Promise<SpeakResult> {
+    speak(text: string, rate?: number): Promise<SpeakResult> {
       cancelled = false;
       return new Promise<SpeakResult>((resolve) => {
         const utterance = new SpeechSynthesisUtterance(text);
+        // `SpeechSynthesisUtterance.rate` is a 1× multiplier (HS-8754); clamp to
+        // the spec's 0.1–10 range to be safe.
+        if (rate !== undefined) utterance.rate = Math.min(10, Math.max(0.1, rate));
         const finish = (natural: SpeakResult): void => resolve(cancelled ? 'cancelled' : natural);
         // Some engines fire `onend` on cancel, others `onerror('canceled')`;
         // the `cancelled` flag makes either path report `'cancelled'`.
@@ -115,7 +132,7 @@ export function createNoneEngine(): SpeechEngine {
   return {
     backend: 'none',
     supportsPauseResume: false,
-    speak(): Promise<SpeakResult> { return Promise.resolve('ended'); },
+    speak(_text: string, _rate?: number): Promise<SpeakResult> { return Promise.resolve('ended'); },
     cancel(): void { /* nothing to cancel */ },
     pause(): void { /* no-op */ },
     resume(): void { /* no-op */ },

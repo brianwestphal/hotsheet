@@ -60,7 +60,7 @@ describe('secret-keys registry (HS-8751)', () => {
   });
 
   it('delete removes both metadata and the keychain secret', async () => {
-    const meta = await createKey('google_tts_key', 'TTS', 'g-123');
+    const meta = await createKey('anthropic_api_key', 'Personal', 'sk-123');
     expect(await deleteKey(meta.id)).toBe(true);
     expect(listKeyMetas()).toHaveLength(0);
     expect(await getKeyValue(meta.id)).toBeNull();
@@ -70,27 +70,36 @@ describe('secret-keys registry (HS-8751)', () => {
   it('resolveKeyValueByType: defaults to the first key of the type', async () => {
     const first = await createKey('anthropic_api_key', 'First', 'sk-first');
     await createKey('anthropic_api_key', 'Second', 'sk-second');
-    await createKey('google_tts_key', 'TTS', 'g-1');
 
     const resolved = await resolveKeyValueByType('anthropic_api_key');
     expect(resolved?.value).toBe('sk-first');
     expect(resolved?.meta.id).toBe(first.id);
   });
 
-  it('resolveKeyValueByType: honors a valid selection, falls back when it is gone or wrong-typed', async () => {
+  it('resolveKeyValueByType: honors a valid selection, falls back when it is gone', async () => {
     await createKey('anthropic_api_key', 'First', 'sk-first');
     const second = await createKey('anthropic_api_key', 'Second', 'sk-second');
-    const tts = await createKey('google_tts_key', 'TTS', 'g-1');
 
     expect((await resolveKeyValueByType('anthropic_api_key', second.id))?.value).toBe('sk-second');
     // Unknown id → fall back to first of type.
     expect((await resolveKeyValueByType('anthropic_api_key', 'bogus'))?.value).toBe('sk-first');
-    // Selecting a key of the WRONG type → ignored, fall back to first of type.
-    expect((await resolveKeyValueByType('anthropic_api_key', tts.id))?.value).toBe('sk-first');
   });
 
   it('resolveKeyValueByType: null when no key of the type exists', async () => {
-    await createKey('google_tts_key', 'TTS', 'g-1');
     expect(await resolveKeyValueByType('anthropic_api_key')).toBeNull();
+  });
+
+  // HS-8760 — provenance timestamps for the API Keys row label.
+  it('stamps created_at on create and bumps updated_at on every update', async () => {
+    const meta = await createKey('anthropic_api_key', 'Personal', 'sk-1');
+    expect(meta.created_at).toBeTruthy();
+    expect(meta.updated_at).toBe(meta.created_at); // equal at creation
+
+    const renamed = await updateKey(meta.id, { name: 'Work' });
+    expect(renamed?.created_at).toBe(meta.created_at); // creation stamp preserved
+    expect(renamed?.updated_at).toBeTruthy();
+    // updated_at moves forward (or stays equal within the same millisecond) and
+    // is never before the creation stamp.
+    expect(new Date(renamed!.updated_at!).getTime()).toBeGreaterThanOrEqual(new Date(meta.created_at!).getTime());
   });
 });

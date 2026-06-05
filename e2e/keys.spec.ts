@@ -13,7 +13,7 @@
  */
 import { expect, test } from './coverage-fixture.js';
 
-interface KeyMeta { id: string; type: string; name: string }
+interface KeyMeta { id: string; type: string; name: string; created_at: string; updated_at: string }
 
 test('API Keys tab: add a key → it lists → Announcer selector picks it up (HS-8751)', async ({ page }) => {
   const keys: KeyMeta[] = [];
@@ -22,7 +22,8 @@ test('API Keys tab: add a key → it lists → Announcer selector picks it up (H
   await page.route(/\/api\/keys(\?|$)/, (route) => {
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON() as { type: string; name: string };
-      const meta: KeyMeta = { id: `id-${String(keys.length + 1)}`, type: body.type, name: body.name };
+      const now = new Date().toISOString();
+      const meta: KeyMeta = { id: `id-${String(keys.length + 1)}`, type: body.type, name: body.name, created_at: now, updated_at: now };
       keys.push(meta);
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ key: meta }) });
     }
@@ -47,17 +48,21 @@ test('API Keys tab: add a key → it lists → Announcer selector picks it up (H
   await expect(panel).toBeVisible();
   await expect(panel.locator('.settings-keys-list')).toContainText('No keys yet');
 
-  // Add an Anthropic key through the real form.
-  await panel.locator('#settings-key-add-type').selectOption('anthropic_api_key');
-  await panel.locator('#settings-key-add-name').fill('Personal');
-  await panel.locator('#settings-key-add-value').fill('sk-ant-secret');
+  // Add an Anthropic key through the "Add a key…" dialog (HS-8761).
   await panel.locator('#settings-key-add-btn').click();
+  const dialog = page.locator('.settings-key-dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.locator('.settings-key-dialog-input').nth(0).fill('Personal'); // Name
+  await dialog.locator('.settings-key-dialog-input').nth(1).fill('sk-ant-secret'); // Value
+  await dialog.getByRole('button', { name: 'Add key' }).click();
 
-  // The row appears, name editable, value field write-only (empty).
+  // The row appears: name editable, type is a static label (HS-8759), and a
+  // "Created …" provenance label replaces the old value field (HS-8760).
   const row = panel.locator('.settings-key-row');
   await expect(row).toHaveCount(1);
   await expect(row.locator('.settings-key-name')).toHaveValue('Personal');
-  await expect(row.locator('.settings-key-value')).toHaveValue('');
+  await expect(row.locator('.settings-key-type-label')).toHaveText('Anthropic API Key');
+  await expect(row.locator('.settings-key-meta')).toContainText('Created');
 
   // Switch to Experimental → the Announcer key selector now offers the new key.
   await page.locator('.settings-tab[data-tab="experimental"]').click();

@@ -48,9 +48,23 @@ describe('summarizeWork (HS-8745)', () => {
     expect(await summarizeWork('m', { apiKey: 'sk-test' })).toEqual([]);
   });
 
-  it('honors a model override (e.g. a cheaper model)', async () => {
+  // HS-8755 — the narration should be concise; guard the brevity directive so a
+  // future prompt edit doesn't silently regress to verbose scripts.
+  it('instructs the model to keep scripts short (HS-8755)', async () => {
     createMock.mockResolvedValue(textResponse({ entries: [] }));
-    await summarizeWork('m', { apiKey: 'sk-test', model: 'claude-haiku-4-5' });
-    expect(createMock.mock.calls[0][0].model).toBe('claude-haiku-4-5');
+    await summarizeWork('m', { apiKey: 'sk-test' });
+    const system = createMock.mock.calls[0][0].system ?? '';
+    expect(system.toLowerCase()).toContain('under 30 words');
+    expect(system.toLowerCase()).toMatch(/one or at most two short sentences|terse/);
+  });
+
+  it('defaults to the cheapest model (HS-8764)', () => {
+    expect(ANNOUNCER_MODEL).toBe('claude-haiku-4-5');
+  });
+
+  it('honors a model override (e.g. a more capable model)', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [] }));
+    await summarizeWork('m', { apiKey: 'sk-test', model: 'claude-sonnet-4-6' });
+    expect(createMock.mock.calls[0][0].model).toBe('claude-sonnet-4-6');
   });
 });

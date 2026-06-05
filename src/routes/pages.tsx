@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { ANNOUNCER_MODELS } from '../announcer/models.js';
 import { Layout } from '../components/layout.js';
 import { isDemoMode } from '../demo-mode.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
@@ -498,7 +499,7 @@ pageRoutes.get('/', (c) => {
               <span>Permissions</span>
             </button>
             {/* HS-8751 — API Keys tab. Machine-global named-secret registry
-                (Anthropic / Google TTS keys) that projects select from. */}
+                (Anthropic API keys) that projects select from. */}
             <button className="settings-tab" data-tab="keys" id="settings-tab-keys">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
               <span>API Keys</span>
@@ -686,7 +687,7 @@ pageRoutes.get('/', (c) => {
                 so no spawn-env injection happens until the user opts
                 in. See docs/67-telemetry.md §67.9 for the contract. */}
             {/* HS-8751 — API Keys panel. A machine-global list of named secrets
-                (Anthropic / Google TTS). Metadata lives in
+                (Anthropic API keys). Metadata lives in
                 `~/.hotsheet/config.json`; values live in the OS keychain and are
                 write-only here. Projects select a key by name (e.g. the
                 Announcer). The list rows are rendered by keysSettings.tsx. */}
@@ -697,26 +698,10 @@ pageRoutes.get('/', (c) => {
                 </div>
                 <span className="settings-hint">Named API keys shared across every project on this machine. <strong>Values are stored in your OS keychain</strong> — never in the database, config file, or git. Each project picks a key by name (for example, the Announcer's Anthropic key under Experimental); with no choice it defaults to the first key of that type.</span>
                 <div id="settings-keys-list" className="settings-keys-list" style="margin-top:12px"></div>
-                <div className="settings-section-header" style="margin-top:18px">
-                  <h3>Add a key</h3>
-                </div>
-                <div className="settings-field">
-                  <label>Type</label>
-                  <select id="settings-key-add-type" style="max-width:240px">
-                    <option value="anthropic_api_key">Anthropic API Key</option>
-                    <option value="google_tts_key">Google TTS Key</option>
-                  </select>
-                </div>
-                <div className="settings-field">
-                  <label>Name</label>
-                  <input type="text" id="settings-key-add-name" placeholder="e.g. Personal" autoComplete="off" style="max-width:240px" />
-                </div>
-                <div className="settings-field">
-                  <label>Value</label>
-                  <div className="settings-inline-row">
-                    <input type="password" id="settings-key-add-value" placeholder="sk-ant-…" autoComplete="off" style="width:320px" />
-                    <button type="button" className="btn btn-sm" id="settings-key-add-btn">Add key</button>
-                  </div>
+                {/* HS-8761 — "Add a key" opens a dialog (full-width Name + Value);
+                    the row dialog code lives in keysSettings.tsx. */}
+                <div className="settings-field" style="margin-top:14px">
+                  <button type="button" className="btn btn-sm" id="settings-key-add-btn">Add a key…</button>
                 </div>
                 <span className="settings-hint" id="settings-keys-status" role="status" aria-live="polite"></span>
               </div>
@@ -839,6 +824,27 @@ pageRoutes.get('/', (c) => {
                     <option value="">Default — first Anthropic key</option>
                   </select>
                   <span className="settings-hint" id="settings-announcer-status" role="status" aria-live="polite">Manage keys in the “API Keys” tab, then pick one here.</span>
+                </div>
+                {/* HS-8754 — global playback speed; also adjustable live from the PIP. */}
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Playback speed <span className="global-setting-badge">Global Setting</span></label>
+                  <select id="settings-announcer-rate" style="max-width:160px">
+                    <option value="0.75">0.75×</option>
+                    <option value="1">1× (normal)</option>
+                    <option value="1.25">1.25×</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="1.75">1.75×</option>
+                    <option value="2">2×</option>
+                  </select>
+                  <span className="settings-hint">Speed of the spoken narration. Also adjustable from the player while listening.</span>
+                </div>
+                {/* HS-8764 — global summarization model; defaults to the cheapest (Haiku). */}
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Summarization model <span className="global-setting-badge">Global Setting</span></label>
+                  <select id="settings-announcer-model" style="max-width:340px">
+                    {ANNOUNCER_MODELS.map(m => <option value={m.id}>{m.label}</option>)}
+                  </select>
+                  <span className="settings-hint">Which Anthropic model writes the narration. Cheaper models cost less per listen; the default (Haiku) is plenty for short summaries.</span>
                 </div>
               </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the

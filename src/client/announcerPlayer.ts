@@ -17,27 +17,32 @@ import type { SpeechEngine } from './tts.js';
 
 export type PlayerState = 'idle' | 'playing' | 'paused' | 'done';
 
-export interface PlayerCallbacks {
+export interface PlayerCallbacks<T extends Announcement = Announcement> {
   /** Fired whenever the active entry changes (or is first shown). */
-  onEntryChange?(index: number, entry: Announcement, total: number): void;
+  onEntryChange?(index: number, entry: T, total: number): void;
   /** Fired on every play/pause/done transition. */
   onStateChange?(state: PlayerState): void;
   /** Fired once when the reel finishes playing through naturally. */
   onComplete?(): void;
   /** Fired when an entry is removed via `removeCurrent()` (skip / dismiss) so
    *  the host can persist the dismissal. */
-  onRemove?(entry: Announcement): void;
+  onRemove?(entry: T): void;
 }
 
-export class AnnouncerPlayer {
+/** `T` carries any per-entry metadata the host needs back in callbacks — e.g.
+ *  the owning project (HS-8762 "All Projects" reel) so the chip + the dismiss
+ *  target the right project. Defaults to a plain `Announcement`. */
+export class AnnouncerPlayer<T extends Announcement = Announcement> {
   private readonly engine: SpeechEngine;
-  private readonly cbs: PlayerCallbacks;
-  private entries: Announcement[];
+  private readonly cbs: PlayerCallbacks<T>;
+  private entries: T[];
   private index = 0;
   private state: PlayerState = 'idle';
   private utteranceToken = 0;
+  /** Playback speed multiplier (1 = normal; HS-8754). */
+  private rate = 1;
 
-  constructor(entries: Announcement[], engine: SpeechEngine, callbacks: PlayerCallbacks = {}) {
+  constructor(entries: T[], engine: SpeechEngine, callbacks: PlayerCallbacks<T> = {}) {
     this.entries = [...entries];
     this.engine = engine;
     this.cbs = callbacks;
@@ -47,10 +52,39 @@ export class AnnouncerPlayer {
   getState(): PlayerState { return this.state; }
   getIndex(): number { return this.index; }
   getCount(): number { return this.entries.length; }
-  getCurrentEntry(): Announcement | null { return this.entries.at(this.index) ?? null; }
+  getCurrentEntry(): T | null { return this.entries.at(this.index) ?? null; }
+
+  /** Replace the reel (HS-8762 context switch) and restart from the top. */
+  setEntries(entries: T[]): void {
+    this.interrupt();
+    this.entries = [...entries];
+    this.index = 0;
+    if (this.entries.length === 0) { this.finish(); return; }
+    if (this.engine.backend === 'none') {
+      this.setState('paused');
+      this.emitEntryChange();
+    } else {
+      this.speakCurrent();
+    }
+  }
   getBackend(): SpeechEngine['backend'] { return this.engine.backend; }
   /** True when the active backend can pause/resume mid-utterance (browser). */
   canPauseResume(): boolean { return this.engine.supportsPauseResume; }
+  getRate(): number { return this.rate; }
+
+  /** Set the playback speed (HS-8754). Takes effect on the next utterance; if a
+   *  voice is currently speaking, re-speaks the current entry at the new rate so
+   *  the change is immediately audible. */
+  setRate(rate: number): void {
+    if (rate === this.rate) return;
+    this.rate = rate;
+    if (this.state === 'playing' && this.engine.backend !== 'none') {
+      // Cancel the in-flight utterance first (so the browser doesn't queue a
+      // second voice on top), then re-speak the current entry at the new rate.
+      this.interrupt();
+      this.speakCurrent();
+    }
+  }
 
   // --- Commands ---
 
@@ -162,7 +196,7 @@ export class AnnouncerPlayer {
     }
     const token = ++this.utteranceToken;
     this.setState('playing');
-    void this.engine.speak(entry.script).then((result) => {
+    void this.engine.speak(entry.script, this.rate).then((result) => {
       if (token !== this.utteranceToken) return; // a newer action superseded us
       if (result === 'ended' || result === 'error') {
         // On natural end OR a TTS error, keep the reel moving rather than

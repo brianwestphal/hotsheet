@@ -2,7 +2,7 @@ import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
 import { createTicket, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
-import { initAnnouncer, refreshAnnouncerVisibility, teardownAnnouncer } from './announcer.js';
+import { initAnnouncer, refreshAnnouncerVisibility } from './announcer.js';
 import { bindAnnouncerSettings } from './announcerSettings.js';
 import { api, apiUpload, apiWithSecret } from './api.js';
 import { bindBackupsUI } from './backups.js';
@@ -126,9 +126,10 @@ async function reloadAppState() {
   void initChannel();
   // Reload plugin UI for the new project
   void reloadPluginToolbar();
-  // HS-8747 / §78 — close any open announcer PIP (it played the previous
-  // project's reel) and re-evaluate the Listen button for the new project.
-  teardownAnnouncer();
+  // HS-8758 / §78 — the announcer is cross-project now: it keeps playing across
+  // project switches (no teardown here). Just re-evaluate the Listen button
+  // (its any-project-enabled gate is unaffected by the switch, but the active
+  // project changing can flip the default context for the *next* launch).
   void refreshAnnouncerVisibility();
 }
 
@@ -158,6 +159,9 @@ async function loadInitialState(): Promise<void> {
   // the default cached value `'api'` is what we want until the load
   // resolves, which matches the no-subscription happy path.
   void loadTelemetryCostMode();
+  // HS-8754 — hydrate the Announcer playback-speed cache so the TTS path + both
+  // speed selectors reflect the saved rate on first use. Default 1× until loaded.
+  void import('./announcerSpeechRate.js').then(({ loadAnnouncerSpeechRate }) => loadAnnouncerSpeechRate());
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   loadAppName();

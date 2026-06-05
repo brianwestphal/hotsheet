@@ -20,6 +20,7 @@ class FakeEngine implements SpeechEngine {
   readonly backend: SpeechEngine['backend'];
   readonly supportsPauseResume: boolean;
   spoken: string[] = [];
+  rates: (number | undefined)[] = [];
   cancels = 0;
   pauses = 0;
   resumes = 0;
@@ -30,8 +31,9 @@ class FakeEngine implements SpeechEngine {
     this.supportsPauseResume = supportsPauseResume;
   }
 
-  speak(text: string): Promise<SpeakResult> {
+  speak(text: string, rate?: number): Promise<SpeakResult> {
     this.spoken.push(text);
+    this.rates.push(rate);
     return new Promise<SpeakResult>((resolve) => { this.resolver = resolve; });
   }
 
@@ -64,6 +66,45 @@ const ENTRIES = [
 ];
 
 describe('AnnouncerPlayer', () => {
+  // HS-8754 — playback speed plumbing.
+  it('passes the current rate to the engine and re-speaks at a new rate while playing', () => {
+    const engine = new FakeEngine('browser', true);
+    const player = new AnnouncerPlayer(ENTRIES, engine);
+    player.setRate(1.5);          // before play — just stored
+    player.play();
+    expect(engine.spoken).toEqual(['one']);
+    expect(engine.rates).toEqual([1.5]);
+
+    // Changing rate mid-utterance cancels and re-speaks the current entry.
+    player.setRate(2);
+    expect(engine.cancels).toBe(1);
+    expect(engine.spoken).toEqual(['one', 'one']);
+    expect(engine.rates).toEqual([1.5, 2]);
+    expect(player.getRate()).toBe(2);
+
+    // Setting the same rate again is a no-op (no extra utterance).
+    player.setRate(2);
+    expect(engine.spoken).toEqual(['one', 'one']);
+  });
+
+  // HS-8762 — context switch swaps the reel and restarts from the top.
+  it('setEntries replaces the reel and restarts from the first new entry', () => {
+    const engine = new FakeEngine('browser', true);
+    const changes: number[] = [];
+    const player = new AnnouncerPlayer(ENTRIES, engine, { onEntryChange: (i) => changes.push(i) });
+    player.play();
+    player.next();
+    expect(engine.spoken).toEqual(['one', 'two']);
+
+    const replacement = [entry(9, 'New', 'fresh')];
+    const cancelsBefore = engine.cancels;
+    player.setEntries(replacement);
+    expect(engine.cancels).toBe(cancelsBefore + 1); // cancelled the in-flight utterance
+    expect(engine.spoken).toEqual(['one', 'two', 'fresh']);
+    expect(player.getIndex()).toBe(0);
+    expect(player.getCount()).toBe(1);
+  });
+
   it('plays entries sequentially and completes at the end', async () => {
     const engine = new FakeEngine();
     const states: PlayerState[] = [];

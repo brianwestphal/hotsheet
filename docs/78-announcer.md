@@ -480,13 +480,73 @@ unit-tested. Sequential narration with play/pause, prev/next entry, and skip
 mid-utterance pause on the browser backend; on the OS-voice backend (no native
 pause) it stops and re-speaks the entry from the start on resume.
 
-**Transcript PIP (`src/client/announcerPip.tsx`).** A non-modal, corner-docked
-floating panel (z-index 2200 — above chrome, below the reader overlay 2400, the
-feedback dialog 2500, and the permission popup, so a dialog/prompt is never
-obscured). Shows the entry title + spoken script + position (N/M) and the
-playback controls. Draggable/resizable, code-diff visuals, the 10s
-audio-timeline seeks, and playback-speed are later phases (see the follow-up
-tickets).
+**Transcript PIP (`src/client/announcerPip.tsx`).** A non-modal floating panel
+(z-index 2200 — above chrome, below the reader overlay 2400, the feedback dialog
+2500, and the permission popup, so a dialog/prompt is never obscured). Shows the
+entry title + spoken script + position (N/M) and the playback controls.
+**HS-8756 — draggable + anchored:** opens anchored just beneath the Listen
+button (pure geometry in `announcerPipPosition.ts`, unit-tested), is dragged by
+its header, and remembers its position in `localStorage`
+(`hotsheet:announcer-pip-pos`). **HS-8757 — minimize:** a minimize button (and
+Escape) hides the panel back into the Listen button *without stopping playback*;
+the button then **glows** (the project-tab pending-permission pulse,
+`.announcer-listen-btn.is-active`) and a second click restores the panel
+(`announcer.tsx` routes the click to `restore()` when a session is live rather
+than regenerating). Resizable, code-diff visuals, the 10s audio-timeline seeks,
+and playback-speed are later phases (see the follow-up tickets).
+
+**Busy feedback (HS-8753).** Clicking Listen shows an immediate "Preparing your
+narration…" toast and the button shows a spinner (`.is-busy`) for the whole
+generation round-trip, so a multi-second Anthropic call no longer looks like a
+dead click.
+
+**Cross-project / context dropdown (HS-8762 + HS-8758).** The announcer is no
+longer strictly per-project. A new `GET /api/announcer/overview` enumerates every
+project with the announcer enabled (reading each project's enabled / key /
+entry-count in its own DB context via `runWithDataDir`, mirroring the §70
+cross-project stats enumeration) and returns the active project's secret. The
+PIP gains a **context dropdown**: "All Projects" + each enabled project.
+- **"All Projects"** aggregates each enabled project's **already-generated**
+  entries (no fresh generation — by design, HS-8762), interleaved
+  chronologically, each entry showing a **project-name chip**.
+- A **specific project** launch generates a fresh batch for that one project,
+  then plays it.
+- **Default context:** the active project when launched from a project tab;
+  "All Projects" from a global surface (terminal dashboard / cross-project
+  stats); unchanged when restoring a minimized PIP.
+- Per-project targeting rides the typed API's `secret` option (→ `apiWithSecret`,
+  `X-Hotsheet-Secret` header) so `entries` / `generate` / `dismiss` / `cursor`
+  act on the chosen project. `dismiss` carries the entry's owning project (ids
+  aren't unique across projects). `AnnouncerPlayer` is now generic over the
+  entry type so each reel entry can carry `{ projectSecret, projectName }`.
+- **Button on all tabs + don't-stop (HS-8758):** the Listen button shows whenever
+  *any* project is enabled+keyed (overview gate), and the PIP is **no longer torn
+  down on project switch** (`reloadAppState` dropped the `teardownAnnouncer`
+  call) — it's a persistent singleton that keeps playing across tab/project
+  changes.
+
+**Summarization model (HS-8764).** A global setting (`announcerModel` in
+`~/.hotsheet/config.json`) picks which Anthropic model writes the narration,
+**defaulting to the cheapest** (Haiku 4.5 — $1/$5 per 1M in/out tokens) rather
+than Opus, since this is high-frequency, lightweight summarization. The model
+list + default live in `src/announcer/models.ts` (ordered cheapest-first, the
+single source of truth shared by the wire schema, the server summarizer, and the
+Settings → Experimental → Announcer dropdown). `summarizeWork` falls back to the
+cheapest model when the setting is unset; the generate route reads the global
+config and passes the chosen model. "Least expensive for the AI tool" is
+future-proofed by the cheapest-first ordering — a future provider supplies its
+own ordered list + default.
+
+**Playback speed (HS-8754).** A global speed multiplier (`announcerSpeechRate`
+in `~/.hotsheet/config.json`, default 1×, clamped 0.5×–2×) drives the TTS rate:
+the browser engine sets `SpeechSynthesisUtterance.rate`; the Tauri engine maps
+it to macOS `say -r` words-per-minute (`rateToMacWpm`, base 175 WPM). It's
+adjustable from a **speed select in the PIP** *and* a **global control under
+Settings → Experimental → Announcer** — both write the cached
+`announcerSpeechRate.ts` value and broadcast `hotsheet:announcer-rate-changed`
+so the two stay in sync. Changing speed mid-utterance cancels and re-speaks the
+current entry at the new rate. Linux/Windows OS voices don't map rate yet
+(best-effort, same as `voice`).
 
 **Settings + Listen affordance.** `announcerSettings.tsx` binds the "Announcer"
 section under Settings → Experimental: a per-project enable toggle
@@ -505,9 +565,10 @@ cursor (`advanceAnnouncerCursor`) when the PIP closes.
 
 **Promotes §78.5 (content tier 1 — text transcript) and §78.6 (settings UI +
 TTS providers: Tauri `say` desktop primary, browser `speechSynthesis`) from
-design to shipped.** Code-diff visuals (§78.5 tier 2), draggable/resizable PIP,
-the 10s audio-timeline seeks, "mark uninteresting" learning, and Google Cloud
-TTS remain later-phase.
+design to shipped.** The **draggable PIP** + remembered position (HS-8756) and
+**minimize-with-glow** (HS-8757) also shipped 2026-06-05. Code-diff visuals
+(§78.5 tier 2), a *resizable* PIP, the 10s audio-timeline seeks, "mark
+uninteresting" learning, and Google Cloud TTS remain later-phase.
 
 **Tests.** `client/announcerPlayer.test.ts` (sequential play, pause/resume on
 both backend kinds, nav, skip/dismiss, the stale-resolution guard, the
