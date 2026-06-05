@@ -67,6 +67,21 @@ describe('announcements DB (HS-8745)', () => {
     expect(active.emphasis).toEqual([]);
   });
 
+  it('round-trips a code-diff visual (HS-8772)', async () => {
+    const [row] = await insertAnnouncements(
+      [{ title: 'A', script: 'a', visuals: [{ type: 'diff', oldStr: 'a', newStr: 'b', filePath: 'f.ts', replaceAll: false }] }],
+      null, null,
+    );
+    expect(row.visuals).toEqual([{ type: 'diff', oldStr: 'a', newStr: 'b', filePath: 'f.ts', replaceAll: false }]);
+    const [active] = await getActiveAnnouncements();
+    expect(active.visuals[0]).toMatchObject({ type: 'diff', oldStr: 'a', newStr: 'b' });
+  });
+
+  it('defaults visuals to an empty array when omitted', async () => {
+    const [row] = await insertAnnouncements([{ title: 'A', script: 'a' }], null, null);
+    expect(row.visuals).toEqual([]);
+  });
+
   it('clear wipes all entries', async () => {
     await insertAnnouncements([{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }], null, null);
     expect(await clearAnnouncements()).toBe(2);

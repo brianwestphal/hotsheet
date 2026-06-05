@@ -279,9 +279,20 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
      and rendered by `src/client/announcerEmphasis.tsx` (`renderScript` wraps
      each phrase in `<strong class="announcer-em">`; the spoken text is
      unchanged). Falls back to plain text when there's no emphasis.
-  2. **Code diffs (design only)** — reuse the diff rendering already built for
-     the §47 permission preview. The most genuinely useful "visual"; needs an
-     announcement to reference a diff. Larger piece, tracked as a follow-up.
+  2. **Code diffs (shipped, HS-8772).** Reuses the §47 permission-preview diff
+     renderer (`src/client/editDiffPreview.tsx::renderEditDiffPreview`, which is
+     self-contained + Tauri-safe). An entry references a diff via the new
+     `announcements.visuals` JSON column (§78.7; `VisualsArraySchema`, a
+     discriminated union whose only variant today is `{ type: 'diff', oldStr,
+     newStr, filePath?, replaceAll? }`). The producer is the **curated**
+     `hotsheet_announce` MCP tool, which gained an optional `diff` ({oldStr,
+     newStr, filePath?}) so the working agent — which knows exactly what it
+     changed — can attach a focused before/after (CHANNEL_VERSION → 11). The PIP
+     renders it in a `.announcer-pip-visual` pane below the script, shown only
+     when the current entry carries a diff (the expanded panel from HS-8749 gives
+     it room). The derived summarizer path produces no diffs (an AI summary of N
+     signals can't be cleanly attributed to one commit-level diff) — that's why
+     the curated path is the source of truth.
   3. **Charts / before-after screenshots / diagrams** — Phase 3, expensive and
      unreliable; defer until the core proves out.
 
@@ -325,10 +336,12 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
 
 - **`announcements`** (per-project DB table): `id`, `created_at`,
   `covers_from` / `covers_to` (the signal range summarized), `title`,
-  `script` (text + emphasis markup), `visuals` (JSON: diff refs / image paths /
-  chart specs), `audio_path` (cached TTS blob, optional), `category`, `tags`,
-  `dismissed` (bool). Persisting entries makes the reel seekable + replayable +
-  shareable.
+  `script`, `emphasis` (JSON string array — HS-8749 tier-1, shipped),
+  `visuals` (JSON array of visual specs — HS-8772 tier-2, shipped; today only
+  `{ type: 'diff', … }`, extensible to image paths / chart specs), `position`,
+  `dismissed` (bool). `audio_path` (cached TTS blob), `category`, `tags` remain
+  the Phase-3/4 sketch. Persisting entries makes the reel seekable + replayable
+  + shareable.
 - **Per-project settings:** `announcer_enabled`, `announcer_last_listened_at`,
   `announcer_ai_provider`, `announcer_tts_provider`, `announcer_default_mode`,
   `announcer_dismissed_topics` (the learn-from-skips list), PIP `position/size`.

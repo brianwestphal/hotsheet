@@ -76,6 +76,25 @@ export const TagsArraySchema = z.array(z.string());
 export const EmphasisArraySchema = z.array(z.string());
 
 // ---------------------------------------------------------------------------
+// Announcer visuals — `announcements.visuals` is a JSON-encoded array of
+// "visual" specs the PIP renders alongside the spoken script (HS-8772, §78.5
+// tier 2 / §78.7). Today the only variant is a code diff (rendered by the
+// shared §47 `renderEditDiffPreview`); modeled as a discriminated union so
+// image / chart variants can be added later without a schema migration.
+// ---------------------------------------------------------------------------
+
+export const DiffVisualSchema = z.object({
+  type: z.literal('diff'),
+  oldStr: z.string(),
+  newStr: z.string(),
+  filePath: z.string().nullable().default(null),
+  replaceAll: z.boolean().default(false),
+});
+export const VisualSchema = z.discriminatedUnion('type', [DiffVisualSchema]);
+export const VisualsArraySchema = z.array(VisualSchema);
+export type Visual = z.infer<typeof VisualSchema>;
+
+// ---------------------------------------------------------------------------
 // Auto-context entries — the `auto_context` setting is a JSON-encoded array of
 // per-category / per-tag preamble blocks injected into the worklist export.
 // ---------------------------------------------------------------------------

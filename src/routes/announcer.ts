@@ -29,6 +29,7 @@ import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
 import { readGlobalConfig } from '../global-config.js';
 import { getAllProjects } from '../projects.js';
+import type { Visual } from '../schemas.js';
 import type { AppEnv } from '../types.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
@@ -126,7 +127,12 @@ announcerRoutes.post('/announcer/announce', async (c) => {
   const raw: unknown = await c.req.json().catch(() => null);
   const parsed = AnnounceReqSchema.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
-  const rows = await insertAnnouncements([{ title: parsed.data.title, script: parsed.data.highlight }], null, null);
+  // HS-8772 — an optional curated diff becomes a tier-2 visual on the entry.
+  const d = parsed.data.diff;
+  const visuals: Visual[] = d === undefined
+    ? []
+    : [{ type: 'diff', oldStr: d.oldStr, newStr: d.newStr, filePath: d.filePath ?? null, replaceAll: d.replaceAll ?? false }];
+  const rows = await insertAnnouncements([{ title: parsed.data.title, script: parsed.data.highlight, visuals }], null, null);
   notifyMutation(c.get('dataDir'));
   return c.json({ entries: rows, inserted: rows.length });
 });

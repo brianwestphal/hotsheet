@@ -8,7 +8,7 @@ import { LiveSession, type LiveSessionDeps } from './announcerLive.js';
 import type { ReelEntry } from './announcerPip.js';
 
 function reel(secret: string, id: number, ts: string): ReelEntry {
-  return { id, created_at: ts, covers_from: null, covers_to: null, title: `t${String(id)}`, script: 's', emphasis: [], position: id, dismissed: false, projectSecret: secret, projectName: 'P' };
+  return { id, created_at: ts, covers_from: null, covers_to: null, title: `t${String(id)}`, script: 's', emphasis: [], visuals: [], position: id, dismissed: false, projectSecret: secret, projectName: 'P' };
 }
 
 interface Harness {

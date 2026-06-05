@@ -280,3 +280,47 @@ test('announcer live mode tails new entries (HS-8767)', async ({ page }) => {
   await expect(pip.locator('.announcer-pip-live')).toHaveAttribute('aria-pressed', 'false');
   await expect.poll(() => liveCalls).toContain(false);
 });
+
+// HS-8772 — tier-2 code-diff visual: an entry carrying a `visuals` diff renders
+// the §47 diff preview inside the PIP body; an entry without one shows none.
+test('announcer PIP renders a code-diff visual when the entry carries one (HS-8772)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+  });
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'proj-a', projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: 2 }] }),
+  }));
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ entries: [
+      { id: 1, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'Refactored the parser', script: 'Tidied the token loop.', position: 0, dismissed: false,
+        visuals: [{ type: 'diff', oldStr: 'let x = 1', newStr: 'const x = 1', filePath: 'src/a.ts', replaceAll: false }] },
+      { id: 2, created_at: '2026-06-05T00:05:00.000Z', covers_from: null, covers_to: null, title: 'No visual here', script: 'Just a note.', position: 1, dismissed: false, visuals: [] },
+    ] }),
+  }));
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  await page.locator('#announcer-listen-btn').click();
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+
+  // First entry has a diff → the visual pane shows the reused §47 diff preview
+  // with the file-path header and the added line.
+  const visual = pip.locator('.announcer-pip-visual');
+  await expect(visual.locator('.edit-diff-preview')).toBeVisible();
+  await expect(visual.locator('.edit-diff-path')).toContainText('src/a.ts');
+  await expect(visual.locator('.edit-diff-line.edit-diff-add')).toContainText('const x = 1');
+
+  // Next entry has no visual → the pane is hidden.
+  await pip.locator('.announcer-pip-next').click();
+  await expect(pip.locator('.announcer-pip-title')).toHaveText('No visual here');
+  await expect(visual).toBeHidden();
+});

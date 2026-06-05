@@ -27,6 +27,7 @@ import { getAnnouncerSpeechRate, RATE_STEPS, setAnnouncerSpeechRate } from './an
 import { getProjectBusySecrets } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
+import { renderEditDiffPreview } from './editDiffPreview.js';
 import { createSpeechEngine } from './tts.js';
 
 const LUCIDE = {
@@ -165,6 +166,9 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       <div className="announcer-pip-body">
         <span className="announcer-pip-project-chip" hidden></span>
         <p className="announcer-pip-script"></p>
+        {/* HS-8772 — tier-2 code-diff visual, shown only when the current entry
+            carries one (curated via hotsheet_announce). */}
+        <div className="announcer-pip-visual" hidden></div>
       </div>
       <div className="announcer-pip-footer">
         <div className="announcer-pip-controls">
@@ -195,6 +199,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const rateSelect = requireChild<HTMLSelectElement>(panel, '.announcer-pip-rate');
   const contextSelect = requireChild<HTMLSelectElement>(panel, '.announcer-pip-context-select');
   const chipEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-project-chip');
+  const visualEl = requireChild<HTMLDivElement>(panel, '.announcer-pip-visual');
   const liveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-live');
   const presenceEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-presence');
   const skipLiveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-skip-live');
@@ -207,10 +212,23 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   // its dedup set + the consumer knows what's already shown (HS-8767).
   let currentEntries: ReelEntry[] = [...entries];
 
+  // HS-8772 — render (or clear) the current entry's code-diff visual. Reuses the
+  // §47 permission-overlay diff renderer (`renderEditDiffPreview`).
+  const renderVisual = (entry: ReelEntry): void => {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- 'diff' is the only visual variant today; the discriminant check is forward-compat for image/chart variants.
+    const diff = entry.visuals.find(v => v.type === 'diff');
+    if (diff === undefined) { visualEl.replaceChildren(); visualEl.hidden = true; return; }
+    visualEl.replaceChildren(renderEditDiffPreview({
+      oldStr: diff.oldStr, newStr: diff.newStr, filePath: diff.filePath, replaceAll: diff.replaceAll, truncated: false,
+    }));
+    visualEl.hidden = false;
+  };
+
   const player = new AnnouncerPlayer<ReelEntry>(entries, engine, {
     onEntryChange(index, entry, total) {
       titleEl.textContent = entry.title;
       renderScript(scriptEl, entry.script, entry.emphasis);
+      renderVisual(entry);
       positionEl.textContent = `${String(index + 1)} / ${String(total)}`;
       // Show which project the entry is about, but only in "All Projects" mode
       // (in a single-project context it's redundant). HS-8762.

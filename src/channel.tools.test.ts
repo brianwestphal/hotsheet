@@ -105,6 +105,21 @@ describe('listTools (HS-8346 + HS-8347)', () => {
     const result = await callTool('hotsheet_announce', { title: 'x' }, tmpDataDir, vi.fn());
     expect(result.isError).toBe(true);
   });
+
+  // HS-8772 — the optional diff is forwarded to the route.
+  it('hotsheet_announce forwards an optional diff', async () => {
+    let captured: { init?: { body?: string | FormData } } | undefined;
+    const fetchFn = fakeFetch((_url, init) => { captured = { init }; return { ok: true, status: 200, text: '{"inserted":1}' }; });
+    const diff = { oldStr: 'let x', newStr: 'const x', filePath: 'a.ts' };
+    const result = await callTool('hotsheet_announce', { title: 'T', highlight: 'H', diff }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(captured?.init?.body as string)).toEqual({ title: 'T', highlight: 'H', diff });
+  });
+
+  it('hotsheet_announce rejects a diff missing newStr', async () => {
+    const result = await callTool('hotsheet_announce', { title: 'T', highlight: 'H', diff: { oldStr: 'a' } }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

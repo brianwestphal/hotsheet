@@ -56,7 +56,7 @@ class FakeEngine implements SpeechEngine {
 }
 
 function entry(id: number, title: string, script: string): Announcement {
-  return { id, created_at: '', covers_from: null, covers_to: null, title, script, emphasis: [], position: id, dismissed: false };
+  return { id, created_at: '', covers_from: null, covers_to: null, title, script, emphasis: [], visuals: [], position: id, dismissed: false };
 }
 
 const ENTRIES = [

@@ -889,6 +889,10 @@ async function initSchema(db: PGlite): Promise<void> {
     -- (verbatim substrings of the script) the PIP renders emphasized; defaults
     -- to an empty array for older rows and curated hotsheet_announce entries.
     ALTER TABLE announcements ADD COLUMN IF NOT EXISTS emphasis TEXT NOT NULL DEFAULT '[]';
+    -- HS-8772 — tier-2 visuals (§78.5/§78.7): a JSON array of visual specs (today
+    -- only code diffs) the PIP renders alongside the script; empty for entries
+    -- without a visual (the common case).
+    ALTER TABLE announcements ADD COLUMN IF NOT EXISTS visuals TEXT NOT NULL DEFAULT '[]';
 
     -- HS-8766 — Announcer summarization token usage + cost (the user's own
     -- Anthropic API spend). Lives in the SHARED telemetry DB keyed by

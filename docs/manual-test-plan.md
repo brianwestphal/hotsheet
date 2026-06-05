@@ -602,6 +602,12 @@ Playback *logic* (state machine, controls, cursor advance) is covered by unit + 
 - [ ] Click Listen with no new work since last listen → a "Nothing new to announce yet" toast; no PIP.
 - [ ] PIP stacking: open a feedback dialog / permission popup while the PIP is open — the dialog/popup renders ABOVE the PIP (never obscured).
 
+### PIP visuals — resize + emphasis + code diff (HS-8749 / HS-8772, §78.5)
+*(Structural presence is e2e-covered; this checks the actual visual rendering, which can't be auto-verified.)*
+- [ ] Expand toggle (header maximize icon): widens the panel and gives the body more room; the icon flips to collapse; the state survives closing + reopening the PIP; the widened panel never spills off the right/bottom edge.
+- [ ] Text emphasis: when an entry's key phrase is emphasized, it renders as a tasteful gradient (blue→purple) **bold** run inline in the script — readable, not garish — and the rest of the script is normal weight. Entries without emphasis read as plain text.
+- [ ] Code-diff visual: trigger a curated `hotsheet_announce` with a `diff` (or seed one). The PIP shows a color-coded diff (red removals / green additions) below the script with the file-path header — the same look as the §47 permission-popup diff. Navigating to an entry without a diff hides the pane.
+
 ### Audio playback — browser build (`npm run dev`, open in Chrome/Safari)
 - [ ] On Listen, the browser voice speaks the first entry aloud and auto-advances to the next when it finishes (position increments, title/script update).
 - [ ] Play/pause: the central button pauses mid-sentence and resumes from where it left off (browser `speechSynthesis` true pause). Prev/Next jump entries and start speaking the target. Skip (thumbs-down) dismisses the current entry (it won't reappear next Listen) and advances.

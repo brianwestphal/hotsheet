@@ -226,9 +226,15 @@ const QueryTicketsInputSchema = z.object({
 });
 
 // HS-8771 — push a curated Announcer highlight (§80 hybrid generation).
+// HS-8772 — optionally attach a code diff the PIP renders alongside the script.
 const AnnounceInputSchema = z.object({
   title: z.string().min(1).describe('A few words naming the moment (e.g. "Fixed the data-loss bug").'),
   highlight: z.string().min(1).describe('One or two short sentences of natural spoken English to read aloud — what happened and why it matters.'),
+  diff: z.object({
+    oldStr: z.string().describe('The code BEFORE the change (the focused snippet you changed, not the whole file).'),
+    newStr: z.string().describe('The code AFTER the change.'),
+    filePath: z.string().optional().describe('Optional file path shown as the diff header.'),
+  }).optional().describe('Optional code diff to display with this highlight — supply the before/after of the focused change you want to show off.'),
 });
 
 // ---------------------------------------------------------------------------

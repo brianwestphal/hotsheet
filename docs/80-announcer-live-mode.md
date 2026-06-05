@@ -157,6 +157,11 @@ call) so it appears with low latency. No-op when the project hasn't enabled the
 Announcer (so it can't create entries the user never sees). The live consumer
 (§80.5.1) tails it like any other entry.
 
+HS-8772 (`CHANNEL_VERSION` → 11) extended this tool with an optional
+`diff` ({ oldStr, newStr, filePath? }) — the curated source of truth for the
+§78.5 tier-2 code-diff visual. The route maps it onto the entry's `visuals`
+column and the PIP renders it via the reused §47 diff preview.
+
 ## 80.6 Live mode — complete
 
 All of HS-8750 (2a) + HS-8767 (2b) + HS-8768/8769/8770/8771 (refinements +

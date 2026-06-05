@@ -12216,6 +12216,14 @@ label.detail-details-label {
   }
 }
 
+// HS-8772 — tier-2 code-diff visual pane (reuses the §47 permission diff
+// renderer). Sits below the script; only present when the entry carries a diff.
+.announcer-pip-visual {
+  margin-top: 12px;
+
+  &[hidden] { display: none; }
+}
+
 .announcer-pip-footer {
   display: flex;
   flex-direction: column;

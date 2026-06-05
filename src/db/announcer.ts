@@ -4,7 +4,7 @@
  * `getDb()`). Entries are persisted so the reel is seekable / replayable rather
  * than a transient stream.
  */
-import { EmphasisArraySchema } from '../schemas.js';
+import { EmphasisArraySchema, type Visual, VisualsArraySchema } from '../schemas.js';
 import { getDb } from './connection.js';
 
 export interface Announcement {
@@ -18,6 +18,8 @@ export interface Announcement {
   dismissed: boolean;
   /** Key phrases (verbatim substrings of `script`) the PIP emphasizes (HS-8749). */
   emphasis: string[];
+  /** Visual specs (today: code diffs) the PIP renders alongside the script (HS-8772). */
+  visuals: Visual[];
 }
 
 /** One generated entry before persistence. */
@@ -25,22 +27,29 @@ export interface NewAnnouncement {
   title: string;
   script: string;
   emphasis?: string[];
+  visuals?: Visual[];
 }
 
-/** The raw `announcements` row — `emphasis` is a JSON-encoded TEXT column. */
-interface AnnouncementRow extends Omit<Announcement, 'emphasis'> {
+/** The raw `announcements` row — `emphasis` / `visuals` are JSON-encoded TEXT columns. */
+interface AnnouncementRow extends Omit<Announcement, 'emphasis' | 'visuals'> {
   emphasis: string;
+  visuals: string;
 }
 
-/** Parse a raw row into a domain `Announcement` (decoding the emphasis JSON). */
+/** Parse a raw row into a domain `Announcement` (decoding the JSON columns). */
 function toAnnouncement(row: AnnouncementRow): Announcement {
   let emphasis: string[] = [];
   try {
     const parsed = EmphasisArraySchema.safeParse(JSON.parse(row.emphasis));
     if (parsed.success) emphasis = parsed.data;
   } catch { /* corrupt/legacy → no emphasis */ }
-  const { emphasis: _raw, ...rest } = row;
-  return { ...rest, emphasis };
+  let visuals: Visual[] = [];
+  try {
+    const parsed = VisualsArraySchema.safeParse(JSON.parse(row.visuals));
+    if (parsed.success) visuals = parsed.data;
+  } catch { /* corrupt/legacy → no visuals */ }
+  const { emphasis: _emph, visuals: _vis, ...rest } = row;
+  return { ...rest, emphasis, visuals };
 }
 
 /**
@@ -60,9 +69,9 @@ export async function insertAnnouncements(
   const out: Announcement[] = [];
   for (const e of entries) {
     const res = await db.query<AnnouncementRow>(
-      `INSERT INTO announcements (covers_from, covers_to, title, script, position, emphasis)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [coversFrom, coversTo, e.title, e.script, pos, JSON.stringify(e.emphasis ?? [])],
+      `INSERT INTO announcements (covers_from, covers_to, title, script, position, emphasis, visuals)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [coversFrom, coversTo, e.title, e.script, pos, JSON.stringify(e.emphasis ?? []), JSON.stringify(e.visuals ?? [])],
     );
     out.push(toAnnouncement(res.rows[0]));
     pos++;

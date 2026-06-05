@@ -155,6 +155,26 @@ describe('announcer routes (HS-8745)', () => {
     expect((await post('/api/announcer/announce', { title: 'x' })).status).toBe(400); // missing highlight
   });
 
+  // HS-8772 — an optional curated diff becomes a tier-2 visual on the entry.
+  it('announce attaches a diff as a code-diff visual', async () => {
+    await post('/api/announcer/enabled', { enabled: true });
+    await post('/api/announcer/announce', {
+      title: 'Refactor', highlight: 'Tidied the parser.',
+      diff: { oldStr: 'let x = 1', newStr: 'const x = 1', filePath: 'src/a.ts' },
+    });
+    const entries = await (await app.request('/api/announcer/entries')).json() as {
+      entries: { title: string; visuals: { type: string; oldStr: string; newStr: string; filePath: string | null }[] }[];
+    };
+    const row = entries.entries.find(e => e.title === 'Refactor');
+    expect(row?.visuals).toHaveLength(1);
+    expect(row?.visuals[0]).toMatchObject({ type: 'diff', oldStr: 'let x = 1', newStr: 'const x = 1', filePath: 'src/a.ts' });
+
+    // No diff → an empty visuals array.
+    await post('/api/announcer/announce', { title: 'Plain', highlight: 'No visual.' });
+    const after = await (await app.request('/api/announcer/entries')).json() as { entries: { title: string; visuals: unknown[] }[] };
+    expect(after.entries.find(e => e.title === 'Plain')?.visuals).toEqual([]);
+  });
+
   // HS-8769 — skipping an entry records its title; the list is editable.
   it('dismiss records the title as a dismissed topic; topics get/put', async () => {
     const ins = await (await getDb()).query<{ id: number }>(

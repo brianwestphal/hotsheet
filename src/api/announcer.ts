@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 
+import { VisualsArraySchema } from '../schemas.js';
 import { apiCall, OkResponseSchema } from './_runner.js';
 
 // --- Wire shapes ---
@@ -19,6 +20,8 @@ export const AnnouncementSchema = z.object({
   // HS-8749 — key phrases (verbatim substrings of `script`) the PIP emphasizes.
   // Defaults to [] for legacy/curated rows the server may omit.
   emphasis: z.array(z.string()).default([]),
+  // HS-8772 — tier-2 visuals (today: code diffs) rendered alongside the script.
+  visuals: VisualsArraySchema.default([]),
   position: z.number(),
   dismissed: z.boolean(),
 }).loose();
@@ -75,7 +78,18 @@ export const SetAnnouncerLiveReqSchema = z.object({ enabled: z.boolean() });
 export const SetDismissedTopicsReqSchema = z.object({ topics: z.array(z.string()) });
 export const DismissedTopicsResSchema = z.object({ topics: z.array(z.string()) });
 // HS-8771 — a curated announcement pushed by the working agent (hotsheet_announce).
-export const AnnounceReqSchema = z.object({ title: z.string().min(1), highlight: z.string().min(1) });
+// HS-8772 — optionally carries a code diff the PIP renders alongside the script.
+export const AnnounceDiffSchema = z.object({
+  oldStr: z.string(),
+  newStr: z.string(),
+  filePath: z.string().nullable().optional(),
+  replaceAll: z.boolean().optional(),
+});
+export const AnnounceReqSchema = z.object({
+  title: z.string().min(1),
+  highlight: z.string().min(1),
+  diff: AnnounceDiffSchema.optional(),
+});
 
 // --- Typed callers (used by the Phase 1b client) ---
 
