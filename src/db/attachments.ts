@@ -74,6 +74,18 @@ export async function getAttachments(ticketId: number): Promise<Attachment[]> {
 }
 
 /**
+ * HS-8783 — every real (non-draft) attachment row across all tickets. Used by
+ * the cleanup self-heal sweep to find rows whose `stored_path` file is gone.
+ */
+export async function getAllAttachments(): Promise<Attachment[]> {
+  const db = await getDb();
+  const result = await db.query<Attachment>(
+    `SELECT * FROM attachments WHERE draft_id IS NULL ORDER BY id ASC`,
+  );
+  return result.rows;
+}
+
+/**
  * HS-8428 — list every attachment linked to a specific draft. Used by
  * the feedback dialog's "reopen draft" path to render previously-
  * uploaded files alongside the draft's text partitions.

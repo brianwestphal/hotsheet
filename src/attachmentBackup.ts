@@ -272,9 +272,14 @@ export async function buildAttachmentManifest(
     'SELECT id, ticket_id, original_filename, stored_path FROM attachments ORDER BY id',
   );
   const entries: AttachmentManifestEntry[] = [];
+  const missingIds: number[] = [];
   for (const row of result.rows) {
     if (!existsSync(row.stored_path)) {
-      console.warn(`[attachmentBackup] attachment ${row.id} (${row.original_filename}) missing on disk: ${row.stored_path}`);
+      // HS-8783 — aggregate instead of one warn per row: a project with many
+      // externally-deleted files used to emit N lines on EVERY backup. The
+      // cleanup self-heal (`cleanupOrphanedAttachments`) prunes the truly-lost
+      // (unrecoverable) ones; recoverable-but-missing rows still surface here.
+      missingIds.push(row.id);
       continue;
     }
     try {
@@ -297,6 +302,11 @@ export async function buildAttachmentManifest(
     // freeze-log heartbeat / WS frames / HTTP requests aren't starved
     // across a multi-file backup window.
     await yieldToEventLoop();
+  }
+  if (missingIds.length > 0) {
+    const shown = missingIds.slice(0, 20).join(', ');
+    const more = missingIds.length > 20 ? `, …(+${String(missingIds.length - 20)} more)` : '';
+    console.warn(`[attachmentBackup] ${String(missingIds.length)} attachment(s) missing on disk (excluded from this backup): ids ${shown}${more}`);
   }
   return {
     schemaVersion: ATTACHMENT_MANIFEST_VERSION,
@@ -534,7 +544,7 @@ function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachm
  * different shas, the most recently scanned wins (cheap deterministic
  * choice — the rebuild path is best-effort).
  */
-function indexExistingManifestEntries(backupRoot: string): Map<number, { sha: string; storedName: string; size: number }> {
+export function indexExistingManifestEntries(backupRoot: string): Map<number, { sha: string; storedName: string; size: number }> {
   const out = new Map<number, { sha: string; storedName: string; size: number }>();
   for (const tier of ['5min', 'hourly', 'daily']) {
     const tierPath = join(backupRoot, tier);

@@ -3403,10 +3403,28 @@ body.cross-project-stats-active {
     background: transparent;
   }
 
-  // HS-8734 — drop the empty checkbox-spacer so the decorative circle + type
-  // badge start near the left edge instead of behind extraneous leading space.
+  // HS-8734 — drop the empty checkbox-spacer so the type badge starts near the
+  // left edge instead of behind extraneous leading space.
   .ticket-checkbox-spacer {
     display: none;
+  }
+
+  // HS-8736 — wrap the type badge + title input in one subtle rounded-rectangle
+  // border so the line reads as a single entry control, with the type pill
+  // inside it at the left (as if the badge were part of the text field).
+  .draft-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+
+    &:focus-within {
+      border-color: var(--accent);
+    }
   }
 
   .draft-placeholder {
@@ -3416,6 +3434,15 @@ body.cross-project-stats-active {
 
   .draft-badge {
     opacity: 0.35;
+  }
+
+  // The box itself provides the focus affordance; the input keeps no underline.
+  .draft-input {
+    padding: 2px 0;
+
+    &:focus {
+      border-bottom: none;
+    }
   }
 
   .draft-input::placeholder {

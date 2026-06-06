@@ -135,7 +135,7 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     const { migrateDbSettingsToFile } = await import('./migrate-settings.js');
     await runWithDataDir(dataDir, () => migrateDbSettingsToFile(dataDir));
     startupMark('init-project: cleaning up attachments');
-    await runWithDataDir(dataDir, () => cleanupAttachments());
+    await runWithDataDir(dataDir, () => cleanupAttachments(dataDir));
     // HS-8154 — telemetry retention sweep. No-op when telemetry hasn't
     // been used (the tables exist but stay empty). HS-8607 — sweep every
     // registered project, not just the launched one: all telemetry shares

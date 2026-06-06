@@ -27,9 +27,10 @@ describe('syncDraftBadge (HS-8375)', () => {
     document.body.replaceChildren(toElement(
       <div className="ticket-row draft-row">
         <span className="ticket-checkbox-spacer"></span>
-        <span className="ticket-status-btn"></span>
-        <span className="ticket-category-badge" style="background-color: rgb(107, 114, 128)">ISS</span>
-        <input className="ticket-title-input draft-input" type="text" />
+        <div className="draft-entry">
+          <span className="ticket-category-badge" style="background-color: rgb(107, 114, 128)">ISS</span>
+          <input className="ticket-title-input draft-input" type="text" />
+        </div>
       </div>
     ));
   });
@@ -141,5 +142,47 @@ describe('createDraftRow keyboard shortcut (Cmd/Ctrl + <category-key>)', () => {
     const bugKey = DEFAULT_CATEGORIES.find(c => c.id === 'bug')!.shortcutKey;
     pressShortcut(bugKey, { meta: true });
     expect(draftCategory).toBeNull();
+  });
+});
+
+// HS-8736 — the type badge + title input are wrapped together in one
+// rounded-rectangle border (`.draft-entry`) so the line reads as a single
+// entry control with the type pill inside it; the decorative ○ status
+// placeholder that mirrored real rows' status button is dropped.
+describe('createDraftRow layout (HS-8736)', () => {
+  beforeEach(() => {
+    state.categories = [...DEFAULT_CATEGORIES];
+    state.view = 'all';
+    setDraftCategory(null);
+    registerCallbacks({
+      renderTicketList: () => {},
+      loadTickets: () => Promise.resolve(),
+      updateSelectionClasses: () => {},
+      updateBatchToolbar: () => {},
+      updateColumnSelectionClasses: () => {},
+      focusDraftInput: () => {},
+    });
+    document.body.replaceChildren(createDraftRow());
+  });
+
+  it('wraps the type badge and the title input together inside .draft-entry', () => {
+    const entry = document.querySelector<HTMLElement>('.draft-row .draft-entry')!;
+    expect(entry).not.toBeNull();
+    expect(entry.querySelector('.ticket-category-badge')).not.toBeNull();
+    expect(entry.querySelector('.draft-input')).not.toBeNull();
+  });
+
+  it('drops the decorative ○ status placeholder from the new-ticket line', () => {
+    const row = document.querySelector<HTMLElement>('.draft-row')!;
+    expect(row.querySelector('.ticket-status-btn')).toBeNull();
+    expect(row.textContent).not.toContain('○');
+  });
+
+  it('keeps the priority/star placeholders outside the bordered entry', () => {
+    const entry = document.querySelector<HTMLElement>('.draft-row .draft-entry')!;
+    expect(entry.querySelector('.ticket-priority-indicator')).toBeNull();
+    expect(entry.querySelector('.ticket-star')).toBeNull();
+    expect(document.querySelector('.draft-row > .ticket-priority-indicator')).not.toBeNull();
+    expect(document.querySelector('.draft-row > .ticket-star')).not.toBeNull();
   });
 });

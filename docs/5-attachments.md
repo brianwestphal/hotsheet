@@ -56,6 +56,7 @@
 ### 5.6 Attachment Cleanup
 
 - The auto-cleanup process (see [3-ticket-management.md](3-ticket-management.md) §3.7) removes attachment files for tickets that are hard-deleted during cleanup.
+- **Orphaned-file self-heal (HS-8783).** When an attachment row's `stored_path` file is removed out-of-band (deleted/pruned while the DB row lingers), the startup cleanup sweep (`cleanupOrphanedAttachments` in `src/cleanup.ts`) drops the row — but **only** when its content is also **unrecoverable from the backup store** (no cross-ref blob in any backup manifest), mirroring the manual-reanalyze guard (§43 / `attachmentBackup.ts`). A row whose file is gone but is still captured in a backup is kept. The sweep **skips entirely when the backup root is absent** (e.g. a temporarily-unmounted custom `backupDir`): without a readable store it can't prove non-recoverability, so it never risks a wrongful delete. Relatedly, `buildAttachmentManifest` now emits **one aggregated** "N attachment(s) missing on disk" warning per backup instead of one line per row (HS-8783 — the recurring-noise origin from HS-8778). Tests: `src/cleanup.test.ts` (prune-unrecoverable / keep-recoverable / keep-present-file / skip-when-no-backup-root).
 
 ## Non-Functional Requirements
 

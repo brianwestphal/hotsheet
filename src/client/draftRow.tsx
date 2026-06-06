@@ -16,18 +16,25 @@ export function createDraftRow(): HTMLElement {
   const draftCat = getDraftCategory();
   const inCategoryView = state.view.startsWith('category:');
 
+  // HS-8736 \u2014 the type badge + title input are wrapped in a single
+  // rounded-rectangle border (`.draft-entry`) so the line reads as one entry
+  // control with the type pill sitting inside it at the left, as if the badge
+  // were part of the text field. The decorative \u25CB status placeholder (mirroring
+  // real rows' status button) is dropped from the new-ticket line per the
+  // maintainer's mockup. The trailing priority/star placeholders stay outside
+  // the box (they're invisible spacers).
   const row = toElement(
     <div className="ticket-row draft-row">
       <span className="ticket-checkbox-spacer"></span>
-      <span className="ticket-status-btn draft-placeholder">{'\u25CB'}</span>
-      <span
-        className="ticket-category-badge draft-badge"
-        style={`background-color:${getCategoryColor(draftCat)}${!inCategoryView ? ';cursor:pointer;opacity:1' : ''}`}
-      >
-        {getCategoryLabel(draftCat)}
-      </span>
-      <span className="ticket-number draft-number"></span>
-      <input type="text" className="ticket-title-input draft-input" placeholder="New ticket..." value={draftTitle} spellCheck="true" />
+      <div className="draft-entry">
+        <span
+          className="ticket-category-badge draft-badge"
+          style={`background-color:${getCategoryColor(draftCat)}${!inCategoryView ? ';cursor:pointer;opacity:1' : ''}`}
+        >
+          {getCategoryLabel(draftCat)}
+        </span>
+        <input type="text" className="ticket-title-input draft-input" placeholder="New ticket..." value={draftTitle} spellCheck="true" />
+      </div>
       <span className="ticket-priority-indicator draft-placeholder"></span>
       <span className="ticket-star draft-placeholder"></span>
     </div>
