@@ -799,6 +799,12 @@ pageRoutes.get('/', (c) => {
                   </select>
                   <span className="settings-hint" id="settings-announcer-status" role="status" aria-live="polite">Manage keys in the “API Keys” tab, then pick one here.</span>
                 </div>
+                {/* HS-8781 — verbally announce permission checks. Global, default on;
+                    TTS-only (no API key/cost), works even without an active reel. */}
+                <div className="settings-field settings-field-checkbox" style="margin-top:12px">
+                  <label><input type="checkbox" id="settings-announcer-speak-permissions" defaultChecked /> Verbally announce permission checks <span className="global-setting-badge">Global Setting</span></label>
+                  <span className="settings-hint">When Claude pauses for a permission (e.g. “Allow Claude to run npm test”), the Announcer reads it aloud so you know what it's asking for while you're away. Uses your system/browser voice — no API key or cost. It waits for the current narration sentence to finish, then speaks before continuing.</span>
+                </div>
                 {/* HS-8754 — global playback speed; also adjustable live from the PIP. */}
                 <div className="settings-field" style="margin-top:12px">
                   <label>Playback speed <span className="global-setting-badge">Global Setting</span></label>

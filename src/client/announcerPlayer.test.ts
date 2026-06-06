@@ -87,6 +87,67 @@ describe('AnnouncerPlayer', () => {
     expect(engine.spoken).toEqual(['one', 'one']);
   });
 
+  // HS-8782 — the spoken text comes from `speechTextFor` (so the host can
+  // prepend the project name in "All Projects" mode) while the displayed
+  // `script` is untouched; falls back to `entry.script` when not provided.
+  it('speaks speechTextFor(entry) instead of the raw script when supplied', () => {
+    const engine = new FakeEngine('browser', true);
+    const player = new AnnouncerPlayer(ENTRIES, engine, {
+      speechTextFor: (e) => `In Demo: ${e.script}`,
+    });
+    player.play();
+    player.next();
+    expect(engine.spoken).toEqual(['In Demo: one', 'In Demo: two']);
+  });
+
+  it('falls back to entry.script when no speechTextFor is provided', () => {
+    const engine = new FakeEngine('browser', true);
+    const player = new AnnouncerPlayer(ENTRIES, engine);
+    player.play();
+    expect(engine.spoken).toEqual(['one']);
+  });
+
+  // HS-8781 — boundary tasks (permission announcements) pre-empt the NEXT
+  // segment without interrupting the one in flight; they run when the current
+  // segment ends naturally, before the next one speaks.
+  it('runs a boundary task after the current segment ends, before the next', async () => {
+    const engine = new FakeEngine();
+    const order: string[] = [];
+    const player = new AnnouncerPlayer(ENTRIES, engine);
+    player.play();                       // speaking 'one'
+    player.runAtNextBoundary(() => { order.push('boundary'); });
+    expect(engine.spoken).toEqual(['one']); // current segment NOT interrupted
+    engine.finishCurrent();              // 'one' ends → boundary runs, then 'two'
+    await flush();
+    order.push('after');
+    expect(order).toEqual(['boundary', 'after']);
+    expect(engine.spoken).toEqual(['one', 'two']);
+  });
+
+  it('runs a boundary task immediately when nothing is speaking', () => {
+    const engine = new FakeEngine();
+    const order: string[] = [];
+    const player = new AnnouncerPlayer(ENTRIES, engine);
+    // idle (never played) → not speaking → task runs now
+    player.runAtNextBoundary(() => { order.push('ran'); });
+    expect(order).toEqual(['ran']);
+  });
+
+  it('awaits an async boundary task before resuming the reel', async () => {
+    const engine = new FakeEngine();
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((r) => { release = () => r(); });
+    const player = new AnnouncerPlayer(ENTRIES, engine);
+    player.play();
+    player.runAtNextBoundary(() => gate);
+    engine.finishCurrent();              // 'one' ends → awaits the gate
+    await flush();
+    expect(engine.spoken).toEqual(['one']); // next segment held until the gap clears
+    release!();
+    await flush();
+    expect(engine.spoken).toEqual(['one', 'two']);
+  });
+
   // HS-8762 — context switch swaps the reel and restarts from the top.
   it('setEntries replaces the reel and restarts from the first new entry', () => {
     const engine = new FakeEngine('browser', true);

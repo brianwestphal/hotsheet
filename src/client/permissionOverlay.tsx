@@ -22,6 +22,7 @@
 import { respondChannelPermission } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
+import { announcePermission } from './announcerPermissionSpeech.js';
 import { buildBashPermissionPreview } from './bashPermissionPreview.js';
 import { channelStore } from './channelStore.js';
 import { clearProjectAttention, isChannelBusy, setChannelBusy } from './channelUI.js';
@@ -113,6 +114,11 @@ initPermissionPopupStateMachine({
 });
 
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
+  // HS-8781 — verbally announce the permission check (when the global setting is
+  // on) so you hear what Claude is asking for while away. Deduped per
+  // request_id; coordinates with any active narration so it doesn't talk over a
+  // segment. Fire-and-forget.
+  announcePermission(perm);
   // A permission request is proof Claude is actively working — extend busy timeout.
   if (permissionState.channelBusyTimeoutModule) {
     clearTimeout(permissionState.channelBusyTimeoutModule);

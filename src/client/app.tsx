@@ -162,6 +162,9 @@ async function loadInitialState(): Promise<void> {
   // HS-8754 — hydrate the Announcer playback-speed cache so the TTS path + both
   // speed selectors reflect the saved rate on first use. Default 1× until loaded.
   void import('./announcerSpeechRate.js').then(({ loadAnnouncerSpeechRate }) => loadAnnouncerSpeechRate());
+  // HS-8781 — hydrate the "announce permission checks" cache so the permission
+  // popup path reads it synchronously. Default ON until loaded.
+  void import('./announcerPermissionPref.js').then(({ loadAnnouncerSpeakPermissions }) => loadAnnouncerSpeakPermissions());
   await loadCategories(rebuildCategoryUI);
   await loadCustomViews();
   loadAppName();

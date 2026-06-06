@@ -11,6 +11,7 @@
  */
 import { ANNOUNCER_MODEL_IDS } from '../announcer/models.js';
 import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
+import { getAnnouncerSpeakPermissions, setAnnouncerSpeakPermissions } from './announcerPermissionPref.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { showToast } from './toast.js';
@@ -96,6 +97,20 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
       });
     });
     byId('settings-btn').addEventListener('click', syncModel);
+  }
+
+  // HS-8781 — "verbally announce permission checks" global toggle (default on).
+  const speakPermsCb = byIdOrNull<HTMLInputElement>('settings-announcer-speak-permissions');
+  if (speakPermsCb !== null) {
+    const syncSpeakPerms = (): void => { speakPermsCb.checked = getAnnouncerSpeakPermissions(); };
+    syncSpeakPerms();
+    speakPermsCb.addEventListener('change', () => {
+      void setAnnouncerSpeakPermissions(speakPermsCb.checked).catch(() => {
+        speakPermsCb.checked = !speakPermsCb.checked; // revert on failure
+        showToast('Could not save the setting.', { variant: 'warning' });
+      });
+    });
+    byId('settings-btn').addEventListener('click', syncSpeakPerms);
   }
 
   // HS-8769 — the editable "uninteresting" topics list (loaded on open, saved on blur).

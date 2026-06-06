@@ -92,6 +92,19 @@ export interface ReelEntry extends Announcement {
   projectName: string;
 }
 
+/**
+ * The text actually spoken for a reel entry (HS-8782). In "All Projects" mode
+ * the listener can't see the visual project chip, so the spoken narration leads
+ * with the owning project name to reiterate which project each entry is about;
+ * in a single-project context the project is implicit, so it's just the script.
+ * Pure + exported for unit testing.
+ */
+export function reelSpeechText(entry: ReelEntry, context: string): string {
+  if (context !== ALL_PROJECTS) return entry.script;
+  const name = entry.projectName.trim();
+  return name === '' ? entry.script : `In ${name}: ${entry.script}`;
+}
+
 export interface AnnouncerPipHandle {
   close(): void;
   minimize(): void;
@@ -120,6 +133,16 @@ export interface OpenPipOptions {
 }
 
 let openHandle: AnnouncerPipHandle | null = null;
+/** The live player behind the open PIP, so the permission-announcement path can
+ *  coordinate (speak between segments) without interrupting narration (HS-8781).
+ *  Null when no PIP session is mounted. */
+let activePlayer: AnnouncerPlayer<ReelEntry> | null = null;
+
+/** The currently-mounted PIP's player, or null. Used by the permission-speech
+ *  coordinator to pre-empt upcoming segments at a boundary (HS-8781). */
+export function getActiveAnnouncerPlayer(): AnnouncerPlayer<ReelEntry> | null {
+  return activePlayer;
+}
 
 /** True when a PIP session is currently mounted (visible or minimized). */
 export function isAnnouncerPipOpen(): boolean {
@@ -252,6 +275,10 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       // unique across projects, so dismiss must target the owning project).
       dismissAnnouncement(entry.id, entry.projectSecret).catch(() => { /* best-effort */ });
     },
+    // HS-8782 — in "All Projects" mode, speak the project name before the script
+    // so the listener knows which project each entry refers to. Reads the live
+    // `currentContext` so it follows context-dropdown switches.
+    speechTextFor: (entry) => reelSpeechText(entry, currentContext),
   });
 
   // --- Context dropdown (HS-8762): switch which project's reel plays. ---
@@ -443,7 +470,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     document.removeEventListener('hotsheet:announcer-rate-changed', onRateChanged);
     document.removeEventListener('visibilitychange', onVisibilityChange);
     panel.remove();
-    if (openHandle === handle) openHandle = null;
+    if (openHandle === handle) { openHandle = null; activePlayer = null; }
     opts.onClose?.(currentContext);
   };
 
@@ -494,6 +521,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
 
   const handle: AnnouncerPipHandle = { close, minimize, restore, isMinimized: () => minimized };
   openHandle = handle;
+  activePlayer = player;
 
   // Kick off narration. Focus the play/pause button so the keyboard shortcuts
   // work immediately without an extra click.

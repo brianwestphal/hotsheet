@@ -542,7 +542,12 @@ cross-project stats enumeration) and returns the active project's secret. The
 PIP gains a **context dropdown**: "All Projects" + each enabled project.
 - **"All Projects"** aggregates each enabled project's **already-generated**
   entries (no fresh generation — by design, HS-8762), interleaved
-  chronologically, each entry showing a **project-name chip**.
+  chronologically, each entry showing a **project-name chip**. Because that chip
+  isn't audible, the **spoken narration also leads with the project name** in
+  "All Projects" mode — "In <project>: <script>" (HS-8782) — while the displayed
+  transcript stays just the script. Implemented as the pure `reelSpeechText`
+  helper (`announcerPip.tsx`) fed to the player's `speechTextFor` hook; a
+  single-project context speaks the script unchanged.
 - A **specific project** launch generates a fresh batch for that one project,
   then plays it.
 - **Default context:** the active project when launched from a project tab;
@@ -613,6 +618,22 @@ the shared "API Keys" tab and the announcer just picks one.)*
 opted in AND has a key (`getAnnouncerStatus`) — which generates the latest
 batch and plays the full active reel through the PIP, advancing the listened
 cursor (`advanceAnnouncerCursor`) when the PIP closes.
+
+**Spoken permission checks (HS-8781).** A global, **default-on** Announcer-tab
+toggle, `announcerSpeakPermissions` (in `~/.hotsheet/config.json`), reads each
+new permission popup aloud — "Permission needed: <description>" — so you hear
+what Claude is asking for while you're away. It's **TTS-only** (no Anthropic key
+or cost; uses the same `SpeechEngine` voice) and works **independent of an active
+reel** — even with no PIP open. Wiring: `permissionOverlay.tsx::showPermissionPopupBody`
+(the single mount point for a new permission) calls `announcePermission(perm)`
+(`announcerPermissionSpeech.ts`); the cached pref is `announcerPermissionPref.ts`.
+**Arbitration:** it never interrupts a narration segment already speaking —
+when the PIP is mid-segment it waits for the segment boundary
+(`AnnouncerPlayer.runAtNextBoundary`) and speaks **before** the next segment,
+pre-empting upcoming narration; if a permission is already resolved
+(allowed/denied/dismissed — checked against `respondedRequestIds` /
+`dismissedRequestIds`) by the time its turn arrives, it's skipped. Deduped per
+`request_id`; long descriptions are word-boundary-trimmed to a short summary.
 
 **Promotes §78.5 (content tier 1 — text transcript) and §78.6 (settings UI +
 TTS providers: Tauri `say` desktop primary, browser `speechSynthesis`) from

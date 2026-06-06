@@ -27,6 +27,11 @@ export interface PlayerCallbacks<T extends Announcement = Announcement> {
   /** Fired when an entry is removed via `removeCurrent()` (skip / dismiss) so
    *  the host can persist the dismissal. */
   onRemove?(entry: T): void;
+  /** Maps an entry to the text actually spoken — distinct from the displayed
+   *  `script` so the host can prepend context the listener can't see, e.g. the
+   *  owning project name in "All Projects" mode (HS-8782). Defaults to
+   *  `entry.script` when omitted. */
+  speechTextFor?(entry: T): string;
 }
 
 /** `T` carries any per-entry metadata the host needs back in callbacks — e.g.
@@ -41,6 +46,11 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
   private utteranceToken = 0;
   /** Playback speed multiplier (1 = normal; HS-8754). */
   private rate = 1;
+  /** HS-8781 — tasks to run at the next segment boundary (between the current
+   *  utterance ending naturally and the next one starting), so a higher-priority
+   *  announcement (e.g. a permission check) can pre-empt UPCOMING segments
+   *  without interrupting the one in flight. */
+  private pendingBoundaryTasks: (() => void | Promise<void>)[] = [];
 
   constructor(entries: T[], engine: SpeechEngine, callbacks: PlayerCallbacks<T> = {}) {
     this.entries = [...entries];
@@ -107,6 +117,22 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
   /** True when the active backend can pause/resume mid-utterance (browser). */
   canPauseResume(): boolean { return this.engine.supportsPauseResume; }
   getRate(): number { return this.rate; }
+
+  /**
+   * HS-8781 — run `task` at the next segment boundary so a time-sensitive
+   * announcement can speak between segments. If a segment is currently in
+   * flight, the task is deferred until it ends naturally (the current segment is
+   * never interrupted) and runs BEFORE the next segment starts. If nothing is
+   * speaking, the task runs immediately. The caller awaits nothing; the player
+   * resumes the reel after the task(s) settle.
+   */
+  runAtNextBoundary(task: () => void | Promise<void>): void {
+    if (this.state === 'playing') {
+      this.pendingBoundaryTasks.push(task);
+    } else {
+      void task();
+    }
+  }
 
   /** Set the playback speed (HS-8754). Takes effect on the next utterance; if a
    *  voice is currently speaking, re-speaks the current entry at the new rate so
@@ -232,7 +258,8 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
     }
     const token = ++this.utteranceToken;
     this.setState('playing');
-    void this.engine.speak(entry.script, this.rate).then((result) => {
+    const text = this.cbs.speechTextFor?.(entry) ?? entry.script;
+    void this.engine.speak(text, this.rate).then((result) => {
       if (token !== this.utteranceToken) return; // a newer action superseded us
       if (result === 'ended' || result === 'error') {
         // On natural end OR a TTS error, keep the reel moving rather than
@@ -244,9 +271,34 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
   }
 
   private advanceAfterEnd(): void {
+    // HS-8781 — if a boundary task is queued (e.g. a permission announcement),
+    // run it in the gap before the next segment. The current segment has already
+    // ended naturally here, so nothing is interrupted.
+    if (this.pendingBoundaryTasks.length > 0) {
+      void this.drainBoundaryThenAdvance();
+      return;
+    }
+    this.advanceNow();
+  }
+
+  private advanceNow(): void {
     if (this.index >= this.entries.length - 1) { this.finish(); return; }
     this.index++;
     this.speakCurrent();
+  }
+
+  /** Run all queued boundary tasks, then resume the reel — unless the user drove
+   *  a different action during the gap (token bumped), in which case that action
+   *  already owns the next state and we bow out. */
+  private async drainBoundaryThenAdvance(): Promise<void> {
+    const token = this.utteranceToken;
+    const tasks = this.pendingBoundaryTasks;
+    this.pendingBoundaryTasks = [];
+    for (const t of tasks) {
+      try { await t(); } catch { /* a bad task must not stall the reel */ }
+    }
+    if (token !== this.utteranceToken) return; // superseded by a user action
+    this.advanceNow();
   }
 
   private finish(): void {

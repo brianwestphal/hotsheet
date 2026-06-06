@@ -244,6 +244,10 @@ export const GlobalConfigSchema = z.object({
   // HS-8764 — Announcer summarization model. Global; defaults to the cheapest
   // (Haiku) when unset. See `src/announcer/models.ts`.
   announcerModel: z.enum(ANNOUNCER_MODEL_IDS).optional(),
+  // HS-8781 — verbally announce permission checks (TTS only, no API cost).
+  // Global; default ON, so `undefined`/unset is treated as enabled by the
+  // client (`announcerSpeakPermissions !== false`).
+  announcerSpeakPermissions: z.boolean().optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that
