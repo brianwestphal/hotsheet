@@ -34,9 +34,21 @@ const EntrySchema = z.object({
   // HS-8749 (§78.5 tier 1) — 0–2 key phrases, each a VERBATIM substring of
   // `script`, that the PIP renders emphasized. Optional; absent → no emphasis.
   emphasis: z.array(z.string()).optional(),
+  // HS-8789 — the model's self-assessed interestingness/importance. `low` entries
+  // are routine/mechanical (esp. mid-task tool noise) and are dropped before
+  // persist. Optional so providers without schema enforcement (Apple guided
+  // generation) that omit it keep their entries (undefined ≠ low → kept).
+  importance: z.enum(['low', 'medium', 'high']).optional(),
 });
 const EntriesSchema = z.object({ entries: z.array(EntrySchema) });
 export type GeneratedEntry = z.infer<typeof EntrySchema>;
+
+/** HS-8789 — drop entries the model rated `low` (routine/uninteresting). Only an
+ *  explicit `low` is dropped; `undefined`/`medium`/`high` are kept, so providers
+ *  that don't emit importance are unaffected. Exported for testing. */
+export function dropUnimportant(entries: GeneratedEntry[]): GeneratedEntry[] {
+  return entries.filter(e => e.importance !== 'low');
+}
 
 /** Validate a model's JSON output (Anthropic or the Apple helper) into entries.
  *  Returns `[]` on malformed output rather than throwing — a bad batch should
@@ -72,6 +84,7 @@ const OUTPUT_SCHEMA = {
           title: { type: 'string' },
           script: { type: 'string' },
           emphasis: { type: 'array', items: { type: 'string' } },
+          importance: { type: 'string', enum: ['low', 'medium', 'high'] },
         },
         required: ['title', 'script'],
         additionalProperties: false,
@@ -90,6 +103,7 @@ Rules:
 - Produce 1 to 4 entries. Strongly prefer FEWER, broader entries: group related signals into one (e.g. "fixed the export bug and added tests" is one entry, not three). Two or three tight entries usually beats five.
 - Each entry has a short "title" (a few words) and a "script". Keep the script to ONE or at most two short sentences — aim for under 30 words. It's spoken aloud, so be terse: lead with what changed, drop preamble ("I went ahead and…", "It looks like…"), filler, and hedging. No markdown, no code blocks, no bullet symbols, no ticket-number jargon unless it genuinely aids clarity.
 - Lead with the most significant work. Skip noise (routine status pings, trivial log lines) — if nothing meaningful happened, return an empty entries array.
+- For each entry, set an "importance" of "low", "medium", or "high" — how interesting/significant it is to a developer hearing a briefing. Completed features/fixes, decisions, and notable changes are "medium" or "high". Routine, mechanical, or merely in-progress activity — reading files, a single command, boilerplate steps, "[in progress]" tool churn — is "low". An entry you'd mark "low" should usually just be OMITTED; only keep one if it's genuinely the only thing that happened.
 - Be accurate to the signals; do not invent work that isn't described. Concise and plain over engaging and breathless — the listener wants the gist fast, not a recap.
 - Optionally include an "emphasis" array of 0 to 2 short key phrases per entry — the single most important noun or action in the script (e.g. "export bug", "added tests"). Each MUST be a verbatim substring of that entry's script (exact characters, same case), so it can be visually highlighted. Omit it (or use an empty array) when nothing clearly stands out; never emphasize a whole sentence.`;
 
@@ -144,7 +158,7 @@ export async function summarizeWork(
     // the same system prompt and just validate the JSON it returns. On-device =
     // free, so no usage/cost is recorded.
     const out = await runAppleFoundationSummarize(system, material);
-    return { entries: parseEntriesJson(out), usage: null };
+    return { entries: dropUnimportant(parseEntriesJson(out)), usage: null };
   }
 
   if (provider === 'local') {
@@ -155,7 +169,7 @@ export async function summarizeWork(
       endpoint: opts.localEndpoint?.trim() !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT,
       model: opts.localModel ?? '',
     });
-    return { entries: parseEntriesJson(out), usage: null };
+    return { entries: dropUnimportant(parseEntriesJson(out)), usage: null };
   }
 
   if (opts.apiKey === undefined || opts.apiKey === null || opts.apiKey === '') {
@@ -181,5 +195,5 @@ export async function summarizeWork(
   for (const block of res.content) {
     if (block.type === 'text') text += block.text;
   }
-  return { entries: parseEntriesJson(text), usage };
+  return { entries: dropUnimportant(parseEntriesJson(text)), usage };
 }

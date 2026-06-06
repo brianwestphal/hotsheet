@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { persistLogsPayload, persistMetricsPayload, persistTracesPayload } from '../db/otelWriters.js';
 import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
+import { notifyChange } from './notify.js';
 import { decodeProtobufPayload, type SignalType } from './otelDecoder.js';
 
 /**
@@ -218,6 +219,15 @@ async function handleOtlpRoute(c: { req: { header: (n: string) => string | undef
     // Persistence failure is logged but doesn't surface as a 5xx —
     // OTLP retry-storm avoidance. The receiver still returns 200.
     console.debug('[otel] persistence failed:', err);
+  }
+
+  // HS-8789 — wake the live-mode generator on telemetry activity (mirrors
+  // `addLogEntry`'s HS-8767 `notifyChange()` wiring) so mid-task narration fires
+  // off tool/prompt events, not just ticket/command-log changes. Only when rows
+  // actually landed; the generator is debounced (15 s) + gated to live projects,
+  // so a quiet stream of OTLP batches can't cause runaway generation.
+  if (persist !== null && persist.inserted > 0 && (signalType === 'metrics' || signalType === 'logs')) {
+    notifyChange();
   }
 
   logOtlp(signalType, summary, persist);

@@ -12,6 +12,7 @@
 import { getLogEntries } from '../db/commandLog.js';
 import { getDb } from '../db/connection.js';
 import { parseNotes } from '../db/notes.js';
+import { collectTelemetrySignals } from './telemetrySignals.js';
 
 export interface CollectedSignals {
   /** The assembled text material for the summarizer (empty string = nothing new). */
@@ -89,8 +90,17 @@ export function capMaterial(texts: string[]): string {
 /**
  * Gather work signals since `since` (ISO string; null = all non-deleted tickets'
  * notes + the full command log) and render them as a chronological text block.
+ *
+ * HS-8789 — when `opts.includeTelemetry` is set (live mode only) the §67
+ * telemetry event stream (in-progress prompts + tool activity, via
+ * `collectTelemetrySignals`) is merged in chronologically, so narration can
+ * describe work as it happens, not only after a unit lands. Needs
+ * `opts.projectSecret` to scope the shared telemetry DB.
  */
-export async function collectWorkSignals(since: string | null): Promise<CollectedSignals> {
+export async function collectWorkSignals(
+  since: string | null,
+  opts: { projectSecret?: string; includeTelemetry?: boolean } = {},
+): Promise<CollectedSignals> {
   const coversTo = new Date().toISOString();
   const db = await getDb();
 
@@ -139,6 +149,13 @@ export async function collectWorkSignals(since: string | null): Promise<Collecte
   for (const e of logEntries) {
     if (e.event_type === 'permission_request' || e.event_type === 'done') continue;
     lines.push({ at: new Date(e.created_at).toISOString(), text: `[activity] ${e.summary}` });
+  }
+
+  // HS-8789 — mid-task telemetry signals (live mode only), merged chronologically.
+  if (opts.includeTelemetry === true && opts.projectSecret !== undefined && opts.projectSecret !== '') {
+    for (const t of await collectTelemetrySignals(opts.projectSecret, since)) {
+      lines.push({ at: t.at, text: t.text });
+    }
   }
 
   lines.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));

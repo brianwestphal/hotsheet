@@ -84,6 +84,26 @@ describe('collectWorkSignals (HS-8745)', () => {
     expect(count).toBe(1);
   });
 
+  // HS-8789 — live mode merges the §67 telemetry stream as a mid-task source.
+  it('merges telemetry signals only when includeTelemetry + projectSecret are set', async () => {
+    const db = await getDb();
+    await db.query('DELETE FROM otel_events');
+    await db.query(
+      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+       VALUES ($1, 'sec-x', 's', 'p', 'user_prompt', '{}'::jsonb, $2::jsonb)`,
+      [NEW, JSON.stringify({ prompt: 'wiring the live loop' })],
+    );
+
+    const withTel = await collectWorkSignals(CURSOR, { projectSecret: 'sec-x', includeTelemetry: true });
+    expect(withTel.material).toContain('[in progress]');
+    expect(withTel.material).toContain('wiring the live loop');
+
+    // Default (after-the-fact) path does not touch telemetry.
+    const without = await collectWorkSignals(CURSOR);
+    expect(without.material).not.toContain('[in progress]');
+    await db.query('DELETE FROM otel_events');
+  });
+
   it('returns empty material when nothing matches the cursor', async () => {
     await seed();
     const { material, count } = await collectWorkSignals('2027-01-01T00:00:00.000Z');

@@ -24,10 +24,15 @@ import { generateAnnouncementsOnce, isAnnouncerEnabled, prepareSummarizationProv
 
 /** How long a single live-listen registration lasts without renewal. */
 export const LIVE_LEASE_MS = 90_000;
-/** Debounce window — fire this long after the last change with no new change. */
-const QUIET_MS = 5_000;
-/** Coalesce cap — never wait longer than this after the first change of a burst. */
-const MAX_WAIT_MS = 25_000;
+/** Debounce window — fire this long after the last change with no new change.
+ *  HS-8789 — 15 s so a turn's burst of telemetry (a prompt + many tool calls,
+ *  arriving every few seconds) coalesces into one narration pass rather than
+ *  narrating each step; the summarizer then rates importance and drops noise. */
+const QUIET_MS = 15_000;
+/** Coalesce cap — never wait longer than this after the first change of a burst,
+ *  so continuous activity still narrates periodically (the 15 s quiet gap rarely
+ *  occurs mid-task). */
+const MAX_WAIT_MS = 30_000;
 
 interface Lease { dataDir: string; expiresAt: number }
 const leases = new Map<string, Lease>(); // keyed by project secret
@@ -106,6 +111,7 @@ async function runGenerationPass(): Promise<void> {
         await generateAnnouncementsOnce({
           dataDir, projectSecret: secret, apiKey, model,
           canSummarize: () => tryConsumeCall(secret, Date.now()), // HS-8770 budget
+          includeTelemetry: true, // HS-8789 — live mode narrates mid-task off telemetry
         });
       });
     } catch (err) {

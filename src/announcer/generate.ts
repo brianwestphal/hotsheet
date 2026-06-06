@@ -11,6 +11,7 @@
 import { getActiveAnnouncements, getLatestCoversTo, insertAnnouncements } from '../db/announcer.js';
 import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { getSettings } from '../db/queries.js';
+import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { notifyMutation } from '../routes/notify.js';
 import { isAppleFoundationAvailable } from './appleFoundation.js';
@@ -98,6 +99,10 @@ export interface GenerateOnceArgs {
   /** Last gate before the (paid) summarize call — return false to skip it
    *  (HS-8770 live-mode call budget). Checked only when there ARE signals. */
   canSummarize?: () => boolean;
+  /** HS-8789 — include the §67 telemetry event stream (in-progress prompts +
+   *  tool activity) as a signal source so live mode narrates mid-task. Set only
+   *  by the live generator; ignored for a project with telemetry disabled. */
+  includeTelemetry?: boolean;
 }
 
 /**
@@ -109,7 +114,11 @@ export interface GenerateOnceArgs {
  */
 export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise<{ rows: Awaited<ReturnType<typeof insertAnnouncements>>; generatedCount: number }> {
   const since = await effectiveSince(args.since);
-  const signals = await collectWorkSignals(since);
+  // HS-8789 — feed telemetry only when the live generator asks AND the project
+  // hasn't opted out of telemetry (default-on; only an explicit `false` opts out).
+  const telemetryEnabled = readFileSettings(args.dataDir)['telemetry_enabled'] !== false;
+  const includeTelemetry = args.includeTelemetry === true && telemetryEnabled;
+  const signals = await collectWorkSignals(since, { projectSecret: args.projectSecret, includeTelemetry });
   if (signals.count === 0) return { rows: [], generatedCount: 0 };
 
   // HS-8770 — the live-mode call budget gates the paid summarize; over budget,

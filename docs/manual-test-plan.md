@@ -612,6 +612,14 @@ The Node/UI side is unit-tested (`localProvider.test`, `summarize.test`, `models
 - [ ] Change the endpoint URL to a wrong port → the model dropdown empties / shows "No models found"; fix it → models repopulate.
 - [ ] Live mode with a local model selected narrates work **without** an Anthropic key (server POSTs to the local endpoint).
 
+#### Mid-task narration off telemetry (HS-8789, §82 — needs telemetry + a live key)
+The collector, merge gating, and importance filter are unit-tested; this verifies the live behavior end-to-end. **Prereq:** telemetry enabled for the project + a working summarization provider; enable Live in the PIP.
+- [ ] With Live on, start Claude working in a project terminal (a prompt + several tool calls). Within ~15 s of activity the reel produces an "in progress / working on …" entry **before** any ticket is completed — i.e. it narrates mid-task, not just on completion.
+- [ ] A turn's burst of many tool calls collapses into **one** entry (grouped by prompt turn), not one per tool.
+- [ ] Routine/mechanical churn is **not** narrated — only meaningful in-progress work surfaces (the AI drops low-importance entries). Verify the reel isn't a play-by-play of every Read/Bash.
+- [ ] Disable telemetry for the project → Live narration falls back to completion-only (no mid-task "in progress" entries).
+- [ ] Cost: mid-task generation stays within the call budget (no runaway spend on the §70/§71 dashboards); turning Live off stops it.
+
 ### Generate + transcript PIP
 - [ ] With some recent completed tickets / notes, click Listen. The button shows a busy state, then a corner-docked PIP appears (bottom-right) with the first entry's title + spoken script and a "1 / N" position. The transcript reads as a coherent spoken summary of recent work (not raw notes).
 - [ ] Click Listen with no new work since last listen → a "Nothing new to announce yet" toast; no PIP.

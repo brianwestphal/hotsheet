@@ -96,6 +96,19 @@ describe('summarizeWork (HS-8745)', () => {
     expect(localRunMock.mock.calls[0][2]).toEqual({ endpoint: 'http://localhost:11434/v1', model: 'llama3.1' });
   });
 
+  // HS-8789 — the model rates importance; `low` entries are dropped before persist.
+  it('drops entries the model rated low importance, keeps medium/high/unrated', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [
+      { title: 'Shipped', script: 'Shipped the export feature.', importance: 'high' },
+      { title: 'Noise', script: 'Read a file.', importance: 'low' },
+      { title: 'Legacy', script: 'A note with no importance field.' },
+    ] }));
+    const res = await summarizeWork('m', { apiKey: 'sk-test' });
+    expect(res.entries.map(e => e.title)).toEqual(['Shipped', 'Legacy']);
+    // usage still captured regardless of filtering.
+    expect(res.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+  });
+
   it('malformed JSON → empty entries but usage still captured (HS-8766)', async () => {
     createMock.mockResolvedValue({ content: [{ type: 'text', text: 'not json at all' }], usage: { input_tokens: 7, output_tokens: 3 } });
     const res = await summarizeWork('m', { apiKey: 'sk-test' });
