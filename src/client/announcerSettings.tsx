@@ -9,7 +9,7 @@
  * dropdown repopulates when keys change elsewhere (the `hotsheet:keys-changed`
  * event) so adding a key in the Keys tab shows up here immediately.
  */
-import { ANNOUNCER_MODEL_IDS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, providerForModel } from '../announcer/models.js';
+import { ANNOUNCER_MODEL_IDS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, LOCAL_MODEL_ID, providerForModel } from '../announcer/models.js';
 import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
 import { getAnnouncerSpeakPermissions, setAnnouncerSpeakPermissions } from './announcerPermissionPref.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
@@ -80,37 +80,76 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     byId('settings-btn').addEventListener('click', syncRate);
   }
 
-  // HS-8764 / HS-8790 — global summarization-model select, now spanning
-  // providers. The on-device Apple option only appears + becomes the default
-  // when this machine supports it (status.appleAvailable); the Anthropic key
-  // field shows only while an Anthropic model is selected.
+  // HS-8764 / HS-8790 / HS-8792 — global summarization-model select, spanning
+  // providers. The on-device options appear + become selectable only when this
+  // machine supports them (status.appleAvailable / status.localAvailable). The
+  // Anthropic key field shows only for an Anthropic model; the local endpoint +
+  // model-dropdown field shows only for the local provider.
   const modelSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-model');
   if (modelSelect !== null) {
     const keyField = byIdOrNull('settings-announcer-key-field');
+    const localField = byIdOrNull('settings-announcer-local-field');
+    const localEndpoint = byIdOrNull<HTMLInputElement>('settings-announcer-local-endpoint');
+    const localModelSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-local-model');
     const appleOption = modelSelect.querySelector<HTMLOptionElement>(`option[value="${APPLE_FOUNDATION_MODEL_ID}"]`);
-    const applyKeyFieldVisibility = (): void => {
-      if (keyField !== null) keyField.style.display = providerForModel(modelSelect.value) === 'anthropic' ? '' : 'none';
+    const localOption = modelSelect.querySelector<HTMLOptionElement>(`option[value="${LOCAL_MODEL_ID}"]`);
+    const applyFieldVisibility = (): void => {
+      const provider = providerForModel(modelSelect.value);
+      if (keyField !== null) keyField.style.display = provider === 'anthropic' ? '' : 'none';
+      if (localField !== null) localField.style.display = provider === 'local' ? '' : 'none';
+    };
+    // Fill the local-model dropdown with the endpoint's reported models, keeping a
+    // stored-but-currently-absent choice visible so it isn't silently dropped.
+    const populateLocalModels = (models: string[], selected: string | undefined): void => {
+      if (localModelSelect === null) return;
+      const ids = [...models];
+      if (selected !== undefined && selected !== '' && !ids.includes(selected)) ids.unshift(selected);
+      localModelSelect.replaceChildren(
+        ...(ids.length === 0 ? [toElement(<option value="">No models found — start your local server</option>)] : []),
+        ...ids.map(id => toElement(<option value={id}>{id}</option>)),
+      );
+      localModelSelect.value = selected ?? '';
     };
     const syncModel = (): void => {
       void Promise.all([getGlobalConfig(), getAnnouncerStatus()]).then(([cfg, status]) => {
         if (appleOption !== null) appleOption.hidden = !status.appleAvailable;
-        // Explicit choice wins; else Apple-when-available, else cheapest. A
-        // stored Apple choice on a machine that no longer supports it falls back.
+        if (localOption !== null) localOption.hidden = !status.localAvailable;
+        // Explicit choice wins; else Apple-when-available, else cheapest. A stored
+        // on-device choice on a machine that no longer supports it falls back.
         let value = cfg.announcerModel ?? (status.appleAvailable ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL);
         if (value === APPLE_FOUNDATION_MODEL_ID && !status.appleAvailable) value = DEFAULT_ANNOUNCER_MODEL;
+        if (value === LOCAL_MODEL_ID && !status.localAvailable) value = DEFAULT_ANNOUNCER_MODEL;
         modelSelect.value = value;
-        applyKeyFieldVisibility();
-      }).catch(() => { applyKeyFieldVisibility(); });
+        if (localEndpoint !== null) localEndpoint.value = cfg.announcerLocalEndpoint ?? '';
+        populateLocalModels(status.localModels, cfg.announcerLocalModel);
+        applyFieldVisibility();
+      }).catch(() => { applyFieldVisibility(); });
     };
     syncModel();
     modelSelect.addEventListener('change', () => {
       const model = ANNOUNCER_MODEL_IDS.find(id => id === modelSelect.value);
       if (model === undefined) return;
-      applyKeyFieldVisibility();
+      applyFieldVisibility();
       void updateGlobalConfig({ announcerModel: model }).catch(() => {
         showToast('Could not save the model choice.', { variant: 'warning' });
       });
     });
+    // HS-8792 — persist the endpoint on blur, then re-sync so the server re-probes
+    // the new URL and repopulates the model dropdown.
+    if (localEndpoint !== null) {
+      localEndpoint.addEventListener('blur', () => {
+        void updateGlobalConfig({ announcerLocalEndpoint: localEndpoint.value.trim() })
+          .then(() => { syncModel(); })
+          .catch(() => { showToast('Could not save the endpoint.', { variant: 'warning' }); });
+      });
+    }
+    if (localModelSelect !== null) {
+      localModelSelect.addEventListener('change', () => {
+        void updateGlobalConfig({ announcerLocalModel: localModelSelect.value }).catch(() => {
+          showToast('Could not save the local model choice.', { variant: 'warning' });
+        });
+      });
+    }
     byId('settings-btn').addEventListener('click', syncModel);
   }
 

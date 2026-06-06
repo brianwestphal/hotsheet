@@ -269,6 +269,33 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(info.distinctTicketMarkers).toContain('HS-42');
       expect(info.apiRequestAttrKeys).toEqual(expect.arrayContaining(['cost', 'tokens', 'model']));
     });
+
+    // HS-8793 — `dailyMetricCounts` is the "why is day X empty" diagnostic: a
+    // GLOBAL (cross-project), per-local-day raw row count. It must (a) count
+    // rows on a day that HAS data, (b) include OTHER projects' rows even when
+    // called with one project's secret (so orphaned-secret data is visible),
+    // and (c) NOT invent a row for a day with no metrics (the gap).
+    it('reports global per-day metric counts across projects (HS-8793)', async () => {
+      const dayWith = new Date();                                    // today — has data
+      const yesterday = new Date(dayWith.getTime() - 24 * 60 * 60 * 1000);
+      await insertCostMetric({ ts: dayWith, projectSecret: SECRET_A, cost: 1.0 });
+      await insertTokenMetric({ ts: dayWith, projectSecret: SECRET_A, type: 'input', tokens: 100 });
+      // A different project's row on the SAME day — must appear even though we
+      // query with SECRET_A (the orphaned-secret detection case).
+      await insertCostMetric({ ts: dayWith, projectSecret: SECRET_B, cost: 2.0 });
+      // `yesterday` deliberately has NO rows — it must be absent from the result.
+
+      const info = await getTelemetryDebugInfo(SECRET_A, 'UTC');
+      const todayStr = info.dailyMetricCounts[0]?.date ?? '';
+      const onToday = info.dailyMetricCounts.filter(r => r.date === todayStr);
+      // cost.usage(A) + token.usage(A) + cost.usage(B) = 3 distinct (date,metric,secret) rows.
+      expect(onToday).toHaveLength(3);
+      expect(onToday.some(r => r.projectSecret === SECRET_B && r.metricName === 'claude_code.cost.usage')).toBe(true);
+      expect(onToday.some(r => r.projectSecret === SECRET_A && r.metricName === 'claude_code.token.usage')).toBe(true);
+      // The empty day is simply not present — the chart fills it with 0 / "No cost".
+      const yStr = yesterday.toISOString().slice(0, 10);
+      if (yStr !== todayStr) expect(info.dailyMetricCounts.some(r => r.date === yStr)).toBe(false);
+    });
   });
 
   describe('getCostByModel', () => {

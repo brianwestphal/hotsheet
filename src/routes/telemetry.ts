@@ -239,6 +239,13 @@ telemetryRoutes.delete('/telemetry/project-data', async (c) => {
  */
 telemetryRoutes.get('/telemetry/_debug', async (c) => {
   const projectSecret = c.get('projectSecret');
-  const info = await getTelemetryDebugInfo(projectSecret === '' ? null : projectSecret);
-  return c.json(info);
+  // HS-8793 — pass the client tz so `dailyMetricCounts` buckets by the same
+  // local day the cost-over-time chart uses (the "missing Jun 3/4" diagnostic).
+  const timezone = c.req.query('tz') ?? 'UTC';
+  const info = await getTelemetryDebugInfo(projectSecret === '' ? null : projectSecret, timezone);
+  // HS-8793 — the currently-loaded projects, so a reader can tell whether a
+  // `projectSecret` in `dailyMetricCounts` is a live project or orphaned data
+  // left behind by a since-closed / re-registered project.
+  const loadedProjects = getAllProjects().map(p => ({ secret: p.secret, name: p.name }));
+  return c.json({ ...info, loadedProjects });
 });

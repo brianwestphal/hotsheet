@@ -40,10 +40,12 @@ export async function refreshAnnouncerVisibility(): Promise<void> {
   if (btn === null) return;
   try {
     const overview = await getAnnouncerOverview();
-    // HS-8790 — a project is narratable with an Anthropic key OR on-device Apple
-    // Foundation Models (machine-global). `overview.projects` is already filtered
-    // to enabled projects, so any of them + Apple availability is enough.
-    const usable = overview.projects.some(p => p.hasKey) || (overview.appleAvailable && overview.projects.length > 0);
+    // HS-8790/8792 — a project is narratable with an Anthropic key OR an on-device
+    // provider (Apple Foundation Models / a reachable local endpoint), both
+    // machine-global. `overview.projects` is already filtered to enabled projects,
+    // so any of them + on-device availability is enough.
+    const onDevice = overview.appleAvailable || overview.localAvailable;
+    const usable = overview.projects.some(p => p.hasKey) || (onDevice && overview.projects.length > 0);
     btn.style.display = usable ? '' : 'none';
   } catch {
     btn.style.display = 'none';
@@ -116,8 +118,9 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
 
     // Generate fresh work ONLY for a specific-project launch (per the design,
     // "All Projects" aggregates existing entries without new generation).
-    // HS-8790 — generation needs an Anthropic key OR on-device Apple availability.
-    const canGenerate = (projects.find(p => p.secret === context)?.hasKey ?? false) || overview.appleAvailable;
+    // HS-8790/8792 — generation needs an Anthropic key OR an on-device provider
+    // (Apple Foundation Models / a reachable local endpoint).
+    const canGenerate = (projects.find(p => p.secret === context)?.hasKey ?? false) || overview.appleAvailable || overview.localAvailable;
     if (context !== ALL_PROJECTS && canGenerate) {
       try {
         await generateAnnouncements({}, context);

@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ANNOUNCER_MODEL_IDS, ANNOUNCER_MODELS, announcerCost, APPLE_FOUNDATION_MODEL_ID,
-  DEFAULT_ANNOUNCER_MODEL, providerForModel,
+  DEFAULT_ANNOUNCER_MODEL, LOCAL_MODEL_ID, providerForModel,
 } from './models.js';
 
 describe('announcer models (HS-8764 / HS-8790)', () => {
@@ -23,16 +23,18 @@ describe('announcer models (HS-8764 / HS-8790)', () => {
     expect(ANNOUNCER_MODELS.map(m => m.id)).toEqual([...ANNOUNCER_MODEL_IDS]);
   });
 
-  // HS-8790 — provider routing.
+  // HS-8790 / HS-8792 — provider routing.
   it('routes each model id to its provider (unknown → anthropic)', () => {
     expect(providerForModel(APPLE_FOUNDATION_MODEL_ID)).toBe('apple');
+    expect(providerForModel(LOCAL_MODEL_ID)).toBe('local');
     expect(providerForModel('claude-haiku-4-5')).toBe('anthropic');
     expect(providerForModel('claude-opus-4-8')).toBe('anthropic');
     expect(providerForModel('some-future-claude')).toBe('anthropic');
   });
 
-  it('prices the on-device Apple model at $0', () => {
+  it('prices the on-device providers (Apple + local) at $0', () => {
     expect(announcerCost(APPLE_FOUNDATION_MODEL_ID, 1_000_000, 1_000_000)).toBe(0);
+    expect(announcerCost(LOCAL_MODEL_ID, 1_000_000, 1_000_000)).toBe(0);
   });
 
   // HS-8766 — cost math (per-1M-token pricing).

@@ -242,6 +242,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 78. `78-announcer.md` — A/V narration of project work (Phase 1a server generation backbone shipped; client + later phases pending)
 79. `79-api-keys.md` — global API-key registry (named Anthropic/Google-TTS keys; projects select by name)
 80. `80-announcer-live-mode.md` — Announcer live mode (server generator loop, coalescing, off-unless-listening lease; Phase 2a shipped)
+81. `81-announcer-local-provider.md` — Announcer local (Ollama / OpenAI-compatible) summarization provider — cross-platform on-device/free, model-detection dropdown
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source).
 

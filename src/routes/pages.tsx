@@ -811,6 +811,16 @@ pageRoutes.get('/', (c) => {
                   </select>
                   <span className="settings-hint" id="settings-announcer-status" role="status" aria-live="polite">Manage keys in the “API Keys” tab, then pick one here.</span>
                 </div>
+                {/* HS-8792 — local-model config: shown only when the "Local model"
+                    provider is selected. Endpoint URL + a dropdown of the models the
+                    endpoint reports. Both are Global Settings. */}
+                <div className="settings-field" style="margin-top:12px;display:none" id="settings-announcer-local-field">
+                  <label>Local model endpoint <span className="global-setting-badge">Global Setting</span></label>
+                  <input type="text" id="settings-announcer-local-endpoint" placeholder="http://localhost:11434/v1" autoComplete="off" spellCheck="false" style="max-width:340px;width:100%;box-sizing:border-box;font-size:13px" />
+                  <label style="margin-top:8px">Local model</label>
+                  <select id="settings-announcer-local-model" style="max-width:340px"></select>
+                  <span className="settings-hint" id="settings-announcer-local-status">An OpenAI-compatible endpoint (Ollama, LM Studio, llama.cpp, vLLM). Runs on-device — free + private, no key. Start your local server, then pick a model.</span>
+                </div>
                 {/* HS-8781 — verbally announce permission checks. Global, default on;
                     TTS-only (no API key/cost), works even without an active reel. */}
                 <div className="settings-field settings-field-checkbox" style="margin-top:12px">

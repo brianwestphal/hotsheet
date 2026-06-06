@@ -9,7 +9,16 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
 import { runAppleFoundationSummarize } from './appleFoundation.js';
+import { DEFAULT_LOCAL_ENDPOINT, runLocalSummarize } from './localProvider.js';
 import { DEFAULT_ANNOUNCER_MODEL, providerForModel } from './models.js';
+
+/**
+ * HS-8792 — extra instruction appended to the system prompt for the **local**
+ * provider only. Anthropic enforces the output shape via `output_config` and
+ * Apple via guided generation; a generic local model has neither, so we must
+ * spell out the exact JSON contract `parseEntriesJson` expects.
+ */
+const LOCAL_JSON_INSTRUCTION = `\n\nOUTPUT FORMAT: respond with ONLY a single JSON object and nothing else (no prose, no code fence): {"entries":[{"title":"...","script":"...","emphasis":["..."]}]}. "emphasis" is optional. If there is nothing worth narrating, respond with {"entries":[]}.`;
 
 /**
  * Default model when the caller passes none. HS-8764 — defaults to the
@@ -105,25 +114,47 @@ export function buildSystemPrompt(opts: { compression?: Compression; dismissedTo
 /**
  * Summarize the assembled `material` into narrated entries. Returns an empty
  * array when there's nothing meaningful (or on a malformed response). Routes by
- * the model's **provider** (HS-8790): `anthropic` calls the Messages API with
- * the caller's key; `apple` shells out to the on-device Swift helper (no key, no
- * cost — `usage` is null). Live mode passes a `compression` altitude (HS-8768)
- * and the per-project `dismissedTopics` omit list (HS-8769).
+ * the model's **provider**: `anthropic` (HS-8790) calls the Messages API with
+ * the caller's key; `apple` shells out to the on-device Swift helper; `local`
+ * (HS-8792) POSTs to a user-run OpenAI-compatible endpoint. The two on-device
+ * providers need no key and record no cost (`usage` is null). Live mode passes a
+ * `compression` altitude (HS-8768) and the per-project `dismissedTopics` omit
+ * list (HS-8769). For `local`, the caller resolves `localEndpoint`/`localModel`
+ * from the global config.
  */
 export async function summarizeWork(
   material: string,
-  opts: { apiKey?: string | null; model?: string; compression?: Compression; dismissedTopics?: readonly string[] },
+  opts: {
+    apiKey?: string | null;
+    model?: string;
+    compression?: Compression;
+    dismissedTopics?: readonly string[];
+    localEndpoint?: string;
+    localModel?: string;
+  },
 ): Promise<SummarizeResult> {
   if (material.trim() === '') return { entries: [], usage: null };
   const model = opts.model ?? ANNOUNCER_MODEL;
   const system = buildSystemPrompt(opts);
+  const provider = providerForModel(model);
 
-  if (providerForModel(model) === 'apple') {
+  if (provider === 'apple') {
     // The on-device helper enforces the {entries:[…]} shape via FoundationModels
     // *guided generation* (the Anthropic `output_config` equivalent), so we pass
     // the same system prompt and just validate the JSON it returns. On-device =
     // free, so no usage/cost is recorded.
     const out = await runAppleFoundationSummarize(system, material);
+    return { entries: parseEntriesJson(out), usage: null };
+  }
+
+  if (provider === 'local') {
+    // HS-8792 — a generic local model has no output-schema enforcement, so we
+    // append the explicit JSON contract to the prompt and lean on the tolerant
+    // `parseEntriesJson`. On-device = free → no usage/cost.
+    const out = await runLocalSummarize(system + LOCAL_JSON_INSTRUCTION, material, {
+      endpoint: opts.localEndpoint?.trim() !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT,
+      model: opts.localModel ?? '',
+    });
     return { entries: parseEntriesJson(out), usage: null };
   }
 

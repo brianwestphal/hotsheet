@@ -604,6 +604,14 @@ The Node/UI side is unit-tested (`models.test`, `summarize.test`, `appleFoundati
 - [ ] With Apple selected and **no Anthropic key set**, enable the Announcer → the Listen button still appears; click Listen → a reel is generated **on-device** (no Anthropic spend recorded on the §70/§71 dashboards). Verify the narration is coherent.
 - [ ] Live mode with Apple selected: enabling Live narrates work as it happens **without** an Anthropic key (server runs the helper).
 
+#### Local (Ollama / OpenAI-compatible) provider (HS-8792, §81 — any OS)
+The Node/UI side is unit-tested (`localProvider.test`, `summarize.test`, `models.test`); this verifies the end-to-end flow against a real local server. **Prereq:** run a local OpenAI-compatible server with ≥1 model (e.g. `ollama serve` + `ollama pull llama3.1`). For the `npm run dev` browser path the server reaches `http://localhost:11434/v1` directly.
+- [ ] With the local server running, Settings → Announcer shows a **"Local model — Ollama / OpenAI-compatible"** option in the model dropdown; selecting it reveals the **endpoint URL** field (prefilled placeholder `http://localhost:11434/v1`) and a **model dropdown populated with your installed models**, and **hides** the Anthropic key field.
+- [ ] Pick a local model → with **no Anthropic key set**, enable the Announcer → the Listen button appears; click Listen → a reel is generated **on-device** (no Anthropic spend on the §70/§71 dashboards) and reads coherently.
+- [ ] Stop the local server → after the ~10 s probe TTL, the "Local model" option disappears (and a stored local selection falls back to Haiku). Restart it → the option returns.
+- [ ] Change the endpoint URL to a wrong port → the model dropdown empties / shows "No models found"; fix it → models repopulate.
+- [ ] Live mode with a local model selected narrates work **without** an Anthropic key (server POSTs to the local endpoint).
+
 ### Generate + transcript PIP
 - [ ] With some recent completed tickets / notes, click Listen. The button shows a busy state, then a corner-docked PIP appears (bottom-right) with the first entry's title + spoken script and a "1 / N" position. The transcript reads as a coherent spoken summary of recent work (not raw notes).
 - [ ] Click Listen with no new work since last listen → a "Nothing new to announce yet" toast; no PIP.

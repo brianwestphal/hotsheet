@@ -16,7 +16,9 @@ import { notifyMutation } from '../routes/notify.js';
 import { isAppleFoundationAvailable } from './appleFoundation.js';
 import { collectWorkSignals } from './collectSignals.js';
 import { getDismissedTopics } from './dismissedTopics.js';
-import { APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL } from './models.js';
+import { resolveAnnouncerKey } from './key.js';
+import { isLocalProviderAvailable } from './localProvider.js';
+import { APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, providerForModel } from './models.js';
 import { type Compression, summarizeWork } from './summarize.js';
 
 /** Above this many unplayed (active) entries the live generator compresses
@@ -46,6 +48,30 @@ export async function resolveAnnouncerModel(): Promise<string> {
   const chosen = readGlobalConfig().announcerModel;
   if (chosen !== undefined) return chosen;
   return (await isAppleFoundationAvailable()) ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL;
+}
+
+/** Whether a model's provider is ready to summarize, and the credential it needs.
+ *  Single source of truth for the gating every generate path shares (HS-8790 +
+ *  HS-8792): `anthropic` needs the user's key; `apple` needs the on-device helper
+ *  available; `local` needs the configured endpoint reachable. `apiKey` is set
+ *  only for the Anthropic path; `error` carries a user-facing reason when not ready. */
+export interface ProviderReadiness { ready: boolean; apiKey: string | null; error: string | null }
+export async function prepareSummarizationProvider(model: string): Promise<ProviderReadiness> {
+  const provider = providerForModel(model);
+  if (provider === 'apple') {
+    return (await isAppleFoundationAvailable())
+      ? { ready: true, apiKey: null, error: null }
+      : { ready: false, apiKey: null, error: 'Apple Foundation Models are not available on this machine' };
+  }
+  if (provider === 'local') {
+    return (await isLocalProviderAvailable())
+      ? { ready: true, apiKey: null, error: null }
+      : { ready: false, apiKey: null, error: 'No local model endpoint is reachable' };
+  }
+  const apiKey = await resolveAnnouncerKey();
+  return apiKey === null
+    ? { ready: false, apiKey: null, error: 'No Anthropic API key configured' }
+    : { ready: true, apiKey, error: null };
 }
 
 /** Latest of (last-listened cursor, last-generated covers_to) — so a re-generate
@@ -93,11 +119,16 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
   // HS-8768 — compress harder when the unplayed backlog is large; HS-8769 —
   // omit topics the listener has marked uninteresting.
   const [backlog, dismissedTopics] = await Promise.all([getActiveAnnouncements(), getDismissedTopics()]);
+  // HS-8792 — the local provider reads its endpoint + model from the global
+  // config (ignored by the Anthropic/Apple paths).
+  const cfg = readGlobalConfig();
   const result = await summarizeWork(signals.material, {
     apiKey: args.apiKey,
     model: args.model,
     compression: backlogCompressionLevel(backlog.length),
     dismissedTopics,
+    localEndpoint: cfg.announcerLocalEndpoint,
+    localModel: cfg.announcerLocalModel,
   });
 
   if (result.usage !== null) {

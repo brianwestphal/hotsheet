@@ -18,12 +18,9 @@
  */
 import { runWithDataDir } from '../db/connection.js';
 import { addPollWaiter } from '../routes/notify.js';
-import { isAppleFoundationAvailable } from './appleFoundation.js';
 import { tryConsumeCall } from './callBudget.js';
 import { CoalescingTrigger } from './coalescingTrigger.js';
-import { generateAnnouncementsOnce, isAnnouncerEnabled, resolveAnnouncerModel } from './generate.js';
-import { resolveAnnouncerKey } from './key.js';
-import { providerForModel } from './models.js';
+import { generateAnnouncementsOnce, isAnnouncerEnabled, prepareSummarizationProvider, resolveAnnouncerModel } from './generate.js';
 
 /** How long a single live-listen registration lasts without renewal. */
 export const LIVE_LEASE_MS = 90_000;
@@ -100,16 +97,12 @@ async function runGenerationPass(): Promise<void> {
     try {
       await runWithDataDir(dataDir, async () => {
         if (!(await isAnnouncerEnabled())) return;
-        // HS-8790 — pick the model (Apple-on-device default when available), then
-        // gate: Anthropic needs the user's key; Apple needs the on-device model.
+        // HS-8790/8792 — pick the model (on-device default when available), then
+        // gate via the shared provider-readiness check (Anthropic key / Apple
+        // helper / local endpoint). Not ready → skip this project this pass.
         const model = await resolveAnnouncerModel();
-        let apiKey: string | null = null;
-        if (providerForModel(model) === 'apple') {
-          if (!(await isAppleFoundationAvailable())) return;
-        } else {
-          apiKey = await resolveAnnouncerKey();
-          if (apiKey === null) return;
-        }
+        const { ready, apiKey } = await prepareSummarizationProvider(model);
+        if (!ready) return;
         await generateAnnouncementsOnce({
           dataDir, projectSecret: secret, apiKey, model,
           canSummarize: () => tryConsumeCall(secret, Date.now()), // HS-8770 budget

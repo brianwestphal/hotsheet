@@ -44,6 +44,9 @@ export const AnnouncerOverviewSchema = z.object({
   // HS-8790 — machine-global: on-device Apple Foundation Models usable here, so a
   // project can narrate (and the Listen button can show) without an Anthropic key.
   appleAvailable: z.boolean().default(false),
+  // HS-8792 — a reachable local OpenAI-compatible endpoint (same effect: narratable
+  // without an Anthropic key). `.default(false)` keeps older servers valid.
+  localAvailable: z.boolean().default(false),
 });
 export type AnnouncerOverview = z.infer<typeof AnnouncerOverviewSchema>;
 
@@ -57,6 +60,10 @@ export const AnnouncerStatusSchema = z.object({
   // HS-8790 — on-device Apple Foundation Models usable on this machine.
   // `.default(false)` keeps older servers / tests that omit it valid.
   appleAvailable: z.boolean().default(false),
+  // HS-8792 — a reachable local OpenAI-compatible endpoint, plus its installed
+  // models (for the settings dropdown). Defaults keep older servers/tests valid.
+  localAvailable: z.boolean().default(false),
+  localModels: z.array(z.string()).default([]),
 });
 export type AnnouncerStatus = z.infer<typeof AnnouncerStatusSchema>;
 

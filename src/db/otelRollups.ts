@@ -358,9 +358,22 @@ export interface TelemetryDebugInfo {
    *  whether `cost` / `cost_usd` / `tokens` / `input_tokens` exist (the rollup's
    *  cost/token source). Empty list ⇒ per-ticket cost can only ever be $0. */
   apiRequestAttrKeys: string[];
+  /** HS-8793 — per-local-day raw `otel_metrics` row counts, grouped by
+   *  `(date, metricName, projectSecret)`, over the last `DEBUG_DAILY_WINDOW_DAYS`
+   *  days. Deliberately **GLOBAL** (every project, ignoring the `projectSecret`
+   *  arg) and unfiltered (no cumulative-monotonic exclusion) so a "missing data
+   *  for day X" report can tell apart: (a) genuinely no rows that day → an
+   *  ingestion gap (server down / telemetry off / not exported); (b) rows exist
+   *  but under a `projectSecret` that isn't a currently-loaded project →
+   *  orphaned after a project re-register; (c) only `token.usage` and no
+   *  `cost.usage` → cost wasn't emitted. Newest day first. */
+  dailyMetricCounts: { date: string; metricName: string; projectSecret: string; points: number }[];
 }
 
-export async function getTelemetryDebugInfo(projectSecret: string | null): Promise<TelemetryDebugInfo> {
+/** HS-8793 — how many days back the `dailyMetricCounts` diagnostic looks. */
+export const DEBUG_DAILY_WINDOW_DAYS = 14;
+
+export async function getTelemetryDebugInfo(projectSecret: string | null, timezone = 'UTC'): Promise<TelemetryDebugInfo> {
   const db = await getTelemetryDb();
   const ev = buildProjectAndWindowClauses(projectSecret, null, 'ts', 0);
   const events = await db.query<{ event_name: string; c: bigint | number; with_pid: bigint | number }>(
@@ -417,6 +430,21 @@ export async function getTelemetryDebugInfo(projectSecret: string | null): Promi
      ORDER BY k`,
     ev.params,
   );
+  // HS-8793 — GLOBAL per-day metric-row counts (every project, no scope, no
+  // cumulative-monotonic exclusion) over the recent window. `ts AT TIME ZONE $1`
+  // buckets by the same local-tz day the cost chart uses, so the diagnostic and
+  // the chart agree on which calendar day a row belongs to.
+  const daily = await db.query<{ date: string; metric_name: string; project_secret: string; points: bigint | number }>(
+    `SELECT to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date,
+            metric_name,
+            project_secret,
+            COUNT(*) AS points
+     FROM otel_metrics
+     WHERE ts >= NOW() - ($2 || ' days')::interval
+     GROUP BY 1, 2, 3
+     ORDER BY 1 DESC, 2 ASC, 3 ASC`,
+    [timezone, String(DEBUG_DAILY_WINDOW_DAYS)],
+  );
   return {
     eventNames: events.rows.map(r => ({ eventName: r.event_name, count: Number(r.c), withPromptId: Number(r.with_pid) })),
     tokenTypes: tokenTypes.rows.map(r => ({ type: r.typ ?? '(none)', points: Number(r.points), tokens: Number(r.toks ?? 0) })),
@@ -426,6 +454,9 @@ export async function getTelemetryDebugInfo(projectSecret: string | null): Promi
     markerEventsByName: markerByName.rows.map(r => ({ eventName: r.event_name, count: Number(r.c) })),
     distinctTicketMarkers: markers.rows.map(r => r.ticket).filter((t): t is string => t !== null),
     apiRequestAttrKeys: apiKeys.rows.map(r => r.k),
+    dailyMetricCounts: daily.rows.map(r => ({
+      date: r.date, metricName: r.metric_name, projectSecret: r.project_secret, points: Number(r.points),
+    })),
   };
 }
 

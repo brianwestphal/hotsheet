@@ -22,12 +22,20 @@ vi.mock('./appleFoundation.js', () => ({
   runAppleFoundationSummarize: (system: string, material: string) => appleRunMock(system, material),
 }));
 
+// HS-8792 — the local (OpenAI-compatible) provider is an HTTP call; mock it so
+// the provider routing is testable without a running endpoint.
+const localRunMock = vi.fn<(system: string, material: string, opts: { endpoint: string; model: string }) => Promise<string>>();
+vi.mock('./localProvider.js', () => ({
+  DEFAULT_LOCAL_ENDPOINT: 'http://localhost:11434/v1',
+  runLocalSummarize: (system: string, material: string, opts: { endpoint: string; model: string }) => localRunMock(system, material, opts),
+}));
+
 // HS-8766 — fake responses carry a `usage` block (the SDK always does).
 function textResponse(obj: unknown, usage = { input_tokens: 100, output_tokens: 40 }): FakeMessage {
   return { content: [{ type: 'text', text: JSON.stringify(obj) }], usage };
 }
 
-beforeEach(() => { ctorMock.mockReset(); createMock.mockReset(); appleRunMock.mockReset(); });
+beforeEach(() => { ctorMock.mockReset(); createMock.mockReset(); appleRunMock.mockReset(); localRunMock.mockReset(); });
 
 describe('summarizeWork (HS-8745)', () => {
   it('passes the API key + default model + structured-output config, returns parsed entries', async () => {
@@ -63,6 +71,29 @@ describe('summarizeWork (HS-8745)', () => {
   it('throws for an Anthropic model when no key is supplied', async () => {
     await expect(summarizeWork('real material', { model: 'claude-haiku-4-5' })).rejects.toThrow(/API key/);
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  // HS-8792 — local-provider routing.
+  it('routes a local model to the OpenAI-compatible endpoint (no Anthropic call, no key, no usage)', async () => {
+    localRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'On device', script: 'Summarized locally.' }] }));
+    const res = await summarizeWork('real material', { model: 'local', localEndpoint: 'http://localhost:1234/v1', localModel: 'llama3.1' });
+
+    expect(localRunMock).toHaveBeenCalledTimes(1);
+    expect(createMock).not.toHaveBeenCalled();   // no cloud call
+    expect(ctorMock).not.toHaveBeenCalled();      // no Anthropic client built
+    // The local path passes through the resolved endpoint + model and appends the
+    // JSON-format instruction to the system prompt.
+    const [system, , opts] = localRunMock.mock.calls[0];
+    expect(opts).toEqual({ endpoint: 'http://localhost:1234/v1', model: 'llama3.1' });
+    expect(system).toContain('OUTPUT FORMAT');
+    expect(res.entries).toEqual([{ title: 'On device', script: 'Summarized locally.' }]);
+    expect(res.usage).toBeNull();                 // on-device = free
+  });
+
+  it('falls back to the default local endpoint when none is configured', async () => {
+    localRunMock.mockResolvedValue('{"entries":[]}');
+    await summarizeWork('real material', { model: 'local', localModel: 'llama3.1' });
+    expect(localRunMock.mock.calls[0][2]).toEqual({ endpoint: 'http://localhost:11434/v1', model: 'llama3.1' });
   });
 
   it('malformed JSON → empty entries but usage still captured (HS-8766)', async () => {

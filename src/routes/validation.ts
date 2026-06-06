@@ -244,6 +244,11 @@ export const GlobalConfigSchema = z.object({
   // HS-8764 — Announcer summarization model. Global; defaults to the cheapest
   // (Haiku) when unset. See `src/announcer/models.ts`.
   announcerModel: z.enum(ANNOUNCER_MODEL_IDS).optional(),
+  // HS-8792 — local-provider config (used only when `announcerModel === 'local'`).
+  // `Endpoint` is the OpenAI-compatible base URL (default `http://localhost:11434/v1`);
+  // `Model` is the concrete local model name (e.g. `llama3.1`). Both global.
+  announcerLocalEndpoint: z.string().optional(),
+  announcerLocalModel: z.string().optional(),
   // HS-8781 — verbally announce permission checks (TTS only, no API cost).
   // Global; default ON, so `undefined`/unset is treated as enabled by the
   // client (`announcerSpeakPermissions !== false`).
