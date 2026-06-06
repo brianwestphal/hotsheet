@@ -128,10 +128,16 @@ export async function collectWorkSignals(since: string | null): Promise<Collecte
     }
   }
 
-  // Command-log channel events (trigger / permission / done). DESC from the
-  // query → reverse to chronological.
+  // Command-log channel events. DESC from the query → reverse to chronological.
+  // HS-8795 — permission checks (`permission_request`, needed AND granted) and
+  // the "Claude finished" `done` event are channel chatter, not project work, so
+  // they're excluded from the narrated material. The live spoken permission
+  // announcement (HS-8781) already covers a permission the moment it's needed;
+  // re-narrating long-resolved grants / "Claude finished" in the after-the-fact
+  // reel is noise. Triggers (the worklist message that kicked off the work) stay.
   const logEntries = (await getLogEntries(since === null ? { limit: 500 } : { limit: 500, since })).reverse();
   for (const e of logEntries) {
+    if (e.event_type === 'permission_request' || e.event_type === 'done') continue;
     lines.push({ at: new Date(e.created_at).toISOString(), text: `[activity] ${e.summary}` });
   }
 

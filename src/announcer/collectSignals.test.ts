@@ -35,8 +35,11 @@ async function seed(): Promise<void> {
     `UPDATE tickets SET notes = $1, updated_at = $2, completed_at = $3, status = 'completed' WHERE id = $4`,
     [notes, NEW, NEW, t.id],
   );
-  await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('done','incoming','old activity','', $1)`, [OLD]);
-  await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('done','incoming','new activity','', $1)`, [NEW]);
+  // `trigger` events ARE narrated (the worklist message that kicked off work).
+  // HS-8795 — `done` / `permission_request` events are filtered; see the
+  // dedicated test below.
+  await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('trigger','outgoing','old activity','', $1)`, [OLD]);
+  await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('trigger','outgoing','new activity','', $1)`, [NEW]);
 }
 
 describe('collectWorkSignals (HS-8745)', () => {
@@ -64,6 +67,21 @@ describe('collectWorkSignals (HS-8745)', () => {
     expect(material).toContain('new activity');
     // both notes + completion + both activities = 5.
     expect(count).toBe(5);
+  });
+
+  // HS-8795 — channel chatter (permission checks + "Claude finished") is not
+  // project work, so it's excluded from the narrated material.
+  it('excludes permission-check and "Claude finished" activity events', async () => {
+    const db = await getDb();
+    await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('trigger','outgoing','Up Next: do the thing','', $1)`, [NEW]);
+    await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('permission_request','incoming','Permission: Bash — allowed','', $1)`, [NEW]);
+    await db.query(`INSERT INTO command_log (event_type, direction, summary, detail, created_at) VALUES ('done','incoming','Claude finished','', $1)`, [NEW]);
+
+    const { material, count } = await collectWorkSignals(CURSOR);
+    expect(material).toContain('Up Next: do the thing'); // trigger kept
+    expect(material).not.toContain('Permission: Bash');   // permission filtered
+    expect(material).not.toContain('Claude finished');     // done filtered
+    expect(count).toBe(1);
   });
 
   it('returns empty material when nothing matches the cursor', async () => {

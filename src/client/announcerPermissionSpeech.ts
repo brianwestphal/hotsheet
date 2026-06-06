@@ -30,18 +30,26 @@ import { createSpeechEngine, type SpeechEngine } from './tts.js';
 const MAX_SPEECH_LEN = 160;
 
 /**
- * The text spoken for a permission check (HS-8781). "Permission needed: " +
- * the popup's human description, trimmed at a word boundary to a short summary
- * when it's long. Falls back to a tool-name sentence when there's no
- * description. Pure + exported for unit testing.
+ * The text spoken for a permission check (HS-8781). "Permission needed" + the
+ * popup's human description, trimmed at a word boundary to a short summary when
+ * it's long. Falls back to a tool-name sentence when there's no description.
+ *
+ * HS-8794 — when the owning project's name is known, it's named in the prefix
+ * ("Permission needed in <project>: …") so that, listening away from the screen
+ * with several projects registered, you hear *which* project Claude is asking
+ * about. An empty/missing name falls back to the un-prefixed phrasing.
+ *
+ * Pure + exported for unit testing.
  */
-export function permissionSpeechText(perm: PermissionData, maxLen = MAX_SPEECH_LEN): string {
+export function permissionSpeechText(perm: PermissionData, projectName = '', maxLen = MAX_SPEECH_LEN): string {
   const desc = perm.description.trim();
   const base = desc === '' ? `Claude needs permission to use ${perm.tool_name}.` : desc;
   const summarized = base.length > maxLen
     ? base.slice(0, maxLen - 1).replace(/\s+\S*$/, '').trimEnd() + '…'
     : base;
-  return `Permission needed: ${summarized}`;
+  const name = projectName.trim();
+  const prefix = name === '' ? 'Permission needed' : `Permission needed in ${name}`;
+  return `${prefix}: ${summarized}`;
 }
 
 interface PlayerLike {
@@ -108,12 +116,14 @@ function scheduleDrain(): void {
 /**
  * Queue a spoken announcement of a permission check. Gated on the global
  * preference; deduped per `request_id` (the popup can re-mount). Fire-and-forget.
+ * `projectName` (HS-8794) is spoken so you hear which project is asking; pass ''
+ * when it can't be resolved.
  */
-export function announcePermission(perm: PermissionData): void {
+export function announcePermission(perm: PermissionData, projectName = ''): void {
   if (!isEnabled()) return;
   if (announced.has(perm.request_id)) return;
   announced.add(perm.request_id);
-  queue.push({ text: permissionSpeechText(perm), isStale: makeStalePredicate(perm.request_id) });
+  queue.push({ text: permissionSpeechText(perm, projectName), isStale: makeStalePredicate(perm.request_id) });
   scheduleDrain();
 }
 

@@ -45,9 +45,19 @@ describe('permissionSpeechText', () => {
     expect(permissionSpeechText(perm({ description: '' }))).toBe('Permission needed: Claude needs permission to use Bash.');
   });
 
+  // HS-8794 — name the owning project so listeners away from the screen hear
+  // which project is asking.
+  it('names the project in the prefix when one is given', () => {
+    expect(permissionSpeechText(perm(), 'Hot Sheet')).toBe('Permission needed in Hot Sheet: Allow Claude to run npm test');
+  });
+
+  it('falls back to the un-prefixed phrasing for an empty / whitespace project name', () => {
+    expect(permissionSpeechText(perm(), '   ')).toBe('Permission needed: Allow Claude to run npm test');
+  });
+
   it('summarizes (word-boundary trim + ellipsis) when the description is long', () => {
     const long = 'Allow Claude to run a very long command that goes on and on past the spoken length budget for sure';
-    const out = permissionSpeechText(perm({ description: long }), 40);
+    const out = permissionSpeechText(perm({ description: long }), '', 40);
     expect(out.startsWith('Permission needed: ')).toBe(true);
     expect(out.endsWith('…')).toBe(true);
     expect(out).not.toContain('budget'); // tail was trimmed
@@ -69,6 +79,14 @@ describe('announcePermission', () => {
     announcePermission(perm());
     await flush();
     expect(engine.spoken).toEqual(['Permission needed: Allow Claude to run npm test']);
+  });
+
+  it('speaks the project name when one is passed (HS-8794)', async () => {
+    const engine = new FakeEngine();
+    _configureAnnouncerPermissionSpeechForTesting({ engine, isEnabled: () => true, getPlayer: () => null });
+    announcePermission(perm(), 'Glassbox');
+    await flush();
+    expect(engine.spoken).toEqual(['Permission needed in Glassbox: Allow Claude to run npm test']);
   });
 
   it('dedupes by request_id', async () => {

@@ -11720,6 +11720,9 @@ label.detail-details-label {
 }
 
 .telemetry-cost-over-time-tooltip-empty {
+  // HS-8793 — full-width muted line (no swatch grid), so "No cost" renders in
+  // full instead of being truncated to "N…" inside the row's 10px swatch track.
+  padding: 1px 0;
   color: var(--text-muted);
   font-style: italic;
 }

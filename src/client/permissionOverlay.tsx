@@ -78,7 +78,8 @@ import {
   syncMinimizedDots,
 } from './permissionPopupStateMachine.js';
 import { formatEditDiff, formatInputPreview } from './permissionPreview.js';
-import { state } from './state.js';
+import { projectsByIdSignal } from './projectsStore.js';
+import { type ProjectInfo, state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
 import { getProjectDefault, getSessionOverride, resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout, peekEntryDims } from './terminalCheckout.js';
@@ -117,8 +118,12 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // HS-8781 — verbally announce the permission check (when the global setting is
   // on) so you hear what Claude is asking for while away. Deduped per
   // request_id; coordinates with any active narration so it doesn't talk over a
-  // segment. Fire-and-forget.
-  announcePermission(perm);
+  // segment. Fire-and-forget. HS-8794 — name the owning project so you hear
+  // which one is asking; `''` when the secret isn't in the current list. The
+  // Record index is typed non-nullable (no `noUncheckedIndexedAccess`); widen to
+  // `| undefined` so an unknown secret safely falls back instead of `undefined.name`.
+  const owningProject = projectsByIdSignal.value[secret] as ProjectInfo | undefined;
+  announcePermission(perm, owningProject?.name ?? '');
   // A permission request is proof Claude is actively working — extend busy timeout.
   if (permissionState.channelBusyTimeoutModule) {
     clearTimeout(permissionState.channelBusyTimeoutModule);

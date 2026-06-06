@@ -624,11 +624,15 @@ cursor (`advanceAnnouncerCursor`) when the PIP closes.
 
 **Spoken permission checks (HS-8781).** A global, **default-on** Announcer-tab
 toggle, `announcerSpeakPermissions` (in `~/.hotsheet/config.json`), reads each
-new permission popup aloud — "Permission needed: <description>" — so you hear
-what Claude is asking for while you're away. It's **TTS-only** (no Anthropic key
-or cost; uses the same `SpeechEngine` voice) and works **independent of an active
-reel** — even with no PIP open. Wiring: `permissionOverlay.tsx::showPermissionPopupBody`
-(the single mount point for a new permission) calls `announcePermission(perm)`
+new permission popup aloud — "Permission needed in <project>: <description>" — so
+you hear what Claude is asking for while you're away. **HS-8794 —** the owning
+project is named in the spoken prefix (resolved from the popup's secret via
+`projectsByIdSignal`), so with several projects registered you hear *which* one is
+asking; an unresolvable name falls back to the un-prefixed "Permission needed:".
+It's **TTS-only** (no Anthropic key or cost; uses the same `SpeechEngine` voice)
+and works **independent of an active reel** — even with no PIP open. Wiring:
+`permissionOverlay.tsx::showPermissionPopupBody` (the single mount point for a new
+permission) calls `announcePermission(perm, projectName)`
 (`announcerPermissionSpeech.ts`); the cached pref is `announcerPermissionPref.ts`.
 **Arbitration:** it never interrupts a narration segment already speaking —
 when the PIP is mid-segment it waits for the segment boundary
@@ -637,6 +641,15 @@ pre-empting upcoming narration; if a permission is already resolved
 (allowed/denied/dismissed — checked against `respondedRequestIds` /
 `dismissedRequestIds`) by the time its turn arrives, it's skipped. Deduped per
 `request_id`; long descriptions are word-boundary-trimmed to a short summary.
+
+**Channel chatter excluded from the reel (HS-8795).** The after-the-fact
+narration is about *project work*, not channel bookkeeping, so `collectWorkSignals`
+(`src/announcer/collectSignals.ts`) drops command-log events of type
+`permission_request` (permission needed AND granted) and `done` ("Claude
+finished") from the assembled material — the live spoken announcement above
+already covers a permission the moment it's needed, and re-narrating long-resolved
+grants or "Claude finished" is noise. `trigger` events (the worklist message that
+kicked off the work) are still narrated.
 
 **Multi-provider summarization + Apple Foundation Models (HS-8790).** The model
 registry (`src/announcer/models.ts`) is now **provider-tagged** (`providerForModel`)

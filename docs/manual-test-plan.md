@@ -625,6 +625,12 @@ The Node/UI side is unit-tested (`models.test`, `summarize.test`, `appleFoundati
 - [ ] Pause/Skip/Next/Prev/Close all interrupt the current utterance promptly (the `tts_stop` command kills the `say` child). On a non-resumable OS voice, resume re-speaks the current entry from the start (expected).
 - [ ] No orphaned `say` processes remain after closing the PIP or quitting the app.
 
+### Spoken permission checks (HS-8781 / HS-8794)
+*(The text mapping + arbitration are unit-tested; actual speech output is manual.)*
+- [ ] With the Announcer-tab "Speak permission checks" toggle on (default), trigger a permission popup → the OS/browser voice reads "Permission needed in &lt;project&gt;: &lt;description&gt;" — and it **names the project** the popup belongs to (HS-8794). Verify with **two+ registered projects** that a permission on a *non-active* project still speaks that project's name.
+- [ ] Turn the toggle off → no permission is spoken.
+- [ ] HS-8795: the after-the-fact **reel does NOT narrate** "permission granted/needed" or "Claude finished" — listen to a reel covering a session that included permission prompts + a channel done; the narration covers ticket/notes work only (channel permission + done chatter is excluded).
+
 ---
 
 ## Automated Coverage Summary

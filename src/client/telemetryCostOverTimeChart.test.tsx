@@ -219,4 +219,29 @@ describe('renderCostOverTimeChart (HS-8506 / HS-8518)', () => {
     expect(el.querySelector('.telemetry-cost-over-time-hover-capture')).toBeNull();
     expect(el.querySelector('.telemetry-cost-over-time-tooltip')).toBeNull();
   });
+
+  // HS-8793 — hovering a day with no cost (e.g. the reported Jun 3/4 gap) must
+  // show the full "No cost" line. The regression: the empty row reused the
+  // `tooltip-row` swatch grid, so the lone label was crushed into the 10px
+  // swatch track and ellipsis-truncated to "N…" (the mysterious "N." the user
+  // saw). clientX=0 clamps to the first column, so dates[0] (cost 0) is hit.
+  it('renders the full "No cost" empty state — not a crushed "N." — on a zero-cost day (HS-8793)', () => {
+    const points = [
+      pt('2026-06-03', 'secretA', 'sonnet', 0),   // dates[0] — the no-cost day
+      pt('2026-06-04', 'secretA', 'sonnet', 2.5),
+    ];
+    const el = renderCostOverTimeChart(points);
+    const svg = el.querySelector('svg');
+    if (svg === null) throw new Error('expected an SVG');
+    // happy-dom returns a 0×0 rect → `update` early-returns; stub a real size.
+    svg.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    const overlay = el.querySelector('.telemetry-cost-over-time-hover-capture');
+    if (overlay === null) throw new Error('expected a hover-capture overlay');
+    overlay.dispatchEvent(new MouseEvent('mousemove', { clientX: 0, clientY: 0, bubbles: true }));
+
+    const empty = el.querySelector('.telemetry-cost-over-time-tooltip-empty');
+    expect(empty?.textContent).toBe('No cost');
+    // Must NOT reuse the 3-column swatch grid that truncated the text.
+    expect(empty?.classList.contains('telemetry-cost-over-time-tooltip-row')).toBe(false);
+  });
 });

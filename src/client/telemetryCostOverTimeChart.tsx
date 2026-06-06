@@ -829,10 +829,13 @@ function attachCostOverTimeHover(args: {
         </div>
       ));
     } else if (perProject.length === 0) {
+      // HS-8793 — a full-width line, NOT a `tooltip-row`: that row is a
+      // `grid-template-columns: 10px 1fr auto` (swatch / label / cost), so a
+      // lone label landed in the 10px swatch track and the label's
+      // `overflow:hidden; text-overflow:ellipsis` crushed "No cost" down to
+      // "N…" — the mysterious "N." the user saw on no-data days.
       rows.push(toElement(
-        <div className="telemetry-cost-over-time-tooltip-row telemetry-cost-over-time-tooltip-empty">
-          <span className="telemetry-cost-over-time-tooltip-label">No cost</span>
-        </div>
+        <div className="telemetry-cost-over-time-tooltip-empty">No cost</div>
       ));
     }
     tooltip.replaceChildren(...rows);
