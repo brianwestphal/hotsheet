@@ -2915,10 +2915,9 @@ body.cross-project-stats-active {
 // --- Batch Toolbar ---
 
 // HS-8796 — host for the "New ticket…" draft row, ABOVE the batch toolbar.
-// The draft row (.ticket-row) carries its own layout; a bottom border separates
-// it from the toolbar below when present (empty host shows nothing).
-.new-ticket-host:not(:empty) {
-  border-bottom: 1px solid var(--border);
+// The draft row (.ticket-row) carries its own layout. HS-8735 — no border here:
+// the toolbar below has its own background + border, which separates the two.
+.new-ticket-host {
   flex-shrink: 0;
 }
 
@@ -3396,11 +3395,18 @@ body.cross-project-stats-active {
 // --- Draft Row (top of list) ---
 
 .draft-row {
-  border-bottom: 1px dashed var(--border) !important;
-  background: var(--bg-secondary);
+  // HS-8735 — no gray fill + no dashed bottom border on the new-ticket line;
+  // it reads as a plain input row (the toolbar below provides the separation).
+  background: transparent;
 
   &:hover {
-    background: var(--bg-secondary);
+    background: transparent;
+  }
+
+  // HS-8734 — drop the empty checkbox-spacer so the decorative circle + type
+  // badge start near the left edge instead of behind extraneous leading space.
+  .ticket-checkbox-spacer {
+    display: none;
   }
 
   .draft-placeholder {
