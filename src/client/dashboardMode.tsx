@@ -2,6 +2,7 @@ import { unmountColumnView } from './columnView.js';
 import { renderDashboard, renderSidebarWidget } from './dashboard.js';
 import { hideDashboardToolbarControls, restoreDashboardToolbarControls } from './dashboardToolbarVisibility.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
+import { clearNewTicketHost } from './draftRow.js';
 import {
   isAnalyticsDashboardActive,
   isCrossProjectStatsPageActive,
@@ -96,6 +97,7 @@ export function enterDashboardMode() {
   // Hide batch toolbar and detail panel
   const batchToolbar = byIdOrNull('batch-toolbar');
   if (batchToolbar) batchToolbar.style.display = 'none';
+  clearNewTicketHost(); // HS-8796 — no "New ticket…" line over the dashboard
   const detailPanel = byIdOrNull('detail-panel');
   if (detailPanel) detailPanel.style.display = 'none';
   const resizeHandle = byIdOrNull('detail-resize-handle');

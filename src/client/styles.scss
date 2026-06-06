@@ -2914,6 +2914,14 @@ body.cross-project-stats-active {
 
 // --- Batch Toolbar ---
 
+// HS-8796 — host for the "New ticket…" draft row, ABOVE the batch toolbar.
+// The draft row (.ticket-row) carries its own layout; a bottom border separates
+// it from the toolbar below when present (empty host shows nothing).
+.new-ticket-host:not(:empty) {
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .batch-toolbar {
   display: flex;
   align-items: center;

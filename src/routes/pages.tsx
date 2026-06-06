@@ -245,6 +245,10 @@ pageRoutes.get('/', (c) => {
                   active view normally hides. Populated by ticketList.tsx
                   via `renderSearchExtraRows`. */}
               <div className="search-extra-rows" id="search-extra-rows"></div>
+              {/* HS-8796 — the "New ticket…" draft row renders here, ABOVE the
+                  batch (selected-ticket) toolbar. Populated by ticketList.tsx for
+                  the default list view; empty otherwise. */}
+              <div className="new-ticket-host" id="new-ticket-host"></div>
               <div className="batch-toolbar" id="batch-toolbar">
                 <input type="checkbox" id="batch-select-all" className="batch-select-all" title="Select all / none" />
                 <button id="batch-category" className="btn btn-sm batch-dropdown-btn" title="Set category" disabled>Category</button>

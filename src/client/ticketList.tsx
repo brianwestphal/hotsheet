@@ -4,7 +4,7 @@ import { captureSnapshot, flipAnimate } from './animate.js';
 import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { createDraftRow, focusDraftInput as _focusDraftInput } from './draftRow.js';
+import { focusDraftInput as _focusDraftInput, syncNewTicketHost } from './draftRow.js';
 import { effect } from './reactive.js';
 import { bindListVirtualized } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
@@ -219,14 +219,15 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   // and falling through to the full remount path fixes the bug
   // without coupling every non-list entry point to the bindList
   // lifecycle.
+  // HS-8796 — the "New ticket…" draft row lives in `#new-ticket-host` ABOVE the
+  // batch toolbar (not inside `#ticket-list`). Show it only for the default list
+  // variant; clear it for trash/preview. Driven on every mount path.
+  syncNewTicketHost(variant === 'default');
+
   const liveRows = container.querySelector<HTMLElement>(':scope > .ticket-list-rows');
-  // Same variant + already mounted — only ensure the variant-specific
-  // structural elements are in place (default needs a draft row at the
-  // top; trash + preview have no extra structure).
+  // Same variant + already mounted — the rows container + (host-managed) draft
+  // row are already in place, so nothing structural to do.
   if (mountedVariant === variant && listViewBindListDispose !== null && liveRows !== null) {
-    if (variant === 'default' && container.querySelector(':scope > .draft-row') === null) {
-      container.insertBefore(createDraftRow(), liveRows);
-    }
     return;
   }
 
@@ -244,9 +245,8 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
   unmountBindList();
   container.replaceChildren();
   container.classList.remove('ticket-list-columns');
-  if (variant === 'default') {
-    container.appendChild(createDraftRow());
-  }
+  // HS-8796 — the draft row is no longer a child of `#ticket-list`; it lives in
+  // `#new-ticket-host` (synced above), so the list starts straight at the rows.
   const rowsContainer = toElement(<div className="ticket-list-rows"></div>);
   container.appendChild(rowsContainer);
 

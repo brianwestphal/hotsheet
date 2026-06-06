@@ -1,6 +1,6 @@
 import { createTicket } from '../api/index.js';
 import { extractBracketTags, hasTag, syncDetailPanel } from './detail.js';
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { getCategoryColor, getCategoryLabel, state } from './state.js';
 import {
@@ -115,6 +115,33 @@ export function createDraftRow(): HTMLElement {
 export function focusDraftInput() {
   const input = document.querySelector<HTMLInputElement>('.draft-row .draft-input');
   input?.focus();
+}
+
+/**
+ * HS-8796 — the "New ticket…" draft row lives in a host element ABOVE the
+ * batch (selected-ticket) toolbar (`#new-ticket-host`), not inside `#ticket-list`,
+ * so it sits above the toolbar instead of below it. Populated for the default
+ * list view; cleared for every other surface that takes over the inline content
+ * area (trash/preview list variants, column view, the analytics dashboard) so no
+ * stray input lingers. An existing draft row is preserved (keeps in-progress
+ * text + focus across list re-renders). The fixed-position overlays (terminal
+ * dashboard §25, cross-project stats §70) occlude the header and don't
+ * participate, so they need no handling here.
+ */
+export function syncNewTicketHost(showDraft: boolean): void {
+  const host = byIdOrNull('new-ticket-host');
+  if (host === null) return;
+  if (showDraft) {
+    if (host.querySelector(':scope > .draft-row') === null) host.replaceChildren(createDraftRow());
+  } else {
+    host.replaceChildren();
+  }
+}
+
+/** HS-8796 — clear the new-ticket host. Called by surfaces that take over the
+ *  inline content area (column view + the analytics dashboard). */
+export function clearNewTicketHost(): void {
+  syncNewTicketHost(false);
 }
 
 function getDefaultsFromView(): Record<string, unknown> {

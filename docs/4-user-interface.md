@@ -59,6 +59,7 @@ The interface is divided into:
 
 - A quick-entry row at the top of the list view for creating new tickets.
 - Visible in both list and column views (not in trash or backup preview).
+- **HS-8796 (2026-06-06)** — in list view the draft row renders in a dedicated host (`#new-ticket-host`) **above the batch (selected-ticket) toolbar**, not below it, so the "New ticket…" line stays at the very top even while a multi-select toolbar is showing. The host is populated only for the default list variant and cleared for trash/preview/column/dashboard surfaces (`syncNewTicketHost` / `clearNewTicketHost` in `src/client/draftRow.tsx`); column view keeps its own per-column draft rows. The draft row is now mount-once in the host across list re-renders (preserves typed text + focus).
 - Press Enter to create the ticket and immediately focus a new draft row.
 - Category and priority can be set inline via dropdown or keyboard shortcut. **HS-8375** — picking a different category from the dropdown repaints the draft row's badge in place via `syncDraftBadge(category)` in `src/client/draftRow.tsx`. Pre-HS-8375 the dropdown action relied on `callRenderTicketList()` to rebuild the draft row, but after the HS-833x bindList refactor the draft row is mount-once for the lifetime of the list view — `renderTicketList` no longer touches it, so the badge stayed on the originally-rendered category until page reload.
 - New tickets inherit sensible defaults from the current view context (e.g., creating in the Bug category view defaults to bug category).

@@ -4,7 +4,7 @@ import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { createDraftRow } from './draftRow.js';
+import { clearNewTicketHost, createDraftRow } from './draftRow.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, effect } from './reactive.js';
 import { bindList, bindText } from './reactive-bind.js';
@@ -185,6 +185,7 @@ function makeColumnSignal(
 // --- Preview column view ---
 
 export function renderPreviewColumnView() {
+  clearNewTicketHost(); // HS-8796 — column view has its own per-column draft rows
   const container = byId('ticket-list');
   const columns = getColumnsForView();
   const key = computeColumnsKey(columns, true);
@@ -308,6 +309,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 // --- Interactive column view ---
 
 export function renderColumnView() {
+  clearNewTicketHost(); // HS-8796 — column view has its own per-column draft rows
   const container = byId('ticket-list');
   const columns = getColumnsForView();
   const key = computeColumnsKey(columns, false);
