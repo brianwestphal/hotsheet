@@ -787,12 +787,24 @@ pageRoutes.get('/', (c) => {
                 <div className="settings-section-header">
                   <h3>Announcer</h3>
                 </div>
-                <span className="settings-hint">Narrates recent work in this project aloud — a spoken summary of completion notes and activity since you last listened. <strong>Privacy &amp; cost:</strong> enabling sends this project's notes + activity log to Anthropic using your own API key (a departure from Hot Sheet's local-only default). Code and ticket details are never sent — only the notes you and your AI tools already write.</span>
+                <span className="settings-hint">Narrates recent work in this project aloud — a spoken summary of completion notes and activity since you last listened. <strong>Privacy &amp; cost:</strong> the work to summarize is sent to your selected model. An <strong>Anthropic</strong> model uses Anthropic's API with your own key (a departure from Hot Sheet's local-only default); the <strong>on-device Apple</strong> model keeps everything local + free. Either way only the notes you and your AI tools already write are sent — never code or ticket details.</span>
+                {/* HS-8790 — model field FIRST; spans providers (Apple on-device +
+                    Anthropic). Provider-specific fields (the Anthropic key) show
+                    conditionally based on the selection. */}
+                <div className="settings-field" style="margin-top:12px">
+                  <label>Summarization model <span className="global-setting-badge">Global Setting</span></label>
+                  <select id="settings-announcer-model" style="max-width:340px">
+                    {ANNOUNCER_MODELS.map(m => <option value={m.id}>{m.label}</option>)}
+                  </select>
+                  <span className="settings-hint" id="settings-announcer-model-hint">Which model writes the narration. On-device (Apple) is free + private; Anthropic models call the cloud with your key.</span>
+                </div>
                 <div className="settings-field settings-field-checkbox" style="margin-top:12px">
                   <label><input type="checkbox" id="settings-announcer-enabled" /> Enable the Announcer for this project</label>
-                  <span className="settings-hint">When on, a “Listen” button appears in the header toolbar (once an API key is set).</span>
+                  <span className="settings-hint">When on, a “Listen” button appears in the header toolbar (once a model is usable).</span>
                 </div>
-                <div className="settings-field" style="margin-top:12px">
+                {/* HS-8790 — Anthropic key: shown only when an Anthropic model is
+                    selected (the on-device Apple model needs no key). */}
+                <div className="settings-field" style="margin-top:12px" id="settings-announcer-key-field">
                   <label>Anthropic API key</label>
                   <select id="settings-announcer-key-select" style="max-width:340px">
                     <option value="">Default — first Anthropic key</option>
@@ -817,14 +829,6 @@ pageRoutes.get('/', (c) => {
                     <option value="2">2×</option>
                   </select>
                   <span className="settings-hint">Speed of the spoken narration. Also adjustable from the player while listening.</span>
-                </div>
-                {/* HS-8764 — global summarization model; defaults to the cheapest (Haiku). */}
-                <div className="settings-field" style="margin-top:12px">
-                  <label>Summarization model <span className="global-setting-badge">Global Setting</span></label>
-                  <select id="settings-announcer-model" style="max-width:340px">
-                    {ANNOUNCER_MODELS.map(m => <option value={m.id}>{m.label}</option>)}
-                  </select>
-                  <span className="settings-hint">Which Anthropic model writes the narration. Cheaper models cost less per listen; the default (Haiku) is plenty for short summaries.</span>
                 </div>
                 {/* HS-8769 — "uninteresting" topics: skipping an entry adds its title here,
                     and future narration omits similar material. Editable. */}

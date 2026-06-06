@@ -106,6 +106,37 @@ describe('drag tickets onto a project tab (HS-8663)', () => {
     expect(transferMock.mock.calls[0][2]).toEqual({ move: true, sourceSecret: 'sec-a' });
   });
 
+  it('move: Option held at the window level threads move:true even when the drop event lacks altKey (HS-8663 WKWebView fix)', async () => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B], A.secret);
+    _renderTabsForTesting();
+    state.tickets = [{ id: 7 } as never];
+    setDraggedTicketIds([7]);
+
+    // Option pressed before the drag (its keydown lands before the native drag
+    // loop); the drop event itself carries no altKey (the WKWebView gap).
+    window.dispatchEvent(new KeyboardEvent('keydown', { altKey: true }));
+    dispatchDrop(tabFor('sec-b')); // alt:false on the event
+    await Promise.resolve();
+
+    expect(transferMock.mock.calls[0][2]).toEqual({ move: true, sourceSecret: 'sec-a' });
+  });
+
+  it('copy: after Option is released, the window tracker clears and the drop copies', async () => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B], A.secret);
+    _renderTabsForTesting();
+    state.tickets = [{ id: 8 } as never];
+    setDraggedTicketIds([8]);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { altKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { altKey: false }));
+    dispatchDrop(tabFor('sec-b'));
+    await Promise.resolve();
+
+    expect(transferMock.mock.calls[0][2]).toEqual({ move: false, sourceSecret: 'sec-a' });
+  });
+
   it('dropping onto the source project\'s own tab is a no-op', async () => {
     makeTitleArea();
     _setProjectsForTesting([A, B], A.secret);

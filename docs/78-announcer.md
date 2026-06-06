@@ -526,7 +526,10 @@ Escape) hides the panel back into the Listen button *without stopping playback*;
 the button then **glows** (the project-tab pending-permission pulse,
 `.announcer-listen-btn.is-active`) and a second click restores the panel
 (`announcer.tsx` routes the click to `restore()` when a session is live rather
-than regenerating). Resizable, code-diff visuals, the 10s audio-timeline seeks,
+than regenerating). **HS-8788 — the Listen button toggles an open session:**
+clicking it while the panel is *visible* **minimizes** it (and a click while
+minimized restores) — playback continues either way; it only generates+opens a
+fresh reel when no session is live. Resizable, code-diff visuals, the 10s audio-timeline seeks,
 and playback-speed are later phases (see the follow-up tickets).
 
 **Busy feedback (HS-8753).** Clicking Listen shows an immediate "Preparing your
@@ -634,6 +637,23 @@ pre-empting upcoming narration; if a permission is already resolved
 (allowed/denied/dismissed — checked against `respondedRequestIds` /
 `dismissedRequestIds`) by the time its turn arrives, it's skipped. Deduped per
 `request_id`; long descriptions are word-boundary-trimmed to a short summary.
+
+**Multi-provider summarization + Apple Foundation Models (HS-8790).** The model
+registry (`src/announcer/models.ts`) is now **provider-tagged** (`providerForModel`)
+and `summarizeWork` routes by provider: `anthropic` calls the Messages API with
+the user's key (cloud); **`apple`** runs **on-device** via Apple Foundation Models
+(macOS 26 + Apple Intelligence) — free, private, no key, `usage = null`. Apple
+inference goes through a bundled **Swift CLI helper** the *server* shells out to
+(`src/announcer/appleFoundation.ts` → `src-tauri/apple-fm-helper/main.swift`), so
+it works in both Listen and live mode (see docs/tauri-architecture.md §"Apple
+Foundation Models helper" for build/bundle/signing). Availability is probed once
++ cached and surfaced via `appleAvailable` on `/announcer/status` + `/overview`;
+when available it becomes the **default** model (explicit `announcerModel` still
+wins), and the Listen button/generation no longer require an Anthropic key. The
+settings UI puts the **model field first** and shows the **Anthropic key field
+only for an Anthropic model**; the on-device option is hidden where unavailable.
+A future cross-platform **local/Ollama** provider (Linux + non-Copilot+ Windows)
+slots into the same `providerForModel` seam (follow-up).
 
 **Promotes §78.5 (content tier 1 — text transcript) and §78.6 (settings UI +
 TTS providers: Tauri `say` desktop primary, browser `speechSynthesis`) from

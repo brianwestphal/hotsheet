@@ -10,13 +10,15 @@
  */
 import { Hono } from 'hono';
 
+import { isAppleFoundationAvailable } from '../announcer/appleFoundation.js';
 import { addDismissedTopic, getDismissedTopics, setDismissedTopics } from '../announcer/dismissedTopics.js';
 import {
-  ANNOUNCER_CURSOR_KEY, ANNOUNCER_ENABLED_KEY, DEFAULT_ANNOUNCER_MODEL,
-  generateAnnouncementsOnce, isAnnouncerEnabled,
+  ANNOUNCER_CURSOR_KEY, ANNOUNCER_ENABLED_KEY,
+  generateAnnouncementsOnce, isAnnouncerEnabled, resolveAnnouncerModel,
 } from '../announcer/generate.js';
 import { getAnnouncerKeyId, hasAnnouncerKey, resolveAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
 import { registerLiveListener, unregisterLiveListener } from '../announcer/liveGenerator.js';
+import { providerForModel } from '../announcer/models.js';
 import {
   AdvanceCursorReqSchema, AnnounceReqSchema, GenerateAnnouncementsReqSchema,
   SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema, SetAnnouncerLiveReqSchema,
@@ -27,7 +29,6 @@ import {
 } from '../db/announcer.js';
 import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
-import { readGlobalConfig } from '../global-config.js';
 import { getAllProjects } from '../projects.js';
 import type { Visual } from '../schemas.js';
 import type { AppEnv } from '../types.js';
@@ -53,7 +54,9 @@ announcerRoutes.get('/announcer/overview', async (c) => {
       projects.push({ secret: p.secret, name: p.name, enabled: true, hasKey: info.hasKey, entryCount: info.entryCount });
     }
   }
-  return c.json({ activeSecret, projects });
+  // HS-8790 — machine-global on-device availability so the client can show the
+  // Listen button (and generate) for an enabled project even with no API key.
+  return c.json({ activeSecret, projects, appleAvailable: await isAppleFoundationAvailable() });
 });
 
 // GET /api/announcer/status — opt-in + key + entry-count + cursor.
@@ -66,6 +69,9 @@ announcerRoutes.get('/announcer/status', async (c) => {
     selectedKeyId: await getAnnouncerKeyId(),
     entryCount: entries.length,
     lastListenedAt: settings[ANNOUNCER_CURSOR_KEY] ?? null,
+    // HS-8790 — whether on-device Apple Foundation Models can be used here, so
+    // the settings UI can offer + default to it.
+    appleAvailable: await isAppleFoundationAvailable(),
   });
 });
 
@@ -73,13 +79,22 @@ announcerRoutes.get('/announcer/status', async (c) => {
 // Shares the generate core with the live-mode loop (HS-8750, `generate.ts`).
 announcerRoutes.post('/announcer/generate', async (c) => {
   if (!(await isAnnouncerEnabled())) return c.json({ error: 'Announcer is not enabled for this project' }, 400);
-  const apiKey = await resolveAnnouncerKey();
-  if (apiKey === null) return c.json({ error: 'No Anthropic API key configured' }, 400);
+
+  // HS-8764 — model from the global setting; HS-8790 — defaults to on-device
+  // Apple Foundation Models when available, else the cheapest Anthropic model.
+  const model = await resolveAnnouncerModel();
+  // HS-8790 — Anthropic models need the user's key; the Apple (on-device)
+  // provider needs no key but does need the on-device model to be available.
+  let apiKey: string | null = null;
+  if (providerForModel(model) === 'apple') {
+    if (!(await isAppleFoundationAvailable())) return c.json({ error: 'Apple Foundation Models are not available on this machine' }, 400);
+  } else {
+    apiKey = await resolveAnnouncerKey();
+    if (apiKey === null) return c.json({ error: 'No Anthropic API key configured' }, 400);
+  }
 
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = GenerateAnnouncementsReqSchema.safeParse(raw);
-  // HS-8764 — model from the global setting (summarizeWork defaults to cheapest).
-  const model = readGlobalConfig().announcerModel ?? DEFAULT_ANNOUNCER_MODEL;
   try {
     const { rows, generatedCount } = await generateAnnouncementsOnce({
       dataDir: c.get('dataDir'),
@@ -106,8 +121,13 @@ announcerRoutes.post('/announcer/live', async (c) => {
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
   const secret = c.get('projectSecret');
   if (parsed.data.enabled) {
-    // Only honor a live lease for an opted-in + keyed project.
-    if (!(await isAnnouncerEnabled()) || !(await hasAnnouncerKey())) {
+    // Only honor a live lease for an opted-in + summarizable project. HS-8790 —
+    // an Apple (on-device) model needs no API key, just availability.
+    const model = await resolveAnnouncerModel();
+    const summarizable = providerForModel(model) === 'apple'
+      ? await isAppleFoundationAvailable()
+      : await hasAnnouncerKey();
+    if (!(await isAnnouncerEnabled()) || !summarizable) {
       return c.json({ error: 'Announcer is not enabled / configured for this project' }, 400);
     }
     registerLiveListener(secret, c.get('dataDir'));

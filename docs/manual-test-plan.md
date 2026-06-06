@@ -39,7 +39,7 @@ This document lists features that require manual verification before each releas
 - [ ] Release — tab order persists across reload
 - [ ] HS-8664: Even with a single project registered, the project tab strip shows (not a plain title) with a trailing "+" button; clicking "+" opens the folder picker; picking a folder registers + switches to a new project.
 - [ ] HS-8663: Select one or more tickets, drag onto **another** project's tab — the hovered tab highlights (accent), the cursor shows a **copy** (+) badge; release → toast "Copied N ticket(s) to <project>", tickets appear in that project, originals remain.
-- [ ] HS-8663 move: Repeat holding **Option/Alt** — cursor shows a **move** badge; release → toast "Moved N…", originals disappear from the source project (in Trash) and appear in the target.
+- [ ] HS-8663 move: Repeat holding **Option/Alt** — cursor shows a **move** badge; release → toast "Moved N…", originals disappear from the source project (in Trash) and appear in the target. **Verify in the Tauri desktop app specifically** (WKWebView): the copy→move switch is now driven by a window-level Alt tracker because WKWebView drops modifier flags from drag events — the earlier `e.altKey`-only read always fell back to copy there (HS-8663 fix).
 - [ ] HS-8663 no-op: Drag tickets onto the source project's **own** tab — no highlight, nothing happens.
 - [ ] HS-8663 "+"-drop: Drag tickets onto the "+" button → folder picker opens; pick a folder → tickets copied/moved into the new project and the app switches to it. **Cancel** the picker → nothing changes (no new project, originals untouched).
 - [ ] HS-8739: Attachments ARE carried across projects — copy/move a ticket that has an attachment to another project (drag or copy/cut+paste) and verify the attachment is present on the ticket in the target project (open its detail panel).
@@ -596,6 +596,13 @@ Playback *logic* (state machine, controls, cursor advance) is covered by unit + 
 - [ ] Settings → Experimental → Announcer: the section shows a BETA chip, the privacy/cost disclosure ("sends this project's notes + activity log to Anthropic using your own API key"), an enable toggle (off by default), and a password key field with a "Save key" button. The header has no "Listen" button yet.
 - [ ] Paste an Anthropic key, click Save key: a success toast fires, the field clears, and the status line reads "API key configured · N entries in the reel." Toggle Enable on. The header "Listen" button (audio-lines icon) appears.
 - [ ] Toggle Enable off → the Listen button disappears. Toggle back on → it returns.
+
+#### Apple Foundation Models provider (HS-8790 — desktop, macOS 26 only)
+The Node/UI side is unit-tested (`models.test`, `summarize.test`, `appleFoundation.test`); the Swift helper itself is **verified compiling + running on macOS 26.5 / Xcode 26.5** (guided generation → clean structured entries). The end-to-end app behavior still needs a manual pass on a machine with Apple Intelligence on. **Prereq:** `npm run tauri:dev` builds the helper (`./apple-fm-helper`) and the dev server discovers it via its cwd — no env var needed. (For the `npm run dev` browser path, run `npm run build:apple-fm-helper` first.) Packaged-app bundling/signing is still TODO (docs/tauri-architecture.md §"Apple Foundation Models helper").
+- [ ] Settings → Announcer with the helper available: the **Summarization model** field is **first**, lists "Apple Intelligence — on-device (free, private)" and is **selected by default**; the **Anthropic API key** field is **hidden**. Pick an Anthropic model → the key field appears; pick Apple again → it hides.
+- [ ] On a machine WITHOUT Apple Intelligence (or no helper): the Apple option is absent and the default is Haiku; the key field shows.
+- [ ] With Apple selected and **no Anthropic key set**, enable the Announcer → the Listen button still appears; click Listen → a reel is generated **on-device** (no Anthropic spend recorded on the §70/§71 dashboards). Verify the narration is coherent.
+- [ ] Live mode with Apple selected: enabling Live narrates work as it happens **without** an Anthropic key (server runs the helper).
 
 ### Generate + transcript PIP
 - [ ] With some recent completed tickets / notes, click Listen. The button shows a busy state, then a corner-docked PIP appears (bottom-right) with the first entry's title + spoken script and a "1 / N" position. The transcript reads as a coherent spoken summary of recent work (not raw notes).

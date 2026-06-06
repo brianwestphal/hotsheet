@@ -461,6 +461,28 @@ function isTicketDrag(): boolean {
   return dragSecret === null && draggedTicketIds.length > 0;
 }
 
+/**
+ * HS-8663 fix — Alt/Option state tracked at the **window** level rather than
+ * read off the drag event. Native HTML5 drag events (`dragover`/`drop`) don't
+ * reliably carry modifier flags in Tauri's WKWebView, so "hold Option to MOVE"
+ * silently fell back to copy in the desktop app. The user presses Option before
+ * (or as) the drag starts, so its `keydown` lands before the native drag loop
+ * begins and the flag is set. We OR with the event's own `altKey` so Chromium
+ * (incl. the Playwright/vitest paths) and mid-drag Option still work.
+ */
+let altHeld = false;
+function isMoveDrag(e: DragEvent): boolean {
+  return altHeld || e.altKey;
+}
+if (typeof window !== 'undefined') {
+  // `e.altKey` reflects the *current* Alt state on both keydown and keyup
+  // (false on the Alt key's own keyup), so this tracks press + release; `blur`
+  // guards against a release missed while another app/window had focus.
+  window.addEventListener('keydown', (e) => { altHeld = e.altKey; });
+  window.addEventListener('keyup', (e) => { altHeld = e.altKey; });
+  window.addEventListener('blur', () => { altHeld = false; });
+}
+
 /** The tab / "+" button currently lit as a ticket-drop target. Single-slot
  *  so the highlight follows the cursor between targets without flicker. */
 let ticketDropTargetEl: HTMLElement | null = null;
@@ -541,7 +563,7 @@ function handleDragOver(e: DragEvent) {
       return;
     }
     e.preventDefault();
-    e.dataTransfer!.dropEffect = e.altKey ? 'move' : 'copy';
+    e.dataTransfer!.dropEffect = isMoveDrag(e) ? 'move' : 'copy';
     setTicketDropTarget(tab);
     return;
   }
@@ -571,7 +593,7 @@ function handleDrop(e: DragEvent, targetProject: ProjectInfo) {
     setDraggedTicketIds([]);
     // No-op when dropped onto the source project's own tab.
     if (targetProject.secret === sourceSecret) return;
-    void dropTicketsOntoProject(ids, targetProject, e.altKey, sourceSecret);
+    void dropTicketsOntoProject(ids, targetProject, isMoveDrag(e), sourceSecret);
     return;
   }
 
@@ -806,7 +828,7 @@ function createAddProjectButton(): HTMLElement {
   btn.addEventListener('dragover', (e) => {
     if (!isTicketDrag()) return;
     e.preventDefault();
-    e.dataTransfer!.dropEffect = e.altKey ? 'move' : 'copy';
+    e.dataTransfer!.dropEffect = isMoveDrag(e) ? 'move' : 'copy';
     setTicketDropTarget(btn);
   });
   btn.addEventListener('dragleave', (e) => handleTicketDragLeave(e));
@@ -815,7 +837,7 @@ function createAddProjectButton(): HTMLElement {
     e.preventDefault();
     setTicketDropTarget(null);
     const ids = [...draggedTicketIds];
-    const move = e.altKey;
+    const move = isMoveDrag(e);
     const sourceSecret = getActiveProject()?.secret;
     setDraggedTicketIds([]);
     const tickets = state.tickets.filter(t => ids.includes(t.id));
@@ -1025,6 +1047,7 @@ export function _resetProjectTabsForTesting(): void {
   pendingReorderSecrets = null;
   dragSecret = null;
   dropInsertIdx = null;
+  altHeld = false;
   if (dropIndicator?.parentElement) dropIndicator.parentElement.removeChild(dropIndicator);
   dropIndicator = null;
 }

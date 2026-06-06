@@ -34,6 +34,13 @@ always-tabbed strip + add-project button from [4-user-interface.md](4-user-inter
   in the target project and the originals are soft-deleted (moved to Trash) from
   the source project. After a move the source list reloads so the moved tickets
   drop out and their selection clears.
+- **Modifier detection (HS-8663 fix):** the copy-vs-move decision reads a
+  **window-level Alt tracker** (`keydown`/`keyup`/`blur` on `window`) OR'd with
+  the drag event's own `altKey`. Native HTML5 drag events don't reliably carry
+  modifier flags in Tauri's WKWebView, so reading `e.altKey` alone made Option
+  silently fall back to copy in the desktop app. Since the user holds Option
+  before/as the drag begins, its `keydown` lands before the native drag loop and
+  the flag is set; the `e.altKey` fallback preserves Chromium + mid-drag behavior.
 - **Dropping onto the source project's own tab is a no-op** (the dragged
   tickets already live there) — that tab is not highlighted and rejects the drop.
 - A toast confirms the result: "Copied N ticket(s) to <project>" /

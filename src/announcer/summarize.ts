@@ -8,7 +8,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 
-import { DEFAULT_ANNOUNCER_MODEL } from './models.js';
+import { runAppleFoundationSummarize } from './appleFoundation.js';
+import { DEFAULT_ANNOUNCER_MODEL, providerForModel } from './models.js';
 
 /**
  * Default model when the caller passes none. HS-8764 — defaults to the
@@ -27,6 +28,21 @@ const EntrySchema = z.object({
 });
 const EntriesSchema = z.object({ entries: z.array(EntrySchema) });
 export type GeneratedEntry = z.infer<typeof EntrySchema>;
+
+/** Validate a model's JSON output (Anthropic or the Apple helper) into entries.
+ *  Returns `[]` on malformed output rather than throwing — a bad batch should
+ *  never break the reel. Exported for reuse + testing. */
+export function parseEntriesJson(text: string): GeneratedEntry[] {
+  // Tolerate a ```json … ``` fence some models wrap output in, and a bare
+  // top-level `[…]` array instead of `{entries:[…]}` (the Anthropic path is
+  // always clean; this hardens the on-device + future local-endpoint paths).
+  const unfenced = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  let raw: unknown;
+  try { raw = JSON.parse(unfenced); } catch { return []; }
+  const candidate = Array.isArray(raw) ? { entries: raw } : raw;
+  const parsed = EntriesSchema.safeParse(candidate);
+  return parsed.success ? parsed.data.entries : [];
+}
 
 /** Token usage from one summarization (HS-8766) — captured even when parsing
  *  the response fails, since the API call (and its cost) already happened. */
@@ -88,21 +104,37 @@ export function buildSystemPrompt(opts: { compression?: Compression; dismissedTo
 
 /**
  * Summarize the assembled `material` into narrated entries. Returns an empty
- * array when there's nothing meaningful (or on a malformed response). The caller
- * supplies the resolved API key and may override the model. Live mode passes a
- * `compression` altitude (HS-8768) and the per-project `dismissedTopics` omit
- * list (HS-8769).
+ * array when there's nothing meaningful (or on a malformed response). Routes by
+ * the model's **provider** (HS-8790): `anthropic` calls the Messages API with
+ * the caller's key; `apple` shells out to the on-device Swift helper (no key, no
+ * cost — `usage` is null). Live mode passes a `compression` altitude (HS-8768)
+ * and the per-project `dismissedTopics` omit list (HS-8769).
  */
 export async function summarizeWork(
   material: string,
-  opts: { apiKey: string; model?: string; compression?: Compression; dismissedTopics?: readonly string[] },
+  opts: { apiKey?: string | null; model?: string; compression?: Compression; dismissedTopics?: readonly string[] },
 ): Promise<SummarizeResult> {
   if (material.trim() === '') return { entries: [], usage: null };
+  const model = opts.model ?? ANNOUNCER_MODEL;
+  const system = buildSystemPrompt(opts);
+
+  if (providerForModel(model) === 'apple') {
+    // The on-device helper enforces the {entries:[…]} shape via FoundationModels
+    // *guided generation* (the Anthropic `output_config` equivalent), so we pass
+    // the same system prompt and just validate the JSON it returns. On-device =
+    // free, so no usage/cost is recorded.
+    const out = await runAppleFoundationSummarize(system, material);
+    return { entries: parseEntriesJson(out), usage: null };
+  }
+
+  if (opts.apiKey === undefined || opts.apiKey === null || opts.apiKey === '') {
+    throw new Error('No Anthropic API key configured');
+  }
   const client = new Anthropic({ apiKey: opts.apiKey });
   const res = await client.messages.create({
-    model: opts.model ?? ANNOUNCER_MODEL,
+    model,
     max_tokens: 4096,
-    system: buildSystemPrompt(opts),
+    system,
     messages: [{ role: 'user', content: material }],
     output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
   });
@@ -118,13 +150,5 @@ export async function summarizeWork(
   for (const block of res.content) {
     if (block.type === 'text') text += block.text;
   }
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return { entries: [], usage };
-  }
-  const parsed = EntriesSchema.safeParse(raw);
-  return { entries: parsed.success ? parsed.data.entries : [], usage };
+  return { entries: parseEntriesJson(text), usage };
 }

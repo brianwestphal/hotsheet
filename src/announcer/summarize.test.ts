@@ -15,12 +15,19 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }));
 
+// HS-8790 — the Apple (on-device) provider is a subprocess; mock it so the
+// routing in `summarizeWork` is testable without the native helper.
+const appleRunMock = vi.fn<(system: string, material: string) => Promise<string>>();
+vi.mock('./appleFoundation.js', () => ({
+  runAppleFoundationSummarize: (system: string, material: string) => appleRunMock(system, material),
+}));
+
 // HS-8766 — fake responses carry a `usage` block (the SDK always does).
 function textResponse(obj: unknown, usage = { input_tokens: 100, output_tokens: 40 }): FakeMessage {
   return { content: [{ type: 'text', text: JSON.stringify(obj) }], usage };
 }
 
-beforeEach(() => { ctorMock.mockReset(); createMock.mockReset(); });
+beforeEach(() => { ctorMock.mockReset(); createMock.mockReset(); appleRunMock.mockReset(); });
 
 describe('summarizeWork (HS-8745)', () => {
   it('passes the API key + default model + structured-output config, returns parsed entries', async () => {
@@ -38,6 +45,23 @@ describe('summarizeWork (HS-8745)', () => {
 
   it('empty / whitespace material short-circuits without an API call', async () => {
     expect(await summarizeWork('   ', { apiKey: 'sk-test' })).toEqual({ entries: [], usage: null });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  // HS-8790 — provider routing.
+  it('routes an Apple model to the on-device helper (no Anthropic call, no key, no usage)', async () => {
+    appleRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'Local', script: 'Summarized on device.' }] }));
+    const res = await summarizeWork('real material', { model: 'apple-foundation' });
+
+    expect(appleRunMock).toHaveBeenCalledTimes(1);
+    expect(createMock).not.toHaveBeenCalled();   // no cloud call
+    expect(ctorMock).not.toHaveBeenCalled();      // no Anthropic client built
+    expect(res.entries).toEqual([{ title: 'Local', script: 'Summarized on device.' }]);
+    expect(res.usage).toBeNull();                 // on-device = free
+  });
+
+  it('throws for an Anthropic model when no key is supplied', async () => {
+    await expect(summarizeWork('real material', { model: 'claude-haiku-4-5' })).rejects.toThrow(/API key/);
     expect(createMock).not.toHaveBeenCalled();
   });
 

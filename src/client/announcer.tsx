@@ -40,7 +40,11 @@ export async function refreshAnnouncerVisibility(): Promise<void> {
   if (btn === null) return;
   try {
     const overview = await getAnnouncerOverview();
-    btn.style.display = overview.projects.some(p => p.hasKey) ? '' : 'none';
+    // HS-8790 — a project is narratable with an Anthropic key OR on-device Apple
+    // Foundation Models (machine-global). `overview.projects` is already filtered
+    // to enabled projects, so any of them + Apple availability is enough.
+    const usable = overview.projects.some(p => p.hasKey) || (overview.appleAvailable && overview.projects.length > 0);
+    btn.style.display = usable ? '' : 'none';
   } catch {
     btn.style.display = 'none';
   }
@@ -77,11 +81,13 @@ function advanceCursors(context: string, projects: AnnouncerProjectInfo[]): void
 }
 
 async function startListening(btn: HTMLButtonElement): Promise<void> {
-  // HS-8757 — if a session is already running (minimized into this button),
-  // clicking the button restores the panel rather than starting a new reel.
+  // HS-8757 / HS-8788 — if a session is already running, the button TOGGLES the
+  // panel rather than starting a new reel: minimized → restore, visible →
+  // minimize (playback continues either way).
   const existing = getAnnouncerPipHandle();
   if (existing !== null) {
     if (existing.isMinimized()) existing.restore();
+    else existing.minimize();
     return;
   }
   if (btn.classList.contains('is-busy')) return;
@@ -110,7 +116,9 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
 
     // Generate fresh work ONLY for a specific-project launch (per the design,
     // "All Projects" aggregates existing entries without new generation).
-    if (context !== ALL_PROJECTS && (projects.find(p => p.secret === context)?.hasKey ?? false)) {
+    // HS-8790 — generation needs an Anthropic key OR on-device Apple availability.
+    const canGenerate = (projects.find(p => p.secret === context)?.hasKey ?? false) || overview.appleAvailable;
+    if (context !== ALL_PROJECTS && canGenerate) {
       try {
         await generateAnnouncements({}, context);
       } catch {

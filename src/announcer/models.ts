@@ -1,40 +1,76 @@
 /**
- * §78 Announcer (HS-8764) — the Anthropic models the Announcer can summarize
- * with, ordered cheapest → most capable. The **default is the cheapest model**
- * so a high-frequency, lightweight summarization task doesn't burn Opus-tier
- * spend unless the user opts up.
+ * §78 Announcer — the models the Announcer can summarize with, across
+ * **providers** (HS-8790). Each model declares its `provider`, so the wire
+ * schema (`validation.ts`), the server summarizer (`summarize.ts` →
+ * `providerForModel`), and the settings UI all share one source of truth.
  *
- * Pricing per the Claude API skill (2026, per 1M input/output tokens):
- *   Haiku 4.5  $1 / $5   ← cheapest, default
+ * Providers today:
+ *  - **`anthropic`** — the Claude Messages API (the user's own API key; cloud).
+ *    Ordered cheapest → most capable; Haiku is the universal default.
+ *  - **`apple`** — Apple Foundation Models, on-device + free + private, via a
+ *    bundled Swift helper the server shells out to (`appleFoundation.ts`).
+ *    Only usable on macOS 26+ with Apple Intelligence; gated at runtime by an
+ *    availability probe, and made the **default when available** (HS-8790).
+ *
+ * A future provider (e.g. a local Ollama endpoint — follow-up) adds its own
+ * entries + an availability gate; nothing else here changes.
+ *
+ * Anthropic pricing per the Claude API skill (2026, per 1M input/output tokens):
+ *   Haiku 4.5  $1 / $5   ← cheapest, Anthropic default
  *   Sonnet 4.6 $3 / $15
  *   Opus 4.8   $5 / $25
+ * Apple Foundation Models run on-device → $0.
  *
- * Model IDs are the exact alias strings (no date suffix). This module is
- * client-safe (pure string constants — no SDK import), so the wire schema
- * (`validation.ts`), the server summarizer (`summarize.ts`), and the settings
- * UI all share one source of truth. "Least expensive for the AI tool" is
- * future-proofed by keeping the list ordered cheapest-first; a future provider
- * adds its own ordered list + default.
+ * This module is client-safe (pure string constants — no SDK import).
  */
-export const ANNOUNCER_MODELS = [
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5 — fastest & cheapest (default)' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — balanced' },
-  { id: 'claude-opus-4-8', label: 'Opus 4.8 — most capable' },
-] as const;
+export type AnnouncerProvider = 'anthropic' | 'apple';
 
-/** Just the ids, cheapest-first — used to build the zod enum. */
-export const ANNOUNCER_MODEL_IDS = ['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-8'] as const;
+export interface AnnouncerModel {
+  id: string;
+  label: string;
+  provider: AnnouncerProvider;
+}
+
+/** The Apple Foundation Models pseudo-model id (one on-device model). */
+export const APPLE_FOUNDATION_MODEL_ID = 'apple-foundation';
+
+/**
+ * Ordered for the model dropdown: the on-device Apple option first (it's the
+ * default when available), then the Anthropic models cheapest → most capable.
+ */
+export const ANNOUNCER_MODELS: AnnouncerModel[] = [
+  { id: APPLE_FOUNDATION_MODEL_ID, label: 'Apple Intelligence — on-device (free, private)', provider: 'apple' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5 — fastest & cheapest', provider: 'anthropic' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — balanced', provider: 'anthropic' },
+  { id: 'claude-opus-4-8', label: 'Opus 4.8 — most capable', provider: 'anthropic' },
+];
+
+/** All ids — used to build the zod enum (so any model can be persisted). */
+export const ANNOUNCER_MODEL_IDS = [
+  APPLE_FOUNDATION_MODEL_ID, 'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-8',
+] as const;
 
 export type AnnouncerModelId = typeof ANNOUNCER_MODEL_IDS[number];
 
-/** The cheapest model — the default when the user hasn't chosen one. */
-export const DEFAULT_ANNOUNCER_MODEL: AnnouncerModelId = ANNOUNCER_MODEL_IDS[0];
+/**
+ * The universal default — the cheapest Anthropic model. Used when no model is
+ * chosen AND Apple Foundation Models aren't available. (When Apple is available,
+ * the runtime default resolver prefers it; see `resolveAnnouncerModel`.)
+ */
+export const DEFAULT_ANNOUNCER_MODEL: AnnouncerModelId = 'claude-haiku-4-5';
+
+/** The provider that backs a model id. Unknown ids fall back to `anthropic`
+ *  (the original behavior — they'd be Claude alias strings). */
+export function providerForModel(model: string): AnnouncerProvider {
+  return ANNOUNCER_MODELS.find(m => m.id === model)?.provider ?? 'anthropic';
+}
 
 /** Per-model price in US dollars per 1M input / output tokens (HS-8766).
- *  Typed as a plain `Record<string, …>` so an unknown model id is a safe miss
- *  (falls back to the default model's pricing) rather than a type error. */
+ *  Apple is on-device ($0). Unknown ids fall back to the default model's
+ *  pricing in `announcerCost`. */
 export interface ModelPricing { inputPerMTok: number; outputPerMTok: number }
 export const ANNOUNCER_PRICING: Record<string, ModelPricing> = {
+  [APPLE_FOUNDATION_MODEL_ID]: { inputPerMTok: 0, outputPerMTok: 0 },
   'claude-haiku-4-5': { inputPerMTok: 1, outputPerMTok: 5 },
   'claude-sonnet-4-6': { inputPerMTok: 3, outputPerMTok: 15 },
   'claude-opus-4-8': { inputPerMTok: 5, outputPerMTok: 25 },

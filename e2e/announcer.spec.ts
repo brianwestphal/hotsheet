@@ -122,6 +122,14 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await expect(pip).toBeVisible();
   await expect(listen).not.toHaveClass(/is-active/);
 
+  // HS-8788 — clicking the button while the panel is VISIBLE minimizes it
+  // (the button toggles the panel; playback continues either way).
+  await listen.click();
+  await expect(pip).toBeHidden();
+  await expect(listen).toHaveClass(/is-active/);
+  await listen.click(); // restore for the close step below
+  await expect(pip).toBeVisible();
+
   // Close → PIP tears down and the listened cursor advances.
   await pip.locator('.announcer-pip-close').click();
   await expect(pip).toHaveCount(0);

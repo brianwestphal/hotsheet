@@ -41,6 +41,9 @@ export type AnnouncerProjectInfo = z.infer<typeof AnnouncerProjectInfoSchema>;
 export const AnnouncerOverviewSchema = z.object({
   activeSecret: z.string().nullable(),
   projects: z.array(AnnouncerProjectInfoSchema),
+  // HS-8790 — machine-global: on-device Apple Foundation Models usable here, so a
+  // project can narrate (and the Listen button can show) without an Anthropic key.
+  appleAvailable: z.boolean().default(false),
 });
 export type AnnouncerOverview = z.infer<typeof AnnouncerOverviewSchema>;
 
@@ -51,6 +54,9 @@ export const AnnouncerStatusSchema = z.object({
   selectedKeyId: z.string().nullable(),
   entryCount: z.number(),
   lastListenedAt: z.string().nullable(),
+  // HS-8790 — on-device Apple Foundation Models usable on this machine.
+  // `.default(false)` keeps older servers / tests that omit it valid.
+  appleAvailable: z.boolean().default(false),
 });
 export type AnnouncerStatus = z.infer<typeof AnnouncerStatusSchema>;
 

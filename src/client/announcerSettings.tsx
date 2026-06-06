@@ -9,7 +9,7 @@
  * dropdown repopulates when keys change elsewhere (the `hotsheet:keys-changed`
  * event) so adding a key in the Keys tab shows up here immediately.
  */
-import { ANNOUNCER_MODEL_IDS } from '../announcer/models.js';
+import { ANNOUNCER_MODEL_IDS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, providerForModel } from '../announcer/models.js';
 import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
 import { getAnnouncerSpeakPermissions, setAnnouncerSpeakPermissions } from './announcerPermissionPref.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
@@ -80,18 +80,33 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     byId('settings-btn').addEventListener('click', syncRate);
   }
 
-  // HS-8764 — global summarization-model select (defaults to the cheapest).
+  // HS-8764 / HS-8790 — global summarization-model select, now spanning
+  // providers. The on-device Apple option only appears + becomes the default
+  // when this machine supports it (status.appleAvailable); the Anthropic key
+  // field shows only while an Anthropic model is selected.
   const modelSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-model');
   if (modelSelect !== null) {
+    const keyField = byIdOrNull('settings-announcer-key-field');
+    const appleOption = modelSelect.querySelector<HTMLOptionElement>(`option[value="${APPLE_FOUNDATION_MODEL_ID}"]`);
+    const applyKeyFieldVisibility = (): void => {
+      if (keyField !== null) keyField.style.display = providerForModel(modelSelect.value) === 'anthropic' ? '' : 'none';
+    };
     const syncModel = (): void => {
-      void getGlobalConfig().then((cfg) => {
-        modelSelect.value = cfg.announcerModel ?? ANNOUNCER_MODEL_IDS[0];
-      }).catch(() => { /* leave the default-selected first option */ });
+      void Promise.all([getGlobalConfig(), getAnnouncerStatus()]).then(([cfg, status]) => {
+        if (appleOption !== null) appleOption.hidden = !status.appleAvailable;
+        // Explicit choice wins; else Apple-when-available, else cheapest. A
+        // stored Apple choice on a machine that no longer supports it falls back.
+        let value = cfg.announcerModel ?? (status.appleAvailable ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL);
+        if (value === APPLE_FOUNDATION_MODEL_ID && !status.appleAvailable) value = DEFAULT_ANNOUNCER_MODEL;
+        modelSelect.value = value;
+        applyKeyFieldVisibility();
+      }).catch(() => { applyKeyFieldVisibility(); });
     };
     syncModel();
     modelSelect.addEventListener('change', () => {
       const model = ANNOUNCER_MODEL_IDS.find(id => id === modelSelect.value);
       if (model === undefined) return;
+      applyKeyFieldVisibility();
       void updateGlobalConfig({ announcerModel: model }).catch(() => {
         showToast('Could not save the model choice.', { variant: 'warning' });
       });

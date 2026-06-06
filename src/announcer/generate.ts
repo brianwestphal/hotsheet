@@ -11,10 +11,12 @@
 import { getActiveAnnouncements, getLatestCoversTo, insertAnnouncements } from '../db/announcer.js';
 import { recordAnnouncerUsage } from '../db/announcerUsage.js';
 import { getSettings } from '../db/queries.js';
+import { readGlobalConfig } from '../global-config.js';
 import { notifyMutation } from '../routes/notify.js';
+import { isAppleFoundationAvailable } from './appleFoundation.js';
 import { collectWorkSignals } from './collectSignals.js';
 import { getDismissedTopics } from './dismissedTopics.js';
-import { DEFAULT_ANNOUNCER_MODEL } from './models.js';
+import { APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL } from './models.js';
 import { type Compression, summarizeWork } from './summarize.js';
 
 /** Above this many unplayed (active) entries the live generator compresses
@@ -34,6 +36,18 @@ export async function isAnnouncerEnabled(): Promise<boolean> {
   return (await getSettings())[ANNOUNCER_ENABLED_KEY] === 'true';
 }
 
+/**
+ * The model to summarize with (HS-8790). The user's explicit `announcerModel`
+ * choice wins; otherwise default to **Apple Foundation Models when available**
+ * (on-device + free), falling back to the cheapest Anthropic model. Shared by
+ * the generate route + the live generator so both honor the same default.
+ */
+export async function resolveAnnouncerModel(): Promise<string> {
+  const chosen = readGlobalConfig().announcerModel;
+  if (chosen !== undefined) return chosen;
+  return (await isAppleFoundationAvailable()) ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL;
+}
+
 /** Latest of (last-listened cursor, last-generated covers_to) — so a re-generate
  *  picks up where it left off rather than re-covering work already turned into
  *  entries but not yet heard. Shared by the manual + live paths. */
@@ -49,7 +63,9 @@ export async function effectiveSince(override?: string): Promise<string | null> 
 export interface GenerateOnceArgs {
   dataDir: string;
   projectSecret: string;
-  apiKey: string;
+  /** Anthropic key — required for Anthropic models, `null` for on-device
+   *  providers (Apple Foundation Models), which need no key. */
+  apiKey: string | null;
   model: string;
   /** Override the "since" cursor; default = `effectiveSince()`. */
   since?: string;
