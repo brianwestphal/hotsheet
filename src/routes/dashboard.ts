@@ -130,33 +130,96 @@ dashboardRoutes.post('/ensure-skills', (c) => {
 
 // --- Glassbox integration ---
 
-let glassboxAvailable: boolean | null = null;
+// HS-8786 — a GUI-launched macOS app gets the minimal launchd PATH
+// (`/usr/bin:/bin:/usr/sbin:/sbin`), so a bare `which glassbox` / `spawn('glassbox')`
+// fails even though the CLI is installed in `/usr/local/bin` (Homebrew/local).
+// We (a) search an AUGMENTED PATH + known install locations, (b) spawn the
+// resolved ABSOLUTE path so launch doesn't depend on PATH at all, and (c) do NOT
+// cache a negative result forever (so installing Glassbox after Hot Sheet started
+// is picked up without a restart).
+
+/** Standard local/Homebrew bin dirs missing from the GUI launchd PATH. */
+function glassboxBinDirs(): string[] {
+  return ['/usr/local/bin', '/opt/homebrew/bin', join(homedir(), '.local', 'bin')];
+}
+
+/** PATH augmented with the local/Homebrew bins, so the resolved `glassbox` (and
+ *  any children it spawns) can find its toolchain. */
+function augmentedPath(): string {
+  return [process.env.PATH ?? '', ...glassboxBinDirs()].filter(p => p !== '').join(':');
+}
+
+/**
+ * Pure resolution logic (HS-8786) — injectable deps so it's unit-testable without
+ * touching the real filesystem / `child_process`. Tries `which` (run under the
+ * augmented PATH) first, then known install locations; returns the absolute path
+ * or null. Exported for testing.
+ */
+export interface GlassboxResolveDeps {
+  /** Result of `which glassbox` under the augmented PATH, or null if it failed.
+   *  A non-empty result is trusted (which only returns existing executables). */
+  which: () => string | null;
+  fileExists: (p: string) => boolean;
+  binDirs: string[];
+}
+export function resolveGlassboxBinWith(deps: GlassboxResolveDeps): string | null {
+  const fromWhich = deps.which();
+  if (fromWhich !== null && fromWhich !== '') return fromWhich;
+  const candidates = [
+    ...deps.binDirs.map(d => join(d, 'glassbox')),
+    '/Applications/Glassbox.app/Contents/Resources/resources/glassbox',
+  ];
+  for (const p of candidates) if (deps.fileExists(p)) return p;
+  return null;
+}
+
+/** Resolve the `glassbox` CLI to an absolute path, or null when not installed,
+ *  wiring the real `which` (under the augmented PATH) + `existsSync`. */
+async function resolveGlassboxBin(): Promise<string | null> {
+  const { execFileSync } = await import('child_process');
+  const which = (): string | null => {
+    try {
+      return execFileSync('which', ['glassbox'], {
+        env: { ...process.env, PATH: augmentedPath() },
+        encoding: 'utf-8',
+      }).trim();
+    } catch {
+      return null;
+    }
+  };
+  return resolveGlassboxBinWith({ which, fileExists: existsSync, binDirs: glassboxBinDirs() });
+}
 
 dashboardRoutes.get('/glassbox/status', async (c) => {
-  if (glassboxAvailable === null) {
-    const { execFileSync } = await import('child_process');
-    try {
-      execFileSync('which', ['glassbox'], { stdio: 'ignore' });
-      glassboxAvailable = true;
-    } catch {
-      glassboxAvailable = false;
-    }
-  }
-  return c.json({ available: glassboxAvailable });
+  // Re-resolve each call (cheap) rather than caching — HS-8786: the old
+  // cache-forever meant a PATH/install fix needed a server restart to take.
+  return c.json({ available: (await resolveGlassboxBin()) !== null });
 });
 
 dashboardRoutes.post('/glassbox/launch', async (c) => {
-  if (glassboxAvailable !== true) return c.json({ error: 'Glassbox not available' }, 404);
+  const bin = await resolveGlassboxBin();
+  if (bin === null) return c.json({ error: 'Glassbox CLI not found. Install it (e.g. in /usr/local/bin) and try again.' }, 404);
   const { spawn } = await import('child_process');
   const path = await import('path');
   // Use the active project's root directory (parent of .hotsheet/), not
   // process.cwd() which is always the server's startup directory.
   const projectRoot = path.dirname(c.get('dataDir'));
-  spawn('glassbox', [], {
-    cwd: projectRoot,
-    detached: true,
-    stdio: 'ignore',
-  }).unref();
+  try {
+    const child = spawn(bin, [], {
+      cwd: projectRoot,
+      detached: true,
+      stdio: 'ignore',
+      // Give the child the augmented PATH so its own toolchain lookups succeed.
+      env: { ...process.env, PATH: augmentedPath() },
+    });
+    // The spawn is detached; surface an async spawn failure (e.g. EACCES) in the
+    // server log rather than swallowing it silently.
+    child.on('error', (err) => { console.error('[glassbox] launch failed:', err); });
+    child.unref();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'spawn failed';
+    return c.json({ error: `Could not launch Glassbox: ${message}` }, 500);
+  }
   return c.json({ ok: true });
 });
 

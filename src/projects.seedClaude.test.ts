@@ -56,8 +56,7 @@ function withClaudeOnPath(): void {
 describe('seedClaudeTerminalIfNew (HS-8491)', () => {
   it('seeds a claude terminal when terminals is unset AND claude is on PATH', () => {
     const dataDir = makeProject('case-a');
-    withClaudeOnPath();
-    seedClaudeTerminalIfNew(dataDir);
+    seedClaudeTerminalIfNew(dataDir, () => true);
     const settings = readFileSettings(dataDir);
     expect(settings.terminals).toEqual([
       { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
@@ -66,16 +65,14 @@ describe('seedClaudeTerminalIfNew (HS-8491)', () => {
 
   it('does NOT seed when claude is not on PATH (even if terminals is unset)', () => {
     const dataDir = makeProject('case-b');
-    process.env.PATH = ''; // no claude binary anywhere
-    seedClaudeTerminalIfNew(dataDir);
+    seedClaudeTerminalIfNew(dataDir, () => false); // claude not installed anywhere
     expect(readFileSettings(dataDir).terminals).toBeUndefined();
   });
 
   it('does NOT seed when terminals is already set (even to an empty array)', () => {
     const dataDir = makeProject('case-c');
-    withClaudeOnPath();
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ terminals: [] }));
-    seedClaudeTerminalIfNew(dataDir);
+    seedClaudeTerminalIfNew(dataDir, () => true);
     // Stays empty — the user explicitly cleared their list and we
     // must not auto-restore.
     expect(readFileSettings(dataDir).terminals).toEqual([]);
@@ -83,29 +80,37 @@ describe('seedClaudeTerminalIfNew (HS-8491)', () => {
 
   it('does NOT seed when terminals is already set to a non-empty list', () => {
     const dataDir = makeProject('case-d');
-    withClaudeOnPath();
     writeFileSync(
       join(dataDir, 'settings.json'),
       JSON.stringify({ terminals: [{ id: 'shell', command: 'bash' }] }),
     );
-    seedClaudeTerminalIfNew(dataDir);
+    seedClaudeTerminalIfNew(dataDir, () => true);
     expect(readFileSettings(dataDir).terminals).toEqual([{ id: 'shell', command: 'bash' }]);
   });
 
   it('is idempotent — a second call after the seed is a no-op', () => {
     const dataDir = makeProject('case-e');
-    withClaudeOnPath();
-    seedClaudeTerminalIfNew(dataDir);
+    seedClaudeTerminalIfNew(dataDir, () => true);
     const after1 = readFileSettings(dataDir).terminals;
-    seedClaudeTerminalIfNew(dataDir);
+    seedClaudeTerminalIfNew(dataDir, () => true);
     const after2 = readFileSettings(dataDir).terminals;
     expect(after2).toEqual(after1);
   });
 
   it('writes a real settings.json file (sanity)', () => {
     const dataDir = makeProject('case-f');
+    seedClaudeTerminalIfNew(dataDir, () => true);
+    expect(existsSync(join(dataDir, 'settings.json'))).toBe(true);
+  });
+
+  // HS-8785 — the real default detector probes the augmented dirs (Homebrew etc.),
+  // so a binary on PATH is still found (the default-arg path, exercised here).
+  it('uses the real PATH probe by default (claude on PATH → seeds)', () => {
+    const dataDir = makeProject('case-g');
     withClaudeOnPath();
     seedClaudeTerminalIfNew(dataDir);
-    expect(existsSync(join(dataDir, 'settings.json'))).toBe(true);
+    expect(readFileSettings(dataDir).terminals).toEqual([
+      { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
+    ]);
   });
 });

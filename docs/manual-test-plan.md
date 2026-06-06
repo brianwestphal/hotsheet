@@ -68,6 +68,7 @@ This document lists features that require manual verification before each releas
 - [ ] "Check for Updates" button finds updates from GitHub releases
 - [ ] "Install Update" downloads and prompts for restart
 - [ ] Download links in notes open in system browser (not webview)
+- [ ] HS-8786: Glassbox launch from the GUI app (minimal launchd PATH). With the `glassbox` CLI installed in `/usr/local/bin` (Homebrew), launch Hot Sheet as a **packaged GUI app** (not from a terminal). The Glassbox toolbar button appears (status resolves the CLI via the augmented PATH / known locations, not just bare `PATH`), and clicking it opens Glassbox. With the CLI **not** installed, clicking shows a "Could not open Glassbox…" toast instead of silently doing nothing. Installing the CLI while Hot Sheet is running makes the button appear without a restart (no permanent negative cache).
 
 ### App Icon (Tauri Only)
 - [ ] Icon variant dropdown in Settings → General shows thumbnail grid

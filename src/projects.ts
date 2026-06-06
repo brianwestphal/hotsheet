@@ -133,9 +133,15 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
  * spinning up the full `registerProject` lifecycle (PGLite +
  * markdown sync + backup scheduler + skills).
  */
-export function seedClaudeTerminalIfNew(absDataDir: string): void {
+export function seedClaudeTerminalIfNew(
+  absDataDir: string,
+  // Injectable so tests can drive the detector deterministically — HS-8785 made
+  // `isExecutableOnPath` also probe real system dirs (Homebrew etc.), which a
+  // test can't suppress via `process.env.PATH` alone.
+  isClaudeOnPath: () => boolean = () => isExecutableOnPath('claude'),
+): void {
   if (readFileSettings(absDataDir).terminals !== undefined) return;
-  if (!isExecutableOnPath('claude')) return;
+  if (!isClaudeOnPath()) return;
   writeFileSettings(absDataDir, {
     terminals: [
       { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },

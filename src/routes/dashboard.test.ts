@@ -40,10 +40,10 @@ vi.mock('child_process', () => ({
   // HS-8723 — git/status.ts (pulled in transitively) now `promisify`s
   // `execFile` at module load, so the mock must expose it as a function.
   execFile: vi.fn(),
-  spawn: vi.fn(() => ({ unref: vi.fn() })),
+  spawn: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() })),
 }));
 
-const { dashboardRoutes } = await import('./dashboard.js');
+const { dashboardRoutes, resolveGlassboxBinWith } = await import('./dashboard.js');
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -259,18 +259,30 @@ describe('GET /glassbox/status', () => {
     const data = await res.json() as { available: boolean };
     expect(typeof data.available).toBe('boolean');
   });
+
+  it('reports available when `which` resolves the CLI (HS-8786)', async () => {
+    const { execFileSync } = await import('child_process');
+    vi.mocked(execFileSync).mockReturnValueOnce('/usr/local/bin/glassbox\n');
+    const res = await app.request('/api/glassbox/status');
+    const data = await res.json() as { available: boolean };
+    expect(data.available).toBe(true);
+  });
 });
 
 describe('POST /glassbox/launch', () => {
-  it('launches glassbox when available', async () => {
-    // First call /status to set glassboxAvailable = true (mocked execFileSync succeeds)
-    await app.request('/api/glassbox/status');
-
+  it('launches the resolved glassbox CLI when available', async () => {
+    const { execFileSync, spawn } = await import('child_process');
+    vi.mocked(execFileSync).mockReturnValueOnce('/usr/local/bin/glassbox\n'); // `which` resolves it
     const res = await app.request('/api/glassbox/launch', { method: 'POST' });
     expect(res.status).toBe(200);
     const data = await res.json() as { ok: boolean };
     expect(data.ok).toBe(true);
+    // Spawned the resolved ABSOLUTE path (HS-8786), not the bare name.
+    expect(vi.mocked(spawn).mock.calls[0][0]).toBe('/usr/local/bin/glassbox');
   });
+  // The not-found → 404 path is covered deterministically by the
+  // `resolveGlassboxBinWith` unit tests below (a route test would depend on
+  // whether glassbox happens to be installed on the test machine).
 });
 
 describe('GET /gitignore/status', () => {
@@ -315,5 +327,40 @@ describe('POST /print', () => {
   it('returns 400 for missing html body', async () => {
     const res = await app.request('/api/print', post({}));
     expect(res.status).toBe(400);
+  });
+});
+
+// HS-8786 — the GUI-launchd-PATH fix: resolve `glassbox` via `which` (augmented
+// PATH) then known install locations, so a bare-name lookup that fails under the
+// minimal GUI PATH still finds the installed CLI.
+describe('resolveGlassboxBinWith (HS-8786)', () => {
+  const binDirs = ['/usr/local/bin', '/opt/homebrew/bin'];
+
+  it('trusts a non-empty `which` result (which only returns existing executables)', () => {
+    const bin = resolveGlassboxBinWith({
+      which: () => '/opt/homebrew/bin/glassbox',
+      fileExists: () => false, // not consulted for the which result
+      binDirs,
+    });
+    expect(bin).toBe('/opt/homebrew/bin/glassbox');
+  });
+
+  it('falls back to a known install location when `which` fails (the GUI-PATH case)', () => {
+    const bin = resolveGlassboxBinWith({
+      which: () => null,                                  // not on the minimal GUI PATH
+      fileExists: p => p === '/usr/local/bin/glassbox',   // but installed there
+      binDirs,
+    });
+    expect(bin).toBe('/usr/local/bin/glassbox');
+  });
+
+  it('finds the macOS app-bundle CLI when nothing else matches', () => {
+    const appBundle = '/Applications/Glassbox.app/Contents/Resources/resources/glassbox';
+    const bin = resolveGlassboxBinWith({ which: () => null, fileExists: p => p === appBundle, binDirs });
+    expect(bin).toBe(appBundle);
+  });
+
+  it('returns null when the CLI is not installed anywhere', () => {
+    expect(resolveGlassboxBinWith({ which: () => null, fileExists: () => false, binDirs })).toBeNull();
   });
 });

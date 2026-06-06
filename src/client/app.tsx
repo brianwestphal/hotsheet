@@ -47,6 +47,7 @@ import { loadTerminalWebglOptOut } from './terminalWebgl.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
+import { showToast } from './toast.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
@@ -393,7 +394,11 @@ function bindGlassbox() {
   }).catch(() => { /* ignore */ });
 
   btn.addEventListener('click', () => {
-    void launchGlassbox();
+    // HS-8786 — surface a launch failure instead of silently doing nothing
+    // (the old fire-and-forget swallowed the 404/500 from the launch route).
+    void launchGlassbox().catch(() => {
+      showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
+    });
   });
 }
 
