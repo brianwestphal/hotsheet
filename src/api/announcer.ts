@@ -76,6 +76,11 @@ export type GenerateAnnouncementsReq = z.infer<typeof GenerateAnnouncementsReqSc
 export const GenerateAnnouncementsResSchema = z.object({
   entries: z.array(AnnouncementSchema),
   generated: z.number(),
+  // HS-8805 — a soft, recoverable summarization failure (the request still
+  // succeeds and returns the existing reel). Present only when generation
+  // hiccupped; the client shows a gentle toast rather than the alarming
+  // "Connection Error" overlay a 5xx used to trigger.
+  error: z.string().optional(),
 });
 
 export const EntriesResSchema = z.object({ entries: z.array(AnnouncementSchema) });

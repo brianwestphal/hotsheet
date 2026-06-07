@@ -668,6 +668,27 @@ only for an Anthropic model**; the on-device option is hidden where unavailable.
 A future cross-platform **local/Ollama** provider (Linux + non-Copilot+ Windows)
 slots into the same `providerForModel` seam (follow-up).
 
+**On-device failure resilience + soft generate errors (HS-8805).** An on-device
+provider can report **available** at probe time yet still **fail at inference**
+(the Apple FM Swift helper exits **code 4** = "inference failed"; a local
+endpoint can refuse mid-request). Two fixes so this no longer surfaces as an
+alarming overlay on dialog open:
+- **Auto-fallback to Anthropic.** When the model was **auto-selected** (no
+  explicit `announcerModel`) and resolved to an on-device provider, the generate
+  path resolves an Anthropic key and hands it to `summarizeWork` as
+  `anthropicFallbackKey`; if the on-device call throws, it transparently retries
+  with the cheapest Anthropic model. An **explicit** on-device choice is
+  respected (no fallback key resolved) so a privacy/cost preference is never
+  silently overridden. `SummarizeResult.modelUsed` carries the model that
+  actually ran so cost is attributed to the Anthropic fallback model (not the
+  on-device id, which `announcerCost` prices at $0).
+- **Soft generate errors.** A summarization failure with no fallback available
+  is **recoverable, not a server fault**, so `POST /api/announcer/generate` now
+  returns **200** with `{ entries: <existing reel>, generated: 0, error }`
+  instead of a **502**. The client's generic api layer pops its "Connection
+  Error" overlay on any `status >= 500`; returning 200 keeps the existing reel
+  playing and lets the client show a gentle toast from the soft `error`.
+
 **Promotes §78.5 (content tier 1 — text transcript) and §78.6 (settings UI +
 TTS providers: Tauri `say` desktop primary, browser `speechSynthesis`) from
 design to shipped.** The **draggable PIP** + remembered position (HS-8756) and

@@ -332,3 +332,52 @@ test('announcer PIP renders a code-diff visual when the entry carries one (HS-87
   await expect(pip.locator('.announcer-pip-title')).toHaveText('No visual here');
   await expect(visual).toBeHidden();
 });
+
+// HS-8805 — a summarization failure (e.g. the on-device Apple FM helper exiting
+// code 4) comes back as a soft `error` on a 200, NOT a 5xx. It must NOT trip the
+// global "Connection Error" overlay (`#network-error-popup`) on dialog open; the
+// existing reel still plays and a gentle toast explains the hiccup.
+test('soft summarization error shows a gentle toast, not the Connection Error overlay (HS-8805)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    if (typeof (window as unknown as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance === 'undefined') {
+      (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+    }
+  });
+
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'proj-a', projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: 1 }] }),
+  }));
+  await page.route('**/api/announcer/status**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ enabled: true, hasKey: true, selectedKeyId: null, entryCount: 1, lastListenedAt: null }),
+  }));
+  // The generate call hiccupped: 200 with a soft `error` and no new entries.
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ entries: [], generated: 0, error: 'Summarization failed: Apple Foundation Models helper exited with code 4' }),
+  }));
+  // The existing reel still loads and plays.
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ entries: [
+      { id: 1, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'Earlier work', script: 'Already here.', position: 0, dismissed: false, visuals: [] },
+    ] }),
+  }));
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  await page.locator('#announcer-listen-btn').click();
+
+  // The gentle soft-error toast appears…
+  await expect(page.locator('.hs-toast')).toContainText('generate new narration', { timeout: 8000 });
+  // …and the existing reel still opens.
+  await expect(page.locator('.announcer-pip')).toBeVisible({ timeout: 8000 });
+  // The alarming global overlay must NOT appear.
+  await expect(page.locator('#network-error-popup')).toHaveCount(0);
+});

@@ -68,7 +68,15 @@ export function parseEntriesJson(text: string): GeneratedEntry[] {
 /** Token usage from one summarization (HS-8766) — captured even when parsing
  *  the response fails, since the API call (and its cost) already happened. */
 export interface SummarizeUsage { inputTokens: number; outputTokens: number }
-export interface SummarizeResult { entries: GeneratedEntry[]; usage: SummarizeUsage | null }
+export interface SummarizeResult {
+  entries: GeneratedEntry[];
+  usage: SummarizeUsage | null;
+  /** HS-8805 — the model that ACTUALLY produced this result. Differs from the
+   *  requested model when an on-device provider failed and we fell back to
+   *  Anthropic, so the caller attributes cost to the right model. Undefined for
+   *  the on-device paths (free; no cost to attribute). */
+  modelUsed?: string;
+}
 
 /** JSON Schema for `output_config.format` — a raw schema (not the SDK's zod
  *  helper) to stay independent of the zod-v4 ↔ helper compatibility surface;
@@ -145,6 +153,16 @@ export async function summarizeWork(
     dismissedTopics?: readonly string[];
     localEndpoint?: string;
     localModel?: string;
+    /**
+     * HS-8805 — when an on-device provider (Apple Foundation Models / a local
+     * endpoint) throws at inference time — e.g. the Swift helper exits non-zero
+     * (code 4 = "inference failed") even though `--probe` reported available —
+     * fall back to Anthropic with this key instead of failing the whole batch.
+     * The caller sets it only when the model was AUTO-selected (not an explicit
+     * on-device choice) and a key is configured, so an explicit privacy/cost
+     * choice of on-device is never silently overridden.
+     */
+    anthropicFallbackKey?: string | null;
   },
 ): Promise<SummarizeResult> {
   if (material.trim() === '') return { entries: [], usage: null };
@@ -157,25 +175,39 @@ export async function summarizeWork(
     // *guided generation* (the Anthropic `output_config` equivalent), so we pass
     // the same system prompt and just validate the JSON it returns. On-device =
     // free, so no usage/cost is recorded.
-    const out = await runAppleFoundationSummarize(system, material);
-    return { entries: dropUnimportant(parseEntriesJson(out)), usage: null };
+    try {
+      const out = await runAppleFoundationSummarize(system, material);
+      return { entries: dropUnimportant(parseEntriesJson(out)), usage: null };
+    } catch (err) {
+      return onDeviceFallbackOrThrow(err, 'Apple Foundation Models', material, system, opts);
+    }
   }
 
   if (provider === 'local') {
     // HS-8792 — a generic local model has no output-schema enforcement, so we
     // append the explicit JSON contract to the prompt and lean on the tolerant
     // `parseEntriesJson`. On-device = free → no usage/cost.
-    const out = await runLocalSummarize(system + LOCAL_JSON_INSTRUCTION, material, {
-      endpoint: opts.localEndpoint?.trim() !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT,
-      model: opts.localModel ?? '',
-    });
-    return { entries: dropUnimportant(parseEntriesJson(out)), usage: null };
+    try {
+      const out = await runLocalSummarize(system + LOCAL_JSON_INSTRUCTION, material, {
+        endpoint: opts.localEndpoint?.trim() !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT,
+        model: opts.localModel ?? '',
+      });
+      return { entries: dropUnimportant(parseEntriesJson(out)), usage: null };
+    } catch (err) {
+      return onDeviceFallbackOrThrow(err, 'local model', material, system, opts);
+    }
   }
 
   if (opts.apiKey === undefined || opts.apiKey === null || opts.apiKey === '') {
     throw new Error('No Anthropic API key configured');
   }
-  const client = new Anthropic({ apiKey: opts.apiKey });
+  return summarizeViaAnthropic(opts.apiKey, model, system, material);
+}
+
+/** One Anthropic Messages call → validated entries + usage. Shared by the normal
+ *  Anthropic path and the on-device fallback (HS-8805). */
+async function summarizeViaAnthropic(apiKey: string, model: string, system: string, material: string): Promise<SummarizeResult> {
+  const client = new Anthropic({ apiKey });
   const res = await client.messages.create({
     model,
     max_tokens: 4096,
@@ -195,5 +227,22 @@ export async function summarizeWork(
   for (const block of res.content) {
     if (block.type === 'text') text += block.text;
   }
-  return { entries: dropUnimportant(parseEntriesJson(text)), usage };
+  return { entries: dropUnimportant(parseEntriesJson(text)), usage, modelUsed: model };
+}
+
+/** HS-8805 — an on-device provider failed at inference time. Fall back to
+ *  Anthropic (the cheapest default model) when a fallback key was provided;
+ *  otherwise re-throw the original error so the caller surfaces it. */
+async function onDeviceFallbackOrThrow(
+  err: unknown,
+  providerLabel: string,
+  material: string,
+  system: string,
+  opts: { anthropicFallbackKey?: string | null },
+): Promise<SummarizeResult> {
+  const key = opts.anthropicFallbackKey;
+  if (key === undefined || key === null || key === '') throw err;
+  const reason = err instanceof Error ? err.message : String(err);
+  console.warn(`[announcer] ${providerLabel} summarization failed (${reason}); falling back to Anthropic (${DEFAULT_ANNOUNCER_MODEL}).`);
+  return summarizeViaAnthropic(key, DEFAULT_ANNOUNCER_MODEL, system, material);
 }

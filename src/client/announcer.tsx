@@ -123,7 +123,13 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
     const canGenerate = (projects.find(p => p.secret === context)?.hasKey ?? false) || overview.appleAvailable || overview.localAvailable;
     if (context !== ALL_PROJECTS && canGenerate) {
       try {
-        await generateAnnouncements({}, context);
+        // HS-8805 — a summarization hiccup now comes back as a soft `error` on a
+        // 200 (not a 5xx), so it no longer trips the global "Connection Error"
+        // overlay. Surface it as a gentle toast; existing entries still play.
+        const gen = await generateAnnouncements({}, context);
+        if (gen.error !== undefined && gen.error !== '') {
+          showToast('Announcer: couldn’t generate new narration just now — showing what’s already here.', { variant: 'warning', durationMs: 5000 });
+        }
       } catch {
         showToast('Announcer: could not generate new entries (check your API key).', { variant: 'warning', durationMs: 5000 });
       }

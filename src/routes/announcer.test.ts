@@ -79,8 +79,10 @@ describe('announcer routes (HS-8745)', () => {
 
   it('enable → generate persists summarized entries → entries + status reflect them', async () => {
     expect((await post('/api/announcer/enabled', { enabled: true })).status).toBe(200);
-    // Seed a work signal so collectWorkSignals has material.
-    await (await getDb()).query(`INSERT INTO command_log (event_type, direction, summary, detail) VALUES ('done','incoming','finished the export feature','')`);
+    // Seed a work signal so collectWorkSignals has material. HS-8795 — `done`
+    // (and `permission_request`) events are excluded from narrated material, so
+    // use a `trigger` event (explicitly kept) or the test collects 0 signals.
+    await (await getDb()).query(`INSERT INTO command_log (event_type, direction, summary, detail) VALUES ('trigger','incoming','finished the export feature','')`);
 
     const genRes = await post('/api/announcer/generate');
     expect(genRes.status).toBe(200);
@@ -110,6 +112,26 @@ describe('announcer routes (HS-8745)', () => {
     const res = await post('/api/announcer/generate');
     expect(res.status).toBe(200);
     expect((await res.json() as { generated: number }).generated).toBe(0);
+  });
+
+  // HS-8805 — a summarization failure (e.g. the on-device Apple FM helper exiting
+  // code 4) is recoverable, not a server fault. It must NOT return 5xx — that
+  // tripped the client's global "Connection Error" overlay on dialog open.
+  it('summarization failure returns 200 with a soft error + the existing reel (HS-8805)', async () => {
+    await post('/api/announcer/enabled', { enabled: true });
+    // Seed an existing entry so the soft response still hands back the reel.
+    expect((await post('/api/announcer/announce', { title: 'Earlier', highlight: 'Already here.' })).status).toBe(200);
+    // Seed a new work signal so generation actually reaches the (failing)
+    // summarizer (a `trigger` event — `done` is excluded; see HS-8795 above).
+    await (await getDb()).query(`INSERT INTO command_log (event_type, direction, summary, detail) VALUES ('trigger','incoming','did a thing','')`);
+    vi.mocked(summarizeWork).mockRejectedValueOnce(new Error('Apple Foundation Models helper exited with code 4'));
+
+    const res = await post('/api/announcer/generate');
+    expect(res.status).toBe(200); // NOT >= 500 — the global error popup keys on that
+    const body = await res.json() as { generated: number; error?: string; entries: unknown[] };
+    expect(body.generated).toBe(0);
+    expect(body.error).toContain('code 4');
+    expect(body.entries).toHaveLength(1); // existing reel preserved
   });
 
   it('cursor advances the last-listened mark', async () => {

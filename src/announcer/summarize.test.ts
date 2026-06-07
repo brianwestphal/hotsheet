@@ -171,4 +171,50 @@ describe('summarizeWork (HS-8745)', () => {
     await summarizeWork('m', { apiKey: 'sk-test', model: 'claude-sonnet-4-6' });
     expect(createMock.mock.calls[0][0].model).toBe('claude-sonnet-4-6');
   });
+
+  // HS-8805 — the on-device Apple FM helper can fail inference (exit code 4)
+  // even though `--probe` reported available. With an Anthropic fallback key
+  // configured (auto-selected model), a failure transparently falls over to
+  // Anthropic instead of breaking the whole batch.
+  describe('on-device → Anthropic fallback (HS-8805)', () => {
+    it('falls back to Anthropic (default model) when the Apple helper throws and a fallback key is set', async () => {
+      appleRunMock.mockRejectedValue(new Error('Apple Foundation Models helper exited with code 4'));
+      createMock.mockResolvedValue(textResponse({ entries: [{ title: 'Recovered', script: 'Summarized via fallback.' }] }));
+
+      const res = await summarizeWork('real material', { model: 'apple-foundation', anthropicFallbackKey: 'sk-fallback' });
+
+      expect(appleRunMock).toHaveBeenCalledTimes(1);
+      expect(ctorMock).toHaveBeenCalledWith({ apiKey: 'sk-fallback' });
+      // Cost must attribute to the model that actually ran (the Anthropic
+      // default), NOT the apple id (which prices at $0).
+      expect(createMock.mock.calls[0][0].model).toBe(ANNOUNCER_MODEL);
+      expect(res.modelUsed).toBe(ANNOUNCER_MODEL);
+      expect(res.entries).toEqual([{ title: 'Recovered', script: 'Summarized via fallback.' }]);
+      expect(res.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+    });
+
+    it('re-throws the original Apple error when no fallback key is configured (no silent cloud call)', async () => {
+      appleRunMock.mockRejectedValue(new Error('Apple Foundation Models helper exited with code 4'));
+      await expect(summarizeWork('real material', { model: 'apple-foundation' })).rejects.toThrow(/code 4/);
+      expect(createMock).not.toHaveBeenCalled();
+      expect(ctorMock).not.toHaveBeenCalled();
+    });
+
+    it('does NOT fall back when the on-device call succeeds (no cloud call)', async () => {
+      appleRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'On device', script: 'All good.' }] }));
+      const res = await summarizeWork('real material', { model: 'apple-foundation', anthropicFallbackKey: 'sk-fallback' });
+      expect(createMock).not.toHaveBeenCalled();
+      expect(res.usage).toBeNull();
+      expect(res.modelUsed).toBeUndefined();
+    });
+
+    it('also falls back when the local provider throws and a fallback key is set', async () => {
+      localRunMock.mockRejectedValue(new Error('local endpoint refused connection'));
+      createMock.mockResolvedValue(textResponse({ entries: [{ title: 'Recovered', script: 'Via fallback.' }] }));
+      const res = await summarizeWork('real material', { model: 'local', localModel: 'llama3.1', anthropicFallbackKey: 'sk-fallback' });
+      expect(createMock).toHaveBeenCalledTimes(1);
+      expect(res.modelUsed).toBe(ANNOUNCER_MODEL);
+      expect(res.entries).toEqual([{ title: 'Recovered', script: 'Via fallback.' }]);
+    });
+  });
 });

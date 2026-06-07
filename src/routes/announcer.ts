@@ -110,8 +110,15 @@ announcerRoutes.post('/announcer/generate', async (c) => {
     });
     return c.json({ entries: rows, generated: generatedCount });
   } catch (err) {
+    // HS-8805 — a summarization failure (e.g. the on-device Apple FM helper
+    // exiting code 4, or a transient provider error) is best-effort and
+    // RECOVERABLE, not a server fault. Returning 5xx made the client's generic
+    // api layer pop the alarming "Connection Error" overlay on dialog open.
+    // Respond 200 with the already-generated reel + a soft `error` the client
+    // surfaces as a gentle toast, so existing entries still play.
     const message = err instanceof Error ? err.message : 'summarization failed';
-    return c.json({ error: `Summarization failed: ${message}` }, 502);
+    console.warn(`[announcer] generate failed (soft): ${message}`);
+    return c.json({ entries: await getActiveAnnouncements(), generated: 0, error: `Summarization failed: ${message}` });
   }
 });
 

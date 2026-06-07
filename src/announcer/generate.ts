@@ -131,6 +131,15 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
   // HS-8792 — the local provider reads its endpoint + model from the global
   // config (ignored by the Anthropic/Apple paths).
   const cfg = readGlobalConfig();
+  // HS-8805 — if the model was AUTO-selected (no explicit `announcerModel`) and
+  // resolved to an on-device provider, hand `summarizeWork` an Anthropic key to
+  // fall back to when the on-device helper fails inference (e.g. Apple FM exits
+  // code 4 despite `--probe` reporting available). An EXPLICIT on-device choice
+  // is respected (no fallback key resolved), so a privacy/cost preference is
+  // never silently overridden by a paid cloud call.
+  const autoSelected = cfg.announcerModel === undefined;
+  const onDevice = providerForModel(args.model) === 'apple' || providerForModel(args.model) === 'local';
+  const anthropicFallbackKey = autoSelected && onDevice ? await resolveAnnouncerKey() : null;
   const result = await summarizeWork(signals.material, {
     apiKey: args.apiKey,
     model: args.model,
@@ -138,12 +147,16 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
     dismissedTopics,
     localEndpoint: cfg.announcerLocalEndpoint,
     localModel: cfg.announcerLocalModel,
+    anthropicFallbackKey,
   });
 
   if (result.usage !== null) {
     await recordAnnouncerUsage({
       projectSecret: args.projectSecret,
-      model: args.model,
+      // HS-8805 — attribute cost to the model that ACTUALLY ran (the Anthropic
+      // fallback model when the on-device path failed over), not the requested
+      // on-device id (which `announcerCost` prices at $0).
+      model: result.modelUsed ?? args.model,
       inputTokens: result.usage.inputTokens,
       outputTokens: result.usage.outputTokens,
     });
