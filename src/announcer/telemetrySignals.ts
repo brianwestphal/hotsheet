@@ -39,9 +39,14 @@ interface ToolRow { prompt_id: string | null; tool: string | null; n: bigint | n
 /**
  * Collect recent in-progress telemetry signals for a project since `since`
  * (ISO; null → the last 30 min). Returns one line per user-prompt turn —
- * "working on: <snippet> (used Bash ×3, Edit ×2)" — plus a catch-all line for
- * tool activity whose prompt turn started before the window. Empty array when
- * there's no telemetry (caller simply contributes nothing).
+ * "working on: <snippet> (used Bash ×3, Edit ×2)". Empty array when there's no
+ * telemetry (caller simply contributes nothing).
+ *
+ * HS-8806 — tool activity whose prompt turn started BEFORE the window is
+ * deliberately NOT emitted: with no prompt context it's pure tool churn ("used
+ * Read, Bash, Edit"), which the summarizer turned into valueless entries like
+ * "Read Bash Edit". A narration line needs the user-prompt context to be a
+ * cohesive summary, so only turns with an in-window prompt contribute.
  */
 export async function collectTelemetrySignals(projectSecret: string, since: string | null): Promise<TelemetryLine[]> {
   const db = await getTelemetryDb();
@@ -80,27 +85,18 @@ export async function collectTelemetrySignals(projectSecret: string, since: stri
   }
 
   const lines: TelemetryLine[] = [];
-  const turnsWithPrompt = new Set<string>();
   for (const p of prompts.rows) {
     const snippet = promptSnippet(p.body);
     if (snippet === '') continue;
     const key = p.prompt_id ?? '(none)';
-    turnsWithPrompt.add(key);
     const toolPart = formatTools(toolsByPrompt.get(key));
     lines.push({ at: p.at, text: `[in progress] working on: "${snippet}"${toolPart === '' ? '' : ` (used ${toolPart})`}` });
   }
 
-  // Tool activity for turns whose user_prompt is outside the window (started
-  // before the cursor) — fold into one catch-all line so it isn't lost.
-  const orphanTools = new Map<string, number>();
-  for (const [key, m] of toolsByPrompt) {
-    if (turnsWithPrompt.has(key)) continue;
-    for (const [tool, n] of m) orphanTools.set(tool, (orphanTools.get(tool) ?? 0) + n);
-  }
-  const orphanPart = formatTools(orphanTools);
-  if (orphanPart !== '') {
-    lines.push({ at: new Date().toISOString(), text: `[in progress] ongoing work (used ${orphanPart})` });
-  }
+  // HS-8806 — intentionally NO orphan-tool catch-all line. Tool activity whose
+  // user_prompt is outside the window has no cohesive context to narrate (it
+  // became valueless "Read Bash Edit" entries); we drop it rather than feed the
+  // summarizer raw tool churn.
 
   return lines;
 }

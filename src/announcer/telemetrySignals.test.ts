@@ -1,8 +1,9 @@
 /**
  * HS-8789 — the mid-task telemetry signal collector: groups in-progress
  * `user_prompt` + `tool_result` events by prompt turn into a few narration lines,
- * strips the hotsheet ticket marker, folds orphan tool activity, and honors the
- * cursor.
+ * strips the hotsheet ticket marker, and honors the cursor. HS-8806 — orphan tool
+ * activity (no in-window prompt) is dropped, not folded into an "ongoing work"
+ * line, since bare tool churn has no cohesive content to narrate.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -54,13 +55,24 @@ describe('collectTelemetrySignals (HS-8789)', () => {
     expect(lines[0].text).toBe('[in progress] working on: "refactor the parser"');
   });
 
-  it('folds tool activity with no in-window prompt into one ongoing-work line', async () => {
+  it('does NOT emit a line for tool activity with no in-window prompt (HS-8806)', async () => {
     // Tool events whose user_prompt started before the cursor (not in window).
+    // Pre-HS-8806 this folded into an "[in progress] ongoing work (used Read ×2)"
+    // line, which the summarizer turned into valueless "Read Bash Edit" entries.
+    // With no prompt context there's nothing cohesive to narrate, so it's dropped.
     await tool(NEW, 'old-turn', 'Read');
     await tool(NEWER, 'old-turn', 'Read');
+    await tool(NEW, 'old-turn-2', 'Bash');
+    expect(await collectTelemetrySignals(SECRET, CURSOR)).toEqual([]);
+  });
+
+  it('still emits in-window prompt turns even when orphan tool churn is present (HS-8806)', async () => {
+    await prompt(NEW, 'p1', { prompt: 'fix the export bug' });
+    await tool(NEW, 'p1', 'Edit');
+    await tool(NEW, 'orphan', 'Read'); // no in-window prompt → contributes nothing
     const lines = await collectTelemetrySignals(SECRET, CURSOR);
     expect(lines).toHaveLength(1);
-    expect(lines[0].text).toBe('[in progress] ongoing work (used Read ×2)');
+    expect(lines[0].text).toBe('[in progress] working on: "fix the export bug" (used Edit)');
   });
 
   it('honors the cursor (pre-cursor events excluded) and scopes by project', async () => {

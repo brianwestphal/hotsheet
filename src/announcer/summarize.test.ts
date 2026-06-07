@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ANNOUNCER_MODEL, buildSystemPrompt, summarizeWork } from './summarize.js';
+import { ANNOUNCER_MODEL, buildSystemPrompt, dropToolChurn, isToolChurn, summarizeWork } from './summarize.js';
 
 interface CreateArgs { model: string; system?: string; output_config?: unknown }
 interface FakeMessage { content: { type: string; text?: string }[]; usage: { input_tokens: number; output_tokens: number } }
@@ -170,6 +170,55 @@ describe('summarizeWork (HS-8745)', () => {
     createMock.mockResolvedValue(textResponse({ entries: [] }));
     await summarizeWork('m', { apiKey: 'sk-test', model: 'claude-sonnet-4-6' });
     expect(createMock.mock.calls[0][0].model).toBe('claude-sonnet-4-6');
+  });
+
+  // HS-8806 — tool-churn guard: entries that are just tool names / raw activity
+  // ("Read Bash Edit") carry no value and must never reach the reel.
+  describe('tool-churn guard (HS-8806)', () => {
+    it('isToolChurn flags pure tool-name / ongoing-work text', () => {
+      expect(isToolChurn('Read Bash Edit')).toBe(true);
+      expect(isToolChurn('used Read, Bash and Edit')).toBe(true);
+      expect(isToolChurn('used Bash ×3, Edit ×2')).toBe(true);
+      expect(isToolChurn('ongoing work')).toBe(true);
+      expect(isToolChurn('ran some commands')).toBe(true);
+    });
+
+    it('isToolChurn keeps any text with a substantive word', () => {
+      expect(isToolChurn('Fixed the export bug')).toBe(false);
+      expect(isToolChurn('Edited the parser and added tests')).toBe(false);
+      expect(isToolChurn('Read the requirements doc')).toBe(false); // "requirements"/"doc" are substantive
+      expect(isToolChurn('Shipped CSV export')).toBe(false);
+      expect(isToolChurn('')).toBe(false); // empty isn't "churn"
+    });
+
+    it('dropToolChurn removes entries whose script is pure churn, keeps real ones', () => {
+      const kept = dropToolChurn([
+        { title: 'Activity', script: 'Read Bash Edit' },
+        { title: 'Shipped export', script: 'Finished the CSV export and its tests.' },
+        { title: 'Ongoing', script: 'used Read, Bash and Edit' },
+      ]);
+      expect(kept.map(e => e.title)).toEqual(['Shipped export']);
+    });
+
+    it('summarizeWork drops a tool-churn entry the model failed to rate low (end to end)', async () => {
+      createMock.mockResolvedValue(textResponse({ entries: [
+        { title: 'Did stuff', script: 'Read Bash Edit' },           // churn, unrated
+        { title: 'Shipped', script: 'Finished the export feature.' }, // real
+      ] }));
+      const res = await summarizeWork('m', { apiKey: 'sk-test' });
+      expect(res.entries.map(e => e.title)).toEqual(['Shipped']);
+    });
+  });
+
+  // HS-8806 — guard the prompt directives that tell the model to omit ongoing
+  // work + never emit tool-name lists, so a future prompt edit can't regress them.
+  it('instructs the model to omit ongoing work and forbid tool-name lists (HS-8806)', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [] }));
+    await summarizeWork('m', { apiKey: 'sk-test' });
+    const system = (createMock.mock.calls[0][0].system ?? '').toLowerCase();
+    expect(system).toContain('cohesive');
+    expect(system).toMatch(/list of tool names|tool names/);
+    expect(system).toContain('underway');
   });
 
   // HS-8805 — the on-device Apple FM helper can fail inference (exit code 4)

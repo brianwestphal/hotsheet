@@ -27,9 +27,13 @@ user-prompt turn** (a burst of tool calls becomes ONE line, not dozens):
 
 - one line per in-window `user_prompt`: `"[in progress] working on: \"<snippet>\"
   (used Bash ×3, Edit ×2)"` — the prompt body trimmed to a 200-char snippet with
-  the `<!-- hotsheet:ticket=… -->` marker stripped, plus that turn's tool counts;
-- one catch-all `"[in progress] ongoing work (used …)"` for tool activity whose
-  prompt turn started before the cursor.
+  the `<!-- hotsheet:ticket=… -->` marker stripped, plus that turn's tool counts.
+
+**HS-8806 — no orphan-tool catch-all.** Tool activity whose prompt turn started
+before the window is **dropped**, not folded into an `"[in progress] ongoing work
+(used …)"` line. With no prompt context that line is bare tool churn, which the
+summarizer turned into valueless entries like "Read Bash Edit"; only turns with an
+in-window prompt (real context) contribute now.
 
 No cursor → it looks back 30 min only (mid-task cares about *now*). It's a dumb,
 deterministic collector — it does NOT decide what's worth saying (§82.4 does).
@@ -60,6 +64,18 @@ tool churn, single commands, boilerplate) is `low` and should usually be omitted
 provider paths (Anthropic / Apple / local). Only an explicit `low` is dropped, so
 a provider that omits the field (Apple guided generation) keeps its entries.
 
+**HS-8806 — stricter interestingness + a deterministic churn guard.** The system
+prompt was strengthened so the model: (a) treats `"[in progress]"` work as
+"ongoing work" that is *not* interesting on its own — narrate one only when it can
+be summarized as a concrete, cohesive activity (never bare tool usage); and (b)
+NEVER emits an entry that is just a list of tool names or raw mechanical activity
+("Read, Bash, Edit"). Because prompt guidance isn't a guarantee, a deterministic
+safety net runs after parsing on every provider path: `sanitizeEntries()` =
+`dropUnimportant()` **then** `dropToolChurn()`, where `isToolChurn(script)` drops
+an entry whose spoken `script` is *entirely* tool names + filler words (e.g. "Read
+Bash Edit", "used Read, Bash and Edit", "ongoing work"). Any substantive word
+keeps the entry, so it's conservative.
+
 ## 82.5 Gating + cost
 
 - **Off unless live + telemetry on:** `generateAnnouncementsOnce` includes
@@ -74,11 +90,14 @@ a provider that omits the field (Apple guided generation) keeps its entries.
 ## 82.6 Tests
 
 - `telemetrySignals.test.ts` — turn grouping (snippet + tool counts), marker
-  strip, orphan-tool fold, cursor + project scoping, empty.
+  strip, cursor + project scoping, empty; **HS-8806** — orphan tool activity (no
+  in-window prompt) emits NO line, and in-window turns still emit alongside it.
 - `collectSignals.test.ts` — telemetry merged only when
   `includeTelemetry`+`projectSecret`; default path untouched.
 - `summarize.test.ts` — `low` entries dropped, medium/high/unrated kept, usage
-  still captured.
+  still captured; **HS-8806** — `isToolChurn`/`dropToolChurn` (flags pure
+  tool/filler text, keeps substantive), end-to-end churn drop, and prompt-directive
+  guards (cohesive-only, no tool-name lists, "ongoing work" omitted).
 
 ## 82.7 Follow-ups
 
