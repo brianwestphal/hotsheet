@@ -17,7 +17,8 @@
  *    only. The listened cursor advances per relevant project when the PIP closes.
  */
 import { advanceAnnouncerCursor, type AnnouncerProjectInfo, generateAnnouncements, getAnnouncerEntries, getAnnouncerOverview } from '../api/index.js';
-import { ALL_PROJECTS, getAnnouncerPipHandle, openAnnouncerPip, type ReelEntry } from './announcerPip.js';
+import { ALL_PROJECTS, getAnnouncerPipHandle, openAnnouncerPip, type OpenPipOptions, type ReelEntry } from './announcerPip.js';
+import { clearAnnouncerSession, loadAnnouncerSession, resolveRestoreIndex } from './announcerSession.js';
 import { byIdOrNull } from './dom.js';
 import { showToast } from './toast.js';
 
@@ -82,6 +83,53 @@ function advanceCursors(context: string, projects: AnnouncerProjectInfo[]): void
   for (const secret of targets) advanceAnnouncerCursor(undefined, secret).catch(() => { /* best-effort */ });
 }
 
+/** The PIP callbacks shared by a fresh launch and a restored session (HS-8804):
+ *  context-switch reel loading, button glow on minimize/restore, and cursor
+ *  advance + cleanup on close. */
+function buildPipOptions(btn: HTMLButtonElement, projects: AnnouncerProjectInfo[]): Omit<OpenPipOptions, 'context'> {
+  return {
+    projects,
+    anchorEl: btn,
+    onContextChange: (ctx) => loadReel(ctx, projects),
+    onMinimize: () => { setMinimizedState(btn, true); },
+    onRestore: () => { setMinimizedState(btn, false); },
+    onClose: (finalContext) => {
+      setMinimizedState(btn, false);
+      advanceCursors(finalContext, projects);
+      void refreshAnnouncerVisibility();
+    },
+  };
+}
+
+/**
+ * HS-8804 — on launch, restore a PIP session that was open when the app last
+ * quit (reload/relaunch otherwise loses it, since the PIP is in-memory). Restores
+ * the saved context, playback position, play/paused state, and open/minimized
+ * state. No-op when there's no saved session, a session is already open, or the
+ * reel can't be rebuilt (then the stale session is cleared).
+ */
+async function restoreAnnouncerSession(btn: HTMLButtonElement): Promise<void> {
+  const session = loadAnnouncerSession();
+  if (session === null || getAnnouncerPipHandle() !== null) return;
+  try {
+    const overview = await getAnnouncerOverview();
+    const projects = overview.projects;
+    if (projects.length === 0) { clearAnnouncerSession(); return; }
+    // The saved context's project may be gone — fall back to "All Projects".
+    const context = session.context === ALL_PROJECTS || projects.some(p => p.secret === session.context)
+      ? session.context : ALL_PROJECTS;
+    const reel = await loadReel(context, projects);
+    if (reel.length === 0) { clearAnnouncerSession(); return; }
+    openAnnouncerPip(reel, {
+      context,
+      startIndex: Math.max(0, resolveRestoreIndex(reel, session)),
+      startPaused: !session.playing,
+      startMinimized: session.minimized,
+      ...buildPipOptions(btn, projects),
+    });
+  } catch { /* best-effort restore — never block startup */ }
+}
+
 async function startListening(btn: HTMLButtonElement): Promise<void> {
   // HS-8757 / HS-8788 — if a session is already running, the button TOGGLES the
   // panel rather than starting a new reel: minimized → restore, visible →
@@ -141,19 +189,7 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
       return;
     }
 
-    openAnnouncerPip(reel, {
-      context,
-      projects,
-      anchorEl: btn,
-      onContextChange: (ctx) => loadReel(ctx, projects),
-      onMinimize: () => { setMinimizedState(btn, true); },
-      onRestore: () => { setMinimizedState(btn, false); },
-      onClose: (finalContext) => {
-        setMinimizedState(btn, false);
-        advanceCursors(finalContext, projects);
-        void refreshAnnouncerVisibility();
-      },
-    });
+    openAnnouncerPip(reel, { context, ...buildPipOptions(btn, projects) });
   } finally {
     btn.classList.remove('is-busy');
     btn.disabled = false;
@@ -167,4 +203,6 @@ export function initAnnouncer(): void {
   if (btn === null) return;
   btn.addEventListener('click', () => { void startListening(btn); });
   void refreshAnnouncerVisibility();
+  // HS-8804 — bring back a session that was open when the app last quit.
+  void restoreAnnouncerSession(btn);
 }

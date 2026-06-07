@@ -23,6 +23,7 @@ import { renderScript } from './announcerEmphasis.js';
 import { LiveSession } from './announcerLive.js';
 import { anchoredPosition, clampPosition, type Point } from './announcerPipPosition.js';
 import { AnnouncerPlayer, type PlayerState } from './announcerPlayer.js';
+import { clearAnnouncerSession, saveAnnouncerSession } from './announcerSession.js';
 import { getAnnouncerSpeechRate, RATE_STEPS, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { getProjectBusySecrets } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
@@ -130,6 +131,11 @@ export interface OpenPipOptions {
   onRestore?(): void;
   /** The Listen button — used to anchor the initial position near it. */
   anchorEl?: HTMLElement | null;
+  /** HS-8804 — restore a persisted session: start at this entry index (default 0),
+   *  paused instead of auto-playing, and/or already minimized. */
+  startIndex?: number;
+  startPaused?: boolean;
+  startMinimized?: boolean;
 }
 
 let openHandle: AnnouncerPipHandle | null = null;
@@ -247,6 +253,23 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     visualEl.hidden = false;
   };
 
+  // HS-8804 — snapshot the session (context, position, play/paused, minimized) to
+  // localStorage so a reload / relaunch restores exactly where the user was. A
+  // function declaration so the player callbacks below can call it (hoisted); it
+  // reads the live `player` / `minimized` / `currentContext` at call time, which
+  // is always after construction.
+  function persistSession(): void {
+    if (closed) return;
+    const entry = player.getCurrentEntry();
+    saveAnnouncerSession({
+      context: currentContext,
+      entryId: entry?.id ?? null,
+      entryProjectSecret: entry?.projectSecret ?? null,
+      playing: player.getState() === 'playing',
+      minimized,
+    });
+  }
+
   const player = new AnnouncerPlayer<ReelEntry>(entries, engine, {
     onEntryChange(index, entry, total) {
       titleEl.textContent = entry.title;
@@ -261,6 +284,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       } else {
         chipEl.hidden = true;
       }
+      persistSession(); // HS-8804 — position changed
     },
     onStateChange(state: PlayerState) {
       const playing = state === 'playing';
@@ -269,6 +293,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       playPauseBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
       panel.classList.toggle('is-playing', playing);
       panel.classList.toggle('is-done', state === 'done');
+      persistSession(); // HS-8804 — play/paused changed
     },
     onRemove(entry) {
       // Persist the dismissal in the entry's OWN project (HS-8762 — ids aren't
@@ -292,6 +317,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         currentContext = next;
         currentEntries = reel;
         player.setEntries(reel);
+        persistSession(); // HS-8804 — context changed
       })
       .catch(() => { contextSelect.value = currentContext; })
       .finally(() => { contextSelect.disabled = false; });
@@ -471,6 +497,10 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     document.removeEventListener('visibilitychange', onVisibilityChange);
     panel.remove();
     if (openHandle === handle) { openHandle = null; activePlayer = null; }
+    // HS-8804 — an explicit close dismisses the session, so it must NOT be
+    // restored on the next launch. (A quit/reload leaves the last snapshot in
+    // place, which is what gets restored.)
+    clearAnnouncerSession();
     opts.onClose?.(currentContext);
   };
 
@@ -478,6 +508,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     if (closed || minimized) return;
     minimized = true;
     panel.style.display = 'none';
+    persistSession(); // HS-8804 — minimized changed
     opts.onMinimize?.();
   };
 
@@ -486,6 +517,7 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     minimized = false;
     panel.style.display = '';
     placeInitial();
+    persistSession(); // HS-8804 — minimized changed
     opts.onRestore?.();
   };
 
@@ -523,10 +555,16 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   openHandle = handle;
   activePlayer = player;
 
-  // Kick off narration. Focus the play/pause button so the keyboard shortcuts
-  // work immediately without an extra click.
-  player.play();
-  playPauseBtn.focus();
+  // Kick off narration. HS-8804 — on a restored session, start at the saved
+  // entry, in the saved play/paused state, and minimized if it was minimized;
+  // otherwise the default fresh open is index 0, auto-playing, visible.
+  player.startAt(opts.startIndex ?? 0, opts.startPaused !== true);
+  if (opts.startMinimized === true) {
+    minimize();
+  } else {
+    // Focus the play/pause button so the keyboard shortcuts work immediately.
+    playPauseBtn.focus();
+  }
 
   return handle;
 }

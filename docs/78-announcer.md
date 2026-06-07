@@ -622,6 +622,25 @@ opted in AND has a key (`getAnnouncerStatus`) — which generates the latest
 batch and plays the full active reel through the PIP, advancing the listened
 cursor (`advanceAnnouncerCursor`) when the PIP closes.
 
+**Session persistence across launches (HS-8804).** The PIP is otherwise
+in-memory, so a reload / app relaunch lost your spot. `announcerSession.ts`
+persists a snapshot to `localStorage` (`hotsheet:announcer-session`) — the
+**context**, **playback position** (current entry by id + owning project),
+**play/paused** state, and **open/minimized** state — saved on every relevant
+change (entry change, play/pause, minimize/restore, context switch). On launch
+`initAnnouncer` calls `restoreAnnouncerSession`, which rebuilds the reel for the
+saved context and reopens the PIP in exactly that state via new
+`openAnnouncerPip` options (`startIndex` / `startPaused` / `startMinimized`,
+driving the player's new `startAt(index, autoplay)`). `resolveRestoreIndex`
+maps the saved entry back to a reel index (matching id + project so colliding
+ids across an "All Projects" reel disambiguate), falling back to the first entry
+when the saved one is gone (dismissed, or filtered as already-listened once
+HS-8803 lands). An explicit **close (X)** clears the saved session so it won't
+return; a quit/reload leaves the last snapshot in place. Caveat: restoring a
+*playing* session auto-speaks on load — fine for the Tauri `say` engine
+(desktop primary); a browser may gate `speechSynthesis` behind a user gesture,
+in which case the restored utterance simply doesn't sound until interaction.
+
 **Spoken permission checks (HS-8781).** A global, **default-on** Announcer-tab
 toggle, `announcerSpeakPermissions` (in `~/.hotsheet/config.json`), reads each
 new permission popup aloud — "Permission needed in <project>: <description>" — so

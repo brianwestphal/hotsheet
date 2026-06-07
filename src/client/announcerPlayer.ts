@@ -150,6 +150,23 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
 
   // --- Commands ---
 
+  /**
+   * HS-8804 — start the reel at a specific index in a chosen play/paused state,
+   * used to restore a persisted session on launch. `autoplay` speaks the entry
+   * (when a voice backend is available); otherwise it shows the entry paused.
+   * Clamps the index into range; finishes immediately on an empty reel.
+   */
+  startAt(index: number, autoplay: boolean): void {
+    if (this.entries.length === 0) { this.finish(); return; }
+    this.index = Math.max(0, Math.min(this.entries.length - 1, index));
+    if (autoplay && this.engine.backend !== 'none') {
+      this.speakCurrent();
+    } else {
+      this.setState('paused');
+      this.emitEntryChange();
+    }
+  }
+
   /** Start (from idle), resume (from paused), or no-op (already playing /
    *  done / empty). On a non-resumable backend, resuming re-speaks the current
    *  entry from the start (the OS voice has no mid-utterance resume). */

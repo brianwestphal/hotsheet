@@ -241,6 +241,7 @@ E2E stubs the `/api/keys` routes, so the real keychain round-trip is manual.
 - [ ] "Set value" on a row overwrites the keychain secret; renaming / changing type persists across a restart.
 - [ ] Delete a row → both the config metadata and the keychain secret are gone.
 - [ ] Settings → Experimental → Announcer: the key dropdown lists the named keys; selecting one and restarting keeps the choice (`announcer_ai_key_id`); with no selection it uses the first Anthropic key; the Listen button enables once a key resolves.
+- [ ] **HS-8804 playback session restore (Tauri, real audio).** Open the announcer (Listen), let it start speaking, then **quit the app mid-playback** (don't click the X). Relaunch → the PIP reopens on its own at the same entry and resumes speaking via the `say` voice (the unit/e2e tests stub TTS + use the paused/visible path, so this real-audio auto-resume-on-launch is manual-only). Repeat while **minimized** → relaunch comes back minimized with the Listen button glowing. Now **close with the X** and relaunch → no PIP returns (closing clears the saved session). Browser caveat: a restored *playing* session may not sound until you interact, since `speechSynthesis` can be gated behind a user gesture.
 
 ## 12. Embedded Terminal
 

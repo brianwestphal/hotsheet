@@ -359,4 +359,53 @@ describe('AnnouncerPlayer', () => {
     expect(engine.cancels).toBe(1);
     expect(player.getState()).toBe('idle');
   });
+
+  // HS-8804 — `startAt` restores a persisted session at a given index + play state.
+  describe('startAt (HS-8804)', () => {
+    it('starts at the given index and auto-plays it', () => {
+      const engine = new FakeEngine('browser', true);
+      const changes: number[] = [];
+      const player = new AnnouncerPlayer(ENTRIES, engine, { onEntryChange: (i) => changes.push(i) });
+      player.startAt(1, true);
+      expect(player.getIndex()).toBe(1);
+      expect(player.getState()).toBe('playing');
+      expect(engine.spoken).toEqual(['two']);
+      expect(changes).toEqual([1]);
+    });
+
+    it('starts paused at the given index without speaking when autoplay is false', () => {
+      const engine = new FakeEngine('browser', true);
+      const player = new AnnouncerPlayer(ENTRIES, engine);
+      player.startAt(2, false);
+      expect(player.getIndex()).toBe(2);
+      expect(player.getState()).toBe('paused');
+      expect(engine.spoken).toEqual([]);
+    });
+
+    it('clamps an out-of-range index into the reel', () => {
+      const engine = new FakeEngine('browser', true);
+      const player = new AnnouncerPlayer(ENTRIES, engine);
+      player.startAt(99, false);
+      expect(player.getIndex()).toBe(2); // last entry
+      player.startAt(-5, false);
+      expect(player.getIndex()).toBe(0); // first entry
+    });
+
+    it('does not speak on the none backend even when autoplay is requested', () => {
+      const engine = new FakeEngine('none', false);
+      const player = new AnnouncerPlayer(ENTRIES, engine);
+      player.startAt(1, true);
+      expect(engine.spoken).toEqual([]);
+      expect(player.getState()).toBe('paused');
+      expect(player.getIndex()).toBe(1);
+    });
+
+    it('finishes immediately on an empty reel', () => {
+      const engine = new FakeEngine('browser', true);
+      const player = new AnnouncerPlayer<Announcement>([], engine);
+      player.startAt(0, true);
+      expect(player.getState()).toBe('done');
+      expect(engine.spoken).toEqual([]);
+    });
+  });
 });

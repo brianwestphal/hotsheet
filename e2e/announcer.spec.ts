@@ -381,3 +381,50 @@ test('soft summarization error shows a gentle toast, not the Connection Error ov
   // The alarming global overlay must NOT appear.
   await expect(page.locator('#network-error-popup')).toHaveCount(0);
 });
+
+// HS-8804 — a PIP session that was open when the app last quit is restored on
+// the next launch: same context, playback position, play/paused, and
+// open/minimized state. Here a persisted session (visible, paused, on the 2nd
+// entry) is seeded in localStorage and must come back on load without a click.
+test('restores the playback session on launch (HS-8804)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    if (typeof (window as unknown as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance === 'undefined') {
+      (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+    }
+    // Seed a saved session: visible, paused, positioned on the 2nd entry (id 102).
+    window.localStorage.setItem('hotsheet:announcer-session', JSON.stringify({
+      context: 'proj-a', entryId: 102, entryProjectSecret: 'proj-a', playing: false, minimized: false,
+    }));
+  });
+
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'proj-a', projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: ENTRIES.length }] }),
+  }));
+  await page.route('**/api/announcer/status**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ enabled: true, hasKey: true, selectedKeyId: null, entryCount: ENTRIES.length, lastListenedAt: null }),
+  }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ entries: ENTRIES }),
+  }));
+  // Restore must NOT generate a fresh batch.
+  let generateCalled = false;
+  await page.route('**/api/announcer/generate**', (route) => { generateCalled = true; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }); });
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+  // The PIP comes back on its own, restored to the 2nd entry and paused.
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+  await expect(pip.locator('.announcer-pip-title')).toHaveText('Fixed the tag leak');
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('2 / 2');
+  await expect(pip).not.toHaveClass(/is-playing/);
+  expect(generateCalled).toBe(false);
+});
