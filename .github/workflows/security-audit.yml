@@ -46,8 +46,8 @@ jobs:
     # SHIPPED dependency — triage it (and, if unreachable, document the
     # justification in docs/dependency-security.md) before merging.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with: { node-version: '20', cache: npm }
       - run: npm ci
       # Production tree only, high severity. The dev toolchain (eslint / vitest /
@@ -67,7 +67,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       # `cargo install` compiles cargo-audit from source (~1-2 min). If CI time
       # becomes a concern, swap for a prebuilt-binary installer
