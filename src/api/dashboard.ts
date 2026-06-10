@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 import { type PrintSchema } from '../routes/validation.js';
 import { apiCall, type OkResponse, OkResponseSchema, qs } from './_runner.js';
+import { type GlassboxReviewReq } from './git.js';
 
 // --- /dashboard ---
 export const DashboardDataSchema = z.object({
@@ -43,6 +44,14 @@ export const TicketStatsSchema = z.object({
   by_status: z.record(z.string(), z.number()),
 });
 export type TicketStats = z.infer<typeof TicketStatsSchema>;
+
+// --- /sidebar-counts (HS-8511) ---
+export const SidebarCountsSchema = z.object({
+  /** `viewId → count` for every sidebar entry (built-in, category:*, priority:*,
+   *  backlog/archive/trash, custom:*). View ids match the `data-view` attrs. */
+  counts: z.record(z.string(), z.number()),
+});
+export type SidebarCounts = z.infer<typeof SidebarCountsSchema>;
 
 // --- /poll ---
 const PollResultSchema = z.object({ version: z.number(), dataVersion: z.number() });
@@ -75,6 +84,11 @@ export async function getStats(): Promise<TicketStats> {
   return apiCall(TicketStatsSchema, '/stats');
 }
 
+/** GET `/sidebar-counts` → per-view ticket counts for the sidebar badges (HS-8511). */
+export async function getSidebarCounts(): Promise<SidebarCounts> {
+  return apiCall(SidebarCountsSchema, '/sidebar-counts');
+}
+
 /** GET `/poll?version=N` → the long-poll version cursor (waits server-side). */
 export async function pollVersion(version: number): Promise<{ version: number; dataVersion: number }> {
   return apiCall(PollResultSchema, `/poll${qs({ version })}`);
@@ -103,6 +117,11 @@ export async function getGlassboxStatus(): Promise<{ available: boolean }> {
 /** POST `/glassbox/launch` → launch the glassbox sidecar. */
 export async function launchGlassbox(): Promise<OkResponse> {
   return apiCall(OkResponseSchema, '/glassbox/launch', { method: 'POST' });
+}
+
+/** POST `/glassbox/review` → open Glassbox focused on a commit or pending range (HS-8472). */
+export async function reviewInGlassbox(req: GlassboxReviewReq): Promise<OkResponse> {
+  return apiCall(OkResponseSchema, '/glassbox/review', { method: 'POST', body: req });
 }
 
 /** POST `/print` → write an HTML doc to a temp file for printing; returns its path. */

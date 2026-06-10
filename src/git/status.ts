@@ -4,7 +4,7 @@ import { promisify } from 'util';
 
 // HS-8522 — wire shapes inferred from the typed-API-layer schemas
 // (`src/api/git.ts`), the single source of truth shared with the client.
-import type { FetchResult, GitStatus, GitStatusFiles } from '../api/git.js';
+import type { FetchResult, GitStatus, GitStatusFiles, PendingCommit } from '../api/git.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { getGitRoot, isGitRepo } from '../gitignore.js';
 
@@ -324,4 +324,62 @@ function pushCapped(arr: string[], item: string, onTruncate: () => void): void {
     return;
   }
   arr.push(item);
+}
+
+// ---------------------------------------------------------------------------
+// HS-8472 — pending (unpushed) commits for the git-status popover
+// ---------------------------------------------------------------------------
+
+const PENDING_COMMITS_CAP = 50;
+// Field/record separators: ASCII Unit Separator (US, \x1f) between fields and
+// Record Separator (RS, \x1e) between commits. They never appear in commit
+// metadata, so the body's own newlines don't confuse the parse.
+const US = '\x1f';
+const RS = '\x1e';
+
+/**
+ * Read the commits in HEAD that aren't in the upstream (`@{u}..HEAD`) — the
+ * unpushed/"pending" commits — newest first, capped at `PENDING_COMMITS_CAP`.
+ * Returns `null` when not a git repo; `{ commits: [], truncated: false }` when
+ * there's no upstream or nothing pending. The `invoker` is a test seam.
+ */
+export async function getPendingCommits(
+  projectRoot: string,
+  invoker: GitInvoker = defaultInvoker,
+): Promise<{ commits: PendingCommit[]; truncated: boolean } | null> {
+  if (!isGitRepo(projectRoot)) return null;
+  return instrumentAsync(join(projectRoot, '.hotsheet'), 'git.getPendingCommits', async () => {
+    const root = getGitRoot(projectRoot) ?? projectRoot;
+    // Fetch one over the cap so we can flag truncation. `@{u}` errors (non-zero)
+    // when the branch has no upstream → treat as "nothing pending".
+    const res = await invoker(
+      ['log', '@{u}..HEAD', '--no-merges', `--max-count=${String(PENDING_COMMITS_CAP + 1)}`,
+        `--pretty=format:%H${US}%h${US}%s${US}%b${RS}`],
+      root,
+    );
+    if (res.status !== 0) return { commits: [], truncated: false };
+    const all = parsePendingCommits(res.stdout);
+    return { commits: all.slice(0, PENDING_COMMITS_CAP), truncated: all.length > PENDING_COMMITS_CAP };
+  });
+}
+
+/** Pure: parse the `git log --pretty=format:%H\x1f%h\x1f%s\x1f%b\x1e` output
+ *  into commit records. Tolerant of a trailing RS / blank records. Exported
+ *  for tests. */
+export function parsePendingCommits(stdout: string): PendingCommit[] {
+  const out: PendingCommit[] = [];
+  for (const rec of stdout.split(RS)) {
+    const trimmed = rec.replace(/^\n+/, '');
+    if (trimmed.trim() === '') continue;
+    const parts = trimmed.split(US);
+    const hash = (parts[0] ?? '').trim();
+    if (hash === '') continue;
+    out.push({
+      hash,
+      shortHash: (parts[1] ?? '').trim(),
+      subject: (parts[2] ?? '').trim(),
+      body: (parts[3] ?? '').replace(/\s+$/, ''),
+    });
+  }
+  return out;
 }

@@ -428,3 +428,128 @@ test('restores the playback session on launch (HS-8804)', async ({ page }) => {
   await expect(pip).not.toHaveClass(/is-playing/);
   expect(generateCalled).toBe(false);
 });
+
+// HS-8798 — Settings → Announcer local-provider (§81) UI flow, fully
+// network-mocked (no real Ollama). When the machine reports a reachable local
+// OpenAI-compatible endpoint (`localAvailable: true` + a `localModels` list):
+//   - the "Local model" option is selectable in `#settings-announcer-model`;
+//   - selecting it reveals the local field (endpoint + model dropdown populated
+//     from `localModels`) and hides the Anthropic-key field;
+//   - the header Listen button shows for an enabled project with NO Anthropic key
+//     (the on-device provider needs none).
+// The real-server pass lives in docs/manual-test-plan.md §15.
+const LOCAL_MODELS = ['llama3.1:8b', 'qwen2.5:7b'];
+
+function stubAnnouncerTts(page: import('@playwright/test').Page): Promise<void> {
+  return page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    if (typeof (window as unknown as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance === 'undefined') {
+      (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+    }
+  });
+}
+
+test('local-provider settings: model option + field toggle + Listen gate (HS-8798)', async ({ page }) => {
+  await stubAnnouncerTts(page);
+
+  // Enabled project, NO Anthropic key, but a reachable local endpoint with models.
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      activeSecret: 'proj-a',
+      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: false, entryCount: 0 }],
+      appleAvailable: false, localAvailable: true,
+    }),
+  }));
+  await page.route('**/api/announcer/status**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      enabled: true, hasKey: false, selectedKeyId: null, entryCount: 0, lastListenedAt: null,
+      appleAvailable: false, localAvailable: true, localModels: LOCAL_MODELS,
+    }),
+  }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [] }),
+  }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+  // (3) Listen button shows for the enabled, keyless project because a local
+  // provider is available.
+  await expect(page.locator('#announcer-listen-btn')).toBeVisible({ timeout: 8000 });
+
+  // Open Settings → Announcer tab.
+  await page.locator('#settings-btn').click();
+  await page.locator('.settings-tab[data-tab="announcer"]').click();
+  await expect(page.locator('#settings-announcer-panel')).toBeVisible();
+
+  // Wait for the settings panel's async `syncModel()` (config + status fetch) to
+  // settle before interacting — the static select defaults to the first option
+  // (Apple), and resolves to the cheapest Anthropic model when nothing is
+  // configured + Apple is unavailable. Gating here avoids a late resolution
+  // clobbering the manual selection below.
+  const modelSelect = page.locator('#settings-announcer-model');
+  await expect(modelSelect).toHaveValue('claude-haiku-4-5');
+
+  // (1) The "Local model" option is present + NOT hidden when localAvailable.
+  const localOption = modelSelect.locator('option[value="local"]');
+  await expect(localOption).toHaveCount(1);
+  await expect(localOption).toHaveJSProperty('hidden', false);
+
+  // Default selection is an Anthropic model → key field shown, local field hidden.
+  await expect(page.locator('#settings-announcer-key-field')).toBeVisible();
+  await expect(page.locator('#settings-announcer-local-field')).toBeHidden();
+
+  // (2) Selecting "Local model" reveals the local field + hides the key field.
+  await modelSelect.selectOption('local');
+  await expect(page.locator('#settings-announcer-local-field')).toBeVisible();
+  await expect(page.locator('#settings-announcer-key-field')).toBeHidden();
+
+  // The local-model dropdown is populated from the endpoint's reported models.
+  const localModelSelect = page.locator('#settings-announcer-local-model');
+  await expect(localModelSelect.locator('option')).toHaveText(LOCAL_MODELS);
+  // The endpoint input is present for editing.
+  await expect(page.locator('#settings-announcer-local-endpoint')).toBeVisible();
+});
+
+test('local-provider settings: "Local model" option hidden when unavailable (HS-8798)', async ({ page }) => {
+  await stubAnnouncerTts(page);
+
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      activeSecret: 'proj-a',
+      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: false, entryCount: 0 }],
+      appleAvailable: false, localAvailable: false,
+    }),
+  }));
+  await page.route('**/api/announcer/status**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      enabled: true, hasKey: false, selectedKeyId: null, entryCount: 0, lastListenedAt: null,
+      appleAvailable: false, localAvailable: false, localModels: [],
+    }),
+  }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [] }),
+  }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+  // No usable provider (no key, no on-device) → Listen button stays hidden.
+  await expect(page.locator('#announcer-listen-btn')).toBeHidden();
+
+  await page.locator('#settings-btn').click();
+  await page.locator('.settings-tab[data-tab="announcer"]').click();
+  await expect(page.locator('#settings-announcer-panel')).toBeVisible();
+
+  // The "Local model" option is hidden when no local endpoint is reachable.
+  await expect(page.locator('#settings-announcer-model option[value="local"]')).toHaveJSProperty('hidden', true);
+  // The local field stays hidden.
+  await expect(page.locator('#settings-announcer-local-field')).toBeHidden();
+});

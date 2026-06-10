@@ -80,6 +80,10 @@ interface InstanceLifecycleHooks {
   /** Switch the active drawer tab — implemented in `commandLog.tsx`,
    *  passed in here at init time to avoid a circular import. */
   selectDrawerTab: (tabId: string) => Promise<void>;
+  /** HS-8609 — toggle the drawer between its normal height and full height
+   *  (the `.drawer-expanded` state). Implemented in `commandLog.tsx`; wired in
+   *  at init to avoid a circular import. Used by the tab double-click handler. */
+  toggleDrawerFullHeight: () => void;
 }
 
 let hooks: InstanceLifecycleHooks | null = null;
@@ -132,6 +136,15 @@ function bindTabBtnHandlers(tabBtn: HTMLElement, config: TerminalTabConfig): voi
   tabBtn.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;
     void requireHooks().selectDrawerTab(`terminal:${config.id}`);
+  });
+  // HS-8609 — double-click a tab to toggle the drawer to full height (and back).
+  // The preceding single `click` already selected the tab ("select it if
+  // needed"), so this just flips the drawer-expanded state. `preventDefault`
+  // suppresses the native text-selection a double-click would otherwise make.
+  tabBtn.addEventListener('dblclick', (e) => {
+    if ((e.target as HTMLElement).closest('.drawer-tab-close')) return;
+    e.preventDefault();
+    requireHooks().toggleDrawerFullHeight();
   });
   closeBtn?.addEventListener('click', (e) => {
     e.stopPropagation();

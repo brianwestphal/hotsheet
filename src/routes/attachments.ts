@@ -3,16 +3,19 @@ import { Hono } from 'hono';
 import { basename, extname, join, resolve, sep } from 'path';
 
 import { CopyAttachmentsReqSchema } from '../api/attachments.js';
+import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from '../attachmentBackup.js';
 import { promoteDraftAttachments } from '../db/attachments.js';
 import { runWithDataDir } from '../db/connection.js';
 import {
   addAttachment,
   addDraftAttachment,
   deleteAttachment,
+  getAllAttachments,
   getAttachment,
   getAttachments,
   getTicket,
 } from '../db/queries.js';
+import { getBackupDir } from '../file-settings.js';
 import { getMimeType } from '../mime-types.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
 import { getProjectBySecret } from '../projects.js';
@@ -205,8 +208,49 @@ attachmentRoutes.post('/attachments/:id/reveal', async (c) => {
   return c.json({ ok: true });
 });
 
+// HS-8808 — negative cache for the serve-time self-heal: a path we just FAILED
+// to restore (no recoverable blob) is skipped for a short window so a
+// hot-looping broken `<img>` doesn't re-walk the manifest store on every retry.
+// Keyed by the absolute resolved path (so it's project-scoped); entries expire
+// so a later backup that captures the blob can still heal after the TTL. A
+// SUCCESSFUL restore self-clears (the file then exists, so the route never
+// reaches the heal path again).
+const SERVE_HEAL_FAIL_TTL_MS = 30_000;
+const recentServeHealFailures = new Map<string, number>();
+
+/**
+ * HS-8808 — serve-time self-heal. The file at `fullPath` is missing; if it maps
+ * to a known attachment row whose content is still in the backup store, restore
+ * the blob back to `fullPath` so the broken image comes back immediately (the
+ * HS-8802 startup sweep also heals, but only on the next launch). Returns true
+ * if the file is now present. Gated so the (potentially many) manifest reads
+ * only run for a genuine missing-attachment request, never for arbitrary 404s.
+ */
+export async function tryServeTimeRestore(dataDir: string, fullPath: string): Promise<boolean> {
+  const failedAt = recentServeHealFailures.get(fullPath);
+  if (failedAt !== undefined) {
+    if (Date.now() - failedAt < SERVE_HEAL_FAIL_TTL_MS) return false;
+    recentServeHealFailures.delete(fullPath);
+  }
+  try {
+    const backupRoot = getBackupDir(dataDir);
+    if (!existsSync(backupRoot)) return false;
+    // Gate the manifest walk on the path mapping to a real attachment row.
+    const att = (await getAllAttachments()).find(a => resolve(a.stored_path) === fullPath);
+    if (att === undefined) return false;
+    const xref = indexExistingManifestEntries(backupRoot).get(att.id);
+    if (xref === undefined) return false;
+    const ok = await restoreAttachmentBlob(attachmentBlobsDir(backupRoot), xref.sha, fullPath);
+    if (!ok) recentServeHealFailures.set(fullPath, Date.now());
+    return ok;
+  } catch {
+    recentServeHealFailures.set(fullPath, Date.now());
+    return false;
+  }
+}
+
 // Serve attachment files
-attachmentRoutes.get('/attachments/file/*', (c) => {
+attachmentRoutes.get('/attachments/file/*', async (c) => {
   const filePath = c.req.path.replace('/api/attachments/file/', '');
   const dataDir = c.get('dataDir');
   const attachDir = resolve(join(dataDir, 'attachments'));
@@ -221,7 +265,9 @@ attachmentRoutes.get('/attachments/file/*', (c) => {
   }
 
   if (!existsSync(fullPath)) {
-    return c.json({ error: 'File not found' }, 404);
+    // HS-8808 — try a serve-time self-heal from the backup store before 404ing.
+    const healed = await tryServeTimeRestore(dataDir, fullPath);
+    if (!healed) return c.json({ error: 'File not found' }, 404);
   }
 
   const content = readFileSync(fullPath);

@@ -107,6 +107,20 @@ test.describe('Sidebar navigation and custom views', () => {
     await expect(statusBar).toContainText('up next', { timeout: 5000 });
   });
 
+  // HS-8511 — per-view count badges in the sidebar. Increment-based so it's
+  // robust against tickets left over from other tests + the virtualized list.
+  test('sidebar "All" view shows a count badge that tracks new tickets', async ({ page }) => {
+    // A baseline ticket guarantees the badge is populated (non-empty) so we can
+    // read the starting value.
+    await createTicket(page, 'HS-8511 baseline');
+    const allBadge = page.locator('.sidebar-item[data-view="all"] .sidebar-count');
+    await expect(allBadge).not.toHaveText('', { timeout: 5000 });
+    const before = parseInt(((await allBadge.textContent()) ?? '0').trim(), 10);
+
+    await createTicket(page, 'HS-8511 increment');
+    await expect(allBadge).toHaveText(String(before + 1), { timeout: 5000 });
+  });
+
   test('dashboard widget opens dashboard view', async ({ page }) => {
     // Create a ticket first so the dashboard widget has data
     await createTicket(page, 'Dashboard trigger ticket');

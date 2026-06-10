@@ -68,6 +68,7 @@ export function initTerminal(): void {
   // `commandLog.tsx`, so it's hooked in at init time.
   initInstanceLifecycle({
     selectDrawerTab,
+    toggleDrawerFullHeight,
   });
   // HS-8396 Phase 4 — wire the tab context menu's accessors. Hooks point
   // back into the lifecycle helpers (now in `terminalInstanceLifecycle.tsx`).
@@ -490,6 +491,16 @@ async function createDynamicTerminal(): Promise<void> {
 async function selectDrawerTab(tabId: string): Promise<void> {
   const mod = await import('./commandLog.js');
   mod.switchDrawerTab(tabId);
+}
+
+// HS-8609 — bridge to the drawer height toggle in commandLog.tsx. Flips the
+// drawer between normal and full height and persists the choice. Lazy-imported
+// (like `selectDrawerTab`) to avoid a circular import.
+function toggleDrawerFullHeight(): void {
+  void import('./commandLog.js').then((mod) => {
+    mod.setDrawerExpanded(!mod.isDrawerExpanded());
+    void mod.saveDrawerState();
+  });
 }
 
 /** Called by experimental settings after the user saves the terminals list. */

@@ -1,6 +1,7 @@
-import type { GitStatusFiles, GitStatusWithFiles } from '../api/git.js';
-import { getGitStatusWithFiles, gitReveal } from '../api/index.js';
+import type { GitStatusFiles, GitStatusWithFiles, PendingCommit } from '../api/git.js';
+import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
+import { showToast } from './toast.js';
 
 /**
  * HS-7956 — Phase 3 expanded popover for the sidebar git status chip.
@@ -116,6 +117,16 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
   // The user explicitly asked for it gone; the chip stays read-only.
   bodyEl.replaceChildren();
   if (ab !== null) bodyEl.appendChild(toElement(<div className="git-popover-ab">{ab}</div>));
+
+  // HS-8472 — pending (unpushed) commits. Placeholder mounted in order (after
+  // ahead/behind, before the working-tree buckets); filled async since the
+  // commit list + Glassbox availability are separate fetches.
+  if (data.upstream !== null && data.ahead > 0) {
+    const commitsEl = toElement(<div className="git-popover-commits"></div>);
+    bodyEl.appendChild(commitsEl);
+    void mountPendingCommits(commitsEl, data.upstream);
+  }
+
   const bucketsEl = toElement(<div className="git-popover-buckets"></div>);
   for (const row of [
     bucketRow('staged', 'Staged', data.staged, data.files),
@@ -154,6 +165,96 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
     });
   });
 
+}
+
+/** Opaque `isConnected` read so TS can't narrow it across an `await`. */
+function stillMounted(el: HTMLElement): boolean {
+  return el.isConnected;
+}
+
+/** Pure: the first up-to-3 non-blank lines of a commit body, joined with `\n`.
+ *  Empty string when the body has no content beyond the subject. Exported for
+ *  tests (HS-8472). */
+export function commitBodyPreview(body: string): string {
+  return body.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '').slice(0, 3).join('\n');
+}
+
+/**
+ * HS-8472 — fill the pending-commits placeholder: list each unpushed commit
+ * (short hash + subject + up to 3 body lines) and, when Glassbox is installed,
+ * a per-commit "Review" link plus an "Open all pending changes in Glassbox"
+ * link that reviews the whole `<upstream>..HEAD` range in one session.
+ */
+async function mountPendingCommits(container: HTMLElement, upstream: string): Promise<void> {
+  let commits: PendingCommit[];
+  let truncated = false;
+  try {
+    const res = await getPendingCommits();
+    commits = res.commits;
+    truncated = res.truncated;
+  } catch {
+    return; // best-effort — leave the section empty on a fetch failure
+  }
+  // `stillMounted` reads `isConnected` opaquely so TS doesn't narrow it to a
+  // constant across the `await` below — the popover can be dismissed mid-fetch,
+  // and the post-await re-check is the whole point.
+  if (!stillMounted(container) || commits.length === 0) return;
+
+  let glassboxAvailable = false;
+  try { glassboxAvailable = (await getGlassboxStatus()).available; } catch { /* treat as unavailable */ }
+  if (!stillMounted(container)) return;
+
+  const section = toElement(
+    <div className="git-popover-commits-inner">
+      <div className="git-popover-commits-header">Pending commits</div>
+    </div>
+  );
+  for (const c of commits) section.appendChild(commitRow(c, glassboxAvailable));
+  if (truncated) {
+    section.appendChild(toElement(<div className="git-popover-commits-more">…and more not shown</div>));
+  }
+  if (glassboxAvailable) {
+    const allBtn = toElement(
+      <button className="git-popover-commits-review-all" type="button">Open all pending changes in Glassbox</button>
+    );
+    allBtn.addEventListener('click', () => {
+      void launchGlassboxReview({ mode: 'range', from: upstream, to: 'HEAD' });
+    });
+    section.appendChild(allBtn);
+  }
+  container.replaceChildren(section);
+}
+
+function commitRow(c: PendingCommit, glassboxAvailable: boolean): HTMLElement {
+  const bodyPreview = commitBodyPreview(c.body);
+  const row = toElement(
+    <div className="git-popover-commit">
+      <div className="git-popover-commit-main">
+        <code className="git-popover-commit-hash" title={c.hash}>{c.shortHash}</code>
+        <span className="git-popover-commit-subject" title={c.subject}>{c.subject}</span>
+        {glassboxAvailable
+          ? <button className="git-popover-commit-review" type="button" title="Review this commit in Glassbox">Review</button>
+          : null}
+      </div>
+      {bodyPreview !== '' ? <div className="git-popover-commit-body">{bodyPreview}</div> : null}
+    </div>
+  );
+  if (glassboxAvailable) {
+    row.querySelector<HTMLButtonElement>('.git-popover-commit-review')!.addEventListener('click', () => {
+      void launchGlassboxReview({ mode: 'commit', sha: c.hash });
+    });
+  }
+  return row;
+}
+
+/** Fire a Glassbox review request, surfacing the same friendly failure toast as
+ *  the toolbar Glassbox button. */
+async function launchGlassboxReview(req: Parameters<typeof reviewInGlassbox>[0]): Promise<void> {
+  try {
+    await reviewInGlassbox(req);
+  } catch {
+    showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
+  }
 }
 
 function bucketRow(kind: 'staged' | 'unstaged' | 'untracked' | 'conflicted', label: string, count: number, files: GitStatusFiles | undefined): HTMLElement | null {

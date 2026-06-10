@@ -174,11 +174,18 @@ unmounted custom `backupDir`), the sweep no-ops entirely: without a readable
 store it can neither restore nor prove non-recoverability, so it never risks a
 wrongful delete. Returns `{ pruned, restored }`.
 
-> Follow-up (deferred): the self-heal only runs on the periodic/startup cleanup
-> sweep, so a broken image persists until the next sweep. A serve-time heal
-> (restore on the `GET /api/attachments/file/*` 404 path) would make it immediate
-> but needs a basename→row→manifest lookup on the (currently sync) serve route —
-> tracked separately rather than bundled here.
+**Serve-time heal (HS-8808).** The startup sweep above only heals on the next
+launch. For immediate (in-session) recovery, the attachment-serving route
+`GET /api/attachments/file/*` (`src/routes/attachments.ts`) also self-heals: when
+the requested file is missing, `tryServeTimeRestore(dataDir, fullPath)` maps the
+path to its attachment row (`getAllAttachments` + resolved-path match — the gate
+that keeps the manifest walk off arbitrary 404s), consults the same cross-ref
+index + blob store, and restores via `restoreAttachmentBlob` before serving;
+otherwise it 404s as before. A short-lived negative cache
+(`SERVE_HEAL_FAIL_TTL_MS = 30 s`, keyed by absolute path) keeps a hot-looping
+broken `<img>` from re-walking the store when no blob is recoverable; a
+successful restore self-clears (the file then exists). The directory-traversal
+guard runs first, unchanged.
 
 ## 43.11 Open questions / explicit follow-ups for the implementation ticket
 

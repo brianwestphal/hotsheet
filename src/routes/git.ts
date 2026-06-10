@@ -7,7 +7,7 @@ import { markProjectActive } from '../activeProjects.js';
 // path" branch still fires when it's missing.
 import { GitRevealReqSchema } from '../api/git.js';
 import { readFileSettings } from '../file-settings.js';
-import { getGitStatusFiles, runGitFetch } from '../git/status.js';
+import { getGitStatusFiles, getPendingCommits, runGitFetch } from '../git/status.js';
 import { dropGitStatusCache, ensureGitWatcher, getCachedGitStatus } from '../git/watcher.js';
 import { getGitRoot } from '../gitignore.js';
 import { openInFileManager } from '../open-in-file-manager.js';
@@ -63,6 +63,19 @@ gitRoutes.get('/git/status', async (c) => {
     return c.json({ ...status, files });
   }
   return c.json(status);
+});
+
+// HS-8472 — the unpushed ("pending") commits for the git-status popover. Same
+// settings opt-out + project-root resolution as `/git/status`; fetched only when
+// the popover opens (and only when the branch is ahead of its upstream).
+gitRoutes.get('/git/pending-commits', async (c) => {
+  const dataDir = c.get('dataDir');
+  const projectRoot = projectRootFromDataDir(dataDir);
+  if (readFileSettings(dataDir).git_tracking_enabled === false) {
+    return c.json({ commits: [], truncated: false });
+  }
+  const result = await getPendingCommits(projectRoot);
+  return c.json(result ?? { commits: [], truncated: false });
 });
 
 /** Pure: convert a `<project>/.hotsheet` dataDir to its project root. The

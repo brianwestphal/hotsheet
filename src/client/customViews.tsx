@@ -4,6 +4,7 @@ import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
+import { refreshSidebarCounts } from './sidebarCounts.js';
 import type { CustomView, CustomViewCondition } from './state.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
 import { draggedTicketIds } from './ticketList.js';
@@ -118,6 +119,10 @@ export function renderSidebarViews() {
 
     container.appendChild(btn);
   }
+  // HS-8511 — newly (re)rendered custom-view rows need their count badges; the
+  // built-in rows keep theirs across this rebuild (this only touches
+  // #custom-views-container).
+  void refreshSidebarCounts();
 }
 
 function showViewContextMenu(anchor: HTMLElement, view: CustomView) {

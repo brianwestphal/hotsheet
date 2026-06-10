@@ -4,7 +4,9 @@ import { homedir, tmpdir } from 'os';
 import { join, relative, resolve } from 'path';
 
 import { markProjectActive } from '../activeProjects.js';
+import { type GlassboxReviewReq, GlassboxReviewReqSchema } from '../api/git.js';
 import { getTicketStats } from '../db/queries.js';
+import { getSidebarCounts } from '../db/sidebarCounts.js';
 import { getDashboardStats, getSnapshots } from '../db/stats.js';
 import { ensureGitignore, isGitRepo, isHotsheetGitignored } from '../gitignore.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
@@ -12,6 +14,7 @@ import { openInFileManager } from '../open-in-file-manager.js';
 import { getAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
 import type { AppEnv } from '../types.js';
+import { extraSearchDirs } from '../utils/isExecutableOnPath.js';
 import { addPollWaiter, getChangeVersion, getDataVersion } from './notify.js';
 import { GlobalConfigSchema,parseBody, PrintSchema } from './validation.js';
 
@@ -42,6 +45,11 @@ dashboardRoutes.get('/poll', async (c) => {
 dashboardRoutes.get('/stats', async (c) => {
   const stats = await getTicketStats();
   return c.json(stats);
+});
+
+// HS-8511 — per-view ticket counts for the sidebar badges.
+dashboardRoutes.get('/sidebar-counts', async (c) => {
+  return c.json({ counts: await getSidebarCounts() });
 });
 
 dashboardRoutes.get('/dashboard', async (c) => {
@@ -137,16 +145,19 @@ dashboardRoutes.post('/ensure-skills', (c) => {
 // resolved ABSOLUTE path so launch doesn't depend on PATH at all, and (c) do NOT
 // cache a negative result forever (so installing Glassbox after Hot Sheet started
 // is picked up without a restart).
+//
+// HS-8801 — `process.env.PATH` here is ALREADY the user's real login-shell PATH:
+// `enrichProcessPath()` (`src/enrich-path.ts`) merges `$SHELL -ilc 'printf %s
+// "$PATH"'` into it at startup (before any route runs), so nvm/asdf/volta/custom-
+// prefix `glassbox` installs are already discoverable. `extraSearchDirs()` (the
+// shared static list, formerly a duplicate `glassboxBinDirs()` here) stays as the
+// fallback for when the login-shell probe failed (Windows, no `$SHELL`, timeout)
+// or for dirs the shell omits.
 
-/** Standard local/Homebrew bin dirs missing from the GUI launchd PATH. */
-function glassboxBinDirs(): string[] {
-  return ['/usr/local/bin', '/opt/homebrew/bin', join(homedir(), '.local', 'bin')];
-}
-
-/** PATH augmented with the local/Homebrew bins, so the resolved `glassbox` (and
- *  any children it spawns) can find its toolchain. */
+/** PATH augmented with the common GUI-PATH-missing install dirs, so the resolved
+ *  `glassbox` (and any children it spawns) can find its toolchain. */
 function augmentedPath(): string {
-  return [process.env.PATH ?? '', ...glassboxBinDirs()].filter(p => p !== '').join(':');
+  return [process.env.PATH ?? '', ...extraSearchDirs()].filter(p => p !== '').join(':');
 }
 
 /**
@@ -187,7 +198,7 @@ async function resolveGlassboxBin(): Promise<string | null> {
       return null;
     }
   };
-  return resolveGlassboxBinWith({ which, fileExists: existsSync, binDirs: glassboxBinDirs() });
+  return resolveGlassboxBinWith({ which, fileExists: existsSync, binDirs: extraSearchDirs() });
 }
 
 dashboardRoutes.get('/glassbox/status', async (c) => {
@@ -215,6 +226,55 @@ dashboardRoutes.post('/glassbox/launch', async (c) => {
     // The spawn is detached; surface an async spawn failure (e.g. EACCES) in the
     // server log rather than swallowing it silently.
     child.on('error', (err) => { console.error('[glassbox] launch failed:', err); });
+    child.unref();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'spawn failed';
+    return c.json({ error: `Could not launch Glassbox: ${message}` }, 500);
+  }
+  return c.json({ ok: true });
+});
+
+/**
+ * HS-8472 — map a validated Glassbox review request to the `glassbox` CLI args
+ * (`--commit <sha>` / `--range <from>..<to>`). Returns null when a sha / ref
+ * fails its safety pattern, so a malformed value can't reach the spawn as an
+ * unexpected git flag (the args are passed array-style — no shell — but a ref
+ * like `--upload-pack=…` could still be read as a flag by `git diff`). Pure +
+ * exported for testing.
+ */
+export function buildGlassboxReviewArgs(req: GlassboxReviewReq): string[] | null {
+  // A ref starts with a word char (never `-`) and uses only ref-safe chars.
+  const SAFE_REF = /^[\w][\w./-]*$/;
+  if (req.mode === 'commit') {
+    if (!/^[0-9a-fA-F]{7,40}$/.test(req.sha)) return null;
+    return ['--commit', req.sha];
+  }
+  if (!SAFE_REF.test(req.from) || !SAFE_REF.test(req.to)) return null;
+  return ['--range', `${req.from}..${req.to}`];
+}
+
+// HS-8472 — open Glassbox focused on a specific pending commit or the whole
+// pending range, launched from the git-status popover.
+dashboardRoutes.post('/glassbox/review', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => null);
+  const parsed = GlassboxReviewReqSchema.safeParse(raw);
+  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
+  const args = buildGlassboxReviewArgs(parsed.data);
+  if (args === null) return c.json({ error: 'Invalid commit / ref' }, 400);
+
+  const bin = await resolveGlassboxBin();
+  if (bin === null) return c.json({ error: 'Glassbox CLI not found. Install it (e.g. in /usr/local/bin) and try again.' }, 404);
+  const { spawn } = await import('child_process');
+  const path = await import('path');
+  const projectRoot = path.dirname(c.get('dataDir'));
+  try {
+    const child = spawn(bin, args, {
+      cwd: projectRoot,
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, PATH: augmentedPath() },
+    });
+    child.on('error', (err) => { console.error('[glassbox] review launch failed:', err); });
     child.unref();
   } catch (err) {
     const message = err instanceof Error ? err.message : 'spawn failed';

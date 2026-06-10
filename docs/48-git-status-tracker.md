@@ -133,6 +133,16 @@ Clicking the chip slides open a small popover anchored under it:
 
 The popover is non-modal (per the §12.10 popup pattern). The popover is read-only — the previous "Last fetched … / Fetch now" row was removed in HS-7974 at the user's request (the API endpoint stays, no UI surfaces it). Phase 3 may add a clickable per-bucket file list (staged → list of paths; click to copy or reveal in finder), but this is incremental — the v1 expanded panel just shows counts.
 
+### 48.4.3 Pending (unpushed) commits + Glassbox links (HS-8472)
+
+When the branch is **ahead** of its upstream, the popover renders a **Pending commits** section between the ahead/behind line and the working-tree buckets, listing each unpushed commit (`<upstream>..HEAD`, newest first) — short hash + subject, with up to the first 3 non-blank body lines beneath. Backed by `GET /api/git/pending-commits` → `{ commits: {hash, shortHash, subject, body}[], truncated }` (`getPendingCommits` + pure `parsePendingCommits` over `git log @{u}..HEAD --no-merges --pretty=format:%H\x1f%h\x1f%s\x1f%b\x1e`, capped at 50). Fetched on popover-open only (one extra shell-out per click), gated on `ahead > 0` + an upstream.
+
+When the **Glassbox** CLI is installed (`getGlassboxStatus`), each commit row gets a **Review** button and the section ends with an **"Open all pending changes in Glassbox"** button:
+- per-commit → `POST /api/glassbox/review { mode: 'commit', sha }` → `glassbox --commit <sha>`;
+- review-all → `POST /api/glassbox/review { mode: 'range', from: <upstream>, to: 'HEAD' }` → `glassbox --range <upstream>..HEAD`.
+
+The server maps these via the pure, validated `buildGlassboxReviewArgs` (sha must be 7–40 hex; refs must start with a word char so a flag-like value can't reach `git` as an option) before spawning the resolved `glassbox` binary detached in the project root (same resolve/PATH path as the toolbar Glassbox button). The pure body-preview helper is `gitStatusPopover.tsx::commitBodyPreview`.
+
 ### 48.4.3 Polling
 
 The chip subscribes to the existing `/api/poll` long-poll's version stream. When the server bumps `gitChangeVersion`, the client refetches `/api/git/status` and re-renders. No dedicated git long-poll endpoint — git events ride on the existing version channel to keep the client connection count constant.

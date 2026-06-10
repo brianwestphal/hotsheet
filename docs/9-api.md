@@ -192,6 +192,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist). The 
 | PATCH | `/api/global-config` | Update global config fields (share timing, channel enabled, etc.) |
 | GET | `/api/glassbox/status` | Check if Glassbox CLI is available |
 | POST | `/api/glassbox/launch` | Launch Glassbox for current project |
+| POST | `/api/glassbox/review` | Open Glassbox focused on a commit (`{mode:'commit',sha}`) or pending range (`{mode:'range',from,to}`) — HS-8472 |
 | POST | `/api/diagnostics/freeze` | Append client long-task / heartbeat events to `<dataDir>/freeze.log` (HS-8054 diagnostics) |
 
 **Git** (see [48-git-status-tracker.md](48-git-status-tracker.md)):
@@ -201,6 +202,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist). The 
 | GET | `/api/git/status` | Git working-tree status (branch / dirty / ahead-behind); `?files=true` adds per-bucket file lists |
 | POST | `/api/git/fetch` | Run `git fetch` against the current branch's upstream |
 | POST | `/api/git/reveal` | Reveal a path under the git root in the OS file manager (path-traversal guarded) |
+| GET | `/api/git/pending-commits` | Unpushed commits (`@{u}..HEAD`) for the popover: `{commits:{hash,shortHash,subject,body}[],truncated}` (cap 50) — HS-8472 |
 
 **Database / recovery** (see [7-backup-restore.md](7-backup-restore.md), [42-repair-database.md](42-repair-database.md), [73-snapshot-protection.md](73-snapshot-protection.md)):
 

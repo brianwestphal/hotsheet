@@ -43,7 +43,7 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() })),
 }));
 
-const { dashboardRoutes, resolveGlassboxBinWith } = await import('./dashboard.js');
+const { dashboardRoutes, resolveGlassboxBinWith, buildGlassboxReviewArgs } = await import('./dashboard.js');
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -362,5 +362,28 @@ describe('resolveGlassboxBinWith (HS-8786)', () => {
 
   it('returns null when the CLI is not installed anywhere', () => {
     expect(resolveGlassboxBinWith({ which: () => null, fileExists: () => false, binDirs })).toBeNull();
+  });
+});
+
+describe('buildGlassboxReviewArgs (HS-8472)', () => {
+  it('maps a valid commit sha to --commit args', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'commit', sha: 'abc1234' })).toEqual(['--commit', 'abc1234']);
+    expect(buildGlassboxReviewArgs({ mode: 'commit', sha: 'a'.repeat(40) })).toEqual(['--commit', 'a'.repeat(40)]);
+  });
+
+  it('rejects a non-hex or too-short sha', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'commit', sha: 'xyz1234' })).toBeNull();
+    expect(buildGlassboxReviewArgs({ mode: 'commit', sha: 'abc' })).toBeNull(); // < 7 chars
+    expect(buildGlassboxReviewArgs({ mode: 'commit', sha: '' })).toBeNull();
+  });
+
+  it('maps a valid range to --range from..to', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'range', from: 'origin/main', to: 'HEAD' }))
+      .toEqual(['--range', 'origin/main..HEAD']);
+  });
+
+  it('rejects a flag-like ref (leading dash) so it cannot reach git as an option', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'range', from: '--upload-pack=evil', to: 'HEAD' })).toBeNull();
+    expect(buildGlassboxReviewArgs({ mode: 'range', from: 'origin/main', to: '-x' })).toBeNull();
   });
 });

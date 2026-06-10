@@ -2827,6 +2827,28 @@ body.cross-project-stats-active {
   }
 }
 
+// HS-8511 — per-view ticket count badge, right-aligned within the sidebar row.
+// Muted so it reads as secondary to the view name; inherits the accent color
+// when the row is active. Empty (`is-zero`) badges collapse so a "0" never shows.
+.sidebar-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 1.4em;
+  padding: 0 6px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+
+  &.is-zero {
+    display: none;
+  }
+
+  .sidebar-item.active & {
+    color: var(--accent);
+  }
+}
+
 .sidebar-divider {
   height: 1px;
   background: var(--border);
@@ -9556,6 +9578,94 @@ label.detail-details-label {
   font-weight: 600;
   color: var(--accent, #3b82f6);
   font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+// HS-8472 — pending (unpushed) commits section.
+.git-popover-commits-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  margin-top: 6px;
+}
+
+.git-popover-commits-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.git-popover-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.git-popover-commit-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.git-popover-commit-hash {
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--accent, #3b82f6);
+}
+
+.git-popover-commit-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-popover-commit-review {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.git-popover-commit-body {
+  white-space: pre-line;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-left: 2px;
+}
+
+.git-popover-commits-more {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.git-popover-commits-review-all {
+  margin-top: 2px;
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
 
 .git-popover-buckets {

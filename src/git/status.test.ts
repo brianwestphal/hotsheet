@@ -5,7 +5,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { bucketPorcelain, bucketPorcelainFiles } from './status.js';
+import { bucketPorcelain, bucketPorcelainFiles, getPendingCommits, parsePendingCommits } from './status.js';
+
+const US = '\x1f';
+const RS = '\x1e';
+/** Build one `git log --pretty` record in the `%H\x1f%h\x1f%s\x1f%b\x1e` shape. */
+function rec(hash: string, short: string, subject: string, body: string): string {
+  return `${hash}${US}${short}${US}${subject}${US}${body}${RS}`;
+}
 
 describe('bucketPorcelain (HS-7954)', () => {
   it('returns all-zero for empty input', () => {
@@ -107,5 +114,42 @@ describe('bucketPorcelainFiles (HS-7956)', () => {
   it('skips short / blank records (defensive)', () => {
     const out = bucketPorcelainFiles('\0\0??' + '\0' + '\0');
     expect(out.untracked).toEqual([]);
+  });
+});
+
+describe('parsePendingCommits (HS-8472)', () => {
+  it('parses multiple commits, preserving multi-line bodies', () => {
+    const out = parsePendingCommits(
+      rec('a'.repeat(40), 'aaaaaaa', 'Subject one', 'body line 1\nbody line 2')
+      + '\n' + rec('b'.repeat(40), 'bbbbbbb', 'Subject two', ''),
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({ hash: 'a'.repeat(40), shortHash: 'aaaaaaa', subject: 'Subject one', body: 'body line 1\nbody line 2' });
+    expect(out[1].subject).toBe('Subject two');
+    expect(out[1].body).toBe('');
+  });
+
+  it('returns [] for empty output and ignores blank trailing records', () => {
+    expect(parsePendingCommits('')).toEqual([]);
+    expect(parsePendingCommits(rec('c'.repeat(40), 'ccccccc', 'S', '') + '\n')).toHaveLength(1);
+  });
+});
+
+describe('getPendingCommits (HS-8472)', () => {
+  // Use the repo root (a real git repo so `isGitRepo` passes) + an injected
+  // invoker returning canned output, so the slicing/truncation logic is tested
+  // without depending on the real commit graph.
+  it('caps at 50 commits and flags truncation', async () => {
+    let stdout = '';
+    for (let i = 0; i < 51; i++) stdout += rec(String(i).padStart(40, '0'), `h${String(i)}`, `subj ${String(i)}`, '');
+    const res = await getPendingCommits(process.cwd(), () => Promise.resolve({ stdout, status: 0 }));
+    expect(res).not.toBeNull();
+    expect(res!.commits).toHaveLength(50);
+    expect(res!.truncated).toBe(true);
+  });
+
+  it('returns empty (not null) when git fails — e.g. no upstream', async () => {
+    const res = await getPendingCommits(process.cwd(), () => Promise.resolve({ stdout: '', status: 128 }));
+    expect(res).toEqual({ commits: [], truncated: false });
   });
 });

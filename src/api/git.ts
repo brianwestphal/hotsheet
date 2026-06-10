@@ -84,6 +84,33 @@ export type GitRevealReq = z.infer<typeof GitRevealReqSchema>;
 
 const GitRevealRespSchema = z.object({ ok: z.literal(true) });
 
+// --- /git/pending-commits (HS-8472) ---
+/** One unpushed commit (in HEAD, not in upstream). `body` is the full commit
+ *  message body; the popover renders the subject + up to its first 3 lines. */
+export const PendingCommitSchema = z.object({
+  hash: z.string(),
+  shortHash: z.string(),
+  subject: z.string(),
+  body: z.string(),
+});
+export type PendingCommit = z.infer<typeof PendingCommitSchema>;
+export const PendingCommitsResSchema = z.object({
+  commits: z.array(PendingCommitSchema),
+  /** True when more commits exist than the cap returned (rare). */
+  truncated: z.boolean(),
+});
+export type PendingCommitsRes = z.infer<typeof PendingCommitsResSchema>;
+
+// --- /glassbox/review (HS-8472) ---
+/** Open Glassbox focused on a specific commit, or on a ref range (all pending
+ *  changes). The server maps these to `glassbox --commit <sha>` /
+ *  `glassbox --range <from>..<to>`. */
+export const GlassboxReviewReqSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('commit'), sha: z.string() }),
+  z.object({ mode: z.literal('range'), from: z.string(), to: z.string() }),
+]);
+export type GlassboxReviewReq = z.infer<typeof GlassboxReviewReqSchema>;
+
 /** Branch + dirty counts for the active project, or null (not a git repo /
  *  tracking disabled). */
 export async function getGitStatus(): Promise<GitStatusWithFiles | null> {
@@ -99,6 +126,11 @@ export async function getGitStatusWithFiles(): Promise<GitStatusWithFiles | null
 /** Run `git fetch` against the current branch's upstream. */
 export async function gitFetch(): Promise<FetchResult> {
   return apiCall(FetchResultSchema, '/git/fetch', { method: 'POST' });
+}
+
+/** HS-8472 — the unpushed commits (HEAD not in upstream), newest first. */
+export async function getPendingCommits(): Promise<PendingCommitsRes> {
+  return apiCall(PendingCommitsResSchema, '/git/pending-commits');
 }
 
 /** Reveal a git-status file (relative path) in the OS file manager. */

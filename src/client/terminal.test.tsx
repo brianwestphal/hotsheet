@@ -34,6 +34,7 @@ import {
   loadAndRenderTerminalTabs,
   onProjectSwitch,
 } from './terminal.js';
+import { initInstanceLifecycle } from './terminalInstanceLifecycle.js';
 
 const {
   getTauriInvokeMock,
@@ -479,5 +480,40 @@ describe('middle-click closes a terminal tab (HS-8657)', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(document.querySelector('[data-terminal-id="dyn-1"]')).not.toBeNull();
+  });
+});
+
+describe('drawer tab double-click → toggle full height (HS-8609)', () => {
+  function lifecycleSpies() {
+    const toggleDrawerFullHeight = vi.fn();
+    const selectDrawerTab = vi.fn<(t: string) => Promise<void>>(() => Promise.resolve());
+    initInstanceLifecycle({ selectDrawerTab, toggleDrawerFullHeight });
+    return { toggleDrawerFullHeight, selectDrawerTab };
+  }
+
+  it('double-clicking a terminal tab toggles the drawer full height', async () => {
+    const { toggleDrawerFullHeight } = lifecycleSpies();
+    apiMock.mockResolvedValue({ configured: [{ id: 't1', name: 'one', command: 'sh' }], dynamic: [], home: '/Users/test' });
+    await loadAndRenderTerminalTabs();
+
+    const tab = document.querySelector<HTMLElement>('#drawer-terminal-tabs [data-terminal-id="t1"]');
+    expect(tab).not.toBeNull();
+    tab!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    expect(toggleDrawerFullHeight).toHaveBeenCalledTimes(1);
+
+    // Each double-click is one toggle (commandLog flips expanded ↔ normal).
+    tab!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    expect(toggleDrawerFullHeight).toHaveBeenCalledTimes(2);
+  });
+
+  it('double-clicking the close glyph does NOT toggle height', async () => {
+    const { toggleDrawerFullHeight } = lifecycleSpies();
+    apiMock.mockResolvedValue({ configured: [], dynamic: [{ id: 'dyn-1', name: 'sh', command: 'sh', dynamic: true }], home: '/Users/test' });
+    await loadAndRenderTerminalTabs();
+
+    const closeGlyph = document.querySelector<HTMLElement>('#drawer-terminal-tabs [data-terminal-id="dyn-1"] .drawer-tab-close');
+    expect(closeGlyph).not.toBeNull();
+    closeGlyph!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    expect(toggleDrawerFullHeight).not.toHaveBeenCalled();
   });
 });

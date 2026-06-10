@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { toElement } from './dom.js';
-import { buildAheadBehindLine, buildBranchLine, paintPopover } from './gitStatusPopover.js';
+import { buildAheadBehindLine, buildBranchLine, commitBodyPreview, paintPopover } from './gitStatusPopover.js';
 
 function status(o: Partial<{
   branch: string;
@@ -127,5 +127,20 @@ describe('paintPopover bucket-strip suppression (HS-7975 follow-up)', () => {
     paintPopover(popover, status({ upstream: 'origin/main' }));
     expect(popover.querySelector('.git-popover-buckets')).toBeNull();
     document.body.innerHTML = '';
+  });
+});
+
+describe('commitBodyPreview (HS-8472)', () => {
+  it('keeps up to the first 3 non-blank lines', () => {
+    expect(commitBodyPreview('line1\nline2\nline3\nline4')).toBe('line1\nline2\nline3');
+  });
+
+  it('drops blank lines before capping', () => {
+    expect(commitBodyPreview('a\n\n\nb\n\nc\nd')).toBe('a\nb\nc');
+  });
+
+  it('returns an empty string for an empty / whitespace-only body', () => {
+    expect(commitBodyPreview('')).toBe('');
+    expect(commitBodyPreview('   \n  \n')).toBe('');
   });
 });

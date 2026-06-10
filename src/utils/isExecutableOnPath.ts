@@ -23,10 +23,20 @@ import { delimiter, join } from 'path';
  * or the official installer is invisible to a bare `process.env.PATH` probe —
  * which is why a friend's 0.19.0 desktop launch didn't auto-seed the Claude
  * terminal (`claude` was installed but not on the GUI PATH). Same root cause as
- * the HS-8786 Glassbox bug. We now ALSO search the common install locations
- * (`extraSearchDirs`). This covers Homebrew / `/usr/local/bin` / the official
- * installer; an `nvm`/exotic layout may still need the user's login-shell PATH
- * (follow-up HS-8801).
+ * the HS-8786 Glassbox bug. We ALSO search the common install locations
+ * (`extraSearchDirs`).
+ *
+ * HS-8801 — the dynamic/exotic case (`nvm` `~/.nvm/versions/node/vX/bin`, `asdf`,
+ * `volta`, a custom npm prefix) is covered NOT here but upstream: `process.env.PATH`
+ * is ENRICHED at startup by `enrichProcessPath()` (`src/enrich-path.ts`), which
+ * spawns `$SHELL -ilc 'printf %s "$PATH"'` once and merges the user's real
+ * login-shell PATH — populated by their rc files (which init nvm/asdf/volta) —
+ * before any code (including this probe) reads PATH. So by the time
+ * `isExecutableOnPath` runs, dynamic install dirs are already in `process.env.PATH`.
+ * `extraSearchDirs` is the belt-and-suspenders static fallback for when that
+ * login-shell probe failed (Windows, no `$SHELL`, a shell that errors/times out)
+ * or for dirs the login shell happens to omit (e.g. the official installer's
+ * `~/.claude/local`).
  */
 
 /** Common executable dirs missing from the GUI launchd PATH (unix only —

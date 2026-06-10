@@ -1,5 +1,5 @@
 import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
-import { createTicket, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
+import { createTicket, getGitStatus, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { suppressAnimation } from './animate.js';
 import { initAnnouncer, refreshAnnouncerVisibility } from './announcer.js';
@@ -23,6 +23,7 @@ import { bindDetailPositionToggle, updateDetailPositionToggle } from './detailBi
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
+import { hasGlassboxReviewableChanges } from './glassboxReview.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
@@ -394,11 +395,24 @@ function bindGlassbox() {
   }).catch(() => { /* ignore */ });
 
   btn.addEventListener('click', () => {
-    // HS-8786 — surface a launch failure instead of silently doing nothing
-    // (the old fire-and-forget swallowed the 404/500 from the launch route).
-    void launchGlassbox().catch(() => {
-      showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
-    });
+    void (async () => {
+      // HS-8784 — if there's nothing pending, say so clearly instead of opening
+      // Glassbox to an empty review (which read as "the button did nothing").
+      // A failed status probe falls through and launches as before.
+      try {
+        if (!hasGlassboxReviewableChanges(await getGitStatus())) {
+          showToast('No pending changes for Glassbox to review.', { variant: 'info' });
+          return;
+        }
+      } catch { /* status probe failed — don't block the launch */ }
+      // HS-8786 — surface a launch failure instead of silently doing nothing
+      // (the old fire-and-forget swallowed the 404/500 from the launch route).
+      try {
+        await launchGlassbox();
+      } catch {
+        showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
+      }
+    })();
   });
 }
 

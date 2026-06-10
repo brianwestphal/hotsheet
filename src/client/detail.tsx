@@ -12,6 +12,7 @@ import { parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } f
 import { renderPluginDetailElements } from './pluginUI.js';
 import { morph } from './reactive.js';
 import { syncDetailReaderButton } from './readerOverlay.js';
+import { refreshSidebarCounts } from './sidebarCounts.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
@@ -534,6 +535,9 @@ export async function updateStats() {
       bar.textContent = `${stats.total} tickets \u00B7 ${stats.open} open \u00B7 ${stats.up_next} up next`;
     }
   } catch { /* ignore */ }
+  // HS-8511 \u2014 keep the sidebar per-view count badges in sync with the same
+  // refresh cadence as the status bar. Best-effort + independent of the bar.
+  void refreshSidebarCounts();
 }
 
 // --- Detail panel orientation ---

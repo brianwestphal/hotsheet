@@ -268,6 +268,31 @@ export const GithubCommentsArraySchema = z.array(z.object({
 }).loose());
 
 // ---------------------------------------------------------------------------
+// Custom views (settings `custom_views` JSON). HS-8511 — parsed server-side so
+// the sidebar-count endpoint can evaluate each view's ticket set via the same
+// `queryTickets` path the client uses. `.loose()` tolerates extra client-only
+// fields (sort prefs, etc.). The condition shape mirrors `queryTickets`'s
+// `{ field, operator, value }[]`.
+// ---------------------------------------------------------------------------
+
+export const CustomViewConditionSchema = z.object({
+  field: z.string(),
+  operator: z.string(),
+  value: z.string(),
+}).loose();
+
+export const CustomViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  tag: z.string().optional(),
+  includeArchived: z.boolean().optional(),
+  logic: z.enum(['all', 'any']).default('all'),
+  conditions: z.array(CustomViewConditionSchema).default([]),
+}).loose();
+
+export const CustomViewArraySchema = z.array(CustomViewSchema);
+
+// ---------------------------------------------------------------------------
 // Helper: parse a JSON string with a zod schema, throwing a clear error.
 // Centralizes the JSON.parse + schema.parse two-step that replaces every
 // `JSON.parse(x) as Foo` callsite.
