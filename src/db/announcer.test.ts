@@ -3,9 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import {
   clearAnnouncements, dismissAnnouncement, getActiveAnnouncements,
-  getLatestCoversTo, insertAnnouncements,
+  getLatestCoversTo, insertAnnouncements, markAnnouncementListened,
 } from './announcer.js';
 import { getDb } from './connection.js';
+import { updateSetting } from './settings.js';
 
 let tempDir: string;
 
@@ -86,5 +87,64 @@ describe('announcements DB (HS-8745)', () => {
     await insertAnnouncements([{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }], null, null);
     expect(await clearAnnouncements()).toBe(2);
     expect(await getActiveAnnouncements()).toHaveLength(0);
+  });
+});
+
+describe('listened tracking + 1h grace window (HS-8803)', () => {
+  /** Directly stamp `listened_at` relative to now (PG interval string, e.g. `2 hours`). */
+  async function stampListened(id: number, interval: string): Promise<void> {
+    await (await getDb()).query(`UPDATE announcements SET listened_at = now() - interval '${interval}' WHERE id = $1`, [id]);
+  }
+  async function listenedAtOf(id: number): Promise<string | Date | null> {
+    const r = await (await getDb()).query<{ listened_at: string | Date | null }>(
+      `SELECT listened_at FROM announcements WHERE id = $1`, [id]);
+    return r.rows[0].listened_at;
+  }
+
+  it('hides entries listened more than the grace window ago, keeps recent + never-heard', async () => {
+    const [a, b, c] = await insertAnnouncements(
+      [{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }, { title: 'C', script: 'c' }], null, null);
+    await stampListened(a.id, '2 hours'); // beyond the 1h grace → hidden
+    await stampListened(b.id, '10 minutes'); // within grace → kept
+    // c left NULL (never heard) → kept
+    expect((await getActiveAnnouncements()).map(r => r.id)).toEqual([b.id, c.id]);
+    // The kept entry round-trips its listened_at as ISO (not Date).
+    const kept = (await getActiveAnnouncements()).find(r => r.id === b.id);
+    expect(kept?.listened_at).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+    expect((await getActiveAnnouncements()).find(r => r.id === c.id)?.listened_at).toBeNull();
+  });
+
+  it('markAnnouncementListened stamps the entry and resets only LATER already-heard entries', async () => {
+    const [a, b, c, d] = await insertAnnouncements(
+      [{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }, { title: 'C', script: 'c' }, { title: 'D', script: 'd' }],
+      null, null);
+    // a (earlier) + c (later) already heard long ago; d (later) never heard.
+    await stampListened(a.id, '3 hours');
+    await stampListened(c.id, '3 hours');
+    // Re-listen to b: b is stamped now, c (later + heard) resets, a (earlier) and d (never-heard) untouched.
+    await markAnnouncementListened(b.id);
+    // a stays beyond grace → hidden; b, c now recent and d still NULL → all shown.
+    expect((await getActiveAnnouncements()).map(r => r.id)).toEqual([b.id, c.id, d.id]);
+    // d (a never-heard later entry) must remain NULL — it's still a "first non-listened" candidate.
+    expect(await listenedAtOf(d.id)).toBeNull();
+  });
+
+  it('one-time backfill clears the pre-cursor backlog from the legacy close-cursor, then is idempotent', async () => {
+    const db = await getDb();
+    // Re-arm the backfill (it runs once per project) and set the legacy close-cursor.
+    await db.query(`DELETE FROM settings WHERE key = 'plugin:announcer_listened_backfilled'`);
+    await updateSetting('announcer_last_listened_at', '2026-06-05T12:00:00Z');
+
+    const [old1, old2] = await insertAnnouncements([{ title: 'old1', script: 'x' }, { title: 'old2', script: 'y' }], null, null);
+    const [fresh] = await insertAnnouncements([{ title: 'fresh', script: 'z' }], null, null);
+    await db.query(`UPDATE announcements SET created_at = '2026-06-05T10:00:00Z' WHERE id = ANY($1::int[])`, [[old1.id, old2.id]]);
+    await db.query(`UPDATE announcements SET created_at = '2026-06-05T14:00:00Z' WHERE id = $1`, [fresh.id]);
+
+    // First read triggers the backfill: pre-cursor entries are marked heard-in-the-past → cleared.
+    expect((await getActiveAnnouncements()).map(r => r.title)).toEqual(['fresh']);
+    // Sentinel persisted → a second read is a no-op (a close-without-listening can't re-trigger it).
+    const sentinel = await db.query(`SELECT 1 FROM settings WHERE key = 'plugin:announcer_listened_backfilled'`);
+    expect(sentinel.rows).toHaveLength(1);
+    expect((await getActiveAnnouncements()).map(r => r.title)).toEqual(['fresh']);
   });
 });

@@ -893,6 +893,13 @@ async function initSchema(db: PGlite): Promise<void> {
     -- only code diffs) the PIP renders alongside the script; empty for entries
     -- without a visual (the common case).
     ALTER TABLE announcements ADD COLUMN IF NOT EXISTS visuals TEXT NOT NULL DEFAULT '[]';
+    -- HS-8803 — per-entry "listened at" wall-clock. NULL = never heard. Set when
+    -- the user lands on the entry; the reel hides listened entries once an hour
+    -- has passed (a grace window to scrub back), and a fresh open starts on the
+    -- first NULL (non-listened) entry. The one-time backlog backfill from the
+    -- old close-cursor lives in getActiveAnnouncements (the cursor is in
+    -- settings.json, not reachable from this raw SQL).
+    ALTER TABLE announcements ADD COLUMN IF NOT EXISTS listened_at TIMESTAMPTZ;
 
     -- HS-8766 — Announcer summarization token usage + cost (the user's own
     -- Anthropic API spend). Lives in the SHARED telemetry DB keyed by

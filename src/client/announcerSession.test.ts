@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  type AnnouncerSession, clearAnnouncerSession, loadAnnouncerSession,
+  type AnnouncerSession, clearAnnouncerSession, firstUnlistenedIndex, loadAnnouncerSession,
   resolveRestoreIndex, saveAnnouncerSession,
 } from './announcerSession.js';
 
@@ -83,5 +83,33 @@ describe('resolveRestoreIndex (HS-8804)', () => {
 
   it('matches on id alone when the saved project is null (legacy/global)', () => {
     expect(resolveRestoreIndex(reel, { entryId: 20, entryProjectSecret: null })).toBe(1);
+  });
+});
+
+describe('firstUnlistenedIndex (HS-8803)', () => {
+  it('returns 0 for an empty reel', () => {
+    expect(firstUnlistenedIndex([])).toBe(0);
+  });
+
+  it('starts on the first never-heard entry', () => {
+    const reel = [
+      { listened_at: '2026-06-07T00:00:00.000Z' },
+      { listened_at: '2026-06-07T00:10:00.000Z' },
+      { listened_at: null },
+      { listened_at: null },
+    ];
+    expect(firstUnlistenedIndex(reel)).toBe(2);
+  });
+
+  it('starts at 0 when nothing has been heard', () => {
+    expect(firstUnlistenedIndex([{ listened_at: null }, { listened_at: null }])).toBe(0);
+  });
+
+  it('starts on the last entry when everything is already heard (within grace)', () => {
+    const reel = [
+      { listened_at: '2026-06-07T00:00:00.000Z' },
+      { listened_at: '2026-06-07T00:10:00.000Z' },
+    ];
+    expect(firstUnlistenedIndex(reel)).toBe(1);
   });
 });

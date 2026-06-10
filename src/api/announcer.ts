@@ -24,6 +24,9 @@ export const AnnouncementSchema = z.object({
   visuals: VisualsArraySchema.default([]),
   position: z.number(),
   dismissed: z.boolean(),
+  // HS-8803 — when the user last heard this entry (ISO), or null if never. Drives
+  // the "first non-listened" start position; older servers omit it → null.
+  listened_at: z.string().nullable().default(null),
 }).loose();
 export type Announcement = z.infer<typeof AnnouncementSchema>;
 
@@ -90,6 +93,8 @@ export const EntriesResSchema = z.object({ entries: z.array(AnnouncementSchema) 
 export const SelectAnnouncerKeyReqSchema = z.object({ keyId: z.string().nullable() });
 export const SetAnnouncerEnabledReqSchema = z.object({ enabled: z.boolean() });
 export const AdvanceCursorReqSchema = z.object({ at: z.string().optional() });
+// HS-8803 — mark an entry listened (resets the 1h-grace clear; bumps later heard entries).
+export const MarkListenedReqSchema = z.object({ id: z.number() });
 // HS-8750 — register/renew (true) or drop (false) a live-listen lease.
 export const SetAnnouncerLiveReqSchema = z.object({ enabled: z.boolean() });
 // HS-8769 — replace the per-project "uninteresting" topic list.
@@ -132,6 +137,12 @@ export async function getAnnouncerEntries(secret?: string): Promise<Announcement
 
 export async function advanceAnnouncerCursor(at?: string, secret?: string): Promise<{ ok: true }> {
   return apiCall(OkResponseSchema, '/announcer/cursor', { method: 'POST', body: { at }, secret });
+}
+
+// HS-8803 — mark an entry listened (in its owning project). Best-effort from the
+// PIP as the user lands on each entry.
+export async function markAnnouncementListened(id: number, secret?: string): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, '/announcer/listened', { method: 'POST', body: { id }, secret });
 }
 
 export async function selectAnnouncerKey(keyId: string | null): Promise<{ ok: true }> {

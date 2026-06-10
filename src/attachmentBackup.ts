@@ -26,7 +26,7 @@ import {
   statSync,
 } from 'fs';
 import type { FileHandle } from 'fs/promises';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
 import { z } from 'zod';
 
@@ -463,6 +463,35 @@ export async function restoreAttachmentsFromManifest(
     }
   }
   return out;
+}
+
+/**
+ * HS-8802 — self-heal a single attachment whose live file is gone but whose
+ * content is still in the backup store. Copies the blob at `<blobsDir>/<sha>`
+ * back to `destPath` (the row's `stored_path`), creating the parent dir if
+ * needed. Returns `true` on a successful restore, `false` if the blob is absent
+ * or the copy fails (the caller then leaves the row alone to retry next sweep).
+ *
+ * Unlike `restoreAttachmentsFromManifest`, the caller here has already confirmed
+ * the live file is MISSING, so there's no live-collision to suffix around — a
+ * direct copy to the original `stored_path` keeps the DB row valid with no
+ * `stored_path` rewrite.
+ */
+export async function restoreAttachmentBlob(blobsDir: string, sha: string, destPath: string): Promise<boolean> {
+  const blobPath = join(blobsDir, sha);
+  try {
+    await fsp.access(blobPath);
+  } catch {
+    return false; // blob not in store
+  }
+  try {
+    await fsp.mkdir(dirname(destPath), { recursive: true });
+    await fsp.copyFile(blobPath, destPath);
+    return true;
+  } catch (err) {
+    console.error(`[attachmentBackup] self-heal restore ${blobPath} → ${destPath} failed:`, err);
+    return false;
+  }
 }
 
 function formatRestoreTimestamp(d: Date): string {

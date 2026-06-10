@@ -150,7 +150,37 @@ The existing `POST /api/backups/restore` flow is extended to:
 
 The Settings → Backups Preview flow does NOT copy attachments — preview is read-only and short-lived. Preview UI continues to ignore attachment paths (matching today's behavior).
 
-## 43.10 Open questions / explicit follow-ups for the implementation ticket
+## 43.10 Orphan-row self-heal (cleanup sweep)
+
+`cleanupOrphanedAttachments(dataDir)` (in `src/cleanup.ts`, run from the startup
+`cleanupAttachments` pass under `runWithDataDir`) reconciles `attachments` rows
+whose `stored_path` file has gone missing out-of-band (deleted/pruned while the
+DB row lingers — it would otherwise render as a broken image / 404 in the ticket
+detail panel). For each missing-file row it consults the cross-reference index
+(`indexExistingManifestEntries`) + the blob store (`attachmentBlobsDir`):
+
+- **Recoverable** — the content is still in the backup store (a manifest
+  cross-ref blob exists at `<backupRoot>/attachments/<sha>`). **Auto-restore**
+  (HS-8802): copy the blob back to the row's `stored_path` via
+  `restoreAttachmentBlob`, so the broken image self-heals on the next sweep (i.e.
+  the next launch). The file is known-missing, so there's no live file to
+  trample and no `stored_path` rewrite is needed. A recoverable row whose copy
+  fails is left intact to retry on a later sweep.
+- **Unrecoverable** — no cross-ref blob. **Prune** the row (HS-8783); the
+  content is genuinely lost and the dangling row is removed.
+
+**Conservative guard.** When the backup root isn't present (e.g. a temporarily
+unmounted custom `backupDir`), the sweep no-ops entirely: without a readable
+store it can neither restore nor prove non-recoverability, so it never risks a
+wrongful delete. Returns `{ pruned, restored }`.
+
+> Follow-up (deferred): the self-heal only runs on the periodic/startup cleanup
+> sweep, so a broken image persists until the next sweep. A serve-time heal
+> (restore on the `GET /api/attachments/file/*` 404 path) would make it immediate
+> but needs a basename→row→manifest lookup on the (currently sync) serve route —
+> tracked separately rather than bundled here.
+
+## 43.11 Open questions / explicit follow-ups for the implementation ticket
 
 These are intentionally NOT decided here so HS-7929 (implementation) can revisit with code in front of it:
 
@@ -159,7 +189,7 @@ These are intentionally NOT decided here so HS-7929 (implementation) can revisit
 3. **Settings UI surfacing.** The Settings → Backups dashboard could grow a "Last GC: 2 hours ago, reclaimed 12 MB" line. Out of scope for v1 implementation; punt to a follow-up if the user wants visibility.
 4. **Big-blob streaming.** `crypto.createHash` accepts a stream; the implementation should `pipeline(createReadStream(path), hash, …)` not `readFileSync` so a 200 MB attachment doesn't blow up the heap.
 
-## 43.11 Cross-references
+## 43.12 Cross-references
 
 - §7 — backup tier semantics + retention; this design re-uses `pruneBackups` and the tier dirs.
 - §41 — JSON co-save; same atomic-write pattern, same `SCHEMA_VERSION` stamping discipline.

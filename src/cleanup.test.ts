@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -186,18 +186,57 @@ describe('cleanupOrphanedAttachments (HS-8783)', () => {
 
   afterAll(() => { rmSync(backupRoot, { recursive: true, force: true }); });
 
-  it('prunes a missing-file row that is NOT recoverable, keeps one that IS', async () => {
+  it('prunes a missing-file row that is NOT recoverable, restores one that IS (HS-8802)', async () => {
     const t = await createTicket('orphan-attachment owner');
-    const recoverable = await insertAttachment(t.id, 'r.png', join(tempDir, 'gone-recoverable.png'));
+    const recoverablePath = join(tempDir, 'gone-recoverable.png');
+    const recoverable = await insertAttachment(t.id, 'r.png', recoverablePath);
     const lost = await insertAttachment(t.id, 'lost.png', join(tempDir, 'gone-lost.png'));
     // Backup store has a blob for `recoverable` only (manifest cross-ref).
     seedBackupWithBlob(recoverable, t.id, 'deadbeefsha');
 
-    const { pruned } = await cleanupOrphanedAttachments(tempDir);
+    const { pruned, restored } = await cleanupOrphanedAttachments(tempDir);
 
     expect(pruned).toBe(1);
+    expect(restored).toBe(1);
     expect(await attachmentExists(lost)).toBe(false);        // unrecoverable → pruned
     expect(await attachmentExists(recoverable)).toBe(true);  // recoverable → kept
+    // HS-8802 — the broken file self-healed: the blob was copied back to stored_path.
+    expect(existsSync(recoverablePath)).toBe(true);
+    expect(readFileSync(recoverablePath, 'utf8')).toBe('blob-bytes');
+  });
+
+  it('does not re-restore on a second sweep once the file is healed (HS-8802)', async () => {
+    const t = await createTicket('already-healed owner');
+    const healedPath = join(tempDir, 'healed.png');
+    const att = await insertAttachment(t.id, 'h.png', healedPath);
+    seedBackupWithBlob(att, t.id, 'cafebabesha');
+
+    const first = await cleanupOrphanedAttachments(tempDir);
+    expect(first.restored).toBe(1);
+    // The file is back on disk, so the next sweep no longer treats it as missing.
+    const second = await cleanupOrphanedAttachments(tempDir);
+    expect(second.restored).toBe(0);
+    expect(second.pruned).toBe(0);
+    expect(await attachmentExists(att)).toBe(true);
+  });
+
+  it('still prunes a row whose manifest cross-ref blob is absent from the store', async () => {
+    const t = await createTicket('blob-missing owner');
+    // The manifest references the attachment, but the blob file itself is gone
+    // from the store → not actually recoverable → pruned (unchanged from HS-8783).
+    const att = await insertAttachment(t.id, 'm.png', join(tempDir, 'gone-blobless.png'));
+    mkdirSync(join(backupRoot, 'daily'), { recursive: true });
+    mkdirSync(join(backupRoot, 'attachments'), { recursive: true });
+    const manifest = {
+      schemaVersion: 1, createdAt: new Date().toISOString(), tarball: 'b.tar.gz',
+      entries: [{ attachmentId: att, ticketId: t.id, originalName: 'm.png', storedName: 'm.png', sha: 'noblobsha', size: 10 }],
+    };
+    writeFileSync(join(backupRoot, 'daily', 'b.tar.gz.attachments.json'), JSON.stringify(manifest));
+
+    const { pruned, restored } = await cleanupOrphanedAttachments(tempDir);
+    expect(restored).toBe(0);
+    expect(pruned).toBe(1);
+    expect(await attachmentExists(att)).toBe(false); // no blob → unrecoverable → pruned
   });
 
   it('never prunes a row whose file is still present on disk', async () => {

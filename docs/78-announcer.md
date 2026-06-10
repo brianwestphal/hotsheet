@@ -339,9 +339,22 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
   `script`, `emphasis` (JSON string array — HS-8749 tier-1, shipped),
   `visuals` (JSON array of visual specs — HS-8772 tier-2, shipped; today only
   `{ type: 'diff', … }`, extensible to image paths / chart specs), `position`,
-  `dismissed` (bool). `audio_path` (cached TTS blob), `category`, `tags` remain
+  `dismissed` (bool), `listened_at` (TIMESTAMPTZ, NULL = never heard — HS-8803,
+  shipped). `audio_path` (cached TTS blob), `category`, `tags` remain
   the Phase-3/4 sketch. Persisting entries makes the reel seekable + replayable
   + shareable.
+  - **Listened tracking + 1h grace clear (HS-8803).** The PIP stamps
+    `listened_at = now()` when the user lands on an entry; `getActiveAnnouncements`
+    then **excludes** any entry heard more than a 1-hour grace window ago, so heard
+    pages clear an hour after listening instead of piling up (a user reported a
+    63-entry reel). Never-heard (`listened_at IS NULL`) and recently-heard entries
+    are kept. Landing on an **earlier** entry resets the grace timer for every
+    **later already-heard** entry (so scrubbing back doesn't expire the pages ahead
+    of you); never-heard later entries are left NULL. A fresh "Listen" open starts
+    on the first non-listened entry (`firstUnlistenedIndex`), falling back to the
+    newest when all are already heard. A one-time, sentinel-guarded backfill marks
+    the pre-`announcer_last_listened_at` backlog as already-heard so existing reels
+    clear on first read after upgrade.
 - **Per-project settings:** `announcer_enabled`, `announcer_last_listened_at`,
   `announcer_ai_provider`, `announcer_tts_provider`, `announcer_default_mode`,
   `announcer_dismissed_topics` (the learn-from-skips list), PIP `position/size`.

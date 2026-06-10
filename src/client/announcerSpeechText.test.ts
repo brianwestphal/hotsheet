@@ -14,7 +14,7 @@ function reelEntry(over: Partial<ReelEntry> = {}): ReelEntry {
   return {
     id: 1, created_at: '', covers_from: null, covers_to: null,
     title: 'T', script: 'did the thing', emphasis: [], visuals: [],
-    position: 1, dismissed: false,
+    position: 1, dismissed: false, listened_at: null,
     projectSecret: 'sec', projectName: 'Hot Sheet',
     ...over,
   };

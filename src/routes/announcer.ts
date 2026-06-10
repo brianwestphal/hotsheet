@@ -21,11 +21,12 @@ import { registerLiveListener, unregisterLiveListener } from '../announcer/liveG
 import { isLocalProviderAvailable, listLocalModels } from '../announcer/localProvider.js';
 import {
   AdvanceCursorReqSchema, AnnounceReqSchema, GenerateAnnouncementsReqSchema,
-  SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema, SetAnnouncerLiveReqSchema,
-  SetDismissedTopicsReqSchema,
+  MarkListenedReqSchema, SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema,
+  SetAnnouncerLiveReqSchema, SetDismissedTopicsReqSchema,
 } from '../api/announcer.js';
 import {
   clearAnnouncements, dismissAnnouncement, getActiveAnnouncements, insertAnnouncements,
+  markAnnouncementListened,
 } from '../db/announcer.js';
 import { runWithDataDir } from '../db/connection.js';
 import { getSettings, updateSetting } from '../db/queries.js';
@@ -179,6 +180,18 @@ announcerRoutes.post('/announcer/cursor', async (c) => {
   const parsed = AdvanceCursorReqSchema.safeParse(raw);
   const at = parsed.success && parsed.data.at !== undefined ? parsed.data.at : new Date().toISOString();
   await updateSetting(ANNOUNCER_CURSOR_KEY, at);
+  return c.json({ ok: true });
+});
+
+// POST /api/announcer/listened — HS-8803. Mark an entry listened (now) + reset
+// the grace timer for later already-heard entries, so heard pages clear an hour
+// after listening rather than piling up. Called by the PIP as the user lands on
+// each entry.
+announcerRoutes.post('/announcer/listened', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => null);
+  const parsed = MarkListenedReqSchema.safeParse(raw);
+  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
+  await markAnnouncementListened(parsed.data.id);
   return c.json({ ok: true });
 });
 

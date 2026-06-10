@@ -73,3 +73,15 @@ export function resolveRestoreIndex(
     && (session.entryProjectSecret === null || e.projectSecret === session.entryProjectSecret));
   return idx >= 0 ? idx : 0;
 }
+
+/**
+ * HS-8803 — where a FRESH "Listen" open should start: the first entry the user
+ * hasn't heard yet (`listened_at === null`). When everything's already been
+ * heard (all within the grace window), start on the last (newest) entry rather
+ * than replaying from the top. 0 for an empty reel. Pure, for unit testing.
+ */
+export function firstUnlistenedIndex(reel: readonly { listened_at: string | null }[]): number {
+  if (reel.length === 0) return 0;
+  const idx = reel.findIndex(e => e.listened_at === null);
+  return idx >= 0 ? idx : reel.length - 1;
+}

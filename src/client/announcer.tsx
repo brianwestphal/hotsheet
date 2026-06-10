@@ -18,7 +18,7 @@
  */
 import { advanceAnnouncerCursor, type AnnouncerProjectInfo, generateAnnouncements, getAnnouncerEntries, getAnnouncerOverview } from '../api/index.js';
 import { ALL_PROJECTS, getAnnouncerPipHandle, openAnnouncerPip, type OpenPipOptions, type ReelEntry } from './announcerPip.js';
-import { clearAnnouncerSession, loadAnnouncerSession, resolveRestoreIndex } from './announcerSession.js';
+import { clearAnnouncerSession, firstUnlistenedIndex, loadAnnouncerSession, resolveRestoreIndex } from './announcerSession.js';
 import { byIdOrNull } from './dom.js';
 import { showToast } from './toast.js';
 
@@ -189,7 +189,8 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
       return;
     }
 
-    openAnnouncerPip(reel, { context, ...buildPipOptions(btn, projects) });
+    // HS-8803 — a fresh open starts on the first page the user hasn't heard yet.
+    openAnnouncerPip(reel, { context, startIndex: firstUnlistenedIndex(reel), ...buildPipOptions(btn, projects) });
   } finally {
     btn.classList.remove('is-busy');
     btn.disabled = false;

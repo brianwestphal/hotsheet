@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 
-import { attachmentBlobsDir, indexExistingManifestEntries } from './attachmentBackup.js';
+import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from './attachmentBackup.js';
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
 import { deleteAttachmentFile, getAllAttachments } from './db/attachments.js';
 import { getTelemetryDb } from './db/connection.js';
@@ -80,41 +80,56 @@ export async function cleanupAttachments(dataDir: string): Promise<void> {
 }
 
 /**
- * HS-8783 — self-heal attachment rows whose `stored_path` file was removed
- * out-of-band (deleted/pruned while the DB row lingers). Drops a row ONLY when
- * its content is ALSO unrecoverable from the backup store (no manifest cross-ref
- * blob) — mirroring the manual-reanalyze guard (`attachmentBackup.ts`), so a row
- * whose file is gone but is still captured in a backup is kept. Skips entirely
- * when the backup root isn't present (e.g. a temporarily-unmounted custom
- * `backupDir`): without a readable store we can't prove non-recoverability, so we
- * never risk a wrongful delete. Returns the pruned count. Runs in the active
- * project's DB context (caller wraps it in `runWithDataDir`).
+ * HS-8783 / HS-8802 — self-heal attachment rows whose `stored_path` file was
+ * removed out-of-band (deleted/pruned while the DB row lingers). For each
+ * missing-file row:
+ *  - **Recoverable** (content still in the backup store via a manifest cross-ref
+ *    blob) → **restore** it: copy the blob back to `stored_path` so the broken
+ *    image / 404 in the detail panel self-heals (HS-8802). A row that's
+ *    recoverable but whose copy fails is left untouched to retry next sweep.
+ *  - **Unrecoverable** (no cross-ref blob) → prune the row, mirroring the
+ *    manual-reanalyze guard (`attachmentBackup.ts`).
+ * Skips entirely when the backup root isn't present (e.g. a temporarily-
+ * unmounted custom `backupDir`): without a readable store we can neither restore
+ * nor prove non-recoverability, so we never risk a wrongful delete. Returns the
+ * pruned + restored counts. Runs in the active project's DB context (caller
+ * wraps it in `runWithDataDir`).
  */
-export async function cleanupOrphanedAttachments(dataDir: string): Promise<{ pruned: number }> {
+export async function cleanupOrphanedAttachments(dataDir: string): Promise<{ pruned: number; restored: number }> {
   try {
     const backupRoot = getBackupDir(dataDir);
-    if (!existsSync(backupRoot)) return { pruned: 0 };
+    if (!existsSync(backupRoot)) return { pruned: 0, restored: 0 };
 
     const missing = (await getAllAttachments()).filter(a => !existsSync(a.stored_path));
-    if (missing.length === 0) return { pruned: 0 };
+    if (missing.length === 0) return { pruned: 0, restored: 0 };
 
     const index = indexExistingManifestEntries(backupRoot);
     const blobsDir = attachmentBlobsDir(backupRoot);
     let pruned = 0;
+    let restored = 0;
     for (const att of missing) {
       const xref = index.get(att.id);
-      const recoverable = xref !== undefined && existsSync(join(blobsDir, xref.sha));
-      if (recoverable) continue; // content still in the backup store — keep the row
+      if (xref !== undefined && existsSync(join(blobsDir, xref.sha))) {
+        // HS-8802 — content is still in the backup store: restore it instead of
+        // leaving a broken row. The file is known-missing (filtered above), so
+        // there's no live file to trample; restoring to the original
+        // `stored_path` keeps the DB row valid with no rewrite.
+        if (await restoreAttachmentBlob(blobsDir, xref.sha, att.stored_path)) restored++;
+        continue; // recoverable — keep the row whether or not the copy succeeded
+      }
       await deleteAttachment(att.id);
       pruned++;
     }
-    if (pruned > 0) {
-      console.log(`  Cleanup: pruned ${String(pruned)} attachment row(s) whose file is missing and unrecoverable from backups.`);
+    if (pruned > 0 || restored > 0) {
+      const parts: string[] = [];
+      if (restored > 0) parts.push(`restored ${String(restored)} attachment file(s) from backups`);
+      if (pruned > 0) parts.push(`pruned ${String(pruned)} attachment row(s) whose file is missing and unrecoverable from backups`);
+      console.log(`  Cleanup: ${parts.join(', ')}.`);
     }
-    return { pruned };
+    return { pruned, restored };
   } catch (err) {
     console.error('Orphaned-attachment cleanup failed:', err);
-    return { pruned: 0 };
+    return { pruned: 0, restored: 0 };
   }
 }
 

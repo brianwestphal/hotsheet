@@ -18,7 +18,7 @@
  * second click on the button restores the panel.
  */
 import type { Announcement, AnnouncerProjectInfo } from '../api/announcer.js';
-import { advanceAnnouncerCursor, dismissAnnouncement, getAnnouncerEntries, setAnnouncerLive } from '../api/index.js';
+import { advanceAnnouncerCursor, dismissAnnouncement, getAnnouncerEntries, markAnnouncementListened, setAnnouncerLive } from '../api/index.js';
 import { renderScript } from './announcerEmphasis.js';
 import { LiveSession } from './announcerLive.js';
 import { anchoredPosition, clampPosition, type Point } from './announcerPipPosition.js';
@@ -285,6 +285,10 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         chipEl.hidden = true;
       }
       persistSession(); // HS-8804 — position changed
+      // HS-8803 — mark this entry heard (in its own project), which also resets
+      // the grace timer for later already-heard entries. Best-effort.
+      entry.listened_at = new Date().toISOString();
+      markAnnouncementListened(entry.id, entry.projectSecret).catch(() => { /* best-effort */ });
     },
     onStateChange(state: PlayerState) {
       const playing = state === 'playing';
