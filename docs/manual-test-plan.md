@@ -648,6 +648,14 @@ The collector, merge gating, and importance filter are unit-tested; this verifie
 - [ ] Pause/Skip/Next/Prev/Close all interrupt the current utterance promptly (the `tts_stop` command kills the `say` child). On a non-resumable OS voice, resume re-speaks the current entry from the start (expected).
 - [ ] No orphaned `say` processes remain after closing the PIP or quitting the app.
 
+#### Linux / Windows OS voice (HS-8765)
+**OS-voice audio — automated + verified (2026-06-11).** The maintainer's "render a wav and check it's not silent" idea is now two re-runnable scripts that drive the **exact** command the app's `tts_speak` spawns and confirm non-silent output:
+- **Linux** (`spd-say --wait` → speech-dispatcher → espeak-ng): `scripts/verify-tts-linux-docker.sh` — headless via Docker, records the synthesized audio off a PulseAudio null sink, asserts non-silence (verified: peak −2.2 dBFS) **and** that no `spd-say` children linger after `--wait` (orphan check). Needs Docker + ffmpeg on the host.
+- **Windows** (`System.Speech.Synthesis.SpeechSynthesizer`): `scripts/verify-tts-windows-parallels.sh "Windows 11"` — drives the synth in a Parallels Windows VM (no Rust toolchain needed), copies the wav back, asserts non-silence (verified: peak −0.3 dBFS).
+
+Still manual (need the actual Tauri *desktop app* GUI on each OS, which the scripts don't run): **mid-speech `tts_stop` interrupt promptly** on Linux/Windows, and the full Listen→speak flow inside the real desktop build. The kill-command construction is Rust-unit-tested (`npm run test:rust`).
+- [ ] **WKWebView `speechSynthesis` empirical check (HS-8744 open question, non-blocking).** In the **Tauri macOS** build, run the 2-minute console snippet in `docs/78-announcer.md §78.6` to confirm whether the *browser* TTS fallback works inside WKWebView. `say`-via-Tauri is the desktop primary regardless; this only tells us whether the browser path is a viable secondary on desktop. (Tracked separately as HS-8811.)
+
 ### Spoken permission checks (HS-8781 / HS-8794)
 *(The text mapping + arbitration are unit-tested; actual speech output is manual.)*
 - [ ] With the Announcer-tab "Speak permission checks" toggle on (default), trigger a permission popup → the OS/browser voice reads "Permission needed in &lt;project&gt;: &lt;description&gt;" — and it **names the project** the popup belongs to (HS-8794). Verify with **two+ registered projects** that a permission on a *non-active* project still speaks that project's name.
