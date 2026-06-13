@@ -184,17 +184,22 @@ describe('ensureClaudeSkills', () => {
 
   it('returns empty array when no platform directories exist', () => {
     rmSync(join(tempDir, '.claude'), { recursive: true, force: true });
-    // HS-8486 — `ensureSkillsForDir` also triggers on PATH-installed
-    // AI tools (e.g. dev machines with `claude` on PATH). Override
-    // PATH to empty so this test exercises the pure no-platform
-    // branch.
+    // HS-8486 — `ensureSkillsForDir` also triggers on PATH-installed AI tools
+    // (e.g. dev machines with `claude` on PATH). HS-8785 — and on
+    // `extraSearchDirs()` (`~/.local/bin`, `~/.claude/local`), so also point
+    // `$HOME` at the empty tempDir (`os.homedir()` honors it on POSIX). Override
+    // both so this exercises the pure no-platform branch.
     const savedPath = process.env.PATH;
+    const savedHome = process.env.HOME;
     process.env.PATH = '';
+    process.env.HOME = tempDir;
     try {
       const platforms = ensureSkills();
       expect(platforms).toHaveLength(0);
     } finally {
       process.env.PATH = savedPath;
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
     }
   });
 
@@ -514,15 +519,21 @@ describe('consumeSkillsCreatedFlag', () => {
     consumeSkillsCreatedFlag();
     // Remove platform directories
     rmSync(join(tempDir, '.claude'), { recursive: true, force: true });
-    // HS-8486 — override PATH to empty so executable detection
-    // doesn't trigger the now-PATH-based Claude install branch.
+    // HS-8486 — override PATH so executable detection doesn't trigger the
+    // PATH-based Claude install branch. HS-8785 — also point `$HOME` at the empty
+    // tempDir so `extraSearchDirs()` (`~/.local/bin`, `~/.claude/local`) can't
+    // leak a dev machine's real `claude` install.
     const savedPath = process.env.PATH;
+    const savedHome = process.env.HOME;
     process.env.PATH = '';
+    process.env.HOME = tempDir;
     try {
       ensureSkills();
       expect(consumeSkillsCreatedFlag()).toBe(false);
     } finally {
       process.env.PATH = savedPath;
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
     }
   });
 });
@@ -705,6 +716,7 @@ describe('ensureSkillsForDir — PATH-based detection (HS-8486)', () => {
   let tempDir: string;
   let fakeBinDir: string;
   let savedPath: string | undefined;
+  let savedHome: string | undefined;
 
   beforeEach(() => {
     tempDir = join(tmpdir(), `hs-skills-path-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -716,11 +728,21 @@ describe('ensureSkillsForDir — PATH-based detection (HS-8486)', () => {
     setSkillCategories(DEFAULT_CATEGORIES);
     savedPath = process.env.PATH;
     process.env.PATH = fakeBinDir;
+    // HS-8785 — `isExecutableOnPath` also searches `extraSearchDirs()`
+    // (`~/.local/bin`, `~/.claude/local`, …), so PATH-only neutralization
+    // leaks a dev machine's real `claude` install into these tests (the
+    // "neither present" case would falsely detect it). `os.homedir()` honors
+    // `$HOME` on POSIX — point it at the empty tempDir so those dirs resolve to
+    // nothing; only the `fakeBinDir` we put on PATH should be discoverable.
+    savedHome = process.env.HOME;
+    process.env.HOME = tempDir;
   });
 
   afterEach(() => {
     if (savedPath === undefined) delete process.env.PATH;
     else process.env.PATH = savedPath;
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
     rmSync(tempDir, { recursive: true, force: true });
   });
 

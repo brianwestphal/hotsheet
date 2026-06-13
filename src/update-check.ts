@@ -79,7 +79,14 @@ function detectUpgradeCommand(): string {
   return `npm update -g ${PACKAGE_NAME}`;
 }
 
-function compareVersions(current: string, latest: string): number {
+/** Compare two dotted version strings by their first three numeric components.
+ *  Returns -1 when current is older than latest, 0 when equal over those
+ *  components, or 1 when current is newer. Non-numeric / missing components are
+ *  treated as 0 — so a pre-release suffix like `1.2.3-beta` parses its patch
+ *  component to 0 and therefore sorts as `1.2.0` (below `1.2.3`). npm registry
+ *  versions are clean `x.y.z`, so that edge doesn't arise in practice. Exported
+ *  for unit testing. */
+export function compareVersions(current: string, latest: string): number {
   const a = current.split('.').map(Number);
   const b = latest.split('.').map(Number);
   for (let i = 0; i < 3; i++) {
