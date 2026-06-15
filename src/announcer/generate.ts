@@ -148,6 +148,11 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
     localEndpoint: cfg.announcerLocalEndpoint,
     localModel: cfg.announcerLocalModel,
     anthropicFallbackKey,
+    // HS-8800 — drop model-rated-`low` entries only on the live mid-task path
+    // (its material carries "[in progress]" telemetry churn). The after-the-fact
+    // "Listen" digest (includeTelemetry false) keeps them, so a minor completion
+    // note isn't silently dropped to an empty "nothing new" reel.
+    excludeLowImportance: includeTelemetry,
   });
 
   if (result.usage !== null) {

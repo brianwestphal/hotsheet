@@ -91,10 +91,19 @@ export function dropToolChurn(entries: GeneratedEntry[]): GeneratedEntry[] {
   return entries.filter(e => !isToolChurn(e.script));
 }
 
-/** HS-8806 — the full post-parse cleanup pipeline shared by every provider:
- *  drop model-rated-`low` entries, then drop pure tool churn. */
-function sanitizeEntries(entries: GeneratedEntry[]): GeneratedEntry[] {
-  return dropToolChurn(dropUnimportant(entries));
+/**
+ * HS-8806 — the full post-parse cleanup pipeline shared by every provider.
+ * `dropToolChurn` ALWAYS runs (the deterministic safety net for valueless
+ * "Read Bash Edit" scripts). `dropUnimportant` runs only when
+ * `excludeLowImportance` is set — HS-8800: the model's `low` rating is meant for
+ * the live mid-task stream's "[in progress]" churn, so it's applied on the
+ * live/telemetry path but NOT on the after-the-fact "Listen" digest, where it
+ * could silently drop a small-but-wanted completion note (worst case: a one-entry
+ * reel rated `low` → an empty "nothing new" digest).
+ */
+function sanitizeEntries(entries: GeneratedEntry[], excludeLowImportance: boolean): GeneratedEntry[] {
+  const kept = excludeLowImportance ? dropUnimportant(entries) : entries;
+  return dropToolChurn(kept);
 }
 
 /** Validate a model's JSON output (Anthropic or the Apple helper) into entries.
@@ -213,12 +222,22 @@ export async function summarizeWork(
      * choice of on-device is never silently overridden.
      */
     anthropicFallbackKey?: string | null;
+    /**
+     * HS-8800 — drop entries the model rated `importance: 'low'`. The live
+     * mid-task path sets this (its material carries "[in progress]" telemetry
+     * churn the model marks `low`); the after-the-fact "Listen" digest leaves it
+     * off so a minor completion note isn't silently dropped to an empty reel.
+     * Defaults to `true` to preserve the pre-HS-8800 drop-everywhere behavior for
+     * any caller that doesn't opt out. `dropToolChurn` runs regardless.
+     */
+    excludeLowImportance?: boolean;
   },
 ): Promise<SummarizeResult> {
   if (material.trim() === '') return { entries: [], usage: null };
   const model = opts.model ?? ANNOUNCER_MODEL;
   const system = buildSystemPrompt(opts);
   const provider = providerForModel(model);
+  const excludeLow = opts.excludeLowImportance ?? true;
 
   if (provider === 'apple') {
     // The on-device helper enforces the {entries:[…]} shape via FoundationModels
@@ -227,9 +246,9 @@ export async function summarizeWork(
     // free, so no usage/cost is recorded.
     try {
       const out = await runAppleFoundationSummarize(system, material);
-      return { entries: sanitizeEntries(parseEntriesJson(out)), usage: null };
+      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow), usage: null };
     } catch (err) {
-      return onDeviceFallbackOrThrow(err, 'Apple Foundation Models', material, system, opts);
+      return onDeviceFallbackOrThrow(err, 'Apple Foundation Models', material, system, opts, excludeLow);
     }
   }
 
@@ -242,21 +261,21 @@ export async function summarizeWork(
         endpoint: opts.localEndpoint?.trim() !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT,
         model: opts.localModel ?? '',
       });
-      return { entries: sanitizeEntries(parseEntriesJson(out)), usage: null };
+      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow), usage: null };
     } catch (err) {
-      return onDeviceFallbackOrThrow(err, 'local model', material, system, opts);
+      return onDeviceFallbackOrThrow(err, 'local model', material, system, opts, excludeLow);
     }
   }
 
   if (opts.apiKey === undefined || opts.apiKey === null || opts.apiKey === '') {
     throw new Error('No Anthropic API key configured');
   }
-  return summarizeViaAnthropic(opts.apiKey, model, system, material);
+  return summarizeViaAnthropic(opts.apiKey, model, system, material, excludeLow);
 }
 
 /** One Anthropic Messages call → validated entries + usage. Shared by the normal
  *  Anthropic path and the on-device fallback (HS-8805). */
-async function summarizeViaAnthropic(apiKey: string, model: string, system: string, material: string): Promise<SummarizeResult> {
+async function summarizeViaAnthropic(apiKey: string, model: string, system: string, material: string, excludeLowImportance: boolean): Promise<SummarizeResult> {
   const client = new Anthropic({ apiKey });
   const res = await client.messages.create({
     model,
@@ -277,7 +296,7 @@ async function summarizeViaAnthropic(apiKey: string, model: string, system: stri
   for (const block of res.content) {
     if (block.type === 'text') text += block.text;
   }
-  return { entries: sanitizeEntries(parseEntriesJson(text)), usage, modelUsed: model };
+  return { entries: sanitizeEntries(parseEntriesJson(text), excludeLowImportance), usage, modelUsed: model };
 }
 
 /** HS-8805 — an on-device provider failed at inference time. Fall back to
@@ -289,10 +308,11 @@ async function onDeviceFallbackOrThrow(
   material: string,
   system: string,
   opts: { anthropicFallbackKey?: string | null },
+  excludeLowImportance: boolean,
 ): Promise<SummarizeResult> {
   const key = opts.anthropicFallbackKey;
   if (key === undefined || key === null || key === '') throw err;
   const reason = err instanceof Error ? err.message : String(err);
   console.warn(`[announcer] ${providerLabel} summarization failed (${reason}); falling back to Anthropic (${DEFAULT_ANNOUNCER_MODEL}).`);
-  return summarizeViaAnthropic(key, DEFAULT_ANNOUNCER_MODEL, system, material);
+  return summarizeViaAnthropic(key, DEFAULT_ANNOUNCER_MODEL, system, material, excludeLowImportance);
 }

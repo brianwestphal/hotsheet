@@ -109,6 +109,27 @@ describe('summarizeWork (HS-8745)', () => {
     expect(res.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
   });
 
+  // HS-8800 — the after-the-fact "Listen" digest passes excludeLowImportance:false
+  // so a minor `low`-rated completion note isn't silently dropped to an empty reel.
+  it('keeps low-importance entries when excludeLowImportance is false (after-the-fact digest)', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [
+      { title: 'Shipped', script: 'Shipped the export feature.', importance: 'high' },
+      { title: 'Minor', script: 'Tweaked a tooltip copy string.', importance: 'low' },
+    ] }));
+    const res = await summarizeWork('m', { apiKey: 'sk-test', excludeLowImportance: false });
+    expect(res.entries.map(e => e.title)).toEqual(['Shipped', 'Minor']);
+  });
+
+  it('still drops pure tool churn even when excludeLowImportance is false (HS-8806 net stays on)', async () => {
+    createMock.mockResolvedValue(textResponse({ entries: [
+      { title: 'Real', script: 'Fixed the cross-project tag leak.', importance: 'low' },
+      { title: 'Churn', script: 'Read Bash Edit', importance: 'low' },
+    ] }));
+    const res = await summarizeWork('m', { apiKey: 'sk-test', excludeLowImportance: false });
+    // The low-but-substantive entry is kept; the pure tool-churn entry is dropped.
+    expect(res.entries.map(e => e.title)).toEqual(['Real']);
+  });
+
   it('malformed JSON → empty entries but usage still captured (HS-8766)', async () => {
     createMock.mockResolvedValue({ content: [{ type: 'text', text: 'not json at all' }], usage: { input_tokens: 7, output_tokens: 3 } });
     const res = await summarizeWork('m', { apiKey: 'sk-test' });

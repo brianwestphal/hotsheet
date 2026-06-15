@@ -60,9 +60,15 @@ The mid-task stream is noisy, so the **AI decides what's worth narrating**
 prompt). The system prompt instructs: completed features/fixes/decisions are
 medium/high; routine, mechanical, or merely in-progress activity (`[in progress]`
 tool churn, single commands, boilerplate) is `low` and should usually be omitted.
-`dropUnimportant()` then filters `low` entries before persist — applied to **all**
-provider paths (Anthropic / Apple / local). Only an explicit `low` is dropped, so
-a provider that omits the field (Apple guided generation) keeps its entries.
+`dropUnimportant()` then filters `low` entries before persist. **HS-8800 — this
+drop is now scoped to the live/telemetry path only.** `summarizeWork` takes an
+`excludeLowImportance` flag (default `true` for back-compat); `generate.ts` sets
+it to `includeTelemetry`, so the live mid-task stream drops `low` (that's where
+the `[in progress]` churn the rating targets lives) but the after-the-fact
+"Listen" digest keeps them — a minor `low`-rated completion note can't silently
+empty the reel into "nothing new". Across every provider path (Anthropic / Apple
+/ local) only an explicit `low` is dropped, so a provider that omits the field
+(Apple guided generation) keeps its entries.
 
 **HS-8806 — stricter interestingness + a deterministic churn guard.** The system
 prompt was strengthened so the model: (a) treats `"[in progress]"` work as
@@ -94,16 +100,19 @@ keeps the entry, so it's conservative.
   in-window prompt) emits NO line, and in-window turns still emit alongside it.
 - `collectSignals.test.ts` — telemetry merged only when
   `includeTelemetry`+`projectSecret`; default path untouched.
-- `summarize.test.ts` — `low` entries dropped, medium/high/unrated kept, usage
-  still captured; **HS-8806** — `isToolChurn`/`dropToolChurn` (flags pure
-  tool/filler text, keeps substantive), end-to-end churn drop, and prompt-directive
-  guards (cohesive-only, no tool-name lists, "ongoing work" omitted).
+- `summarize.test.ts` — `low` entries dropped (default), medium/high/unrated kept,
+  usage still captured; **HS-8800** — with `excludeLowImportance: false` (the
+  after-the-fact digest) `low` entries are KEPT, while `dropToolChurn` still drops
+  pure churn; **HS-8806** — `isToolChurn`/`dropToolChurn` (flags pure tool/filler
+  text, keeps substantive), end-to-end churn drop, and prompt-directive guards
+  (cohesive-only, no tool-name lists, "ongoing work" omitted).
 
 ## 82.7 Follow-ups
 
-- **Prompt tuning:** the global `low`-importance filter now affects the
-  after-the-fact digest too; if it ever over-drops there, scope the filter to the
-  live/telemetry path or tune the prompt (tracked separately).
+- **Prompt tuning (RESOLVED, HS-8800):** the `low`-importance filter is now scoped
+  to the live/telemetry path (`excludeLowImportance` = `includeTelemetry`), so the
+  after-the-fact digest no longer over-drops. `dropToolChurn` still runs on both
+  paths as the deterministic noise guard.
 - **Prompt-text privacy toggle:** mid-task narration sends a trimmed user-prompt
   snippet to the model (same trust class as the notes already sent). A per-project
   "don't send prompt text" option could narrate tool activity only (follow-up).
