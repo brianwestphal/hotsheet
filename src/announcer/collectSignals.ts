@@ -120,9 +120,21 @@ export async function collectWorkSignals(
   const lines: TimedLine[] = [];
 
   for (const t of ticketRes.rows) {
-    const freshNotes = parseNotes(t.notes).filter(n => since === null || n.created_at >= since);
+    const allNotes = parseNotes(t.notes);
+    // HS-8820 — a ticket is "waiting for feedback" when its CURRENT (last) note
+    // carries the FEEDBACK NEEDED phrase AND it's still `started` (i.e. paused on
+    // the question, not resolved). Mirrors `feedback-state.ts::notesEndWithFeedback`
+    // ("only the most recent note matters") + the actionable-status rule, and the
+    // substring covers `IMMEDIATE FEEDBACK NEEDED` (a superset). An older/resolved
+    // feedback note narrates as a plain note.
+    const lastNoteId = allNotes.length > 0 ? allNotes[allNotes.length - 1].id : null;
+    const freshNotes = allNotes.filter(n => since === null || n.created_at >= since);
     for (const n of freshNotes) {
-      lines.push({ at: n.created_at, text: `[${t.ticket_number} "${t.title}" — note] ${n.text}` });
+      const isPendingFeedback = t.status === 'started' && n.id === lastNoteId && n.text.includes('FEEDBACK NEEDED');
+      // Label feedback requests distinctly so the summarizer narrates the question
+      // the listener must answer rather than treating it as a routine note.
+      const label = isPendingFeedback ? 'WAITING FOR FEEDBACK' : 'note';
+      lines.push({ at: n.created_at, text: `[${t.ticket_number} "${t.title}" — ${label}] ${n.text}` });
     }
     // A completion that happened within the window is itself a signal worth
     // narrating even if no note was attached. `completed_at` comes back in the

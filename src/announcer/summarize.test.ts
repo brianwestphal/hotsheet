@@ -177,6 +177,17 @@ describe('summarizeWork (HS-8745)', () => {
     expect(buildSystemPrompt({ compression: 'high' })).toContain('BACKLOG');
   });
 
+  // HS-8820 — completions + feedback-waiting tickets should almost always be
+  // narrated with a concise note summary, not merged away or dropped.
+  it('buildSystemPrompt instructs near-always narration of completions + feedback requests', () => {
+    const p = buildSystemPrompt({});
+    expect(p).toContain('WAITING FOR FEEDBACK');
+    expect(p).toMatch(/completions/i);
+    // The priority rule forbids dropping/merging these and rates them above low.
+    expect(p).toContain('marked completed.');
+    expect(p).toMatch(/never.*"low"/i);
+  });
+
   // HS-8769 — learn-from-skips: inject the omit-list.
   it('buildSystemPrompt injects the dismissed topics (omitting blanks)', () => {
     const p = buildSystemPrompt({ dismissedTopics: ['lint runs', '   ', 'test output'] });

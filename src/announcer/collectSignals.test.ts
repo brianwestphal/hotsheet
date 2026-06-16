@@ -69,6 +69,55 @@ describe('collectWorkSignals (HS-8745)', () => {
     expect(count).toBe(5);
   });
 
+  // HS-8820 — a `started` ticket whose latest note carries the FEEDBACK NEEDED
+  // phrase is paused awaiting the user; label it distinctly so the summarizer
+  // treats it as a feedback request (status alone stays `started`).
+  it('labels FEEDBACK NEEDED / IMMEDIATE FEEDBACK NEEDED notes as WAITING FOR FEEDBACK', async () => {
+    const db = await getDb();
+    const a = await createTicket('Auth flow');
+    await db.query(
+      `UPDATE tickets SET notes = $1, updated_at = $2, status = 'started' WHERE id = $3`,
+      [JSON.stringify([{ id: 'f1', text: 'FEEDBACK NEEDED: which OAuth provider?', created_at: NEW }]), NEW, a.id],
+    );
+    const b = await createTicket('Payments');
+    await db.query(
+      `UPDATE tickets SET notes = $1, updated_at = $2, status = 'started' WHERE id = $3`,
+      [JSON.stringify([{ id: 'f2', text: 'IMMEDIATE FEEDBACK NEEDED: prod or sandbox keys?', created_at: NEW }]), NEW, b.id],
+    );
+    const c = await createTicket('Routine');
+    await db.query(
+      `UPDATE tickets SET notes = $1, updated_at = $2, status = 'started' WHERE id = $3`,
+      [JSON.stringify([{ id: 'r1', text: 'made some progress on the parser', created_at: NEW }]), NEW, c.id],
+    );
+    // Resolved feedback: the FEEDBACK NEEDED note is no longer the LAST note (a
+    // later note answered it) → plain `note`, not a pending feedback request.
+    const d = await createTicket('Resolved');
+    await db.query(
+      `UPDATE tickets SET notes = $1, updated_at = $2, status = 'started' WHERE id = $3`,
+      [JSON.stringify([
+        { id: 'd1', text: 'FEEDBACK NEEDED: which region?', created_at: NEW },
+        { id: 'd2', text: 'going with us-east per the answer', created_at: NEW },
+      ]), NEW, d.id],
+    );
+    // A completed ticket whose last note has the phrase is NOT "waiting" (not started).
+    const e = await createTicket('Closed');
+    await db.query(
+      `UPDATE tickets SET notes = $1, updated_at = $2, completed_at = $2, status = 'completed' WHERE id = $3`,
+      [JSON.stringify([{ id: 'e1', text: 'answered FEEDBACK NEEDED inline and shipped', created_at: NEW }]), NEW, e.id],
+    );
+
+    const { material } = await collectWorkSignals(CURSOR);
+    expect(material).toContain('— WAITING FOR FEEDBACK] FEEDBACK NEEDED: which OAuth provider?');
+    expect(material).toContain('— WAITING FOR FEEDBACK] IMMEDIATE FEEDBACK NEEDED: prod or sandbox keys?');
+    // A routine note keeps the plain `— note` label.
+    expect(material).toContain('— note] made some progress on the parser');
+    expect(material).not.toContain('— WAITING FOR FEEDBACK] made some progress');
+    // Resolved (not last note) + completed (not started) → plain `note`.
+    expect(material).toContain('— note] FEEDBACK NEEDED: which region?');
+    expect(material).toContain('— note] answered FEEDBACK NEEDED inline and shipped');
+    expect(material).not.toContain('— WAITING FOR FEEDBACK] FEEDBACK NEEDED: which region?');
+  });
+
   // HS-8795 — channel chatter (permission checks + "Claude finished") is not
   // project work, so it's excluded from the narrated material.
   it('excludes permission-check and "Claude finished" activity events', async () => {

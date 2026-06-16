@@ -101,6 +101,30 @@ Two sources, not mutually exclusive:
 The **narrative generation** (raw signals → spoken script + emphasis markup +
 visual references) is where the user's **AI API key** is used (§78.6).
 
+**Salient events — completions + feedback requests (HS-8820).** Two signal
+classes are the ones a listener most wants to hear and are treated as
+near-always-narrated, each with a concise summary of the note that was written:
+
+- **Ticket completions** — `collectWorkSignals` emits a `marked completed.`
+  line alongside the completion note, and the summarizer prompt
+  (`src/announcer/summarize.ts`) instructs the model to give each completion its
+  own entry summarizing what was actually done/fixed/decided (not a bare
+  "finished a ticket"), never merging it into a vague group or omitting it.
+- **Tickets waiting for feedback** — a ticket paused on a `FEEDBACK NEEDED:` /
+  `IMMEDIATE FEEDBACK NEEDED:` note keeps `status = 'started'`, so it's otherwise
+  indistinguishable from a routine note. `collectWorkSignals` flags the line
+  `— WAITING FOR FEEDBACK]` (so the summarizer narrates the specific question)
+  when the phrase is in the ticket's **current (last) note** AND the ticket is
+  still **`started`** — mirroring `feedback-state.ts`'s "only the most recent
+  note matters" + actionable-status rule (and the substring covers the
+  `IMMEDIATE` superset). A resolved or already-answered feedback note narrates as
+  a plain note.
+
+Both classes are rated `medium`/`high` (never `low`), so they survive the
+live-path `excludeLowImportance` drop (HS-8800) as well as the after-the-fact
+digest. Only an explicit catch-up/backlog directive may compress multiple
+completions together, and even then each one's outcome must stay identifiable.
+
 ## 78.4 Modes, entries, and playback
 
 - **Entry = a discrete announcement**: `{ id, title, script (text + emphasis
