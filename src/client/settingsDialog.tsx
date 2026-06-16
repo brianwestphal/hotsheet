@@ -263,6 +263,12 @@ function bindGeneralTab() {
         // used to live here is obsolete for the title-bar case.
         setAppTitle(val || 'Hot Sheet');
         appNameHint.textContent = val ? 'Saved.' : 'Using default name.';
+        // HS-8823 — the project tab label is `ProjectInfo.name`, which the
+        // server derives from `appName` (falling back to the dir name). Re-fetch
+        // the project list so the renamed tab updates immediately instead of
+        // only after a reload. Dynamic import avoids a static settings↔tabs
+        // cycle (matches the other lazy imports in this file).
+        void import('./projectTabs.js').then(({ refreshProjectTabs }) => refreshProjectTabs()).catch(() => { /* tab refresh is best-effort */ });
       });
     }, 800);
   });

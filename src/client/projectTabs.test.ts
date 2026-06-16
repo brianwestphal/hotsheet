@@ -146,6 +146,28 @@ describe('projectTabs trial migration (HS-8235)', () => {
     expect(rowB.classList.contains('active')).toBe(true);
   });
 
+  // HS-8823 — renaming a project (same secret, new name) must update the tab
+  // label in place. `bindList` keys by secret, so the row isn't re-created; a
+  // per-row reactive name effect flips the text. Regression guard: pre-fix the
+  // `.project-tab-name` was a static render that kept its stale label until a
+  // full reload.
+  it('updates the tab name in place when a project is renamed (same secret)', () => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B, C], A.secret);
+    _renderTabsForTesting();
+    const rowA = document.querySelector<HTMLElement>('[data-secret="sec-a"]')!;
+    expect(rowA.querySelector('.project-tab-name')?.textContent).toBe('A');
+
+    // Rename A — same secret, new name — without re-rendering the strip.
+    _setProjectsForTesting([{ ...A, name: 'A renamed' }, B, C], A.secret);
+
+    // Same row element (no re-mount) but the label updated reactively.
+    expect(document.querySelector('[data-secret="sec-a"]')).toBe(rowA);
+    expect(rowA.querySelector('.project-tab-name')?.textContent).toBe('A renamed');
+    // Siblings untouched.
+    expect(document.querySelector<HTMLElement>('[data-secret="sec-b"]')?.querySelector('.project-tab-name')?.textContent).toBe('B');
+  });
+
   it('multi → single keeps the tab strip (HS-8664 always-tabbed) — no h1', () => {
     makeTitleArea();
     _setProjectsForTesting([A, B], A.secret);

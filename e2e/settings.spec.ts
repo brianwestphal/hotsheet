@@ -27,9 +27,13 @@ test.describe('Settings dialog', () => {
     await appNameInput.clear();
     await appNameInput.type('My Project Board');
 
-    // The app debounces the save at 800ms then makes an async API call that updates the h1.
-    await expect(page.locator('.app-title h1')).toHaveText('My Project Board', { timeout: 10000 });
-    // Document title should also update
+    // HS-8823 — the visible project name is the active project TAB
+    // (`.project-tab-name`), not an `.app-title h1` (that h1 only exists in the
+    // impossible empty-projects state since HS-8664 made the title area always
+    // tabbed). The app debounces the save at 800ms, then `refreshProjectTabs` +
+    // the per-row reactive name effect update the tab in place — no reload.
+    await expect(page.locator('.project-tab.active .project-tab-name')).toHaveText('My Project Board', { timeout: 10000 });
+    // Document title should also update.
     await expect(page).toHaveTitle('My Project Board', { timeout: 5000 });
 
     // Close settings
@@ -39,7 +43,7 @@ test.describe('Settings dialog', () => {
     // Reload and verify the name persisted
     await page.reload();
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('.app-title h1')).toHaveText('My Project Board', { timeout: 5000 });
+    await expect(page.locator('.project-tab.active .project-tab-name')).toHaveText('My Project Board', { timeout: 5000 });
   });
 
   test('close settings with Escape key', async ({ page }) => {

@@ -901,6 +901,19 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
     else row.classList.remove('active');
   });
 
+  // HS-8823 — per-row reactive name. `bindList` keys rows by `secret`, which is
+  // unchanged when a project is renamed, so a name-only update never re-creates
+  // the row; without this effect the tab kept its stale label until a reload.
+  // Reading `projectsListSignal` here re-runs on every `setProjects(...)` (e.g.
+  // the `refreshProjectTabs()` after an app-name change), updating the label in
+  // place. Guarded on text equality so unrelated list changes don't thrash.
+  const nameSpan = row.querySelector('.project-tab-name');
+  const stopName = effect(() => {
+    const current = projectsListSignal.value.find(pr => pr.secret === p.secret);
+    const name = current?.name ?? p.name;
+    if (nameSpan !== null && nameSpan.textContent !== name) nameSpan.textContent = name;
+  });
+
   row.addEventListener('click', () => {
     void (async () => {
       // HS-6832: clicking a project tab while the terminal dashboard is
@@ -980,7 +993,7 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
   row.addEventListener('drop', (e) => handleDrop(e, p));
   row.addEventListener('dragend', (e) => handleDragEnd(e));
 
-  return { el: row, dispose: stopActive };
+  return { el: row, dispose: () => { stopActive(); stopName(); } };
 }
 
 function renderTabs() {
