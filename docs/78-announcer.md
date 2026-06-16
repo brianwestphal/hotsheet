@@ -311,12 +311,13 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
   - **Desktop (Tauri) primary: a `tts_speak` Tauri command** wrapping macOS
     `say` (confirmed present at `/usr/bin/say` with a full voice list) — model
     it on the existing `#[tauri::command]` surface in `src-tauri/src/lib.rs`.
-    This is rock-solid and **sidesteps the unverified WKWebView risk**: rather
-    than depend on WKWebView `speechSynthesis` (whose reliability in this Tauri
-    build is *not yet empirically verified* — it's a WebKit feature so it likely
-    works, but it's the same browser-API class as the Tauri-unsafe `confirm`, so
-    don't assume), the desktop build uses the OS voice directly. Linux/Windows
-    get their native equivalents later; cloud TTS is the cross-platform fallback.
+    This is rock-solid and **sidesteps the WKWebView risk**: rather than depend
+    on WKWebView `speechSynthesis`, the desktop build uses the OS voice directly.
+    Linux/Windows get their native equivalents later; cloud TTS is the
+    cross-platform fallback. *(WKWebView `speechSynthesis` has since been
+    **empirically verified** to produce audio in the Tauri macOS build — HS-8811,
+    confirmed 2026-06-16 — so the browser path is a viable secondary on desktop,
+    but `say`-via-Tauri remains the primary regardless. See the check below.)*
   - **Browser build: Web Speech API** (`speechSynthesis`) — zero config/cost,
     works in Chromium/Safari. Feature-detect at runtime; if `getTauriInvoke()`
     is non-null prefer the `tts_speak` command, else use `speechSynthesis`.
@@ -324,9 +325,17 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
     returns audio bytes the client plays; key from the keychain. Higher quality,
     costs money, needs the disclosure in §78.8. Also the cross-platform fallback
     when no native voice path is available.
-  - *(Still worth a 2-minute empirical check in the desktop app — see the
-    HS-8744 findings note for the one-line console snippet — but the go/no-go no
-    longer hinges on it, since `say` is the desktop primary.)*
+  - **WKWebView `speechSynthesis` empirical check (HS-8811 — VERIFIED
+    2026-06-16).** Ran a voice-enumeration + spoken-utterance snippet in the
+    Tauri macOS desktop app's WebKit dev console: `'speechSynthesis' in window`
+    is true, `getVoices()` returned the full macOS voice list (Samantha [default],
+    Albert, Fred, …), the utterance fired `onstart` → `onend` with **no
+    `onerror`**, and **audio was audibly produced**. Verdict: the browser
+    `speechSynthesis` path is a viable *secondary* on the macOS desktop build —
+    but `say`-via-`tts_speak` stays the primary (no behavior change; this just
+    retires the last open WKWebView-reliability question from the HS-8744 spike).
+    Reproduce via the console snippet recorded on HS-8811 (voice list + a test
+    `SpeechSynthesisUtterance` with `onstart`/`onend`/`onerror` logging).
 - **Settings UI:** a dedicated "Announcer" settings tab (HS-8777 — shipped as
   its own tab; was briefly a section under Experimental) with: per-project enable toggle, AI provider + key,
   TTS provider + key, default playback mode, and the "uninteresting" dismiss
@@ -365,8 +374,11 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
 
 ## 78.8 Likely problems / open questions
 
-- **WKWebView `speechSynthesis` reliability** — the single biggest risk to the
-  "free default." Verify first; have the Tauri-command / cloud fallback ready.
+- **WKWebView `speechSynthesis` reliability** — *was* the single biggest risk to
+  the "free default." **Resolved (HS-8811, 2026-06-16):** empirically verified to
+  enumerate voices + produce audio in the Tauri macOS WKWebView (`onstart`/`onend`,
+  no `onerror`). `say`-via-`tts_speak` is the desktop primary either way; the
+  browser path is a confirmed-working secondary. See §78.6.
 - **Cost & disclosure** — summarization + cloud TTS spend the user's
   credits/keys. Need per-session budgets, throttles, and an explicit, up-front
   "this sends your work to <provider> and uses your key" opt-in, **per project**
@@ -402,6 +414,7 @@ being deferred with the speculative visuals.
   global version, the command-log-not-on-change-version signal, and adding
   `created_at >= since` query helpers). Two things still need hands-on
   confirmation but don't block: the empirical WKWebView `speechSynthesis` check
+  (**done — HS-8811, verified audible in the macOS build 2026-06-16; see §78.6**)
   and a real AI-key summarization quality pass.
 - **Phase 1a — server generation backbone (HS-8745, SHIPPED 2026-06-05).** The
   derived-summarization engine + API, verified end-to-end with a real key. See
@@ -673,6 +686,14 @@ pre-empting upcoming narration; if a permission is already resolved
 (allowed/denied/dismissed — checked against `respondedRequestIds` /
 `dismissedRequestIds`) by the time its turn arrives, it's skipped. Deduped per
 `request_id`; long descriptions are word-boundary-trimmed to a short summary.
+**HS-8816 —** the boundary task `scheduleDrain` hands to `runAtNextBoundary`
+now **returns** its `drain()` promise (it previously fire-and-forgot it). The
+player's `drainBoundaryThenAdvance` `await`s the boundary task before advancing,
+so the permission voice now finishes *before* the next reel segment speaks;
+without the returned promise the task resolved instantly, the reel advanced, and
+the next narration segment played on top of the permission announcement (two
+voices overlapping). Regression-covered by a deferred-resolution engine test in
+`announcerPermissionSpeech.test.ts`.
 
 **Channel chatter excluded from the reel (HS-8795).** The after-the-fact
 narration is about *project work*, not channel bookkeeping, so `collectWorkSignals`

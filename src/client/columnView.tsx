@@ -4,7 +4,7 @@ import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { clearNewTicketHost, createDraftRow } from './draftRow.js';
+import { clearNewTicketHost, syncNewTicketHost } from './draftRow.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, effect } from './reactive.js';
 import { bindList, bindText } from './reactive-bind.js';
@@ -309,7 +309,12 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 // --- Interactive column view ---
 
 export function renderColumnView() {
-  clearNewTicketHost(); // HS-8796 — column view has its own per-column draft rows
+  // HS-8796 — the "New ticket…" draft row goes in `#new-ticket-host` ABOVE the
+  // batch toolbar (same host the list view uses), not appended inside
+  // `#ticket-list` below the toolbar. The user's report: in column view the
+  // toolbar sat above the new-ticket line; routing it through the host puts the
+  // entry on top, consistent with the list view.
+  syncNewTicketHost(true);
   const container = byId('ticket-list');
   const columns = getColumnsForView();
   const key = computeColumnsKey(columns, false);
@@ -342,8 +347,6 @@ export function renderColumnView() {
   // limitation applies here.
   container.replaceChildren();
   container.classList.add('ticket-list-columns');
-
-  container.appendChild(createDraftRow());
 
   const knownStatuses = new Set(columns.map(c => c.status));
   // When verified column is hidden, verified items go into the completed column

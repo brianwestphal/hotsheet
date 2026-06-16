@@ -114,6 +114,40 @@ describe('announcePermission', () => {
     expect(engine.spoken).toEqual(['Permission needed: Allow Claude to run npm test']);
   });
 
+  // HS-8816 — the boundary task must stay pending until the announcement has
+  // actually FINISHED speaking. The player awaits the task before advancing the
+  // reel; if the task resolved while the voice was still going, the next
+  // narration segment would speak on top of the permission (overlapping audio).
+  it('the boundary task stays pending until the announcement finishes (no overlap)', async () => {
+    let resolveSpeak: (() => void) | null = null;
+    const engine: SpeechEngine = {
+      backend: 'browser',
+      supportsPauseResume: false,
+      speak: () => new Promise<SpeakResult>((res) => { resolveSpeak = () => res('ended'); }),
+      cancel() { /* no-op */ },
+      pause() { /* no-op */ },
+      resume() { /* no-op */ },
+    };
+    let boundaryTask: (() => void | Promise<void>) | null = null;
+    _configureAnnouncerPermissionSpeechForTesting({
+      engine, isEnabled: () => true,
+      getPlayer: () => ({ runAtNextBoundary: (t) => { boundaryTask = t; } }),
+    });
+    announcePermission(perm());
+    await flush();
+
+    // Reach the boundary: invoke the task as the player would and watch its
+    // returned promise. It must NOT settle while the voice is still speaking.
+    let settled = false;
+    const taskDone = Promise.resolve(boundaryTask!()).then(() => { settled = true; });
+    await flush();
+    expect(settled).toBe(false);           // still speaking → reel held back
+
+    resolveSpeak!();                        // announcement voice finishes
+    await taskDone;
+    expect(settled).toBe(true);            // only now may the reel advance
+  });
+
   it('skips a permission already closed by the time it would speak', async () => {
     const engine = new FakeEngine();
     let boundaryTask: (() => void | Promise<void>) | null = null;

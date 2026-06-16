@@ -1,6 +1,7 @@
 import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
 import { createTicket, getGitStatus, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { flashAnchoredHint } from './anchoredHint.js';
 import { suppressAnimation } from './animate.js';
 import { initAnnouncer, refreshAnnouncerVisibility } from './announcer.js';
 import { bindAnnouncerSettings } from './announcerSettings.js';
@@ -48,7 +49,6 @@ import { loadTerminalWebglOptOut } from './terminalWebgl.js';
 import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from './ticketList.js';
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
-import { showToast } from './toast.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
@@ -398,10 +398,13 @@ function bindGlassbox() {
     void (async () => {
       // HS-8784 — if there's nothing pending, say so clearly instead of opening
       // Glassbox to an empty review (which read as "the button did nothing").
-      // A failed status probe falls through and launches as before.
+      // The confirmation is anchored to the button itself (not a bottom-center
+      // toast) — the user reported missing the toast entirely since it appeared
+      // far from where they clicked. A failed status probe falls through and
+      // launches as before.
       try {
         if (!hasGlassboxReviewableChanges(await getGitStatus())) {
-          showToast('No pending changes for Glassbox to review.', { variant: 'info' });
+          flashAnchoredHint(btn, 'No pending changes for Glassbox to review.');
           return;
         }
       } catch { /* status probe failed — don't block the launch */ }
@@ -410,7 +413,7 @@ function bindGlassbox() {
       try {
         await launchGlassbox();
       } catch {
-        showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
+        flashAnchoredHint(btn, 'Could not open Glassbox. Make sure the Glassbox CLI is installed.');
       }
     })();
   });

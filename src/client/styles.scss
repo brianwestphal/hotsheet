@@ -3449,9 +3449,12 @@ body.cross-project-stats-active {
     }
   }
 
+  // HS-8815 — drop the trailing priority/star placeholders from layout (not just
+  // dim them) so the rounded entry box fills the full available width minus the
+  // row's own 16px padding. They previously reserved ~56px of invisible spacers
+  // on the right, which read as "a lot of extra space" beside the input.
   .draft-placeholder {
-    opacity: 0.35;
-    pointer-events: none;
+    display: none;
   }
 
   .draft-badge {
@@ -5739,10 +5742,6 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-
-  .draft-row {
-    flex-shrink: 0;
-  }
 }
 
 .columns-container {
@@ -6307,6 +6306,34 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &.visible {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+}
+
+// --- Anchored hint (HS-8784) ---
+// A transient bubble pinned beneath the control the user just clicked, used when
+// a bottom-center toast would land too far from the action to be noticed (e.g.
+// the top-toolbar Glassbox button reporting "no pending changes"). Position is
+// set inline (fixed left/top via `positionDropdown`); this only styles the bubble
+// and its fade.
+.anchored-hint {
+  position: fixed;
+  max-width: 280px;
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  z-index: 4100;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.16s, transform 0.16s;
+  pointer-events: none;
+
+  &.visible {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

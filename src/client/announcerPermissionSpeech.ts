@@ -105,12 +105,18 @@ async function drain(): Promise<void> {
 function scheduleDrain(): void {
   if (scheduled || draining) return;
   scheduled = true;
-  const run = (): void => { scheduled = false; void drain(); };
+  // HS-8816 — RETURN the drain promise (don't `void` it). When this runs as a
+  // player boundary task, `AnnouncerPlayer.drainBoundaryThenAdvance` AWAITS the
+  // returned promise before advancing to the next reel segment. If we discarded
+  // it (fire-and-forget), the boundary task resolved immediately, the player
+  // advanced, and the next narration segment spoke ON TOP of this permission
+  // announcement — two voices overlapping. Awaiting the drain serializes them.
+  const run = (): Promise<void> => { scheduled = false; return drain(); };
   const player = getPlayer();
   // `runAtNextBoundary` runs `run` immediately when nothing is speaking, or
   // defers it to the gap after the current segment otherwise.
   if (player !== null) player.runAtNextBoundary(run);
-  else run();
+  else void run();
 }
 
 /**
