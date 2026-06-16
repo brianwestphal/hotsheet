@@ -87,6 +87,12 @@ export interface RenderCostOverTimeChartOpts {
   /** Format a cost number for tooltips + axis ticks. Default: USD
    *  with 2 decimals (`$0.42`). */
   readonly formatCost?: (n: number) => string;
+  /** HS-8810 — local-calendar days (YYYY-MM-DD) that had ≥1 ingested metric
+   *  point. A charted day NOT in this set is shaded as "no telemetry captured"
+   *  (the OTLP receiver wasn't running / Claude ran outside Hot Sheet) to set it
+   *  apart from a genuine $0 day. Omit (undefined) to disable the shading
+   *  entirely — prior behavior. */
+  readonly ingestedDates?: readonly string[];
 }
 
 const DEFAULT_HEIGHT = 220;
@@ -551,6 +557,60 @@ function renderLegend(opts: {
  * data. When toggled, the chart body is re-rendered in place; the
  * toggle button survives the re-render to avoid focus thrash.
  */
+/** HS-8810 — the tooltip suffix appended to a no-telemetry day. */
+const NO_TELEMETRY_NOTE = 'no telemetry captured';
+
+/**
+ * HS-8810 — derive the set of charted dates that had NO ingested telemetry.
+ * Returns an empty set when `ingestedDates` is undefined (shading disabled).
+ * A no-telemetry day is necessarily $0 (no points → no cost), so this is the
+ * sole signal needed to tell it apart from a real $0 day.
+ */
+function computeNoTelemetryDates(
+  dates: readonly string[],
+  ingestedDates: readonly string[] | undefined,
+): Set<string> {
+  if (ingestedDates === undefined) return new Set();
+  const ingested = new Set(ingestedDates);
+  return new Set(dates.filter(d => !ingested.has(d)));
+}
+
+/**
+ * HS-8810 — a faint full-height band behind each no-telemetry date column, so
+ * the gap reads differently from a $0 day at a glance (mode-independent: drawn
+ * once behind both the stacked bars and the lines). Returns null when there's
+ * nothing to shade.
+ */
+function renderNoTelemetryBands(
+  dates: readonly string[],
+  noTelemetry: Set<string>,
+  width: number,
+  height: number,
+): HTMLElement | null {
+  if (noTelemetry.size === 0 || dates.length === 0) return null;
+  const chartLeft = MARGIN_LEFT;
+  const chartTop = MARGIN_TOP;
+  const chartWidth = Math.max(0, width - MARGIN_LEFT - MARGIN_RIGHT);
+  const chartHeight = Math.max(0, height - MARGIN_TOP - MARGIN_BOTTOM);
+  const colWidth = chartWidth / dates.length;
+  const g = toElement(<g className="telemetry-cost-over-time-no-telemetry"></g>);
+  dates.forEach((date, idx) => {
+    if (!noTelemetry.has(date)) return;
+    const rect = toElement(
+      <rect
+        className="telemetry-cost-over-time-no-telemetry-band"
+        x={String(chartLeft + idx * colWidth)}
+        y={String(chartTop)}
+        width={String(colWidth)}
+        height={String(chartHeight)}
+      ></rect>
+    );
+    rect.appendChild(toElement(<title>{`${date} — ${NO_TELEMETRY_NOTE}`}</title>));
+    g.appendChild(rect);
+  });
+  return g;
+}
+
 export function renderCostOverTimeChart(
   points: readonly CostOverTimePoint[],
   opts: RenderCostOverTimeChartOpts = {},
@@ -581,6 +641,8 @@ export function renderCostOverTimeChart(
     models.forEach((m, i) => modelIdxOf.set(`${secret} ${m}`, i));
   }
   const costLookup = buildCostLookup(points);
+  // HS-8810 — days with no ingested telemetry (shaded distinctly from $0 days).
+  const noTelemetryDates = computeNoTelemetryDates(dates, opts.ingestedDates);
 
   const showToggle = projectSecrets.length > 1;
   let currentMode: CostOverTimeChartMode = initialMode;
@@ -660,6 +722,10 @@ export function renderCostOverTimeChart(
         aria-label="Cost over time"
       ></svg>
     );
+    // HS-8810 — no-telemetry shading goes in FIRST so it sits behind the bars /
+    // lines; the hover overlay is appended last (inside attachCostOverTimeHover).
+    const bands = renderNoTelemetryBands(dates, noTelemetryDates, viewBoxWidth, height);
+    if (bands !== null) svg.appendChild(bands);
     svg.appendChild(body);
     svgWrap.appendChild(svg);
 
@@ -680,6 +746,7 @@ export function renderCostOverTimeChart(
       height,
       formatCost,
       resolveProjectLabel,
+      noTelemetryDates,
     });
   }
   rerenderBody();
@@ -721,8 +788,11 @@ function attachCostOverTimeHover(args: {
   height: number;
   formatCost: (n: number) => string;
   resolveProjectLabel: (secret: string) => string;
+  /** HS-8810 — charted dates with no ingested telemetry (the empty-day tooltip
+   *  reads "No telemetry captured" for these vs. "No cost" for a real $0 day). */
+  noTelemetryDates: Set<string>;
 }): void {
-  const { svgWrap, svg, dates, projectSecrets, tuples, costLookup, viewBoxWidth, height, formatCost, resolveProjectLabel } = args;
+  const { svgWrap, svg, dates, projectSecrets, tuples, costLookup, viewBoxWidth, height, formatCost, resolveProjectLabel, noTelemetryDates } = args;
   if (dates.length === 0) return;
 
   const chartLeft = MARGIN_LEFT;
@@ -834,8 +904,12 @@ function attachCostOverTimeHover(args: {
       // lone label landed in the 10px swatch track and the label's
       // `overflow:hidden; text-overflow:ellipsis` crushed "No cost" down to
       // "N…" — the mysterious "N." the user saw on no-data days.
+      // HS-8810 — distinguish a day with no telemetry ingested at all (receiver
+      // down / Claude outside Hot Sheet) from a day that genuinely cost $0.
       rows.push(toElement(
-        <div className="telemetry-cost-over-time-tooltip-empty">No cost</div>
+        <div className="telemetry-cost-over-time-tooltip-empty">
+          {noTelemetryDates.has(date) ? 'No telemetry captured' : 'No cost'}
+        </div>
       ));
     }
     tooltip.replaceChildren(...rows);

@@ -537,7 +537,7 @@ export async function updateStats() {
   } catch { /* ignore */ }
   // HS-8511 \u2014 keep the sidebar per-view count badges in sync with the same
   // refresh cadence as the status bar. Best-effort + independent of the bar.
-  void refreshSidebarCounts();
+  refreshSidebarCounts();
 }
 
 // --- Detail panel orientation ---

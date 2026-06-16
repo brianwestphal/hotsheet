@@ -55,8 +55,11 @@ interface ProjectRollupPayload {
   toolLatencyHistogram: ToolLatencyHistogramRow[];
   recentPrompts: RecentPromptRow[];
   costOverTime: CostOverTimePoint[];
+  ingestedDates: string[]; // HS-8810
 }
 ```
+
+**HS-8810 — "no telemetry captured" vs. a real $0 day.** A day with zero cost looked identical whether the OTLP receiver simply wasn't running that day (no points ingested at all — e.g. Claude ran outside a Hot Sheet terminal) or telemetry came in but cost was genuinely $0. The payload now carries `ingestedDates` — the local-calendar days (same `tz` bucketing as the cost series) that had ≥1 ingested `otel_metrics` point under the same project/window/allowed-secrets filter (`getIngestedDates` in `src/db/otelRollups.ts`; a `COUNT`-free `SELECT DISTINCT`, no metric-name filter so a token-only / $0 day still counts as "captured"). The shared `renderCostOverTimeChart` (used by both this section and the §70 cross-project page) takes an `ingestedDates` option and shades any charted day NOT in that set with a faint band (`.telemetry-cost-over-time-no-telemetry-band`) + a "no telemetry captured" tooltip, and the hover overlay's empty-day line reads **"No telemetry captured"** instead of **"No cost"** for those days. Omitting the option disables the shading (back-compat). The same field is on the cross-project `DashboardPayload`. (This is the mitigation from the HS-8797 root-cause; a small clarity enhancement to the existing cost-over-time chart, so it lives here rather than in a new requirements doc.)
 
 Re-fetch triggers: section mount + every window-selector change + a 30 s background poll while the section is mounted (HS-8572). The poll self-stops when (a) the `bodySlot` element leaves the document (analytics dashboard teardown removes the surrounding subtree), (b) the active project changes to a different secret, or (c) `getActiveProject()` returns null.
 

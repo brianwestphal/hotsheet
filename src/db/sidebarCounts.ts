@@ -14,7 +14,7 @@
 import { CustomViewArraySchema, parseJsonOrNull } from '../schemas.js';
 import { getDb } from './connection.js';
 import { getSettings } from './settings.js';
-import { queryTickets } from './tickets.js';
+import { countQueryTickets } from './tickets.js';
 
 /** Active scope = everything a default list shows: not backlog/archive/deleted. */
 const ACTIVE_SCOPE = `status NOT IN ('deleted', 'backlog', 'archive')`;
@@ -85,8 +85,8 @@ export async function getSidebarCounts(): Promise<Record<string, number>> {
   if (customViews !== null) {
     for (const v of customViews) {
       try {
-        const rows = await queryTickets(v.logic, v.conditions, undefined, undefined, v.tag, v.includeArchived);
-        counts[`custom:${v.id}`] = rows.length;
+        // HS-8809 — COUNT(*) rather than SELECT-rows-then-`.length`.
+        counts[`custom:${v.id}`] = await countQueryTickets(v.logic, v.conditions, v.tag, v.includeArchived);
       } catch {
         /* skip a broken custom view rather than break every badge */
       }

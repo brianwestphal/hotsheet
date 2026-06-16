@@ -112,7 +112,7 @@ Each built-in view has an icon to the left of the label:
 #### View Counts (HS-8511)
 - Every sidebar view shows a **right-aligned count badge** of the tickets it contains: the built-in status views (All, Non-Verified, Up Next, Open, Completed, Verified), the special **Backlog / Archive / Trash** views, every **category** and **priority** filter, and every **custom view**.
 - Counts come from `GET /api/sidebar-counts` (`src/db/sidebarCounts.ts`), computed server-side: built-in / category / priority counts via cheap `GROUP BY` queries over the active scope (excludes deleted/backlog/archive, matching the list), and each custom view counted through the **same `queryTickets` path** the list uses (so a custom badge can't disagree with its list — note custom views include backlog but exclude deleted/archive). A count of 0 renders an empty (hidden) badge rather than a literal "0".
-- Badges refresh on the same cadence as the Stats Bar (`updateStats()` → `refreshSidebarCounts()`), so they stay live as tickets move between views; custom-view badges are also re-applied whenever the custom-view rows re-render (`renderSidebarViews`).
+- Badges refresh on the same cadence as the Stats Bar (`updateStats()` → `refreshSidebarCounts()`), so they stay live as tickets move between views; custom-view badges are also re-applied whenever the custom-view rows re-render (`renderSidebarViews`). **HS-8809** — `refreshSidebarCounts()` is debounced (150 ms trailing) so a burst of changes collapses into one `/sidebar-counts` fetch, and custom-view counts use a `COUNT(*)`-only query (`countQueryTickets`) rather than fetching + discarding full rows.
 
 #### Stats Bar
 - Displays "X tickets, Y open, Z up next" at the bottom of the sidebar.

@@ -93,6 +93,8 @@ interface ProjectRollupPayload {
   toolLatencyHistogram: ToolLatencyHistogramRow[];
   recentPrompts: RecentPromptRow[];
   costOverTime: CostOverTimePoint[];
+  /** HS-8810 — days with ≥1 ingested metric point (shade no-telemetry days). */
+  ingestedDates?: string[];
   announcer?: AnnouncerUsageTotals;
 }
 
@@ -233,6 +235,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
     section.appendChild(renderCostOverTimeChart(payload.costOverTime, {
       formatCost,
       resolveProjectLabel: (secret) => secret === activeSecret ? 'This project' : secret.slice(0, 8),
+      ingestedDates: payload.ingestedDates, // HS-8810 — shade no-telemetry days
     }));
     body.appendChild(section);
   }

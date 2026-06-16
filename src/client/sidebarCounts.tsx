@@ -31,7 +31,7 @@ export function applySidebarCounts(counts: Record<string, number>): void {
 
 /** Fetch the counts and apply them. Best-effort — a failure leaves the existing
  *  badges untouched rather than clearing them. */
-export async function refreshSidebarCounts(): Promise<void> {
+async function fetchAndApplySidebarCounts(): Promise<void> {
   let counts: Record<string, number>;
   try {
     counts = (await getSidebarCounts()).counts;
@@ -39,4 +39,22 @@ export async function refreshSidebarCounts(): Promise<void> {
     return;
   }
   applySidebarCounts(counts);
+}
+
+// HS-8809 — `refreshSidebarCounts` is called on every `updateStats()` (after each
+// list render / ticket change) and every custom-view re-render, so a burst of
+// changes used to fire a burst of `/sidebar-counts` requests (each of which runs
+// a COUNT per custom view). Debounce on the trailing edge so a burst collapses
+// into a single fetch.
+const SIDEBAR_COUNT_DEBOUNCE_MS = 150;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Schedule a (debounced) refresh of the sidebar count badges. Rapid calls
+ *  within the window coalesce into one fetch (the last call wins). */
+export function refreshSidebarCounts(): void {
+  if (debounceTimer !== null) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    void fetchAndApplySidebarCounts();
+  }, SIDEBAR_COUNT_DEBOUNCE_MS);
 }

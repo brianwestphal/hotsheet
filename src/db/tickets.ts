@@ -535,15 +535,19 @@ function ordinalValue(field: string, value: string): number | null {
   return null;
 }
 
-export async function queryTickets(
+/**
+ * HS-8511 / HS-8809 — build the WHERE clause + bind values for a custom-view
+ * query. Shared by `queryTickets` (SELECT rows) and `countQueryTickets`
+ * (COUNT only) so the sidebar count badges don't have to materialize + discard
+ * full rows just to take `.length`. System conditions (never-deleted, archive
+ * gate, required tag) are always AND'd; user conditions are grouped by `logic`.
+ */
+function buildTicketQueryWhere(
   logic: 'all' | 'any',
   conditions: { field: string; operator: string; value: string }[],
-  sortBy?: string,
-  sortDir?: string,
   requiredTag?: string,
   includeArchived?: boolean,
-): Promise<Ticket[]> {
-  const db = await getDb();
+): { whereClause: string; values: unknown[] } {
   const systemWhere: string[] = [];
   const userWhere: string[] = [];
   const values: unknown[] = [];
@@ -616,6 +620,39 @@ export async function queryTickets(
   if (userWhere.length > 0) {
     whereClause += ` AND (${userWhere.join(joiner)})`;
   }
+  return { whereClause, values };
+}
+
+/**
+ * HS-8809 — COUNT(*) for a custom view, without SELECTing + discarding rows.
+ * Used by the sidebar count badges (`getSidebarCounts`). Shares the exact WHERE
+ * logic with `queryTickets` so the badge can't disagree with the list.
+ */
+export async function countQueryTickets(
+  logic: 'all' | 'any',
+  conditions: { field: string; operator: string; value: string }[],
+  requiredTag?: string,
+  includeArchived?: boolean,
+): Promise<number> {
+  const db = await getDb();
+  const { whereClause, values } = buildTicketQueryWhere(logic, conditions, requiredTag, includeArchived);
+  const result = await db.query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM tickets WHERE ${whereClause}`,
+    values,
+  );
+  return parseInt(result.rows[0].count, 10);
+}
+
+export async function queryTickets(
+  logic: 'all' | 'any',
+  conditions: { field: string; operator: string; value: string }[],
+  sortBy?: string,
+  sortDir?: string,
+  requiredTag?: string,
+  includeArchived?: boolean,
+): Promise<Ticket[]> {
+  const db = await getDb();
+  const { whereClause, values } = buildTicketQueryWhere(logic, conditions, requiredTag, includeArchived);
 
   let orderBy: string;
   switch (sortBy) {

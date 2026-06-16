@@ -122,7 +122,7 @@ export function renderSidebarViews() {
   // HS-8511 — newly (re)rendered custom-view rows need their count badges; the
   // built-in rows keep theirs across this rebuild (this only touches
   // #custom-views-container).
-  void refreshSidebarCounts();
+  refreshSidebarCounts();
 }
 
 function showViewContextMenu(anchor: HTMLElement, view: CustomView) {

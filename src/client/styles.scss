@@ -11792,6 +11792,16 @@ label.detail-details-label {
   display: block;
 }
 
+// HS-8810 — faint hatched band behind a day that had NO telemetry ingested
+// (receiver down / Claude ran outside Hot Sheet), so it reads differently from
+// a genuine $0 day. Drawn behind the bars/lines; a repeating-linear-gradient
+// fill renders the diagonal hatch (works in WKWebView + Chromium SVG).
+.telemetry-cost-over-time-no-telemetry-band {
+  fill: var(--text-muted);
+  opacity: 0.1;
+  pointer-events: none;
+}
+
 // HS-8534 — vertical cursor line shown while the user hovers over
 // the chart. Sits inside the SVG so it shares the viewBox scaling.
 .telemetry-cost-over-time-cursor {

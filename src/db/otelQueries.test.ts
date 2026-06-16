@@ -15,6 +15,7 @@ import {
   getCostOverTime,
   getDashboardPayload,
   getHourlyActivityHeatmap,
+  getIngestedDates,
   getPerTicketRollup,
   getProjectRollupPayload,
   getPromptTimeline,
@@ -1057,6 +1058,35 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       const sonnet = rows.find(r => r.model === 'sonnet');
       expect(sonnet?.tokens).toBe(60); // 40 + 20
       expect(sonnet?.cost).toBeCloseTo(0.5);
+    });
+  });
+
+  describe('getIngestedDates (HS-8810)', () => {
+    it('returns the distinct local days with ANY ingested metric point (token-only / $0 included)', async () => {
+      // A token-only day, a $0-cost day, and a real-cost day — all "had telemetry".
+      await insertTokenMetric({ ts: new Date('2026-05-19T12:00:00Z'), projectSecret: SECRET_A, tokens: 100 });
+      await insertCostMetric({ ts: new Date('2026-05-20T12:00:00Z'), projectSecret: SECRET_A, model: 'sonnet', cost: 0 });
+      await insertCostMetric({ ts: new Date('2026-05-21T12:00:00Z'), projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+
+      const dates = await getIngestedDates(new Date('2026-05-19T00:00:00Z'), null, 'UTC');
+      expect(dates).toEqual(['2026-05-19', '2026-05-20', '2026-05-21']);
+    });
+
+    it('excludes rows before the window start', async () => {
+      await insertCostMetric({ ts: new Date('2026-05-10T12:00:00Z'), projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: new Date('2026-05-21T12:00:00Z'), projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      expect(await getIngestedDates(new Date('2026-05-20T00:00:00Z'), null, 'UTC')).toEqual(['2026-05-21']);
+    });
+
+    it('scopes to a single project when a secret is given', async () => {
+      const day = new Date('2026-05-21T12:00:00Z');
+      await insertCostMetric({ ts: day, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+      await insertCostMetric({ ts: day, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
+      expect(await getIngestedDates(null, SECRET_A, 'UTC')).toEqual(['2026-05-21']);
+    });
+
+    it('returns [] when there are no metric points', async () => {
+      expect(await getIngestedDates(null, null, 'UTC')).toEqual([]);
     });
   });
 

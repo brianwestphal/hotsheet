@@ -24,6 +24,7 @@ import {
   getCostByProject,
   getCostOverTime,
   getHourlyActivityHeatmap,
+  getIngestedDates,
   getRecentPrompts,
   getToolLatencyHistogram,
   getWindowTotals,
@@ -64,6 +65,10 @@ export interface DashboardPayload {
    *  Stacked / Overlay cost-over-time chart. One point per
    *  (date, project, model) tuple in the window. */
   costOverTime: CostOverTimePoint[];
+  /** HS-8810 — local-calendar days in the window that had ≥1 ingested metric
+   *  point. A cost-over-time day absent from this set + at $0 had no telemetry
+   *  captured (receiver down / Claude outside Hot Sheet) vs. a genuine $0 day. */
+  ingestedDates: string[];
   /** HS-8766 — cross-project Announcer spend (the user's own Anthropic API
    *  usage), window total + per-project breakdown. */
   announcer: { total: AnnouncerUsageTotals; byProject: AnnouncerUsageByProjectRow[] };
@@ -335,7 +340,7 @@ export async function getDashboardPayload(
   // `getAllProjects().map(p => p.secret)`); null means "every project"
   // (back-compat / tests). Threaded into all eight sub-queries so totals,
   // cost-by-project, donut, heatmap, and cost-over-time agree.
-  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, announcerByProject] = await Promise.all([
+  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject] = await Promise.all([
     getWindowTotals(null, midnight, allowedSecrets),
     getWindowTotals(null, weekStart, allowedSecrets),
     getWindowTotals(null, monthStart, allowedSecrets),
@@ -344,6 +349,7 @@ export async function getDashboardPayload(
     getCostByModel(null, windowSinceTs, allowedSecrets),
     getHourlyActivityHeatmap(windowSinceTs, timezone, allowedSecrets),
     getCostOverTime(windowSinceTs, null, timezone, now, allowedSecrets),
+    getIngestedDates(windowSinceTs, null, timezone, allowedSecrets),
     getAnnouncerUsageByProject(allowedSecrets, windowSinceTs),
   ]);
 
@@ -354,6 +360,7 @@ export async function getDashboardPayload(
     costByModel,
     hourlyActivity,
     costOverTime,
+    ingestedDates,
     announcer: { total: sumAnnouncerUsage(announcerByProject), byProject: announcerByProject },
   };
 }
@@ -392,6 +399,9 @@ export interface ProjectRollupPayload {
   toolLatencyHistogram: ToolLatencyHistogram[];
   recentPrompts: RecentPrompt[];
   costOverTime: CostOverTimePoint[];
+  /** HS-8810 — local-calendar days in the window with ≥1 ingested metric point
+   *  (this project). Lets the chart distinguish a no-telemetry day from a $0 day. */
+  ingestedDates: string[];
   /** HS-8766 — Announcer token usage + cost for this project in the window. */
   announcer: AnnouncerUsageTotals;
 }
@@ -405,7 +415,7 @@ export async function getProjectRollupPayload(
   const { midnight, weekStart, monthStart } = windowBoundaries(now);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
-  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime, announcer] = await Promise.all([
+  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime, ingestedDates, announcer] = await Promise.all([
     getWindowTotals(projectSecret, midnight),
     getWindowTotals(projectSecret, weekStart),
     getWindowTotals(projectSecret, monthStart),
@@ -417,6 +427,7 @@ export async function getProjectRollupPayload(
     // `getRecentPrompts` already).
     getRecentPrompts(projectSecret, 10),
     getCostOverTime(windowSinceTs, projectSecret, timezone, now),
+    getIngestedDates(windowSinceTs, projectSecret, timezone),
     getAnnouncerUsageTotals(projectSecret, windowSinceTs),
   ]);
 
@@ -427,6 +438,7 @@ export async function getProjectRollupPayload(
     toolLatencyHistogram,
     recentPrompts,
     costOverTime,
+    ingestedDates,
     announcer,
   };
 }

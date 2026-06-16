@@ -245,3 +245,31 @@ describe('renderCostOverTimeChart (HS-8506 / HS-8518)', () => {
     expect(empty?.classList.contains('telemetry-cost-over-time-tooltip-row')).toBe(false);
   });
 });
+
+describe('renderCostOverTimeChart no-telemetry shading (HS-8810)', () => {
+  // 3-day axis (the middle day is $0) for one project, so there's no mode toggle.
+  const points = [
+    pt('2026-05-19', 'secretA', 'sonnet', 1.0),
+    pt('2026-05-20', 'secretA', 'sonnet', 0.0), // $0 — appears on the date axis
+    pt('2026-05-21', 'secretA', 'sonnet', 0.7),
+  ];
+
+  it('shades a $0 day that had NO ingested telemetry, with a tooltip note', () => {
+    const el = renderCostOverTimeChart(points, { ingestedDates: ['2026-05-19', '2026-05-21'] });
+    const bands = el.querySelectorAll('.telemetry-cost-over-time-no-telemetry-band');
+    expect(bands.length).toBe(1);
+    const title = bands[0].querySelector('title')?.textContent ?? '';
+    expect(title).toContain('2026-05-20');
+    expect(title).toMatch(/no telemetry/i);
+  });
+
+  it('does NOT shade a $0 day that DID have telemetry ingested', () => {
+    const el = renderCostOverTimeChart(points, { ingestedDates: ['2026-05-19', '2026-05-20', '2026-05-21'] });
+    expect(el.querySelectorAll('.telemetry-cost-over-time-no-telemetry-band').length).toBe(0);
+  });
+
+  it('shades nothing when ingestedDates is omitted (back-compat)', () => {
+    const el = renderCostOverTimeChart(points);
+    expect(el.querySelectorAll('.telemetry-cost-over-time-no-telemetry-band').length).toBe(0);
+  });
+});

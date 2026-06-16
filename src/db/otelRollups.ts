@@ -1189,6 +1189,48 @@ function addDaysToDateString(dateStr: string, days: number): string {
  * cross-project (cross-project stats page variant). The shape is
  * identical so a single chart component handles both surfaces.
  */
+/**
+ * HS-8810 — the set of local-calendar days (YYYY-MM-DD) within the window that
+ * had AT LEAST ONE ingested `otel_metrics` point, under the SAME project /
+ * window / allowed-secrets filter as `getCostOverTime` (but no metric_name
+ * filter and no cumulative-monotonic exclusion — ANY point counts as "telemetry
+ * was captured that day"). Lets the cost-over-time chart tell a genuine $0 day
+ * (telemetry came in, cost was zero) apart from a day the OTLP receiver simply
+ * wasn't running / Claude ran outside Hot Sheet (no points at all). Same
+ * `ts AT TIME ZONE $1` bucketing as the chart so they agree on day boundaries.
+ */
+export async function getIngestedDates(
+  sinceTs: Date | null,
+  projectSecret: string | null,
+  timezone = 'UTC',
+  allowedSecrets: readonly string[] | null = null,
+): Promise<string[]> {
+  const db = await getTelemetryDb();
+  const params: Array<string | Date> = [timezone];
+  let projectClause = '';
+  let windowClause = '';
+  if (projectSecret !== null) {
+    params.push(projectSecret);
+    projectClause = ` AND project_secret = $${String(params.length)}`;
+  }
+  if (sinceTs !== null) {
+    params.push(sinceTs);
+    windowClause = ` AND ts >= $${String(params.length)}`;
+  }
+  const secrets = buildSecretsInClause(allowedSecrets, params.length);
+  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
+  params.push(...secrets.params);
+
+  const result = await db.query<{ date: string }>(
+    `SELECT DISTINCT to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date
+       FROM otel_metrics
+      WHERE TRUE${projectClause}${windowClause}${secretsClause}
+      ORDER BY 1 ASC`,
+    params,
+  );
+  return result.rows.map(r => r.date);
+}
+
 export async function getCostOverTime(
   sinceTs: Date | null,
   projectSecret: string | null,

@@ -133,6 +133,8 @@ export interface DashboardPayload {
   costByModel: ModelRollup[];
   hourlyActivity: HourlyActivityCell[];
   costOverTime: CostOverTimePoint[];
+  /** HS-8810 — days with ≥1 ingested metric point (shade no-telemetry days). */
+  ingestedDates?: string[];
   announcer?: { total: AnnouncerUsageTotals; byProject: AnnouncerUsageByProjectRow[] };
 }
 
@@ -508,13 +510,14 @@ function populateChips(root: HTMLElement, totals: DashboardPayload['windowTotals
 }
 
 /** HS-8681 — populate the cost-over-time chart slot (HS-8506 / §70.4). */
-function populateCostOverTime(root: HTMLElement, points: readonly CostOverTimePoint[]): void {
+function populateCostOverTime(root: HTMLElement, points: readonly CostOverTimePoint[], ingestedDates: readonly string[] | undefined): void {
   if (points.length === 0) return;
   const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-over-time');
   if (target === null) return;
   target.replaceChildren(renderCostOverTimeChart(points, {
     resolveProjectLabel: resolveProjectName,
     formatCost,
+    ingestedDates, // HS-8810 — shade no-telemetry days
   }));
 }
 
@@ -672,7 +675,7 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   // `costOverTime` has existed on the wire since HS-8505 Phase 1; the
   // `DashboardPayload` interface types it as a non-optional array, so no
   // runtime guard is needed here.
-  populateCostOverTime(root, payload.costOverTime);
+  populateCostOverTime(root, payload.costOverTime, payload.ingestedDates);
   populateCostByProject(root, payload.costByProject);
   populateCostByModel(root, payload.costByModel);
   populateHeatmap(root, payload.hourlyActivity);

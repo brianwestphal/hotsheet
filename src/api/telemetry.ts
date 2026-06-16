@@ -191,6 +191,9 @@ export const DashboardPayloadSchema = z.object({
   costByModel: z.array(ModelRollupSchema),
   hourlyActivity: z.array(HourlyActivityCellSchema),
   costOverTime: z.array(CostOverTimePointSchema),
+  // HS-8810 — days with ≥1 ingested metric point; optional+default so older
+  // servers/fixtures still validate (a missing list = no shading, prior behavior).
+  ingestedDates: z.array(z.string()).default([]),
   // Optional so pre-HS-8766 fixtures/clients still validate (matches the
   // cacheReadTokens precedent on WindowTotals).
   announcer: AnnouncerDashboardSchema.optional(),
@@ -204,6 +207,8 @@ export const ProjectRollupPayloadSchema = z.object({
   toolLatencyHistogram: z.array(ToolLatencyHistogramSchema),
   recentPrompts: z.array(RecentPromptSchema),
   costOverTime: z.array(CostOverTimePointSchema),
+  // HS-8810 — days with ≥1 ingested metric point for this project (optional+default).
+  ingestedDates: z.array(z.string()).default([]),
   // HS-8766 — Announcer usage for this project (optional for back-compat).
   announcer: AnnouncerUsageTotalsSchema.optional(),
 });
