@@ -2948,7 +2948,9 @@ body.cross-project-stats-active {
   align-items: center;
   gap: 8px;
   padding: 6px 16px 6px 19px;
-  background: var(--bg-secondary);
+  // HS-8818 — white (the base surface) instead of the gray --bg-secondary fill;
+  // the bottom border alone provides enough separation from the list below.
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   flex-wrap: wrap;
@@ -3420,6 +3422,12 @@ body.cross-project-stats-active {
   // HS-8735 — no gray fill + no dashed bottom border on the new-ticket line;
   // it reads as a plain input row (the toolbar below provides the separation).
   background: transparent;
+
+  // HS-8819 — a touch more vertical breathing room around the new-ticket input
+  // (4px more on top + bottom than the base .ticket-row's 4px) so the entry box
+  // doesn't sit flush against the chrome above and the toolbar below.
+  padding-top: 8px;
+  padding-bottom: 8px;
 
   &:hover {
     background: transparent;
@@ -11472,10 +11480,54 @@ label.detail-details-label {
 .telemetry-dashboard-heatmap-wrap {
   color: var(--accent); // drives the `currentColor` fill on cells
   overflow-x: auto;
+  position: relative; // anchor for the HS-8817 hover tooltip
 }
 
 .telemetry-dashboard-heatmap-svg {
   display: block;
+}
+
+// HS-8817 — hover feedback: an accent outline on the cell under the cursor
+// (works on empty cells too, since intensity drives fill-opacity not the
+// element's opacity, leaving the stroke fully visible).
+.telemetry-dashboard-heatmap-cell {
+  cursor: default;
+
+  &:hover {
+    stroke: var(--accent);
+    stroke-width: 1.5px;
+  }
+}
+
+// HS-8817 — styled, instant hover tooltip for each heatmap cell.
+.telemetry-dashboard-heatmap-tooltip {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+
+  &[hidden] { display: none; }
+
+  .telemetry-dashboard-heatmap-tooltip-when {
+    font-weight: 600;
+  }
+
+  .telemetry-dashboard-heatmap-tooltip-cost {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--accent);
+  }
+
+  .telemetry-dashboard-heatmap-tooltip-prompts {
+    color: var(--text-secondary);
+  }
 }
 
 // ----- Top-10 expensive prompts (HS-8483 / §69.3.5) -----

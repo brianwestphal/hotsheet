@@ -88,8 +88,8 @@ A 7×24 grid of cells:
 
 - **Rows:** days of the week (Mon → Sun, top-to-bottom)
 - **Columns:** hours of the day (00 → 23, left-to-right)
-- **Cell color:** intensity by cost contribution in that day-of-week × hour bucket (5-step scale: empty / low / medium / high / very-high)
-- **Tooltip on hover:** "Wed 10:00 — $4.23 cost, 17 prompts"
+- **Cell color:** intensity by cost contribution in that day-of-week × hour bucket (5-step scale: empty / low / medium / high / very-high). Intensity drives each cell's `fill-opacity` (not the element `opacity`) so the hover outline stays visible even on empty cells.
+- **Hover feedback (HS-8817):** the hovered cell gets an accent outline, and a styled, instant tooltip appears next to the cursor showing the hour range, precise cost, and prompt count — e.g. "Wed 10:00–11:00 / $0.0423 / 17 prompts". The cost is shown to 4 decimals below $1 (vs. the `<$0.01` floor `formatCost` uses elsewhere) so a single low-spend hour reads exactly. Replaces the earlier delayed native SVG `<title>` tooltip; cells keep an `aria-label` for screen readers.
 
 The week is in the user's local timezone. The heatmap aggregates across the selected window (default: trailing 90 days, so weekly patterns have enough data to surface).
 

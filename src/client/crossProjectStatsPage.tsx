@@ -409,18 +409,28 @@ function renderHourlyHeatmap(cells: HourlyActivityCell[]): HTMLElement {
   let maxCost = 0;
   for (const c of cells) if (c.cost > maxCost) maxCost = c.cost;
 
-  // Build cell rects as JSX.
+  // Build cell rects as JSX. HS-8817 — each cell carries its precise figures in
+  // `data-*` so the interactive tooltip (wired below) can show exact cost +
+  // prompt count on hover. Intensity drives `fill-opacity` (not the element's
+  // `opacity`) so the hover outline stroke stays fully visible even on empty
+  // cells — element-level opacity:0 would hide the stroke too.
   const rectEls = cells.map(cell => {
     // Sunday=0 in PG; we want Monday=row0.
     const row = (cell.dow + 6) % 7;
     const x = leftAxisWidth + cell.hour * (cellSize + cellGap);
     const y = topAxisHeight + row * (cellSize + cellGap);
-    const opacity = heatmapIntensity(cell.cost, maxCost).toFixed(2);
-    const tooltip = `${DAY_LABELS_MON_FIRST[row]} ${String(cell.hour).padStart(2, '0')}:00 — ${formatCost(cell.cost)}, ${String(cell.promptCount)} prompts`;
+    const fillOpacity = heatmapIntensity(cell.cost, maxCost).toFixed(2);
+    const hh = String(cell.hour).padStart(2, '0');
+    const nextHh = String((cell.hour + 1) % 24).padStart(2, '0');
+    const when = `${DAY_LABELS_MON_FIRST[row]} ${hh}:00–${nextHh}:00`;
     return (
-      <rect x={String(x)} y={String(y)} width={String(cellSize)} height={String(cellSize)} rx="2" ry="2" fill="currentColor" opacity={opacity}>
-        <title>{tooltip}</title>
-      </rect>
+      <rect
+        className="telemetry-dashboard-heatmap-cell"
+        x={String(x)} y={String(y)} width={String(cellSize)} height={String(cellSize)} rx="2" ry="2"
+        fill="currentColor" fill-opacity={fillOpacity}
+        data-when={when} data-cost={String(cell.cost)} data-prompts={String(cell.promptCount)}
+        aria-label={`${when}: ${formatPreciseCost(cell.cost)}, ${String(cell.promptCount)} prompts`}
+      />
     );
   });
 
@@ -439,15 +449,74 @@ function renderHourlyHeatmap(cells: HourlyActivityCell[]): HTMLElement {
     return <text x="0" y={String(y)} font-size="10" fill="currentColor" opacity="0.7">{label}</text>;
   });
 
-  return toElement(
+  const wrap = toElement(
     <div className="telemetry-dashboard-heatmap-wrap">
       <svg className="telemetry-dashboard-heatmap-svg" width={String(width)} height={String(height)} viewBox={`0 0 ${String(width)} ${String(height)}`} role="img" aria-label="Hourly activity heatmap">
         {dayLabels}
         {hourLabels}
         {rectEls}
       </svg>
+      {/* HS-8817 — styled, instant hover tooltip (the native SVG <title> had a
+          delay and OS-default chrome, and gave no visual cell feedback). */}
+      <div className="telemetry-dashboard-heatmap-tooltip" hidden></div>
     </div>
   );
+  wireHeatmapTooltip(wrap);
+  return wrap;
+}
+
+/**
+ * HS-8817 — precise cost for the heatmap hover tooltip. Unlike `formatCost`
+ * (which floors sub-cent values to `<$0.01` for the at-a-glance surfaces), this
+ * shows up to 4 decimals so a single hovered hour with a few cents of spend
+ * reads exactly rather than as an approximation.
+ */
+function formatPreciseCost(n: number): string {
+  if (n === 0) return '$0.00';
+  if (n < 1) return `$${n.toFixed(4)}`;
+  return formatCost(n);
+}
+
+/**
+ * HS-8817 — wire the heatmap's interactive hover tooltip. The SVG is recreated
+ * on every render (`populateHeatmap` → `replaceChildren`), so listeners attach
+ * to the freshly-built `wrap` here rather than via a surviving delegate.
+ */
+function wireHeatmapTooltip(wrap: HTMLElement): void {
+  const svg = wrap.querySelector('svg');
+  const tooltip = wrap.querySelector<HTMLElement>('.telemetry-dashboard-heatmap-tooltip');
+  if (svg === null || tooltip === null) return;
+
+  const showFor = (cell: SVGRectElement, clientX: number, clientY: number): void => {
+    const when = cell.dataset.when ?? '';
+    const cost = formatPreciseCost(Number(cell.dataset.cost ?? '0'));
+    const prompts = Number(cell.dataset.prompts ?? '0');
+    tooltip.replaceChildren(
+      toElement(<div className="telemetry-dashboard-heatmap-tooltip-when">{when}</div>),
+      toElement(<div className="telemetry-dashboard-heatmap-tooltip-cost">{cost}</div>),
+      toElement(<div className="telemetry-dashboard-heatmap-tooltip-prompts">{`${String(prompts)} ${prompts === 1 ? 'prompt' : 'prompts'}`}</div>),
+    );
+    tooltip.hidden = false;
+    // Position within the wrap, nudged up-and-right of the cursor; clamp to the
+    // wrap so it never spills past the right edge.
+    const wrapRect = wrap.getBoundingClientRect();
+    const left = clientX - wrapRect.left + 12;
+    const top = clientY - wrapRect.top + 12;
+    const maxLeft = Math.max(0, wrap.clientWidth - tooltip.offsetWidth - 4);
+    tooltip.style.left = `${String(Math.min(left, maxLeft))}px`;
+    tooltip.style.top = `${String(top)}px`;
+  };
+
+  svg.addEventListener('mouseover', e => {
+    const cell = (e.target instanceof Element ? e.target.closest('.telemetry-dashboard-heatmap-cell') : null);
+    if (cell instanceof SVGRectElement) showFor(cell, e.clientX, e.clientY);
+  });
+  svg.addEventListener('mousemove', e => {
+    const cell = (e.target instanceof Element ? e.target.closest('.telemetry-dashboard-heatmap-cell') : null);
+    if (cell instanceof SVGRectElement) showFor(cell, e.clientX, e.clientY);
+    else tooltip.hidden = true;
+  });
+  svg.addEventListener('mouseleave', () => { tooltip.hidden = true; });
 }
 
 /**
@@ -1030,5 +1099,11 @@ export const _testingHS8572 = {
   getCached(w: DashboardWindow): DashboardPayload | undefined { return cachedPayloads.get(w); },
   isPolling(): boolean { return pollIntervalId !== null; },
   getCurrentWindow(): DashboardWindow { return currentDashboardWindow; },
+};
+
+/** HS-8817 — heatmap hover-tooltip internals exposed for unit testing. */
+export const _testingHS8817 = {
+  renderHourlyHeatmap,
+  formatPreciseCost,
 };
 
