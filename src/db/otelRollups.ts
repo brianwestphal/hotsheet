@@ -72,8 +72,48 @@ export interface RecentPrompt {
   promptId: string;
   ts: string;
   projectSecret: string;
-  /** Model name from the user_prompt event's attributes, when present. */
+  /** Model — from the user_prompt event's attributes, falling back to the model
+   *  on the prompt's `api_request` calls when the user_prompt event omits it. */
   model: string | null;
+  /** HS-8779 — best-effort short prompt-text snippet from the user_prompt record.
+   *  Null unless Claude Code is configured to log prompt text (otherwise the body
+   *  is just the event name, which `sanitizePromptSnippet` rejects). */
+  promptText: string | null;
+  /** HS-8779 — per-prompt aggregates summed over the prompt's `api_request`
+   *  events; null when the prompt has no such events (distinguishes "no data"
+   *  from a genuine zero). */
+  totalTokens: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  /** Wall-clock span of all the prompt's telemetry events, in milliseconds. */
+  durationMs: number | null;
+  /** Tool calls in the prompt (count of `tool_result` events). */
+  toolCount: number | null;
+}
+
+/** HS-8779 — coerce a numeric SQL aggregate (returned as a string, or null when
+ *  a LEFT JOIN found no matching rows) to a number or null. */
+function numOrNull(v: string | null): number | null {
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * HS-8779 — clean a raw `user_prompt` log body into a short, human-readable
+ * snippet, or null when there's nothing meaningful to show. Strips the hotsheet
+ * ticket marker comment and rejects a value that's just the dotted OTLP event
+ * name (`claude_code.user_prompt`) — the default log body when Claude Code isn't
+ * configured to log prompt text. Pure + exported for unit testing.
+ */
+export function sanitizePromptSnippet(raw: string | null, maxLen = 140): string | null {
+  if (raw === null) return null;
+  let s = raw.replace(/<!--\s*hotsheet:[^>]*-->/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s === '') return null;
+  if (/^claude_code\.[a-z_.]+$/i.test(s)) return null;
+  if (s.length > maxLen) s = s.slice(0, maxLen - 1).replace(/\s+\S*$/, '').trimEnd() + '…';
+  return s;
 }
 
 /**
@@ -569,9 +609,16 @@ export async function getQuerySourceRollup(
 
 /**
  * Recent prompts list. Returns the last `limit` `claude_code.user_prompt`
- * events, newest first. Lightweight — just the headline row data the
- * drawer renders. The per-prompt drilldown (HS-8149) fetches the full
- * timeline lazily on click.
+ * events, newest first, each enriched (HS-8779) with the per-prompt aggregates
+ * the user can actually act on — model, a prompt-text snippet (when logged),
+ * token usage, cost, wall-clock duration, and tool-call count — instead of the
+ * old "(unknown model) + uuid fragment" row that carried no signal.
+ *
+ * The aggregates are summed over the prompt's `api_request` events (cost/tokens,
+ * matching the per-ticket rollup's COALESCE-over-attribute-name-variants) and
+ * `tool_result` events (tool count), grouped by `prompt_id`; duration spans all
+ * of the prompt's events. The per-prompt drilldown (HS-8149) still fetches the
+ * full event timeline lazily on click.
  */
 export async function getRecentPrompts(
   projectSecret: string | null,
@@ -582,16 +629,74 @@ export async function getRecentPrompts(
   // Clamp limit to a sane bound — caller validates but defense-in-depth.
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
 
-  const result = await db.query<{ prompt_id: string; ts: string; project_secret: string; model: string | null }>(
-    `SELECT
-        prompt_id,
-        ts,
-        project_secret,
-        attributes_json->>'model' AS model
-     FROM otel_events
-     WHERE ${eventNameMatchSql('event_name', 'user_prompt')} AND prompt_id IS NOT NULL${clauses.clauses}
-     ORDER BY ts DESC
-     LIMIT ${String(safeLimit)}`,
+  const result = await db.query<{
+    prompt_id: string;
+    ts: string;
+    project_secret: string;
+    model: string | null;
+    prompt_text: string | null;
+    total_tokens: string | null;
+    input_tokens: string | null;
+    output_tokens: string | null;
+    cost_usd: string | null;
+    duration_ms: string | null;
+    tool_count: string | null;
+  }>(
+    // `recent` is the newest-N user_prompt events (the only project/window
+    // filter); the aggregate CTEs join back on `prompt_id IN recent` so they
+    // only scan the handful of prompts we're about to render. Cost/token
+    // attribute names vary by Claude Code version, so COALESCE over the common
+    // variants (mirrors `getPerTicketRollup`). LEFT JOINs keep a prompt with no
+    // api_request/tool_result events (→ null aggregates) rather than dropping it.
+    `WITH recent AS (
+       SELECT prompt_id, ts, project_secret,
+              attributes_json->>'model' AS up_model,
+              COALESCE(attributes_json->>'prompt', body_json->'body'->>'stringValue') AS prompt_text
+         FROM otel_events
+        WHERE ${eventNameMatchSql('event_name', 'user_prompt')} AND prompt_id IS NOT NULL${clauses.clauses}
+        ORDER BY ts DESC
+        LIMIT ${String(safeLimit)}
+     ),
+     api AS (
+       SELECT e.prompt_id,
+              SUM(COALESCE((e.attributes_json->>'cost')::numeric, (e.attributes_json->>'cost_usd')::numeric, 0)) AS cost_usd,
+              SUM(COALESCE((e.attributes_json->>'input_tokens')::numeric, 0)) AS input_tokens,
+              SUM(COALESCE((e.attributes_json->>'output_tokens')::numeric, 0)) AS output_tokens,
+              SUM(COALESCE(
+                (e.attributes_json->>'tokens')::numeric,
+                (e.attributes_json->>'total_tokens')::numeric,
+                (e.attributes_json->>'input_tokens')::numeric + (e.attributes_json->>'output_tokens')::numeric,
+                0
+              )) AS total_tokens,
+              MAX(e.attributes_json->>'model') AS api_model
+         FROM otel_events e
+        WHERE ${eventNameMatchSql('e.event_name', 'api_request')}
+          AND e.prompt_id IN (SELECT prompt_id FROM recent)
+        GROUP BY e.prompt_id
+     ),
+     tools AS (
+       SELECT prompt_id, COUNT(*) AS tool_count
+         FROM otel_events
+        WHERE ${eventNameMatchSql('event_name', 'tool_result')}
+          AND prompt_id IN (SELECT prompt_id FROM recent)
+        GROUP BY prompt_id
+     ),
+     dur AS (
+       SELECT prompt_id, EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) * 1000 AS duration_ms
+         FROM otel_events
+        WHERE prompt_id IN (SELECT prompt_id FROM recent)
+        GROUP BY prompt_id
+     )
+     SELECT r.prompt_id, r.ts, r.project_secret,
+            COALESCE(r.up_model, a.api_model) AS model,
+            r.prompt_text,
+            a.total_tokens, a.input_tokens, a.output_tokens, a.cost_usd,
+            d.duration_ms, t.tool_count
+       FROM recent r
+       LEFT JOIN api a ON a.prompt_id = r.prompt_id
+       LEFT JOIN tools t ON t.prompt_id = r.prompt_id
+       LEFT JOIN dur d ON d.prompt_id = r.prompt_id
+      ORDER BY r.ts DESC`,
     clauses.params,
   );
   return result.rows.map(r => ({
@@ -599,6 +704,13 @@ export async function getRecentPrompts(
     ts: typeof r.ts === 'string' ? r.ts : new Date(r.ts).toISOString(),
     projectSecret: r.project_secret,
     model: r.model,
+    promptText: sanitizePromptSnippet(r.prompt_text),
+    totalTokens: numOrNull(r.total_tokens),
+    inputTokens: numOrNull(r.input_tokens),
+    outputTokens: numOrNull(r.output_tokens),
+    costUsd: numOrNull(r.cost_usd),
+    durationMs: numOrNull(r.duration_ms),
+    toolCount: numOrNull(r.tool_count),
   }));
 }
 

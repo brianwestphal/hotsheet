@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatCost, formatRatePerMtok, formatTokens } from './telemetryFormat.js';
+import { formatCost, formatDuration, formatRatePerMtok, formatTokens } from './telemetryFormat.js';
 
 describe('formatCost (HS-8566)', () => {
   it('shows $0.00 for an exact zero — preserves cent-column parity', () => {
@@ -99,5 +99,33 @@ describe('formatTokens (HS-8670)', () => {
   it('uses an M tier with two decimals at >= 1M', () => {
     expect(formatTokens(1_000_000)).toBe('1.00M');
     expect(formatTokens(2_345_000)).toBe('2.35M');
+  });
+});
+
+describe('formatDuration (HS-8779)', () => {
+  it('shows milliseconds under a second', () => {
+    expect(formatDuration(0)).toBe('0ms');
+    expect(formatDuration(350)).toBe('350ms');
+    expect(formatDuration(999)).toBe('999ms');
+  });
+
+  it('shows one decimal of seconds under 10s', () => {
+    expect(formatDuration(1000)).toBe('1.0s');
+    expect(formatDuration(2500)).toBe('2.5s');
+  });
+
+  it('shows whole seconds between 10s and a minute', () => {
+    expect(formatDuration(12_400)).toBe('12s');
+    expect(formatDuration(59_500)).toBe('60s');
+  });
+
+  it('shows Mm Ss past a minute, dropping a zero seconds', () => {
+    expect(formatDuration(92_000)).toBe('1m 32s');
+    expect(formatDuration(120_000)).toBe('2m');
+  });
+
+  it('returns an em dash for negative / non-finite input', () => {
+    expect(formatDuration(-5)).toBe('—');
+    expect(formatDuration(NaN)).toBe('—');
   });
 });

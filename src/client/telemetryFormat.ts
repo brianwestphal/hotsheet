@@ -79,3 +79,19 @@ export function formatTokens(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(Math.round(n));
 }
+
+/**
+ * HS-8779 — compact wall-clock duration for the recent-prompts list. Sub-second
+ * in ms, single-/double-digit seconds with one decimal under 10 s, whole seconds
+ * up to a minute, then `Mm Ss`. Returns `—` for a negative / non-finite input.
+ */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const secs = ms / 1000;
+  if (secs < 10) return `${secs.toFixed(1)}s`;
+  if (secs < 60) return `${Math.round(secs)}s`;
+  const m = Math.floor(secs / 60);
+  const s = Math.round(secs % 60);
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
+}

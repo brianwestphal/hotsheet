@@ -338,6 +338,8 @@ Click a prompt row in the telemetry drawer (or the cost chip → drawer → row)
   - `claude_code.api_error` (if any).
 - Each row clickable → expands to show full `attributes_json` for debugging.
 
+**HS-8780 — contextualization.** A user reported the modal's raw event stream was opaque ("are these sub-prompts? messages? when would I use this?"). The body now leads with a plain-English summary line (`summarizeTimeline` in `src/client/promptDrilldown.tsx` — "Claude emitted N telemetry events over D handling this prompt — X model requests, Y tool calls"; pure + unit-tested) and a collapsible **"What is this?"** `<details>` explainer that defines a prompt timeline, names the common event types (`api_request` / `tool_decision` / `tool_result` / hooks / MCP / skills), and frames it as a debugging/curiosity trace (pointing at the dashboard cards for at-a-glance cost/token totals). The raw attribute/body expansion stays for power users.
+
 Mirrors the §49 reader-mode overlay shell (90vw / 90vh, X / Escape / backdrop dismiss). Single query per modal open, keyed by `prompt_id` (indexed).
 
 ### 67.10.4 Trace waterfall view (HS-8155, beta)

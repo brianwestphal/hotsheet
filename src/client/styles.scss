@@ -10778,6 +10778,43 @@ label.detail-details-label {
   overflow-y: auto;
 }
 
+// HS-8780 — plain-English summary + collapsible explainer at the top of the
+// prompt-timeline modal, so it leads with meaning before the raw event stream.
+.telemetry-drilldown-summary {
+  margin: 0;
+  padding: 14px 16px 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.telemetry-drilldown-intro {
+  margin: 0;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+
+  > summary {
+    cursor: pointer;
+    color: var(--accent);
+    width: max-content;
+    list-style-position: inside;
+  }
+
+  p {
+    margin: 8px 0 0;
+    line-height: 1.45;
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    background: var(--bg-hover);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+}
+
 .telemetry-drilldown-header-meta {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
@@ -11679,11 +11716,13 @@ label.detail-details-label {
   gap: 4px;
 }
 
+// HS-8779 — each row is now a two-line entry: a prompt summary headline on top,
+// and a muted meta line (timestamp + token/cost/duration/tool chips) below.
 .telemetry-recent-prompt {
-  display: grid;
-  grid-template-columns: max-content 1fr max-content;
-  gap: 12px;
-  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 8px;
   border-radius: calc(var(--radius) - 2px);
   font-size: 12px;
   cursor: pointer;
@@ -11692,19 +11731,39 @@ label.detail-details-label {
   &:hover { background: var(--bg-hover); }
 }
 
-.telemetry-recent-prompt-ts {
+.telemetry-recent-prompt-summary {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telemetry-recent-prompt-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
   color: var(--text-muted);
+}
+
+.telemetry-recent-prompt-ts {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
+}
+
+// HS-8779 — derived per-prompt metric chips on the meta line. A subtle dot
+// separator between chips reads cleaner than borders at this density.
+.telemetry-recent-prompt-chip {
+  white-space: nowrap;
+
+  &::before {
+    content: "·";
+    margin-right: 8px;
+    color: var(--text-muted);
+  }
 }
 
 .telemetry-recent-prompt-model { color: var(--text-secondary); }
-
-.telemetry-recent-prompt-id {
-  color: var(--text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: nowrap;
-}
 
 // HS-8497 — subscription-mode notice banner. Rendered above the drawer
 // + dashboard chrome whenever the global cost mode is `'subscription'`,

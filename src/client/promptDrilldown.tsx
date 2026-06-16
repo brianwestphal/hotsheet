@@ -2,6 +2,7 @@ import { getPromptTimeline } from '../api/index.js';
 import type { SpanRow } from '../db/otelQueries.js';
 import { toElement } from './dom.js';
 import { assembleSpanTree, findEnclosingSpanId, type SpanTreeNode } from './spanTree.js';
+import { formatDuration } from './telemetryFormat.js';
 
 /**
  * HS-8149 — per-prompt timeline drilldown modal (§67.10.3). Opens an
@@ -55,6 +56,39 @@ function formatTs(ts: string): string {
   } catch {
     return ts;
   }
+}
+
+/** Match a Claude Code event name in either the bare or `claude_code.`-dotted
+ *  spelling (both coexist in the live DB — HS-8639). */
+function isEvt(name: string, base: string): boolean {
+  return name === base || name === `claude_code.${base}`;
+}
+
+/**
+ * HS-8780 — a one-line, plain-English summary of what the timeline represents,
+ * so the modal leads with meaning ("Claude emitted N events over D handling this
+ * prompt — X model requests, Y tool calls") before the raw event stream. Pure +
+ * exported for unit testing.
+ */
+export function summarizeTimeline(timeline: {
+  entries: { eventName: string }[];
+  firstTs: string | null;
+  lastTs: string | null;
+}): string {
+  const events = timeline.entries.length;
+  if (events === 0) return 'No telemetry events were recorded for this prompt.';
+  const tools = timeline.entries.filter(e => isEvt(e.eventName, 'tool_result')).length;
+  const apis = timeline.entries.filter(e => isEvt(e.eventName, 'api_request')).length;
+  let durPhrase = '';
+  if (timeline.firstTs !== null && timeline.lastTs !== null) {
+    const ms = new Date(timeline.lastTs).getTime() - new Date(timeline.firstTs).getTime();
+    if (Number.isFinite(ms) && ms > 0) durPhrase = ` over ${formatDuration(ms)}`;
+  }
+  const detail: string[] = [];
+  if (apis > 0) detail.push(`${String(apis)} model ${apis === 1 ? 'request' : 'requests'}`);
+  if (tools > 0) detail.push(`${String(tools)} tool ${tools === 1 ? 'call' : 'calls'}`);
+  const tail = detail.length > 0 ? ` — ${detail.join(', ')}` : '';
+  return `Claude emitted ${String(events)} telemetry ${events === 1 ? 'event' : 'events'}${durPhrase} handling this prompt${tail}.`;
 }
 
 function formatTsRelative(ts: string, anchorTs: string | null): string {
@@ -369,6 +403,19 @@ function renderSpanTreeBody(timeline: PromptTimeline, firstTs: string | null): H
 function renderTimeline(timeline: PromptTimeline): HTMLElement {
   const root = toElement(
     <div className="telemetry-drilldown-body">
+      {/* HS-8780 — lead with a plain-English summary + a collapsible explainer,
+          so the modal answers "what am I looking at / when would I use this?"
+          before the raw event stream. */}
+      <p className="telemetry-drilldown-summary">{summarizeTimeline(timeline)}</p>
+      <details className="telemetry-drilldown-intro">
+        <summary>What is this?</summary>
+        <p>
+          A <strong>prompt timeline</strong> is the ordered list of OpenTelemetry events Claude Code emitted while working on a single message you sent. Each row is one event — a model call (<code>api_request</code>), a tool invocation and its result (<code>tool_decision</code> / <code>tool_result</code>), a hook, an MCP connection, a skill activation — shown with its time offset from the start of the prompt.
+        </p>
+        <p>
+          It's a <strong>debugging / curiosity view</strong>: use it to see step-by-step what Claude did and where the time went on a particular prompt. Click any row to expand its raw attributes and body. For at-a-glance cost and token totals, use the cards above instead — this is the detailed trace.
+        </p>
+      </details>
       <div className="telemetry-drilldown-header-meta">
         <div className="telemetry-drilldown-meta-row">
           <span className="telemetry-drilldown-meta-label">Prompt id:</span>

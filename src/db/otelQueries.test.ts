@@ -27,6 +27,7 @@ import {
   getToolRollup,
   getWindowTotals,
   resolveDashboardWindowSinceTs,
+  sanitizePromptSnippet,
 } from './otelQueries.js';
 
 const SECRET_A = 'secret-A';
@@ -384,6 +385,67 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       // limit 99999 should still work (clamped to 500); just ensure no SQL error.
       const result = await getRecentPrompts(SECRET_A, 99999);
       expect(result).toHaveLength(1);
+    });
+
+    // HS-8779 — each prompt is enriched with model / token / cost / duration /
+    // tool aggregates joined from its api_request + tool_result events.
+    it('enriches a prompt with model, token, cost, duration, and tool aggregates', async () => {
+      const db = await getDb();
+      const insert = (ts: Date, eventName: string, attrs: Record<string, unknown>): Promise<unknown> =>
+        db.query(
+          `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
+          [ts, SECRET_A, 'session-1', 'pA', eventName, JSON.stringify(attrs), JSON.stringify({})],
+        );
+      const t0 = new Date('2026-05-20T10:00:00Z');
+      const t1 = new Date('2026-05-20T10:00:02Z'); // +2s
+      const t2 = new Date('2026-05-20T10:00:05Z'); // +5s
+      await insert(t0, 'claude_code.user_prompt', {}); // model absent on user_prompt
+      await insert(t1, 'claude_code.api_request', { model: 'sonnet-4', input_tokens: 1000, output_tokens: 200, cost: 0.03 });
+      await insert(t2, 'claude_code.api_request', { input_tokens: 500, output_tokens: 100, cost: 0.02 });
+      await insert(t1, 'claude_code.tool_result', { tool_name: 'Bash' });
+      await insert(t2, 'claude_code.tool_result', { tool_name: 'Read' });
+
+      const [row] = await getRecentPrompts(SECRET_A, 10);
+      expect(row.promptId).toBe('pA');
+      expect(row.model).toBe('sonnet-4');   // user_prompt lacked it → fell back to api_request
+      expect(row.inputTokens).toBe(1500);
+      expect(row.outputTokens).toBe(300);
+      expect(row.totalTokens).toBe(1800);
+      expect(row.costUsd).toBeCloseTo(0.05, 5);
+      expect(row.toolCount).toBe(2);
+      expect(row.durationMs).toBe(5000);    // last event (t2) − first event (t0)
+    });
+
+    it('leaves aggregates null when a prompt has only the user_prompt event', async () => {
+      await insertPromptEvent({ ts: new Date('2026-05-20T10:00:00Z'), projectSecret: SECRET_A, promptId: 'pB', model: 'opus-4' });
+      const [row] = await getRecentPrompts(SECRET_A, 10);
+      expect(row.model).toBe('opus-4');
+      expect(row.totalTokens).toBeNull();
+      expect(row.costUsd).toBeNull();
+      expect(row.toolCount).toBeNull();
+      expect(row.durationMs).toBe(0); // single event → zero span
+    });
+  });
+
+  // HS-8779 — pure body→snippet sanitizer (no DB).
+  describe('sanitizePromptSnippet', () => {
+    it('returns null for null, empty, or event-name-only bodies', () => {
+      expect(sanitizePromptSnippet(null)).toBeNull();
+      expect(sanitizePromptSnippet('   ')).toBeNull();
+      expect(sanitizePromptSnippet('claude_code.user_prompt')).toBeNull();
+    });
+
+    it('strips the hotsheet ticket marker and collapses whitespace', () => {
+      expect(sanitizePromptSnippet('<!-- hotsheet:ticket=HS-42 -->  Fix the   login bug'))
+        .toBe('Fix the login bug');
+    });
+
+    it('truncates a long prompt at a word boundary with an ellipsis', () => {
+      const long = 'Please refactor the entire authentication subsystem and also update every single call site across the whole codebase right now';
+      const out = sanitizePromptSnippet(long, 40);
+      expect(out?.endsWith('…')).toBe(true);
+      expect((out ?? '').length).toBeLessThanOrEqual(40);
     });
   });
 

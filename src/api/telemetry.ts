@@ -77,6 +77,16 @@ export const RecentPromptSchema = z.object({
   ts: z.string(),
   projectSecret: z.string(),
   model: z.string().nullable(),
+  // HS-8779 — per-prompt enrichment. All optional + nullable so older
+  // servers / fixtures (which sent only the four fields above) still validate;
+  // the list UI treats a missing field the same as null ("no data").
+  promptText: z.string().nullable().default(null),
+  totalTokens: z.number().nullable().default(null),
+  inputTokens: z.number().nullable().default(null),
+  outputTokens: z.number().nullable().default(null),
+  costUsd: z.number().nullable().default(null),
+  durationMs: z.number().nullable().default(null),
+  toolCount: z.number().nullable().default(null),
 });
 export type RecentPrompt = z.infer<typeof RecentPromptSchema>;
 
