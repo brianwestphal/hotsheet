@@ -153,18 +153,23 @@ export async function getActiveAnnouncements(): Promise<Announcement[]> {
 }
 
 /**
- * HS-8803 — mark an entry listened (now), and reset the grace timer for every
- * LATER entry that's already been heard, so going back to an earlier page keeps
- * the ones after it from expiring while the user re-listens. Never-heard later
- * entries are left untouched (they stay "first non-listened" candidates).
+ * HS-8803 — mark an entry listened (now), AND treat the whole consumed prefix as
+ * heard: every EARLIER entry (by playback order `(position, id)`) is stamped
+ * `now()` too, so skipping ahead — or jumping to the live announcement — clears
+ * the backlog the user leapt over instead of leaving it piled up. Also resets
+ * the grace timer for every LATER already-heard entry, so scrubbing back to an
+ * earlier page doesn't expire the ones after it while the user re-listens.
+ * Never-heard LATER entries are left untouched (they stay "first non-listened"
+ * candidates). No-op when `id` doesn't exist (the scalar subquery is NULL, so
+ * every row comparison is NULL → unmatched).
  */
 export async function markAnnouncementListened(id: number): Promise<void> {
   const db = await getDb();
   await db.query(
     `UPDATE announcements SET listened_at = now()
-       WHERE id = $1
+       WHERE (position, id) <= (SELECT position, id FROM announcements WHERE id = $1)
           OR (listened_at IS NOT NULL
-              AND position > COALESCE((SELECT position FROM announcements WHERE id = $1), 2147483647))`,
+              AND (position, id) > (SELECT position, id FROM announcements WHERE id = $1))`,
     [id],
   );
 }

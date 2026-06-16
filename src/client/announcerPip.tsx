@@ -23,7 +23,7 @@ import { renderScript } from './announcerEmphasis.js';
 import { LiveSession } from './announcerLive.js';
 import { anchoredPosition, clampPosition, type Point } from './announcerPipPosition.js';
 import { AnnouncerPlayer, type PlayerState } from './announcerPlayer.js';
-import { clearAnnouncerSession, saveAnnouncerSession } from './announcerSession.js';
+import { clearAnnouncerSession, reelPrefixListenTargets, saveAnnouncerSession } from './announcerSession.js';
 import { getAnnouncerSpeechRate, RATE_STEPS, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { getProjectBusySecrets } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
@@ -285,10 +285,17 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         chipEl.hidden = true;
       }
       persistSession(); // HS-8804 — position changed
-      // HS-8803 — mark this entry heard (in its own project), which also resets
-      // the grace timer for later already-heard entries. Best-effort.
-      entry.listened_at = new Date().toISOString();
-      markAnnouncementListened(entry.id, entry.projectSecret).catch(() => { /* best-effort */ });
+      // HS-8803 — landing on an entry (incl. skipping ahead / jumping to live)
+      // marks the WHOLE consumed reel prefix heard, not just this entry, so the
+      // pages the user leapt over clear instead of piling up. The reel can span
+      // projects, so mark one representative per project (`reelPrefixListenTargets`);
+      // the server stamps each project's whole prefix from there. Best-effort.
+      const reel = player.getEntries();
+      const nowIso = new Date().toISOString();
+      for (let i = 0; i <= index && i < reel.length; i++) reel[i].listened_at = nowIso;
+      for (const target of reelPrefixListenTargets(reel, index)) {
+        markAnnouncementListened(target.id, target.projectSecret).catch(() => { /* best-effort */ });
+      }
     },
     onStateChange(state: PlayerState) {
       const playing = state === 'playing';

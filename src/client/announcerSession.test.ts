@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   type AnnouncerSession, clearAnnouncerSession, firstUnlistenedIndex, loadAnnouncerSession,
-  resolveRestoreIndex, saveAnnouncerSession,
+  reelPrefixListenTargets, resolveRestoreIndex, saveAnnouncerSession,
 } from './announcerSession.js';
 
 const SESSION: AnnouncerSession = {
@@ -111,5 +111,51 @@ describe('firstUnlistenedIndex (HS-8803)', () => {
       { listened_at: '2026-06-07T00:10:00.000Z' },
     ];
     expect(firstUnlistenedIndex(reel)).toBe(1);
+  });
+});
+
+describe('reelPrefixListenTargets (HS-8803 skip-ahead prefix marking)', () => {
+  const reel = [
+    { id: 1, projectSecret: 'a' },
+    { id: 2, projectSecret: 'b' },
+    { id: 3, projectSecret: 'a' },
+    { id: 4, projectSecret: 'b' },
+    { id: 5, projectSecret: 'c' },
+  ];
+
+  it('returns the FURTHEST entry per project within the prefix (0..index)', () => {
+    // Landing on index 3 (id 4): prefix is ids 1,2,3,4 → a's furthest is id 3,
+    // b's furthest is id 4. c (id 5) is past the prefix → excluded.
+    expect(reelPrefixListenTargets(reel, 3)).toEqual([
+      { id: 3, projectSecret: 'a' },
+      { id: 4, projectSecret: 'b' },
+    ]);
+  });
+
+  it('returns one target per project across the whole reel when landing on the last entry', () => {
+    // Jump-to-live: index = last → every project represented once, by its furthest entry.
+    expect(reelPrefixListenTargets(reel, 4)).toEqual([
+      { id: 3, projectSecret: 'a' },
+      { id: 4, projectSecret: 'b' },
+      { id: 5, projectSecret: 'c' },
+    ]);
+  });
+
+  it('keeps first-seen project order even as later entries advance the target', () => {
+    // a is seen first (index 0), b second (index 1) — order must stay a, b.
+    expect(reelPrefixListenTargets(reel, 4).map(t => t.projectSecret)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('landing on index 0 marks only that entry', () => {
+    expect(reelPrefixListenTargets(reel, 0)).toEqual([{ id: 1, projectSecret: 'a' }]);
+  });
+
+  it('clamps an out-of-range index to the reel length', () => {
+    expect(reelPrefixListenTargets(reel, 99)).toHaveLength(3); // all three projects
+  });
+
+  it('returns nothing for an empty reel or a negative index', () => {
+    expect(reelPrefixListenTargets([], 0)).toEqual([]);
+    expect(reelPrefixListenTargets(reel, -1)).toEqual([]);
   });
 });

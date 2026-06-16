@@ -357,9 +357,16 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
     then **excludes** any entry heard more than a 1-hour grace window ago, so heard
     pages clear an hour after listening instead of piling up (a user reported a
     63-entry reel). Never-heard (`listened_at IS NULL`) and recently-heard entries
-    are kept. Landing on an **earlier** entry resets the grace timer for every
+    are kept. Landing on an entry marks the **whole consumed prefix** heard, not
+    just that entry: every **earlier** entry (by playback order `(position, id)`)
+    is stamped `now()` too, so skipping ahead — or jumping to the live
+    announcement — clears the backlog the user leapt over instead of leaving it
+    piled up (HS-8803 follow-up). Landing also resets the grace timer for every
     **later already-heard** entry (so scrubbing back doesn't expire the pages ahead
-    of you); never-heard later entries are left NULL. A fresh "Listen" open starts
+    of you); never-heard later entries are left NULL. Because the reel can span
+    projects in "All Projects" mode, the client marks one representative entry per
+    project for the prefix (`reelPrefixListenTargets`), and the server stamps each
+    project's whole prefix from there. A fresh "Listen" open starts
     on the first non-listened entry (`firstUnlistenedIndex`), falling back to the
     newest when all are already heard. A one-time, sentinel-guarded backfill marks
     the pre-`announcer_last_listened_at` backlog as already-heard so existing reels

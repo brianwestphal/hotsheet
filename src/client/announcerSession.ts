@@ -85,3 +85,27 @@ export function firstUnlistenedIndex(reel: readonly { listened_at: string | null
   const idx = reel.findIndex(e => e.listened_at === null);
   return idx >= 0 ? idx : reel.length - 1;
 }
+
+/**
+ * HS-8803 — when the listener lands on reel `index` (including by skipping ahead
+ * or jumping to the live announcement), everything before it in the reel should
+ * count as heard. The reel can span projects, and each project is marked
+ * server-side from a single entry (the server stamps that entry's whole
+ * consumed prefix). So return ONE representative per project for the prefix
+ * `0..index`: each project's furthest (last-in-reel-order) entry. Returned in
+ * first-seen project order; empty for an out-of-range / empty reel. Pure.
+ */
+export function reelPrefixListenTargets<T extends { projectSecret: string }>(
+  reel: readonly T[],
+  index: number,
+): T[] {
+  const furthest = new Map<string, T>();
+  const end = Math.min(index, reel.length - 1);
+  for (let i = 0; i <= end; i++) {
+    // Map.set on an existing key updates the value WITHOUT reordering, so the
+    // map keeps first-seen project order while each value advances to the
+    // furthest entry of that project within the prefix.
+    furthest.set(reel[i].projectSecret, reel[i]);
+  }
+  return [...furthest.values()];
+}

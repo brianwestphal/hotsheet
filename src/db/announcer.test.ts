@@ -114,19 +114,40 @@ describe('listened tracking + 1h grace window (HS-8803)', () => {
     expect((await getActiveAnnouncements()).find(r => r.id === c.id)?.listened_at).toBeNull();
   });
 
-  it('markAnnouncementListened stamps the entry and resets only LATER already-heard entries', async () => {
+  it('marks the entry + the whole EARLIER prefix heard, resets LATER heard, leaves never-heard LATER NULL (HS-8803 skip-ahead)', async () => {
     const [a, b, c, d] = await insertAnnouncements(
       [{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }, { title: 'C', script: 'c' }, { title: 'D', script: 'd' }],
       null, null);
-    // a (earlier) + c (later) already heard long ago; d (later) never heard.
-    await stampListened(a.id, '3 hours');
+    // a (earlier) never heard; c (later) heard long ago; d (later) never heard.
     await stampListened(c.id, '3 hours');
-    // Re-listen to b: b is stamped now, c (later + heard) resets, a (earlier) and d (never-heard) untouched.
+    // Land on b (e.g. the user skipped ahead to it).
     await markAnnouncementListened(b.id);
-    // a stays beyond grace → hidden; b, c now recent and d still NULL → all shown.
-    expect((await getActiveAnnouncements()).map(r => r.id)).toEqual([b.id, c.id, d.id]);
-    // d (a never-heard later entry) must remain NULL — it's still a "first non-listened" candidate.
+    // a (earlier, was never-heard) is now stamped recent — the leapt-over page
+    // counts as heard and will clear after the grace window instead of piling up.
+    expect(await listenedAtOf(a.id)).not.toBeNull();
+    // d (never-heard LATER) stays NULL — still a "first non-listened" candidate.
     expect(await listenedAtOf(d.id)).toBeNull();
+    // a (now recent) + b + c (reset) + d (never-heard) → all within grace → all shown.
+    expect((await getActiveAnnouncements()).map(r => r.id)).toEqual([a.id, b.id, c.id, d.id]);
+  });
+
+  it('jumping to the last entry marks the ENTIRE reel heard (HS-8803 skip-to-live)', async () => {
+    const [a, b, c, d] = await insertAnnouncements(
+      [{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }, { title: 'C', script: 'c' }, { title: 'D', script: 'd' }],
+      null, null);
+    // Fresh backlog: nothing heard yet.
+    for (const e of [a, b, c, d]) expect(await listenedAtOf(e.id)).toBeNull();
+    // Skip to live → land on the last entry.
+    await markAnnouncementListened(d.id);
+    // Every leapt-over page is now heard (recent) so the backlog clears on grace.
+    for (const e of [a, b, c, d]) expect(await listenedAtOf(e.id)).not.toBeNull();
+  });
+
+  it('is a no-op for an unknown id (scalar subquery is NULL → no rows match)', async () => {
+    const [a, b] = await insertAnnouncements([{ title: 'A', script: 'a' }, { title: 'B', script: 'b' }], null, null);
+    await markAnnouncementListened(999_999);
+    expect(await listenedAtOf(a.id)).toBeNull();
+    expect(await listenedAtOf(b.id)).toBeNull();
   });
 
   it('one-time backfill clears the pre-cursor backlog from the legacy close-cursor, then is idempotent', async () => {

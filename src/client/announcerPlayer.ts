@@ -63,6 +63,10 @@ export class AnnouncerPlayer<T extends Announcement = Announcement> {
   getIndex(): number { return this.index; }
   getCount(): number { return this.entries.length; }
   getCurrentEntry(): T | null { return this.entries.at(this.index) ?? null; }
+  /** HS-8803 — the live reel (read-only), so the host can mark the consumed
+   *  prefix heard on a jump. The player owns its own copy, so the host can't
+   *  reach it any other way. */
+  getEntries(): readonly T[] { return this.entries; }
 
   /** Replace the reel (HS-8762 context switch) and restart from the top. */
   setEntries(entries: T[]): void {
