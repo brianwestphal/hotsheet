@@ -585,7 +585,7 @@ async function wireCommandCombobox(
     setTimeout(() => { popover.hidden = true; }, BLUR_DEBOUNCE_MS);
   });
   input.addEventListener('keydown', (e) => {
-    if (popover.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+    if (popover.hidden !== false && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       activeIndex = -1; render();
       e.preventDefault();
       return;
@@ -603,7 +603,7 @@ async function wireCommandCombobox(
     } else if (e.key === 'Enter' && activeIndex >= 0 && activeIndex < visibleMatches.length) {
       e.preventDefault();
       commit(visibleMatches[activeIndex]);
-    } else if (e.key === 'Escape' && !popover.hidden) {
+    } else if (e.key === 'Escape' && popover.hidden === false) {
       popover.hidden = true;
       activeIndex = -1;
     }

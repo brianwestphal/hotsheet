@@ -607,7 +607,9 @@ export const MODAL_OVERLAY_SELECTORS: readonly string[] = [
 
 /** True when an element is rendered + visible (not display:none / hidden). */
 function isElementVisible(el: HTMLElement): boolean {
-  if (el.hidden) return false;
+  // TS6's DOM lib widened `hidden` to `boolean | "until-found"`; `false` is the
+  // only "visible" value, so `!== false` means hidden (true or until-found).
+  if (el.hidden !== false) return false;
   // The server-rendered overlays toggle `style.display` directly; cheap
   // inline check first so we don't pay for a getComputedStyle round-trip
   // on every keystroke when nothing is open.

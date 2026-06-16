@@ -63,9 +63,9 @@
     "!dist/*.map"
   ],
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.100.1",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@electric-sql/pglite": "^0.4.5",
-    "@hono/node-server": "^1.19.9",
+    "@hono/node-server": "^2.0.5",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
@@ -83,18 +83,18 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.3",
+    "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.59.1",
     "@tauri-apps/cli": "^2",
     "@types/marked": "^5.0.2",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.9.3",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.0",
     "c8": "^11.0.0",
-    "domotion-svg": "^0.8.0",
+    "domotion-svg": "^0.12.0",
     "dotenv": "^17.4.1",
-    "esbuild": "^0.27.3",
-    "eslint": "^9.39.3",
+    "esbuild": "^0.28.1",
+    "eslint": "^9.39.4",
     "eslint-plugin-import-x": "^4.16.1",
     "eslint-plugin-kerfjs": "^0.14.0",
     "eslint-plugin-simple-import-sort": "^12.1.1",
@@ -105,7 +105,7 @@
     "sass": "^1.97.3",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.56.1",
     "vitest": "^4.1.0"
   }
