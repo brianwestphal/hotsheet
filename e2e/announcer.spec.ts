@@ -466,8 +466,24 @@ function stubAnnouncerTts(page: import('@playwright/test').Page): Promise<void> 
   });
 }
 
+// HS-8854 — make the model-dropdown settings tests hermetic. They read
+// `getGlobalConfig()` and the model `<select>`'s change handler writes
+// `PATCH /global-config`. Left to hit the real (temp) server, selecting "Local
+// model" persists `announcerModel: 'local'`, which leaks into later tests / the
+// 2nd `--repeat-each` run (the dropdown then shows 'local' instead of the
+// expected default haiku). Mock GET to a fixed empty config (all fields optional
+// → the panel renders with defaults) and swallow PATCH so nothing persists. The
+// regex matches `/api/global-config` exactly (with or without `?project=…`) and
+// not the unrelated `/plugins/<id>/global-config` endpoints.
+function hermeticGlobalConfig(page: import('@playwright/test').Page): Promise<void> {
+  return page.route(/\/api\/global-config(\?|$)/, (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({}),
+  }));
+}
+
 test('local-provider settings: model option + field toggle + Listen gate (HS-8798)', async ({ page }) => {
   await stubAnnouncerTts(page);
+  await hermeticGlobalConfig(page);
 
   // Enabled project, NO Anthropic key, but a reachable local endpoint with models.
   await page.route('**/api/announcer/overview**', (route) => route.fulfill({
@@ -532,6 +548,7 @@ test('local-provider settings: model option + field toggle + Listen gate (HS-879
 
 test('local-provider settings: "Local model" option hidden when unavailable (HS-8798)', async ({ page }) => {
   await stubAnnouncerTts(page);
+  await hermeticGlobalConfig(page);
 
   await page.route('**/api/announcer/overview**', (route) => route.fulfill({
     status: 200, contentType: 'application/json',
