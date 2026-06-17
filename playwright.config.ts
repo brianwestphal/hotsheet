@@ -9,7 +9,13 @@ export default defineConfig({
   testDir: 'e2e',
   testIgnore: ['**/smoke/**'],  // Smoke tests use playwright.config.smoke.ts with their own server
   timeout: 30_000,
-  retries: 0,
+  // Retry on CI only. The single-worker browser suite runs on a shared, often
+  // loaded ubuntu runner where individual specs intermittently flake on timing
+  // (e.g. a slow /api/backups/now, a sidebar re-render mid-interaction) — these
+  // pass on a clean retry and pass locally. Retries keep one flaky spec from
+  // failing the whole job; they do NOT mask a deterministic failure (which fails
+  // every attempt). Local runs keep retries: 0 so flakes surface during dev.
+  retries: process.env.CI !== undefined && process.env.CI !== '' ? 2 : 0,
   workers: 1,
   use: {
     baseURL: 'http://localhost:4190',

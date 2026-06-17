@@ -31,7 +31,14 @@ async function setCommandsAndReload(page: Page, items: unknown[]): Promise<void>
 
 /** Press and hold the locator past the 500ms long-press threshold, then release. */
 async function longPress(page: Page, locator: import('@playwright/test').Locator, holdMs = 700): Promise<void> {
-  await locator.scrollIntoViewIfNeeded();
+  // The command sidebar re-renders its buttons after a settings reload, so the
+  // target can detach the instant we reach for it — a bare
+  // `scrollIntoViewIfNeeded()` then throws "Element is not attached to the DOM"
+  // (HS-8855). Wait for it to be stably visible, then let `hover()` (which
+  // auto-scrolls + waits for attached/stable/hittable) settle it before we read
+  // its box and drive the raw mouse.
+  await expect(locator).toBeVisible({ timeout: 6000 });
+  await locator.hover();
   const box = await locator.boundingBox();
   if (box === null) throw new Error('long-press target has no bounding box');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
