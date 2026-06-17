@@ -367,6 +367,64 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     showTicketContextMenu(makeContextMenuEvent(), t);
     expect(menuLabels()).not.toContain('Read Latest Note');
   });
+
+  // HS-8841 — when there are no notes, the item falls back to reading the
+  // Details (description) and is relabeled "Read Description"; it's disabled
+  // only when there is neither a note nor a description.
+  it('falls back to "Read Description" (enabled) when there are no notes but a description exists (HS-8841)', () => {
+    const t = makeTicket(110, { notes: '', details: '## The description body' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(110);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const labels = menuLabels();
+    expect(labels).toContain('Read Description');
+    expect(labels).not.toContain('Read Latest Note');
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Description');
+    expect(readItem).toBeDefined();
+    expect(readItem!.classList.contains('disabled')).toBe(false);
+
+    readItem!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const overlay = document.querySelector('.reader-mode-overlay');
+    expect(overlay).not.toBeNull();
+    expect(overlay!.textContent).toContain('The description body');
+    // Only the Details entry exists → no nav chevrons.
+    expect(overlay!.querySelector('.reader-mode-prev')).toBeNull();
+  });
+
+  it('also falls back to the description when every note is placeholder-only (HS-8841)', () => {
+    const t = makeTicket(111, { notes: notesWith('', '   '), details: 'Plain description text' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(111);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Description');
+    expect(readItem).toBeDefined();
+    expect(readItem!.classList.contains('disabled')).toBe(false);
+  });
+
+  it('stays disabled (Read Latest Note) when there is neither a note nor a description (HS-8841)', () => {
+    const t = makeTicket(112, { notes: '', details: '' });
+    ticketsStore.actions.setTickets([t]);
+    state.selectedIds.add(112);
+    state.tickets = [t];
+
+    showTicketContextMenu(makeContextMenuEvent(), t);
+
+    const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Latest Note');
+    expect(readItem).toBeDefined();
+    expect(readItem!.classList.contains('disabled')).toBe(true);
+    // No description, so it does NOT relabel to "Read Description".
+    expect(menuLabels()).not.toContain('Read Description');
+  });
 });
 
 /**

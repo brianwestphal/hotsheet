@@ -6,7 +6,7 @@ import { buildFeedbackNav, getTicketFeedbackState, openFeedbackDialogForNote, su
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
-import { buildCombinedReaderEntries, buildNoteReaderTitle, openReaderOverlay } from './readerOverlay.js';
+import { buildCombinedReaderEntries, openReaderOverlay } from './readerOverlay.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
@@ -126,29 +126,45 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   // note, so a ticket with a single note opened with no chevrons and the
   // Details were unreachable from "Read Latest Note" (HS-8598). Including
   // Details means a single-note ticket that has Details now also gets
-  // chevrons (combined length is 2). The item stays disabled when there is
-  // no non-empty note (it's "Read Latest *Note*").
+  // chevrons (combined length is 2). HS-8841 — when there is no non-empty
+  // note, the item falls back to reading the Details (relabeled "Read
+  // Description") and is disabled ONLY when there is neither a note nor a
+  // description.
   if (state.selectedIds.size === 1) {
     const parsedNotes = parseNotesJson(ticket.notes);
     const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '');
     const latestNote = nonEmptyNotes.length > 0 ? nonEmptyNotes[nonEmptyNotes.length - 1] : null;
-    addActionItem(menu, 'Read Latest Note', () => {
-      if (latestNote === null) return;
+    // HS-8841 — when the ticket has no non-empty note, fall back to reading the
+    // Details (description). The item is now only disabled when there is NEITHER
+    // a note NOR a description. Relabel to "Read Description" in the fallback so
+    // the menu item name matches what it actually opens.
+    const hasDescription = ticket.details.trim() !== '';
+    const readTarget: 'note' | 'details' | null =
+      latestNote !== null ? 'note' : (hasDescription ? 'details' : null);
+    const label = readTarget === 'details' ? 'Read Description' : 'Read Latest Note';
+    addActionItem(menu, label, () => {
+      if (readTarget === null) return;
       const combined = buildCombinedReaderEntries({
         ticketNumber: ticket.ticket_number,
         ticketTitle: ticket.title,
         detailsMarkdown: ticket.details,
         notes: parsedNotes,
       });
-      const initialIndex = Math.max(0, combined.findIndex((e) => e.id === latestNote.id));
+      // Anchor on the latest note, or the Details entry in the fallback case.
+      // `readTarget !== null` guarantees the anchor exists in `combined` (a
+      // non-empty note, or a non-empty Details), so `combined` is non-empty
+      // and `combined[initialIndex]` resolves.
+      const anchorId = latestNote !== null ? (latestNote.id ?? '') : 'details';
+      const initialIndex = Math.max(0, combined.findIndex((e) => e.id === anchorId));
+      const anchor = combined[initialIndex];
       openReaderOverlay({
-        title: buildNoteReaderTitle(latestNote.created_at),
-        markdown: latestNote.text,
+        title: anchor.title,
+        markdown: anchor.markdown,
         navigation: combined.length > 1
           ? { entries: combined.map((e) => ({ title: e.title, markdown: e.markdown })), initialIndex }
           : undefined,
       });
-    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: latestNote === null });
+    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: readTarget === null });
   }
 
   // HS-8414 — separator under the read / feedback inspection block when

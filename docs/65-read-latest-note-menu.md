@@ -1,7 +1,8 @@
 # §65 Read Latest Note context-menu item (HS-8401)
 
 A right-click affordance on ticket rows + column-view cards that opens
-the most recent non-empty note in the §49 reader-mode overlay. The
+the most recent non-empty note in the §49 reader-mode overlay — or, when
+the ticket has no notes, the ticket's description (HS-8841, see §65.3). The
 existing entry-points to the reader (the `book-open-text` icon next to
 each note's timestamp row, plus the Details label button) require the
 user to first select the ticket, scroll to the relevant note, then
@@ -42,16 +43,25 @@ appears on either surface without duplicate wiring.
   at a time; a "read latest note across N tickets" affordance would
   need a multi-ticket overlay variant which doesn't exist.
 
-## §65.3 Empty-state
+## §65.3 Description fallback + empty-state (HS-8841)
 
-The item is **disabled** (greyed out, present) when the ticket has no
-non-empty notes. The DOM is rendered with the `.disabled` class on the
-`.context-menu-item` element; the click listener is omitted so the
-item is unreachable but visible. Users learn the affordance exists
-even on tickets that don't yet have content.
+When the ticket has **no non-empty note**, the item **falls back to
+reading the ticket's Details (description)** and is **relabeled "Read
+Description"** so its name matches what it opens (anchored on the
+combined list's `details` entry; since the notes are all empty the
+combined list is just that one entry, so no nav chevrons appear). The
+item is **disabled** (greyed out, present) ONLY when the ticket has
+**neither a non-empty note NOR a non-empty description** — the DOM gets
+the `.disabled` class and the click listener is omitted, so users still
+learn the affordance exists on truly empty tickets.
 
-A note counts as "empty" when its `text` is empty after `.trim()`. Two
-practical cases:
+So the precedence is: latest non-empty note → else the description →
+else disabled. The label is "Read Latest Note" when a note is shown (or
+when fully disabled), and "Read Description" in the fallback.
+
+A note counts as "empty" when its `text` is empty after `.trim()`; the
+description counts as present when `ticket.details.trim() !== ''`. Two
+practical empty-note cases:
 
 - The ticket's `notes` field is an empty string or `[]`.
 - The notes array contains only placeholder rows whose `text` is `''`,
@@ -61,8 +71,8 @@ practical cases:
 
 The "find latest non-empty note" search walks the notes array from
 the end backwards, returning the first row whose `text` is non-empty
-after trimming. Returns `null` when no row matches, which is the
-signal the menu item uses to apply the `disabled` class.
+after trimming. `null` (no matching note) now triggers the description
+fallback rather than disabling outright.
 
 ## §65.4 Implementation pointer
 
