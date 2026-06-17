@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getFeedbackDrafts } from '../api/index.js';
 import {
+  buildFeedbackNav,
   buildOverlay,
   openFeedbackDialogForNote,
   parseFeedbackPrefix,
@@ -294,6 +295,81 @@ describe('buildOverlay ticket-ref linkification (HS-8338)', () => {
     const overlay = buildOverlay('HS-9001', []);
     expect(overlay.querySelector('.feedback-prompt-empty')).not.toBeNull();
     expect(overlay.querySelectorAll('.feedback-prompt-block .ticket-ref').length).toBe(0);
+  });
+});
+
+describe('buildFeedbackNav (HS-8836)', () => {
+  const fbNote = { id: 'n-fb', text: 'FEEDBACK NEEDED: confirm the plan?', created_at: '2026-06-17T03:00:00Z' };
+
+  it('returns undefined when there is nothing prior to page to (only the feedback note)', () => {
+    const nav = buildFeedbackNav(
+      { ticketNumber: 'HS-1', ticketTitle: 'T', detailsMarkdown: '', notes: [fbNote] },
+      'n-fb',
+    );
+    expect(nav).toBeUndefined();
+  });
+
+  it('builds [Details, ...notes] entries anchored on the feedback note when there is prior context', () => {
+    const nav = buildFeedbackNav(
+      {
+        ticketNumber: 'HS-1',
+        ticketTitle: 'T',
+        detailsMarkdown: 'The description.',
+        notes: [
+          { id: 'n0', text: 'an earlier note', created_at: '2026-06-17T01:00:00Z' },
+          fbNote,
+        ],
+      },
+      'n-fb',
+    );
+    expect(nav).not.toBeUndefined();
+    // Details + the two non-empty notes = 3 entries; the feedback note is last.
+    expect(nav!.entries.length).toBe(3);
+    expect(nav!.activeNoteId).toBe('n-fb');
+    expect(nav!.entries[nav!.entries.length - 1].id).toBe('n-fb');
+    // Every entry carries a title + markdown for the read-only context render.
+    expect(nav!.entries.every(e => typeof e.title === 'string' && typeof e.markdown === 'string')).toBe(true);
+  });
+
+  it('skips empty notes (they have no reader entry)', () => {
+    const nav = buildFeedbackNav(
+      {
+        ticketNumber: 'HS-1', ticketTitle: 'T', detailsMarkdown: '',
+        notes: [
+          { id: 'empty', text: '   ', created_at: '2026-06-17T01:00:00Z' },
+          { id: 'n0', text: 'a real earlier note', created_at: '2026-06-17T02:00:00Z' },
+          fbNote,
+        ],
+      },
+      'n-fb',
+    );
+    // Empty note dropped → 2 entries (the earlier note + the feedback note).
+    expect(nav!.entries.map(e => e.id)).toEqual(['n0', 'n-fb']);
+  });
+});
+
+describe('buildOverlay nav chevrons (HS-8836)', () => {
+  it('omits the nav chevrons + context view by default (single-entry / no nav)', () => {
+    const overlay = buildOverlay('HS-9001', []);
+    expect(overlay.querySelector('.feedback-nav-controls')).toBeNull();
+    expect(overlay.querySelector('.feedback-context-view')).toBeNull();
+    expect(overlay.querySelector('.feedback-nav-caption')).toBeNull();
+  });
+
+  it('renders prev/next chevrons + a hidden context view when showNav is true', () => {
+    const overlay = buildOverlay('HS-9001', [], true);
+    expect(overlay.querySelector('.feedback-nav-prev')).not.toBeNull();
+    expect(overlay.querySelector('.feedback-nav-next')).not.toBeNull();
+    const contextView = overlay.querySelector<HTMLElement>('.feedback-context-view');
+    const caption = overlay.querySelector<HTMLElement>('.feedback-nav-caption');
+    expect(contextView).not.toBeNull();
+    expect(caption).not.toBeNull();
+    // Both start hidden — the dialog opens on the interactive prompt-stack.
+    expect(contextView!.hidden).toBe(true);
+    expect(caption!.hidden).toBe(true);
+    // The response box + buttons still render (Option 1 — pinned below).
+    expect(overlay.querySelector('#feedback-catchall-text')).not.toBeNull();
+    expect(overlay.querySelector('#feedback-submit')).not.toBeNull();
   });
 });
 

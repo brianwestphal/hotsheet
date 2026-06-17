@@ -278,6 +278,40 @@ describe('ticketsStore — filteredTickets derived signal', () => {
     ticketsStore.actions.patchFilter({ search: 'urgent' });
     expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
   });
+
+  // HS-8646 — a multi-word search matches the UNION of its words: every
+  // whitespace-separated term must appear in at least one column (AND across
+  // terms, OR across columns), in any order — NOT the literal phrase.
+  it('multi-word search requires every word, matchable across different columns (HS-8646)', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { title: 'Login crash', details: 'happens on a bug in auth' }),
+      makeTicket(2, { title: 'Login works fine', details: 'no problems' }),
+      makeTicket(3, { title: 'Unrelated', details: 'a bug somewhere' }),
+    ]);
+    // "login bug": #1 has "login" in title + "bug" in details → match.
+    // #2 has "login" but no "bug"; #3 has "bug" but no "login" → both excluded.
+    ticketsStore.actions.patchFilter({ search: 'login bug' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
+  });
+
+  it('multi-word search is order-independent and not a literal phrase (HS-8646)', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { title: 'bug in the login flow' }),
+    ]);
+    // A literal-phrase search for "login bug" would NOT match this title; the
+    // union-of-words search does, because both words are present.
+    ticketsStore.actions.patchFilter({ search: 'login bug' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
+  });
+
+  it('splits on any whitespace run, ignoring extra spaces (HS-8646)', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(1, { title: 'apple banana' }),
+      makeTicket(2, { title: 'apple only' }),
+    ]);
+    ticketsStore.actions.patchFilter({ search: '  apple   banana ' });
+    expect(filteredTickets.value.map(t => t.id)).toEqual([1]);
+  });
 });
 
 /**

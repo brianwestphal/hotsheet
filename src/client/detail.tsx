@@ -6,7 +6,7 @@ import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTic
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
+import { buildFeedbackNav, getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
@@ -441,6 +441,14 @@ async function loadDetail(id: number) {
   // gate is held until drafts arrive (or fail) and we pass the matching
   // draft as `draftSeed` when one is found.
   const feedbackState = getTicketFeedbackState(parsedNotes);
+  // HS-8836 — context nav for the auto-shown feedback dialog: the same
+  // [Details + notes] list the reader pages, anchored on the feedback note.
+  const feedbackNav = feedbackState !== null
+    ? buildFeedbackNav(
+        { ticketNumber: ticket.ticket_number, ticketTitle: ticket.title, detailsMarkdown: ticket.details, notes: parsedNotes },
+        feedbackState.noteId,
+      )
+    : undefined;
   if (!noteBeingEdited || document.activeElement !== noteBeingEdited) {
     renderNotes(ticket.id, parsedNotes);
     // HS-7599: load any feedback drafts for this ticket and re-render once
@@ -464,9 +472,9 @@ async function loadDetail(id: number) {
         requestAnimationFrame(() => {
           if (seed !== null) {
             // HS-8603 — canonical seed mapping (shared with the click paths).
-            showFeedbackDialog(ticket.id, ticket.ticket_number, seed.promptText, toDraftSeed(seed));
+            showFeedbackDialog(ticket.id, ticket.ticket_number, seed.promptText, toDraftSeed(seed), undefined, feedbackNav);
           } else {
-            showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt);
+            showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt, undefined, undefined, feedbackNav);
           }
         });
       }
@@ -476,7 +484,7 @@ async function loadDetail(id: number) {
       // gets prompted.
       if (feedbackState !== null && state.activeTicketId === ticket.id
           && shouldAutoShowFeedback(ticket.id, feedbackState.noteId)) {
-        requestAnimationFrame(() => showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt));
+        requestAnimationFrame(() => showFeedbackDialog(ticket.id, ticket.ticket_number, feedbackState.prompt, undefined, undefined, feedbackNav));
       }
     });
   } else if (feedbackState !== null && shouldAutoShowFeedback(id, feedbackState.noteId)) {
@@ -484,7 +492,7 @@ async function loadDetail(id: number) {
     // drafts re-render. Auto-show without a seed — losing the edit by
     // clobbering with renderNotes is worse than showing a stale form;
     // the user can dismiss the dialog and pick the draft from the list.
-    requestAnimationFrame(() => showFeedbackDialog(id, ticket.ticket_number, feedbackState.prompt));
+    requestAnimationFrame(() => showFeedbackDialog(id, ticket.ticket_number, feedbackState.prompt, undefined, undefined, feedbackNav));
   }
 
   // Meta info

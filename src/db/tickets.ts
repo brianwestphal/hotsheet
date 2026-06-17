@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { readFileSettings } from '../file-settings.js';
-import { isExactTicketIdSearch } from '../ticketNumber.js';
+import { isExactTicketIdSearch, splitSearchTerms } from '../ticketNumber.js';
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
 import { getDataDir, getDb } from './connection.js';
 import { generateNoteId, normalizeNotesAppend, parseNotes } from './notes.js';
@@ -331,9 +331,17 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
       // column matches text content inline. Substrings that collide with JSON
       // structural keys (`text`, `id`, `created_at`) or ISO timestamps will
       // over-match, but typical searches are content words that map cleanly.
-      conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx} OR notes ILIKE $${paramIdx})`);
-      values.push(`%${escapeIlike(filters.search)}%`);
-      paramIdx++;
+      // HS-8646 — a multi-word search matches the UNION of its words: split on
+      // whitespace and require EVERY term to appear in at least one column (AND
+      // across terms, OR across the five columns), in any order — NOT the literal
+      // phrase. So `login bug` matches a ticket titled "bug" whose details
+      // mention "login". `splitSearchTerms` is the shared split rule with the
+      // client's `ticketMatchesSearch` so the two layers can't drift.
+      for (const term of splitSearchTerms(filters.search)) {
+        conditions.push(`(title ILIKE $${paramIdx} OR details ILIKE $${paramIdx} OR ticket_number ILIKE $${paramIdx} OR tags ILIKE $${paramIdx} OR notes ILIKE $${paramIdx})`);
+        values.push(`%${escapeIlike(term)}%`);
+        paramIdx++;
+      }
     }
   }
 
@@ -408,21 +416,30 @@ export async function countSearchMatchesInExcludedStatuses(
   // "Include {N} backlog/archive" rows are redundant. Return zeroes so
   // they don't render alongside the matched ticket.
   if (isExactTicketIdSearch(search)) return { backlog: 0, archive: 0 };
+  // HS-8646 — mirror `buildTicketWhereClause`'s union-of-words semantics so the
+  // "Include {N} backlog/archive" counts stay in sync with the list the toggle
+  // reveals (a phrase-vs-union mismatch would re-introduce the HS-8380 desync).
+  const terms = splitSearchTerms(search);
+  if (terms.length === 0) return { backlog: 0, archive: 0 };
   const db = await getDb();
-  const like = `%${escapeIlike(search)}%`;
+  // One 5-column OR group per term, AND-ed together. `$1..$N` line up with `values`.
+  const termConditions = terms.map((_, i) => {
+    const p = i + 1;
+    return `(title ILIKE $${p} OR details ILIKE $${p} OR ticket_number ILIKE $${p} OR tags ILIKE $${p} OR notes ILIKE $${p})`;
+  });
+  const matchClause = termConditions.join(' AND ');
+  const values = terms.map(term => `%${escapeIlike(term)}%`);
   // Run both counts in parallel — independent queries, server doesn't care.
   const [backlogRes, archiveRes] = await Promise.all([
     db.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM tickets
-       WHERE status = 'backlog'
-         AND (title ILIKE $1 OR details ILIKE $1 OR ticket_number ILIKE $1 OR tags ILIKE $1 OR notes ILIKE $1)`,
-      [like],
+       WHERE status = 'backlog' AND (${matchClause})`,
+      values,
     ),
     db.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM tickets
-       WHERE status = 'archive'
-         AND (title ILIKE $1 OR details ILIKE $1 OR ticket_number ILIKE $1 OR tags ILIKE $1 OR notes ILIKE $1)`,
-      [like],
+       WHERE status = 'archive' AND (${matchClause})`,
+      values,
     ),
   ]);
   const backlog = Number.parseInt(backlogRes.rows[0]?.count ?? '0', 10) || 0;

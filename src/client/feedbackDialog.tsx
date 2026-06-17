@@ -13,9 +13,50 @@ import {
 } from './feedbackParser.js';
 import type { FeedbackDraft, NoteEntry } from './noteRenderer.js';
 import { delegate, morph } from './reactive.js';
+import { buildCombinedReaderEntries, renderReaderBodyHtml } from './readerOverlay.js';
 import { loadTickets } from './ticketList.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
+
+// HS-8836 — Lucide chevron glyphs for the feedback dialog's prev/next nav,
+// matching the reader overlay's `CHEVRON_UP_SVG` / `CHEVRON_DOWN_SVG`.
+const NAV_ICON_ATTRS = {
+  xmlns: 'http://www.w3.org/2000/svg', width: '16', height: '16', viewBox: '0 0 24 24',
+  fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+} as const;
+const CHEVRON_UP = <svg {...NAV_ICON_ATTRS}><path d="m18 15-6-6-6 6"/></svg>;
+const CHEVRON_DOWN = <svg {...NAV_ICON_ATTRS}><path d="m6 9 6 6 6-6"/></svg>;
+
+/**
+ * HS-8836 — navigation context for the feedback dialog. The chevrons page a
+ * read-only view through the ticket's combined [Details + notes] entries (the
+ * same list the reader overlay builds), so the user can review previous notes
+ * and the description WITHOUT leaving their in-progress response — Option 1:
+ * the response box + action buttons stay pinned, only the upper area pages.
+ * `entries` is the combined list (newest note last); `activeNoteId` is the
+ * feedback note whose entry shows the interactive prompt-stack instead of a
+ * read-only render.
+ */
+export interface FeedbackNav {
+  entries: { id: string; title: string; markdown: string }[];
+  activeNoteId: string;
+}
+
+/**
+ * HS-8836 — build the feedback dialog's nav from a ticket's details + notes,
+ * reusing the reader overlay's `buildCombinedReaderEntries` so the dialog and
+ * the reader page the exact same list. Returns `undefined` when there's nothing
+ * to page to (only the feedback note, no prior notes or Details) so the caller
+ * opens the dialog without chevrons.
+ */
+export function buildFeedbackNav(
+  input: { ticketNumber: string | null | undefined; ticketTitle: string | null | undefined; detailsMarkdown: string; notes: readonly NoteEntry[] },
+  activeNoteId: string,
+): FeedbackNav | undefined {
+  const entries = buildCombinedReaderEntries(input);
+  if (entries.length <= 1) return undefined;
+  return { entries: entries.map(e => ({ id: e.id, title: e.title, markdown: e.markdown })), activeNoteId };
+}
 
 const STANDARD_PHRASE = 'FEEDBACK NEEDED';
 const IMMEDIATE_PHRASE = 'IMMEDIATE FEEDBACK NEEDED';
@@ -208,6 +249,7 @@ export async function openFeedbackDialogForNote(
   ticketNumber: string,
   prompt: string,
   noteId: string | undefined,
+  nav?: FeedbackNav,
 ): Promise<void> {
   let seed: FeedbackDraftSeed | undefined;
   if (noteId !== undefined && noteId !== '') {
@@ -218,7 +260,7 @@ export async function openFeedbackDialogForNote(
       if (picked !== null) seed = toDraftSeed(picked);
     } catch { /* fall back to the bare prompt below */ }
   }
-  showFeedbackDialog(ticketId, ticketNumber, prompt, seed, noteId);
+  showFeedbackDialog(ticketId, ticketNumber, prompt, seed, noteId, nav);
 }
 
 /**
@@ -480,6 +522,7 @@ export function showFeedbackDialog(
   prompt: string,
   draftSeed?: FeedbackDraftSeed,
   parentNoteId?: string,
+  nav?: FeedbackNav,
 ) {
   // Clear any prior feedback dialog.
   document.querySelectorAll('.feedback-dialog-overlay').forEach(el => el.remove());
@@ -489,7 +532,9 @@ export function showFeedbackDialog(
   const blocks = draftSeed !== undefined ? draftSeed.partitions.blocks : parseFeedbackBlocks(prompt);
   const effectivePrompt = draftSeed !== undefined ? draftSeed.promptText : prompt;
   const effectiveParentNoteId = draftSeed?.parentNoteId ?? parentNoteId ?? null;
-  const overlay = buildOverlay(ticketNumber, blocks);
+  // HS-8836 — only show the nav chevrons when there's something to page to.
+  const showNav = nav !== undefined && nav.entries.length > 1;
+  const overlay = buildOverlay(ticketNumber, blocks, showNav);
 
   if (draftSeed !== undefined) restoreDraftSeedToOverlay(overlay, draftSeed);
 
@@ -549,8 +594,70 @@ export function showFeedbackDialog(
   overlay.querySelector('#feedback-save-draft')!.addEventListener('click', buildSaveDraftHandler(ctx));
   overlay.querySelector('#feedback-submit')!.addEventListener('click', buildSubmitHandler(ctx));
 
+  // HS-8836 — wire the prev/next context navigation when there's a list to page.
+  if (showNav) wireFeedbackNav(overlay, nav);
+
   document.body.appendChild(overlay);
   focusFirstInput(overlay);
+}
+
+/**
+ * HS-8836 — wire the feedback dialog's prev/next context navigation (Option 1).
+ * The arrows page a read-only view through the ticket's [Details + notes] while
+ * the response box + action buttons stay pinned below — so reviewing earlier
+ * context never disturbs the in-progress response (including any inline
+ * responses already added to the prompt-stack, which are simply hidden and
+ * restored, never rebuilt). Keyboard ↑/↓ also navigate, but only when focus
+ * isn't in an editable field, so typing a response keeps normal cursor motion.
+ */
+function wireFeedbackNav(overlay: HTMLElement, nav: FeedbackNav): void {
+  const prevBtn = overlay.querySelector<HTMLButtonElement>('.feedback-nav-prev');
+  const nextBtn = overlay.querySelector<HTMLButtonElement>('.feedback-nav-next');
+  if (prevBtn === null || nextBtn === null) return;
+  const promptStack = requireChild(overlay, '.feedback-prompt-stack');
+  const contextView = requireChild(overlay, '.feedback-context-view');
+  const caption = requireChild(overlay, '.feedback-nav-caption');
+
+  // Start on the feedback note's entry (the interactive prompt). If its id isn't
+  // in the list (id-less note), fall back to the last entry — the newest note.
+  const foundIdx = nav.entries.findIndex(e => e.id === nav.activeNoteId);
+  const activeIndex = foundIdx === -1 ? nav.entries.length - 1 : foundIdx;
+  let currentIndex = activeIndex;
+
+  const paint = (): void => {
+    const onFeedback = currentIndex === activeIndex;
+    promptStack.hidden = !onFeedback;
+    contextView.hidden = onFeedback;
+    caption.hidden = onFeedback;
+    if (!onFeedback) {
+      const entry = nav.entries[currentIndex];
+      caption.textContent = `Viewing: ${entry.title}`;
+      morph(contextView, renderReaderBodyHtml(entry.markdown));
+      contextView.scrollTop = 0;
+    }
+    prevBtn.disabled = currentIndex === 0;
+    nextBtn.disabled = currentIndex === nav.entries.length - 1;
+  };
+
+  const go = (delta: number): void => {
+    const next = currentIndex + delta;
+    if (next < 0 || next > nav.entries.length - 1) return;
+    currentIndex = next;
+    paint();
+  };
+
+  prevBtn.addEventListener('click', () => go(-1));
+  nextBtn.addEventListener('click', () => go(1));
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const ae = document.activeElement;
+    if (ae instanceof HTMLTextAreaElement || ae instanceof HTMLInputElement
+      || (ae instanceof HTMLElement && ae.isContentEditable)) return;
+    e.preventDefault();
+    go(e.key === 'ArrowUp' ? -1 : 1);
+  });
+
+  paint();
 }
 
 /** HS-7599 — true when ANY input in the overlay has non-empty text. Drives
@@ -569,7 +676,7 @@ function overlayHasAnyText(overlay: HTMLElement): boolean {
 /** HS-8338 — exported as a test seam so the ticket-ref linkification in
  *  the header + the prompt blocks can be DOM-asserted without spinning up
  *  the full `showFeedbackDialog` flow. */
-export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTMLElement {
+export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], showNav = false): HTMLElement {
   return toElement(
     <div className="feedback-dialog-overlay custom-view-editor-overlay" style="z-index:2500">
       <div className="custom-view-editor feedback-dialog" style="width:560px">
@@ -583,9 +690,27 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[]): HTM
               affordance is "let me re-open the originating ticket for
               reference while I'm composing a response". */}
           <span>{'Feedback Needed — '}<a className="ticket-ref" data-ticket-number={ticketNumber} href="javascript:void(0)">{ticketNumber}</a></span>
+          {/* HS-8836 — prev/next chevrons page a read-only view through the
+              ticket's [Details + previous notes] while the response box stays
+              pinned below. Rendered only when there's prior context to page to. */}
+          {showNav
+            ? <div className="feedback-nav-controls">
+                <button className="feedback-nav-prev" type="button" title="Previous — older note / Details" aria-label="Previous note">{CHEVRON_UP}</button>
+                <button className="feedback-nav-next" type="button" title="Next — toward your response" aria-label="Next note">{CHEVRON_DOWN}</button>
+              </div>
+            : null}
           <button className="detail-close" id="feedback-close">{'×'}</button>
         </div>
         <div className="custom-view-editor-body">
+          {/* HS-8836 — read-only context view + caption, shown when the user
+              pages back to a previous note / Details; hidden while on the
+              feedback note (where the interactive prompt-stack shows instead). */}
+          {showNav
+            ? <>
+                <div className="feedback-nav-caption" hidden={true}></div>
+                <div className="feedback-context-view note-markdown" hidden={true}></div>
+              </>
+            : null}
           <div className="feedback-prompt-stack">
             {blocks.length === 0
               ? <div className="feedback-prompt-block note-markdown feedback-prompt-empty"><em>(no prompt text)</em></div>

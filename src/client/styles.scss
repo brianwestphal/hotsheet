@@ -6978,6 +6978,10 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     display: flex;
     flex-direction: column;
     margin-bottom: 8px;
+
+    // HS-8836 — the explicit `display: flex` overrides the UA `[hidden]` rule,
+    // so honor the attribute when the nav pages away to a read-only context.
+    &[hidden] { display: none; }
   }
 
   .feedback-prompt-block {
@@ -6998,6 +7002,69 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     color: var(--text-muted);
     font-style: italic;
     border-left-color: var(--border);
+  }
+
+  // HS-8836 — prev/next context navigation. The chevrons sit between the
+  // title and the close button; the caption + read-only context view appear
+  // when the user pages back to a previous note / Details.
+  .feedback-nav-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+
+  .feedback-nav-prev,
+  .feedback-nav-next {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+    &:hover:not(:disabled) {
+      background: var(--bg-hover);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    &:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+  }
+
+  .feedback-nav-caption {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  // Read-only context page (a previous note or the Details). Bounded height so
+  // a long note scrolls instead of pushing the pinned response box off-screen.
+  .feedback-context-view {
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border-left: 3px solid var(--text-muted);
+    max-height: 260px;
+    overflow-y: auto;
+
+    > p:first-child { margin-top: 0; }
+    > p:last-child { margin-bottom: 0; }
   }
 
   // HS-7930 (revised) — collapsed-by-default insertion gap. The slot is a

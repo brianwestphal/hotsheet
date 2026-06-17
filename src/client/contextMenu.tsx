@@ -2,7 +2,7 @@ import { duplicateTickets, getBackends, pushTicketToBackend, updateTicket, uploa
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
-import { getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
+import { buildFeedbackNav, getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
@@ -99,7 +99,12 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
         // HS-8603 — auto-load the saved draft for this note (if any) instead
         // of opening a blank form. `openFeedbackDialogForNote` fetches the
         // ticket's drafts + picks the match before showing the dialog.
-        void openFeedbackDialogForNote(ticket.id, ticket.ticket_number, feedback.prompt, feedback.noteId);
+        // HS-8836 — give the dialog the same prev/next context nav as the reader.
+        const nav = feedback.noteId === '' ? undefined : buildFeedbackNav(
+          { ticketNumber: ticket.ticket_number, ticketTitle: ticket.title, detailsMarkdown: ticket.details, notes },
+          feedback.noteId,
+        );
+        void openFeedbackDialogForNote(ticket.id, ticket.ticket_number, feedback.prompt, feedback.noteId, nav);
       }, { icon: MEGAPHONE_SVG });
     }
   }

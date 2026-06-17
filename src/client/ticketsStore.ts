@@ -28,7 +28,7 @@
  * The intent here is "establish the computed-derived shape;
  * leave the body extension to the atomic-flip ticket."
  */
-import { isExactTicketIdSearch } from '../ticketNumber.js';
+import { isExactTicketIdSearch, splitSearchTerms } from '../ticketNumber.js';
 import type { ReadonlySignal, Signal } from './reactive.js';
 import { computed, defineStore, signal } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -343,11 +343,15 @@ function ticketMatchesSearch(t: Ticket, lcSearch: string): boolean {
   // pass dropped any ticket whose match lived solely in notes or tags. Result:
   // "Hide 84 archive items" banner alongside a visible list of 17. Now the
   // client filter operates on the same five columns the server does.
-  return t.title.toLowerCase().includes(lcSearch)
-    || t.details.toLowerCase().includes(lcSearch)
-    || t.ticket_number.toLowerCase().includes(lcSearch)
-    || t.tags.toLowerCase().includes(lcSearch)
-    || t.notes.toLowerCase().includes(lcSearch);
+  //
+  // HS-8646 — multi-word searches match the UNION of words: every whitespace-
+  // separated term must appear in at least one column (AND across terms, OR
+  // across columns), in any order, mirroring the server's per-term ILIKE groups.
+  // `splitSearchTerms` is the shared split rule so the two layers can't drift.
+  const terms = splitSearchTerms(lcSearch);
+  if (terms.length === 0) return true;
+  const haystacks = [t.title, t.details, t.ticket_number, t.tags, t.notes].map(s => s.toLowerCase());
+  return terms.every(term => haystacks.some(h => h.includes(term)));
 }
 
 /**

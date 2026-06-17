@@ -216,3 +216,79 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
     await expect(page.locator('#detail-notes .note-entry').last().locator('.note-text')).toContainText('Leaning towards A');
   });
 });
+
+test.describe('Feedback dialog prev/next context navigation (HS-8836)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('pages back to a previous note (read-only) while keeping the pinned response box + its text', async ({ page }) => {
+    await createTicket(page, 'Nav feedback ticket');
+    // An earlier non-feedback note provides prior context to page back to, and
+    // the feedback note is the most recent note (so the dialog auto-shows).
+    await addFeedbackNote(page, 'Nav feedback ticket', '', 'An earlier plain note with distinctive WALRUS text.');
+    await addFeedbackNote(page, 'Nav feedback ticket', 'Which option do you prefer?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Nav feedback ticket');
+
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+
+    // Chevrons present (there's prior context); context view starts hidden and
+    // the interactive prompt-stack is shown.
+    const prev = overlay.locator('.feedback-nav-prev');
+    const next = overlay.locator('.feedback-nav-next');
+    await expect(prev).toBeVisible();
+    await expect(next).toBeVisible();
+    const contextView = overlay.locator('.feedback-context-view');
+    await expect(contextView).toBeHidden();
+    await expect(overlay.locator('.feedback-prompt-stack')).toBeVisible();
+
+    // Type a response, then page back to the earlier note.
+    await overlay.locator('#feedback-catchall-text').fill('my in-progress answer');
+    await prev.click();
+
+    // The earlier note renders read-only; the prompt-stack is hidden; caption shows.
+    await expect(contextView).toBeVisible();
+    await expect(contextView).toContainText('WALRUS');
+    await expect(overlay.locator('.feedback-prompt-stack')).toBeHidden();
+    await expect(overlay.locator('.feedback-nav-caption')).toBeVisible();
+    // Option 1 — the response box stays pinned and its text is preserved.
+    await expect(overlay.locator('#feedback-catchall-text')).toHaveValue('my in-progress answer');
+
+    // Page forward — back to the interactive prompt, response still intact.
+    await next.click();
+    await expect(overlay.locator('.feedback-prompt-stack')).toBeVisible();
+    await expect(contextView).toBeHidden();
+    await expect(overlay.locator('#feedback-catchall-text')).toHaveValue('my in-progress answer');
+  });
+
+  test('reader button on the unanswered feedback note opens the feedback dialog, not the reader overlay', async ({ page }) => {
+    await createTicket(page, 'Reader route ticket');
+    await addFeedbackNote(page, 'Reader route ticket', '', 'An earlier plain note.');
+    await addFeedbackNote(page, 'Reader route ticket', 'Need your decision here?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Reader route ticket');
+
+    // Dismiss the auto-shown dialog so we exercise the reader button explicitly.
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+    await overlay.locator('#feedback-close').click();
+    await expect(overlay).toHaveCount(0);
+
+    // The feedback note is the LAST note and is still unanswered → its reader
+    // button opens the FEEDBACK dialog (with nav), NOT the read-only reader.
+    await page.locator('#detail-notes .note-entry .note-reader-btn').last().click();
+    await expect(page.locator('.feedback-dialog-overlay')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.reader-mode-overlay')).toHaveCount(0);
+
+    // A NON-feedback (earlier) note's reader button still opens the read-only reader.
+    await page.locator('.feedback-dialog-overlay #feedback-close').click();
+    await expect(page.locator('.feedback-dialog-overlay')).toHaveCount(0);
+    await page.locator('#detail-notes .note-entry .note-reader-btn').first().click();
+    await expect(page.locator('.reader-mode-overlay')).toBeVisible({ timeout: 5000 });
+  });
+});

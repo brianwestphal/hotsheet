@@ -434,6 +434,48 @@ describe('filtering', () => {
     expect(byWildcard.every(t => t.title.includes('%') || t.details.includes('%') || t.tags.includes('%') || t.notes.includes('%'))).toBe(true);
   });
 
+  // HS-8646 — a multi-word search matches the UNION of its words (every term in
+  // at least one column, AND across terms, OR across columns), in any order —
+  // NOT the literal phrase.
+  it('multi-word search matches words across different columns, any order (HS-8646)', async () => {
+    const t = await createTicket('Octopus crashreport');
+    await updateTicket(t.id, { details: 'the squid subsystem misbehaves' });
+    // "squid octopus" — "octopus" is in the title, "squid" in the details, and
+    // the order is reversed vs the columns: union match still finds it.
+    const tickets = await getTickets({ search: 'squid octopus' });
+    expect(tickets.map(x => x.id)).toContain(t.id);
+  });
+
+  it('multi-word search excludes a ticket missing any one of the words (HS-8646)', async () => {
+    const t = await createTicket('Narwhal report');
+    await updateTicket(t.id, { details: 'about narwhals only' });
+    // "narwhal pufferfish" — has "narwhal" but not "pufferfish" → excluded.
+    const tickets = await getTickets({ search: 'narwhal pufferfish' });
+    expect(tickets.map(x => x.id)).not.toContain(t.id);
+  });
+
+  it('does not match a literal multi-word phrase when the words are non-contiguous (HS-8646)', async () => {
+    const t = await createTicket('Manatee in the lagoon habitat');
+    // The old literal-phrase search for "manatee habitat" would miss this title
+    // (the words aren't adjacent); the union search matches because both appear.
+    const tickets = await getTickets({ search: 'manatee habitat' });
+    expect(tickets.map(x => x.id)).toContain(t.id);
+  });
+
+  it('countSearchMatchesInExcludedStatuses uses union-of-words too (HS-8646)', async () => {
+    const { countSearchMatchesInExcludedStatuses } = await import('./tickets.js');
+    const hit = await createTicket('Axolotl swimming lessons');
+    await updateTicket(hit.id, { status: 'archive' });
+    const miss = await createTicket('Axolotl resting'); // has "axolotl" but not "swimming"
+    await updateTicket(miss.id, { status: 'archive' });
+    const counts = await countSearchMatchesInExcludedStatuses('axolotl swimming');
+    // Only the ticket containing BOTH words is counted in the archive bucket.
+    expect(counts.archive).toBeGreaterThanOrEqual(1);
+    const archiveAll = await getTickets({ search: 'axolotl swimming', include_archive: true });
+    expect(archiveAll.map(x => x.id)).toContain(hit.id);
+    expect(archiveAll.map(x => x.id)).not.toContain(miss.id);
+  });
+
   it('filters combine with AND logic', async () => {
     const tickets = await getTickets({ category: 'investigation', status: 'started' as TicketStatus });
     const ids = tickets.map(t => t.id);

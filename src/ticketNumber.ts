@@ -23,3 +23,21 @@
 export function isExactTicketIdSearch(search: string): boolean {
   return /^\s*[A-Za-z][A-Za-z0-9_]*-\d+\s*$/.test(search);
 }
+
+/**
+ * HS-8646 — split a free-text search query into whitespace-separated terms.
+ * A multi-word search matches on the UNION of its words rather than the literal
+ * phrase: each term must appear in at least one searched column (AND across
+ * terms, OR across columns), in any order/position. So `login bug` finds a
+ * ticket titled "bug" whose details mention "login", which a literal-phrase
+ * ILIKE would have missed.
+ *
+ * Splits on ANY run of whitespace and drops empty tokens; an all-whitespace
+ * query yields `[]` (both layers treat that as "no narrowing"). Single source
+ * of truth for the split rule so the server (`buildTicketWhereClause` +
+ * `countSearchMatchesInExcludedStatuses`) and the client (`ticketMatchesSearch`)
+ * can't drift — cf. HS-8380, which fixed a prior client/server search desync.
+ */
+export function splitSearchTerms(search: string): string[] {
+  return search.trim().split(/\s+/).filter(term => term !== '');
+}
