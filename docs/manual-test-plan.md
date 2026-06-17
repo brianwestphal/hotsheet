@@ -140,6 +140,14 @@ This document lists features that require manual verification before each releas
 - [ ] **Per-command "Launch in New Terminal"** — enable it in the command editor (shell-only checkbox). Now a *normal click* opens a new terminal by default; long-press still opens a new terminal (redundant, harmless). Disable it → click reverts to the inline run.
 - [ ] **Default shell, per OS** — the new terminal runs the user's **default shell** (zsh/bash on macOS/Linux, the configured default on Windows), NOT the command as the PTY program. Verify the injected command runs and the shell stays open on each target OS. The 300 ms inject delay should be enough that the command isn't dropped/garbled during shell startup — watch for any truncated first command on slower machines.
 
+### Long-press → make a task (Claude command buttons, HS-8538, §83.2)
+
+- [ ] **Long-press** a Claude command button (~0.5 s): a **Task ticket** is created from it — title = the command name, details = the command's prompt — and a success toast appears. The ticket shows in the list (reload happens automatically). The prompt is NOT sent to the channel.
+- [ ] **Category is `task`/TSK** even if you've removed "task" from the project's configured categories (Settings → Categories). The ticket still saves with category `task` (it may render without a custom color/label in that edge case, but it's a real, filterable ticket).
+- [ ] **Normal (quick) click** still sends the prompt to the channel (unchanged). When Claude isn't connected, a warning **toast** appears (not a blocking dialog).
+- [ ] **Press feedback + no double-fire** — the button depresses while held; a long-press does NOT also send the prompt to the channel.
+- [ ] **First-use hint toast** — the first normal click of any Claude command button (fresh `localStorage`) shows the one-time long-press hint; it doesn't reappear on later clicks/reloads, and doesn't fire if the first interaction was a long-press.
+
 ---
 
 ## 5. Command Groups (Sidebar)

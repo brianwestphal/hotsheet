@@ -1,13 +1,13 @@
 # 83. Command-Button Long-Press Actions
 
-> **Status:** Partial. **§83.1 (HS-8539) — long-press a custom *shell* command button → run it in a new terminal — shipped.** §83.2 (HS-8538) — long-press a custom *Claude* command button → create a ticket — is designed here but not yet built (separate ticket).
+> **Status:** Shipped. **§83.1 (HS-8539)** — long-press a custom *shell* command button → run it in a new terminal. **§83.2 (HS-8538)** — long-press a custom *Claude* command button → create a Task ticket.
 
 Custom command buttons in the sidebar (§15 shell-commands, §16 command-groups) support a **secondary gesture** — a press-and-hold (long-press) — that runs an alternative action to the normal click, so a single button offers two related behaviors without extra UI. The alternative differs by the button's target:
 
 | Target | Normal click | Long-press (≥ 500 ms) |
 |---|---|---|
 | **Shell** | Inline streaming run (§53), unless "Launch in New Terminal" is on (then = new terminal) | Run in a **new drawer terminal** (default shell) — §83.1 |
-| **Claude** | Send the prompt to the channel | Create a **ticket** to run the command — §83.2 (HS-8538, designed only) |
+| **Claude** | Send the prompt to the channel | Create a **Task ticket** from the command — §83.2 (HS-8538) |
 
 The long-press threshold is **500 ms** (`LONG_PRESS_MS` in `src/client/commandSidebar.tsx`). While held, the button shows a subtle press feedback (`.channel-command-btn.is-long-pressing` — slight scale/opacity). On the threshold the alternative action fires immediately and the trailing `click` event is suppressed (a `longPressed` flag → `preventDefault` + `stopPropagation`), so the normal action does NOT also fire.
 
@@ -28,9 +28,21 @@ The long-press threshold is **500 ms** (`LONG_PRESS_MS` in `src/client/commandSi
 - **Server (unit).** `src/routes/api.test.ts` "terminal route" — `POST /create` with `runCommand` spawns the default shell (the PTY command is NOT `runCommand`), writes nothing before the delay, and writes `runCommand\n` after advancing 300 ms (fake timers + a PTY factory that captures writes).
 - **Manual (gesture + platform).** Long-press timing, the press visual, the click-suppression, the first-use toast, the per-command option, and the default-shell resolution on Windows/Linux are covered in `docs/manual-test-plan.md` (long-press + platform behavior are inherently manual, per the testing philosophy).
 
-## 83.2 Claude command → create a ticket (HS-8538, designed only)
+## 83.2 Claude command → create a Task ticket (HS-8538, shipped)
 
-Long-pressing a custom **Claude** command button should create a **ticket** to run the command later, rather than sending the prompt to the channel immediately. Per HS-8538 the ticket should default to a **TSK** category even when "task" isn't in the project's configured category list (or fall back gracefully if that's infeasible), and a first-use hint toast should teach the gesture. This shares the same long-press plumbing as §83.1 (`wireShellButtonPress`'s claude-target analogue) and is tracked in **HS-8538**.
+### Behavior
+- **Long-press a Claude command button** creates a **Task ticket** from the command instead of sending the prompt to the channel: the ticket's **title** is the command's name and its **details** are the command's prompt (the text that would otherwise go to Claude). A success toast confirms ("Created a task from \"<name>\".") and the ticket list reloads so it appears immediately. Always available (Claude buttons have no per-command option, unlike the shell "Launch in New Terminal").
+- **Normal click** is unchanged — sends the prompt to the channel (or a warning toast when Claude isn't connected).
+- **First-use hint toast** — the first time the user does a *normal click* on any Claude command button, a one-time toast teaches the gesture: *"Tip: long-press a Claude command button to make a task from it instead of running it."* Persisted via `localStorage` key `hotsheet:claude-longpress-hint-shown` (once globally; doesn't fire on a long-press).
+
+### Category = always `task` (TSK)
+The created ticket's category is always **`task`** (whose `shortLabel` is "TSK"). `tickets.category` is a **free string** column (`TicketCategory = string`), and the create API stores whatever is passed — so the ticket is categorized `task` **even when the project removed `task` from its configured category list** (per the user's request). The only cosmetic consequence in that edge case is the ticket may render without a configured color/label for `task`; it's still a valid, filterable ticket. (So the "if that would cause too much trouble" caveat didn't apply — free-string categories made it trivial.)
+
+### Implementation
+- `wireClaudeButtonPress(btn, cmd)` (`src/client/commandSidebar.tsx`) mirrors §83.1's `wireShellButtonPress`: a pointerdown/up/leave/cancel timer at the shared `LONG_PRESS_MS` (500 ms), with the trailing click suppressed after a long-press. `makeTaskFromClaudeCommand(cmd)` calls the typed `createTicket({ title: cmd.name, defaults: { category: 'task', details: cmd.prompt } })`, toasts, and lazy-imports `loadTickets` to refresh. `maybeFireClaudeLongPressHintToast()` is the one-time hint. (While here, the connect-failure `window.alert` was replaced with an in-app warning toast — `window.alert` no-ops in Tauri's WKWebView.)
+
+### Tests
+- The long-press gesture + the resulting ticket are **manual-test-plan** items (long-press is inherently interaction-bound, same as §83.1). The create-ticket request shape (`category: 'task'`) rides the already-tested typed `createTicket` caller + the route/DB layer's free-string category handling. A Playwright E2E for the gesture is tracked as a follow-up.
 
 ## Cross-references
 - [15-shell-commands.md](15-shell-commands.md) — custom shell command targets + execution.

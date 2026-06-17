@@ -1,4 +1,4 @@
-import { ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, killShellCommand, updateSettings } from '../api/index.js';
+import { createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, killShellCommand, updateSettings } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
@@ -178,13 +178,7 @@ function renderButton(cmd: CustomCommand) {
   if (isShell) {
     wireShellButtonPress(btn, cmd, lookupKey);
   } else {
-    btn.addEventListener('click', () => {
-      if (!isChannelAlive()) {
-        alert('Claude is not connected. Launch Claude Code with channel support first.');
-      } else {
-        triggerChannelAndMarkBusy(cmd.prompt);
-      }
-    });
+    wireClaudeButtonPress(btn, cmd);
   }
   return btn;
 }
@@ -240,6 +234,90 @@ function wireShellButtonPress(btn: HTMLElement, cmd: CustomCommand, lookupKey: s
       return;
     }
     void runShellCommand(cmd, cmd.autoShowLog === true);
+  });
+}
+
+/**
+ * HS-8538 — first-use discoverability key for the Claude-button long-press
+ * hint. One-time across reloads + projects.
+ */
+const CLAUDE_LONGPRESS_HINT_KEY = 'hotsheet:claude-longpress-hint-shown';
+
+/**
+ * HS-8538 — the first time the user does a normal click on any custom Claude
+ * command button, show a one-time toast teaching the long-press → make-a-task
+ * gesture. Idempotent via the localStorage sentinel. Doesn't fire on a
+ * long-press (they already know the gesture). Exported for tests.
+ */
+export function maybeFireClaudeLongPressHintToast(): void {
+  try {
+    if (window.localStorage.getItem(CLAUDE_LONGPRESS_HINT_KEY) !== null) return;
+    window.localStorage.setItem(CLAUDE_LONGPRESS_HINT_KEY, String(Date.now()));
+  } catch { /* localStorage disabled — fall through and show once this session */ }
+  showToast('Tip: long-press a Claude command button to make a task from it instead of running it.', { durationMs: 7000 });
+}
+
+/**
+ * HS-8538 — create a Task ticket from a custom Claude command instead of
+ * sending it to the channel. The ticket's title is the command name and its
+ * details are the command's prompt (the text that would otherwise be sent to
+ * Claude). Category is always `task` (shortLabel "TSK") — a free-string column,
+ * so it's stored even if the project removed `task` from its configured
+ * category list (per the user's request). Reloads the list so the new ticket
+ * shows immediately.
+ */
+async function makeTaskFromClaudeCommand(cmd: CustomCommand): Promise<void> {
+  try {
+    await createTicket({ title: cmd.name, defaults: { category: 'task', details: cmd.prompt } });
+    showToast(`Created a task from "${cmd.name}".`, { variant: 'success' });
+    const { loadTickets } = await import('./ticketList.js');
+    void loadTickets();
+  } catch {
+    showToast('Could not create a task from that command.', { variant: 'warning' });
+  }
+}
+
+/**
+ * HS-8538 — wire a Claude command button's press behavior:
+ * - **Long-press (≥500 ms)** → make a Task ticket from the command (and
+ *   suppress the trailing click so it isn't ALSO sent to the channel).
+ * - **Normal click** → the existing behavior (send the prompt to the channel,
+ *   or a warning toast when Claude isn't connected). The first normal click
+ *   ever also fires the one-time long-press discoverability toast.
+ *
+ * Mirrors the shell button's `wireShellButtonPress` (HS-8539); long-press is
+ * always the make-a-task action.
+ */
+function wireClaudeButtonPress(btn: HTMLElement, cmd: CustomCommand): void {
+  let pressTimer: number | null = null;
+  let longPressed = false;
+  const clearPressTimer = (): void => {
+    if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; }
+    btn.classList.remove('is-long-pressing');
+  };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; // primary button only
+    longPressed = false;
+    btn.classList.add('is-long-pressing');
+    pressTimer = window.setTimeout(() => {
+      pressTimer = null;
+      longPressed = true;
+      btn.classList.remove('is-long-pressing');
+      void makeTaskFromClaudeCommand(cmd);
+    }, LONG_PRESS_MS);
+  });
+  btn.addEventListener('pointerup', clearPressTimer);
+  btn.addEventListener('pointerleave', clearPressTimer);
+  btn.addEventListener('pointercancel', clearPressTimer);
+  btn.addEventListener('click', (e) => {
+    if (longPressed) { longPressed = false; e.preventDefault(); e.stopPropagation(); return; }
+    maybeFireClaudeLongPressHintToast();
+    if (!isChannelAlive()) {
+      // HS-8538 — in-app toast (not window.alert, which WKWebView no-ops).
+      showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
+    } else {
+      triggerChannelAndMarkBusy(cmd.prompt);
+    }
   });
 }
 
