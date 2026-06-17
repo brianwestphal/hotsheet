@@ -109,6 +109,11 @@ export const CreateTerminalReqSchema = z.object({
   command: z.string().optional(),
   cwd: z.string().optional(),
   spawn: z.boolean().optional(),
+  // HS-8539 — when set, the terminal launches the DEFAULT shell (NOT this as the
+  // PTY command) and the server writes `runCommand\n` into the PTY so it runs as
+  // if typed, leaving the shell open afterward. Powers the long-press "run in a
+  // new terminal" path on custom shell-command buttons.
+  runCommand: z.string().optional(),
 }).loose();
 export type CreateTerminalReq = z.infer<typeof CreateTerminalReqSchema>;
 

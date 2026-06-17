@@ -26,6 +26,7 @@ import {
   listProjectTerminalIds,
   restartTerminal,
   type TerminalState,
+  writeInput,
 } from '../terminals/registry.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -300,9 +301,20 @@ terminalRoutes.post('/create', async (c) => {
   const config: TerminalConfig = { id, command, name };
   if (typeof body.cwd === 'string' && body.cwd !== '') config.cwd = body.cwd;
   dynamicConfigs.set(`${secret}::${id}`, config);
-  if (body.spawn === true) {
+  // HS-8539 — `runCommand` runs in the freshly-spawned DEFAULT shell, so it
+  // forces an eager spawn (the command needs a live PTY to receive it) even when
+  // the caller didn't pass `spawn: true`.
+  const runCommand = typeof body.runCommand === 'string' ? body.runCommand : '';
+  if (body.spawn === true || runCommand !== '') {
     try {
       ensureSpawned(secret, dataDir, id, config);
+      if (runCommand !== '') {
+        // Write the command to the PTY as if typed. A short delay lets the
+        // shell's line editor (bash readline / zsh zle) finish initializing
+        // during rc-file startup before the input lands, so it isn't dropped
+        // or garbled. `writeInput` is a no-op if the PTY already exited.
+        setTimeout(() => writeInput(secret, `${runCommand}\n`, id), 300);
+      }
     } catch (err) {
       // Mirror eagerSpawnTerminals' policy: log but don't fail the request.
       // The config is still registered, so a subsequent WS attach can retry.

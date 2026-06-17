@@ -130,6 +130,16 @@ This document lists features that require manual verification before each releas
 - [ ] Stop sends SIGTERM; if process doesn't exit in 3 seconds, SIGKILL follows
 - [ ] Working directory is the project root (parent of `.hotsheet/`)
 
+### Long-press → run in new terminal (HS-8539, §83.1) — gesture + per-OS
+
+- [ ] **Long-press** a shell command button (press and hold ~0.5 s): a **new drawer terminal opens running the default shell** and the command runs in it as if typed; after it finishes the shell prompt is live (you can type more). The drawer opens if it was closed.
+- [ ] **Press feedback** — the button visibly depresses (slight scale/dim) while held, and clears on release.
+- [ ] **Click is not double-fired** — a long-press does NOT also trigger the inline streaming run (only the new terminal opens).
+- [ ] **Normal (quick) click** still does the inline streaming run (unchanged), with the spinner + Commands Log.
+- [ ] **First-use hint toast** — on the FIRST normal click of any shell command button (fresh `localStorage`), a one-time toast appears explaining the long-press. It does NOT reappear on later clicks/reloads, and does NOT fire if the very first interaction was a long-press.
+- [ ] **Per-command "Launch in New Terminal"** — enable it in the command editor (shell-only checkbox). Now a *normal click* opens a new terminal by default; long-press still opens a new terminal (redundant, harmless). Disable it → click reverts to the inline run.
+- [ ] **Default shell, per OS** — the new terminal runs the user's **default shell** (zsh/bash on macOS/Linux, the configured default on Windows), NOT the command as the PTY program. Verify the injected command runs and the shell stays open on each target OS. The 300 ms inject delay should be enough that the command isn't dropped/garbled during shell startup — watch for any truncated first command on slower machines.
+
 ---
 
 ## 5. Command Groups (Sidebar)

@@ -73,6 +73,11 @@ export function showCommandEditorModal(ref: ItemRef) {
           <label className="command-auto-show-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
             <input type="checkbox" className="command-auto-show" checked={cmd.autoShowLog === true} /> Show log on completion
           </label>
+          {/* HS-8539 — when on, a normal click launches the command in a new
+              terminal (default shell). Long-press always does this regardless. */}
+          <label className="command-launch-terminal-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
+            <input type="checkbox" className="command-launch-terminal" checked={cmd.launchInNewTerminal === true} /> Launch in new terminal
+          </label>
           <div className="command-claude-warning" style={currentTarget !== 'shell' && !isChannelEnabled() ? '' : 'display:none'}>
             {'\u26A0'} This command won't appear in the sidebar unless Claude Channel is enabled above.
           </div>
@@ -101,6 +106,8 @@ export function showCommandEditorModal(ref: ItemRef) {
   const promptLabelEl = overlay.querySelector('.command-prompt-label') as HTMLElement;
   const autoShowLabel = overlay.querySelector('.command-auto-show-label') as HTMLElement;
   const autoShowCheckbox = overlay.querySelector('.command-auto-show') as HTMLInputElement;
+  const launchTerminalLabel = overlay.querySelector('.command-launch-terminal-label') as HTMLElement;
+  const launchTerminalCheckbox = overlay.querySelector('.command-launch-terminal') as HTMLInputElement;
   const claudeWarning = overlay.querySelector('.command-claude-warning') as HTMLElement;
 
   const save = () => {
@@ -116,6 +123,12 @@ export function showCommandEditorModal(ref: ItemRef) {
     void saveCommandItems();
   });
 
+  // HS-8539 — per-command "Launch in New Terminal" default.
+  launchTerminalCheckbox.addEventListener('change', () => {
+    updateCommand(ref, c => { c.launchInNewTerminal = launchTerminalCheckbox.checked; });
+    void saveCommandItems();
+  });
+
   for (const segBtn of segBtns) {
     segBtn.addEventListener('click', () => {
       const target = (segBtn as HTMLElement).dataset.target as 'claude' | 'shell';
@@ -125,6 +138,7 @@ export function showCommandEditorModal(ref: ItemRef) {
       promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
       promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
       autoShowLabel.style.display = target === 'shell' ? '' : 'none';
+      launchTerminalLabel.style.display = target === 'shell' ? '' : 'none';
       claudeWarning.style.display = target !== 'shell' && !isChannelEnabled() ? '' : 'none';
       void saveCommandItems();
     });

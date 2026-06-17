@@ -55,6 +55,26 @@ export function maybeFireShellStreamFirstUseToast(): void {
   showToast('Shell command output now streams live in the Commands Log — Settings → Experimental to disable.', { durationMs: 7000 });
 }
 
+/**
+ * HS-8539 — first-use discoverability key for the long-press hint. One-time
+ * across reloads + projects, like `SHELL_STREAM_TOAST_DISMISSED_KEY`.
+ */
+const SHELL_LONGPRESS_HINT_KEY = 'hotsheet:shell-longpress-hint-shown';
+
+/**
+ * HS-8539 — the first time the user presses ANY custom shell-command button
+ * (a normal click, not a long-press — if they long-pressed they already know),
+ * show a one-time toast teaching the long-press → new-terminal gesture.
+ * Idempotent via the localStorage sentinel. Exported for tests.
+ */
+export function maybeFireShellLongPressHintToast(): void {
+  try {
+    if (window.localStorage.getItem(SHELL_LONGPRESS_HINT_KEY) !== null) return;
+    window.localStorage.setItem(SHELL_LONGPRESS_HINT_KEY, String(Date.now()));
+  } catch { /* localStorage disabled — fall through and show once this session */ }
+  showToast('Tip: long-press a shell command button to run it in its own new terminal instead.', { durationMs: 7000 });
+}
+
 function isCommandVisible(cmd: CustomCommand, channelEnabled: boolean): boolean {
   if (!cmd.name.trim() || !cmd.prompt.trim()) return false;
   const isShell = cmd.target === 'shell';
@@ -155,21 +175,72 @@ function renderButton(cmd: CustomCommand) {
     >{renderIconSvg(iconDef.svg, 14, textColor)}<span>{cmd.name}</span></button>
   );
   if (isRunning) btn.appendChild(buildSpinnerElement(textColor));
-  btn.addEventListener('click', () => {
-    if (isShell) {
-      const runningId = _runningButtonsForTesting.get(lookupKey);
-      if (runningId !== undefined) {
-        void confirmStopShellCommand(cmd, runningId);
-        return;
+  if (isShell) {
+    wireShellButtonPress(btn, cmd, lookupKey);
+  } else {
+    btn.addEventListener('click', () => {
+      if (!isChannelAlive()) {
+        alert('Claude is not connected. Launch Claude Code with channel support first.');
+      } else {
+        triggerChannelAndMarkBusy(cmd.prompt);
       }
-      void runShellCommand(cmd, cmd.autoShowLog === true);
-    } else if (!isChannelAlive()) {
-      alert('Claude is not connected. Launch Claude Code with channel support first.');
-    } else {
-      triggerChannelAndMarkBusy(cmd.prompt);
-    }
-  });
+    });
+  }
   return btn;
+}
+
+/** HS-8539 — long-press threshold for the "run in a new terminal" gesture. */
+const LONG_PRESS_MS = 500;
+
+/**
+ * HS-8539 — wire a shell command button's press behavior:
+ * - **Long-press (≥500 ms)** → ALWAYS run in a new drawer terminal (default
+ *   shell), and suppress the click that follows the release.
+ * - **Normal click** → run the running-stop confirm if it's already running;
+ *   else, if the command has `launchInNewTerminal`, run in a new terminal;
+ *   else the inline streaming run. The first normal click ever also fires the
+ *   one-time long-press discoverability toast.
+ *
+ * Option B (HS-8539): long-press is always new-terminal — when
+ * `launchInNewTerminal` is on, a click already does that, so long-press is
+ * simply redundant (not an inverse).
+ */
+function wireShellButtonPress(btn: HTMLElement, cmd: CustomCommand, lookupKey: string): void {
+  let pressTimer: number | null = null;
+  let longPressed = false;
+  const clearPressTimer = (): void => {
+    if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; }
+    btn.classList.remove('is-long-pressing');
+  };
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return; // primary button only
+    longPressed = false;
+    btn.classList.add('is-long-pressing');
+    pressTimer = window.setTimeout(() => {
+      pressTimer = null;
+      longPressed = true;
+      btn.classList.remove('is-long-pressing');
+      void runShellInNewTerminal(cmd);
+    }, LONG_PRESS_MS);
+  });
+  btn.addEventListener('pointerup', clearPressTimer);
+  btn.addEventListener('pointerleave', clearPressTimer);
+  btn.addEventListener('pointercancel', clearPressTimer);
+  btn.addEventListener('click', (e) => {
+    // Long-press already acted on pointerdown's timer — swallow the trailing click.
+    if (longPressed) { longPressed = false; e.preventDefault(); e.stopPropagation(); return; }
+    maybeFireShellLongPressHintToast();
+    const runningId = _runningButtonsForTesting.get(lookupKey);
+    if (runningId !== undefined) {
+      void confirmStopShellCommand(cmd, runningId);
+      return;
+    }
+    if (cmd.launchInNewTerminal === true) {
+      void runShellInNewTerminal(cmd);
+      return;
+    }
+    void runShellCommand(cmd, cmd.autoShowLog === true);
+  });
 }
 
 /**
@@ -388,6 +459,23 @@ async function autoShowLogEntry(logId: number, autoShow: boolean) {
       showLogEntryById(logId);
     }
   } catch { /* non-critical */ }
+}
+
+/**
+ * HS-8539 — run a custom shell command in a NEW drawer terminal (the user's
+ * default shell), rather than the inline streaming run. Fired by a long-press
+ * on the button (always) or a normal click when the command has "Launch in New
+ * Terminal" enabled. Lazy-imports `terminal.js` to avoid pulling the terminal
+ * stack into the sidebar's import graph at module load.
+ */
+async function runShellInNewTerminal(cmd: CustomCommand): Promise<void> {
+  try {
+    void ensureSkills();
+    const { openTerminalRunningCommand } = await import('./terminal.js');
+    await openTerminalRunningCommand(cmd.prompt, cmd.name);
+  } catch {
+    showToast('Could not open a new terminal for that command.', { variant: 'warning' });
+  }
 }
 
 async function runShellCommand(cmd: CustomCommand, autoShow = false): Promise<void> {

@@ -15,6 +15,11 @@ export interface CustomCommand {
   color?: string;
   target?: 'claude' | 'shell';  // default 'claude'
   autoShowLog?: boolean;  // auto-show log entry on shell completion (always on error)
+  // HS-8539 — shell only. When true, a normal click launches the command in a
+  // NEW drawer terminal (default shell) instead of the inline streaming run.
+  // Long-press always launches in a new terminal regardless of this flag.
+  // Default false (undefined).
+  launchInNewTerminal?: boolean;
 }
 
 export interface CommandGroup {

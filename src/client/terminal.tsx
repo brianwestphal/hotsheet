@@ -487,6 +487,26 @@ async function createDynamicTerminal(): Promise<void> {
   } catch { /* ignore */ }
 }
 
+/**
+ * HS-8539 — open a NEW drawer terminal running the user's default shell and run
+ * `command` in it (the server writes `command\n` to the PTY via `runCommand`, so
+ * it executes as if typed and the shell stays open). Used by the long-press
+ * "run in a new terminal" path on custom shell-command buttons, and by a normal
+ * click when the command has "Launch in New Terminal" enabled. Opens the drawer
+ * (if closed) and selects the new terminal's tab.
+ */
+export async function openTerminalRunningCommand(command: string, name?: string): Promise<void> {
+  const { config } = await createTerminal({ spawn: true, runCommand: command, name });
+  const active = getActiveProject();
+  if (active !== null) {
+    const { hideNewTerminalInNonDefaultGroupings } = await import('./dashboardHiddenTerminals.js');
+    hideNewTerminalInNonDefaultGroupings(active.secret, config.id);
+  }
+  await loadAndRenderTerminalTabs();
+  const mod = await import('./commandLog.js');
+  mod.openDrawerTab(`terminal:${config.id}`);
+}
+
 // Bridge to the drawer tab switcher implemented in commandLog.tsx.
 async function selectDrawerTab(tabId: string): Promise<void> {
   const mod = await import('./commandLog.js');

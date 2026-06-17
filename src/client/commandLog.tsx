@@ -275,6 +275,17 @@ export function previewDrawerTab(tab: string): () => void {
   };
 }
 
+/**
+ * HS-8539 — open the drawer (if closed) and switch to `tab`, staying there
+ * (no restore disposer, unlike `previewDrawerTab`). For actions that
+ * intentionally bring the user to a tab — e.g. launching a custom shell
+ * command in a new terminal via long-press.
+ */
+export function openDrawerTab(tab: string): void {
+  if (!panelOpen) openPanel();
+  switchDrawerTab(tab);
+}
+
 /** Refresh the command log contents (e.g., after switching projects). */
 export function refreshCommandLog() {
   const panel = byIdOrNull('command-log-panel');

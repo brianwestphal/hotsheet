@@ -681,6 +681,10 @@ describe('terminal route', () => {
   // session in `not_spawned` and the test seeing the wrong state.
   let restorePtyFactory: ((factory: PtyFactory) => PtyFactory) | null = null;
   let savedPtyFactory: PtyFactory | null = null;
+  // HS-8539 — capture every PTY write so the `runCommand` injection test can
+  // assert the command was written to the freshly-spawned shell. Harmless to
+  // the other terminal-route tests (none assert on writes).
+  const ptyWrites: string[] = [];
   beforeAll(async () => {
     const { setPtyFactory } = await import('../terminals/registry.js');
     restorePtyFactory = setPtyFactory;
@@ -690,7 +694,7 @@ describe('terminal route', () => {
       rows: args.rows,
       onData: () => ({ dispose: () => {} }),
       onExit: () => ({ dispose: () => {} }),
-      write: () => {},
+      write: (data: string) => { ptyWrites.push(data); },
       resize: () => {},
       kill: () => {},
     });
@@ -722,6 +726,31 @@ describe('terminal route', () => {
     expect(ids).toContain(created.config.id);
     const echoed = data.dynamic.find(t => t.id === created.config.id);
     expect(echoed?.name).toBe(created.config.name);
+  });
+
+  it('POST /api/terminal/create with runCommand spawns the default shell and writes the command (HS-8539)', async () => {
+    vi.useFakeTimers();
+    try {
+      ptyWrites.length = 0;
+      const create = await app.request('/api/terminal/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runCommand: 'npm run build', name: 'Build' }),
+      });
+      expect(create.status).toBe(200);
+      const created = await create.json() as TerminalCreateResponse;
+      // The PTY runs the DEFAULT shell — runCommand is NOT the PTY command.
+      expect(created.config.command).not.toBe('npm run build');
+      expect(created.config.command.length).toBeGreaterThan(0);
+      // The command is injected after a short delay so the shell's line editor
+      // can initialize; nothing is written before then.
+      expect(ptyWrites).toEqual([]);
+      vi.advanceTimersByTime(300);
+      // Written as if typed, with a trailing newline to execute it.
+      expect(ptyWrites).toContain('npm run build\n');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('POST /api/terminal/destroy removes the dynamic terminal from /list', async () => {

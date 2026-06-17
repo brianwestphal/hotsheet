@@ -2140,6 +2140,14 @@ body.cross-project-stats-active {
   svg { flex-shrink: 0; }
 
   &:hover { opacity: 0.85; }
+
+  // HS-8539 — subtle press feedback while a long-press is building toward the
+  // "run in a new terminal" gesture; cleared on release / threshold / cancel.
+  &.is-long-pressing {
+    transform: scale(0.97);
+    opacity: 0.8;
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
 }
 
 // HS-8060 — running-state spinner-with-stop-icon. Anchored to the

@@ -244,6 +244,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 80. `80-announcer-live-mode.md` — Announcer live mode (server generator loop, coalescing, off-unless-listening lease; Phase 2a shipped)
 81. `81-announcer-local-provider.md` — Announcer local (Ollama / OpenAI-compatible) summarization provider — cross-platform on-device/free, model-detection dropdown
 82. `82-announcer-mid-task-narration.md` — Announcer live mid-task narration off the §67 telemetry stream + AI importance rating/exclusion (15s debounce)
+83. `83-command-button-long-press.md` — long-press a command button for a secondary action (shell → run in new terminal, shipped; Claude → make a ticket, designed)
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source).
 
