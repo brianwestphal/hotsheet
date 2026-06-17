@@ -2118,6 +2118,44 @@ body.cross-project-stats-active {
 
 // --- Custom command buttons ---
 
+// HS-8847 — styled hover tooltip for custom command buttons (replaces the
+// native `title`). A fixed-position singleton placed beside the hovered button.
+.command-tooltip {
+  position: fixed;
+  z-index: 3000;
+  max-width: 320px;
+  padding: 7px 10px;
+  background: var(--bg-elevated, var(--bg-secondary));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none; // never steals hover from the button beneath it
+}
+
+.command-tooltip-name {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.command-tooltip-cmd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 6em;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.command-tooltip-lastrun {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .channel-command-btn {
   display: flex;
   align-items: center;
