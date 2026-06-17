@@ -264,6 +264,44 @@ terminalRoutes.post('/kill', async (c) => {
 });
 
 /**
+ * HS-8840 — tunables for `injectCommandWhenSettled`, exported so unit tests can
+ * shrink them for deterministic runs. `quietMs`: how long the PTY output must be
+ * idle (prompt rendered, shell awaiting input) before injecting. `pollMs`: poll
+ * cadence. `maxWaitMs`: hard fallback so we inject even if the shell never
+ * settles (e.g. a continuously-printing rc file) or emits no output.
+ */
+export const _settleInjectTimings = { quietMs: 150, pollMs: 50, maxWaitMs: 3000 };
+
+/**
+ * HS-8840 — write `data` into a freshly-spawned PTY once its output has SETTLED,
+ * rather than after a fixed delay. Polls `getLastOutputAtMs`: once the shell has
+ * produced output AND that output has been quiet for `quietMs` (its prompt has
+ * rendered and it's awaiting input), the command is injected. This adapts to the
+ * shell's real startup time so a slow shell (PowerShell) doesn't drop or garble
+ * the command the way a fixed 300 ms could. A `maxWaitMs` fallback guarantees we
+ * never hang; `writeInput` is a no-op once the PTY exits.
+ */
+export function injectCommandWhenSettled(secret: string, terminalId: string, data: string): void {
+  const { quietMs, pollMs, maxWaitMs } = _settleInjectTimings;
+  const startedAt = Date.now();
+  // The output timestamp at spawn time (usually null) — we wait for it to CHANGE
+  // so a respawn's stale timestamp doesn't read as fresh output.
+  const baseline = getLastOutputAtMs(secret, terminalId);
+  const tick = (): void => {
+    const lastOut = getLastOutputAtMs(secret, terminalId);
+    const now = Date.now();
+    const hadOutput = lastOut !== null && lastOut !== baseline;
+    const settled = hadOutput && (now - lastOut) >= quietMs;
+    if (settled || (now - startedAt) >= maxWaitMs) {
+      writeInput(secret, data, terminalId);
+      return;
+    }
+    setTimeout(tick, pollMs);
+  };
+  setTimeout(tick, pollMs);
+}
+
+/**
  * POST /api/terminal/create — register a dynamic (ad-hoc) terminal config and
  * return its id. By default the PTY spawns lazily on first WebSocket attach
  * (the drawer's `+` button relies on that — it selects the new tab
@@ -309,11 +347,13 @@ terminalRoutes.post('/create', async (c) => {
     try {
       ensureSpawned(secret, dataDir, id, config);
       if (runCommand !== '') {
-        // Write the command to the PTY as if typed. A short delay lets the
-        // shell's line editor (bash readline / zsh zle) finish initializing
-        // during rc-file startup before the input lands, so it isn't dropped
-        // or garbled. `writeInput` is a no-op if the PTY already exited.
-        setTimeout(() => writeInput(secret, `${runCommand}\n`, id), 300);
+        // HS-8840 — inject the command once the shell's output has SETTLED
+        // (its prompt has rendered and gone quiet), instead of after a fixed
+        // 300 ms. This adapts to the shell's real startup time so a slow shell
+        // (PowerShell on Windows can take noticeably longer to be ready for
+        // input) doesn't drop or garble the injected command the way a fixed
+        // delay could. `writeInput` is a no-op if the PTY already exited.
+        injectCommandWhenSettled(secret, id, `${runCommand}\n`);
       }
     } catch (err) {
       // Mirror eagerSpawnTerminals' policy: log but don't fail the request.

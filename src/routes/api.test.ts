@@ -685,6 +685,10 @@ describe('terminal route', () => {
   // assert the command was written to the freshly-spawned shell. Harmless to
   // the other terminal-route tests (none assert on writes).
   const ptyWrites: string[] = [];
+  // HS-8840 — capture the most-recently-spawned PTY's data callback (the
+  // lifecycle's `onData` wrapper) so the settle-injection test can simulate the
+  // shell printing its prompt, which drives `session.lastOutputAtMs`.
+  let emitPtyData: ((s: string) => void) | null = null;
   beforeAll(async () => {
     const { setPtyFactory } = await import('../terminals/registry.js');
     restorePtyFactory = setPtyFactory;
@@ -692,7 +696,7 @@ describe('terminal route', () => {
       pid: 0,
       cols: args.cols,
       rows: args.rows,
-      onData: () => ({ dispose: () => {} }),
+      onData: (cb: (data: string) => void) => { emitPtyData = cb; return { dispose: () => { emitPtyData = null; } }; },
       onExit: () => ({ dispose: () => {} }),
       write: (data: string) => { ptyWrites.push(data); },
       resize: () => {},
@@ -728,7 +732,7 @@ describe('terminal route', () => {
     expect(echoed?.name).toBe(created.config.name);
   });
 
-  it('POST /api/terminal/create with runCommand spawns the default shell and writes the command (HS-8539)', async () => {
+  it('POST /api/terminal/create with runCommand spawns the default shell and injects once output settles (HS-8539/HS-8840)', async () => {
     vi.useFakeTimers();
     try {
       ptyWrites.length = 0;
@@ -742,12 +746,46 @@ describe('terminal route', () => {
       // The PTY runs the DEFAULT shell — runCommand is NOT the PTY command.
       expect(created.config.command).not.toBe('npm run build');
       expect(created.config.command.length).toBeGreaterThan(0);
-      // The command is injected after a short delay so the shell's line editor
-      // can initialize; nothing is written before then.
+
+      // HS-8840 — nothing is injected while the shell is still starting up (no
+      // output yet).
+      vi.advanceTimersByTime(100);
       expect(ptyWrites).toEqual([]);
-      vi.advanceTimersByTime(300);
-      // Written as if typed, with a trailing newline to execute it.
+
+      // The shell prints its prompt → output timestamp updates.
+      emitPtyData?.('user@host:~$ ');
+      // Still nothing until the output has been quiet for the settle window.
+      vi.advanceTimersByTime(100);
+      expect(ptyWrites).toEqual([]);
+
+      // After the quiet window elapses, the command is injected as if typed
+      // (trailing newline to execute it).
+      vi.advanceTimersByTime(200);
       expect(ptyWrites).toContain('npm run build\n');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('POST /api/terminal/create with runCommand falls back to injecting after maxWaitMs when the shell never outputs (HS-8840)', async () => {
+    vi.useFakeTimers();
+    try {
+      ptyWrites.length = 0;
+      const create = await app.request('/api/terminal/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runCommand: 'echo fallback' }),
+      });
+      expect(create.status).toBe(200);
+
+      // No PTY output at all → the settle signal never fires. Before the hard
+      // fallback (`_settleInjectTimings.maxWaitMs` = 3000 ms) nothing is written.
+      vi.advanceTimersByTime(2000);
+      expect(ptyWrites).toEqual([]);
+      // After the fallback ceiling the command is injected regardless, so the
+      // gesture never silently does nothing.
+      vi.advanceTimersByTime(1200);
+      expect(ptyWrites).toContain('echo fallback\n');
     } finally {
       vi.useRealTimers();
     }
