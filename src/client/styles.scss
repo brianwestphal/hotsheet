@@ -1661,7 +1661,6 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
 }
 
 body.terminal-dashboard-active {
-  .header-controls,
   .sidebar,
   .content-area,
   .app-body,
@@ -1674,6 +1673,14 @@ body.terminal-dashboard-active {
   #update-banner,
   #share-banner,
   .app-footer {
+    display: none !important;
+  }
+  // HS-8852 — the dashboard is a global surface, so the per-ticket header
+  // controls (search, layout, sort, detail-position, print, settings) are
+  // hidden. But the Announcer "Listen" button is a global feature and must stay
+  // reachable here, so hide every header control EXCEPT it (rather than the
+  // whole `.header-controls`, whose `display:none` would also hide the button).
+  .header-controls > *:not(#announcer-listen-btn) {
     display: none !important;
   }
   .terminal-dashboard {
@@ -1700,7 +1707,6 @@ body.terminal-dashboard-active {
 // sort, detail-position toggle, settings) are hidden via
 // `.header-controls`.
 body.cross-project-stats-active {
-  .header-controls,
   .sidebar,
   .content-area,
   .app-body,
@@ -1713,6 +1719,12 @@ body.cross-project-stats-active {
   #update-banner,
   #share-banner,
   .app-footer {
+    display: none !important;
+  }
+  // HS-8852 — keep the Announcer "Listen" button (a global feature) reachable
+  // on this global surface; hide every other ticket-view header control rather
+  // than the whole `.header-controls` (whose `display:none` would hide it too).
+  .header-controls > *:not(#announcer-listen-btn) {
     display: none !important;
   }
   .cross-project-stats-root {

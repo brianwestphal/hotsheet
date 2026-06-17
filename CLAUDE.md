@@ -247,7 +247,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 83. `83-command-button-long-press.md` — long-press a command button for a secondary action (shell → run in new terminal, shipped; Claude → make a ticket, designed)
 84. `84-command-last-run.md` — hover a custom command button to see its last-run time (per-device, localStorage)
 
-Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source).
+Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source), `docs/demo-plan.md` (story-driven demo script for showing Hot Sheet + Glassbox to potential users).
 
 ### AI Summaries (`docs/ai/`)
 

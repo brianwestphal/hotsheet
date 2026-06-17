@@ -52,8 +52,40 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
     await expect(page.locator('#terminal-dashboard-toggle.active')).toHaveCount(1);
     await expect(page.locator('.sidebar')).toBeHidden();
-    await expect(page.locator('.header-controls')).toBeHidden();
+    // HS-8852 — the ticket-view header controls hide individually now (the
+    // Announcer Listen button is exempted from the takeover), so assert a
+    // couple of specific controls rather than the whole `.header-controls`.
+    await expect(page.locator('#settings-btn')).toBeHidden();
+    await expect(page.locator('.search-box')).toBeHidden();
     await expect(page.locator('#terminal-dashboard-root')).toBeVisible();
+  });
+
+  test('the dashboard takeover exempts the Announcer Listen button (HS-8852)', async ({ page }) => {
+    // CSS-contract test (independent of whether the announcer is currently
+    // usable): the dashboard takeover must NOT hide the Announcer button, which
+    // pre-HS-8852 it did by `display:none`-ing the whole `.header-controls`.
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#terminal-dashboard-toggle').click();
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
+
+    // The button's container is no longer display:none under the takeover.
+    const headerControlsDisplay = await page.locator('.header-controls')
+      .evaluate((el) => getComputedStyle(el).display);
+    expect(headerControlsDisplay).not.toBe('none');
+
+    // The Announcer button itself is exempt from the child-hide rule: forcing a
+    // visible inline display, the dashboard CSS does not override it to none.
+    const announcerHiddenByTakeover = await page.locator('#announcer-listen-btn').evaluate((el) => {
+      (el as HTMLElement).style.display = 'inline-flex';
+      return getComputedStyle(el).display === 'none';
+    });
+    expect(announcerHiddenByTakeover).toBe(false);
+
+    // A sibling ticket-view control (settings) IS hidden by the takeover.
+    const settingsDisplay = await page.locator('#settings-btn')
+      .evaluate((el) => getComputedStyle(el).display);
+    expect(settingsDisplay).toBe('none');
   });
 
   test('clicking the toggle a second time exits dashboard mode', async ({ page }) => {
