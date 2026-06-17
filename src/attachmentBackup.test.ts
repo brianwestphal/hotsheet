@@ -19,13 +19,15 @@ utimesSync,
   writeFileSync} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gzipSync } from 'zlib';
 
 import {
+  _resetMissingAttachmentWarningsForTests,
   ATTACHMENT_MANIFEST_VERSION,
   attachmentBlobsDir,
   type AttachmentManifest,
+  type AttachmentManifestEntry,
   type AttachmentRowSource,
   buildAttachmentManifest,
   deleteManifestSibling,
@@ -49,6 +51,9 @@ beforeEach(() => {
   liveAttachmentsDir = join(dataDir, 'attachments');
   mkdirSync(backupRoot, { recursive: true });
   mkdirSync(liveAttachmentsDir, { recursive: true });
+  // HS-8825 — the "already warned" dedupe set is process-global; clear it
+  // so each case starts clean (vitest runs a whole file in one process).
+  _resetMissingAttachmentWarningsForTests();
 });
 
 afterEach(() => {
@@ -232,6 +237,79 @@ describe('buildAttachmentManifest (HS-7929)', () => {
     // would be near 0 (the only ticks would be the ones between awaited
     // I/O inside hashFile / ensureBlobInStore which already exist).
     expect(immediateCount).toBeGreaterThan(10);
+  });
+});
+
+describe('buildAttachmentManifest missing-file self-heal + warn-once (HS-8825)', () => {
+  // The bug: the orphan self-heal (`cleanupOrphanedAttachments`) only runs once
+  // at startup, but the backup runs every ~5 min. A file deleted out-of-band
+  // mid-session therefore re-logged "N attachment(s) missing on disk" on EVERY
+  // backup tick for the rest of a (possibly days-long) session. The fix makes
+  // the manifest builder (1) restore a recoverable file inline from the backup
+  // store and (2) warn at most once per id per process for the unrecoverable
+  // remainder.
+
+  /** Plant an existing manifest under a tier so `indexExistingManifestEntries`
+   *  can cross-reference a missing row's blob. */
+  function plantManifest(tier: '5min' | 'hourly' | 'daily', name: string, entries: AttachmentManifestEntry[]): void {
+    const tdir = join(backupRoot, tier);
+    mkdirSync(tdir, { recursive: true });
+    const manifest: AttachmentManifest = {
+      schemaVersion: ATTACHMENT_MANIFEST_VERSION,
+      createdAt: new Date().toISOString(),
+      tarball: name.replace('.attachments.json', '.tar.gz'),
+      entries,
+    };
+    writeFileSync(join(tdir, name), JSON.stringify(manifest));
+  }
+
+  it('self-heals a missing file from the backup store and captures it (no warning)', async () => {
+    const payload = Buffer.from('recover-me');
+    const sha = expectedSha(payload);
+    const blobsDir = attachmentBlobsDir(backupRoot);
+    mkdirSync(blobsDir, { recursive: true });
+    writeFileSync(join(blobsDir, sha), payload); // content still in the store
+    // An existing manifest references attachment 5 → this blob.
+    plantManifest('5min', 'backup-old.attachments.json', [
+      { attachmentId: 5, ticketId: 50, originalName: 'x.png', storedName: 'HS-5_x.png', sha, size: payload.length },
+    ]);
+
+    const ghost = join(liveAttachmentsDir, 'HS-5_x.png'); // missing on disk
+    const db = makeStubDb([{ id: 5, ticket_id: 50, original_filename: 'x.png', stored_path: ghost }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const m = await buildAttachmentManifest(db, backupRoot, 'backup-new.tar.gz');
+
+    // Restored back to its original stored_path, byte-for-byte...
+    expect(existsSync(ghost)).toBe(true);
+    expect(readFileSync(ghost)).toEqual(payload);
+    // ...and captured in the freshly-built manifest.
+    expect(m.entries).toHaveLength(1);
+    expect(m.entries[0]?.attachmentId).toBe(5);
+    expect(m.entries[0]?.sha).toBe(sha);
+    // Recovered → never reported as missing.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('warns only once per process for a genuinely-unrecoverable missing row', async () => {
+    const ghost = join(liveAttachmentsDir, 'gone.bin'); // missing, no cross-ref blob anywhere
+    const db = makeStubDb([{ id: 99, ticket_id: 9, original_filename: 'gone.bin', stored_path: ghost }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const m1 = await buildAttachmentManifest(db, backupRoot, 'backup-1.tar.gz');
+    expect(m1.entries).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('unrecoverable');
+    expect(String(warn.mock.calls[0]?.[0])).toContain('99');
+
+    // A second backup tick with the same still-missing row must NOT re-warn —
+    // this is the exact every-5-min repetition the user reported.
+    const m2 = await buildAttachmentManifest(db, backupRoot, 'backup-2.tar.gz');
+    expect(m2.entries).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1); // unchanged
+
+    warn.mockRestore();
   });
 });
 

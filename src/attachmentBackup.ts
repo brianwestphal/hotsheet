@@ -262,6 +262,26 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise<void>(resolve => setImmediate(resolve));
 }
 
+/**
+ * HS-8825 — attachment ids already warned about as "missing on disk and
+ * unrecoverable" during this process. The orphan self-heal that prunes / restores
+ * these rows (`cleanupOrphanedAttachments`) only runs once at startup, but the
+ * backup runs every ~5 min. Pre-fix, a file deleted out-of-band mid-session
+ * therefore re-logged the same warning on EVERY backup tick for the rest of a
+ * (potentially days-long) session. We now (1) attempt an inline self-heal from
+ * the backup store before warning, and (2) warn at most once per id per process
+ * for the genuinely-unrecoverable remainder — the next restart's cleanup prunes
+ * them. Reset via `_resetMissingAttachmentWarningsForTests`.
+ */
+const warnedMissingAttachmentIds = new Set<number>();
+
+/** Test-only — clear the per-process "already warned" set so a vitest
+ *  file (single process, many cases) can assert the once-per-id dedupe
+ *  without cross-test leakage. */
+export function _resetMissingAttachmentWarningsForTests(): void {
+  warnedMissingAttachmentIds.clear();
+}
+
 export async function buildAttachmentManifest(
   db: AttachmentRowSource,
   backupRoot: string,
@@ -273,14 +293,32 @@ export async function buildAttachmentManifest(
   );
   const entries: AttachmentManifestEntry[] = [];
   const missingIds: number[] = [];
+  // HS-8825 — built lazily on the first missing file: an index of every
+  // existing manifest's `attachmentId → {sha,…}` so the inline self-heal can
+  // recover a file whose blob is still in the backup store.
+  let crossRefIndex: Map<number, { sha: string; storedName: string; size: number }> | null = null;
   for (const row of result.rows) {
     if (!existsSync(row.stored_path)) {
-      // HS-8783 — aggregate instead of one warn per row: a project with many
-      // externally-deleted files used to emit N lines on EVERY backup. The
-      // cleanup self-heal (`cleanupOrphanedAttachments`) prunes the truly-lost
-      // (unrecoverable) ones; recoverable-but-missing rows still surface here.
-      missingIds.push(row.id);
-      continue;
+      // HS-8825 — attempt an inline self-heal from the backup store before
+      // giving up. Pre-fix the only self-heal ran once at startup
+      // (`cleanupOrphanedAttachments`); a file deleted out-of-band mid-session
+      // therefore stayed missing — and re-logged the warning — on EVERY 5-min
+      // backup for the rest of the session. If the content is still in the
+      // hash-addressed store we copy it back to `stored_path` and fall through
+      // to capture it in THIS manifest; otherwise it's genuinely unrecoverable
+      // (the next restart's cleanup prunes the row).
+      crossRefIndex ??= indexExistingManifestEntries(backupRoot);
+      const xref = crossRefIndex.get(row.id);
+      let healed = false;
+      if (xref !== undefined && existsSync(join(blobsDir, xref.sha))) {
+        healed = await restoreAttachmentBlob(blobsDir, xref.sha, row.stored_path) && existsSync(row.stored_path);
+      }
+      if (!healed) {
+        // HS-8783 — aggregate instead of one warn per row.
+        missingIds.push(row.id);
+        continue;
+      }
+      // fall through — the file is back on disk; hash + capture it below.
     }
     try {
       const { sha, size } = await hashFile(row.stored_path);
@@ -304,9 +342,17 @@ export async function buildAttachmentManifest(
     await yieldToEventLoop();
   }
   if (missingIds.length > 0) {
-    const shown = missingIds.slice(0, 20).join(', ');
-    const more = missingIds.length > 20 ? `, …(+${String(missingIds.length - 20)} more)` : '';
-    console.warn(`[attachmentBackup] ${String(missingIds.length)} attachment(s) missing on disk (excluded from this backup): ids ${shown}${more}`);
+    // HS-8825 — only warn for ids not already reported this process. The
+    // self-heal above recovers anything still in the backup store, so what
+    // reaches here is genuinely unrecoverable and won't change between
+    // backup ticks; logging it once (rather than every 5 min) is enough.
+    const fresh = missingIds.filter(id => !warnedMissingAttachmentIds.has(id));
+    for (const id of missingIds) warnedMissingAttachmentIds.add(id);
+    if (fresh.length > 0) {
+      const shown = fresh.slice(0, 20).join(', ');
+      const more = fresh.length > 20 ? `, …(+${String(fresh.length - 20)} more)` : '';
+      console.warn(`[attachmentBackup] ${String(fresh.length)} attachment(s) missing on disk and unrecoverable from backups (excluded from this backup): ids ${shown}${more}`);
+    }
   }
   return {
     schemaVersion: ATTACHMENT_MANIFEST_VERSION,

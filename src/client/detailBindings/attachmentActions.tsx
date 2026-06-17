@@ -11,6 +11,30 @@ import { delegate } from '../reactive.js';
 import { state } from '../state.js';
 import { getTauriInvoke } from '../tauriIntegration.js';
 
+/** HS-8826 — robust macOS detection. `navigator.platform` is deprecated and,
+ *  while WKWebView still reports `"MacIntel"`, relying on it alone is brittle
+ *  (some embedders freeze it to `""`). Fall back to the user-agent string,
+ *  which always carries `"Macintosh"` / `"Mac OS X"` in WebKit. */
+function isMac(): boolean {
+  const platform = navigator.platform || '';
+  if (platform.includes('Mac')) return true;
+  return /Mac/i.test(navigator.userAgent || '');
+}
+
+/** HS-8826 — build the serve URL for an attachment. The file is served from
+ *  `dataDir/attachments/<storedName>`, where `storedName` is the on-disk
+ *  basename (e.g. `HS-1_Screenshot.png` — a `ticket_number` prefix plus the
+ *  base name, see the upload route in `src/routes/attachments.ts`). It is NOT
+ *  the user-facing `original_filename` (`Screenshot.png`). Serving by the
+ *  original name 404s → broken-image overlay (the symptom this fixes). Derive
+ *  the served name from `stored_path`'s basename; split on both separators so
+ *  a Windows `stored_path` resolves too. */
+function serveUrlFor(storedPath: string, originalFilename: string): string {
+  const storedName = storedPath.split(/[/\\]/).pop();
+  const name = storedName !== undefined && storedName !== '' ? storedName : originalFilename;
+  return `/api/attachments/file/${encodeURIComponent(name)}`;
+}
+
 /** Preview an attachment — Quicklook on macOS (Tauri), inline overlay in browser.
  *  Exported for the `bindDetailAttachmentActions` handlers below; not part of
  *  the panel's public surface. */
@@ -18,14 +42,23 @@ export async function previewAttachment(item: HTMLElement): Promise<void> {
   const filename = item.dataset.filename ?? '';
   const attId = item.dataset.attId ?? '';
   if (attId === '') return;
+  const storedPath = item.dataset.storedPath ?? '';
 
-  // Tauri: use qlmanage for macOS Quicklook
+  // Tauri: use qlmanage for macOS Quicklook.
   const invoke = getTauriInvoke();
-  if (invoke && navigator.platform.includes('Mac')) {
-    const storedPath = item.dataset.storedPath ?? '';
+  if (invoke && isMac()) {
     if (storedPath !== '') {
-      try { await invoke('quicklook', { path: storedPath }); } catch { /* fallback below */ }
-      return;
+      try {
+        await invoke('quicklook', { path: storedPath });
+        return; // HS-8826 — only short-circuit on SUCCESS.
+      } catch {
+        // HS-8826 — pre-fix the `return` sat OUTSIDE the try/catch, so a
+        // failed `quicklook` (missing file, qlmanage error) returned anyway
+        // and the "fallback below" the comment promised was dead code —
+        // nothing happened at all. Now a failure falls through to the inline
+        // browser overlay below, which still previews images / PDFs even when
+        // the native Quick Look path is unavailable.
+      }
     }
   }
 
@@ -35,11 +68,12 @@ export async function previewAttachment(item: HTMLElement): Promise<void> {
   const pdfExts = new Set(['pdf']);
 
   if (imageExts.has(ext) || pdfExts.has(ext)) {
+    const url = serveUrlFor(storedPath, filename);
     const overlay = toElement(
       <div className="quicklook-overlay" style="position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;cursor:pointer">
         {imageExts.has(ext)
-          ? <img src={`/api/attachments/file/${encodeURIComponent(filename)}`} style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4)" alt={filename} />
-          : <iframe src={`/api/attachments/file/${encodeURIComponent(filename)}`} style="width:80vw;height:85vh;border:none;border-radius:8px" title={filename}></iframe>
+          ? <img src={url} style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.4)" alt={filename} />
+          : <iframe src={url} style="width:80vw;height:85vh;border:none;border-radius:8px" title={filename}></iframe>
         }
       </div>
     );

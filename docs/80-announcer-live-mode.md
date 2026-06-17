@@ -101,11 +101,15 @@ command-log UI) on the same fast path as ticket mutations.
 - **Skip-catch-up.** A fast-forward control jumps the player to the newest entry
   (`AnnouncerPlayer.jumpToLast`) and advances the listened cursor for the live
   projects (drops the backlog).
-- **"Still working" presence.** A presence line ("● working…" / "✓ idle") driven
-  by the §12 channel busy state (`getProjectBusySecrets`), distinct from the
-  entry being narrated.
-- The context dropdown is disabled while live (live tails the current context).
-  Closing/minimizing the PIP stops the session (drops the leases).
+- **"Still working" presence.** ~~A presence line ("● working…" / "✓ idle")
+  driven by the §12 channel busy state.~~ **Removed (HS-8827)** — the live
+  session still polls `getProjectBusySecrets` to drive generation, it just no
+  longer surfaces the idle/working state as a visible label.
+- **The context dropdown is switchable while live (HS-8827).** ~~Disabled while
+  live.~~ Switching now stops the live session on the old context, swaps the
+  reel, and resumes live tailing on the new context's secrets. The Stop button
+  (or the Listen-button toggle to hide) is how the session ends/drops the leases;
+  the X merely hides the panel without stopping playback or the live leases.
 
 Tests: `client/announcerPlayer.test.ts` (`appendEntries` resume/extend +
 `jumpToLast`), `client/announcerLive.test.ts` (lease renew, tail + dedup + sort,

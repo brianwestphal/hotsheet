@@ -187,6 +187,22 @@ broken `<img>` from re-walking the store when no blob is recoverable; a
 successful restore self-clears (the file then exists). The directory-traversal
 guard runs first, unchanged.
 
+**Backup-time heal + warn-once (HS-8825).** Both heals above are conditional —
+the startup sweep only runs on launch, and the serve-time heal only fires when
+someone *views* the attachment. A file deleted out-of-band mid-session that
+nobody re-opens therefore stayed missing for the rest of a (potentially
+days-long) session, and `buildAttachmentManifest` re-logged
+`"N attachment(s) missing on disk …"` on **every** ~5-min backup tick. The
+manifest builder now self-heals inline: when `stored_path` is missing it
+consults `indexExistingManifestEntries` + the blob store and, if the content is
+recoverable, copies it back via `restoreAttachmentBlob` and captures it in the
+manifest being built (no warning). The genuinely-unrecoverable remainder is
+warned at most **once per id per process** (a module-level
+`warnedMissingAttachmentIds` set, reset in tests via
+`_resetMissingAttachmentWarningsForTests`) with the message
+`"… missing on disk and unrecoverable from backups …"` — the next restart's
+startup sweep prunes those rows.
+
 ## 43.11 Open questions / explicit follow-ups for the implementation ticket
 
 These are intentionally NOT decided here so HS-7929 (implementation) can revisit with code in front of it:

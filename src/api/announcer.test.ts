@@ -122,4 +122,12 @@ describe('announcer callers (HS-8745)', () => {
     await clearAnnouncements();
     expect(lastCall?.path).toBe('/announcer/clear');
   });
+
+  // HS-8827 — "Clear all" in "All Projects" mode targets each project by secret.
+  it('clearAnnouncements(secret) → POST /announcer/clear with the project secret', async () => {
+    stub({ ok: true });
+    await clearAnnouncements('sec-z');
+    expect(lastCall?.path).toBe('/announcer/clear');
+    expect(lastCall?.opts.secret).toBe('sec-z');
+  });
 });

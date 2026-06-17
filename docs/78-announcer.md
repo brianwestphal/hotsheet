@@ -589,6 +589,24 @@ minimized restores) — playback continues either way; it only generates+opens a
 fresh reel when no session is live. Resizable, code-diff visuals, the 10s audio-timeline seeks,
 and playback-speed are later phases (see the follow-up tickets).
 
+**HS-8827 — header/footer rework.** The header **X** now *hides* the panel
+(the former minimize behavior) instead of closing it; the dedicated minimize
+button is gone, and an explicit **Stop** button (`.announcer-pip-stop`, filled
+square) ends the session entirely (the former close path — `dispose()` +
+`clearAnnouncerSession()` + `onClose` cursor advance). The footer meta row gains
+a **per-announcement timestamp** (`.announcer-pip-timestamp`, `timeAgo(created_at)`
+relative text + absolute on hover) and a **Clear All** button
+(`.announcer-pip-clear`, trash icon) that — behind a confirm — permanently wipes
+every announcement in the current view via `POST /announcer/clear` per project
+(`clearTargetSecrets(context, projects)`: all offered projects in "All Projects"
+mode, else the selected one) and leaves the panel open showing a "No
+announcements." empty state. The idle/working **presence** line and the
+"Speaking via system/browser voice" **hint** are removed (only the actionable
+"no voice available — transcript only" note survives). The **context dropdown is
+now switchable while Live** — switching stops live on the old context, swaps the
+reel, and resumes live tailing on the new context's secrets (pre-fix the dropdown
+was disabled in live mode).
+
 **Busy feedback (HS-8753).** Clicking Listen shows an immediate "Preparing your
 narration…" toast and the button shows a spinner (`.is-busy`) for the whole
 generation round-trip, so a multi-second Anthropic call no longer looks like a

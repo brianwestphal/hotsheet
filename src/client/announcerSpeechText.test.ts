@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ALL_PROJECTS, type ReelEntry, reelSpeechText } from './announcerPip.js';
+import type { AnnouncerProjectInfo } from '../api/announcer.js';
+import { ALL_PROJECTS, clearTargetSecrets, type ReelEntry, reelSpeechText } from './announcerPip.js';
 
 function reelEntry(over: Partial<ReelEntry> = {}): ReelEntry {
   return {
@@ -36,5 +37,20 @@ describe('reelSpeechText (HS-8782)', () => {
   it('uses the entry-specific project name (interleaved reel)', () => {
     expect(reelSpeechText(reelEntry({ projectName: 'Glassbox', script: 'shipped X' }), ALL_PROJECTS))
       .toBe('In Glassbox: shipped X');
+  });
+});
+
+describe('clearTargetSecrets (HS-8827)', () => {
+  const proj = (secret: string, name: string): AnnouncerProjectInfo => ({
+    secret, name, enabled: true, hasKey: true, entryCount: 0,
+  });
+  const projects = [proj('sec-a', 'Alpha'), proj('sec-b', 'Beta')];
+
+  it('clears every offered project in All Projects mode', () => {
+    expect(clearTargetSecrets(ALL_PROJECTS, projects)).toEqual(['sec-a', 'sec-b']);
+  });
+
+  it('clears only the selected project in single-project mode', () => {
+    expect(clearTargetSecrets('sec-b', projects)).toEqual(['sec-b']);
   });
 });

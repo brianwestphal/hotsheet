@@ -144,6 +144,13 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      # HS-8829 — run the Rust unit tests on this OS before the (long, signed)
+      # bundle build, so the per-OS `#[cfg(target_os)]` command builders execute
+      # on macOS / ubuntu / windows and a Rust regression fails the job fast.
+      - name: Rust unit tests
+        run: npm run test:rust
+        shell: bash
+
       - name: Build sidecar
         run: bash scripts/build-sidecar.sh ${{ matrix.target }}
         shell: bash

@@ -61,8 +61,84 @@ export function registerHttpServerForShutdown(server: HttpServer | null): void {
  */
 export function gracefulShutdown(reason: ShutdownReason): Promise<void> {
   if (shutdownPromise !== null) return shutdownPromise;
-  shutdownPromise = runShutdownPipeline(reason);
+  shutdownPromise = runWithOverallDeadline(reason);
   return shutdownPromise;
+}
+
+/**
+ * HS-8828 — per-step + overall shutdown timeouts.
+ *
+ * The reported bug: quitting Hot Sheet (run via `npm run tauri:dev`) "never
+ * actually quits." Root cause class: the SIGINT/SIGTERM handler (and the
+ * `/api/shutdown` route) `await gracefulShutdown()` BEFORE calling
+ * `process.exit(0)`. The pipeline tolerated a step that *throws* (each step has
+ * its own try/catch), but NOT a step that *hangs* — a cleanup promise that
+ * never settles (a PGLite CHECKPOINT that blocks, a PTY destroy waiting on a
+ * wedged child, an Announcer generator promise that never resolves) left
+ * `gracefulShutdown` pending forever, so `process.exit(0)` was never reached
+ * and the Node sidecar lived on. Under `tauri dev` that keeps the whole dev
+ * invocation alive → "never quits."
+ *
+ * Fix: bound every step (`STEP_TIMEOUT_MS`) so one hung step is abandoned and
+ * the rest of the pipeline still runs, AND bound the whole pipeline
+ * (`OVERALL_TIMEOUT_MS`) so a pathological cascade of slow steps can never
+ * exceed a hard ceiling. On timeout we log and resolve — the caller's
+ * `process.exit(0)` tears down whatever work is still pending, and the
+ * synchronous `process.on('exit')` handler in `cli.ts` is the lockfile-removal
+ * safety net for steps the deadline skipped.
+ */
+const STEP_TIMEOUT_MS = 3000;
+const OVERALL_TIMEOUT_MS = 8000;
+
+/** Test-only overrides so the timeout contract is unit-testable without
+ *  waiting multiple real seconds. Production never sets these. */
+let stepTimeoutOverrideMs: number | null = null;
+let overallTimeoutOverrideMs: number | null = null;
+export function _setShutdownTimeoutsForTests(step: number | null, overall: number | null): void {
+  stepTimeoutOverrideMs = step;
+  overallTimeoutOverrideMs = overall;
+}
+
+/** Run a single cleanup step under a timeout. A step that rejects OR hangs is
+ *  logged and swallowed so the pipeline always advances to the next step. */
+async function runStep(label: string, fn: () => Promise<void> | void): Promise<void> {
+  const ms = stepTimeoutOverrideMs ?? STEP_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(fn),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${String(ms)}ms`)), ms);
+        timer.unref();
+      }),
+    ]);
+  } catch (err) {
+    console.error(`[lifecycle] step "${label}" failed:`, err);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** Wrap the whole pipeline in a hard wall-clock ceiling. Resolves (not
+ *  rejects) on timeout so every caller's post-shutdown `process.exit(0)` still
+ *  fires. */
+async function runWithOverallDeadline(reason: ShutdownReason): Promise<void> {
+  const ms = overallTimeoutOverrideMs ?? OVERALL_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      runShutdownPipeline(reason),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(`[lifecycle] gracefulShutdown(${reason}) — overall deadline (${String(ms)}ms) hit; forcing resolve so the process can exit`);
+          resolve();
+        }, ms);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Test-only — clears the cached promise + http-server registration so each
@@ -70,6 +146,8 @@ export function gracefulShutdown(reason: ShutdownReason): Promise<void> {
 export function _resetLifecycleForTests(): void {
   shutdownPromise = null;
   httpServer = null;
+  stepTimeoutOverrideMs = null;
+  overallTimeoutOverrideMs = null;
 }
 
 /** Test-only — true once `gracefulShutdown` has been called. */
@@ -80,16 +158,18 @@ export function _shutdownStarted(): boolean {
 async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   console.log(`[lifecycle] gracefulShutdown(${reason}) — starting`);
 
-  await closeHttpServer();
-  await killShellCommands();
-  await destroyTerminals();
-  await disposeGitWatchers();
-  await terminateHashWorkerStep();
-  await snapshotDatabases();
-  await closeDatabases();
-  stopFreezeHeartbeat();
-  releaseProjectLocks();
-  removeLockfile();
+  // HS-8828 — every step runs under `runStep`'s per-step timeout so a single
+  // hung cleanup can't wedge the whole quit (see `gracefulShutdown` above).
+  await runStep('closeHttpServer', closeHttpServer);
+  await runStep('killShellCommands', killShellCommands);
+  await runStep('destroyTerminals', destroyTerminals);
+  await runStep('disposeGitWatchers', disposeGitWatchers);
+  await runStep('terminateHashWorker', terminateHashWorkerStep);
+  await runStep('snapshotDatabases', snapshotDatabases);
+  await runStep('closeDatabases', closeDatabases);
+  await runStep('stopFreezeHeartbeat', stopFreezeHeartbeat);
+  await runStep('releaseProjectLocks', releaseProjectLocks);
+  await runStep('removeLockfile', removeLockfile);
 
   console.log(`[lifecycle] gracefulShutdown(${reason}) — done`);
 }

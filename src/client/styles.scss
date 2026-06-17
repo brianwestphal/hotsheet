@@ -12415,8 +12415,10 @@ label.detail-details-label {
   text-overflow: ellipsis;
 }
 
+// HS-8827 — header window controls: expand, hide (X), stop. The dedicated
+// minimize button was removed (the X now hides, keeping playback).
 .announcer-pip-close,
-.announcer-pip-min,
+.announcer-pip-stop,
 .announcer-pip-expand {
   display: inline-flex;
   align-items: center;
@@ -12439,8 +12441,14 @@ label.detail-details-label {
   }
 }
 
+// HS-8827 — the Stop button reads as "end the session": tint it on hover.
+.announcer-pip-stop:hover {
+  color: var(--danger, #d33);
+  border-color: var(--danger, #d33);
+}
+
 // HS-8762 — context dropdown ("All Projects" / a specific project).
-// HS-8767 — + the Live toggle and the "still working" presence line.
+// HS-8767 — + the Live toggle. (HS-8827 removed the idle/working presence line.)
 .announcer-pip-context {
   display: flex;
   align-items: center;
@@ -12480,16 +12488,6 @@ label.detail-details-label {
     border-color: var(--danger, #d33);
     animation: announcer-btn-glow 1.8s ease-in-out infinite;
   }
-}
-
-.announcer-pip-presence {
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-
-  &.is-working { color: var(--accent, #3b82f6); }
-
-  &[hidden] { display: none; }
 }
 
 .announcer-pip-body {
@@ -12601,6 +12599,38 @@ label.detail-details-label {
 .announcer-pip-position {
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+// HS-8827 — per-announcement timestamp in the footer meta row.
+.announcer-pip-timestamp {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+// HS-8827 — Clear All button (footer meta row).
+.announcer-pip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+
+  svg { width: 14px; height: 14px; }
+
+  &:hover {
+    color: var(--danger, #d33);
+    border-color: var(--danger, #d33);
+    background: var(--bg-hover);
+  }
 }
 
 // HS-8754 — playback-speed control in the PIP footer.

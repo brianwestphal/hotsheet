@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   _resetLifecycleForTests,
+  _setShutdownTimeoutsForTests,
   _shutdownStarted,
   gracefulShutdown,
   registerHttpServerForShutdown,
@@ -125,6 +126,42 @@ describe('gracefulShutdown (HS-7931)', () => {
     expect(destroyAllTerminalsMock).toHaveBeenCalledTimes(1);
     expect(closeAllDatabasesMock).toHaveBeenCalledTimes(1);
     expect(removeInstanceMock).toHaveBeenCalledTimes(1);
+  });
+
+  // HS-8828 — a step that THROWS was already tolerated; the new contract is
+  // that a step that HANGS (never settles) is bounded by a per-step timeout so
+  // the pipeline still advances. Pre-fix this wedged `gracefulShutdown` forever
+  // → the SIGINT/SIGTERM handler never reached `process.exit(0)` → the app
+  // "never quit" (the reported symptom, when run via `npm run tauri:dev`).
+  it('does not wedge when a step HANGS — abandons it after the per-step timeout and runs the rest (HS-8828)', async () => {
+    _setShutdownTimeoutsForTests(20, 2000); // 20ms per-step, generous overall
+    // `closeAllDatabases` never resolves — the classic "PGLite CHECKPOINT
+    // blocked" hang.
+    closeAllDatabasesMock.mockImplementation(() => new Promise<void>(() => { /* never resolves */ }));
+    registerHttpServerForShutdown(makeFakeServer());
+
+    // Must resolve despite the hang (the test would itself time out otherwise).
+    await gracefulShutdown('test');
+
+    // The hung DB-close step was abandoned, but the lockfile-removal step that
+    // comes AFTER it still ran.
+    expect(removeInstanceMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('honors the overall deadline when a step hangs longer than the per-step budget (HS-8828)', async () => {
+    // Per-step budget high, overall ceiling low: the overall deadline must win
+    // and resolve `gracefulShutdown` so `process.exit(0)` can fire.
+    _setShutdownTimeoutsForTests(10_000, 30);
+    // `snapshotAllForShutdown` (the step BEFORE databases + lockfile) hangs.
+    snapshotAllForShutdownMock.mockImplementation(() => new Promise<void>(() => { /* never resolves */ }));
+    registerHttpServerForShutdown(makeFakeServer());
+
+    await gracefulShutdown('test');
+
+    // The 30ms overall deadline pre-empted the pipeline mid-snapshot, so the
+    // later steps never ran — proving the ceiling fired (not the 10s per-step).
+    expect(closeAllDatabasesMock).not.toHaveBeenCalled();
+    expect(removeInstanceMock).not.toHaveBeenCalled();
   });
 
   it('is idempotent — concurrent callers share the same underlying promise', async () => {

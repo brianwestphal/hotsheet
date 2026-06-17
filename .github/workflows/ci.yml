@@ -45,6 +45,23 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # HS-8829 — Rust unit tests (`src-tauri/`) for the Tauri crate. Previously ran
+  # ONLY locally on the maintainer's Mac (never in CI), so the per-OS command
+  # builders (build_tts_command / build_kill_command / build_quicklook_command)
+  # had no continuous gate. This runs them on every push/PR. The crate links
+  # WebKitGTK on Linux, so the same apt deps the release matrices install are
+  # needed to compile the test binary. (The release matrices also run cargo test
+  # on macOS + Windows for true per-OS execution.)
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+      - run: npm run test:rust
+
   e2e:
     runs-on: ubuntu-latest
     steps:

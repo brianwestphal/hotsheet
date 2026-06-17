@@ -172,6 +172,9 @@ export async function setAnnouncerDismissedTopics(topics: string[]): Promise<str
   return (await apiCall(DismissedTopicsResSchema, '/announcer/dismissed-topics', { method: 'PUT', body: { topics } })).topics;
 }
 
-export async function clearAnnouncements(): Promise<{ ok: true }> {
-  return apiCall(OkResponseSchema, '/announcer/clear', { method: 'POST' });
+// HS-8827 — `secret` targets a specific project (routes through `apiWithSecret`)
+// so the PIP's "Clear all" can wipe each project's reel in "All Projects" mode,
+// not just the active one. Omitted → the active project (existing behavior).
+export async function clearAnnouncements(secret?: string): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, '/announcer/clear', { method: 'POST', secret });
 }

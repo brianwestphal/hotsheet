@@ -761,25 +761,54 @@ async fn show_native_notification(
         .map_err(|e| e.to_string())
 }
 
+/// HS-8826 — build the OS Quick Look / open command for `platform`. macOS uses
+/// `qlmanage -p <path>` (the CLI Quick Look preview panel); other platforms open
+/// the file in its default app (`xdg-open` on Linux, `cmd /C start "" <path>` on
+/// Windows — `start` is a `cmd.exe` builtin, not an executable, so the previous
+/// `Command::new("start")` form never actually launched anything). Pure data so
+/// the per-platform construction is unit-testable on any host (mirrors
+/// `build_tts_command` / `build_kill_command`).
+fn build_quicklook_command(platform: TtsPlatform, path: &str) -> CommandSpec {
+    match platform {
+        TtsPlatform::MacOs => CommandSpec {
+            program: "qlmanage".to_string(),
+            args: vec!["-p".to_string(), path.to_string()],
+            env: Vec::new(),
+        },
+        TtsPlatform::Windows => CommandSpec {
+            program: "cmd".to_string(),
+            // The empty "" is `start`'s title argument, so a quoted path isn't
+            // mis-parsed as the window title.
+            args: vec![
+                "/C".to_string(),
+                "start".to_string(),
+                String::new(),
+                path.to_string(),
+            ],
+            env: Vec::new(),
+        },
+        TtsPlatform::Linux => CommandSpec {
+            program: "xdg-open".to_string(),
+            args: vec![path.to_string()],
+            env: Vec::new(),
+        },
+    }
+}
+
 #[tauri::command]
 async fn quicklook(path: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("qlmanage")
-            .arg("-p")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+    // HS-8826 — fail fast when the file is gone (e.g. an attachment deleted
+    // out-of-band — see HS-8825). `qlmanage` on a missing path shows an empty /
+    // error preview while `spawn()` still returns Ok, so the client could never
+    // tell the preview failed. Returning Err here lets the client fall back to
+    // its inline browser overlay, which fetches the file via the HTTP route
+    // (and benefits from that route's serve-time self-heal, HS-8808).
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("file not found: {path}"));
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // On non-macOS, open with default application via xdg-open/start
-        let cmd = if cfg!(target_os = "windows") { "start" } else { "xdg-open" };
-        std::process::Command::new(cmd)
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
+    spec_to_command(&build_quicklook_command(current_tts_platform(), &path))
+        .spawn()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1656,5 +1685,33 @@ mod tts_command_tests {
         } else {
             assert_eq!(platform, TtsPlatform::Linux);
         }
+    }
+
+    // HS-8826 — Quick Look / open command per platform. Pure builder, so all
+    // three OS branches are asserted on any host (the macOS `qlmanage` path is
+    // the only one exercised live in dev).
+
+    #[test]
+    fn quicklook_macos_uses_qlmanage_preview() {
+        let spec = build_quicklook_command(TtsPlatform::MacOs, "/tmp/a file.png");
+        assert_eq!(spec.program, "qlmanage");
+        assert_eq!(spec.args, vec!["-p", "/tmp/a file.png"]);
+        assert!(spec.env.is_empty());
+    }
+
+    #[test]
+    fn quicklook_linux_uses_xdg_open() {
+        let spec = build_quicklook_command(TtsPlatform::Linux, "/home/x/doc.pdf");
+        assert_eq!(spec.program, "xdg-open");
+        assert_eq!(spec.args, vec!["/home/x/doc.pdf"]);
+    }
+
+    #[test]
+    fn quicklook_windows_uses_cmd_start_with_empty_title() {
+        let spec = build_quicklook_command(TtsPlatform::Windows, "C:\\tmp\\doc.pdf");
+        assert_eq!(spec.program, "cmd");
+        // `cmd /C start "" <path>` — the empty title arg keeps a quoted path
+        // from being swallowed as the window title.
+        assert_eq!(spec.args, vec!["/C", "start", "", "C:\\tmp\\doc.pdf"]);
     }
 }

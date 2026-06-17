@@ -250,6 +250,95 @@ describe('projectTabs trial migration (HS-8235)', () => {
   });
 });
 
+describe('active-tab scroll only on switch (HS-8824)', () => {
+  // The bug: `scrollActiveTabIntoView()` ran on EVERY `renderTabs()` call —
+  // both via the trailing `requestAnimationFrame` and via `setupScrollObserver`
+  // re-creating the ResizeObserver (whose callback fires once on `observe()`).
+  // `renderTabs()` runs on every poll-driven `refreshProjectTabs()`, so any
+  // manual scroll away from the selected tab got snapped back on the next poll
+  // tick — making it impossible to scroll the strip past the selected project.
+  //
+  // The fix gates the rAF scroll on a CHANGE of active secret (a real switch /
+  // initial mount), and wires the resize observer once per strip mount instead
+  // of once per render. These tests lock in: (1) a same-active re-render does
+  // not touch the user's scroll position; (2) switching active still scrolls
+  // the newly-selected tab into view.
+  //
+  // happy-dom does no layout, so geometry + `scrollLeft` are stubbed. Each tab
+  // is parked out of the container's right edge so that ANY call to
+  // `scrollActiveTabIntoView()` would visibly move `scrollLeft` — that's what
+  // makes "no scroll on poll" observable.
+  function stubScrollGeometry(): { get: () => number; set: (n: number) => void } {
+    const inner = document.querySelector<HTMLElement>('.project-tabs-inner');
+    if (inner === null) throw new Error('tab strip not mounted');
+    let scroll = 0;
+    Object.defineProperty(inner, 'scrollLeft', {
+      configurable: true,
+      get: () => scroll,
+      set: (v: number) => { scroll = v; },
+    });
+    Object.defineProperty(inner, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 100, bottom: 30, width: 100, height: 30, x: 0, y: 0, toJSON: () => ({}) } as DOMRect),
+    });
+    Object.defineProperty(inner, 'scrollWidth', { configurable: true, value: 300 });
+    Object.defineProperty(inner, 'clientWidth', { configurable: true, value: 100 });
+    // Every tab sits at 200..250 — well past the container's right edge (100),
+    // so `scrollActiveTabIntoView` would always add (250 - 100) = 150 to scroll.
+    for (const row of tabs()) {
+      Object.defineProperty(row, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ left: 200, top: 0, right: 250, bottom: 30, width: 50, height: 30, x: 200, y: 0, toJSON: () => ({}) } as DOMRect),
+      });
+    }
+    return { get: () => scroll, set: (n: number) => { scroll = n; } };
+  }
+
+  // Flush two animation frames so the production rAF (scheduled inside
+  // `renderTabs`) has definitely run before we assert.
+  function flushRaf(): Promise<void> {
+    return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  }
+
+  it('does NOT snap the strip back to the selected tab on a poll-driven re-render', async () => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B, C], A.secret);
+    _renderTabsForTesting();
+    const scroll = stubScrollGeometry();
+    await flushRaf(); // initial mount scrolls active A into view
+
+    // User scrolls the strip away from the selected tab to see others.
+    scroll.set(80);
+
+    // A poll-driven refresh re-renders the strip WITHOUT changing the active
+    // project (the common case — a ticket changed somewhere, a status dot
+    // updated, etc.). Pre-fix this snapped scroll back to ~230 (80 + 150).
+    _renderTabsForTesting();
+    await flushRaf();
+
+    expect(scroll.get()).toBe(80);
+  });
+
+  it('scrolls the newly-selected tab into view when the active project changes', async () => {
+    makeTitleArea();
+    _setProjectsForTesting([A, B, C], A.secret);
+    _renderTabsForTesting();
+    const scroll = stubScrollGeometry();
+    await flushRaf();
+
+    scroll.set(80);
+
+    // Switch to a different project (production: `switchProject` → `renderTabs`).
+    _setProjectsForTesting([A, B, C], B.secret);
+    _renderTabsForTesting();
+    await flushRaf();
+
+    // The active secret changed, so the new tab IS scrolled into view — the
+    // user's stale scroll position is intentionally overridden on a switch.
+    expect(scroll.get()).not.toBe(80);
+  });
+});
+
 describe('project-tab non-selectable text (HS-8413)', () => {
   // The bug class — Tauri's WKWebView ignores unprefixed `user-select`
   // on older Safari/WKWebView versions, so a `.project-tab` rule with

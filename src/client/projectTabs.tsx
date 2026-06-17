@@ -751,6 +751,18 @@ export function updateProjectBellIndicators(
 
 // --- Scroll active tab into view ---
 
+/** **HS-8824** — secret of the project whose tab was last auto-scrolled
+ *  into view. The rAF scroll in `renderTabs` only fires when the active
+ *  project actually CHANGES (i.e. a real project switch). Pre-fix the
+ *  scroll ran on every `renderTabs()` call — and `renderTabs()` runs on
+ *  every poll-driven `refreshProjectTabs()` — so the moment the user
+ *  scrolled the strip away from the selected tab, the next poll tick
+ *  snapped it right back, making it impossible to scroll past the
+ *  selected project. Gating on a change of active secret lets the user's
+ *  manual scroll stick between switches. Reset in
+ *  `_resetProjectTabsForTesting`. */
+let lastScrolledActiveSecret: string | null = null;
+
 function scrollActiveTabIntoView() {
   const container = document.querySelector('.project-tabs-inner');
   if (!container) return;
@@ -1034,6 +1046,13 @@ function renderTabs() {
     // non-keyed button survives every reconcile and stays after the tabs.
     inner.appendChild(createAddProjectButton());
     multiTabState = { dispose, parent: inner };
+    // HS-8824 — wire the resize observer once per strip (re)mount, NOT on
+    // every `renderTabs()`. Pre-fix `setupScrollObserver()` ran at the end
+    // of every render; `observe()` fires the observer's callback once
+    // immediately, so each poll-driven re-render triggered a fresh
+    // `scrollActiveTabIntoView()` and snapped the strip back to the
+    // selected tab while the user was scrolling.
+    setupScrollObserver();
   }
 
   updateStatusDots();
@@ -1042,12 +1061,18 @@ function renderTabs() {
   // be up to 3 s away — re-applying here keeps freshly-rendered tabs from
   // missing known bells.
   void import('./bellPoll.js').then(m => { updateProjectBellIndicators(m.getBellState()); }).catch(() => {});
-  // Scroll active tab into view after DOM settles
+  // HS-8824 — only scroll the active tab into view when the active project
+  // actually changed since the last scroll (i.e. a real switch / initial
+  // mount), NOT on every poll-driven re-render. Otherwise the user can't
+  // scroll the strip past the selected tab — each poll would snap it back.
   requestAnimationFrame(() => {
-    scrollActiveTabIntoView();
+    const activeSecret = getActiveProject()?.secret ?? null;
+    if (activeSecret !== lastScrolledActiveSecret) {
+      lastScrolledActiveSecret = activeSecret;
+      scrollActiveTabIntoView();
+    }
     updateProjectTabsOverflow();
   });
-  setupScrollObserver();
 }
 
 /** **HS-8235 / HS-8317 — TEST ONLY.** Reset the multi-tab bindList state
@@ -1061,6 +1086,7 @@ export function _resetProjectTabsForTesting(): void {
   dragSecret = null;
   dropInsertIdx = null;
   altHeld = false;
+  lastScrolledActiveSecret = null;
   if (dropIndicator?.parentElement) dropIndicator.parentElement.removeChild(dropIndicator);
   dropIndicator = null;
 }

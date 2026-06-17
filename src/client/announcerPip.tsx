@@ -13,12 +13,17 @@
  *
  * HS-8756 — the panel opens anchored beneath the Listen button, is **draggable**
  * by its header, and remembers its dragged position (localStorage).
- * HS-8757 — a **minimize** button hides the panel back into the Listen button
- * *without stopping playback*; the host glows the button while minimized and a
+ * HS-8757 — the header **X** hides the panel back into the Listen button
+ * *without stopping playback*; the host glows the button while hidden and a
  * second click on the button restores the panel.
+ * HS-8827 — header controls reworked: the X now HIDES (was: close); the
+ * dedicated minimize button is gone; an explicit **Stop** button ends the
+ * session. Footer gains a per-entry timestamp + a **Clear All** button, the
+ * idle/working presence line and the "Speaking via …" hint are removed, and the
+ * context dropdown is switchable WHILE LIVE (live retargets to the new context).
  */
 import type { Announcement, AnnouncerProjectInfo } from '../api/announcer.js';
-import { advanceAnnouncerCursor, dismissAnnouncement, getAnnouncerEntries, markAnnouncementListened, setAnnouncerLive } from '../api/index.js';
+import { advanceAnnouncerCursor, clearAnnouncements, dismissAnnouncement, getAnnouncerEntries, markAnnouncementListened, setAnnouncerLive } from '../api/index.js';
 import { renderScript } from './announcerEmphasis.js';
 import { LiveSession } from './announcerLive.js';
 import { anchoredPosition, clampPosition, type Point } from './announcerPipPosition.js';
@@ -29,6 +34,7 @@ import { getProjectBusySecrets } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
+import { timeAgo } from './timeAgo.js';
 import { createSpeechEngine } from './tts.js';
 
 const LUCIDE = {
@@ -48,8 +54,12 @@ const NEXT_ICON = <svg {...LUCIDE}><polygon points="5 4 15 12 5 20 5 4"/><line x
 const PLAY_ICON = <svg {...LUCIDE}><polygon points="6 3 20 12 6 21 6 3"/></svg>;
 const PAUSE_ICON = <svg {...LUCIDE}><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>;
 const SKIP_ICON = <svg {...LUCIDE}><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>;
-const MINIMIZE_ICON = <svg {...LUCIDE}><path d="M5 12h14"/></svg>;
 const CLOSE_ICON = <svg {...LUCIDE}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+// lucide "square" (filled) — the explicit Stop button (HS-8827): ends the
+// session entirely, as opposed to the X which now just hides the panel.
+const STOP_ICON = <svg {...LUCIDE}><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg>;
+// lucide "trash-2" — clear all announcements in the current view (HS-8827).
+const TRASH_ICON = <svg {...LUCIDE}><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>;
 // lucide "radio" — the Live (tail work as it happens) toggle.
 const LIVE_ICON = <svg {...LUCIDE}><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>;
 // lucide "fast-forward" — skip-catch-up (jump to the newest entry).
@@ -104,6 +114,15 @@ export function reelSpeechText(entry: ReelEntry, context: string): string {
   if (context !== ALL_PROJECTS) return entry.script;
   const name = entry.projectName.trim();
   return name === '' ? entry.script : `In ${name}: ${entry.script}`;
+}
+
+/**
+ * HS-8827 — which project secrets a "Clear all" press wipes for a given context:
+ * in "All Projects" mode every offered project; otherwise just the selected one.
+ * Pure + exported for unit testing.
+ */
+export function clearTargetSecrets(context: string, projects: AnnouncerProjectInfo[]): string[] {
+  return context === ALL_PROJECTS ? projects.map(p => p.secret) : [context];
 }
 
 export interface AnnouncerPipHandle {
@@ -170,9 +189,11 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   let currentContext = opts.context;
 
   const engine = createSpeechEngine();
+  // HS-8827 — drop the "Speaking via system/browser voice" labels (noise); keep
+  // only the actionable "no voice available" warning.
   const backendHint = engine.backend === 'none'
     ? 'No speech voice available — transcript only.'
-    : engine.backend === 'tauri' ? 'Speaking via system voice.' : 'Speaking via browser voice.';
+    : '';
 
   const panel = toElement(
     <div className="announcer-pip" role="region" aria-label="Announcer transcript">
@@ -180,8 +201,10 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         <span className="announcer-pip-eyebrow">Announcer</span>
         <span className="announcer-pip-title"></span>
         <button className="announcer-pip-expand" type="button" title="Expand" aria-label="Expand announcer" aria-pressed="false">{EXPAND_ICON}</button>
-        <button className="announcer-pip-min" type="button" title="Minimize (keeps playing)" aria-label="Minimize announcer">{MINIMIZE_ICON}</button>
-        <button className="announcer-pip-close" type="button" title="Close" aria-label="Close announcer">{CLOSE_ICON}</button>
+        {/* HS-8827 — the X now HIDES the panel (keeps playing); the dedicated
+            minimize button is gone and the new Stop button ends the session. */}
+        <button className="announcer-pip-close" type="button" title="Hide (keeps playing)" aria-label="Hide announcer">{CLOSE_ICON}</button>
+        <button className="announcer-pip-stop" type="button" title="Stop and close" aria-label="Stop and close announcer">{STOP_ICON}</button>
       </div>
       <div className="announcer-pip-context">
         <select className="announcer-pip-context-select" aria-label="Announcer context">
@@ -190,7 +213,6 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         </select>
         {/* HS-8767 — Live toggle: tail work as it happens. */}
         <button className="announcer-pip-live" type="button" title="Live — narrate work as it happens" aria-pressed="false">{LIVE_ICON}<span>Live</span></button>
-        <span className="announcer-pip-presence" hidden aria-live="polite"></span>
       </div>
       <div className="announcer-pip-body">
         <span className="announcer-pip-project-chip" hidden></span>
@@ -209,13 +231,17 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         </div>
         <div className="announcer-pip-meta">
           <span className="announcer-pip-position" aria-live="polite"></span>
+          {/* HS-8827 — per-announcement timestamp (relative; absolute on hover). */}
+          <span className="announcer-pip-timestamp"></span>
           <label className="announcer-pip-speed">
             Speed
             <select className="announcer-pip-rate" aria-label="Playback speed">
               {RATE_STEPS.map(s => <option value={String(s)}>{`${String(s)}×`}</option>)}
             </select>
           </label>
-          <span className="announcer-pip-hint">{backendHint}</span>
+          {/* HS-8827 — clear every announcement in the current view. */}
+          <button className="announcer-pip-clear" type="button" title="Clear all announcements" aria-label="Clear all announcements">{TRASH_ICON}</button>
+          <span className="announcer-pip-hint" hidden={backendHint === ''}>{backendHint}</span>
         </div>
       </div>
     </div>,
@@ -224,13 +250,13 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const titleEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-title');
   const scriptEl = requireChild<HTMLParagraphElement>(panel, '.announcer-pip-script');
   const positionEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-position');
+  const timestampEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-timestamp');
   const playPauseBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-playpause');
   const rateSelect = requireChild<HTMLSelectElement>(panel, '.announcer-pip-rate');
   const contextSelect = requireChild<HTMLSelectElement>(panel, '.announcer-pip-context-select');
   const chipEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-project-chip');
   const visualEl = requireChild<HTMLDivElement>(panel, '.announcer-pip-visual');
   const liveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-live');
-  const presenceEl = requireChild<HTMLSpanElement>(panel, '.announcer-pip-presence');
   const skipLiveBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-skip-live');
   const header = requireChild<HTMLDivElement>(panel, '.announcer-pip-header');
   const expandBtn = requireChild<HTMLButtonElement>(panel, '.announcer-pip-expand');
@@ -276,6 +302,9 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       renderScript(scriptEl, entry.script, entry.emphasis);
       renderVisual(entry);
       positionEl.textContent = `${String(index + 1)} / ${String(total)}`;
+      // HS-8827 — per-announcement timestamp: relative text, absolute on hover.
+      timestampEl.textContent = timeAgo(entry.created_at);
+      timestampEl.title = new Date(entry.created_at).toLocaleString();
       // Show which project the entry is about, but only in "All Projects" mode
       // (in a single-project context it's redundant). HS-8762.
       if (currentContext === ALL_PROJECTS) {
@@ -318,20 +347,30 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   });
 
   // --- Context dropdown (HS-8762): switch which project's reel plays. ---
+  // HS-8827 — switching is now allowed WHILE LIVE: if a live session is running
+  // we stop it on the old context, swap the reel, then resume live tailing on
+  // the new context's secrets. (Pre-fix the dropdown was disabled in live mode.)
   contextSelect.value = currentContext;
   contextSelect.addEventListener('change', () => {
     const next = contextSelect.value;
     if (next === currentContext) return;
+    const wasLive = liveSession !== null;
     contextSelect.disabled = true;
-    void (opts.onContextChange?.(next) ?? Promise.resolve<ReelEntry[]>([]))
-      .then((reel) => {
+    void (async () => {
+      try {
+        if (wasLive) await stopLive();
+        const reel = await (opts.onContextChange?.(next) ?? Promise.resolve<ReelEntry[]>([]));
         currentContext = next;
         currentEntries = reel;
         player.setEntries(reel);
         persistSession(); // HS-8804 — context changed
-      })
-      .catch(() => { contextSelect.value = currentContext; })
-      .finally(() => { contextSelect.disabled = false; });
+        if (wasLive) await startLive(); // HS-8827 — retarget live to the new context
+      } catch {
+        contextSelect.value = currentContext;
+      } finally {
+        contextSelect.disabled = false;
+      }
+    })();
   });
 
   // --- Live mode (HS-8767): tail work as it happens, with a "still working"
@@ -344,11 +383,6 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   const projectNameOf = (secret: string): string => opts.projects.find(p => p.secret === secret)?.name ?? '';
   const fetchReel = async (secret: string): Promise<ReelEntry[]> =>
     (await getAnnouncerEntries(secret)).map(e => ({ ...e, projectSecret: secret, projectName: projectNameOf(secret) }));
-  const setPresence = (busy: boolean): void => {
-    presenceEl.hidden = false;
-    presenceEl.textContent = busy ? '● working…' : '✓ idle';
-    presenceEl.classList.toggle('is-working', busy);
-  };
   const startLive = async (): Promise<void> => {
     if (liveStarting || liveSession !== null) return;
     liveStarting = true;
@@ -376,13 +410,14 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       setLive: (enabled, secret) => setAnnouncerLive(enabled, secret),
       isBusy: (ss) => { const busy = getProjectBusySecrets(); return ss.some(s => busy.has(s)); },
       onNewEntries: (es) => { currentEntries.push(...es); player.appendEntries(es); },
-      onPresence: setPresence,
+      // HS-8827 — the idle/working presence label was removed; live still polls
+      // busy state to drive generation, it just no longer surfaces it as text.
+      onPresence: () => { /* no-op */ },
     });
     liveSession.seed(currentEntries);
     panel.classList.add('is-live');
     liveBtn.setAttribute('aria-pressed', 'true');
     skipLiveBtn.hidden = false;
-    contextSelect.disabled = true; // live tails the current context
     await liveSession.start();
   };
   const stopLive = async (): Promise<void> => {
@@ -391,8 +426,6 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     panel.classList.remove('is-live');
     liveBtn.setAttribute('aria-pressed', 'false');
     skipLiveBtn.hidden = true;
-    presenceEl.hidden = true;
-    contextSelect.disabled = false;
     await session?.stop();
   };
   liveBtn.addEventListener('click', () => {
@@ -532,6 +565,39 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     opts.onRestore?.();
   };
 
+  // HS-8827 — render the "nothing to show" state after a Clear All (or any time
+  // the reel empties). Leaves the panel open so live tailing can refill it.
+  const renderEmptyState = (): void => {
+    titleEl.textContent = '';
+    scriptEl.textContent = 'No announcements.';
+    positionEl.textContent = '0 / 0';
+    timestampEl.textContent = '';
+    timestampEl.title = '';
+    chipEl.hidden = true;
+    visualEl.replaceChildren();
+    visualEl.hidden = true;
+  };
+
+  // HS-8827 — Clear All: permanently wipe every announcement in the current view
+  // (all offered projects in "All Projects" mode, else the selected project),
+  // behind a confirm. The reel empties; the panel stays open.
+  const clearAll = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: 'Clear all announcements?',
+      message: 'This permanently removes every announcement in the current view. This cannot be undone.',
+      confirmLabel: 'Clear All',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok || closed) return;
+    const secrets = clearTargetSecrets(currentContext, opts.projects);
+    await Promise.all(secrets.map(s => clearAnnouncements(s).catch(() => { /* best-effort per project */ })));
+    currentEntries = [];
+    player.setEntries([]); // interrupts narration + transitions to 'done'
+    renderEmptyState();
+    persistSession();
+  };
+
   const onKeydown = (e: KeyboardEvent): void => {
     // Only handle keys when the PIP holds focus, so global shortcuts and
     // ticket editing aren't hijacked while the PIP merely sits open.
@@ -542,8 +608,10 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     else if (e.key === 'ArrowRight') { e.preventDefault(); player.next(); }
   };
 
-  requireChild<HTMLButtonElement>(panel, '.announcer-pip-close').addEventListener('click', close);
-  requireChild<HTMLButtonElement>(panel, '.announcer-pip-min').addEventListener('click', minimize);
+  // HS-8827 — the X now hides (minimizes); the new Stop button ends the session.
+  requireChild<HTMLButtonElement>(panel, '.announcer-pip-close').addEventListener('click', minimize);
+  requireChild<HTMLButtonElement>(panel, '.announcer-pip-stop').addEventListener('click', close);
+  requireChild<HTMLButtonElement>(panel, '.announcer-pip-clear').addEventListener('click', () => { void clearAll(); });
   requireChild<HTMLButtonElement>(panel, '.announcer-pip-prev').addEventListener('click', () => player.prev());
   playPauseBtn.addEventListener('click', () => player.togglePlayPause());
   requireChild<HTMLButtonElement>(panel, '.announcer-pip-next').addEventListener('click', () => player.next());

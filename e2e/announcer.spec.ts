@@ -112,10 +112,10 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
   await expect.poll(() => dismissed).toContain(101);
 
-  // HS-8757 — minimize hides the panel back into the button (which glows) while
-  // playback continues; the PIP element stays mounted (just display:none), and
-  // clicking the button again restores it (no regeneration).
-  await pip.locator('.announcer-pip-min').click();
+  // HS-8757 / HS-8827 — the X now HIDES the panel back into the button (which
+  // glows) while playback continues; the PIP element stays mounted (just
+  // display:none), and clicking the button again restores it (no regeneration).
+  await pip.locator('.announcer-pip-close').click();
   await expect(pip).toBeHidden();
   await expect(listen).toHaveClass(/is-active/);
   await listen.click();
@@ -127,11 +127,12 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await listen.click();
   await expect(pip).toBeHidden();
   await expect(listen).toHaveClass(/is-active/);
-  await listen.click(); // restore for the close step below
+  await listen.click(); // restore for the stop step below
   await expect(pip).toBeVisible();
 
-  // Close → PIP tears down and the listened cursor advances.
-  await pip.locator('.announcer-pip-close').click();
+  // HS-8827 — Stop (the explicit end-session button) tears the PIP down and
+  // advances the listened cursor.
+  await pip.locator('.announcer-pip-stop').click();
   await expect(pip).toHaveCount(0);
   await expect.poll(() => cursorAdvanced).toBe(true);
 });
@@ -268,12 +269,11 @@ test('announcer live mode tails new entries (HS-8767)', async ({ page }) => {
   await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
 
   // Go live → accept the one-time spend/privacy disclosure (HS-8770) → registers
-  // a lease, presence line appears, skip-to-live shows.
+  // a lease, skip-to-live shows. (HS-8827 removed the idle/working presence line.)
   await pip.locator('.announcer-pip-live').click();
   await page.locator('.confirm-dialog-confirm').click();
   await expect(pip.locator('.announcer-pip-live')).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => liveCalls).toContain(true);
-  await expect(pip.locator('.announcer-pip-presence')).toBeVisible();
   await expect(pip.locator('.announcer-pip-skip-live')).toBeVisible();
 
   // The generator produces a second entry → the live poll appends it.

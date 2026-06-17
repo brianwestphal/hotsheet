@@ -124,6 +124,12 @@ jobs:
       - if: matrix.platform == 'ubuntu-22.04'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
       - run: npm ci
+      # HS-8829 — execute the Rust unit tests on THIS OS before the long bundle
+      # build, so the per-OS `#[cfg(target_os)]` branches are actually run (not
+      # just compiled) on macOS / ubuntu / windows, and a Rust regression fails
+      # the job fast.
+      - run: npm run test:rust
+        shell: bash
       - run: bash scripts/build-sidecar.sh ${{ matrix.target }}
         shell: bash
       - run: npx tauri build --target ${{ matrix.target }}
@@ -323,6 +329,11 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
 
       - run: npm ci
+
+      # HS-8829 — run the Rust unit tests on this OS before building the signed
+      # bundle (true per-OS execution of the `#[cfg(target_os)]` command builders).
+      - run: npm run test:rust
+        shell: bash
 
       - name: Set version for bundle build
         shell: bash
