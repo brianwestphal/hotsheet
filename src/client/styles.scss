@@ -12415,8 +12415,8 @@ label.detail-details-label {
   text-overflow: ellipsis;
 }
 
-// HS-8827 — header window controls: expand, hide (X), stop. The dedicated
-// minimize button was removed (the X now hides, keeping playback).
+// HS-8827 — header window controls. The dedicated minimize button was removed
+// (the X now hides, keeping playback). HS-8832 — order is stop, expand, hide (X).
 .announcer-pip-close,
 .announcer-pip-stop,
 .announcer-pip-expand {

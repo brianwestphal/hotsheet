@@ -593,7 +593,9 @@ and playback-speed are later phases (see the follow-up tickets).
 (the former minimize behavior) instead of closing it; the dedicated minimize
 button is gone, and an explicit **Stop** button (`.announcer-pip-stop`, filled
 square) ends the session entirely (the former close path — `dispose()` +
-`clearAnnouncerSession()` + `onClose` cursor advance). The footer meta row gains
+`clearAnnouncerSession()` + `onClose` cursor advance). **HS-8832 — the header
+control order is Stop, Expand, Hide (X)** (`.announcer-pip-stop` sits before
+`.announcer-pip-expand`). The footer meta row gains
 a **per-announcement timestamp** (`.announcer-pip-timestamp`, `timeAgo(created_at)`
 relative text + absolute on hover) and a **Clear All** button
 (`.announcer-pip-clear`, trash icon) that — behind a confirm — permanently wipes

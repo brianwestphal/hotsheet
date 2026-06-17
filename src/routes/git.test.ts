@@ -10,8 +10,9 @@
  *     dropGitStatusCache → drives the status + cache-drop paths
  *   - git/status.getGitStatusFiles / runGitFetch → drives the
  *     files=true opt-in + the fetch handler
- *   - gitignore.getGitRoot + open-in-file-manager.openInFileManager
+ *   - gitignore.getGitRoot + open-in-file-manager.revealInFileManager
  *     → drives the reveal handler's path-resolve + invocation paths
+ *       (HS-8833 — reveal/highlight in Finder, not open the file)
  *
  * Tests assert on JSON response shapes (not internal mock call counts
  * where they're not the user-visible contract) so a refactor that
@@ -36,7 +37,7 @@ const mockRunGitFetch = vi.fn<(root: string) => unknown>();
 const mockDropCache = vi.fn<(root: string) => void>();
 const mockEnsureWatcher = vi.fn<(root: string) => void>();
 const mockGetGitRoot = vi.fn<(root: string) => string | null>();
-const mockOpenInFileManager = vi.fn<(path: string) => Promise<void>>();
+const mockRevealInFileManager = vi.fn<(path: string) => Promise<void>>();
 const mockReadFileSettings = vi.fn<(dir: string) => Record<string, unknown>>();
 
 vi.mock('../file-settings.js', () => ({
@@ -59,7 +60,7 @@ vi.mock('../gitignore.js', () => ({
 }));
 
 vi.mock('../open-in-file-manager.js', () => ({
-  openInFileManager: (path: string): Promise<void> => mockOpenInFileManager(path),
+  revealInFileManager: (path: string): Promise<void> => mockRevealInFileManager(path),
 }));
 
 // Import AFTER mocks so the routes module picks up the mocked deps.
@@ -82,7 +83,7 @@ beforeEach(() => {
   mockDropCache.mockReset();
   mockEnsureWatcher.mockReset();
   mockGetGitRoot.mockReset();
-  mockOpenInFileManager.mockReset();
+  mockRevealInFileManager.mockReset();
   mockReadFileSettings.mockReset().mockReturnValue({}); // default: tracking enabled (no opt-out)
 });
 
@@ -208,14 +209,14 @@ describe('POST /git/reveal', () => {
     });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: 'Invalid path' });
-    expect(mockOpenInFileManager).not.toHaveBeenCalled();
+    expect(mockRevealInFileManager).not.toHaveBeenCalled();
   });
 
   it('returns 400 when the body is empty / not JSON', async () => {
     const res = await buildApp().request('/api/git/reveal', { method: 'POST' });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ ok: false, error: 'Invalid path' });
-    expect(mockOpenInFileManager).not.toHaveBeenCalled();
+    expect(mockRevealInFileManager).not.toHaveBeenCalled();
   });
 
   it('returns 400 for a `..`-traversal path (privilege-boundary guard)', async () => {
@@ -225,7 +226,7 @@ describe('POST /git/reveal', () => {
       body: JSON.stringify({ path: '../etc/passwd' }),
     });
     expect(res.status).toBe(400);
-    expect(mockOpenInFileManager).not.toHaveBeenCalled();
+    expect(mockRevealInFileManager).not.toHaveBeenCalled();
   });
 
   it('returns 400 for any path containing `..` anywhere (defensive)', async () => {
@@ -244,12 +245,12 @@ describe('POST /git/reveal', () => {
       body: JSON.stringify({ path: '/etc/passwd' }),
     });
     expect(res.status).toBe(400);
-    expect(mockOpenInFileManager).not.toHaveBeenCalled();
+    expect(mockRevealInFileManager).not.toHaveBeenCalled();
   });
 
-  it('opens the resolved (gitRoot-joined) path on the happy path', async () => {
+  it('reveals the resolved (gitRoot-joined) path on the happy path', async () => {
     mockGetGitRoot.mockReturnValue('/tmp/proj');
-    mockOpenInFileManager.mockResolvedValue(undefined);
+    mockRevealInFileManager.mockResolvedValue(undefined);
     const res = await buildApp().request('/api/git/reveal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -260,18 +261,18 @@ describe('POST /git/reveal', () => {
     // HS-8713 — the route does `join(gitRoot, rel)`, so the native separator
     // is correct (the OS file manager needs a native path). Build the expected
     // value with `join` rather than a hardcoded POSIX string.
-    expect(mockOpenInFileManager).toHaveBeenCalledWith(join('/tmp/proj', 'src/foo.ts'));
+    expect(mockRevealInFileManager).toHaveBeenCalledWith(join('/tmp/proj', 'src/foo.ts'));
   });
 
   it('falls back to the project root when getGitRoot returns null (non-git project)', async () => {
     mockGetGitRoot.mockReturnValue(null);
-    mockOpenInFileManager.mockResolvedValue(undefined);
+    mockRevealInFileManager.mockResolvedValue(undefined);
     const res = await buildApp('/tmp/fallback/.hotsheet').request('/api/git/reveal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: 'README.md' }),
     });
     expect(res.status).toBe(200);
-    expect(mockOpenInFileManager).toHaveBeenCalledWith(join('/tmp/fallback', 'README.md'));
+    expect(mockRevealInFileManager).toHaveBeenCalledWith(join('/tmp/fallback', 'README.md'));
   });
 });

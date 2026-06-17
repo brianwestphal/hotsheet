@@ -10,7 +10,7 @@ import { readFileSettings } from '../file-settings.js';
 import { getGitStatusFiles, getPendingCommits, runGitFetch } from '../git/status.js';
 import { dropGitStatusCache, ensureGitWatcher, getCachedGitStatus } from '../git/watcher.js';
 import { getGitRoot } from '../gitignore.js';
-import { openInFileManager } from '../open-in-file-manager.js';
+import { revealInFileManager } from '../open-in-file-manager.js';
 import type { AppEnv } from '../types.js';
 
 /**
@@ -109,6 +109,9 @@ gitRoutes.post('/git/fetch', async (c) => {
 // the relative path it received from `getGitStatusFiles`. Defensively
 // skips paths that escape the git root (`..` traversal) — opening
 // arbitrary system paths would be a privilege boundary leak.
+// HS-8833 — uses `revealInFileManager` (Finder `open -R` / Explorer
+// `/select,`), which HIGHLIGHTS the file in its folder, rather than
+// `openInFileManager`, which would *open* the file in its default app.
 gitRoutes.post('/git/reveal', async (c) => {
   const dataDir = c.get('dataDir');
   const projectRoot = projectRootFromDataDir(dataDir);
@@ -121,6 +124,6 @@ gitRoutes.post('/git/reveal', async (c) => {
     return c.json({ ok: false, error: 'Invalid path' }, 400);
   }
   const abs = join(gitRoot, rel);
-  await openInFileManager(abs);
+  await revealInFileManager(abs);
   return c.json({ ok: true });
 });

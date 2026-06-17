@@ -200,11 +200,13 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       <div className="announcer-pip-header">
         <span className="announcer-pip-eyebrow">Announcer</span>
         <span className="announcer-pip-title"></span>
-        <button className="announcer-pip-expand" type="button" title="Expand" aria-label="Expand announcer" aria-pressed="false">{EXPAND_ICON}</button>
-        {/* HS-8827 — the X now HIDES the panel (keeps playing); the dedicated
-            minimize button is gone and the new Stop button ends the session. */}
-        <button className="announcer-pip-close" type="button" title="Hide (keeps playing)" aria-label="Hide announcer">{CLOSE_ICON}</button>
+        {/* HS-8827 — the X HIDES the panel (keeps playing); the dedicated
+            minimize button is gone and the Stop button ends the session.
+            HS-8832 — header order is Stop, Expand, Hide (X): Stop sits before
+            Expand. */}
         <button className="announcer-pip-stop" type="button" title="Stop and close" aria-label="Stop and close announcer">{STOP_ICON}</button>
+        <button className="announcer-pip-expand" type="button" title="Expand" aria-label="Expand announcer" aria-pressed="false">{EXPAND_ICON}</button>
+        <button className="announcer-pip-close" type="button" title="Hide (keeps playing)" aria-label="Hide announcer">{CLOSE_ICON}</button>
       </div>
       <div className="announcer-pip-context">
         <select className="announcer-pip-context-select" aria-label="Announcer context">
