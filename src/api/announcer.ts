@@ -67,6 +67,10 @@ export const AnnouncerStatusSchema = z.object({
   // models (for the settings dropdown). Defaults keep older servers/tests valid.
   localAvailable: z.boolean().default(false),
   localModels: z.array(z.string()).default([]),
+  // HS-8853 — the Anthropic models the active key offers (discovered via the
+  // Models API), or the static fallback set. `{id, label}` for the dropdown.
+  // `.default([])` keeps older servers/tests that omit it valid.
+  anthropicModels: z.array(z.object({ id: z.string(), label: z.string() })).default([]),
 });
 export type AnnouncerStatus = z.infer<typeof AnnouncerStatusSchema>;
 

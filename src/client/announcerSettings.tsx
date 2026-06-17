@@ -9,7 +9,7 @@
  * dropdown repopulates when keys change elsewhere (the `hotsheet:keys-changed`
  * event) so adding a key in the Keys tab shows up here immediately.
  */
-import { ANNOUNCER_MODEL_IDS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, LOCAL_MODEL_ID, providerForModel } from '../announcer/models.js';
+import { ANNOUNCER_MODELS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, LOCAL_MODEL_ID, providerForModel, resolveBestModelForSelection } from '../announcer/models.js';
 import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
 import { getAnnouncerSpeakPermissions, setAnnouncerSpeakPermissions } from './announcerPermissionPref.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
@@ -91,12 +91,25 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     const localField = byIdOrNull('settings-announcer-local-field');
     const localEndpoint = byIdOrNull<HTMLInputElement>('settings-announcer-local-endpoint');
     const localModelSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-local-model');
-    const appleOption = modelSelect.querySelector<HTMLOptionElement>(`option[value="${APPLE_FOUNDATION_MODEL_ID}"]`);
-    const localOption = modelSelect.querySelector<HTMLOptionElement>(`option[value="${LOCAL_MODEL_ID}"]`);
+    const appleModel = ANNOUNCER_MODELS.find(m => m.id === APPLE_FOUNDATION_MODEL_ID);
+    const localModel = ANNOUNCER_MODELS.find(m => m.id === LOCAL_MODEL_ID);
     const applyFieldVisibility = (): void => {
       const provider = providerForModel(modelSelect.value);
       if (keyField !== null) keyField.style.display = provider === 'anthropic' ? '' : 'none';
       if (localField !== null) localField.style.display = provider === 'local' ? '' : 'none';
+    };
+    // HS-8853 — rebuild the model <select> from the on-device options (shown only
+    // when usable) plus the Anthropic models the key actually offers (discovered
+    // server-side). A stored-but-absent `value` is kept as an option so a saved
+    // choice is never silently dropped.
+    const populateModelSelect = (status: { appleAvailable: boolean; localAvailable: boolean; anthropicModels: { id: string; label: string }[] }, value: string): void => {
+      const specs: { value: string; label: string }[] = [];
+      if (status.appleAvailable && appleModel !== undefined) specs.push({ value: appleModel.id, label: appleModel.label });
+      if (status.localAvailable && localModel !== undefined) specs.push({ value: localModel.id, label: localModel.label });
+      for (const m of status.anthropicModels) specs.push({ value: m.id, label: m.label });
+      if (value !== '' && !specs.some(s => s.value === value)) specs.push({ value, label: value });
+      modelSelect.replaceChildren(...specs.map(s => toElement(<option value={s.value}>{s.label}</option>)));
+      modelSelect.value = value;
     };
     // Fill the local-model dropdown with the endpoint's reported models, keeping a
     // stored-but-currently-absent choice visible so it isn't silently dropped.
@@ -110,16 +123,26 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
       );
       localModelSelect.value = selected ?? '';
     };
+    // HS-8853 — `syncModel` runs on init AND on each settings-btn open, both
+    // async. A stale one resolving late would rebuild the <select> and clobber a
+    // value the user just picked. Apply only the most-recently-started sync.
+    let syncSeq = 0;
     const syncModel = (): void => {
+      const seq = ++syncSeq;
       void Promise.all([getGlobalConfig(), getAnnouncerStatus()]).then(([cfg, status]) => {
-        if (appleOption !== null) appleOption.hidden = !status.appleAvailable;
-        if (localOption !== null) localOption.hidden = !status.localAvailable;
+        if (seq !== syncSeq) return;
         // Explicit choice wins; else Apple-when-available, else cheapest. A stored
         // on-device choice on a machine that no longer supports it falls back.
         let value = cfg.announcerModel ?? (status.appleAvailable ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL);
         if (value === APPLE_FOUNDATION_MODEL_ID && !status.appleAvailable) value = DEFAULT_ANNOUNCER_MODEL;
         if (value === LOCAL_MODEL_ID && !status.localAvailable) value = DEFAULT_ANNOUNCER_MODEL;
-        modelSelect.value = value;
+        // HS-8853 — show the same-family upgrade for a saved Anthropic model the
+        // key no longer offers (sonnet-4-5 → sonnet-4-6), matching what the server
+        // resolves at generate time.
+        if (providerForModel(value) === 'anthropic' && status.anthropicModels.length > 0) {
+          value = resolveBestModelForSelection(value, status.anthropicModels.map(m => m.id)) ?? value;
+        }
+        populateModelSelect(status, value);
         if (localEndpoint !== null) localEndpoint.value = cfg.announcerLocalEndpoint ?? '';
         populateLocalModels(status.localModels, cfg.announcerLocalModel);
         applyFieldVisibility();
@@ -127,10 +150,12 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     };
     syncModel();
     modelSelect.addEventListener('change', () => {
-      const model = ANNOUNCER_MODEL_IDS.find(id => id === modelSelect.value);
-      if (model === undefined) return;
+      if (modelSelect.value === '') return;
+      // A manual pick supersedes any in-flight `syncModel` so a late refresh
+      // can't rebuild the <select> and revert the choice (HS-8853).
+      syncSeq++;
       applyFieldVisibility();
-      void updateGlobalConfig({ announcerModel: model }).catch(() => {
+      void updateGlobalConfig({ announcerModel: modelSelect.value }).catch(() => {
         showToast('Could not save the model choice.', { variant: 'warning' });
       });
     });

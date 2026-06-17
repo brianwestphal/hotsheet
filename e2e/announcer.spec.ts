@@ -18,6 +18,20 @@ const ENTRIES = [
   { id: 102, created_at: '2026-06-05T00:05:00.000Z', covers_from: null, covers_to: null, title: 'Fixed the tag leak', script: 'Cross-project tag bleed is now resolved.', position: 1, dismissed: false },
 ];
 
+// HS-8803 — as the PIP advances, it marks each entry listened
+// (`markAnnouncementListened`, best-effort, with the entry's project secret).
+// Every test here mocks the announcer reads with a fake 'proj-a' secret, so an
+// unmocked `/listened` POST hits the real temp server with that fake secret →
+// 403 → a "Failed to load resource" console.error that trips the HS-8435
+// strict-error gate (the cause of the v0.20.0-beta.1 e2e failures). Mock it
+// once for every test; per-test routes registered later still take precedence
+// for the endpoints they handle.
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/announcer/listened**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }),
+  }));
+});
+
 test('announcer Listen button → PIP playback controls (HS-8747)', async ({ page }) => {
   let cursorAdvanced = false;
   const dismissed: number[] = [];
@@ -548,8 +562,10 @@ test('local-provider settings: "Local model" option hidden when unavailable (HS-
   await page.locator('.settings-tab[data-tab="announcer"]').click();
   await expect(page.locator('#settings-announcer-panel')).toBeVisible();
 
-  // The "Local model" option is hidden when no local endpoint is reachable.
-  await expect(page.locator('#settings-announcer-model option[value="local"]')).toHaveJSProperty('hidden', true);
+  // HS-8853 — the dropdown is now rebuilt from the discovered/available providers,
+  // so the "Local model" option is omitted entirely when no local endpoint is
+  // reachable (previously it was rendered with `hidden`).
+  await expect(page.locator('#settings-announcer-model option[value="local"]')).toHaveCount(0);
   // The local field stays hidden.
   await expect(page.locator('#settings-announcer-local-field')).toBeHidden();
 });

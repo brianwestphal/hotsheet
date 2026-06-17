@@ -672,6 +672,26 @@ config and passes the chosen model. "Least expensive for the AI tool" is
 future-proofed by the cheapest-first ordering — a future provider supplies its
 own ordered list + default.
 
+**Dynamic Anthropic model discovery + same-family upgrade (HS-8853).** The
+Anthropic options in the dropdown are no longer a hardcoded list: the server
+queries the Models API (`client.models.list()` in `src/announcer/anthropicModels.ts`,
+filtered to `claude-*`, cached per-key with a 5-minute TTL) so the dropdown
+tracks the models the user's key actually offers — new Claude models appear
+automatically; retired ones drop off. The `/api/announcer/status` route returns
+this discovered list (`anthropicModels`), falling back to the static
+`ANNOUNCER_MODELS` set when there's no key or discovery fails (the dropdown is
+never empty). The Models API publishes **no pricing** (there is no pricing
+endpoint), so `announcerCost` keeps a maintained price map but falls back by
+**family** (haiku/sonnet/opus) for an unlisted id — a future `claude-sonnet-4-7`
+prices at sonnet rates rather than the flat default. When a saved model the key
+no longer offers is resolved (`resolveBestModelForSelection`), it upgrades to the
+**newest available model in the same family** (a retired `claude-sonnet-4-5` →
+`claude-sonnet-4-6`, *not* a jump to opus); `resolveAnnouncerModel` applies this
+at generate time and the settings dropdown mirrors it. The `announcerModel`
+config schema accepts any `claude-*` id (plus the on-device pseudo-ids) instead
+of a fixed enum. The local provider already discovered its models this way
+(§81); Apple stays a single availability-gated pseudo-entry.
+
 **Playback speed (HS-8754).** A global speed multiplier (`announcerSpeechRate`
 in `~/.hotsheet/config.json`, default 1×, clamped 0.5×–2×) drives the TTS rate:
 the browser engine sets `SpeechSynthesisUtterance.rate`; the Tauri engine maps

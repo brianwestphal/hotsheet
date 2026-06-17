@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ANNOUNCER_MODEL_IDS } from '../announcer/models.js';
+import { APPLE_FOUNDATION_MODEL_ID, LOCAL_MODEL_ID } from '../announcer/models.js';
 
 // --- Enums ---
 
@@ -242,8 +242,13 @@ export const GlobalConfigSchema = z.object({
   // it's a listening preference, not project-specific. Clamped 0.5×–2×.
   announcerSpeechRate: z.number().min(0.5).max(2).optional(),
   // HS-8764 — Announcer summarization model. Global; defaults to the cheapest
-  // (Haiku) when unset. See `src/announcer/models.ts`.
-  announcerModel: z.enum(ANNOUNCER_MODEL_IDS).optional(),
+  // (Haiku) when unset. See `src/announcer/models.ts`. HS-8853 — the Anthropic
+  // list is now discovered dynamically from the user's key, so this accepts any
+  // `claude-*` id (not just the static set) plus the two on-device pseudo-ids.
+  announcerModel: z.string()
+    .refine(v => v === APPLE_FOUNDATION_MODEL_ID || v === LOCAL_MODEL_ID || v.startsWith('claude-'),
+      { message: 'must be an on-device provider id or a claude-* model id' })
+    .optional(),
   // HS-8792 — local-provider config (used only when `announcerModel === 'local'`).
   // `Endpoint` is the OpenAI-compatible base URL (default `http://localhost:11434/v1`);
   // `Model` is the concrete local model name (e.g. `llama3.1`). Both global.

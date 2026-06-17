@@ -14,7 +14,8 @@ import { isAppleFoundationAvailable } from '../announcer/appleFoundation.js';
 import { addDismissedTopic, getDismissedTopics, setDismissedTopics } from '../announcer/dismissedTopics.js';
 import {
   ANNOUNCER_CURSOR_KEY, ANNOUNCER_ENABLED_KEY,
-  generateAnnouncementsOnce, isAnnouncerEnabled, prepareSummarizationProvider, resolveAnnouncerModel,
+  generateAnnouncementsOnce, isAnnouncerEnabled, listAnnouncerAnthropicModels,
+  prepareSummarizationProvider, resolveAnnouncerModel,
 } from '../announcer/generate.js';
 import { getAnnouncerKeyId, hasAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
 import { registerLiveListener, unregisterLiveListener } from '../announcer/liveGenerator.js';
@@ -83,6 +84,10 @@ announcerRoutes.get('/announcer/status', async (c) => {
     // installed-model ids it reports (for the settings model dropdown).
     localAvailable: await isLocalProviderAvailable(),
     localModels: await listLocalModels(),
+    // HS-8853 — the Anthropic models the active key actually offers (discovered
+    // via the Models API), or the static fallback set. Drives the dropdown so it
+    // tracks new/retired Claude models instead of a hardcoded list.
+    anthropicModels: await listAnnouncerAnthropicModels(),
   });
 });
 

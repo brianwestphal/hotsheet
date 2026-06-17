@@ -45,8 +45,12 @@ export const APPLE_FOUNDATION_MODEL_ID = 'apple-foundation';
 export const LOCAL_MODEL_ID = 'local';
 
 /**
- * Ordered for the model dropdown: the two on-device/free options first (Apple,
- * then local — each shown only when available), then the Anthropic models
+ * The static **fallback** list (HS-8853). The Anthropic entries here are the
+ * defaults used only when live model discovery is unavailable (no key, or
+ * `/v1/models` unreachable) — see `anthropicModels.ts` + the
+ * `/api/announcer/status` route, which prefer the models the user's key actually
+ * offers. Ordered for the model dropdown: the two on-device/free options first
+ * (Apple, then local — each shown only when available), then the Anthropic models
  * cheapest → most capable.
  */
 export const ANNOUNCER_MODELS: AnnouncerModel[] = [
@@ -77,9 +81,49 @@ export function providerForModel(model: string): AnnouncerProvider {
   return ANNOUNCER_MODELS.find(m => m.id === model)?.provider ?? 'anthropic';
 }
 
+/** The Anthropic model families the Announcer knows, cheapest → most capable.
+ *  Used for same-family upgrade resolution (HS-8853) and family-fallback pricing. */
+export type AnthropicModelFamily = 'haiku' | 'sonnet' | 'opus';
+
+/** Parse a current-scheme Anthropic id (`claude-<family>-<major>-<minor>`, e.g.
+ *  `claude-sonnet-4-6`) into its family + numeric version. Returns null for the
+ *  on-device pseudo-ids and any id that doesn't match the scheme (older dated
+ *  snapshots, `claude-fable-5`, etc.) — callers treat null as "can't compare". */
+export function parseAnthropicModel(id: string): { family: AnthropicModelFamily; major: number; minor: number } | null {
+  const m = /^claude-(haiku|sonnet|opus)-(\d+)-(\d+)$/.exec(id);
+  if (m === null) return null;
+  return { family: m[1] as AnthropicModelFamily, major: Number(m[2]), minor: Number(m[3]) };
+}
+
+/** Order two parsed versions (major then minor). */
+function compareVersion(a: { major: number; minor: number }, b: { major: number; minor: number }): number {
+  return a.major !== b.major ? a.major - b.major : a.minor - b.minor;
+}
+
+/**
+ * HS-8853 — pick the best available model id for a saved selection. If the saved
+ * id is still offered, keep it. Otherwise, if it parses to a known family, return
+ * the **newest available model in that same family** (so a retired
+ * `claude-sonnet-4-5` upgrades to `claude-sonnet-4-6`, NOT to a different family
+ * like `claude-opus-4-8`). Returns null when nothing in the same family is
+ * available — the caller then falls back to its own default.
+ */
+export function resolveBestModelForSelection(selectedId: string, availableIds: readonly string[]): string | null {
+  if (availableIds.includes(selectedId)) return selectedId;
+  const target = parseAnthropicModel(selectedId);
+  if (target === null) return null;
+  let best: { id: string; major: number; minor: number } | null = null;
+  for (const id of availableIds) {
+    const parsed = parseAnthropicModel(id);
+    if (parsed === null || parsed.family !== target.family) continue;
+    if (best === null || compareVersion(parsed, best) > 0) best = { id, ...parsed };
+  }
+  return best?.id ?? null;
+}
+
 /** Per-model price in US dollars per 1M input / output tokens (HS-8766).
- *  Apple is on-device ($0). Unknown ids fall back to the default model's
- *  pricing in `announcerCost`. */
+ *  Apple/local are on-device ($0). Unknown ids fall back to same-family pricing,
+ *  then the default model's pricing, in `announcerCost`. */
 export interface ModelPricing { inputPerMTok: number; outputPerMTok: number }
 export const ANNOUNCER_PRICING: Record<string, ModelPricing> = {
   [APPLE_FOUNDATION_MODEL_ID]: { inputPerMTok: 0, outputPerMTok: 0 },
@@ -89,9 +133,28 @@ export const ANNOUNCER_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-8': { inputPerMTok: 5, outputPerMTok: 25 },
 };
 
-/** Dollar cost of one summarization given the model + token counts. Unknown
- *  models fall back to the default model's pricing. */
+/** Per-family fallback pricing (HS-8853). The Models API doesn't publish prices,
+ *  so a newly-discovered model (e.g. a future `claude-sonnet-4-7`) isn't in
+ *  `ANNOUNCER_PRICING` yet — price it at its family's published rate rather than
+ *  the flat default, which would otherwise mis-price an opus model as haiku. */
+export const ANNOUNCER_FAMILY_PRICING: Record<AnthropicModelFamily, ModelPricing> = {
+  haiku: { inputPerMTok: 1, outputPerMTok: 5 },
+  sonnet: { inputPerMTok: 3, outputPerMTok: 15 },
+  opus: { inputPerMTok: 5, outputPerMTok: 25 },
+};
+
+/** Dollar cost of one summarization given the model + token counts. Exact id
+ *  pricing wins; an unlisted Anthropic id falls back to its family's rate
+ *  (HS-8853); a truly unknown id falls back to the default model's pricing. */
 export function announcerCost(model: string, inputTokens: number, outputTokens: number): number {
-  const p = ANNOUNCER_PRICING[model] ?? ANNOUNCER_PRICING[DEFAULT_ANNOUNCER_MODEL];
+  const family = parseAnthropicModel(model)?.family;
+  let p: ModelPricing;
+  if (model in ANNOUNCER_PRICING) {
+    p = ANNOUNCER_PRICING[model];
+  } else if (family !== undefined) {
+    p = ANNOUNCER_FAMILY_PRICING[family];
+  } else {
+    p = ANNOUNCER_PRICING[DEFAULT_ANNOUNCER_MODEL];
+  }
   return (inputTokens / 1_000_000) * p.inputPerMTok + (outputTokens / 1_000_000) * p.outputPerMTok;
 }

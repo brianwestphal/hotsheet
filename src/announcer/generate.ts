@@ -14,12 +14,13 @@ import { getSettings } from '../db/queries.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { notifyMutation } from '../routes/notify.js';
+import { listAnthropicModels } from './anthropicModels.js';
 import { isAppleFoundationAvailable } from './appleFoundation.js';
 import { collectWorkSignals } from './collectSignals.js';
 import { getDismissedTopics } from './dismissedTopics.js';
 import { resolveAnnouncerKey } from './key.js';
 import { isLocalProviderAvailable } from './localProvider.js';
-import { APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, providerForModel } from './models.js';
+import { ANNOUNCER_MODELS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, providerForModel, resolveBestModelForSelection } from './models.js';
 import { type Compression, summarizeWork } from './summarize.js';
 
 /** Above this many unplayed (active) entries the live generator compresses
@@ -44,11 +45,41 @@ export async function isAnnouncerEnabled(): Promise<boolean> {
  * choice wins; otherwise default to **Apple Foundation Models when available**
  * (on-device + free), falling back to the cheapest Anthropic model. Shared by
  * the generate route + the live generator so both honor the same default.
+ *
+ * HS-8853 — best-effort same-family upgrade: if the saved choice is an Anthropic
+ * model the active key no longer offers (e.g. a retired `claude-sonnet-4-5`),
+ * resolve it to the newest available model in the **same family**
+ * (`claude-sonnet-4-6`) rather than running an invalid id or jumping families.
+ * Discovery failure (no key / unreachable) leaves the saved id untouched.
  */
 export async function resolveAnnouncerModel(): Promise<string> {
   const chosen = readGlobalConfig().announcerModel;
-  if (chosen !== undefined) return chosen;
-  return (await isAppleFoundationAvailable()) ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL;
+  if (chosen === undefined) {
+    return (await isAppleFoundationAvailable()) ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL;
+  }
+  if (providerForModel(chosen) === 'anthropic') {
+    const key = await resolveAnnouncerKey();
+    if (key !== null) {
+      const available = (await listAnthropicModels(key)).map(m => m.id);
+      if (available.length > 0) return resolveBestModelForSelection(chosen, available) ?? chosen;
+    }
+  }
+  return chosen;
+}
+
+/**
+ * HS-8853 — the Anthropic models to offer in the settings dropdown: the
+ * `claude-*` models the active key actually exposes (discovered via the Models
+ * API), or the static fallback set when there's no key / discovery failed (so
+ * the dropdown is never empty). Each entry is `{id, label}`.
+ */
+export async function listAnnouncerAnthropicModels(): Promise<{ id: string; label: string }[]> {
+  const key = await resolveAnnouncerKey();
+  if (key !== null) {
+    const discovered = await listAnthropicModels(key);
+    if (discovered.length > 0) return discovered;
+  }
+  return ANNOUNCER_MODELS.filter(m => m.provider === 'anthropic').map(m => ({ id: m.id, label: m.label }));
 }
 
 /** Whether a model's provider is ready to summarize, and the credential it needs.
