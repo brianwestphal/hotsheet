@@ -100,10 +100,18 @@ export function _setShutdownTimeoutsForTests(step: number | null, overall: numbe
 }
 
 /** Run a single cleanup step under a timeout. A step that rejects OR hangs is
- *  logged and swallowed so the pipeline always advances to the next step. */
+ *  logged and swallowed so the pipeline always advances to the next step.
+ *
+ *  HS-8828 — every step logs its start AND its completion time. The reported
+ *  hang ("app never quits" under `npm run tauri:dev`) needs a per-step trail so
+ *  the next stuck quit names the exact culprit step (a 3000ms "timed out" line,
+ *  or a step that takes suspiciously long) rather than just showing the pipeline
+ *  going quiet between "starting" and "done". */
 async function runStep(label: string, fn: () => Promise<void> | void): Promise<void> {
   const ms = stepTimeoutOverrideMs ?? STEP_TIMEOUT_MS;
+  const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  console.log(`[lifecycle] step "${label}" — starting`);
   try {
     await Promise.race([
       Promise.resolve().then(fn),
@@ -112,8 +120,9 @@ async function runStep(label: string, fn: () => Promise<void> | void): Promise<v
         timer.unref();
       }),
     ]);
+    console.log(`[lifecycle] step "${label}" — done in ${String(Date.now() - startedAt)}ms`);
   } catch (err) {
-    console.error(`[lifecycle] step "${label}" failed:`, err);
+    console.error(`[lifecycle] step "${label}" failed after ${String(Date.now() - startedAt)}ms:`, err);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

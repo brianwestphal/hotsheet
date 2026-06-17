@@ -457,17 +457,44 @@ export function createSignalHandler(hooks: SignalHandlerHooks): (signal: 'SIGINT
  * tolerant of half-initialised state.
  */
 function registerSignalHandlersEarly(): void {
+  // HS-8828 — the Tauri parent closes our stdout/stderr pipe ~300ms after it
+  // SIGTERMs us on quit; a graceful shutdown that's still logging past that
+  // point would otherwise hit an uncaught EPIPE and crash mid-checkpoint.
+  // Swallow EPIPE so the pipeline finishes and the lockfile-removal exit
+  // handler runs; re-surface any other stream error.
+  ignoreBrokenPipe(process.stdout);
+  ignoreBrokenPipe(process.stderr);
+
   const handler = createSignalHandler({
     runShutdown: async (signal) => {
+      // HS-8828 — bracket the whole graceful pipeline with timing so a stuck
+      // quit shows exactly how far it got. Pairs with `lifecycle.ts`'s
+      // per-step trail (see `runStep`).
+      console.error(`[cli] ${signal} received — starting graceful shutdown`);
+      const startedAt = Date.now();
       const { gracefulShutdown } = await import('./lifecycle.js');
       await gracefulShutdown(signal);
+      console.error(`[cli] graceful shutdown finished in ${String(Date.now() - startedAt)}ms — scheduling exit(0)`);
     },
-    exit: (code) => process.exit(code),
+    exit: (code) => {
+      console.error(`[cli] process.exit(${String(code)})`);
+      process.exit(code);
+    },
     setImmediate: (fn) => { setImmediate(fn); },
     log: (m) => { console.error(m); },
   });
   process.on('SIGINT', () => { void handler('SIGINT'); });
   process.on('SIGTERM', () => { void handler('SIGTERM'); });
+}
+
+/** HS-8828 — swallow EPIPE on a writable std stream (broken pipe when the
+ *  Tauri parent goes away during quit) so it doesn't crash an in-flight
+ *  graceful shutdown. Any non-EPIPE stream error is re-surfaced. */
+function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    console.error('[cli] stream error:', err);
+  });
 }
 
 /** Write instance file and register exit cleanup handlers. */

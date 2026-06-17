@@ -1,11 +1,29 @@
 {
   "identifier": "remote-localhost",
-  "description": "Allow IPC from localhost so the Node-served frontend can call Tauri commands",
+  "description": "Allow IPC from the localhost origin so the Node-served frontend can call Tauri core APIs AND the app's own commands. HS-8828: Tauri 2.11 stopped auto-allowing app commands for remote-origin webviews, so each command (generated as allow-<cmd> via build.rs AppManifest) is granted explicitly here.",
   "windows": ["main"],
   "remote": {
-    "urls": ["http://localhost:*"]
+    "urls": ["http://localhost:*", "http://localhost:*/*"]
   },
   "permissions": [
-    "core:default"
+    "core:default",
+    "notification:default",
+    "allow-check-cli-installed",
+    "allow-install-cli",
+    "allow-get-pending-update",
+    "allow-check-for-update",
+    "allow-install-update",
+    "allow-set-app-icon",
+    "allow-request-attention",
+    "allow-request-attention-once",
+    "allow-pick-folder",
+    "allow-open-url",
+    "allow-set-window-title",
+    "allow-show-native-notification",
+    "allow-quicklook",
+    "allow-confirm-quit",
+    "allow-tts-speak",
+    "allow-tts-stop",
+    "allow-open-project"
   ]
 }

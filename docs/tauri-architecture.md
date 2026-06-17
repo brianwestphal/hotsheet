@@ -116,6 +116,29 @@ The Node.js server process must be cleaned up when the Tauri window closes:
   - Windows: `taskkill /PID ... /T /F` — `/T` kills the process tree
 - **Graceful exit only**: This cleanup runs on Cmd+Q or window close. Force-killing the Tauri process (e.g., `kill -9`) will orphan the Node server. PGLite's lock file (`postmaster.pid`) must then be manually removed before the next launch.
 
+## IPC capabilities & the remote-origin gotcha (HS-8828)
+
+Hot Sheet's frontend is **not** a bundled Tauri asset — it's served by the Node server over `http://localhost:<port>`, and the main window `navigate()`s there (dev *and* prod). To Tauri's security model that is a **remote origin**, not trusted local app content, so IPC from it is governed by a dedicated capability:
+
+- `capabilities/remote-localhost.json` — `"remote": { "urls": ["http://localhost:*", "http://localhost:*/*"] }`, granting `core:default`, `notification:default`, and an explicit `allow-<cmd>` for **every** app command the frontend invokes.
+- `capabilities/default.json` — the same grants for local content (the pre-navigation `loading/` splash), as a safety mirror.
+
+**The gotcha:** an app's own `#[tauri::command]`s are allowed for *local* windows by default, but **NOT for a remote-origin window** — each must be granted explicitly. Those `allow-<cmd>` permissions don't exist until the commands are declared in `src-tauri/build.rs`:
+
+```rust
+tauri_build::try_build(
+    tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&["confirm_quit", "quicklook", /* … */]),
+    ),
+).expect("failed to run tauri-build");
+```
+
+This generates `allow-<cmd>` / `deny-<cmd>` permissions (kebab-case: `confirm_quit` → `allow-confirm-quit`) into `gen/schemas/`, which the capability files then reference.
+
+**Tauri 2.10 → 2.11 regression that caused HS-8828:** 2.10 still tolerated app commands on the remote origin without explicit grants; 2.11 (bumped 2026-06-16) enforces it, rejecting ungranted calls with `<cmd> not allowed. Plugin not found`. That silently broke **Quit** (`confirm_quit` rejected → `app.exit(0)` never ran → window stayed open) and **Quick Look** (`quicklook` rejected → broken-image fallback, HS-8826).
+
+**Maintenance rule:** when you add a `#[tauri::command]` that the frontend calls, you MUST (1) add it to `generate_handler!` in `lib.rs`, (2) add it to the `commands(&[…])` list in `build.rs`, and (3) add `allow-<cmd>` to both capability files. Forgetting (2)/(3) makes the command fail *only from the desktop app* (Playwright/browser tests won't catch it — there's no Tauri ACL there). `cargo check` validates that every `allow-*` in a capability resolves, so a typo'd identifier fails the build. The `acl_grant_sync_tests` module in `lib.rs` (run by `npm run test:rust`) goes further: it parses these four lists from source and fails if they drift — every `generate_handler!` command must be registered in `build.rs`, and every registered command must be granted in *both* capability files — so a forgotten grant is a unit-test failure, not a desktop-only runtime regression.
+
 ## Dev mode vs production
 
 | | Dev (`tauri:dev`) | Production (`tauri:build`) |

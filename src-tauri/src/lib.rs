@@ -177,6 +177,69 @@ fn startup_log(msg: &str) {
     }
 }
 
+/// HS-8828 — quit/shutdown diagnostic logger. Unlike `startup_log` (release-
+/// only) this is compiled into EVERY build, because the reported "app never
+/// quits" hang reproduces under `npm run tauri:dev` — a debug build. Mirrors to
+/// stderr (visible on a terminal / dev run) AND appends to
+/// `~/.hotsheet/shutdown.log` so a GUI launch — where stderr is discarded —
+/// still leaves a trail to pair with the Node sidecar's `[lifecycle] step …`
+/// lines. Best-effort: any filesystem error is swallowed so logging never
+/// affects the quit path.
+fn shutdown_log(msg: &str) {
+    eprintln!("[shutdown] {msg}");
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok());
+    if let Some(home) = home {
+        use std::io::Write;
+        let dir = std::path::PathBuf::from(home).join(".hotsheet");
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("shutdown.log"))
+        {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+}
+
+/// HS-8828 — build the dev-mode (`npm run tauri:dev`) server child invocation.
+/// Returns the args for `node` (program is always `node`).
+///
+/// We launch the server as `node --import tsx src/cli.ts …` rather than the old
+/// `npx tsx …` ON PURPOSE. With `npx tsx`, the process we spawn (and whose PID
+/// we store in `SidecarPid` to SIGTERM on quit) is the `npm exec` wrapper; the
+/// real `cli.ts` Node process — the one carrying the SIGINT/SIGTERM
+/// graceful-shutdown handler — is its GRANDCHILD (npx → tsx CLI → node cli.ts).
+/// So `RunEvent::Exit`'s `kill(pid)` only ever hit the wrapper, the server was
+/// orphaned, it kept the port + lockfile, and the app "never actually quit."
+/// `node --import tsx` runs `cli.ts` IN the spawned process (verified
+/// single-process with tsx 4.x), so `child.id()` IS the server and the quit
+/// SIGTERM lands on its handler. `TSX_TSCONFIG_PATH=tsconfig.json` (set by the
+/// caller) replaces the old `--tsconfig` CLI flag now that we use tsx as a
+/// loader rather than its CLI.
+#[cfg(debug_assertions)]
+fn build_dev_server_args(app_args: &[String]) -> Vec<String> {
+    let mut server_args = vec![
+        "--import".to_string(),
+        "tsx".to_string(),
+        "src/cli.ts".to_string(),
+        "--no-open".to_string(),
+        "--replace".to_string(),
+    ];
+    if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
+        if let Some(dir) = app_args.get(i + 1) {
+            server_args.push("--data-dir".to_string());
+            server_args.push(dir.clone());
+        }
+    }
+    // Forward Hot Sheet CLI flags (--demo:N, --port, --strict-port, --force,
+    // --check-for-updates) from the Tauri binary's argv into the server child.
+    server_args.extend(collect_forwarded_server_args(app_args));
+    server_args
+}
+
 #[cfg(not(debug_assertions))]
 /// Determines the app/window title from .hotsheet/settings.json or the parent folder name.
 fn resolve_app_name(data_dir: &str) -> String {
@@ -733,6 +796,7 @@ fn set_window_title(app: tauri::AppHandle, title: String) -> Result<(), String> 
 /// as before.
 #[tauri::command]
 fn confirm_quit(app: tauri::AppHandle) -> Result<(), String> {
+    shutdown_log("confirm_quit invoked — setting QuitConfirmed + app.exit(0)");
     let confirmed = app.state::<QuitConfirmed>();
     confirmed.0.store(true, Ordering::SeqCst);
     app.exit(0);
@@ -1158,7 +1222,9 @@ pub fn run() {
                 // sets the QuitConfirmed flag + re-issues window.close().
                 // The second close attempt sees the flag and proceeds.
                 let confirmed = window.app_handle().state::<QuitConfirmed>();
-                if !confirmed.0.load(Ordering::SeqCst) {
+                let already = confirmed.0.load(Ordering::SeqCst);
+                shutdown_log(&format!("WindowEvent::CloseRequested (confirmed={already})"));
+                if !already {
                     api.prevent_close();
                     let _ = window.emit("quit-confirm-requested", ());
                 }
@@ -1338,34 +1404,26 @@ pub fn run() {
                 let app_args: Vec<String> = std::env::args().collect();
                 // Dev builds always start a clean server: if a prior instance is running,
                 // --replace tells the CLI to shut it down before starting.
-                let mut server_args = vec![
-                    "tsx".to_string(),
-                    "--tsconfig".to_string(),
-                    "tsconfig.json".to_string(),
-                    "src/cli.ts".to_string(),
-                    "--no-open".to_string(),
-                    "--replace".to_string(),
-                ];
-                if let Some(i) = app_args.iter().position(|a| a == "--data-dir") {
-                    if let Some(dir) = app_args.get(i + 1) {
-                        server_args.push("--data-dir".to_string());
-                        server_args.push(dir.clone());
-                    }
-                }
-                // Forward Hot Sheet CLI flags (--demo:N, --port, --strict-port, --force,
-                // --check-for-updates) from the Tauri binary's argv into the server child.
-                server_args.extend(collect_forwarded_server_args(&app_args));
+                // HS-8828 — `node --import tsx` (NOT `npx tsx`) so the spawned
+                // child IS the cli.ts server and is directly killable on quit;
+                // see `build_dev_server_args`.
+                let server_args = build_dev_server_args(&app_args);
 
                 // The Rust binary runs from src-tauri/, so set cwd to the project root
                 let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-                let mut child = std::process::Command::new("npx")
+                shutdown_log(&format!("[dev] spawning server: node {}", server_args.join(" ")));
+                let mut child = std::process::Command::new("node")
                     .args(&server_args)
                     .current_dir(project_root)
+                    // tsx-as-loader reads the tsconfig (jsx / jsxImportSource /
+                    // paths) from here instead of the old `--tsconfig` CLI flag.
+                    .env("TSX_TSCONFIG_PATH", "tsconfig.json")
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::inherit())
                     .spawn()
-                    .expect("Failed to start dev server (is npx/tsx installed?)");
+                    .expect("Failed to start dev server (is node/tsx installed?)");
 
+                shutdown_log(&format!("[dev] server child pid = {}", child.id()));
                 *app.state::<SidecarPid>().0.lock().unwrap() = Some(child.id());
 
                 let stdout = child.stdout.take().expect("Failed to capture stdout");
@@ -1571,7 +1629,9 @@ pub fn run() {
                 // do nothing, and the exit proceeds normally.
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     let confirmed = app_handle.state::<QuitConfirmed>();
-                    if !confirmed.0.load(Ordering::SeqCst) {
+                    let already = confirmed.0.load(Ordering::SeqCst);
+                    shutdown_log(&format!("RunEvent::ExitRequested (confirmed={already})"));
+                    if !already {
                         api.prevent_exit();
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.emit("quit-confirm-requested", ());
@@ -1579,24 +1639,39 @@ pub fn run() {
                     }
                 }
                 tauri::RunEvent::Exit => {
-                    // Kill the sidecar process on app exit
+                    shutdown_log("RunEvent::Exit — tearing down server child");
+                    // Kill the sidecar / dev-server process on app exit
                     if let Some(pid) = app_handle.state::<SidecarPid>().0.lock().unwrap().take() {
                         #[cfg(unix)]
                         {
-                            // Send SIGTERM to let the Node process clean up (release lock files, etc.)
+                            // Send SIGTERM to let the Node process clean up
+                            // (run gracefulShutdown → release lock files, etc.).
+                            // HS-8828 — `pid` is now the cli.ts server itself
+                            // (dev: `node --import tsx`; prod: the sidecar
+                            // binary), so `kill(pid)` reaches its graceful
+                            // handler. `kill(-pid)` additionally sweeps the
+                            // group when the child happens to lead one.
+                            shutdown_log(&format!("RunEvent::Exit — SIGTERM server pid {pid}"));
                             unsafe {
-                                libc::kill(pid as i32, libc::SIGTERM);
-                                libc::kill(-(pid as i32), libc::SIGTERM);
+                                let r1 = libc::kill(pid as i32, libc::SIGTERM);
+                                let r2 = libc::kill(-(pid as i32), libc::SIGTERM);
+                                shutdown_log(&format!(
+                                    "RunEvent::Exit — kill(pid)={r1} kill(-pid)={r2}"
+                                ));
                             }
                             // Wait briefly for cleanup before the process is force-killed by OS
                             std::thread::sleep(std::time::Duration::from_millis(300));
+                            shutdown_log("RunEvent::Exit — 300ms grace elapsed, exiting");
                         }
                         #[cfg(windows)]
                         {
+                            shutdown_log(&format!("RunEvent::Exit — taskkill /T /F pid {pid}"));
                             let _ = std::process::Command::new("taskkill")
                                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                                 .status();
                         }
+                    } else {
+                        shutdown_log("RunEvent::Exit — no server pid recorded");
                     }
                 }
                 _ => {}
@@ -1713,5 +1788,178 @@ mod tts_command_tests {
         // `cmd /C start "" <path>` — the empty title arg keeps a quoted path
         // from being swallowed as the window title.
         assert_eq!(spec.args, vec!["/C", "start", "", "C:\\tmp\\doc.pdf"]);
+    }
+}
+
+// HS-8828 — dev-mode server launch must spawn the cli.ts server IN-process
+// (`node --import tsx`) so its PID is directly killable on quit, NOT via an
+// `npx`/`tsx`-CLI wrapper whose real server is an unreachable grandchild. Gated
+// to debug builds because `build_dev_server_args` only exists there (it's the
+// dev-only launch path). `cargo test` is a debug build, so this runs in CI.
+#[cfg(all(test, debug_assertions))]
+mod dev_server_args_tests {
+    use super::*;
+
+    #[test]
+    fn launches_cli_via_node_import_tsx_not_npx_wrapper() {
+        let args = build_dev_server_args(&[]);
+        // node flags first: `--import tsx` runs cli.ts in THIS process, so the
+        // spawned child PID is the server the quit-time SIGTERM must reach.
+        assert_eq!(args[0], "--import");
+        assert_eq!(args[1], "tsx");
+        assert_eq!(args[2], "src/cli.ts");
+        assert!(args.iter().any(|a| a == "--no-open"));
+        assert!(args.iter().any(|a| a == "--replace"));
+        // Guard against a regression to the old wrapper form, where the child
+        // PID was `npm exec`/`npx` and the server was an unkillable grandchild.
+        assert!(!args.iter().any(|a| a == "npx"));
+        // tsconfig is now passed via TSX_TSCONFIG_PATH env, not the CLI flag.
+        assert!(!args.iter().any(|a| a == "--tsconfig"));
+    }
+
+    #[test]
+    fn forwards_data_dir_to_the_server() {
+        let args = build_dev_server_args(&[
+            "--data-dir".to_string(),
+            "/some/dir".to_string(),
+        ]);
+        let i = args.iter().position(|a| a == "--data-dir").expect("--data-dir forwarded");
+        assert_eq!(args[i + 1], "/some/dir");
+    }
+}
+
+// HS-8828 — guard the ACL grant-sync invariant that the *definitive* root cause
+// violated. Hot Sheet's frontend is served from `http://localhost:<port>` — a
+// "remote" origin to Tauri — and the main window navigates there. Tauri 2.11
+// stopped auto-allowing the app's own `#[tauri::command]`s for remote-origin
+// webviews, so every command must be (a) registered in `build.rs` (which
+// generates an `allow-<cmd>` permission) and (b) explicitly granted to the
+// localhost origin in `capabilities/remote-localhost.json` (and mirrored in
+// `default.json`). A command in `generate_handler!` but missing a grant is
+// silently rejected at runtime with `<cmd> not allowed. Plugin not found` —
+// exactly the Quit/Quick Look breakage we just fixed.
+//
+// These four lists are maintained by hand in four separate files, so they WILL
+// drift. This test reads the real source files and fails the build the moment
+// they disagree — turning a runtime-only, GUI-only regression into a unit-test
+// failure that names the offending command.
+#[cfg(test)]
+mod acl_grant_sync_tests {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn crate_file(rel: &str) -> String {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.push(rel);
+        fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+    }
+
+    /// Pull every double-quoted token out of `src` whose value is between the
+    /// first `start` marker and the next `end` marker after it.
+    fn quoted_between(src: &str, start: &str, end: &str) -> Vec<String> {
+        let from = src.find(start).unwrap_or_else(|| panic!("marker {start:?} not found"));
+        let rest = &src[from + start.len()..];
+        let to = rest.find(end).unwrap_or_else(|| panic!("marker {end:?} not found"));
+        let block = &rest[..to];
+        quoted_tokens(block)
+    }
+
+    /// All `"..."` string literals in `block` (no escapes expected here).
+    fn quoted_tokens(block: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut chars = block.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if c == '"' {
+                if let Some(close) = block[i + 1..].find('"') {
+                    out.push(block[i + 1..i + 1 + close].to_string());
+                    // Skip past the closing quote so the inner content isn't rescanned.
+                    while let Some(&(j, _)) = chars.peek() {
+                        if j <= i + 1 + close { chars.next(); } else { break; }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `confirm_quit` -> `allow-confirm-quit`.
+    fn allow_perm(cmd: &str) -> String {
+        format!("allow-{}", cmd.replace('_', "-"))
+    }
+
+    /// The app-command grants in a capability file: `"allow-..."` tokens that
+    /// are NOT namespaced (`core:`, `shell:allow-spawn`, …) — those are plugin
+    /// permissions, not our generated app-command grants.
+    fn app_grants(json: &str) -> BTreeSet<String> {
+        quoted_tokens(json)
+            .into_iter()
+            .filter(|t| t.starts_with("allow-") && !t.contains(':'))
+            .collect()
+    }
+
+    /// Commands registered via `build.rs`'s `AppManifest::new().commands([...])`.
+    fn build_rs_commands() -> Vec<String> {
+        quoted_between(&crate_file("build.rs"), ".commands(&[", "])")
+    }
+
+    /// Bare identifiers inside `generate_handler![ ... ]` in lib.rs (skipping
+    /// `#[cfg(...)]` attribute lines and the macro/handler scaffolding).
+    fn generate_handler_commands() -> BTreeSet<String> {
+        let src = crate_file("src/lib.rs");
+        let from = src.find("generate_handler![").expect("generate_handler! present");
+        let rest = &src[from + "generate_handler![".len()..];
+        let to = rest.find(']').expect("generate_handler! closing ]");
+        rest[..to]
+            .lines()
+            .map(|l| l.trim().trim_end_matches(','))
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn build_rs_command_list_is_not_empty() {
+        // Sanity: if the parse breaks (markers renamed), fail loudly here rather
+        // than silently passing the comparisons below against empty sets.
+        let cmds = build_rs_commands();
+        assert!(cmds.contains(&"confirm_quit".to_string()), "got: {cmds:?}");
+        assert!(cmds.contains(&"quicklook".to_string()), "got: {cmds:?}");
+    }
+
+    #[test]
+    fn every_invoke_handler_command_is_registered_in_build_rs() {
+        let registered: BTreeSet<String> = build_rs_commands().into_iter().collect();
+        let handled = generate_handler_commands();
+        let missing: Vec<_> = handled.difference(&registered).cloned().collect();
+        assert!(
+            missing.is_empty(),
+            "commands in generate_handler! but NOT registered in build.rs \
+             (so no allow-<cmd> permission is generated): {missing:?}"
+        );
+    }
+
+    #[test]
+    fn remote_localhost_grants_every_app_command() {
+        let expected: BTreeSet<String> =
+            build_rs_commands().iter().map(|c| allow_perm(c)).collect();
+        let granted = app_grants(&crate_file("capabilities/remote-localhost.json"));
+        assert_eq!(
+            expected, granted,
+            "remote-localhost.json app-command grants are out of sync with build.rs. \
+             A command registered but not granted here is rejected from the localhost \
+             frontend with `<cmd> not allowed. Plugin not found` (HS-8828)."
+        );
+    }
+
+    #[test]
+    fn default_capability_mirrors_the_same_app_command_grants() {
+        let expected: BTreeSet<String> =
+            build_rs_commands().iter().map(|c| allow_perm(c)).collect();
+        let granted = app_grants(&crate_file("capabilities/default.json"));
+        assert_eq!(
+            expected, granted,
+            "default.json app-command grants drifted from build.rs / remote-localhost.json"
+        );
     }
 }

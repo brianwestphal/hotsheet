@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default permissions for Hot Sheet",
+  "description": "Default permissions for Hot Sheet (local content). HS-8828: the app-command allow-<cmd> grants mirror remote-localhost.json so that if registering commands via build.rs AppManifest switches app commands to explicit-permission mode, local windows keep their access too.",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -17,6 +17,23 @@
     },
     "updater:default",
     "process:default",
-    "notification:default"
+    "notification:default",
+    "allow-check-cli-installed",
+    "allow-install-cli",
+    "allow-get-pending-update",
+    "allow-check-for-update",
+    "allow-install-update",
+    "allow-set-app-icon",
+    "allow-request-attention",
+    "allow-request-attention-once",
+    "allow-pick-folder",
+    "allow-open-url",
+    "allow-set-window-title",
+    "allow-show-native-notification",
+    "allow-quicklook",
+    "allow-confirm-quit",
+    "allow-tts-speak",
+    "allow-tts-stop",
+    "allow-open-project"
   ]
 }
