@@ -2,11 +2,13 @@ import { createTicket, ensureSkills, execShellCommand, getCommandLog, getRunning
 import type { SafeHtml } from '../jsx-runtime.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { refreshLogBadge } from './commandLog.js';
+import { getCommandLastRun, recordCommandRun } from './commandRunTimes.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup, noteCommandItemsMutation } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
 import { getActiveProject, state } from './state.js';
+import { formatRelativeTime } from './timeFormat.js';
 import { showToast } from './toast.js';
 
 /**
@@ -175,6 +177,12 @@ function renderButton(cmd: CustomCommand) {
     >{renderIconSvg(iconDef.svg, 14, textColor)}<span>{cmd.name}</span></button>
   );
   if (isRunning) btn.appendChild(buildSpinnerElement(textColor));
+  // HS-8398 — show the command's last-run time on hover. Computed on
+  // `mouseenter` (not at render) so the relative time is fresh every hover.
+  btn.addEventListener('mouseenter', () => {
+    const lastRun = getCommandLastRun(lookupKey);
+    btn.title = lastRun !== null ? `Last run: ${formatRelativeTime(lastRun)}` : 'Not run yet';
+  });
   if (isShell) {
     wireShellButtonPress(btn, cmd, lookupKey);
   } else {
@@ -316,6 +324,7 @@ function wireClaudeButtonPress(btn: HTMLElement, cmd: CustomCommand): void {
       // HS-8538 — in-app toast (not window.alert, which WKWebView no-ops).
       showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
     } else {
+      recordCommandRun(runningKey(getActiveProject()?.secret ?? '', cmd)); // HS-8398
       triggerChannelAndMarkBusy(cmd.prompt);
     }
   });
@@ -547,6 +556,7 @@ async function autoShowLogEntry(logId: number, autoShow: boolean) {
  * stack into the sidebar's import graph at module load.
  */
 async function runShellInNewTerminal(cmd: CustomCommand): Promise<void> {
+  recordCommandRun(runningKey(getActiveProject()?.secret ?? '', cmd)); // HS-8398
   try {
     void ensureSkills();
     const { openTerminalRunningCommand } = await import('./terminal.js');
@@ -557,6 +567,7 @@ async function runShellInNewTerminal(cmd: CustomCommand): Promise<void> {
 }
 
 async function runShellCommand(cmd: CustomCommand, autoShow = false): Promise<void> {
+  recordCommandRun(runningKey(getActiveProject()?.secret ?? '', cmd)); // HS-8398
   setShellBusy(true);
   try {
     // Ensure AI tool skills are installed/up-to-date before running commands
