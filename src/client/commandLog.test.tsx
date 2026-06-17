@@ -378,3 +378,63 @@ describe('applyPerProjectDrawerState — user mid-fetch click wins (HS-8443)', (
     expect(document.getElementById('command-log-panel')!.style.display).toBe('');
   });
 });
+
+/**
+ * HS-8845 — the drawer defaults to OPEN on a project's FIRST use (no saved
+ * `drawer_open` setting yet), for discoverability of the Commands Log /
+ * terminal. A prior explicit choice is still honored. Drives the real
+ * `getFileSettings` by injecting a mock API transport (`setApiTransport`), so
+ * the `fs.drawer_open` branch in `applyPerProjectDrawerState` is exercised.
+ */
+describe('applyPerProjectDrawerState — default open on first use (HS-8845)', () => {
+  beforeEach(async () => {
+    document.body.replaceChildren(
+      toElement(<div id="command-log-panel" className="command-log-panel" style="display:none"></div>),
+      toElement(<button id="command-log-btn" type="button"></button>),
+      toElement(<button id="command-log-expand-btn" type="button"></button>),
+      toElement(<div id="drawer-tabs-container"></div>),
+      toElement(<div id="drawer-terminal-tabs-wrap" style="display:none"></div>),
+      toElement(<div id="command-log-entries"></div>),
+    );
+    const { _resetPanelStateForTesting } = await import('./commandLog.js');
+    _resetPanelStateForTesting();
+  });
+
+  afterEach(async () => {
+    document.body.innerHTML = '';
+    // Restore the "no transport" state so this block doesn't leak into others.
+    const { setApiTransport } = await import('../api/_runner.js');
+    setApiTransport(() => { throw new Error('no transport (test cleanup)'); });
+  });
+
+  /** Inject a transport so `/file-settings` returns `settings`; every other
+   *  boot-path endpoint gets a benign shape (terminal-tab/log errors are
+   *  swallowed inside `loadAndRenderTerminalTabs` / `loadEntries`). */
+  async function runRestoreWithSettings(settings: Record<string, unknown>): Promise<void> {
+    const { setApiTransport } = await import('../api/_runner.js');
+    setApiTransport((path: string) => {
+      if (path.includes('/file-settings')) return Promise.resolve(settings);
+      if (path.includes('/command-log')) return Promise.resolve([]);
+      if (path.includes('/shell/running')) return Promise.resolve({ ids: [], outputs: {} });
+      return Promise.resolve({ configured: [], dynamic: [] });
+    });
+    const { applyPerProjectDrawerState } = await import('./commandLog.js');
+    await applyPerProjectDrawerState();
+  }
+
+  it('opens the drawer when no drawer_open setting is saved (first use)', async () => {
+    await runRestoreWithSettings({ /* brand-new project: no drawer_open key */ });
+    // Default flipped from closed → open for the never-set case.
+    expect(document.getElementById('command-log-panel')!.style.display).toBe('');
+  });
+
+  it('stays closed when drawer_open is explicitly "false" (honors a prior choice)', async () => {
+    await runRestoreWithSettings({ drawer_open: 'false', drawer_active_tab: 'commands-log', drawer_expanded: 'false' });
+    expect(document.getElementById('command-log-panel')!.style.display).toBe('none');
+  });
+
+  it('opens when drawer_open is explicitly "true"', async () => {
+    await runRestoreWithSettings({ drawer_open: 'true', drawer_active_tab: 'commands-log', drawer_expanded: 'false' });
+    expect(document.getElementById('command-log-panel')!.style.display).toBe('');
+  });
+});

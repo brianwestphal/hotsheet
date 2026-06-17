@@ -26,7 +26,8 @@ The long-press threshold is **500 ms** (`LONG_PRESS_MS` in `src/client/commandSi
 
 ### Tests
 - **Server (unit).** `src/routes/api.test.ts` "terminal route" — `POST /create` with `runCommand` spawns the default shell (the PTY command is NOT `runCommand`), writes nothing before the delay, and writes `runCommand\n` after advancing 300 ms (fake timers + a PTY factory that captures writes).
-- **Manual (gesture + platform).** Long-press timing, the press visual, the click-suppression, the first-use toast, the per-command option, and the default-shell resolution on Windows/Linux are covered in `docs/manual-test-plan.md` (long-press + platform behavior are inherently manual, per the testing philosophy).
+- **E2E (HS-8839).** `e2e/command-long-press.spec.ts` drives a real press-and-hold past the 500 ms threshold and asserts a new dynamic terminal tab (`terminal:dyn-*`) opens + becomes active (and the button never enters the inline-run state), plus a normal click opening a new terminal when "Launch in New Terminal" is on. Skips gracefully when the sidebar command container isn't present in the environment.
+- **Manual (platform).** The per-OS default-shell resolution (zsh/bash/PowerShell) + the first-use toast are covered in `docs/manual-test-plan.md` — platform behavior is inherently manual.
 
 ## 83.2 Claude command → create a Task ticket (HS-8538, shipped)
 
@@ -42,7 +43,7 @@ The created ticket's category is always **`task`** (whose `shortLabel` is "TSK")
 - `wireClaudeButtonPress(btn, cmd)` (`src/client/commandSidebar.tsx`) mirrors §83.1's `wireShellButtonPress`: a pointerdown/up/leave/cancel timer at the shared `LONG_PRESS_MS` (500 ms), with the trailing click suppressed after a long-press. `makeTaskFromClaudeCommand(cmd)` calls the typed `createTicket({ title: cmd.name, defaults: { category: 'task', details: cmd.prompt } })`, toasts, and lazy-imports `loadTickets` to refresh. `maybeFireClaudeLongPressHintToast()` is the one-time hint. (While here, the connect-failure `window.alert` was replaced with an in-app warning toast — `window.alert` no-ops in Tauri's WKWebView.)
 
 ### Tests
-- The long-press gesture + the resulting ticket are **manual-test-plan** items (long-press is inherently interaction-bound, same as §83.1). The create-ticket request shape (`category: 'task'`) rides the already-tested typed `createTicket` caller + the route/DB layer's free-string category handling. A Playwright E2E for the gesture is tracked as a follow-up.
+- **E2E (HS-8844).** `e2e/command-long-press.spec.ts` long-presses a Claude command button and asserts a Task ticket was created from it (title = command name, details = the prompt, category `task`) — proving the gesture and that the prompt wasn't sent to the channel. Skips when the Claude button can't render (channel disabled / no compatible Claude CLI). The first-use hint toast stays a manual-test-plan item.
 
 ## Cross-references
 - [15-shell-commands.md](15-shell-commands.md) — custom shell command targets + execution.

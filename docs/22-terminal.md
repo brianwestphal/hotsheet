@@ -170,7 +170,7 @@ Keys on `.hotsheet/settings.json`:
 |---|---|---|---|
 | `terminals` | `TerminalConfig[]` | `[]` (HS-6337 — no implicit default terminal per project) — **except HS-8491 (2026-05-22) auto-seeds a single `{ id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true }` row when the project's `terminals` is `undefined` AND `claude` is installed on `PATH`. Existing projects that already have a `terminals` value (even an empty `[]`) are NOT affected. HS-8785 (2026-06-06): the `claude` probe (`isExecutableOnPath`, shared with the `{{claudeCommand}}` detector + skills install) now ALSO searches common install dirs missing from a GUI app's minimal launchd `PATH` (`/usr/local/bin`, `/opt/homebrew/bin`, `~/.local/bin`, `~/.claude/local`), so a desktop launch with `claude` installed via Homebrew/the official installer still seeds the terminal — previously it silently didn't. HS-8801 (2026-06-10): `nvm`/`asdf`/`volta`/custom-prefix layouts are already covered by the **login-shell PATH enrichment** — `enrichProcessPath()` (`src/enrich-path.ts`, wired at the top of `src/cli.ts` startup since HS-8422) spawns `$SHELL -ilc 'printf %s "$PATH"'` and merges the user's real login-shell PATH (which their rc files populate with the dynamic node-version dirs) into `process.env.PATH` before any probe runs; the static dir list above is the fallback for when that probe fails (Windows / no `$SHELL` / shell error/timeout). The glassbox detector (`src/routes/dashboard.ts`) shares the same static `extraSearchDirs()` list.** | One row per configured tab (HS-6271). See §22.17 for the schema. |
 | `terminal_scrollback_bytes` | number | `1048576` | Ring buffer size (shared across terminals) |
-| `drawer_open` | bool (as `"true"`/`"false"`) | `false` | Drawer visibility for this project; restored on project switch (HS-6309). |
+| `drawer_open` | bool (as `"true"`/`"false"`) | **open on first use** (HS-8845); else the saved value | Drawer visibility for this project; restored on project switch (HS-6309). When unset (first use) the drawer defaults to **open** for discoverability; an explicit `"false"` keeps it closed. |
 | `drawer_active_tab` | string | `"commands-log"` | Active drawer tab id for this project: `"commands-log"` or `"terminal:<id>"`. Restored on project switch (HS-6309). |
 | `drawer_expanded` | bool (as `"true"`/`"false"`) | `false` | Full-height drawer toggle state (HS-6312). Restored on project switch; cleared automatically when the drawer closes. |
 
@@ -392,6 +392,8 @@ The upgrade URL is `GET /api/terminal/ws?project=<secret>&terminal=<terminalId>`
 ### 22.17.7 Per-project drawer state (HS-6309)
 
 The drawer's open/closed state and its active tab id are **project-scoped**. They live in `.hotsheet/settings.json` under `drawer_open` and `drawer_active_tab` (see §22.10) and are applied on project switch so each project returns to whatever the user last had in view.
+
+**HS-8845 — default OPEN on first use.** When a project has **no saved `drawer_open` yet** (its first use), the drawer now defaults to **open** rather than closed, so the Commands Log / terminal is discoverable instead of hidden. Only the never-set (undefined) case flips; once the user opens or closes the drawer, that explicit choice is persisted and honored on every subsequent visit (an explicit `'false'` keeps it closed). Implemented in `applyPerProjectDrawerState` (`src/client/commandLog.tsx`): `wantOpen = fs.drawer_open === undefined ? true : (fs.drawer_open === true || fs.drawer_open === 'true')`.
 
 On project switch, the client:
 

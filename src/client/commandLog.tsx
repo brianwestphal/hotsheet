@@ -386,7 +386,13 @@ export async function applyPerProjectDrawerState(): Promise<void> {
   // tripped `terminal-search.spec.ts:310` on CI under load).
   if (drawerStateMutationEpoch !== epochBeforeFetch) return;
 
-  const wantOpen = fs.drawer_open === true || fs.drawer_open === 'true';
+  // HS-8845 — the drawer defaults to OPEN on a project's FIRST use (no saved
+  // `drawer_open` yet), for discoverability of the Commands Log / terminal. A
+  // prior explicit choice is still honored: only the never-set (undefined) case
+  // flips from the old default-closed to open; an explicit 'false' stays closed.
+  const wantOpen = fs.drawer_open === undefined
+    ? true
+    : (fs.drawer_open === true || fs.drawer_open === 'true');
   const wantExpanded = fs.drawer_expanded === true || fs.drawer_expanded === 'true';
   const savedTab = typeof fs.drawer_active_tab === 'string' && fs.drawer_active_tab !== ''
     ? fs.drawer_active_tab
