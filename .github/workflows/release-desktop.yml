@@ -230,6 +230,13 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}
 
+      # HS-8868 — fail the release if the produced bundle can't launch (real Node
+      # sidecar + bootable server resources), catching the HS-8867 0-byte-sidecar
+      # class on the shipped artifact (the npm-package smoke job never runs the
+      # desktop bundle).
+      - run: node scripts/verify-bundle.mjs ${{ matrix.target }}
+        shell: bash
+
   # Rename installer assets to human-friendly names.
   # Only .dmg files are safe to rename — the updater's latest.json references
   # .exe, .msi, .deb, .AppImage, and .rpm by their original filenames.

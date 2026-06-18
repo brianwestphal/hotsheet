@@ -136,6 +136,11 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # HS-8868 — fail the gate if the produced bundle can't launch (real Node
+      # sidecar + bootable server resources). Catches the HS-8867 0-byte-sidecar
+      # class that the npm-package smoke test never exercises.
+      - run: node scripts/verify-bundle.mjs ${{ matrix.target }}
+        shell: bash
       - uses: actions/upload-artifact@v7
         with:
           name: tauri-${{ matrix.target }}
@@ -447,6 +452,13 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }}${{ matrix.target == 'x86_64-pc-windows-msvc' && ' --bundles nsis' || '' }}
+
+      # HS-8868 — fail the signed-bundle job if the produced .app/installer can't
+      # launch (real Node sidecar + bootable server resources). The npm-package
+      # smoke job below never touches the desktop bundle, so this is the only
+      # check guarding the HS-8867 0-byte-sidecar class on the shipped artifact.
+      - run: node scripts/verify-bundle.mjs ${{ matrix.target }}
+        shell: bash
 
   # === Phase 5: Smoke tests (both tag types) ===
   #

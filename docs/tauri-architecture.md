@@ -38,6 +38,7 @@ src-tauri/
 scripts/
 ├── build-sidecar.sh        # Downloads Node.js + bundles server for production
 ├── ensure-sidecar-stub.sh  # Creates placeholder binary for dev mode
+├── verify-bundle.mjs       # Post-build check: produced bundle has a real sidecar + bootable server (HS-8868)
 └── release.sh              # npm + Tauri version bumping + publish
 ```
 
@@ -166,6 +167,8 @@ In dev mode, Tauri's `beforeDevCommand` starts the Node server, and the webview 
    - Compiles Rust code
    - Bundles the `.app` (macOS), `.AppImage` (Linux), or `.msi` (Windows)
    - Includes the sidecar binary, server resources, CLI launcher scripts, and icons
+
+In CI, both release workflows run **`node scripts/verify-bundle.mjs <triple>`** immediately after `tauri build` / `tauri-action` (HS-8868). It hard-fails the job if the bundle can't launch: it deep-checks the produced macOS `.app` (`Contents/MacOS/hotsheet-node` is a real, executable, non-empty binary; `Contents/Resources/server/cli.js` + bundled `@electric-sql/pglite` are present) and, on every platform, verifies the staged `src-tauri/` bundle inputs. This closes the gap that let HS-8867 ship — the npm-package smoke test never launches the desktop bundle, so nothing else exercises the shipped sidecar.
 
 ### CI/CD (`.github/workflows/release-desktop.yml`)
 
