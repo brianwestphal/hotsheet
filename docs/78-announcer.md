@@ -692,6 +692,26 @@ config schema accepts any `claude-*` id (plus the on-device pseudo-ids) instead
 of a fixed enum. The local provider already discovered its models this way
 (§81); Apple stays a single availability-gated pseudo-entry.
 
+**Availability-aware on-device fallback (HS-8872).** A *same-family upgrade* only
+covers Anthropic ids; an explicitly-chosen **on-device** provider can simply
+become unavailable on the current machine or build — a Mac without Apple
+Intelligence, a beta bundle missing the helper sidecar, a stopped local endpoint,
+or a local endpoint that's reachable but has no `announcerLocalModel` picked.
+Before this fix `resolveAnnouncerModel` returned the saved on-device id unchanged,
+so the readiness gate (`prepareSummarizationProvider`) failed **every** generate
+with a misleading `"<provider> not available"` 400 — the reported symptom of
+*"announcer is constantly nothing and warning message"* even though the project
+had a working Anthropic key (or a different on-device provider). Now, when the
+chosen on-device provider isn't ready, `resolveAnnouncerModel` falls back to the
+first working one via `firstReadyAnnouncerModel` — preferring the **other
+free/on-device option** (Apple, then a configured + reachable local endpoint)
+before the **cheapest Anthropic** model, so a privacy/cost preference is honored
+wherever one still works. When *nothing* is ready (no Apple, no local model, no
+key) the saved id is left untouched so the original accurate provider error
+surfaces rather than being masked behind a different model. A reachable local
+endpoint with **no** `announcerLocalModel` configured counts as *not ready* (it
+would otherwise throw at the summarize call).
+
 **Playback speed (HS-8754).** A global speed multiplier (`announcerSpeechRate`
 in `~/.hotsheet/config.json`, default 1×, clamped 0.5×–2×) drives the TTS rate:
 the browser engine sets `SpeechSynthesisUtterance.rate`; the Tauri engine maps

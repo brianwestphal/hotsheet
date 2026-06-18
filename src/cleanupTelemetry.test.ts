@@ -5,14 +5,25 @@
  *   3. Retention = 0 (or unset = keep-forever via default 30 OR explicit
  *      `0` = forever) keeps everything when explicitly 0.
  */
-import { writeFileSync } from 'fs';
+import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupAllProjectsTelemetry, cleanupTelemetryRows } from './cleanup.js';
-import { getDb } from './db/connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb } from './db/connection.js';
 import type * as ProjectListModule from './project-list.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from './test-helpers.js';
+
+// HS-8874 — `cleanupAllProjectsTelemetry` also sweeps the central store; isolate
+// it to a temp dir so the sweep never instantiates a PGlite cluster in the
+// developer's real `~/.hotsheet/telemetry`.
+let centralOverrideDir: string;
+beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
+afterAll(async () => {
+  await closeDbForDir(centralTelemetryDataDir());
+  delete process.env.HOTSHEET_TELEMETRY_DIR;
+  rmSync(centralOverrideDir, { recursive: true, force: true });
+});
 
 // HS-8607 — `cleanupAllProjectsTelemetry` reads the persisted project list
 // from `~/.hotsheet/projects.json`. Mock it so the test never touches the

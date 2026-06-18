@@ -8,15 +8,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _resetAnthropicModelsForTesting, _setAnthropicModelsForTesting } from './anthropicModels.js';
 
-// Deterministic config + key + Apple availability (no dependence on the dev box).
+// Deterministic config + key + Apple/local availability (no dependence on the dev box).
 const { mockConfig, mockState } = vi.hoisted(() => {
   const mockConfig: { announcerModel?: string } = {};
-  const mockState: { key: string | null; apple: boolean } = { key: 'sk-test', apple: false };
+  const mockState: { key: string | null; apple: boolean; local: boolean; localModel: string } =
+    { key: 'sk-test', apple: false, local: false, localModel: '' };
   return { mockConfig, mockState };
 });
 vi.mock('../global-config.js', () => ({ readGlobalConfig: () => mockConfig }));
 vi.mock('./key.js', () => ({ resolveAnnouncerKey: () => Promise.resolve(mockState.key) }));
 vi.mock('./appleFoundation.js', () => ({ isAppleFoundationAvailable: () => Promise.resolve(mockState.apple) }));
+vi.mock('./localProvider.js', () => ({
+  isLocalProviderAvailable: () => Promise.resolve(mockState.local),
+  resolveLocalModel: () => mockState.localModel,
+}));
 
 // Imported AFTER the mocks are declared so it picks them up.
 const { resolveAnnouncerModel } = await import('./generate.js');
@@ -31,6 +36,8 @@ beforeEach(() => {
   delete mockConfig.announcerModel;
   mockState.key = 'sk-test';
   mockState.apple = false;
+  mockState.local = false;
+  mockState.localModel = '';
   _setAnthropicModelsForTesting({ lister: () => Promise.resolve(AVAILABLE) });
 });
 afterEach(() => { _resetAnthropicModelsForTesting(); });
@@ -52,9 +59,17 @@ describe('resolveAnnouncerModel (HS-8853)', () => {
     expect(await resolveAnnouncerModel()).toBe('claude-sonnet-4-5');
   });
 
-  it('does not touch on-device pseudo-ids', async () => {
+  it('keeps an explicit local choice when the endpoint is ready', async () => {
+    mockState.local = true;
+    mockState.localModel = 'gemma:12b';
     mockConfig.announcerModel = 'local';
     expect(await resolveAnnouncerModel()).toBe('local');
+  });
+
+  it('keeps an explicit Apple choice when Apple is available', async () => {
+    mockState.apple = true;
+    mockConfig.announcerModel = 'apple-foundation';
+    expect(await resolveAnnouncerModel()).toBe('apple-foundation');
   });
 
   it('defaults to Apple when available + nothing chosen, else cheapest', async () => {
@@ -62,5 +77,50 @@ describe('resolveAnnouncerModel (HS-8853)', () => {
     expect(await resolveAnnouncerModel()).toBe('apple-foundation');
     mockState.apple = false;
     expect(await resolveAnnouncerModel()).toBe('claude-haiku-4-5');
+  });
+});
+
+// HS-8872 — an explicitly-chosen on-device provider that's no longer available
+// (different machine / beta build missing the helper / local endpoint down) must
+// NOT lock the announcer into a hard-failing model. It falls back to the first
+// working provider, preferring the other free option before paid Anthropic.
+describe('resolveAnnouncerModel on-device unavailable fallback (HS-8872)', () => {
+  it('falls back from an unavailable Apple choice to a ready local endpoint', async () => {
+    mockConfig.announcerModel = 'apple-foundation';
+    mockState.apple = false;
+    mockState.local = true;
+    mockState.localModel = 'gemma:12b';
+    expect(await resolveAnnouncerModel()).toBe('local');
+  });
+
+  it('falls back from an unavailable Apple choice to cheapest Anthropic when no local', async () => {
+    mockConfig.announcerModel = 'apple-foundation';
+    mockState.apple = false;
+    mockState.local = false;
+    expect(await resolveAnnouncerModel()).toBe('claude-haiku-4-5');
+  });
+
+  it('treats a reachable local endpoint with no model configured as not ready', async () => {
+    mockConfig.announcerModel = 'local';
+    mockState.local = true;
+    mockState.localModel = ''; // endpoint up, but no model picked
+    expect(await resolveAnnouncerModel()).toBe('claude-haiku-4-5'); // -> Anthropic default
+  });
+
+  it('falls back from an unavailable local choice to available Apple', async () => {
+    mockConfig.announcerModel = 'local';
+    mockState.local = false;
+    mockState.apple = true;
+    expect(await resolveAnnouncerModel()).toBe('apple-foundation');
+  });
+
+  it('leaves the unavailable on-device id untouched when nothing else works', async () => {
+    // No Apple, no local, no Anthropic key -> nothing ready; surface the original
+    // (accurate) provider error rather than masking it behind a different model.
+    mockConfig.announcerModel = 'apple-foundation';
+    mockState.apple = false;
+    mockState.local = false;
+    mockState.key = null;
+    expect(await resolveAnnouncerModel()).toBe('apple-foundation');
   });
 });

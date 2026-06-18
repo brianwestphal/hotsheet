@@ -19,8 +19,9 @@
  * names + counts. Nothing here is sent unless the live lease is held AND telemetry
  * is enabled for the project (gated by the caller).
  */
-import { getTelemetryDb } from '../db/connection.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from '../db/connection.js';
 import { eventNameMatchSql } from '../db/otelRollups.js';
+import { getProjectBySecret } from '../projects.js';
 
 /** A rendered telemetry signal line + its timestamp (for chronological merge). */
 export interface TelemetryLine { at: string; text: string }
@@ -49,6 +50,15 @@ interface ToolRow { prompt_id: string | null; tool: string | null; n: bigint | n
  * cohesive summary, so only turns with an in-window prompt contribute.
  */
 export async function collectTelemetrySignals(projectSecret: string, since: string | null): Promise<TelemetryLine[]> {
+  // HS-8874 — read THIS project's own telemetry DB (telemetry is per-project
+  // now). The live generator runs outside the request context, so resolve the
+  // project's dataDir from its secret and bind it explicitly.
+  const project = getProjectBySecret(projectSecret);
+  const dataDir = project !== undefined ? project.dataDir : centralTelemetryDataDir();
+  return runWithTelemetryDb(dataDir, () => collectTelemetrySignalsFromCurrentDb(projectSecret, since));
+}
+
+async function collectTelemetrySignalsFromCurrentDb(projectSecret: string, since: string | null): Promise<TelemetryLine[]> {
   const db = await getTelemetryDb();
   const sinceClause = since !== null ? '$2::timestamptz' : `NOW() - INTERVAL '${String(NO_CURSOR_LOOKBACK_MS)} milliseconds'`;
   const params: string[] = since !== null ? [projectSecret, since] : [projectSecret];

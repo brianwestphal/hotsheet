@@ -12,11 +12,12 @@
  * facade preserving the original import surface, mirroring the HS-8189
  * registry split pattern.
  */
+import { getAllProjects } from '../projects.js';
 import {
   type AnnouncerUsageByProjectRow, type AnnouncerUsageTotals,
   getAnnouncerUsageByProject, getAnnouncerUsageTotals,
 } from './announcerUsage.js';
-import { getTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
 import {
   type CostOverTimePoint,
   eventNameMatchSql,
@@ -119,7 +120,25 @@ export interface SpanRow {
   statusCode: string | null;
 }
 
+/**
+ * HS-8874 — a prompt lives in exactly one project's DB (or central). Fan out
+ * across every known project dataDir + the central store, running the timeline
+ * query in each DB's context, and return the first DB that has any events for
+ * the prompt. Falls back to the empty shape (read in the ambient context) when
+ * nothing matches.
+ */
 export async function getPromptTimeline(promptId: string): Promise<PromptTimeline> {
+  const dirs = [...getAllProjects().map(p => p.dataDir), centralTelemetryDataDir()];
+  for (const dir of dirs) {
+    const timeline = await runWithTelemetryDb(dir, () => getPromptTimelineFromCurrentDb(promptId));
+    if (timeline.entries.length > 0) return timeline;
+  }
+  // No DB had events for this prompt — return the empty shape (also checks for
+  // orphan spans in the ambient context, matching the prior single-DB behavior).
+  return getPromptTimelineFromCurrentDb(promptId);
+}
+
+async function getPromptTimelineFromCurrentDb(promptId: string): Promise<PromptTimeline> {
   const db = await getTelemetryDb();
   const [eventsResult, spansResult] = await Promise.all([
     db.query<{
@@ -326,32 +345,95 @@ export async function getPerTicketRollup(ticketNumber: string, secret?: string):
  * `window` parameter narrows the cost-by-project / cost-by-model /
  * heatmap / top-prompts sections.
  */
+/**
+ * HS-8874 — a loaded project, for the cross-project fan-out. Each project's
+ * telemetry lives in its own DB now, so the dashboard reads each project's DB
+ * (filtered by that project's own secret) and merges in JS.
+ */
+export interface DashboardProject {
+  secret: string;
+  dataDir: string;
+}
+
 export async function getDashboardPayload(
   window: DashboardWindow,
   timezone = 'UTC',
-  allowedSecrets: readonly string[] | null = null,
+  projects: ReadonlyArray<DashboardProject> | null = null,
   now: Date = new Date(),
 ): Promise<DashboardPayload> {
   const { midnight, weekStart, monthStart } = windowBoundaries(now);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
-  // HS-8625 — `allowedSecrets` restricts every cross-project aggregate to the
-  // currently-loaded project tabs (passed from the route as
-  // `getAllProjects().map(p => p.secret)`); null means "every project"
-  // (back-compat / tests). Threaded into all eight sub-queries so totals,
-  // cost-by-project, donut, heatmap, and cost-over-time agree.
-  const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject] = await Promise.all([
-    getWindowTotals(null, midnight, allowedSecrets),
-    getWindowTotals(null, weekStart, allowedSecrets),
-    getWindowTotals(null, monthStart, allowedSecrets),
-    getWindowTotals(null, null, allowedSecrets),
-    getCostByProject(windowSinceTs, allowedSecrets),
-    getCostByModel(null, windowSinceTs, allowedSecrets),
-    getHourlyActivityHeatmap(windowSinceTs, timezone, allowedSecrets),
-    getCostOverTime(windowSinceTs, null, timezone, now, allowedSecrets),
-    getIngestedDates(windowSinceTs, null, timezone, allowedSecrets),
-    getAnnouncerUsageByProject(allowedSecrets, windowSinceTs),
-  ]);
+  // HS-8874 — back-compat / tests: when no `projects` list is supplied, run each
+  // rollup ONCE in the ambient telemetry context with no project filter (the
+  // pre-fan-out behavior). The route always passes the loaded-projects list.
+  if (projects === null) {
+    const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject] = await Promise.all([
+      getWindowTotals(null, midnight, null),
+      getWindowTotals(null, weekStart, null),
+      getWindowTotals(null, monthStart, null),
+      getWindowTotals(null, null, null),
+      getCostByProject(windowSinceTs, null),
+      getCostByModel(null, windowSinceTs, null),
+      getHourlyActivityHeatmap(windowSinceTs, timezone, null),
+      getCostOverTime(windowSinceTs, null, timezone, now, null),
+      getIngestedDates(windowSinceTs, null, timezone, null),
+      getAnnouncerUsageByProject(null, windowSinceTs),
+    ]);
+    return {
+      window,
+      windowTotals: { today, week, month, allTime },
+      costByProject,
+      costByModel,
+      hourlyActivity,
+      costOverTime,
+      ingestedDates,
+      announcer: { total: sumAnnouncerUsage(announcerByProject), byProject: announcerByProject },
+    };
+  }
+
+  // HS-8874 — FAN OUT. For each loaded project P, read P's OWN DB filtered by
+  // P's OWN secret; also read the central store (no-project rows). Reading P's
+  // DB with `projectSecret = P.secret` is what prevents the non-destructive
+  // migration from double-counting: un-deleted source rows for OTHER projects
+  // that may still sit in P's old launch-default DB are excluded by the secret
+  // filter. The central read uses `null` as the secret (central rows carry a
+  // NULL `project_secret`) so they aren't filtered out.
+  const sources: Array<{ dataDir: string; secret: string | null }> = [
+    ...projects.map(p => ({ dataDir: p.dataDir, secret: p.secret })),
+    { dataDir: centralTelemetryDataDir(), secret: null },
+  ];
+
+  // Per-source results, each read in that source's DB context.
+  const perSource = await Promise.all(sources.map(src =>
+    runWithTelemetryDb(src.dataDir, async () => {
+      const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject] = await Promise.all([
+        getWindowTotals(src.secret, midnight),
+        getWindowTotals(src.secret, weekStart),
+        getWindowTotals(src.secret, monthStart),
+        getWindowTotals(src.secret, null),
+        getCostByProject(windowSinceTs, src.secret === null ? null : [src.secret]),
+        getCostByModel(src.secret, windowSinceTs),
+        getHourlyActivityHeatmap(windowSinceTs, timezone, src.secret === null ? null : [src.secret]),
+        getCostOverTime(windowSinceTs, src.secret, timezone, now),
+        getIngestedDates(windowSinceTs, src.secret, timezone),
+        getAnnouncerUsageByProject(src.secret === null ? null : [src.secret], windowSinceTs),
+      ]);
+      return { today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject };
+    }),
+  ));
+
+  // Merge in JS.
+  const today = sumWindowTotals(perSource.map(s => s.today));
+  const week = sumWindowTotals(perSource.map(s => s.week));
+  const month = sumWindowTotals(perSource.map(s => s.month));
+  const allTime = sumWindowTotals(perSource.map(s => s.allTime));
+  const costByProject = perSource.flatMap(s => s.costByProject);
+  const costByModel = mergeCostByModel(perSource.flatMap(s => s.costByModel));
+  const hourlyActivity = mergeHourlyActivity(perSource.map(s => s.hourlyActivity));
+  const costOverTime = perSource.flatMap(s => s.costOverTime);
+  const ingestedDates = [...new Set(perSource.flatMap(s => s.ingestedDates))].sort();
+  const announcerByProject = perSource.flatMap(s => s.announcerByProject);
 
   return {
     window,
@@ -363,6 +445,60 @@ export async function getDashboardPayload(
     ingestedDates,
     announcer: { total: sumAnnouncerUsage(announcerByProject), byProject: announcerByProject },
   };
+}
+
+/** HS-8874 — sum every numeric field of a set of WindowTotals across DBs. */
+function sumWindowTotals(parts: WindowTotals[]): WindowTotals {
+  return parts.reduce<WindowTotals>((acc, w) => ({
+    cost: acc.cost + w.cost,
+    tokens: acc.tokens + w.tokens,
+    inputTokens: acc.inputTokens + w.inputTokens,
+    outputTokens: acc.outputTokens + w.outputTokens,
+    cacheReadTokens: acc.cacheReadTokens + w.cacheReadTokens,
+    cacheCreationTokens: acc.cacheCreationTokens + w.cacheCreationTokens,
+    promptCount: acc.promptCount + w.promptCount,
+  }), { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, promptCount: 0 });
+}
+
+/** HS-8874 — group cost-by-model rows from multiple DBs by model, summing each
+ *  numeric field; sorted by cost descending (matching the single-DB query). */
+function mergeCostByModel(rows: ModelRollup[]): ModelRollup[] {
+  const byModel = new Map<string, ModelRollup>();
+  for (const r of rows) {
+    const existing = byModel.get(r.model);
+    if (existing === undefined) {
+      byModel.set(r.model, { ...r });
+    } else {
+      existing.cost += r.cost;
+      existing.tokens += r.tokens;
+      existing.inputTokens += r.inputTokens;
+      existing.outputTokens += r.outputTokens;
+      existing.promptCount += r.promptCount;
+    }
+  }
+  return Array.from(byModel.values()).sort((a, b) => b.cost - a.cost);
+}
+
+/** HS-8874 — merge the 168-cell (dow, hour) heatmaps from multiple DBs, summing
+ *  cost + promptCount per cell. Each input is already densified to 168 cells in
+ *  the same dow*24+hour order, so a positional reduce is safe. */
+function mergeHourlyActivity(grids: HourlyActivityCell[][]): HourlyActivityCell[] {
+  const merged: HourlyActivityCell[] = [];
+  for (let dow = 0; dow < 7; dow++) {
+    for (let hour = 0; hour < 24; hour++) {
+      merged.push({ dow, hour, cost: 0, promptCount: 0 });
+    }
+  }
+  for (const grid of grids) {
+    for (const cell of grid) {
+      const idx = cell.dow * 24 + cell.hour;
+      if (idx >= 0 && idx < merged.length) {
+        merged[idx].cost += cell.cost;
+        merged[idx].promptCount += cell.promptCount;
+      }
+    }
+  }
+  return merged;
 }
 
 /** Sum a per-project Announcer breakdown into one totals object (HS-8766). */

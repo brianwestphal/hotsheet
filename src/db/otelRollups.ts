@@ -1,4 +1,5 @@
-import { getTelemetryDb } from './connection.js';
+import { getAllProjects } from '../projects.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
 
 /**
  * HS-8148 — rollup queries for the footer drawer Telemetry tab (§67.10.2).
@@ -470,11 +471,33 @@ export async function getTelemetryDebugInfo(projectSecret: string | null, timezo
      ORDER BY k`,
     ev.params,
   );
-  // HS-8793 — GLOBAL per-day metric-row counts (every project, no scope, no
-  // cumulative-monotonic exclusion) over the recent window. `ts AT TIME ZONE $1`
-  // buckets by the same local-tz day the cost chart uses, so the diagnostic and
-  // the chart agree on which calendar day a row belongs to.
-  const daily = await db.query<{ date: string; metric_name: string; project_secret: string; points: bigint | number }>(
+  // HS-8793 / HS-8874 — GLOBAL per-day metric-row counts. Telemetry is now
+  // per-project (each project's own DB) + a central store, so the GLOBAL daily
+  // section must fan out across EVERY known project DB + central and concat —
+  // a single-DB query would only see the active project. Project-scoped
+  // sections above stay on the active project's DB (the ambient context).
+  const dailyMetricCounts = await fanOutDailyMetricCounts(timezone);
+  return {
+    eventNames: events.rows.map(r => ({ eventName: r.event_name, count: Number(r.c), withPromptId: Number(r.with_pid) })),
+    tokenTypes: tokenTypes.rows.map(r => ({ type: r.typ ?? '(none)', points: Number(r.points), tokens: Number(r.toks ?? 0) })),
+    totalEvents: Number(totals.rows[0]?.total ?? 0),
+    distinctPromptIds: Number(totals.rows[0]?.pids ?? 0),
+    distinctSessions: Number(totals.rows[0]?.sessions ?? 0),
+    markerEventsByName: markerByName.rows.map(r => ({ eventName: r.event_name, count: Number(r.c) })),
+    distinctTicketMarkers: markers.rows.map(r => r.ticket).filter((t): t is string => t !== null),
+    apiRequestAttrKeys: apiKeys.rows.map(r => r.k),
+    dailyMetricCounts,
+  };
+}
+
+/** HS-8874 — per-DB raw daily metric-row counts. Run once per DB context. NULL
+ *  `project_secret` (central rows) surfaces as the literal `(central)` so the
+ *  diagnostic still shows a label. */
+async function queryDailyMetricCounts(
+  timezone: string,
+): Promise<TelemetryDebugInfo['dailyMetricCounts']> {
+  const db = await getTelemetryDb();
+  const daily = await db.query<{ date: string; metric_name: string; project_secret: string | null; points: bigint | number }>(
     `SELECT to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date,
             metric_name,
             project_secret,
@@ -485,19 +508,31 @@ export async function getTelemetryDebugInfo(projectSecret: string | null, timezo
      ORDER BY 1 DESC, 2 ASC, 3 ASC`,
     [timezone, String(DEBUG_DAILY_WINDOW_DAYS)],
   );
-  return {
-    eventNames: events.rows.map(r => ({ eventName: r.event_name, count: Number(r.c), withPromptId: Number(r.with_pid) })),
-    tokenTypes: tokenTypes.rows.map(r => ({ type: r.typ ?? '(none)', points: Number(r.points), tokens: Number(r.toks ?? 0) })),
-    totalEvents: Number(totals.rows[0]?.total ?? 0),
-    distinctPromptIds: Number(totals.rows[0]?.pids ?? 0),
-    distinctSessions: Number(totals.rows[0]?.sessions ?? 0),
-    markerEventsByName: markerByName.rows.map(r => ({ eventName: r.event_name, count: Number(r.c) })),
-    distinctTicketMarkers: markers.rows.map(r => r.ticket).filter((t): t is string => t !== null),
-    apiRequestAttrKeys: apiKeys.rows.map(r => r.k),
-    dailyMetricCounts: daily.rows.map(r => ({
-      date: r.date, metricName: r.metric_name, projectSecret: r.project_secret, points: Number(r.points),
-    })),
-  };
+  return daily.rows.map(r => ({
+    date: r.date, metricName: r.metric_name, projectSecret: r.project_secret ?? '(central)', points: Number(r.points),
+  }));
+}
+
+/** HS-8874 — fan the daily-metric-count diagnostic across every known project
+ *  DB + the central store, concat the per-DB rows, and re-sort to the original
+ *  (date DESC, metric ASC, secret ASC) order so the view is stable. */
+async function fanOutDailyMetricCounts(
+  timezone: string,
+): Promise<TelemetryDebugInfo['dailyMetricCounts']> {
+  const dirs = [...getAllProjects().map(p => p.dataDir), centralTelemetryDataDir()];
+  const all: TelemetryDebugInfo['dailyMetricCounts'] = [];
+  for (const dir of dirs) {
+    try {
+      const rows = await runWithTelemetryDb(dir, () => queryDailyMetricCounts(timezone));
+      all.push(...rows);
+    } catch (err) {
+      console.error('[telemetry] _debug daily-count fan-out failed for', dir, err);
+    }
+  }
+  return all.sort((a, b) =>
+    a.date < b.date ? 1 : a.date > b.date ? -1
+      : a.metricName < b.metricName ? -1 : a.metricName > b.metricName ? 1
+        : a.projectSecret < b.projectSecret ? -1 : a.projectSecret > b.projectSecret ? 1 : 0);
 }
 
 /**
@@ -736,23 +771,26 @@ export async function getTodayCost(projectSecret: string): Promise<number> {
 
 /**
  * HS-8606 — clear ALL telemetry for one project. Deletes every row across
- * `otel_metrics` / `otel_events` / `otel_spans` whose `project_secret`
- * matches, with no time filter (unlike the §67.6 retention sweep). The one
- * mutation in this otherwise read-only module — it lives here because the
- * telemetry tables are a single shared store (the primary project's DB,
- * keyed by `project_secret`; see `getTelemetryDb` / §67.6), so the delete
- * MUST go through `getTelemetryDb()` and MUST be secret-scoped exactly like
- * every rollup. Returns the total rows removed across the three tables.
+ * `otel_metrics` / `otel_events` / `otel_spans` / `announcer_usage` whose
+ * `project_secret` matches, with no time filter (unlike the §67.6 retention
+ * sweep). The one mutation in this otherwise read-only module.
+ *
+ * **HS-8874** — telemetry is now stored per-project (each project's own DB).
+ * The delete resolves the DB via `getTelemetryDb()`, so the CALLER must run it
+ * in the target project's telemetry context (`runWithTelemetryDb(dataDir)`, or
+ * the request context for the active project). The `project_secret = $1` filter
+ * is kept as defense-in-depth: a non-destructively-migrated DB may still hold
+ * un-deleted foreign rows, and we must clear only this project's. Returns the
+ * total rows removed across the four tables.
  *
  * Backs the Settings → Telemetry → Retention "Clear telemetry data" button
  * (§74). An empty / missing `projectSecret` is rejected by the caller before
- * we get here — an unscoped delete across the shared store would wipe every
- * project's data, so this function never runs without a concrete secret.
+ * we get here.
  */
 export async function clearProjectTelemetry(projectSecret: string): Promise<{ deleted: number }> {
   const db = await getTelemetryDb();
   let deleted = 0;
-  for (const table of ['otel_metrics', 'otel_events', 'otel_spans'] as const) {
+  for (const table of ['otel_metrics', 'otel_events', 'otel_spans', 'announcer_usage'] as const) {
     const result = await db.query(
       `DELETE FROM ${table} WHERE project_secret = $1`,
       [projectSecret],
@@ -1001,20 +1039,16 @@ export const TOOL_LATENCY_BUCKET_UPPER_MS = HISTOGRAM_BUCKET_UPPER_MS;
  * `cost > 0`).
  */
 export async function getTodayCostByProject(): Promise<Record<string, number>> {
-  const db = await getTelemetryDb();
-  const now = new Date();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const result = await db.query<{ project_secret: string; total: string | null }>(
-    `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-     FROM otel_metrics
-     WHERE metric_name = $1 AND ts >= $2 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
-     GROUP BY project_secret
-     HAVING SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) > 0`,
-    ['claude_code.cost.usage', midnight],
-  );
+  // HS-8874 — telemetry is per-project now: each project's cost lives in its
+  // OWN DB. Fan out, running `getTodayCost(secret)` in each project's DB
+  // context (filtered by that project's secret so a non-destructively-migrated
+  // DB's foreign rows don't leak in), and assemble `{secret → cost}`. Only
+  // non-zero costs are kept (the chip is hidden at $0 per §67.10.1). Polled on
+  // the bell cadence, so each query is a single indexed SUM.
   const out: Record<string, number> = {};
-  for (const row of result.rows) {
-    out[row.project_secret] = Number(row.total ?? 0);
+  for (const project of getAllProjects()) {
+    const cost = await runWithTelemetryDb(project.dataDir, () => getTodayCost(project.secret));
+    if (cost > 0) out[project.secret] = cost;
   }
   return out;
 }

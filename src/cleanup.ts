@@ -4,7 +4,7 @@ import { join } from 'path';
 import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from './attachmentBackup.js';
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
 import { deleteAttachmentFile, getAllAttachments } from './db/attachments.js';
-import { getTelemetryDb } from './db/connection.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './db/connection.js';
 import {
   deleteAttachment,
   getAttachments,
@@ -148,17 +148,16 @@ export async function cleanupOrphanedAttachments(dataDir: string): Promise<{ pru
  * summary to stdout when rows were actually deleted, mirroring the
  * `cleanupAttachments` log shape.
  *
- * **HS-8607 — scopes deletion to THIS project's `project_secret`** and
- * reads from the shared telemetry DB via `getTelemetryDb()` (NOT the
- * per-request `getDb()`). The otel tables are a single shared store in
- * the primary project's DB keyed by `project_secret` (§67.6 /
- * `getTelemetryDb`), so an unscoped DELETE run under one project would
- * prune EVERY project's rows using that project's retention window, and
- * a sweep run under a secondary project's request context would hit its
- * own (empty) DB and delete nothing. Scoping by secret + targeting the
- * shared DB makes each project prune exactly its own rows by its own
- * window. No `runWithDataDir` wrapper is needed any more — the DB is
- * resolved explicitly.
+ * **HS-8607 — scopes deletion to THIS project's `project_secret`.**
+ *
+ * **HS-8874** — telemetry is now stored per-project (each project's own DB).
+ * The sweep runs in THIS project's telemetry DB context (`runWithTelemetryDb`)
+ * and deletes only rows whose `project_secret` matches — the secret filter is
+ * defense-in-depth, since a non-destructively-migrated DB may still hold
+ * un-deleted foreign rows. The cross-project driver
+ * (`cleanupAllProjectsTelemetry`) iterates every project DB + the central
+ * store. The `dataDir` passed in is BOTH the settings source AND the target
+ * telemetry DB.
  */
 export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: number }> {
   try {
@@ -170,26 +169,29 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
     if (days <= 0) return { deleted: 0 };
 
     // HS-8607 — can't scope a deletion without the project's secret; bail
-    // rather than risk an unscoped DELETE across the shared store.
+    // rather than risk an unscoped DELETE across the project's DB.
     const secret = typeof settings.secret === 'string' && settings.secret !== '' ? settings.secret : null;
     if (secret === null) return { deleted: 0 };
 
-    const db = await getTelemetryDb();
-    let deleted = 0;
-    for (const table of ['otel_metrics', 'otel_events'] as const) {
-      // `start_ts` for spans, `ts` for metrics + events.
-      const result = await db.query(
-        `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
+    const deleted = await runWithTelemetryDb(dataDir, async () => {
+      const db = await getTelemetryDb();
+      let n = 0;
+      for (const table of ['otel_metrics', 'otel_events'] as const) {
+        // `start_ts` for spans, `ts` for metrics + events.
+        const result = await db.query(
+          `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
+          [String(days), secret],
+        );
+        n += result.affectedRows ?? 0;
+      }
+      // Spans use `start_ts` not `ts` — separate query.
+      const spansResult = await db.query(
+        `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
         [String(days), secret],
       );
-      deleted += result.affectedRows ?? 0;
-    }
-    // Spans use `start_ts` not `ts` — separate query.
-    const spansResult = await db.query(
-      `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
-      [String(days), secret],
-    );
-    deleted += spansResult.affectedRows ?? 0;
+      n += spansResult.affectedRows ?? 0;
+      return n;
+    });
 
     if (deleted > 0) {
       console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) older than ${String(days)} day(s).`);
@@ -221,5 +223,43 @@ export async function cleanupAllProjectsTelemetry(launchedDataDir: string): Prom
     const result = await cleanupTelemetryRows(dir);
     deleted += result.deleted;
   }
+  // HS-8874 — also sweep the centralized store (`~/.hotsheet/telemetry`), which
+  // holds the no-`hotsheet_project` rows (NULL `project_secret`). It has no
+  // per-project retention setting, so it uses the default 30-day window.
+  deleted += (await cleanupCentralTelemetry()).deleted;
   return { deleted };
+}
+
+/** HS-8874 — retention sweep for the centralized telemetry store. Central rows
+ *  carry a NULL `project_secret`; there's no project settings file, so we use
+ *  the §67.6 default 30-day window. */
+const CENTRAL_TELEMETRY_RETENTION_DAYS = 30;
+
+async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
+  try {
+    const deleted = await runWithTelemetryDb(centralTelemetryDataDir(), async () => {
+      const db = await getTelemetryDb();
+      let n = 0;
+      for (const table of ['otel_metrics', 'otel_events'] as const) {
+        const result = await db.query(
+          `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
+          [String(CENTRAL_TELEMETRY_RETENTION_DAYS)],
+        );
+        n += result.affectedRows ?? 0;
+      }
+      const spansResult = await db.query(
+        `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
+        [String(CENTRAL_TELEMETRY_RETENTION_DAYS)],
+      );
+      n += spansResult.affectedRows ?? 0;
+      return n;
+    });
+    if (deleted > 0) {
+      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) older than ${String(CENTRAL_TELEMETRY_RETENTION_DAYS)} day(s).`);
+    }
+    return { deleted };
+  } catch (err) {
+    console.error('Central telemetry retention sweep failed:', err);
+    return { deleted: 0 };
+  }
 }

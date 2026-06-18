@@ -239,6 +239,17 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     addToProjectList(dataDir);
     startupMark('post-startup: restoring previous projects');
     await restorePreviousProjects(dataDir, actualPort);
+    // HS-8874 — one-time, non-destructive per-project telemetry migration. Runs
+    // AFTER projects are registered (so the secret→dataDir map is complete) but
+    // before serving heavy traffic. Best-effort + self-guarded by the
+    // `telemetryMigratedV1` config flag — a failure must never block startup.
+    startupMark('post-startup: migrating per-project telemetry');
+    try {
+      const { migratePerProjectTelemetry } = await import('./db/telemetryMigration.js');
+      await migratePerProjectTelemetry();
+    } catch (e: unknown) {
+      console.warn(`[startup] Per-project telemetry migration failed (non-fatal): ${getErrorMessage(e)}`);
+    }
     startupMark('post-startup: migrating global config');
     await migrateGlobalConfig();
     startupMark('post-startup: cleaning up stale channels');

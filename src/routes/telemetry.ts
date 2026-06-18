@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { runWithTelemetryDb } from '../db/connection.js';
 import { clearProjectTelemetry, type DashboardWindow, getDashboardPayload, getPerTicketRollup, getProjectRollupPayload, getPromptTimeline, getTelemetryDebugInfo, getTodayCost, getTodayCostByProject } from '../db/otelQueries.js';
 import { readFileSettings } from '../file-settings.js';
 import { getAllProjects, getProjectBySecret } from '../projects.js';
@@ -175,8 +176,13 @@ telemetryRoutes.get('/telemetry/dashboard', async (c) => {
   // secrets. Telemetry rows outlive the project that produced them (the §67.6
   // shared store), so without this filter a closed project's stale data lingers
   // in the totals / cost-by-project table (the HS-8622 "Unknown project" row).
-  const allowedSecrets = getAllProjects().map(p => p.secret);
-  const payload = await getDashboardPayload(window, timezone, allowedSecrets);
+  // HS-8874 — telemetry is now stored per-project (each project's own DB) plus
+  // a central store for no-project rows. Pass the loaded projects so the
+  // dashboard fans out across every project's DB + central and merges in JS;
+  // each project's DB is read filtered by its OWN secret (the migration is
+  // non-destructive, so a project DB may still hold un-deleted foreign rows).
+  const projects = getAllProjects().map(p => ({ secret: p.secret, dataDir: p.dataDir }));
+  const payload = await getDashboardPayload(window, timezone, projects);
   return c.json(payload);
 });
 
@@ -207,7 +213,14 @@ telemetryRoutes.get('/telemetry/project-rollup', async (c) => {
     : 'month';
   const timezone = c.req.query('tz') ?? 'UTC';
   const projectSecret = c.get('projectSecret');
-  const payload = await getProjectRollupPayload(projectSecret, window, timezone);
+  // HS-8874 — per-project analytics reads THIS project's own telemetry DB. The
+  // `/api/*` middleware already binds the active project's dataDir as the
+  // request context (which `getTelemetryDb` resolves), but bind it explicitly
+  // here too so the rollup is unambiguous regardless of caller.
+  const project = getProjectBySecret(projectSecret);
+  const payload = project !== undefined
+    ? await runWithTelemetryDb(project.dataDir, () => getProjectRollupPayload(projectSecret, window, timezone))
+    : await getProjectRollupPayload(projectSecret, window, timezone);
   return c.json(payload);
 });
 
@@ -223,7 +236,13 @@ telemetryRoutes.get('/telemetry/project-rollup', async (c) => {
 telemetryRoutes.delete('/telemetry/project-data', async (c) => {
   const projectSecret = c.get('projectSecret');
   if (projectSecret === '') return c.json({ error: 'No project secret' }, 400);
-  const result = await clearProjectTelemetry(projectSecret);
+  // HS-8874 — clear from THIS project's own telemetry DB. Resolve its dataDir
+  // and run the delete in that DB's context (falls back to the request context
+  // when the project isn't registered, e.g. tests).
+  const project = getProjectBySecret(projectSecret);
+  const result = project !== undefined
+    ? await runWithTelemetryDb(project.dataDir, () => clearProjectTelemetry(projectSecret))
+    : await clearProjectTelemetry(projectSecret);
   return c.json(result);
 });
 

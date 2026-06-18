@@ -4,10 +4,11 @@
  * the expected shape.
  */
 import { rmSync } from 'fs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { closeDbForDir, getDb, getDbForDir, runWithDataDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, runWithDataDir } from './connection.js';
 import {
   clearProjectTelemetry,
   getCostByModel,
@@ -29,6 +30,17 @@ import {
   resolveDashboardWindowSinceTs,
   sanitizePromptSnippet,
 } from './otelQueries.js';
+
+// HS-8874 — isolate the central store to a temp dir so the cross-project
+// fan-out (which also reads central) can't pick up rows from the developer's
+// real `~/.hotsheet/telemetry` (see otelWriters.test.ts).
+let centralOverrideDir: string;
+beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
+afterAll(async () => {
+  await closeDbForDir(centralTelemetryDataDir());
+  delete process.env.HOTSHEET_TELEMETRY_DIR;
+  rmSync(centralOverrideDir, { recursive: true, force: true });
+});
 
 const SECRET_A = 'secret-A';
 const SECRET_B = 'secret-B';
@@ -107,6 +119,7 @@ async function insertToolResultEvent(opts: {
     [opts.ts, opts.projectSecret, 'session-1', 'prompt-1', 'claude_code.tool_result', JSON.stringify(attrs), JSON.stringify({})],
   );
 }
+
 
 describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
   let tempDir: string;
@@ -277,26 +290,34 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // rows on a day that HAS data, (b) include OTHER projects' rows even when
     // called with one project's secret (so orphaned-secret data is visible),
     // and (c) NOT invent a row for a day with no metrics (the gap).
-    it('reports global per-day metric counts across projects (HS-8793)', async () => {
+    it('reports global per-day metric counts across projects (HS-8793 / HS-8874 fan-out)', async () => {
       const dayWith = new Date();                                    // today — has data
       const yesterday = new Date(dayWith.getTime() - 24 * 60 * 60 * 1000);
       await insertCostMetric({ ts: dayWith, projectSecret: SECRET_A, cost: 1.0 });
       await insertTokenMetric({ ts: dayWith, projectSecret: SECRET_A, type: 'input', tokens: 100 });
       // A different project's row on the SAME day — must appear even though we
-      // query with SECRET_A (the orphaned-secret detection case).
+      // query with SECRET_A (the orphaned-secret detection case). Both rows live
+      // in the same (test) DB here.
       await insertCostMetric({ ts: dayWith, projectSecret: SECRET_B, cost: 2.0 });
       // `yesterday` deliberately has NO rows — it must be absent from the result.
 
-      const info = await getTelemetryDebugInfo(SECRET_A, 'UTC');
-      const todayStr = info.dailyMetricCounts[0]?.date ?? '';
-      const onToday = info.dailyMetricCounts.filter(r => r.date === todayStr);
-      // cost.usage(A) + token.usage(A) + cost.usage(B) = 3 distinct (date,metric,secret) rows.
-      expect(onToday).toHaveLength(3);
-      expect(onToday.some(r => r.projectSecret === SECRET_B && r.metricName === 'claude_code.cost.usage')).toBe(true);
-      expect(onToday.some(r => r.projectSecret === SECRET_A && r.metricName === 'claude_code.token.usage')).toBe(true);
-      // The empty day is simply not present — the chart fills it with 0 / "No cost".
-      const yStr = yesterday.toISOString().slice(0, 10);
-      if (yStr !== todayStr) expect(info.dailyMetricCounts.some(r => r.date === yStr)).toBe(false);
+      // HS-8874 — `dailyMetricCounts` now fans out across `getAllProjects()` DBs
+      // + central. Register the test DB as a project so the fan-out includes it.
+      registerExistingProject(tempDir, SECRET_A, await getDb());
+      try {
+        const info = await getTelemetryDebugInfo(SECRET_A, 'UTC');
+        const todayStr = info.dailyMetricCounts[0]?.date ?? '';
+        const onToday = info.dailyMetricCounts.filter(r => r.date === todayStr);
+        // cost.usage(A) + token.usage(A) + cost.usage(B) = 3 distinct (date,metric,secret) rows.
+        expect(onToday).toHaveLength(3);
+        expect(onToday.some(r => r.projectSecret === SECRET_B && r.metricName === 'claude_code.cost.usage')).toBe(true);
+        expect(onToday.some(r => r.projectSecret === SECRET_A && r.metricName === 'claude_code.token.usage')).toBe(true);
+        // The empty day is simply not present — the chart fills it with 0 / "No cost".
+        const yStr = yesterday.toISOString().slice(0, 10);
+        if (yStr !== todayStr) expect(info.dailyMetricCounts.some(r => r.date === yStr)).toBe(false);
+      } finally {
+        unregisterProject(SECRET_A);
+      }
     });
   });
 
@@ -985,13 +1006,14 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
   });
 
   describe('getDashboardPayload (HS-8480 / §69.4)', () => {
-    it('returns every section bundled in one call', async () => {
+    it('returns every section bundled in one call (ambient, null projects)', async () => {
       const now = new Date();
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
 
-      const payload = await getDashboardPayload('all', 'UTC');
+      // HS-8874 — null `projects` keeps the ambient-context back-compat path.
+      const payload = await getDashboardPayload('all', 'UTC', null);
       expect(payload.window).toBe('all');
       expect(payload.windowTotals.allTime.cost).toBeCloseTo(1.5);
       expect(payload.costByProject).toHaveLength(2);
@@ -1002,44 +1024,90 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
   });
 
-  // HS-8625 — the cross-project page should only ever show currently-loaded
-  // project data. Telemetry rows outlive their project, so the dashboard route
-  // passes the registered project secrets and every aggregate filters to them.
-  describe('cross-project loaded-projects filter (HS-8625)', () => {
-    it('getDashboardPayload restricts every aggregate to allowedSecrets', async () => {
+  // HS-8874 — telemetry is per-project: the dashboard fans out across each
+  // project's OWN DB + the central store and merges in JS. Reading each project
+  // DB filtered by its own secret is what prevents the non-destructive migration
+  // from double-counting when a source DB still holds another project's rows.
+  describe('cross-project fan-out (HS-8874)', () => {
+    // Per-test UNIQUE secrets so no row from a parallel test file (which may
+    // touch the shared real central store) can collide on `SECRET_A`/`SECRET_B`.
+    it('sums totals / merges costByModel / concats costByProject across project DBs', async () => {
       const now = new Date();
-      // SECRET_A is "loaded"; SECRET_C is a closed project's lingering data.
-      const SECRET_C = 'secret-closed-project';
-      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
-      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 1000 });
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'pa', model: 'sonnet' });
-      await insertCostMetric({ ts: now, projectSecret: SECRET_C, model: 'opus', cost: 99 });
-      await insertTokenMetric({ ts: now, projectSecret: SECRET_C, tokens: 500000 });
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_C, promptId: 'pc', model: 'opus' });
+      const A = `fanout-A-${Math.random().toString(36).slice(2)}`;
+      const B = `fanout-B-${Math.random().toString(36).slice(2)}`;
+      const dirA = createTempDir();
+      const dirB = createTempDir();
+      try {
+        // Seed each project's OWN DB.
+        await runWithDataDir(dirA, async () => {
+          await insertCostMetric({ ts: now, projectSecret: A, model: 'sonnet', cost: 0.5 });
+          await insertTokenMetric({ ts: now, projectSecret: A, type: 'input', tokens: 1000 });
+          await insertPromptEvent({ ts: now, projectSecret: A, promptId: 'pa', model: 'sonnet' });
+        });
+        await runWithDataDir(dirB, async () => {
+          await insertCostMetric({ ts: now, projectSecret: B, model: 'opus', cost: 1.0 });
+          await insertCostMetric({ ts: now, projectSecret: B, model: 'sonnet', cost: 0.25 });
+        });
 
-      const payload = await getDashboardPayload('all', 'UTC', [SECRET_A]);
-      // Only the loaded project surfaces — the closed project's big $99 row is gone.
-      expect(payload.costByProject).toHaveLength(1);
-      expect(payload.costByProject[0].projectSecret).toBe(SECRET_A);
-      // Window totals exclude the closed project (would be 99.5 without the filter).
-      expect(payload.windowTotals.allTime.cost).toBeCloseTo(0.5);
-      // Cost-by-model only sees the loaded project's model.
-      expect(payload.costByModel.map(m => m.model)).toContain('sonnet');
-      expect(payload.costByModel.map(m => m.model)).not.toContain('opus');
-      // Cost-over-time only carries the loaded project's secret.
-      expect(payload.costOverTime.every(p => p.projectSecret === SECRET_A)).toBe(true);
+        const payload = await getDashboardPayload('all', 'UTC', [
+          { secret: A, dataDir: dirA },
+          { secret: B, dataDir: dirB },
+        ]);
+        // One row per loaded project (concat across the two DBs).
+        const byProject = new Map(payload.costByProject.map(r => [r.projectSecret, r.cost]));
+        expect(byProject.get(A)).toBeCloseTo(0.5);   // dirA only
+        expect(byProject.get(B)).toBeCloseTo(1.25);  // dirB: opus 1.0 + sonnet 0.25
+        // Cross-DB merge: this run's two projects contribute exactly $1.75
+        // summed (central may add unrelated rows, never less).
+        expect((byProject.get(A) ?? 0) + (byProject.get(B) ?? 0)).toBeCloseTo(1.75);
+        // 168-cell heatmap merged.
+        expect(payload.hourlyActivity).toHaveLength(168);
+      } finally {
+        await closeDbForDir(dirA);
+        await closeDbForDir(dirB);
+        rmSync(dirA, { recursive: true, force: true });
+        rmSync(dirB, { recursive: true, force: true });
+      }
     });
 
-    it('getDashboardPayload with an empty allowedSecrets shows nothing (no project loaded)', async () => {
+    it('does NOT double-count when a source DB still contains another project\'s rows', async () => {
+      // Simulates the post-migration state: project A's DB still holds an
+      // un-deleted copy of project B's row (non-destructive migration). Reading
+      // A's DB filtered by A's secret must exclude B's stray row.
       const now = new Date();
-      await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 1.0 });
-      const payload = await getDashboardPayload('all', 'UTC', []);
-      expect(payload.costByProject).toEqual([]);
-      expect(payload.windowTotals.allTime.cost).toBe(0);
-      expect(payload.costOverTime).toEqual([]);
+      const A = `dc-A-${Math.random().toString(36).slice(2)}`;
+      const B = `dc-B-${Math.random().toString(36).slice(2)}`;
+      const dirA = createTempDir();
+      const dirB = createTempDir();
+      try {
+        await runWithDataDir(dirA, async () => {
+          await insertCostMetric({ ts: now, projectSecret: A, model: 'sonnet', cost: 0.5 });
+          // Stray foreign row left behind in A's DB by the non-destructive copy.
+          await insertCostMetric({ ts: now, projectSecret: B, model: 'opus', cost: 1.0 });
+        });
+        await runWithDataDir(dirB, async () => {
+          await insertCostMetric({ ts: now, projectSecret: B, model: 'opus', cost: 1.0 });
+        });
+
+        const payload = await getDashboardPayload('all', 'UTC', [
+          { secret: A, dataDir: dirA },
+          { secret: B, dataDir: dirB },
+        ]);
+        // The key assertion: A's per-project row is its own $0.50 only (the stray
+        // foreign B-row in A's DB is excluded by the per-secret filter), and B's
+        // is its own $1.00 counted ONCE — NOT $1.00 + the stray.
+        const byProject = new Map(payload.costByProject.map(r => [r.projectSecret, r.cost]));
+        expect(byProject.get(A)).toBeCloseTo(0.5);
+        expect(byProject.get(B)).toBeCloseTo(1.0);
+      } finally {
+        await closeDbForDir(dirA);
+        await closeDbForDir(dirB);
+        rmSync(dirA, { recursive: true, force: true });
+        rmSync(dirB, { recursive: true, force: true });
+      }
     });
 
-    it('getDashboardPayload with null allowedSecrets keeps the pre-HS-8625 every-project behavior', async () => {
+    it('with null projects keeps the ambient every-project behavior (back-compat)', async () => {
       const now = new Date();
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_B, cost: 1.0 });
@@ -1047,7 +1115,9 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(payload.costByProject).toHaveLength(2);
       expect(payload.windowTotals.allTime.cost).toBeCloseTo(1.5);
     });
+  });
 
+  describe('cross-project loaded-projects filter (HS-8625, rollup-level)', () => {
     it('getCostByProject + getHourlyActivityHeatmap honor allowedSecrets directly', async () => {
       const t = new Date('2026-05-18T10:30:00Z'); // Monday 10:00 UTC
       await insertCostMetric({ ts: t, projectSecret: SECRET_A, cost: 0.5 });
@@ -1300,59 +1370,59 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
   });
 
-  // HS-8581 — telemetry is a single shared store keyed by `project_secret`,
-  // NOT a per-project table set. All OTLP writes land in the default
-  // (primary) project's DB; the rollups must read that same DB regardless
-  // of which project tab is active. The original bug: rollups went through
-  // the per-request `getDb()`, so a *secondary* project's analytics
-  // dashboard read its own (telemetry-empty) DB and showed "No telemetry
-  // recorded" even though the data was in the primary DB. These tests pin
-  // that the rollups ignore the per-request dataDir context.
-  describe('HS-8581 — rollups read the shared telemetry DB, not the request-context DB', () => {
-    let secondaryDir: string;
+  // HS-8874 — telemetry is now stored PER-PROJECT (each project's own DB),
+  // superseding the HS-8581 single-shared-store model. The per-project rollup
+  // reads the project's OWN telemetry DB, resolved from the active
+  // `runWithTelemetryDb` context (the route binds the active project's dataDir).
+  // These tests pin that contract: data seeded in project A's own DB is read
+  // when A's telemetry context is active, and is NOT visible from a different
+  // project's (empty) DB context.
+  describe('HS-8874 — per-project rollups read the project\'s own telemetry DB', () => {
+    let dirA: string;
+    let dirOther: string;
 
     beforeEach(async () => {
-      // A second project's data directory + its own (empty) DB, standing in
-      // for a secondary project tab whose request context is active when
-      // the user opens its analytics dashboard.
-      secondaryDir = createTempDir();
-      await getDbForDir(secondaryDir);
+      dirA = createTempDir();
+      dirOther = createTempDir();
+      await getDbForDir(dirA);
+      await getDbForDir(dirOther);
     });
 
     afterEach(async () => {
-      await closeDbForDir(secondaryDir);
-      try { rmSync(secondaryDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      await closeDbForDir(dirA);
+      await closeDbForDir(dirOther);
+      try { rmSync(dirA, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(dirOther, { recursive: true, force: true }); } catch { /* ignore */ }
     });
 
-    it('getProjectRollupPayload finds the project\'s data while a different project is the active request context', async () => {
+    it('getProjectRollupPayload reads project A\'s OWN DB when bound to A\'s telemetry context', async () => {
       const now = new Date();
-      // Seed telemetry in the DEFAULT DB (where the OTLP receiver writes).
-      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
-      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
+      // Seed telemetry in A's OWN DB (where the per-resource writer routes it).
+      await runWithDataDir(dirA, async () => {
+        await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
+        await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1', model: 'sonnet' });
+      });
 
-      // Run the rollup as if the SECONDARY project tab is active — its own
-      // DB has zero telemetry rows. Pre-fix this returned the empty state.
-      const payload = await runWithDataDir(secondaryDir, () =>
+      const payload = await runWithDataDir(dirA, () =>
         getProjectRollupPayload(SECRET_A, 'all', 'UTC'),
       );
-
       expect(payload.windowTotals.allTime.cost).toBeCloseTo(0.5);
       expect(payload.windowTotals.allTime.promptCount).toBe(1);
       expect(payload.recentPrompts).toHaveLength(1);
       expect(payload.recentPrompts[0].promptId).toBe('p1');
     });
 
-    it('getWindowTotals (the empty-state input) is non-zero under a foreign request context', async () => {
+    it('a different project\'s (empty) DB context sees none of A\'s telemetry', async () => {
       const now = new Date();
-      await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 1.25 });
-
-      // The analytics empty-state hinges on allTime cost/promptCount being
-      // zero. Confirm the shared-DB read keeps it non-zero even when the
-      // active context is a different project's (empty) DB.
-      const totals = await runWithDataDir(secondaryDir, () =>
+      await runWithDataDir(dirA, () =>
+        insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 1.25 }),
+      );
+      // Reading under the OTHER project's empty DB context returns zero — each
+      // project owns its own telemetry now.
+      const totals = await runWithDataDir(dirOther, () =>
         getWindowTotals(SECRET_A, null),
       );
-      expect(totals.cost).toBeCloseTo(1.25);
+      expect(totals.cost).toBe(0);
     });
   });
 

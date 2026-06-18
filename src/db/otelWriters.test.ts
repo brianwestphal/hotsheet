@@ -3,10 +3,12 @@
  * for all three signal types + the §67.5.3 drop-on-unknown-project
  * anti-pollution gate + per-row malformed-entry handling.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { rmSync } from 'fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { getDb } from './connection.js';
+import { registerExistingProject, unregisterProject } from '../projects.js';
+import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir } from './connection.js';
 import {
   _testing,
   persistLogsPayload,
@@ -16,6 +18,17 @@ import {
 
 const KNOWN_SECRET = 'secret-known-A';
 const isKnownProject = (s: string): boolean => s === KNOWN_SECRET;
+
+// HS-8874 — isolate the central non-project store to a temp dir so these tests
+// (which exercise the real no-project → central routing) never instantiate a
+// PGlite cluster in the developer's real `~/.hotsheet/telemetry`.
+let centralOverrideDir: string;
+beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
+afterAll(async () => {
+  await closeDbForDir(centralTelemetryDataDir());
+  delete process.env.HOTSHEET_TELEMETRY_DIR;
+  rmSync(centralOverrideDir, { recursive: true, force: true });
+});
 
 const SAMPLE_METRICS_JSON = {
   resourceMetrics: [
@@ -127,9 +140,15 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
 
   beforeEach(async () => {
     tempDir = await setupTestDb();
+    // HS-8874 — writers route per-resource via `getProjectBySecret(secret).dataDir`.
+    // Register KNOWN_SECRET against the test's own dataDir so the existing
+    // round-trip assertions (which read `getDb()` = tempDir) keep working.
+    const db = await getDb();
+    registerExistingProject(tempDir, KNOWN_SECRET, db);
   });
 
   afterEach(async () => {
+    unregisterProject(KNOWN_SECRET);
     await cleanupTestDb(tempDir);
   });
 
@@ -353,6 +372,91 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
     });
   });
 
+  // HS-8874 — per-resource routing: each project's rows go to that project's
+  // own DB; no-`hotsheet_project` rows go to central; unknown-project rows drop.
+  describe('per-project write routing (HS-8874)', () => {
+    it('routes two resources for two known projects to their two separate DBs', async () => {
+      const SECRET_2 = 'secret-known-B';
+      const dir2 = createTempDir();
+      const db2 = await getDbForDir(dir2);
+      registerExistingProject(dir2, SECRET_2, db2);
+      try {
+        const payload = {
+          resourceMetrics: [
+            {
+              resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+              scopeMetrics: [{ metrics: [{ name: 'claude_code.cost.usage', sum: { dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: 0.5 }] } }] }],
+            },
+            {
+              resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: SECRET_2 } }] },
+              scopeMetrics: [{ metrics: [{ name: 'claude_code.cost.usage', sum: { dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: 0.9 }] } }] }],
+            },
+          ],
+        };
+        const result = await persistMetricsPayload(payload, (s) => s === KNOWN_SECRET || s === SECRET_2);
+        expect(result.inserted).toBe(2);
+        expect(result.dropped).toBe(0);
+
+        // Each project's row landed in its OWN DB, not the other's.
+        const a = await (await getDbForDir(tempDir)).query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
+        expect(a.rows.map(r => r.project_secret)).toEqual([KNOWN_SECRET]);
+        const b = await db2.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
+        expect(b.rows.map(r => r.project_secret)).toEqual([SECRET_2]);
+      } finally {
+        unregisterProject(SECRET_2);
+        await closeDbForDir(dir2);
+      }
+    });
+
+    it('routes a no-hotsheet_project resource to the central store (NULL project_secret)', async () => {
+      // A unique marker cost so the assertion + cleanup target only this row in
+      // the real `~/.hotsheet/telemetry` central store.
+      const MARKER = 0.700123;
+      try {
+        const payload = {
+          resourceMetrics: [
+            {
+              resource: { attributes: [{ key: 'service.name', value: { stringValue: 'claude-code' } }] },
+              scopeMetrics: [{ metrics: [{ name: 'claude_code.cost.usage', sum: { dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: MARKER }] } }] }],
+            },
+          ],
+        };
+        const result = await persistMetricsPayload(payload, () => true);
+        expect(result.inserted).toBe(1);
+        expect(result.dropped).toBe(0);
+
+        // Did NOT land in the project DB.
+        const proj = await (await getDbForDir(tempDir)).query(`SELECT COUNT(*) AS c FROM otel_metrics`);
+        expect(Number((proj.rows[0] as { c: bigint | number }).c)).toBe(0);
+
+        // Landed in central with a NULL project_secret.
+        const central = await (await getDbForDir(centralTelemetryDataDir())).query<{ project_secret: string | null }>(
+          `SELECT project_secret FROM otel_metrics WHERE project_secret IS NULL AND (value_json->>'asDouble')::numeric = $1`,
+          [MARKER],
+        );
+        expect(central.rows.length).toBe(1);
+      } finally {
+        // Don't leave a marker row behind in the user's real central store.
+        const c = await getDbForDir(centralTelemetryDataDir());
+        await c.query(`DELETE FROM otel_metrics WHERE project_secret IS NULL AND (value_json->>'asDouble')::numeric = $1`, [MARKER]);
+      }
+    });
+
+    it('drops an unknown-project resource (anti-pollution gate preserved)', async () => {
+      const payload = {
+        resourceMetrics: [
+          {
+            resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: 'not-registered' } }] },
+            scopeMetrics: [{ metrics: [{ name: 'claude_code.cost.usage', sum: { dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: 0.4 }] } }] }],
+          },
+        ],
+      };
+      const result = await persistMetricsPayload(payload, (s) => s === KNOWN_SECRET);
+      expect(result.inserted).toBe(0);
+      expect(result.dropped).toBe(1);
+    });
+  });
+
   describe('helpers (_testing)', () => {
     it('unixNanoToDate converts a nano string to a Date within 1 ms', () => {
       // 1700000000 seconds = 2023-11-14T22:13:20.000Z
@@ -377,17 +481,27 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(flat).toEqual({ a: 'hi', b: '42', c: 3.14, d: true });
     });
 
-    it('resolveResource returns null for missing hotsheet_project', () => {
+    // HS-8874 — missing hotsheet_project routes to CENTRAL (projectSecret: null),
+    // not a drop.
+    it('resolveResource returns a central context (projectSecret null) for missing hotsheet_project', () => {
       const r = _testing.resolveResource({ attributes: [{ key: 'service.name', value: { stringValue: 'x' } }] }, () => true);
-      expect(r).toBeNull();
+      expect(r).not.toBeNull();
+      expect(r).not.toBe('drop');
+      if (r !== null && r !== 'drop') expect(r.projectSecret).toBeNull();
     });
 
-    it('resolveResource returns null when the project lookup says unknown', () => {
+    // HS-8874 — an unknown (un-registered) project is the 'drop' signal.
+    it('resolveResource returns the drop signal when the project lookup says unknown', () => {
       const r = _testing.resolveResource(
         { attributes: [{ key: 'hotsheet_project', value: { stringValue: 'nope' } }] },
         () => false,
       );
-      expect(r).toBeNull();
+      expect(r).toBe('drop');
+    });
+
+    it('resolveResource returns null for a malformed (non-object) resource', () => {
+      expect(_testing.resolveResource(null, () => true)).toBeNull();
+      expect(_testing.resolveResource('nope', () => true)).toBeNull();
     });
 
     it('resolveResource returns the context when the project is known', () => {
@@ -396,8 +510,11 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         (s) => s === 'known',
       );
       expect(r).not.toBeNull();
-      expect(r!.projectSecret).toBe('known');
-      expect(r!.sessionId).toBe('sess-1');
+      expect(r).not.toBe('drop');
+      if (r !== null && r !== 'drop') {
+        expect(r.projectSecret).toBe('known');
+        expect(r.sessionId).toBe('sess-1');
+      }
     });
 
     // HS-8600 — aggregation-temporality extraction + cumulative-counter warning.

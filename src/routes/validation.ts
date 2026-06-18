@@ -258,6 +258,11 @@ export const GlobalConfigSchema = z.object({
   // Global; default ON, so `undefined`/unset is treated as enabled by the
   // client (`announcerSpeakPermissions !== false`).
   announcerSpeakPermissions: z.boolean().optional(),
+  // HS-8874 — one-time marker that the per-project telemetry migration
+  // (`migratePerProjectTelemetry`) has run. Set after a successful, non-
+  // destructive copy of legacy launch-default telemetry rows into each row's
+  // owning project DB / the central store. Skipped on subsequent startups.
+  telemetryMigratedV1: z.boolean().optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that

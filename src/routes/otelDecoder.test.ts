@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { getDb } from '../db/connection.js';
 import { persistMetricsPayload } from '../db/otelWriters.js';
+import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { _testing, decodeProtobufPayload } from './otelDecoder.js';
 
@@ -96,9 +97,14 @@ describe('protobuf → persistence end-to-end (HS-8471)', () => {
 
   beforeEach(async () => {
     tempDir = await setupTestDb();
+    // HS-8874 — the writer routes per-resource via `getProjectBySecret(secret).dataDir`.
+    // Register KNOWN_SECRET against the test DB so the persisted rows land where
+    // the assertion reads them (`getDb()` = tempDir).
+    registerExistingProject(tempDir, KNOWN_SECRET, await getDb());
   });
 
   afterEach(async () => {
+    unregisterProject(KNOWN_SECRET);
     await cleanupTestDb(tempDir);
   });
 

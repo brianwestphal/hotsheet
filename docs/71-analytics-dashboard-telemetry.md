@@ -80,8 +80,8 @@ All three are pure render helpers; their opts accept callable formatters (`forma
 - **`src/client/analyticsTelemetrySection.tsx`** — section module. Exports `renderAnalyticsTelemetrySection()` (the entry point called by the analytics dashboard) and `_testing` (escape hatch for unit tests).
 - **`src/client/dashboard.tsx`** — `buildDashboard` now appends `renderAnalyticsTelemetrySection()` below the chart grid.
 - **`src/client/telemetryModelDonut.tsx`** / **`telemetryToolHistogram.tsx`** / **`telemetryRecentPromptsList.tsx`** — the three extracted shared modules.
-- **`src/routes/telemetry.ts`** — `GET /api/telemetry/project-rollup` (unchanged from HS-8505 Phase 1).
-- **`src/db/otelQueries.ts::getProjectRollupPayload`** — bundles the per-project payload (unchanged from HS-8505).
+- **`src/routes/telemetry.ts`** — `GET /api/telemetry/project-rollup`. **HS-8874:** the route binds the active project's own telemetry DB (`runWithTelemetryDb(project.dataDir)`) before calling the rollup, since telemetry is now stored per-project (each project's own `<dataDir>/db`; see §67.6). The `/api/*` middleware already binds the active project's request context, so this is belt-and-suspenders.
+- **`src/db/otelQueries.ts::getProjectRollupPayload`** — bundles the per-project payload (rollup bodies unchanged from HS-8505; under HS-8874 they read the project's OWN DB via the bound telemetry context rather than a single shared store).
 - **`src/client/styles.scss`** — `.analytics-telemetry-*` rules under the "HS-8508 / §71" section header.
 
 ## 71.7.1 Announcer usage (HS-8766)

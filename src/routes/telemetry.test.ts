@@ -24,7 +24,7 @@ const mockTodayCost = vi.fn<(secret: string) => Promise<number>>();
 const mockTodayCostByProject = vi.fn<() => Promise<Record<string, number>>>();
 const mockPromptTimeline = vi.fn<(id: string) => Promise<unknown>>();
 const mockPerTicketRollup = vi.fn<(num: string) => Promise<unknown>>();
-const mockDashboardPayload = vi.fn<(window: string, tz: string, allowedSecrets: readonly string[] | null) => Promise<unknown>>();
+const mockDashboardPayload = vi.fn<(window: string, tz: string, projects: ReadonlyArray<{ secret: string; dataDir: string }> | null) => Promise<unknown>>();
 const mockProjectRollup = vi.fn<(secret: string, window: string, tz: string) => Promise<unknown>>();
 const mockClearProjectTelemetry = vi.fn<(secret: string) => Promise<{ deleted: number }>>();
 const mockReadProjectList = vi.fn<() => string[]>();
@@ -37,7 +37,7 @@ vi.mock('../db/otelQueries.js', () => ({
   getTodayCostByProject: (): Promise<Record<string, number>> => mockTodayCostByProject(),
   getPromptTimeline: (id: string): Promise<unknown> => mockPromptTimeline(id),
   getPerTicketRollup: (num: string): Promise<unknown> => mockPerTicketRollup(num),
-  getDashboardPayload: (window: string, tz: string, allowedSecrets: readonly string[] | null): Promise<unknown> => mockDashboardPayload(window, tz, allowedSecrets),
+  getDashboardPayload: (window: string, tz: string, projects: ReadonlyArray<{ secret: string; dataDir: string }> | null): Promise<unknown> => mockDashboardPayload(window, tz, projects),
   getProjectRollupPayload: (secret: string, window: string, tz: string): Promise<unknown> => mockProjectRollup(secret, window, tz),
   clearProjectTelemetry: (secret: string): Promise<{ deleted: number }> => mockClearProjectTelemetry(secret),
 }));
@@ -235,16 +235,19 @@ describe('GET /telemetry/dashboard', () => {
     expect(mockDashboardPayload).toHaveBeenCalledWith('month', 'UTC', expect.any(Array));
   });
 
-  // HS-8625 — the route scopes the cross-project payload to currently-loaded
-  // project tabs by passing `getAllProjects()` secrets as allowedSecrets.
-  it('passes the registered projects\' secrets as allowedSecrets (HS-8625)', async () => {
+  // HS-8874 — the route passes the loaded projects (secret + dataDir) so the
+  // dashboard can fan out across each project's own telemetry DB + central.
+  it('passes the registered projects\' {secret, dataDir} list (HS-8874)', async () => {
     mockGetAllProjects.mockReturnValue([
       { secret: 'sec-loaded-1', dataDir: '/a', name: 'A' },
       { secret: 'sec-loaded-2', dataDir: '/b', name: 'B' },
     ]);
     mockDashboardPayload.mockResolvedValue({});
     await buildApp().request('/api/telemetry/dashboard?window=all');
-    expect(mockDashboardPayload).toHaveBeenCalledWith('all', 'UTC', ['sec-loaded-1', 'sec-loaded-2']);
+    expect(mockDashboardPayload).toHaveBeenCalledWith('all', 'UTC', [
+      { secret: 'sec-loaded-1', dataDir: '/a' },
+      { secret: 'sec-loaded-2', dataDir: '/b' },
+    ]);
   });
 
   it('accepts all five known windows', async () => {

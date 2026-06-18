@@ -19,8 +19,8 @@ import { isAppleFoundationAvailable } from './appleFoundation.js';
 import { collectWorkSignals } from './collectSignals.js';
 import { getDismissedTopics } from './dismissedTopics.js';
 import { resolveAnnouncerKey } from './key.js';
-import { isLocalProviderAvailable } from './localProvider.js';
-import { ANNOUNCER_MODELS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, providerForModel, resolveBestModelForSelection } from './models.js';
+import { isLocalProviderAvailable, resolveLocalModel } from './localProvider.js';
+import { ANNOUNCER_MODELS, type AnnouncerProvider, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, LOCAL_MODEL_ID, providerForModel, resolveBestModelForSelection } from './models.js';
 import { type Compression, summarizeWork } from './summarize.js';
 
 /** Above this many unplayed (active) entries the live generator compresses
@@ -51,20 +51,56 @@ export async function isAnnouncerEnabled(): Promise<boolean> {
  * resolve it to the newest available model in the **same family**
  * (`claude-sonnet-4-6`) rather than running an invalid id or jumping families.
  * Discovery failure (no key / unreachable) leaves the saved id untouched.
+ *
+ * HS-8872 — availability-aware fallback for an explicitly-chosen ON-DEVICE
+ * provider. An Apple / local choice can become unavailable on the current
+ * machine or build (no Apple Intelligence support, a beta bundle missing the
+ * helper, a stopped local endpoint, or a local endpoint that's up but has no
+ * model configured). Returning the unavailable id made EVERY generate hard-fail
+ * with a misleading "<provider> not available" 400 — the "constantly nothing +
+ * warning message" report — even when another provider was ready. When the
+ * chosen on-device provider isn't ready we fall back to the first working one,
+ * preferring the other free/on-device option before the (paid) cheapest Anthropic
+ * model, so a privacy/cost preference is honored where one still works.
  */
 export async function resolveAnnouncerModel(): Promise<string> {
   const chosen = readGlobalConfig().announcerModel;
   if (chosen === undefined) {
     return (await isAppleFoundationAvailable()) ? APPLE_FOUNDATION_MODEL_ID : DEFAULT_ANNOUNCER_MODEL;
   }
-  if (providerForModel(chosen) === 'anthropic') {
+  const provider = providerForModel(chosen);
+  if (provider === 'anthropic') {
     const key = await resolveAnnouncerKey();
     if (key !== null) {
       const available = (await listAnthropicModels(key)).map(m => m.id);
       if (available.length > 0) return resolveBestModelForSelection(chosen, available) ?? chosen;
     }
+    return chosen;
   }
-  return chosen;
+  // On-device choice (apple / local): keep it when ready, else recover.
+  if (await isOnDeviceProviderReady(provider)) return chosen;
+  return (await firstReadyAnnouncerModel()) ?? chosen;
+}
+
+/** Whether an on-device provider can actually summarize right now. `apple` needs
+ *  the on-device helper; `local` needs a reachable endpoint AND a configured model
+ *  (a reachable endpoint with no `announcerLocalModel` set still throws at the
+ *  summarize call, so it isn't "ready"). Anthropic is gated separately by key. */
+async function isOnDeviceProviderReady(provider: AnnouncerProvider): Promise<boolean> {
+  if (provider === 'apple') return isAppleFoundationAvailable();
+  if (provider === 'local') return (await isLocalProviderAvailable()) && resolveLocalModel() !== '';
+  return true;
+}
+
+/** HS-8872 — the first announcer model whose provider is ready, preferring the
+ *  free/on-device options (Apple, then a configured local endpoint) before the
+ *  cheapest Anthropic model. `null` when nothing is configured/available, so the
+ *  caller surfaces the original (accurate) provider error rather than masking it. */
+async function firstReadyAnnouncerModel(): Promise<string | null> {
+  if (await isAppleFoundationAvailable()) return APPLE_FOUNDATION_MODEL_ID;
+  if ((await isLocalProviderAvailable()) && resolveLocalModel() !== '') return LOCAL_MODEL_ID;
+  if ((await resolveAnnouncerKey()) !== null) return DEFAULT_ANNOUNCER_MODEL;
+  return null;
 }
 
 /**

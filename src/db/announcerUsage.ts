@@ -3,15 +3,20 @@
  * Anthropic API spend.
  *
  * One row per `POST /api/announcer/generate` that actually called the API.
- * Stored in the SHARED telemetry DB (`getTelemetryDb()`) keyed by
- * `project_secret`, exactly like `otel_metrics`, so the per-project analytics
- * dashboard (§71) and the cross-project stats page (§70) aggregate it with the
- * same project filter. Unlike Claude Code's telemetry, this is always the
- * user's real Anthropic spend on their own key — it does NOT respect the
- * `telemetryCostMode` api/subscription toggle.
+ *
+ * **HS-8874** — like `otel_metrics`, this is now stored PER-PROJECT (in each
+ * project's own DB), keyed by `project_secret`. `recordAnnouncerUsage` resolves
+ * the writing project's own DB from its secret (generate runs OUTSIDE the
+ * request `runWithDataDir` context, so it can't rely on the ambient DB). Reads
+ * (`getAnnouncerUsageTotals` / `getAnnouncerUsageByProject`) use the ambient
+ * telemetry context the caller binds (the per-project route's request context,
+ * or the dashboard fan-out's `runWithTelemetryDb`). Unlike Claude Code's
+ * telemetry, this is always the user's real Anthropic spend on their own key —
+ * it does NOT respect the `telemetryCostMode` api/subscription toggle.
  */
 import { announcerCost } from '../announcer/models.js';
-import { getTelemetryDb } from './connection.js';
+import { getProjectBySecret } from '../projects.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
 
 export interface AnnouncerUsageTotals {
   cost: number;
@@ -33,12 +38,19 @@ export async function recordAnnouncerUsage(usage: {
   outputTokens: number;
 }): Promise<void> {
   const cost = announcerCost(usage.model, usage.inputTokens, usage.outputTokens);
-  const db = await getTelemetryDb();
-  await db.query(
-    `INSERT INTO announcer_usage (project_secret, model, input_tokens, output_tokens, cost)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [usage.projectSecret, usage.model, usage.inputTokens, usage.outputTokens, cost],
-  );
+  // HS-8874 — write to the project's OWN telemetry DB, resolved from its secret
+  // (falls back to central if the project isn't registered, mirroring the otel
+  // writers' routing).
+  const project = getProjectBySecret(usage.projectSecret);
+  const dataDir = project !== undefined ? project.dataDir : centralTelemetryDataDir();
+  await runWithTelemetryDb(dataDir, async () => {
+    const db = await getTelemetryDb();
+    await db.query(
+      `INSERT INTO announcer_usage (project_secret, model, input_tokens, output_tokens, cost)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [usage.projectSecret, usage.model, usage.inputTokens, usage.outputTokens, cost],
+    );
+  });
 }
 
 interface TotalsRow { cost: string | number | null; input_tokens: string | number | null; output_tokens: string | number | null; generations: string | number | null }

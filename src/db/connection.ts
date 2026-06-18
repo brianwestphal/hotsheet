@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { type PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
 import { join } from 'path';
 import { z } from 'zod';
 
@@ -15,7 +16,7 @@ import { createPglite } from './pglite.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 5; // HS-8730 — added ticket_work_intervals table
+export const SCHEMA_VERSION = 6; // HS-8874 — telemetry project_secret is now nullable (central non-project store)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -212,6 +213,34 @@ export function runWithDataDir<T>(dataDir: string, fn: () => T): T {
   return requestDataDir.run(dataDir, fn);
 }
 
+// HS-8874 — per-resolution telemetry-DB context. Telemetry is now stored
+// per-project (in each project's own `<dataDir>/db`) plus a centralized store
+// for non-project rows (`~/.hotsheet/telemetry`). The read layer fans out
+// across project DBs + central by binding the target dataDir here for each
+// rollup; the writers resolve a DB per OTLP resource. See `getTelemetryDb`.
+const telemetryDbDir = new AsyncLocalStorage<string>();
+
+/** HS-8874 — run a function with a specific telemetry-DB dataDir bound to the
+ *  async context. All `getTelemetryDb()` calls within resolve to that DB. */
+export function runWithTelemetryDb<T>(dataDir: string, fn: () => T): T {
+  return telemetryDbDir.run(dataDir, fn);
+}
+
+/** HS-8874 — centralized store for NON-project telemetry (rows that carry no
+ *  `hotsheet_project` resource attr). Lives outside any project at
+ *  `~/.hotsheet/telemetry` so it isn't tied to whichever project the server
+ *  launched with. */
+export function centralTelemetryDataDir(): string {
+  // HS-8874 — `HOTSHEET_TELEMETRY_DIR` redirects the central store off
+  // `~/.hotsheet/telemetry`. Production never sets it; it exists so unit tests
+  // (which exercise the real writer/migration central-routing paths) isolate to
+  // a temp dir instead of instantiating a PGlite cluster in the developer's real
+  // home — which the rebuilt app would then read as live telemetry.
+  const override = process.env.HOTSHEET_TELEMETRY_DIR;
+  if (override !== undefined && override !== '') return override;
+  return join(homedir(), '.hotsheet', 'telemetry');
+}
+
 /** Get the current data directory from async context or legacy default.
  *  Returns the `.hotsheet/` data directory path (NOT the db/ subdirectory). */
 export function getDataDir(): string {
@@ -314,28 +343,38 @@ export async function getDb(): Promise<PGlite> {
 }
 
 /**
- * HS-8581 — get the SHARED telemetry database, independent of the
- * per-request project context.
+ * HS-8874 — resolve the telemetry database for the current context.
  *
- * The OTLP tables (`otel_metrics` / `otel_events` / `otel_spans`) are a
- * single shared store keyed by the `project_secret` column, NOT a
- * per-project table set. Every OTLP payload lands here: Claude Code's
- * bundled exporter POSTs to `/v1/{metrics,logs,traces}` with no
- * `X-Hotsheet-Secret` header, so the server middleware resolves those
- * writes to the default (primary) project's dataDir. The cross-project
- * dashboard then aggregates by `project_secret`.
+ * Telemetry is now stored PER-PROJECT: each project's OTLP rows
+ * (`otel_metrics` / `otel_events` / `otel_spans` / `announcer_usage`) live in
+ * THAT project's own `<dataDir>/db`. Rows that carry no `hotsheet_project`
+ * resource attr go to a centralized store at `~/.hotsheet/telemetry`. This
+ * replaced the pre-HS-8874 single shared store (the launch-default project's
+ * DB), which scattered telemetry whenever the launch project changed.
  *
- * Reads MUST resolve to the same default DB regardless of which project
- * tab is active. Routing telemetry rollups through the per-request
- * `getDb()` made a *secondary* project's analytics dashboard query its
- * own (telemetry-empty) DB and render the "No telemetry recorded"
- * placeholder even though the data was sitting in the primary project's
- * DB — the symptom reported in HS-8581. Both the writers and the rollup
- * queries call this helper so the store stays single-sourced.
+ * Resolution order:
+ *   1. an explicit `runWithTelemetryDb(dir)` context — used by the read-layer
+ *      fan-out (per-project rollups + the central read) and by the writers
+ *      (which bind the resource's target DB), and by the cleanup / clear /
+ *      migration code that targets a specific project's DB;
+ *   2. else the per-request `requestDataDir` context — so per-project analytics
+ *      reads the project the user is viewing without an explicit wrapper;
+ *   3. else the legacy `defaultDbPath` (single-project mode / tests that call
+ *      `setDataDir()` without binding the request context);
+ *   4. else the centralized telemetry store — the no-context fallback.
+ *
+ * `getDbForDir` runs the full `initSchema` (which creates the otel tables), so
+ * it is safe to open the central dir the same way as any project dir.
  */
 export async function getTelemetryDb(): Promise<PGlite> {
-  if (defaultDbPath === null) throw new Error('Data directory not set. Call setDataDir() first.');
-  return getDbByPath(defaultDbPath);
+  const telemetryDir = telemetryDbDir.getStore();
+  if (telemetryDir !== undefined) return getDbForDir(telemetryDir);
+  const contextDataDir = requestDataDir.getStore();
+  if (contextDataDir !== undefined) return getDbForDir(contextDataDir);
+  // `defaultDbPath` is the `<dataDir>/db` directory; `getDbByPath` opens it
+  // directly (it already exists with the schema applied).
+  if (defaultDbPath !== null) return getDbByPath(defaultDbPath);
+  return getDbForDir(centralTelemetryDataDir());
 }
 
 /** Get or create a database for a specific dataDir. */
@@ -917,6 +956,20 @@ async function initSchema(db: PGlite): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_announcer_usage_project_ts ON announcer_usage(project_secret, ts DESC);
   `);
+
+  // HS-8874 — telemetry is now stored per-project, plus a centralized store
+  // (`~/.hotsheet/telemetry`) for rows that carry NO `hotsheet_project` resource
+  // attr. Central rows have a NULL `project_secret`, so the four telemetry
+  // tables' `project_secret` columns must allow NULL. Pre-HS-8874 they were
+  // `NOT NULL` (the single-shared-store design always had a secret). Drop the
+  // constraint additively on existing clusters; new tables created by the DDL
+  // above are still `NOT NULL`, so the ALTER is what makes central writes work.
+  await db.exec(`
+    ALTER TABLE otel_metrics ALTER COLUMN project_secret DROP NOT NULL;
+    ALTER TABLE otel_events ALTER COLUMN project_secret DROP NOT NULL;
+    ALTER TABLE otel_spans ALTER COLUMN project_secret DROP NOT NULL;
+    ALTER TABLE announcer_usage ALTER COLUMN project_secret DROP NOT NULL;
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('does not exist')) console.error('Migration error (telemetry project_secret nullable):', e.message); });
 
   // Migration: ensure all existing notes have stable persisted IDs
   await migrateNoteIds(db);

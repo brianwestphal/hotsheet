@@ -1,4 +1,5 @@
-import { getTelemetryDb } from './connection.js';
+import { getProjectBySecret } from '../projects.js';
+import { centralTelemetryDataDir, getDbForDir } from './connection.js';
 
 /**
  * HS-8470 — OTLP persistence layer. Phase 2 of HS-8143's receiver work.
@@ -30,13 +31,14 @@ import { getTelemetryDb } from './connection.js';
  * or a hand-rolled decoder) and pass the decoded JSON-shaped object
  * straight into these writers — no writer changes needed.
  *
- * **Shared store (HS-8581).** Every writer targets the single shared
- * telemetry DB via `getTelemetryDb()` (the default/primary project's
- * DB) rather than the per-request `getDb()`. Rows carry the per-project
- * `project_secret` (from the `hotsheet_project` resource attr) so the
- * rollup queries — which also read `getTelemetryDb()` — can filter by
- * project. This keeps writes + reads single-sourced no matter which
- * project tab is active; see `connection.ts::getTelemetryDb`.
+ * **Per-project store (HS-8874).** Each OTLP resource is routed to a DB by
+ * its `hotsheet_project` attr: a KNOWN project's rows go to THAT project's own
+ * `<dataDir>/db`; rows with NO `hotsheet_project` attr go to the centralized
+ * store (`~/.hotsheet/telemetry`); rows for an UNKNOWN project are DROPPED
+ * (the §67.5.3 anti-pollution gate). Rows still carry the `project_secret`
+ * column (NULL for central rows). The target DB is resolved PER RESOURCE via
+ * `telemetryDataDirForSecret` + `getDbForDir`, replacing the pre-HS-8874
+ * single shared store (`getTelemetryDb()` of the launch-default project).
  *
  * See docs/67-telemetry.md §67.5 + §67.6 for the full design.
  */
@@ -103,31 +105,61 @@ function flattenAttributes(attrs: unknown): Record<string, unknown> {
 }
 
 interface ResourceContext {
-  projectSecret: string;
+  /** HS-8874 — NULL means "no `hotsheet_project` attr" → route to the central
+   *  store; a non-null secret is a known, registered project. */
+  projectSecret: string | null;
   sessionId: string | null;
   resourceAttrs: Record<string, unknown>;
 }
 
 /**
- * Extract the routing-relevant resource attributes from an OTLP
- * resource entry. Returns `null` when the entry has no
- * `hotsheet_project` attribute OR the value isn't a known project
- * secret per `isKnownProject` — the caller treats that as a drop.
+ * HS-8874 — sentinel for "this resource named a project that ISN'T currently
+ * registered" — the §67.5.3 anti-pollution drop. Distinct from `null`, which
+ * is reserved for a malformed resource (also a drop, but counted the same way
+ * by the caller).
+ */
+type ResolveResult = ResourceContext | 'drop' | null;
+
+/**
+ * Extract the routing-relevant resource attributes from an OTLP resource entry.
+ * Three outcomes (HS-8874):
+ *   - malformed resource (not an object) → `null` (caller drops),
+ *   - no `hotsheet_project` attr → `{ projectSecret: null, … }` (route CENTRAL),
+ *   - `hotsheet_project` present but NOT a known project → `'drop'` (caller
+ *     drops; preserves the anti-pollution gate),
+ *   - a known project → `{ projectSecret: <secret>, … }`.
  */
 function resolveResource(
   resource: unknown,
   isKnownProject: (s: string) => boolean,
-): ResourceContext | null {
+): ResolveResult {
   if (typeof resource !== 'object' || resource === null) return null;
   const attrs = (resource as Record<string, unknown>).attributes;
   const flat = flattenAttributes(attrs);
   const projectSecret = flat['hotsheet_project'];
-  if (typeof projectSecret !== 'string' || projectSecret === '') return null;
-  if (!isKnownProject(projectSecret)) return null;
   const sessionId = typeof flat['session.id'] === 'string'
     ? flat['session.id']
     : null;
+  if (typeof projectSecret !== 'string' || projectSecret === '') {
+    // No project attr → centralized store.
+    return { projectSecret: null, sessionId, resourceAttrs: flat };
+  }
+  if (!isKnownProject(projectSecret)) return 'drop';
   return { projectSecret, sessionId, resourceAttrs: flat };
+}
+
+/**
+ * HS-8874 — map a resolved row's `project_secret` to the dataDir of the DB it
+ * should be written to / read from. A null secret (no `hotsheet_project`) → the
+ * centralized store; a known project → its own dataDir; an (unexpected)
+ * un-registered secret also falls back to central rather than throwing.
+ * Lives here (not in `connection.ts`) so the project lookup stays out of the
+ * connection module and no import cycle forms.
+ */
+function telemetryDataDirForSecret(secret: string | null): string {
+  if (secret === null) return centralTelemetryDataDir();
+  const p = getProjectBySecret(secret);
+  return p !== undefined ? p.dataDir : centralTelemetryDataDir();
 }
 
 /**
@@ -142,7 +174,6 @@ export async function persistMetricsPayload(
   parsed: unknown,
   isKnownProject: (s: string) => boolean,
 ): Promise<PersistResult> {
-  const db = await getTelemetryDb();
   let inserted = 0;
   let dropped = 0;
 
@@ -155,7 +186,7 @@ export async function persistMetricsPayload(
     if (typeof entry !== 'object' || entry === null) continue;
     const eR = entry as Record<string, unknown>;
     const resCtx = resolveResource(eR.resource, isKnownProject);
-    if (resCtx === null) {
+    if (resCtx === null || resCtx === 'drop') {
       const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
       for (const sm of scopes) {
         const ms = Array.isArray((sm as Record<string, unknown> | null)?.metrics)
@@ -169,6 +200,9 @@ export async function persistMetricsPayload(
       continue;
     }
 
+    // HS-8874 — resolve the target DB from THIS resource's secret (project DB
+    // for a known project, central for a no-project row).
+    const db = await getDbForDir(telemetryDataDirForSecret(resCtx.projectSecret));
     const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
     for (const sm of scopes) {
       if (typeof sm !== 'object' || sm === null) continue;
@@ -333,7 +367,6 @@ export async function persistLogsPayload(
   parsed: unknown,
   isKnownProject: (s: string) => boolean,
 ): Promise<PersistResult> {
-  const db = await getTelemetryDb();
   let inserted = 0;
   let dropped = 0;
 
@@ -346,11 +379,13 @@ export async function persistLogsPayload(
     if (typeof entry !== 'object' || entry === null) continue;
     const eR = entry as Record<string, unknown>;
     const resCtx = resolveResource(eR.resource, isKnownProject);
-    if (resCtx === null) {
+    if (resCtx === null || resCtx === 'drop') {
       dropped += countLogRecords(eR);
       continue;
     }
 
+    // HS-8874 — per-resource target DB.
+    const db = await getDbForDir(telemetryDataDirForSecret(resCtx.projectSecret));
     const scopes = Array.isArray(eR.scopeLogs) ? eR.scopeLogs : [];
     for (const sl of scopes) {
       if (typeof sl !== 'object' || sl === null) continue;
@@ -415,7 +450,6 @@ export async function persistTracesPayload(
   parsed: unknown,
   isKnownProject: (s: string) => boolean,
 ): Promise<PersistResult> {
-  const db = await getTelemetryDb();
   let inserted = 0;
   let dropped = 0;
 
@@ -428,11 +462,13 @@ export async function persistTracesPayload(
     if (typeof entry !== 'object' || entry === null) continue;
     const eR = entry as Record<string, unknown>;
     const resCtx = resolveResource(eR.resource, isKnownProject);
-    if (resCtx === null) {
+    if (resCtx === null || resCtx === 'drop') {
       dropped += countSpans(eR);
       continue;
     }
 
+    // HS-8874 — per-resource target DB.
+    const db = await getDbForDir(telemetryDataDirForSecret(resCtx.projectSecret));
     const scopes = Array.isArray(eR.scopeSpans) ? eR.scopeSpans : [];
     for (const ss of scopes) {
       if (typeof ss !== 'object' || ss === null) continue;

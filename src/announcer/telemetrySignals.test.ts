@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getDb } from '../db/connection.js';
+import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { collectTelemetrySignals } from './telemetrySignals.js';
 
@@ -18,8 +19,14 @@ const NEW = '2026-06-05T14:00:00.000Z';
 const NEWER = '2026-06-05T14:01:00.000Z';
 
 let tempDir: string;
-beforeAll(async () => { tempDir = await setupTestDb(); });
-afterAll(async () => { await cleanupTestDb(tempDir); });
+beforeAll(async () => {
+  tempDir = await setupTestDb();
+  // HS-8874 — `collectTelemetrySignals` reads the project's OWN telemetry DB
+  // (resolved from its secret). Register SECRET against the test DB so the
+  // seeded rows are visible.
+  registerExistingProject(tempDir, SECRET, await getDb());
+});
+afterAll(async () => { unregisterProject(SECRET); await cleanupTestDb(tempDir); });
 beforeEach(async () => { await (await getDb()).query('DELETE FROM otel_events'); });
 
 async function prompt(ts: string, promptId: string, body: unknown, secret = SECRET): Promise<void> {

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getDb } from '../db/connection.js';
 import { createTicket } from '../db/tickets.js';
+import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { capMaterial, collectWorkSignals, MAX_INPUT_TOKENS } from './collectSignals.js';
 
@@ -15,8 +16,14 @@ const OLD = '2026-06-05T10:00:00.000Z';
 const CURSOR = '2026-06-05T12:00:00.000Z';
 const NEW = '2026-06-05T14:00:00.000Z';
 
-beforeAll(async () => { tempDir = await setupTestDb(); });
-afterAll(async () => { await cleanupTestDb(tempDir); });
+beforeAll(async () => {
+  tempDir = await setupTestDb();
+  // HS-8874 — the telemetry-signal path reads the project's OWN DB (resolved
+  // from its secret). Register `sec-x` against the test DB so the seeded
+  // user_prompt row is visible to `collectTelemetrySignals`.
+  registerExistingProject(tempDir, 'sec-x', await getDb());
+});
+afterAll(async () => { unregisterProject('sec-x'); await cleanupTestDb(tempDir); });
 
 beforeEach(async () => {
   const db = await getDb();
