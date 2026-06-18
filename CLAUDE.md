@@ -93,6 +93,7 @@ npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tau
 ## Git
 
 - **NEVER create git commits unless the user explicitly asks** ("commit this" / "make a commit"). Do not commit after completing work, as part of a workflow, or "for convenience." Strict, non-negotiable.
+- **Drafting commit messages / release notes — use [gitgist](https://github.com/brianwestphal/gitgist)** (a devDependency; invoke via `npx gitgist`). For a commit message from staged work: `npx gitgist --staged --commit-message`. For release notes over a range: `npx gitgist <last_tag>..HEAD`. `release.sh` (`step_release_notes`) already uses it for the changelog/tag body. Note: gitgist's default `--provider auto` shells out to the signed-in `claude` CLI — a nested `claude` call — so when *you* are running inside a Claude session, prefer drafting the message/notes yourself (gitgist is the canonical tool for the user's own runs and for CI with `$ANTHROPIC_API_KEY`).
 
 ## Ticket-Driven Work
 

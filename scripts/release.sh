@@ -310,88 +310,44 @@ step_release_notes() {
   else
     last_tag=$(git tag --list --sort=-v:refname 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
   fi
-  local log_range="${last_tag:+${last_tag}..HEAD}"
+  local range="${last_tag:+${last_tag}..HEAD}"
 
-  local commit_log
-  commit_log=$(git log ${log_range:-"-30"} --format="%s" --no-decorate)
-  local commit_count
-  commit_count=$(echo "$commit_log" | grep -c '^' || echo "0")
-
-  # HS-8453 — branch the prompt body on BETA_MODE. A beta cycle diffs against
-  # the immediately-previous tag (5–20 commits typically) and wants a tight
-  # 5–10-bullet summary so each beta's notes don't repeat the prior one's.
-  # A stable cut diffs against the last PRODUCTION tag, which over a v0.X
-  # → v0.X+1 cycle can be 200+ commits totalling 1 MB of subject text; the
-  # tight beta budget instructs the model to drop ~95% of the content, so
-  # the stable prompt asks for a much wider, section-grouped summary plus
-  # tells the model how many commits it's summarizing so it self-paces.
+  # HS-8870 — draft release notes with gitgist (https://github.com/brianwestphal/gitgist),
+  # installed as a devDependency and invoked via `npx`. gitgist reads the commit
+  # range itself, groups commits into themed H2 sections, rewrites terse subjects
+  # into user-facing lines, and filters internal noise (refactors, test-only
+  # changes, CI tweaks, dependency bumps, ticket IDs) — replacing the bespoke
+  # `claude -p` prompt this step used to build. We use gitgist's default grouping
+  # for both beta and stable cuts (no per-mode templates); the only mode
+  # difference left is the `last_tag` ANCHOR above. No `--title` is passed: the
+  # release version isn't chosen until the NEXT step (step_version), and
+  # step_update_changelog already wraps these notes under `## [version] - date`.
+  # `--provider auto` (the default) uses the signed-in `claude` CLI when present
+  # (no API key), else the Anthropic API (`$ANTHROPIC_API_KEY`), else the
+  # on-device Apple helper. With no prior tag, gitgist summarizes from the latest
+  # tag (or full history) to HEAD on its own, so the empty-range case is fine.
   local generated=""
-  if command -v claude &>/dev/null; then
-    info "Drafting release notes with Claude (${commit_count} commits since ${last_tag:-last 30})..."
-    local prompt
-    local beta_rules
-    beta_rules="Rules:
-- Output ONLY markdown bullets — no heading, no preamble, no closing remarks.
-- Each bullet is ONE short line (~80 chars max), user-facing.
-- Group related changes into single bullets.
-- INCLUDE: new features, UX improvements, bug fixes, breaking changes — anything a user upgrading would notice.
-- EXCLUDE: ticket IDs (HS-NNNN), internal refactors, test additions, doc-only changes, implementation rationale, build/CI tweaks.
-- Aim for 5–10 bullets total. Fewer is better."
-    local stable_rules
-    stable_rules="This is a STABLE release summarizing ${commit_count} commits since the last production release ${last_tag:-HEAD~30}. Be thorough — these notes will land in CHANGELOG.md.
-
-Rules:
-- Group bullets under H2 markdown headings: \"## New features\", \"## UX improvements\", \"## Bug fixes\", \"## Performance\", \"## Developer-facing\". Omit any heading whose section is empty.
-- Each bullet is ONE short line (~80 chars max), user-facing.
-- Group several related commits into single bullets when they cover the same feature area.
-- INCLUDE: new features, UX improvements, bug fixes, breaking changes, performance improvements, notable refactors that change user-observable behavior.
-- EXCLUDE: ticket IDs (HS-NNNN), pure internal refactors, test-only additions, doc-only changes, implementation rationale, build/CI tweaks.
-- For a ${commit_count}-commit release cycle aim for 15–40 total bullets, scaled to the volume of user-visible work. Don't pad — if a section has nothing user-facing, drop it. Don't under-deliver either — a stable release of this size shouldn't summarize down to 5 bullets."
-    local body
-    if [[ "${BETA_MODE:-false}" == "true" ]]; then
-      body="$beta_rules"
-    else
-      body="$stable_rules"
-    fi
-    prompt="Draft release notes for Hot Sheet (a developer-focused CLI project management tool) from the commit subjects below.
-
-${body}
-
-Commits:
-${commit_log}"
-    # HS-8453 — pipe the prompt via stdin instead of "claude -p \$prompt" so
-    # we don't blow past ARG_MAX (1 MB on macOS — a stable cycle's
-    # commit-subject volume is regularly 900 KB+, putting the positional-arg
-    # form right at the kernel's E2BIG cliff with truncation observed in
-    # the wild).
-    generated=$(printf '%s' "$prompt" | claude -p 2>/dev/null || true)
-    # Strip leading/trailing blank lines + any stray code-fence wrappers
-    generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
-    # HS-8453 / HS-8439 — `claude -p` can return 200 OK with an auth/network
-    # error printed to stdout (e.g. "Failed to authenticate. API Error: 403
-    # ..."). Pre-fix that text would pass the empty-stdout guard below and
-    # become the CHANGELOG entry / annotated tag body. Treat known error
-    # signatures as empty so the placeholder fallback fires instead.
-    if echo "$generated" | head -1 | grep -qE '^(Failed to authenticate|API Error:|Error:)'; then
-      warn "Claude draft looks like an auth/network error — opening blank editor."
-      warn "  First line: $(echo "$generated" | head -1)"
-      generated=""
-    fi
+  if command -v npx &>/dev/null; then
+    info "Drafting release notes with gitgist (${range:-latest tag..HEAD})..."
+    # stderr stays on the terminal so provider/auth errors are visible; only
+    # stdout (the notes markdown) is captured. The empty-guard below falls back
+    # to a blank editor if gitgist produced nothing.
+    generated=$(npx gitgist ${range:+"$range"} || true)
+    # Trim leading/trailing blank lines.
+    generated=$(echo "$generated" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
   fi
 
   local initial
   if [[ -n "$generated" ]]; then
     success "Draft ready — review and edit in the editor."
-    initial="# Release notes — Claude draft below. Edit freely.
+    initial="# Release notes — gitgist draft below. Edit freely.
 # Lines starting with '#' are removed on save.
 
 ${generated}"
   else
-    if command -v claude &>/dev/null; then
-      warn "Claude draft was empty — opening blank editor."
-    else
-      warn "'claude' CLI not found — opening blank editor. Install Claude Code for AI drafts."
-    fi
+    warn "gitgist draft was empty — opening blank editor."
+    warn "  Check that 'npx gitgist' resolves (run 'npm install') and a provider is available"
+    warn "  (signed-in 'claude' CLI, \$ANTHROPIC_API_KEY, or the Apple helper)."
     initial="# Release notes — keep it SHORT and USER-FACING.
 # Bullets only. Skip ticket IDs, refactors, tests, docs, internals.
 # Lines starting with '#' are removed on save.
