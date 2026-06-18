@@ -329,12 +329,19 @@ step_release_notes() {
   local generated=""
   if command -v npx &>/dev/null; then
     info "Drafting release notes with gitgist (${range:-latest tag..HEAD})..."
-    # stderr stays on the terminal so provider/auth errors are visible; only
-    # stdout (the notes markdown) is captured. The empty-guard below falls back
-    # to a blank editor if gitgist produced nothing.
-    generated=$(npx gitgist ${range:+"$range"} || true)
-    # Trim leading/trailing blank lines.
-    generated=$(echo "$generated" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+    # gitgist is well-behaved on failure: it exits non-zero, writes the error to
+    # stderr (which stays on the terminal here), and prints NOTHING to stdout.
+    # That's structurally safer than the old `claude -p`, which returned exit 0
+    # with the auth-error text ON stdout — so that text became the immutable
+    # annotated-tag body / CHANGELOG entry (HS-8439/HS-8453). Key off gitgist's
+    # exit code so a failed draft can never silently become release prose.
+    if generated=$(npx gitgist ${range:+"$range"}); then
+      # Trim leading/trailing blank lines.
+      generated=$(echo "$generated" | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
+    else
+      warn "gitgist exited non-zero — opening a blank editor (see the error above)."
+      generated=""
+    fi
   fi
 
   local initial
