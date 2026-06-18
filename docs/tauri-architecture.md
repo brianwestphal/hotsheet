@@ -156,10 +156,11 @@ In dev mode, Tauri's `beforeDevCommand` starts the Node server, and the webview 
 ### `npm run tauri:build`
 
 1. **`scripts/build-sidecar.sh`** runs first:
-   - Downloads Node.js v20 for the target platform (cached if already present)
+   - Downloads Node.js v20 for the target platform (re-downloads if the binary is **missing or zero-byte** — HS-8867; the release workflows run `test:rust` first, and its `ensure-sidecar-placeholder.mjs` drops a 0-byte placeholder at `binaries/hotsheet-node-{triple}` to satisfy tauri-build's externalBin existence check, so the guard must be `-s`, not `-f`, or the empty placeholder ships and the app hangs/white-screens at launch)
    - Places it at `src-tauri/binaries/hotsheet-node-{target-triple}`
    - Runs `npm run build` (tsup → `dist/cli.js` + client assets)
    - Copies `dist/`, client assets, and runtime `node_modules` into `src-tauri/server/`
+   - Asserts at the end that the sidecar is non-empty (>1MB) + executable, failing the build rather than shipping a broken bundle
 
 2. **`tauri build`** then:
    - Compiles Rust code

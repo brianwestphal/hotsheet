@@ -43,7 +43,15 @@ npm run build
 # --- Step 2: Download Node.js binary for the target platform ---
 mkdir -p src-tauri/binaries
 
-if [ ! -f "$SIDECAR" ]; then
+# HS-8867 — `-s` (exists AND non-empty), NOT `-f` (merely exists). The release
+# workflows run `npm run test:rust` BEFORE this script, and that step's
+# scripts/ensure-sidecar-placeholder.mjs drops a 0-BYTE placeholder at $SIDECAR
+# so tauri-build's externalBin existence check passes. With `-f` we'd treat that
+# empty placeholder as a real Node binary, skip the download, and bundle a
+# 0-byte sidecar — the app then spawns an empty executable that exits instantly
+# and never starts the server (hang / white screen at launch). `-s` re-downloads
+# over the placeholder; the `mv` below overwrites it.
+if [ ! -s "$SIDECAR" ]; then
   echo "Downloading Node.js $NODE_VERSION for $NODE_PLATFORM..."
 
   if [[ "$TARGET" == *"windows"* ]]; then
@@ -129,4 +137,20 @@ if [ -d "$SERVER_DIR/node_modules/node-pty" ]; then
 fi
 
 echo "Server resources: $SERVER_DIR/ ($(du -sh "$SERVER_DIR" | cut -f1))"
+
+# HS-8867 — fail LOUD if the sidecar is missing/empty rather than letting a
+# broken bundle ship. A 0-byte (or absent) hotsheet-node is the externalBin
+# placeholder from ensure-sidecar-placeholder.mjs; bundling it produces an app
+# that spawns an empty executable and hangs / white-screens at launch. A real
+# Node v20 runtime is tens of MB, so a tiny sanity floor cannot false-positive.
+SIDECAR_BYTES=$(wc -c < "$SIDECAR" 2>/dev/null | tr -d '[:space:]')
+if [ -z "$SIDECAR_BYTES" ] || [ "$SIDECAR_BYTES" -lt 1000000 ]; then
+  echo "ERROR: sidecar $SIDECAR is missing or too small (${SIDECAR_BYTES:-0} bytes) — refusing to bundle a non-functional Node runtime." >&2
+  exit 1
+fi
+if [ "$EXT" = "" ] && [ ! -x "$SIDECAR" ]; then
+  echo "ERROR: sidecar $SIDECAR is not executable." >&2
+  exit 1
+fi
+echo "Sidecar binary OK: $SIDECAR ($SIDECAR_BYTES bytes)"
 echo "Done."
