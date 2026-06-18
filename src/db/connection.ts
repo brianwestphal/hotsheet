@@ -895,9 +895,10 @@ async function initSchema(db: PGlite): Promise<void> {
     -- HS-8730 (per-ticket cost, time-window correlation) — records when each
     -- ticket was actively being worked (its status was 'started'), so the
     -- per-ticket rollup can attribute api_request cost by timestamp instead of
-    -- only the channelUI prompt marker. Lives in the telemetry DB (this is the
-    -- default/primary project's DB per getTelemetryDb) so the rollup join with
-    -- otel_events is single-DB. Keyed by project_secret (matching otel_events).
+    -- only the channelUI prompt marker. HS-8874/HS-8875 — lives in the OWNING
+    -- project's own DB (per-project, like otel_events / announcer_usage), keyed
+    -- by project_secret; getPerTicketRollup reads that project's DB so the
+    -- rollup join with otel_events is single-DB.
     CREATE TABLE IF NOT EXISTS ticket_work_intervals (
       id SERIAL PRIMARY KEY,
       project_secret TEXT NOT NULL,

@@ -11,16 +11,32 @@
  * ticket's cost is the `api_request` events whose timestamp falls inside a
  * window during which the ticket was `started`.
  *
- * Storage: `ticket_work_intervals` lives in the telemetry DB (the default
- * project's DB per `getTelemetryDb`), keyed by `project_secret` to match the
- * `otel_events` rows — so the rollup join (`getPerTicketRollup`) is single-DB.
+ * Storage (HS-8874 / HS-8875): `ticket_work_intervals` lives in the OWNING
+ * project's own DB, keyed by `project_secret` — the same per-project model as
+ * `otel_events` / `announcer_usage`. Both writers resolve the target DB from the
+ * `secret` argument (via `getProjectBySecret`) and bind it with
+ * `runWithTelemetryDb`, so storage is deterministic instead of depending on
+ * whichever async context happened to be active (the channel-`done` close path
+ * has no request context, so relying on the ambient DB would have closed
+ * intervals in a different DB than the one the status-update path opened them
+ * in). `getPerTicketRollup` reads the same project's DB (its route runs in that
+ * project's request context), so the rollup join stays single-DB.
  *
  * All writes are best-effort and swallow errors: cost attribution must never
  * break a ticket status update.
  */
 
+import { getProjectBySecret } from '../projects.js';
 import type { TicketStatus } from '../types.js';
-import { getTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+
+/** Resolve the telemetry DB dir that owns a project's work-interval rows: the
+ *  project's own dataDir, or the central store if the secret isn't a registered
+ *  project (mirrors the otel writers' + `recordAnnouncerUsage`'s routing). */
+function workIntervalDataDir(secret: string): string {
+  const project = getProjectBySecret(secret);
+  return project !== undefined ? project.dataDir : centralTelemetryDataDir();
+}
 
 /**
  * Record a ticket status transition for cost attribution.
@@ -41,21 +57,23 @@ export async function recordTicketWorkTransition(
 ): Promise<void> {
   if (secret === '' || ticketNumber === '') return;
   try {
-    const db = await getTelemetryDb();
-    // Close any currently-open interval either way (a re-`started` supersedes a
-    // stale open one; leaving `started` ends the window).
-    await db.query(
-      `UPDATE ticket_work_intervals SET ended_at = NOW()
-       WHERE project_secret = $1 AND ticket_number = $2 AND ended_at IS NULL`,
-      [secret, ticketNumber],
-    );
-    if (status === 'started') {
+    await runWithTelemetryDb(workIntervalDataDir(secret), async () => {
+      const db = await getTelemetryDb();
+      // Close any currently-open interval either way (a re-`started` supersedes a
+      // stale open one; leaving `started` ends the window).
       await db.query(
-        `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at)
-         VALUES ($1, $2, NOW())`,
+        `UPDATE ticket_work_intervals SET ended_at = NOW()
+         WHERE project_secret = $1 AND ticket_number = $2 AND ended_at IS NULL`,
         [secret, ticketNumber],
       );
-    }
+      if (status === 'started') {
+        await db.query(
+          `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at)
+           VALUES ($1, $2, NOW())`,
+          [secret, ticketNumber],
+        );
+      }
+    });
   } catch (err) {
     console.warn('[ticketWorkIntervals] failed to record transition:', err instanceof Error ? err.message : String(err));
   }
@@ -70,12 +88,14 @@ export async function recordTicketWorkTransition(
 export async function closeOpenTicketIntervalsForProject(secret: string): Promise<void> {
   if (secret === '') return;
   try {
-    const db = await getTelemetryDb();
-    await db.query(
-      `UPDATE ticket_work_intervals SET ended_at = NOW()
-       WHERE project_secret = $1 AND ended_at IS NULL`,
-      [secret],
-    );
+    await runWithTelemetryDb(workIntervalDataDir(secret), async () => {
+      const db = await getTelemetryDb();
+      await db.query(
+        `UPDATE ticket_work_intervals SET ended_at = NOW()
+         WHERE project_secret = $1 AND ended_at IS NULL`,
+        [secret],
+      );
+    });
   } catch (err) {
     console.warn('[ticketWorkIntervals] failed to close open intervals:', err instanceof Error ? err.message : String(err));
   }

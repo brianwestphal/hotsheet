@@ -70,6 +70,27 @@ async function countCost(dataDir: string, secret: string | null): Promise<number
   });
 }
 
+// HS-8875 — ticket_work_intervals is migrated alongside the otel tables.
+async function insertWorkInterval(dataDir: string, secret: string, ticket: string): Promise<void> {
+  await runWithTelemetryDb(dataDir, async () => {
+    const db = await getDbForDir(dataDir);
+    await db.query(
+      `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at)
+       VALUES ($1, $2, $3, $4)`,
+      [secret, ticket, new Date('2026-06-01T12:00:00Z'), new Date('2026-06-01T12:30:00Z')],
+    );
+  });
+}
+
+async function countWorkIntervals(dataDir: string, secret: string): Promise<number> {
+  return runWithTelemetryDb(dataDir, async () => {
+    const db = await getDbForDir(dataDir);
+    const res = await db.query<{ c: bigint | number }>(
+      `SELECT COUNT(*) AS c FROM ticket_work_intervals WHERE project_secret = $1`, [secret]);
+    return Number(res.rows[0]?.c ?? 0);
+  });
+}
+
 describe('migratePerProjectTelemetry (HS-8874)', () => {
   let dirA: string;
   let dirB: string;
@@ -150,5 +171,15 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     expect(result).toEqual({ moved: 0, perTable: {}, scannedDbs: 0 });
     // Nothing moved into B.
     expect(await countCost(dirB, SECRET_B)).toBe(0);
+  });
+
+  it('migrates ticket_work_intervals to the owning project DB (HS-8875)', async () => {
+    // dirA (launch-default) holds a work interval that belongs to project B.
+    await insertWorkInterval(dirA, SECRET_B, 'HS-1');
+    const result = await migratePerProjectTelemetry();
+    expect(result.perTable.ticket_work_intervals).toBe(1);
+    // It now lives in B's DB; A's copy is left intact (non-destructive).
+    expect(await countWorkIntervals(dirB, SECRET_B)).toBe(1);
+    expect(await countWorkIntervals(dirA, SECRET_B)).toBe(1);
   });
 });

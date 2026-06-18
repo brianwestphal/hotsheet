@@ -32,7 +32,7 @@ import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
 import { centralTelemetryDataDir, getDbForDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
 
-const TELEMETRY_TABLES = ['otel_metrics', 'otel_events', 'otel_spans', 'announcer_usage'] as const;
+const TELEMETRY_TABLES = ['otel_metrics', 'otel_events', 'otel_spans', 'announcer_usage', 'ticket_work_intervals'] as const;
 type TelemetryTable = (typeof TELEMETRY_TABLES)[number];
 
 export interface MigrationResult {
@@ -156,6 +156,7 @@ async function migrateFromSourceDb(
  *   - otel_metrics: (ts, project_secret, metric_name, attributes_json::text, value_json::text)
  *   - otel_events: (ts, project_secret, event_name, body_json::text)
  *   - announcer_usage: (ts, project_secret, model, input_tokens, output_tokens)
+ *   - ticket_work_intervals: (project_secret, ticket_number, started_at)
  * `id` (SERIAL) is intentionally dropped so the destination assigns its own.
  */
 async function insertIfAbsent(table: TelemetryTable, row: Record<string, unknown>): Promise<boolean> {
@@ -189,6 +190,7 @@ const COLUMNS: Record<TelemetryTable, string[]> = {
   otel_events: ['ts', 'project_secret', 'session_id', 'prompt_id', 'event_name', 'attributes_json', 'body_json'],
   otel_spans: ['trace_id', 'span_id', 'parent_span_id', 'project_secret', 'session_id', 'prompt_id', 'span_name', 'start_ts', 'end_ts', 'attributes_json', 'status_code'],
   announcer_usage: ['ts', 'project_secret', 'model', 'input_tokens', 'output_tokens', 'cost'],
+  ticket_work_intervals: ['project_secret', 'ticket_number', 'started_at', 'ended_at'],
 };
 
 /** Columns that are JSONB and need a `::jsonb` cast on insert. */
@@ -197,6 +199,7 @@ const JSONB_COLUMNS: Record<TelemetryTable, string[]> = {
   otel_events: ['attributes_json', 'body_json'],
   otel_spans: ['attributes_json'],
   announcer_usage: [],
+  ticket_work_intervals: [],
 };
 
 /**
@@ -236,6 +239,9 @@ const DEDUPE_KEYS: Record<TelemetryTable, string[]> = {
   otel_metrics: ['ts', 'project_secret', 'metric_name', 'attributes_json', 'value_json'],
   otel_events: ['ts', 'project_secret', 'event_name', 'body_json'],
   announcer_usage: ['ts', 'project_secret', 'model', 'input_tokens', 'output_tokens'],
+  // A ticket can't open two work intervals at the same instant; (project, ticket,
+  // started_at) is a stable natural key for idempotent re-copies.
+  ticket_work_intervals: ['project_secret', 'ticket_number', 'started_at'],
 };
 
 /** HS-8874 — exported only so the unit test can open destination DBs the same
