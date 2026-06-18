@@ -81,10 +81,19 @@ test.describe('Upgrade install smoke test', () => {
 
   test('search works after upgrade', async ({ page }) => {
     const searchInput = page.locator('#search-input');
-    await searchInput.fill('Upgrade ticket 1');
+    // Search a term unique to exactly one seeded ticket. NOTE: the title
+    // "Upgrade ticket 1" is no longer unambiguous — HS-8646's union-of-words
+    // search matches every whitespace-separated term across all five columns
+    // INCLUDING `ticket_number`, so the digit "1" also matches the auto-assigned
+    // `HS-N` numbers of other tickets (a fresh install seeds demo data, so the
+    // seeded tickets get high HS-numbers — hence the `>= 3` total elsewhere).
+    // "Pre-upgrade" is seeded only on ticket 3's note and has no digits, so it
+    // deterministically resolves to exactly one row regardless of numbering.
+    await searchInput.fill('Pre-upgrade');
     await page.waitForTimeout(500);
-    // After search, only matching tickets should be visible
+    // After search, only the one matching ticket (ticket 3) should be visible.
     const rows = page.locator('.ticket-row[data-id]');
     await expect(rows).toHaveCount(1, { timeout: 5000 });
+    await expect(rows.first().locator('.ticket-title-input')).toHaveValue('Upgrade ticket 3');
   });
 });
