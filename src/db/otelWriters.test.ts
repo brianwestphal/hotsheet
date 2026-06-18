@@ -16,6 +16,12 @@ import {
   persistTracesPayload,
 } from './otelWriters.js';
 
+// HS-8877 — central (no-project) writes mark the central store dirty for a
+// snapshot. Mock the trigger so the test asserts the wiring without a real
+// debounce timer firing after teardown.
+const { snapshotSpy } = vi.hoisted(() => ({ snapshotSpy: vi.fn() }));
+vi.mock('./snapshot.js', () => ({ scheduleSnapshot: snapshotSpy }));
+
 const KNOWN_SECRET = 'secret-known-A';
 const isKnownProject = (s: string): boolean => s === KNOWN_SECRET;
 
@@ -413,6 +419,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       // the real `~/.hotsheet/telemetry` central store.
       const MARKER = 0.700123;
       try {
+        snapshotSpy.mockClear();
         const payload = {
           resourceMetrics: [
             {
@@ -435,6 +442,8 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
           [MARKER],
         );
         expect(central.rows.length).toBe(1);
+        // HS-8877 — the central write marks the central store dirty for a snapshot.
+        expect(snapshotSpy).toHaveBeenCalledWith(centralTelemetryDataDir());
       } finally {
         // Don't leave a marker row behind in the user's real central store.
         const c = await getDbForDir(centralTelemetryDataDir());

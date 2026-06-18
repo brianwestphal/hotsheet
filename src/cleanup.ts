@@ -15,6 +15,7 @@ import {
   updateTicket,
 } from './db/queries.js';
 import { getBackupDir, readFileSettings } from './file-settings.js';
+import { readGlobalConfig } from './global-config.js';
 import { ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS } from './limits.js';
 import { readProjectList } from './project-list.js';
 
@@ -230,12 +231,25 @@ export async function cleanupAllProjectsTelemetry(launchedDataDir: string): Prom
   return { deleted };
 }
 
-/** HS-8874 — retention sweep for the centralized telemetry store. Central rows
- *  carry a NULL `project_secret`; there's no project settings file, so we use
- *  the §67.6 default 30-day window. */
-const CENTRAL_TELEMETRY_RETENTION_DAYS = 30;
+/** HS-8874 / HS-8877 — retention window (days) for the centralized telemetry
+ *  store. Central rows carry a NULL `project_secret` and there's no project
+ *  settings file, so the window comes from the global config key
+ *  `centralTelemetryRetentionDays` (HS-8877), falling back to the §67.6 default
+ *  of 30 days. A value of `0` means "keep forever" (matches the per-project
+ *  retention semantics), so the sweep is skipped. */
+const DEFAULT_CENTRAL_TELEMETRY_RETENTION_DAYS = 30;
+
+function centralTelemetryRetentionDays(): number {
+  const configured = readGlobalConfig().centralTelemetryRetentionDays;
+  return typeof configured === 'number' && Number.isInteger(configured) && configured >= 0
+    ? configured
+    : DEFAULT_CENTRAL_TELEMETRY_RETENTION_DAYS;
+}
 
 async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
+  const retentionDays = centralTelemetryRetentionDays();
+  // `0` = keep central forever (matches per-project retention), so don't sweep.
+  if (retentionDays === 0) return { deleted: 0 };
   try {
     const deleted = await runWithTelemetryDb(centralTelemetryDataDir(), async () => {
       const db = await getTelemetryDb();
@@ -243,19 +257,19 @@ async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
       for (const table of ['otel_metrics', 'otel_events'] as const) {
         const result = await db.query(
           `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
-          [String(CENTRAL_TELEMETRY_RETENTION_DAYS)],
+          [String(retentionDays)],
         );
         n += result.affectedRows ?? 0;
       }
       const spansResult = await db.query(
         `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
-        [String(CENTRAL_TELEMETRY_RETENTION_DAYS)],
+        [String(retentionDays)],
       );
       n += spansResult.affectedRows ?? 0;
       return n;
     });
     if (deleted > 0) {
-      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) older than ${String(CENTRAL_TELEMETRY_RETENTION_DAYS)} day(s).`);
+      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) older than ${String(retentionDays)} day(s).`);
     }
     return { deleted };
   } catch (err) {

@@ -1,5 +1,6 @@
 import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir } from './connection.js';
+import { scheduleSnapshot } from './snapshot.js';
 
 /**
  * HS-8470 — OTLP persistence layer. Phase 2 of HS-8143's receiver work.
@@ -202,7 +203,13 @@ export async function persistMetricsPayload(
 
     // HS-8874 — resolve the target DB from THIS resource's secret (project DB
     // for a known project, central for a no-project row).
-    const db = await getDbForDir(telemetryDataDirForSecret(resCtx.projectSecret));
+    const targetDir = telemetryDataDirForSecret(resCtx.projectSecret);
+    // HS-8877 — central (no-project) rows aren't covered by any project's
+    // ticket-mutation snapshot trigger, so mark the central store dirty here;
+    // its debounced + shutdown snapshot then fires (and `restore.ts` auto-
+    // restores it on a corrupt open). No-op for project rows.
+    if (resCtx.projectSecret === null) scheduleSnapshot(targetDir);
+    const db = await getDbForDir(targetDir);
     const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
     for (const sm of scopes) {
       if (typeof sm !== 'object' || sm === null) continue;

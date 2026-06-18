@@ -263,6 +263,11 @@ export const GlobalConfigSchema = z.object({
   // destructive copy of legacy launch-default telemetry rows into each row's
   // owning project DB / the central store. Skipped on subsequent startups.
   telemetryMigratedV1: z.boolean().optional(),
+  // HS-8877 — retention window (days) for the centralized non-project telemetry
+  // store (`~/.hotsheet/telemetry`). Projects have a per-project
+  // `telemetry_retention_days`; central isn't a project, so its sweep window
+  // lives here. Unset → the §67.6 default (30 days). `0` keeps central forever.
+  centralTelemetryRetentionDays: z.number().int().min(0).optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that

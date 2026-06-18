@@ -10,7 +10,8 @@ import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupAllProjectsTelemetry, cleanupTelemetryRows } from './cleanup.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb } from './db/connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, runWithTelemetryDb } from './db/connection.js';
+import type * as GlobalConfigModule from './global-config.js';
 import type * as ProjectListModule from './project-list.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from './test-helpers.js';
 
@@ -34,6 +35,17 @@ vi.mock('./project-list.js', async (importOriginal) => {
   return { ...actual, readProjectList: mockReadProjectList };
 });
 
+// HS-8877 — control the central retention window without touching the real
+// `~/.hotsheet/config.json`. `undefined` → the cleanup default (30 days).
+const { mockCentralRetention } = vi.hoisted(() => ({ mockCentralRetention: { value: undefined as number | undefined } }));
+vi.mock('./global-config.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof GlobalConfigModule>();
+  return {
+    ...actual,
+    readGlobalConfig: () => ({ ...actual.readGlobalConfig(), centralTelemetryRetentionDays: mockCentralRetention.value }),
+  };
+});
+
 const KNOWN_SECRET = 'secret-A';
 
 async function insertMetric(ts: Date, secret = KNOWN_SECRET): Promise<void> {
@@ -49,6 +61,27 @@ async function countMetrics(): Promise<number> {
   const db = await getDb();
   const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics`);
   return Number(r.rows[0].c);
+}
+
+// HS-8877 — central-store (NULL project_secret) helpers, scoped to the temp
+// central dir (HOTSHEET_TELEMETRY_DIR override set in beforeAll).
+async function insertCentralMetric(ts: Date): Promise<void> {
+  await runWithTelemetryDb(centralTelemetryDataDir(), async () => {
+    const db = await getDbForDir(centralTelemetryDataDir());
+    await db.query(
+      `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
+       VALUES ($1, NULL, $2, $3, $4::jsonb, $5::jsonb)`,
+      [ts, 'session-c', 'claude_code.cost.usage', JSON.stringify({}), JSON.stringify({ value: 0.5 })],
+    );
+  });
+}
+
+async function countCentralMetrics(): Promise<number> {
+  return runWithTelemetryDb(centralTelemetryDataDir(), async () => {
+    const db = await getDbForDir(centralTelemetryDataDir());
+    const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret IS NULL`);
+    return Number(r.rows[0].c);
+  });
 }
 
 function writeRetentionSetting(dataDir: string, days: number | null): void {
@@ -170,6 +203,7 @@ describe('cleanupAllProjectsTelemetry (HS-8607)', () => {
     tempDir = await setupTestDb();
     mockReadProjectList.mockReset();
     mockReadProjectList.mockReturnValue([]);
+    mockCentralRetention.value = undefined;
   });
 
   afterEach(async () => {
@@ -225,5 +259,21 @@ describe('cleanupAllProjectsTelemetry (HS-8607)', () => {
     // Deduped via the Set — the single old row is counted once, not twice.
     expect(result.deleted).toBe(1);
     expect(await countMetrics()).toBe(0);
+  });
+
+  it('central retention honors centralTelemetryRetentionDays; 0 = keep forever (HS-8877)', async () => {
+    writeSettings(tempDir, KNOWN_SECRET, 30);
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    await insertCentralMetric(old);
+
+    // 0 = keep forever → the 40-day-old central row survives.
+    mockCentralRetention.value = 0;
+    await cleanupAllProjectsTelemetry(tempDir);
+    expect(await countCentralMetrics()).toBe(1);
+
+    // A finite window (30 days) sweeps it.
+    mockCentralRetention.value = 30;
+    await cleanupAllProjectsTelemetry(tempDir);
+    expect(await countCentralMetrics()).toBe(0);
   });
 });
