@@ -159,15 +159,21 @@ export async function cleanupOrphanedAttachments(dataDir: string): Promise<{ pru
  * (`cleanupAllProjectsTelemetry`) iterates every project DB + the central
  * store. The `dataDir` passed in is BOTH the settings source AND the target
  * telemetry DB.
+ *
+ * **HS-8890 (§85.2.2/85.2.3) — per-table windows + span row cap.** `otel_spans`
+ * (§68 enhanced tracing, high-volume) uses a SHORTER window — the per-project
+ * `telemetry_span_retention_days` (default 7), while metrics + events keep the
+ * `telemetry_retention_days` window (default 30). `0` keeps a window forever for
+ * either group. After the time-based deletes, a hard **row cap**
+ * (`SPAN_ROW_CAP`) trims `otel_spans` to its newest N as a burst backstop the
+ * time window can't provide — applied even when the span window is "forever",
+ * since it's a safety limit, not a retention preference.
  */
 export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: number }> {
   try {
     const settings = readFileSettings(dataDir);
-    const days = typeof settings.telemetry_retention_days === 'number'
-      ? settings.telemetry_retention_days
-      : 30;
-    // `0` (or anything <= 0) means "keep forever" per §67.6.
-    if (days <= 0) return { deleted: 0 };
+    const metricsDays = typeof settings.telemetry_retention_days === 'number' ? settings.telemetry_retention_days : 30;
+    const spanDays = typeof settings.telemetry_span_retention_days === 'number' ? settings.telemetry_span_retention_days : DEFAULT_SPAN_RETENTION_DAYS;
 
     // HS-8607 — can't scope a deletion without the project's secret; bail
     // rather than risk an unscoped DELETE across the project's DB.
@@ -177,31 +183,84 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
     const deleted = await runWithTelemetryDb(dataDir, async () => {
       const db = await getTelemetryDb();
       let n = 0;
-      for (const table of ['otel_metrics', 'otel_events'] as const) {
-        // `start_ts` for spans, `ts` for metrics + events.
-        const result = await db.query(
-          `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
-          [String(days), secret],
-        );
-        n += result.affectedRows ?? 0;
+      // Metrics + events: the `telemetry_retention_days` window (`ts` column).
+      // `0` (or <= 0) means "keep forever" per §67.6.
+      if (metricsDays > 0) {
+        for (const table of ['otel_metrics', 'otel_events'] as const) {
+          const result = await db.query(
+            `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
+            [String(metricsDays), secret],
+          );
+          n += result.affectedRows ?? 0;
+        }
       }
-      // Spans use `start_ts` not `ts` — separate query.
-      const spansResult = await db.query(
-        `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
-        [String(days), secret],
-      );
-      n += spansResult.affectedRows ?? 0;
+      // Spans: the shorter `telemetry_span_retention_days` window (`start_ts`).
+      if (spanDays > 0) {
+        const spansResult = await db.query(
+          `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
+          [String(spanDays), secret],
+        );
+        n += spansResult.affectedRows ?? 0;
+      }
+      // HS-8890 — hard span row cap (burst backstop, independent of the window).
+      n += await capSpanRows(db, secret);
       return n;
     });
 
     if (deleted > 0) {
-      console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) older than ${String(days)} day(s).`);
+      console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(metricsDays)}d, spans > ${String(spanDays)}d, span cap ${String(SPAN_ROW_CAP)}).`);
     }
     return { deleted };
   } catch (err) {
     console.error('Telemetry retention sweep failed:', err);
     return { deleted: 0 };
   }
+}
+
+/** HS-8890 (§85.2.2) — default `otel_spans` retention window (days) when
+ *  `telemetry_span_retention_days` / `centralSpanRetentionDays` is unset. Shorter
+ *  than the 30-day metrics/events default because §68 spans are high-volume. */
+export const DEFAULT_SPAN_RETENTION_DAYS = 7;
+
+/** HS-8890 (§85.2.3) — hard cap on `otel_spans` row count per project secret, a
+ *  burst backstop the time window can't provide (one heavy day can write far more
+ *  than the window's worth). Keep the newest N; trim the rest by `start_ts`. */
+export const SPAN_ROW_CAP = 500_000;
+
+/**
+ * Trim `otel_spans` for `secret` (pass `null` for the central NULL-secret rows)
+ * down to the newest `cap` by `start_ts`, deleting the oldest overflow. Runs in
+ * the CURRENT telemetry DB context. Returns the number of rows deleted. A no-op
+ * when at/under the cap. Applied unconditionally by the sweep — it's a safety
+ * limit, so it bounds even a "keep forever" (`0`-day) span window. `cap` is a
+ * parameter (defaulting to `SPAN_ROW_CAP`) so tests can exercise it without
+ * inserting half a million rows. Exported for unit testing.
+ */
+export async function capSpanRows(
+  db: Awaited<ReturnType<typeof getTelemetryDb>>,
+  secret: string | null,
+  cap: number = SPAN_ROW_CAP,
+): Promise<number> {
+  const secretClause = secret === null ? 'project_secret IS NULL' : 'project_secret = $1';
+  const params = secret === null ? [] : [secret];
+  const countRes = await db.query<{ c: bigint | number }>(
+    `SELECT COUNT(*) AS c FROM otel_spans WHERE ${secretClause}`,
+    params,
+  );
+  const count = Number(countRes.rows[0]?.c ?? 0);
+  if (count <= cap) return 0;
+  const overflow = count - cap;
+  // Delete the oldest `overflow` rows by `start_ts` (ties broken by `id`). PGLite
+  // supports a `LIMIT` subquery in the `DELETE ... WHERE id IN (...)` form.
+  const capParam = secret === null ? '$1' : '$2';
+  const delRes = await db.query(
+    `DELETE FROM otel_spans WHERE id IN (
+       SELECT id FROM otel_spans WHERE ${secretClause}
+       ORDER BY start_ts ASC, id ASC LIMIT ${capParam}
+     )`,
+    [...params, overflow],
+  );
+  return delRes.affectedRows ?? 0;
 }
 
 /**
@@ -246,30 +305,48 @@ function centralTelemetryRetentionDays(): number {
     : DEFAULT_CENTRAL_TELEMETRY_RETENTION_DAYS;
 }
 
+/** HS-8890 (§85.2.2) — central-store span window. Like the per-project
+ *  `telemetry_span_retention_days`, central spans use the global
+ *  `centralSpanRetentionDays`, defaulting to the §85 7-day span default; `0`
+ *  keeps central spans forever. */
+function centralSpanRetentionDays(): number {
+  const configured = readGlobalConfig().centralSpanRetentionDays;
+  return typeof configured === 'number' && Number.isInteger(configured) && configured >= 0
+    ? configured
+    : DEFAULT_SPAN_RETENTION_DAYS;
+}
+
 async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
   const retentionDays = centralTelemetryRetentionDays();
-  // `0` = keep central forever (matches per-project retention), so don't sweep.
-  if (retentionDays === 0) return { deleted: 0 };
+  const spanDays = centralSpanRetentionDays();
   try {
     const deleted = await runWithTelemetryDb(centralTelemetryDataDir(), async () => {
       const db = await getTelemetryDb();
       let n = 0;
-      for (const table of ['otel_metrics', 'otel_events'] as const) {
-        const result = await db.query(
-          `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
-          [String(retentionDays)],
-        );
-        n += result.affectedRows ?? 0;
+      // Metrics + events: central window. `0` = keep forever (skip).
+      if (retentionDays > 0) {
+        for (const table of ['otel_metrics', 'otel_events'] as const) {
+          const result = await db.query(
+            `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
+            [String(retentionDays)],
+          );
+          n += result.affectedRows ?? 0;
+        }
       }
-      const spansResult = await db.query(
-        `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
-        [String(retentionDays)],
-      );
-      n += spansResult.affectedRows ?? 0;
+      // Spans: shorter central span window (HS-8890). `0` = keep forever (skip).
+      if (spanDays > 0) {
+        const spansResult = await db.query(
+          `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
+          [String(spanDays)],
+        );
+        n += spansResult.affectedRows ?? 0;
+      }
+      // HS-8890 — hard span row cap on the central NULL-secret rows too.
+      n += await capSpanRows(db, null);
       return n;
     });
     if (deleted > 0) {
-      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) older than ${String(retentionDays)} day(s).`);
+      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(retentionDays)}d, spans > ${String(spanDays)}d, span cap ${String(SPAN_ROW_CAP)}).`);
     }
     return { deleted };
   } catch (err) {

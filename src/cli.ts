@@ -266,6 +266,27 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     } catch (e: unknown) {
       console.warn(`[startup] Scheduling telemetry vacuum failed (non-fatal): ${getErrorMessage(e)}`);
     }
+    // HS-8888 (§85.2.4) — log a per-table row+size breakdown for each telemetry
+    // DB so we can confirm which table dominates (HS-8882 suspected spans). Also
+    // off-loop via the §75 scheduler (the DBs were just opened by the retention
+    // sweep, so the COUNTs are cache-cheap); never blocks startup.
+    startupMark('post-startup: scheduling telemetry breakdown log');
+    try {
+      const { scheduleTelemetryBreakdownLog } = await import('./db/telemetryDiagnostics.js');
+      void scheduleTelemetryBreakdownLog(dataDir);
+    } catch (e: unknown) {
+      console.warn(`[startup] Scheduling telemetry breakdown log failed (non-fatal): ${getErrorMessage(e)}`);
+    }
+    // HS-8889 (§85.2.1) — periodic 24h retention sweep so a long-lived session
+    // doesn't accumulate telemetry rows unbounded between restarts. Off-loop via
+    // the §75 scheduler; the timer is `unref`'d and cleared on shutdown.
+    startupMark('post-startup: starting telemetry retention timer');
+    try {
+      const { startTelemetryRetentionTimer } = await import('./telemetryRetentionTimer.js');
+      startTelemetryRetentionTimer(dataDir);
+    } catch (e: unknown) {
+      console.warn(`[startup] Starting telemetry retention timer failed (non-fatal): ${getErrorMessage(e)}`);
+    }
     startupMark('post-startup: migrating global config');
     await migrateGlobalConfig();
     startupMark('post-startup: cleaning up stale channels');

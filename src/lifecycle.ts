@@ -185,6 +185,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await runStep('snapshotDatabases', snapshotDatabases);
   await runStep('closeDatabases', closeDatabases);
   await runStep('stopFreezeHeartbeat', stopFreezeHeartbeat);
+  await runStep('stopTelemetryRetentionTimer', stopTelemetryRetentionTimerStep);
   await runStep('releaseProjectLocks', releaseProjectLocks);
   await runStep('removeLockfile', removeLockfile);
 
@@ -200,6 +201,17 @@ function stopFreezeHeartbeat(): void {
   try {
     stopServerEventLoopHeartbeat();
   } catch { /* heartbeat never started — nothing to stop */ }
+}
+
+/** HS-8889 — stop the periodic telemetry retention timer so its 24h interval
+ *  doesn't outlive the data directory in tests / multi-shutdown paths. The timer
+ *  is `unref`'d so it never blocks exit; this is the explicit-cleanup belt to the
+ *  unref suspenders. */
+async function stopTelemetryRetentionTimerStep(): Promise<void> {
+  try {
+    const { stopTelemetryRetentionTimer } = await import('./telemetryRetentionTimer.js');
+    stopTelemetryRetentionTimer();
+  } catch { /* never started — nothing to stop */ }
 }
 
 /** HS-8040 — kill every shell-command process spawned via custom-command

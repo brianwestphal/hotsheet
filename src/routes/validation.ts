@@ -274,6 +274,11 @@ export const GlobalConfigSchema = z.object({
   // `telemetry_retention_days`; central isn't a project, so its sweep window
   // lives here. Unset → the §67.6 default (30 days). `0` keeps central forever.
   centralTelemetryRetentionDays: z.number().int().min(0).optional(),
+  // HS-8890 (§85.2.2) — retention window (days) for `otel_spans` in the central
+  // store. Spans (§68 enhanced tracing) are high-volume, so they age out faster
+  // than metrics/events: unset → the §85 default of 7 days (vs 30 for
+  // metrics/events via `centralTelemetryRetentionDays`); `0` keeps spans forever.
+  centralSpanRetentionDays: z.number().int().min(0).optional(),
   // HS-8884 — last time a `VACUUM FULL` reclaim ran per telemetry DB dir
   // (`<dataDir>/db` or the central store), keyed by that dir's absolute path →
   // ISO timestamp. Throttles the heavy, exclusive-lock full reclaim to at most

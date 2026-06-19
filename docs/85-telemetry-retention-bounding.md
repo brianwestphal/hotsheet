@@ -1,8 +1,9 @@
 # 85. Telemetry Retention Bounding (periodic sweep + per-table windows + size cap)
 
-**Status: design (decided), implementation deferred to follow-up tickets.** Filed
-as HS-8886 from the HS-8882 telemetry-bloat investigation. The two sibling
-*disk-reclaim* bugs are already shipped and bound the on-disk footprint:
+**Status: SHIPPED** (HS-8888 diagnostic + HS-8889 periodic sweep + HS-8890
+per-table windows & span cap, 2026-06-19). Filed as HS-8886 from the HS-8882
+telemetry-bloat investigation. The two sibling *disk-reclaim* bugs are also
+shipped and bound the on-disk footprint:
 
 - **HS-8884** — `VACUUM` pass (`src/db/telemetryVacuum.ts`): PGLite doesn't return
   disk to the OS on `DELETE`, so a routine plain `VACUUM` + a size-gated/throttled
@@ -91,18 +92,28 @@ rest).
   reuses that scheduling group so a sweep's deletes get reclaimed on the normal
   VACUUM cadence.
 
-## 85.4 Implementation follow-ups
-Tracked as separate tickets (this doc is the spec):
+## 85.4 Implementation (shipped)
+All three follow-ups landed 2026-06-19:
 
-1. **Per-table telemetry diagnostic** (do first) — row + size breakdown via
-   startup log line + `_debug` field. Confirms the dominant table.
-2. **Periodic 24 h retention sweep** — §75-scheduled, `deferUnderLag`, coalesced,
-   `unref`'d timer reusing `cleanupAllProjectsTelemetry`.
-3. **Per-table retention windows + span row cap** — spans 7-day default
-   (`telemetry_span_retention_days` / `centralSpanRetentionDays`) + the ~500k
-   `otel_spans` row cap; metrics/events stay 30 d.
+1. **Per-table telemetry diagnostic** (HS-8888) — `src/db/telemetryDiagnostics.ts`:
+   `telemetryTableBreakdown(dataDir)` (per-table row counts + cluster size) +
+   `formatTelemetryBreakdown`. Surfaced on `GET /api/telemetry/_debug`
+   (`tableBreakdown`, active project) and as a per-DB startup log via
+   `scheduleTelemetryBreakdownLog` (off-loop, §75 scheduler, GC + `deferUnderLag`).
+2. **Periodic 24 h retention sweep** (HS-8889) — `src/telemetryRetentionTimer.ts`:
+   `startTelemetryRetentionTimer` arms an `unref`'d 24 h interval whose tick
+   submits one coalesced `telemetry-retention-sweep` job (GC, `deferUnderLag`)
+   that runs `cleanupAllProjectsTelemetry` then nudges the §75 vacuum pass;
+   `stopTelemetryRetentionTimer` is a `gracefulShutdown` step. Wired in `cli.ts`.
+3. **Per-table retention windows + span row cap** (HS-8890) — `src/cleanup.ts`:
+   `cleanupTelemetryRows` / `cleanupCentralTelemetry` split the span window
+   (`telemetry_span_retention_days` / `centralSpanRetentionDays`, default 7) from
+   metrics/events (`telemetry_retention_days` / `centralTelemetryRetentionDays`,
+   default 30), each `0` = forever; then `capSpanRows(db, secret, cap=SPAN_ROW_CAP)`
+   trims `otel_spans` to its newest 500k (a safety limit applied even when the
+   span window is "forever").
 
-Each follow-up gets unit coverage in the §67.6 test style (`cleanupTelemetry.test.ts`
-/ a new `telemetryRetention.test.ts`): age-based span vs metric/event windows, the
-row-cap trim keeping exactly the newest N, the `0`-means-forever path, and the
-diagnostic counts.
+Coverage (§67.6 test style): `telemetryDiagnostics.test.ts`,
+`telemetryRetentionTimer.test.ts`, `telemetryRetention.test.ts` (span-vs-metric
+windows, `0`-means-forever, the row-cap trim keeping exactly the newest N), plus
+the existing `cleanupTelemetry.test.ts`.
