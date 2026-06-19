@@ -803,7 +803,13 @@ the user's key (cloud); **`apple`** runs **on-device** via Apple Foundation Mode
 inference goes through a bundled **Swift CLI helper** the *server* shells out to
 (`src/announcer/appleFoundation.ts` → `src-tauri/apple-fm-helper/main.swift`), so
 it works in both Listen and live mode (see docs/tauri-architecture.md §"Apple
-Foundation Models helper" for build/bundle/signing). Availability is probed once
+Foundation Models helper" for build/bundle/signing). **HS-8876** — the packaged
+desktop app now actually ships the helper: `build-sidecar.sh` compiles it into the
+bundled `server/` dir for arm64 macOS, the macOS pre-sign step signs it for
+notarization, and the Rust launcher points the server at it via
+`HOTSHEET_APPLE_FM_BIN` — so `appleAvailable` is true in the installed app, not
+just in `npm run tauri:dev`. (CI must build the arm64 job on a `macos-26` runner —
+`macos-latest` is macOS 15 / Xcode 16 and self-skips the helper.) Availability is probed once
 + cached and surfaced via `appleAvailable` on `/announcer/status` + `/overview`;
 when available it becomes the **default** model (explicit `announcerModel` still
 wins), and the Listen button/generation no longer require an Anthropic key. The

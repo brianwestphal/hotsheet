@@ -1079,10 +1079,21 @@ async fn spawn_sidecar_and_navigate(
     sidecar_args.extend(extra_args);
     eprintln!("[sidecar] args={:?}", sidecar_args);
 
-    let sidecar = app
+    let mut sidecar = app
         .shell()
         .sidecar("hotsheet-node")
         .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
+
+    // HS-8876 — point the server at the bundled Apple Foundation Models helper
+    // (built into `server/apple-fm-helper` by build-sidecar.sh on arm64 macOS).
+    // `appleFmBinPath()` reads HOTSHEET_APPLE_FM_BIN; without this the helper is
+    // unreachable inside the .app even when bundled, so on-device Apple
+    // Intelligence narration is unavailable. Set only when the binary is present
+    // (absent on non-arm64 / non-macOS-26 builds), so it's a no-op elsewhere.
+    let apple_fm = resource_dir.join("server").join("apple-fm-helper");
+    if apple_fm.exists() {
+        sidecar = sidecar.env("HOTSHEET_APPLE_FM_BIN", apple_fm.to_string_lossy().to_string());
+    }
 
     let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
     let (mut rx, child) = sidecar

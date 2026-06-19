@@ -106,6 +106,36 @@ function verifyTree(root, sidecarRel, serverRel, label) {
   }
 }
 
+// HS-8876 — the Apple Foundation Models helper (`apple-fm-helper`) is built ONLY
+// for arm64 macOS on a macOS 26 / Xcode 26 runner (FoundationModels SDK). It's a
+// hard requirement ONLY when `EXPECT_APPLE_FM_HELPER=1` is set — the workflow
+// sets it on the macOS-26 arm64 job. On a `macos-latest` (macOS 15 / no Xcode 26)
+// build the helper can't compile and is legitimately absent, so without the flag
+// we only log presence/absence rather than failing — otherwise this gate would
+// red the pipeline until the runner is moved. A non-empty Swift binary is tens of
+// KB; the 1 KB floor sits far below that and above any stub.
+function verifyAppleFmHelper(root, serverRel, label) {
+  if (triple !== 'aarch64-apple-darwin') return;
+  const helper = join(root, serverRel, 'apple-fm-helper');
+  const expected = process.env.EXPECT_APPLE_FM_HELPER === '1';
+  if (!existsSync(helper)) {
+    if (expected) {
+      fail(`${label}: apple-fm-helper missing at ${helper} — the macOS 26 SDK build step didn't produce it (is this runner on Xcode 26?)`);
+    } else {
+      console.log(`  • ${label}: apple-fm-helper not bundled — ok on a non-macOS-26 runner (set EXPECT_APPLE_FM_HELPER=1 to require it)`);
+    }
+    return;
+  }
+  const bytes = statSync(helper).size;
+  if (bytes < 1000) {
+    fail(`${label}: apple-fm-helper ${helper} is suspiciously small (${bytes} bytes) — a failed/stub compile?`);
+  } else if (!isExecutable(helper)) {
+    fail(`${label}: apple-fm-helper ${helper} is not executable`);
+  } else {
+    ok(`apple-fm-helper (${bytes} bytes, executable)`);
+  }
+}
+
 // --- Universal: the staged inputs tauri just bundled (all platforms) ---
 const srcTauri = join(repoRoot, 'src-tauri');
 verifyTree(
@@ -114,6 +144,7 @@ verifyTree(
   'server',
   'staged bundle inputs (src-tauri/)',
 );
+verifyAppleFmHelper(srcTauri, 'server', 'staged bundle inputs (src-tauri/)');
 
 // --- macOS deep: the produced .app, the exact layout the runtime spawns from ---
 if (isMac) {
@@ -128,6 +159,7 @@ if (isMac) {
       for (const app of apps) {
         const appRoot = join(macosBundleDir, app, 'Contents');
         verifyTree(appRoot, join('MacOS', 'hotsheet-node'), join('Resources', 'server'), `produced ${app}`);
+        verifyAppleFmHelper(appRoot, join('Resources', 'server'), `produced ${app}`);
       }
     }
   }
