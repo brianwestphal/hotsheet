@@ -93,10 +93,27 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     const localModelSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-local-model');
     const appleModel = ANNOUNCER_MODELS.find(m => m.id === APPLE_FOUNDATION_MODEL_ID);
     const localModel = ANNOUNCER_MODELS.find(m => m.id === LOCAL_MODEL_ID);
+    // HS-8891 — the optional fallback model, shown only when the primary is Apple.
+    const fallbackField = byIdOrNull('settings-announcer-fallback-field');
+    const fallbackSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-fallback');
     const applyFieldVisibility = (): void => {
       const provider = providerForModel(modelSelect.value);
       if (keyField !== null) keyField.style.display = provider === 'anthropic' ? '' : 'none';
       if (localField !== null) localField.style.display = provider === 'local' ? '' : 'none';
+      // The fallback only makes sense for an Apple primary (HS-8891 scope).
+      if (fallbackField !== null) fallbackField.style.display = provider === 'apple' ? '' : 'none';
+    };
+    // HS-8891 — fill the fallback dropdown with the NON-apple options: every
+    // Anthropic model the key offers, plus the local option when this machine has
+    // a reachable endpoint. A "None" sentinel ("" value) disables the fallback.
+    const populateFallbackSelect = (status: { localAvailable: boolean; anthropicModels: { id: string; label: string }[] }, value: string): void => {
+      if (fallbackSelect === null) return;
+      const specs: { value: string; label: string }[] = [{ value: '', label: 'None — don’t fall back (no narration if Apple fails)' }];
+      for (const m of status.anthropicModels) specs.push({ value: m.id, label: m.label });
+      if (status.localAvailable && localModel !== undefined) specs.push({ value: localModel.id, label: localModel.label });
+      if (value !== '' && !specs.some(s => s.value === value)) specs.push({ value, label: value });
+      fallbackSelect.replaceChildren(...specs.map(s => toElement(<option value={s.value}>{s.label}</option>)));
+      fallbackSelect.value = value;
     };
     // HS-8853 — rebuild the model <select> from the on-device options (shown only
     // when usable) plus the Anthropic models the key actually offers (discovered
@@ -145,6 +162,7 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
         populateModelSelect(status, value);
         if (localEndpoint !== null) localEndpoint.value = cfg.announcerLocalEndpoint ?? '';
         populateLocalModels(status.localModels, cfg.announcerLocalModel);
+        populateFallbackSelect(status, cfg.announcerFallbackModel ?? ''); // HS-8891
         applyFieldVisibility();
       }).catch(() => { applyFieldVisibility(); });
     };
@@ -172,6 +190,14 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
       localModelSelect.addEventListener('change', () => {
         void updateGlobalConfig({ announcerLocalModel: localModelSelect.value }).catch(() => {
           showToast('Could not save the local model choice.', { variant: 'warning' });
+        });
+      });
+    }
+    // HS-8891 — persist the fallback choice ("" = none disables it).
+    if (fallbackSelect !== null) {
+      fallbackSelect.addEventListener('change', () => {
+        void updateGlobalConfig({ announcerFallbackModel: fallbackSelect.value }).catch(() => {
+          showToast('Could not save the fallback model choice.', { variant: 'warning' });
         });
       });
     }

@@ -634,3 +634,62 @@ test('local-provider settings: "Local model" option hidden when unavailable (HS-
   // The local field stays hidden.
   await expect(page.locator('#settings-announcer-local-field')).toBeHidden();
 });
+
+test('Apple-primary fallback model selector (HS-8891)', async ({ page }) => {
+  await stubAnnouncerTts(page);
+  await hermeticGlobalConfig(page);
+
+  // Apple available + an Anthropic key configured (so the fallback dropdown can
+  // offer cloud models); nothing configured → primary resolves to Apple.
+  const ANTHROPIC_MODELS = [
+    { id: 'claude-haiku-4-5', label: 'Haiku 4.5 — fastest & cheapest' },
+    { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — balanced' },
+  ];
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      activeSecret: 'proj-a',
+      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: true, entryCount: 0 }],
+      appleAvailable: true, localAvailable: false,
+    }),
+  }));
+  await page.route('**/api/announcer/status**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      enabled: true, hasKey: true, selectedKeyId: null, entryCount: 0, lastListenedAt: null,
+      appleAvailable: true, localAvailable: false, localModels: [], anthropicModels: ANTHROPIC_MODELS,
+    }),
+  }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [] }),
+  }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+  await page.locator('#settings-btn').click();
+  await page.locator('.settings-tab[data-tab="announcer"]').click();
+  await expect(page.locator('#settings-announcer-panel')).toBeVisible();
+
+  // Nothing configured + Apple available → the primary resolves to Apple.
+  const modelSelect = page.locator('#settings-announcer-model');
+  await expect(modelSelect).toHaveValue('apple-foundation');
+
+  // (1) The fallback field is shown for an Apple primary, with "None" + the
+  // Anthropic models as options (no Apple option in the fallback list).
+  const fallbackField = page.locator('#settings-announcer-fallback-field');
+  await expect(fallbackField).toBeVisible();
+  const fallbackSelect = page.locator('#settings-announcer-fallback');
+  await expect(fallbackSelect.locator('option[value=""]')).toHaveCount(1); // None
+  await expect(fallbackSelect.locator('option[value="claude-sonnet-4-6"]')).toHaveCount(1);
+  await expect(fallbackSelect.locator('option[value="apple-foundation"]')).toHaveCount(0);
+  await expect(fallbackSelect).toHaveValue(''); // defaults to None
+
+  // (2) Choosing a fallback sticks.
+  await fallbackSelect.selectOption('claude-sonnet-4-6');
+  await expect(fallbackSelect).toHaveValue('claude-sonnet-4-6');
+
+  // (3) Switching the primary to a non-Apple model hides the fallback field.
+  await modelSelect.selectOption('claude-haiku-4-5');
+  await expect(fallbackField).toBeHidden();
+});

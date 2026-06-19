@@ -848,6 +848,26 @@ alarming overlay on dialog open:
   Error" overlay on any `status >= 500`; returning 200 keeps the existing reel
   playing and lets the client show a gentle toast from the soft `error`.
 
+**Opt-in fallback for an explicit Apple primary (HS-8891).** The HS-8805 auto-
+fallback deliberately does NOT fire for an *explicit* Apple choice (so a
+privacy/cost preference isn't silently overridden). HS-8891 lets the user opt in:
+when the primary is **Apple Intelligence**, the settings UI shows an optional
+**"Fallback model if Apple Intelligence fails"** dropdown (global
+`announcerFallbackModel`) listing the **non-apple** options — the Anthropic models
+the key offers, plus the local option when a local endpoint is reachable; default
+**"None"** = the pre-HS-8891 behavior (Apple failure → no narration). The pure
+policy `decideAnnouncerFallback(provider, autoSelected, configuredFallbackModel)`
+(in `generate.ts`) decides: auto-on-device → Anthropic default (HS-8805);
+**explicit Apple + a configured fallback → that model** (an Anthropic id needs the
+key, a `local` id uses the configured endpoint, free); everything else → none.
+`summarizeWork`'s `fallbackModel` opt then routes the failure to the chosen
+provider. Scope (per the HS-8886-style decisions on the ticket): the selector is
+shown **only for an Apple primary**, the fallback may be **Anthropic OR local**,
+and it applies to **both Live and manual** generation (it's the shared
+`generateAnnouncementsOnce` path). When set to an Anthropic model it spends on the
+user's key whenever Apple FM fails — surfaced by a hint on the field + the
+retention copy.
+
 **Promotes §78.5 (content tier 1 — text transcript) and §78.6 (settings UI +
 TTS providers: Tauri `say` desktop primary, browser `speechSynthesis`) from
 design to shipped.** The **draggable PIP** + remembered position (HS-8756) and

@@ -254,6 +254,16 @@ export const GlobalConfigSchema = z.object({
   // `Model` is the concrete local model name (e.g. `llama3.1`). Both global.
   announcerLocalEndpoint: z.string().optional(),
   announcerLocalModel: z.string().optional(),
+  // HS-8891 — optional fallback model used ONLY when the primary is Apple
+  // Foundation Models and it fails at inference (the HS-8883 "code 4" class). A
+  // non-apple id: a `claude-*` model (cloud backup, spends on the user's key) or
+  // the local pseudo-id. Empty string / unset = no fallback (Apple failure → no
+  // narration, the pre-HS-8891 behavior). The auto-selected-on-device fallback
+  // (HS-8805) is separate and unaffected.
+  announcerFallbackModel: z.string()
+    .refine(v => v === '' || v === LOCAL_MODEL_ID || v.startsWith('claude-'),
+      { message: 'must be empty, the local provider id, or a claude-* model id' })
+    .optional(),
   // HS-8781 — verbally announce permission checks (TTS only, no API cost).
   // Global; default ON, so `undefined`/unset is treated as enabled by the
   // client (`announcerSpeakPermissions !== false`).

@@ -24,7 +24,7 @@ vi.mock('./localProvider.js', () => ({
 }));
 
 // Imported AFTER the mocks are declared so it picks them up.
-const { resolveAnnouncerModel } = await import('./generate.js');
+const { resolveAnnouncerModel, decideAnnouncerFallback } = await import('./generate.js');
 
 const AVAILABLE = [
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
@@ -122,5 +122,35 @@ describe('resolveAnnouncerModel on-device unavailable fallback (HS-8872)', () =>
     mockState.local = false;
     mockState.key = null;
     expect(await resolveAnnouncerModel()).toBe('apple-foundation');
+  });
+});
+
+// HS-8891 — the pure fallback policy: auto-on-device → Anthropic default;
+// explicit Apple + configured fallback → that model (key only for Anthropic);
+// explicit on-device with no configured fallback → none (respect the choice).
+describe('decideAnnouncerFallback (HS-8805 / HS-8891)', () => {
+  it('auto-selected on-device falls back to the Anthropic default (key needed)', () => {
+    expect(decideAnnouncerFallback('apple', true, undefined)).toEqual({ fallbackModel: undefined, needsAnthropicKey: true });
+    expect(decideAnnouncerFallback('local', true, undefined)).toEqual({ fallbackModel: undefined, needsAnthropicKey: true });
+  });
+
+  it('explicit Apple + configured Anthropic fallback uses that model and needs the key', () => {
+    expect(decideAnnouncerFallback('apple', false, 'claude-sonnet-4-6')).toEqual({ fallbackModel: 'claude-sonnet-4-6', needsAnthropicKey: true });
+  });
+
+  it('explicit Apple + configured LOCAL fallback uses it without a key', () => {
+    expect(decideAnnouncerFallback('apple', false, 'local')).toEqual({ fallbackModel: 'local', needsAnthropicKey: false });
+  });
+
+  it('explicit Apple with no configured fallback → none (respect the privacy/cost choice)', () => {
+    expect(decideAnnouncerFallback('apple', false, undefined)).toEqual({ fallbackModel: undefined, needsAnthropicKey: false });
+    expect(decideAnnouncerFallback('apple', false, '')).toEqual({ fallbackModel: undefined, needsAnthropicKey: false });
+  });
+
+  it('a configured fallback is ignored for a non-Apple primary (scope = Apple only)', () => {
+    // An explicit local primary doesn't get the configured fallback (HS-8891 #2b).
+    expect(decideAnnouncerFallback('local', false, 'claude-sonnet-4-6')).toEqual({ fallbackModel: undefined, needsAnthropicKey: false });
+    // An Anthropic primary never falls back.
+    expect(decideAnnouncerFallback('anthropic', false, 'claude-sonnet-4-6')).toEqual({ fallbackModel: undefined, needsAnthropicKey: false });
   });
 });

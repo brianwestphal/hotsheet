@@ -82,6 +82,42 @@ export async function resolveAnnouncerModel(): Promise<string> {
   return (await firstReadyAnnouncerModel()) ?? chosen;
 }
 
+/**
+ * HS-8805 / HS-8891 — pure fallback policy for `generateAnnouncementsOnce`. Given
+ * the RESOLVED model's provider, whether the model was auto-selected, and the
+ * user's configured `announcerFallbackModel`, decide the on-device-failure
+ * fallback:
+ *  - **auto path (HS-8805):** an auto-selected on-device model falls back to
+ *    Anthropic at the default model — `fallbackModel` undefined, key needed.
+ *  - **configured path (HS-8891):** an EXPLICIT Apple primary with a non-empty
+ *    configured fallback uses that model — key needed only for an Anthropic
+ *    fallback (a `local` fallback needs no key).
+ *  - **none:** an explicit on-device choice with no configured fallback (the
+ *    pre-HS-8891 "respect the privacy/cost choice" behavior) — Apple failure
+ *    surfaces as an error, no cloud call.
+ * Exported for unit testing.
+ */
+export interface AnnouncerFallbackDecision { fallbackModel: string | undefined; needsAnthropicKey: boolean }
+export function decideAnnouncerFallback(
+  provider: AnnouncerProvider,
+  autoSelected: boolean,
+  configuredFallbackModel: string | undefined,
+): AnnouncerFallbackDecision {
+  const onDevice = provider === 'apple' || provider === 'local';
+  if (autoSelected && onDevice) {
+    // Legacy auto fallback → Anthropic at the default model (summarize.ts).
+    return { fallbackModel: undefined, needsAnthropicKey: true };
+  }
+  // Configured fallback is scoped to an explicit Apple primary (HS-8891 decision).
+  if (provider === 'apple' && configuredFallbackModel !== undefined && configuredFallbackModel !== '') {
+    return {
+      fallbackModel: configuredFallbackModel,
+      needsAnthropicKey: providerForModel(configuredFallbackModel) === 'anthropic',
+    };
+  }
+  return { fallbackModel: undefined, needsAnthropicKey: false };
+}
+
 /** Whether an on-device provider can actually summarize right now. `apple` needs
  *  the on-device helper; `local` needs a reachable endpoint AND a configured model
  *  (a reachable endpoint with no `announcerLocalModel` set still throws at the
@@ -198,15 +234,12 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
   // HS-8792 — the local provider reads its endpoint + model from the global
   // config (ignored by the Anthropic/Apple paths).
   const cfg = readGlobalConfig();
-  // HS-8805 — if the model was AUTO-selected (no explicit `announcerModel`) and
-  // resolved to an on-device provider, hand `summarizeWork` an Anthropic key to
-  // fall back to when the on-device helper fails inference (e.g. Apple FM exits
-  // code 4 despite `--probe` reporting available). An EXPLICIT on-device choice
-  // is respected (no fallback key resolved), so a privacy/cost preference is
-  // never silently overridden by a paid cloud call.
-  const autoSelected = cfg.announcerModel === undefined;
-  const onDevice = providerForModel(args.model) === 'apple' || providerForModel(args.model) === 'local';
-  const anthropicFallbackKey = autoSelected && onDevice ? await resolveAnnouncerKey() : null;
+  // HS-8805 / HS-8891 — decide whether (and how) to fall back when the on-device
+  // model fails inference. `decideAnnouncerFallback` is the pure policy; we then
+  // resolve the Anthropic key only if it's actually needed.
+  const decision = decideAnnouncerFallback(providerForModel(args.model), cfg.announcerModel === undefined, cfg.announcerFallbackModel);
+  const anthropicFallbackKey = decision.needsAnthropicKey ? await resolveAnnouncerKey() : null;
+  const fallbackModel = decision.fallbackModel;
   const result = await summarizeWork(signals.material, {
     apiKey: args.apiKey,
     model: args.model,
@@ -215,6 +248,7 @@ export async function generateAnnouncementsOnce(args: GenerateOnceArgs): Promise
     localEndpoint: cfg.announcerLocalEndpoint,
     localModel: cfg.announcerLocalModel,
     anthropicFallbackKey,
+    fallbackModel,
     // HS-8800 — drop model-rated-`low` entries only on the live mid-task path
     // (its material carries "[in progress]" telemetry churn). The after-the-fact
     // "Listen" digest (includeTelemetry false) keeps them, so a minor completion

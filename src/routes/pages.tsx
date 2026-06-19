@@ -768,7 +768,7 @@ pageRoutes.get('/', (c) => {
               <div className="settings-field">
                 <label>Keep raw rows for (days)</label>
                 <input type="number" id="settings-telemetry-retention-days" min="0" value="30" style="width: 120px" />
-                <span className="settings-hint">Older rows are deleted automatically on every Hot Sheet startup. Use <code>0</code> to keep forever.</span>
+                <span className="settings-hint">Older metric and event rows are deleted automatically (on startup and once a day). Use <code>0</code> to keep forever. <strong>Traces age out faster</strong> — kept about 7 days by default — so your trace history is intentionally shorter than your cost/usage history (not data loss).</span>
               </div>
               {/* HS-8606 / §74 — manually clear all of this project's telemetry. */}
               <div className="settings-field">
@@ -801,6 +801,16 @@ pageRoutes.get('/', (c) => {
                     {ANNOUNCER_MODELS.map(m => <option value={m.id}>{m.label}</option>)}
                   </select>
                   <span className="settings-hint" id="settings-announcer-model-hint">Which model writes the narration. On-device (Apple) is free + private; Anthropic models call the cloud with your key.</span>
+                </div>
+                {/* HS-8891 — optional fallback model, shown ONLY when the primary
+                    is Apple Intelligence: Apple FM can fail at inference (the
+                    HS-8883 "code 4" class), and this is the model used instead. */}
+                <div className="settings-field" style="margin-top:12px;display:none" id="settings-announcer-fallback-field">
+                  <label>Fallback model if Apple Intelligence fails <span className="global-setting-badge">Global Setting</span></label>
+                  <select id="settings-announcer-fallback" style="max-width:340px">
+                    <option value="">None — don’t fall back (no narration if Apple fails)</option>
+                  </select>
+                  <span className="settings-hint">Used only when the on-device Apple model fails to generate. An Anthropic model calls the cloud with your key (so it spends when Apple fails); a local model stays on-device. Defaults to none.</span>
                 </div>
                 <div className="settings-field settings-field-checkbox" style="margin-top:12px">
                   <label><input type="checkbox" id="settings-announcer-enabled" /> Enable the Announcer for this project</label>

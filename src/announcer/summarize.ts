@@ -224,6 +224,16 @@ export async function summarizeWork(
      */
     anthropicFallbackKey?: string | null;
     /**
+     * HS-8891 — an EXPLICIT fallback model to use when the (Apple) on-device
+     * provider fails, configured by the user (`announcerFallbackModel`). A
+     * `claude-*` id falls back via the Messages API (needs `anthropicFallbackKey`)
+     * or `local` falls back via the OpenAI-compatible endpoint
+     * (`localEndpoint`/`localModel`). When unset, the legacy HS-8805 auto path is
+     * used instead (Anthropic at the default model, only if `anthropicFallbackKey`
+     * is present).
+     */
+    fallbackModel?: string;
+    /**
      * HS-8800 — drop entries the model rated `importance: 'low'`. The live
      * mid-task path sets this (its material carries "[in progress]" telemetry
      * churn the model marks `low`); the after-the-fact "Listen" digest leaves it
@@ -300,20 +310,45 @@ async function summarizeViaAnthropic(apiKey: string, model: string, system: stri
   return { entries: sanitizeEntries(parseEntriesJson(text), excludeLowImportance), usage, modelUsed: model };
 }
 
-/** HS-8805 — an on-device provider failed at inference time. Fall back to
- *  Anthropic (the cheapest default model) when a fallback key was provided;
- *  otherwise re-throw the original error so the caller surfaces it. */
+/**
+ * An on-device provider failed at inference time. Two fallback shapes:
+ *  - **HS-8891 explicit fallback** — when the user configured `fallbackModel`
+ *    (only for an Apple primary). A `local` id re-summarizes via the
+ *    OpenAI-compatible endpoint (free); a `claude-*` id via the Messages API
+ *    (needs `anthropicFallbackKey`).
+ *  - **HS-8805 auto fallback** — no `fallbackModel`, but an `anthropicFallbackKey`
+ *    was provided (the auto-selected-on-device path): Anthropic at the default model.
+ * With neither available, re-throw the original error so the caller surfaces it.
+ */
 async function onDeviceFallbackOrThrow(
   err: unknown,
   providerLabel: string,
   material: string,
   system: string,
-  opts: { anthropicFallbackKey?: string | null },
+  opts: { anthropicFallbackKey?: string | null; fallbackModel?: string; localEndpoint?: string; localModel?: string },
   excludeLowImportance: boolean,
 ): Promise<SummarizeResult> {
+  const reason = err instanceof Error ? err.message : String(err);
+  const fb = opts.fallbackModel;
+
+  // HS-8891 — explicit, user-configured fallback model.
+  if (fb !== undefined && fb !== '') {
+    if (providerForModel(fb) === 'local') {
+      console.warn(`[announcer] ${providerLabel} summarization failed (${reason}); falling back to the configured local model.`);
+      const endpoint = opts.localEndpoint !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT;
+      const out = await runLocalSummarize(system + LOCAL_JSON_INSTRUCTION, material, { endpoint, model: opts.localModel ?? '' });
+      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLowImportance), usage: null };
+    }
+    // Anthropic fallback id — needs the key; without it, surface the original error.
+    const key = opts.anthropicFallbackKey;
+    if (key === undefined || key === null || key === '') throw err;
+    console.warn(`[announcer] ${providerLabel} summarization failed (${reason}); falling back to Anthropic (${fb}).`);
+    return summarizeViaAnthropic(key, fb, system, material, excludeLowImportance);
+  }
+
+  // HS-8805 — auto fallback: Anthropic at the default model when a key is present.
   const key = opts.anthropicFallbackKey;
   if (key === undefined || key === null || key === '') throw err;
-  const reason = err instanceof Error ? err.message : String(err);
   console.warn(`[announcer] ${providerLabel} summarization failed (${reason}); falling back to Anthropic (${DEFAULT_ANNOUNCER_MODEL}).`);
   return summarizeViaAnthropic(key, DEFAULT_ANNOUNCER_MODEL, system, material, excludeLowImportance);
 }

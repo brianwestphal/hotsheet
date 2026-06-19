@@ -298,4 +298,56 @@ describe('summarizeWork (HS-8745)', () => {
       expect(res.entries).toEqual([{ title: 'Recovered', script: 'Via fallback.' }]);
     });
   });
+
+  // HS-8891 — explicit, user-configured fallback for an Apple primary (the opt-in
+  // beyond the HS-8805 auto path). The `fallbackModel` chooses the provider used
+  // when Apple FM fails: a specific Anthropic model, or the local endpoint.
+  describe('explicit configured fallback (HS-8891)', () => {
+    it('falls back to the configured Anthropic model (not the default) on Apple failure', async () => {
+      appleRunMock.mockRejectedValue(new Error('Apple Foundation Models helper exited with code 4'));
+      createMock.mockResolvedValue(textResponse({ entries: [{ title: 'Recovered', script: 'Via Sonnet.' }] }));
+
+      const res = await summarizeWork('real material', {
+        model: 'apple-foundation',
+        fallbackModel: 'claude-sonnet-4-6',
+        anthropicFallbackKey: 'sk-fallback',
+      });
+
+      expect(ctorMock).toHaveBeenCalledWith({ apiKey: 'sk-fallback' });
+      // The CONFIGURED model runs (not the cheapest default), so cost attributes correctly.
+      expect(createMock.mock.calls[0][0].model).toBe('claude-sonnet-4-6');
+      expect(res.modelUsed).toBe('claude-sonnet-4-6');
+      expect(res.entries).toEqual([{ title: 'Recovered', script: 'Via Sonnet.' }]);
+    });
+
+    it('falls back to the configured LOCAL model on Apple failure (no cloud call, no usage)', async () => {
+      appleRunMock.mockRejectedValue(new Error('Apple Foundation Models helper exited with code 4'));
+      localRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'Recovered', script: 'Via local.' }] }));
+
+      const res = await summarizeWork('real material', {
+        model: 'apple-foundation',
+        fallbackModel: 'local',
+        localEndpoint: 'http://localhost:1234/v1',
+        localModel: 'llama3.1',
+      });
+
+      expect(createMock).not.toHaveBeenCalled();   // no cloud call
+      expect(ctorMock).not.toHaveBeenCalled();
+      const [system, , opts] = localRunMock.mock.calls[0];
+      expect(opts).toEqual({ endpoint: 'http://localhost:1234/v1', model: 'llama3.1' });
+      expect(system).toContain('OUTPUT FORMAT'); // the local JSON contract is appended
+      expect(res.entries).toEqual([{ title: 'Recovered', script: 'Via local.' }]);
+      expect(res.usage).toBeNull();               // local = free
+    });
+
+    it('re-throws when the configured fallback is Anthropic but no key is available', async () => {
+      appleRunMock.mockRejectedValue(new Error('Apple Foundation Models helper exited with code 4'));
+      await expect(summarizeWork('real material', {
+        model: 'apple-foundation',
+        fallbackModel: 'claude-sonnet-4-6',
+        anthropicFallbackKey: null,
+      })).rejects.toThrow(/code 4/);
+      expect(createMock).not.toHaveBeenCalled();
+    });
+  });
 });
