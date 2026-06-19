@@ -247,6 +247,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 82. `82-announcer-mid-task-narration.md` — Announcer live mid-task narration off the §67 telemetry stream + AI importance rating/exclusion (15s debounce)
 83. `83-command-button-long-press.md` — long-press a command button for a secondary action (shell → run in new terminal, shipped; Claude → make a ticket, designed)
 84. `84-command-last-run.md` — hover a custom command button to see its last-run time (per-device, localStorage)
+85. `85-telemetry-retention-bounding.md` — periodic 24h telemetry sweep + per-table windows (spans 7d) + ~500k span row cap (design; implementation in follow-ups)
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source), `docs/demo-plan.md` (story-driven demo script for showing Hot Sheet + Glassbox to potential users).
 

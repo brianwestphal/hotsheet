@@ -1,10 +1,12 @@
 /**
- * HS-8874 — per-project telemetry migration tests. Seed a "launch-default" DB
- * with rows for projects A and B (+ a NULL-secret row), run the migration, then
- * assert:
+ * HS-8874 / HS-8885 — per-project telemetry migration tests. Seed a "launch-
+ * default" DB with rows for projects A and B (+ a NULL-secret row), run the
+ * migration, then assert:
  *   - A's rows now exist in A's DB, B's in B's DB, NULL-secret rows in central;
- *   - source rows are untouched (non-destructive);
- *   - a SECOND run adds nothing (idempotent).
+ *   - HS-8885 — the moved foreign rows are DELETED from the source (move, not
+ *     copy); the source keeps only its own-secret rows;
+ *   - a SECOND run adds nothing (idempotent), and a row left in both places by a
+ *     simulated insert-then-crash is reconciled (re-deleted), never duplicated.
  */
 import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -121,7 +123,7 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     rmSync(dirB, { recursive: true, force: true });
   });
 
-  it('copies foreign rows to their owning project DB + NULL-secret rows to central, leaving sources intact', async () => {
+  it('moves foreign rows to their owning project DB + NULL-secret rows to central, deleting them from the source (HS-8885)', async () => {
     // dirA is the launch-default dumping ground: it holds its own row, B's row,
     // and a NULL-secret row.
     await insertCost(dirA, SECRET_A, 0.5);
@@ -132,6 +134,8 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     expect(result.scannedDbs).toBe(2);
     // B's row + the NULL row are the two foreign rows moved out of A.
     expect(result.moved).toBe(2);
+    // HS-8885 — and both are now gone from the source.
+    expect(result.deletedFromSource).toBe(2);
 
     // B's row now lives in B's DB.
     expect(await countCost(dirB, SECRET_B)).toBe(1);
@@ -144,13 +148,14 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     });
     expect(centralMarker).toBe(1);
 
-    // Non-destructive: A's DB still has all three of its original rows.
-    const totalInA = await runWithTelemetryDb(dirA, async () => {
+    // HS-8885 — move, not copy: A's DB now holds ONLY its own SECRET_A row; the
+    // migrated foreign rows (B's + the NULL one) are deleted from the source.
+    const remainingInA = await runWithTelemetryDb(dirA, async () => {
       const db = await getDbForDir(dirA);
-      const res = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics`);
-      return Number(res.rows[0]?.c ?? 0);
+      const res = await db.query<{ project_secret: string | null }>(`SELECT project_secret FROM otel_metrics`);
+      return res.rows.map(r => r.project_secret);
     });
-    expect(totalInA).toBe(3);
+    expect(remainingInA).toEqual([SECRET_A]);
   });
 
   it('is idempotent — a second run (after resetting the flag) adds nothing', async () => {
@@ -173,7 +178,7 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     migratedFlag = true;
     await insertCost(dirA, SECRET_B, 1.0);
     const result = await migratePerProjectTelemetry();
-    expect(result).toEqual({ moved: 0, perTable: {}, scannedDbs: 0 });
+    expect(result).toEqual({ moved: 0, deletedFromSource: 0, perTable: {}, scannedDbs: 0 });
     // Nothing moved into B.
     expect(await countCost(dirB, SECRET_B)).toBe(0);
   });
@@ -183,9 +188,9 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     await insertWorkInterval(dirA, SECRET_B, 'HS-1');
     const result = await migratePerProjectTelemetry();
     expect(result.perTable.ticket_work_intervals).toBe(1);
-    // It now lives in B's DB; A's copy is left intact (non-destructive).
+    // It now lives in B's DB and is deleted from A's (HS-8885 — move, not copy).
     expect(await countWorkIntervals(dirB, SECRET_B)).toBe(1);
-    expect(await countWorkIntervals(dirA, SECRET_B)).toBe(1);
+    expect(await countWorkIntervals(dirA, SECRET_B)).toBe(0);
   });
 
   it('migrates a volume that spans multiple keyset pages (batching)', async () => {
@@ -215,6 +220,29 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     const result = await migratePerProjectTelemetry();
     expect(result.moved).toBe(1);
     expect(await countCost(dirB, SECRET_B)).toBe(1);
+    // HS-8885 — BOTH source duplicates are removed even though only one canonical
+    // copy was inserted downstream.
+    expect(result.deletedFromSource).toBe(2);
+    expect(await countCost(dirA, SECRET_B)).toBe(0);
+  });
+
+  // HS-8885 — crash-safety: a row that a prior interrupted run had already
+  // inserted into the destination but crashed BEFORE deleting from the source is
+  // present in both DBs at the start. Re-running must NOT duplicate it downstream
+  // (the NOT EXISTS dedupe) and MUST reconcile the source (re-delete), so no data
+  // is lost and nothing double-counts.
+  it('reconciles a row left in both source and destination by a simulated insert-then-crash', async () => {
+    await insertCost(dirA, SECRET_B, 7.0); // the "stranded" source copy
+    await insertCost(dirB, SECRET_B, 7.0); // already copied to its destination
+    expect(await countCost(dirB, SECRET_B)).toBe(1);
+
+    const result = await migratePerProjectTelemetry();
+    // Nothing new inserted (already present downstream), but the source copy is
+    // recognized as present-in-destination and removed.
+    expect(result.moved).toBe(0);
+    expect(result.deletedFromSource).toBe(1);
+    expect(await countCost(dirB, SECRET_B)).toBe(1); // still exactly one — no dup
+    expect(await countCost(dirA, SECRET_B)).toBe(0); // source reconciled
   });
 
   it('skips source DBs already recorded as drained (resumability)', async () => {

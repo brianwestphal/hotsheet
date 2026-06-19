@@ -274,6 +274,11 @@ export const GlobalConfigSchema = z.object({
   // `telemetry_retention_days`; central isn't a project, so its sweep window
   // lives here. Unset → the §67.6 default (30 days). `0` keeps central forever.
   centralTelemetryRetentionDays: z.number().int().min(0).optional(),
+  // HS-8884 — last time a `VACUUM FULL` reclaim ran per telemetry DB dir
+  // (`<dataDir>/db` or the central store), keyed by that dir's absolute path →
+  // ISO timestamp. Throttles the heavy, exclusive-lock full reclaim to at most
+  // once per `FULL_VACUUM_THROTTLE_DAYS`; routine plain VACUUMs aren't tracked.
+  telemetryVacuumFullAt: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that

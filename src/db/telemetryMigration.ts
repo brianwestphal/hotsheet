@@ -13,12 +13,20 @@
  * finds rows whose `project_secret` does NOT belong to that DB's own project
  * (they only landed there because it was once the launch default) and COPIES
  * them into the DB of the project that owns them (or central, for NULL-secret
- * rows). It is:
- *   - **non-destructive** — source rows are never deleted (the cross-project
- *     dashboard reads each DB filtered by its own secret, so un-deleted foreign
- *     rows can't double-count);
- *   - **idempotent** — each destination insert is gated by a natural-key
- *     `NOT EXISTS` check, so re-running adds nothing.
+ * rows), then DELETES them from the source. It is:
+ *   - **move, not copy (HS-8885)** — once a batch is durably inserted into its
+ *     destination, those exact source rows are deleted. Before HS-8885 the copy
+ *     was left in place, so the legacy launch-default DB kept a full duplicate of
+ *     everything migrated elsewhere forever (the §67.6 retention sweep only reaps
+ *     rows matching the DB's OWN secret, never the foreign copies) — a standing
+ *     contributor to the multi-hundred-MB telemetry bloat HS-8882 found. The
+ *     freed pages are reclaimed separately by the telemetry VACUUM pass (HS-8884).
+ *   - **idempotent + crash-safe** — each destination insert is gated by a
+ *     natural-key `NOT EXISTS` check, and the source delete runs only AFTER that
+ *     insert resolves (durably confirmed). A crash between the two leaves the row
+ *     in BOTH places; the next run re-inserts it as a no-op (the dedupe guard) and
+ *     re-deletes the source copy. So re-running never double-counts and never
+ *     loses data — the property the old non-destructive design guaranteed, kept.
  *
  * Runs once at startup (guarded by the `telemetryMigratedV1` flag in
  * `~/.hotsheet/config.json`), sequentially, best-effort: a single unreadable DB
@@ -37,6 +45,11 @@ type TelemetryTable = (typeof TELEMETRY_TABLES)[number];
 
 export interface MigrationResult {
   moved: number;
+  /** HS-8885 — foreign rows deleted from their source DB after a confirmed
+   *  destination insert. Tracks the dedupe-collapsed reality: a source page can
+   *  hold more rows than were inserted (intra-page duplicates), and all of them
+   *  are removed from the source once the canonical copy is durable downstream. */
+  deletedFromSource: number;
   perTable: Record<string, number>;
   scannedDbs: number;
 }
@@ -80,7 +93,7 @@ function yieldToEventLoop(): Promise<void> {
  * interrupted.
  */
 export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
-  const empty: MigrationResult = { moved: 0, perTable: {}, scannedDbs: 0 };
+  const empty: MigrationResult = { moved: 0, deletedFromSource: 0, perTable: {}, scannedDbs: 0 };
   if (readGlobalConfig().telemetryMigratedV1 === true) return empty;
 
   const projectDirs = readProjectList();
@@ -96,6 +109,7 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
 
   const perTable: Record<string, number> = {};
   let moved = 0;
+  let deletedFromSource = 0;
   let scannedDbs = 0;
 
   for (const sourceDir of projectDirs) {
@@ -106,6 +120,7 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
     try {
       const result = await migrateFromSourceDb(sourceDir, ownSecret, secretToDataDir);
       moved += result.moved;
+      deletedFromSource += result.deletedFromSource;
       for (const [t, n] of Object.entries(result.perTable)) perTable[t] = (perTable[t] ?? 0) + n;
       scannedDbs++;
       // Record progress AFTER this DB is fully drained, so a crash/quit before
@@ -121,8 +136,8 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
   // Done — set the completion flag and drop the now-redundant progress list.
   writeGlobalConfig({ telemetryMigratedV1: true, telemetryMigrationV1DoneDirs: [] });
   const summary = Object.entries(perTable).map(([t, n]) => `${t}=${String(n)}`).join(' ');
-  console.log(`  [telemetry-migration] HS-8874: scanned ${String(scannedDbs)} DB(s), moved ${String(moved)} row(s) to their owning project / central${summary === '' ? '' : ` (${summary})`}.`);
-  return { moved, perTable, scannedDbs };
+  console.log(`  [telemetry-migration] HS-8874: scanned ${String(scannedDbs)} DB(s), moved ${String(moved)} row(s) to their owning project / central (deleted ${String(deletedFromSource)} from source — HS-8885)${summary === '' ? '' : ` (${summary})`}.`);
+  return { moved, deletedFromSource, perTable, scannedDbs };
 }
 
 /**
@@ -137,9 +152,10 @@ async function migrateFromSourceDb(
   sourceDir: string,
   ownSecret: string | null,
   secretToDataDir: Map<string, string>,
-): Promise<{ moved: number; perTable: Record<string, number> }> {
+): Promise<{ moved: number; deletedFromSource: number; perTable: Record<string, number> }> {
   const perTable: Record<string, number> = {};
   let moved = 0;
+  let deletedFromSource = 0;
 
   for (const table of TELEMETRY_TABLES) {
     let lastId = 0;
@@ -178,6 +194,20 @@ async function migrateFromSourceDb(
       for (const [destDir, group] of byDest) {
         const inserted = await runWithTelemetryDb(destDir, () => insertBatchIfAbsent(table, group));
         if (inserted > 0) { moved += inserted; perTable[table] = (perTable[table] ?? 0) + inserted; }
+        // HS-8885 — the insert above has resolved, so every row in `group` is now
+        // durably present in the destination (the `NOT EXISTS` insert leaves each
+        // value row either freshly inserted OR already-present — never missing).
+        // It's therefore safe to remove those exact rows from the source. We
+        // delete by the source SERIAL `id` (captured before any delete), so even
+        // intra-page duplicates collapsed to one destination row are all cleared
+        // from the source. A crash between insert and delete just leaves the row
+        // in both places for the next (idempotent) run to reconcile.
+        const sourceIds = group
+          .map(r => Number(r.id))
+          .filter(id => Number.isInteger(id));
+        if (sourceIds.length > 0) {
+          deletedFromSource += await runWithTelemetryDb(sourceDir, () => deleteRowsByIds(table, sourceIds));
+        }
       }
 
       if (rows.length < BATCH) break;
@@ -185,7 +215,21 @@ async function migrateFromSourceDb(
     }
   }
 
-  return { moved, perTable };
+  return { moved, deletedFromSource, perTable };
+}
+
+/**
+ * HS-8885 — delete rows by their SERIAL `id` from `table` in the CURRENT
+ * telemetry-DB context (the source). Called only after the destination insert
+ * for these exact rows has durably resolved. `ids` is one keyset page's worth
+ * (≤ BATCH), comfortably under the bind-parameter ceiling, so a single
+ * statement suffices. Returns the number of rows actually removed.
+ */
+async function deleteRowsByIds(table: TelemetryTable, ids: number[]): Promise<number> {
+  const db = await getTelemetryDb();
+  const placeholders = ids.map((_, i) => `$${String(i + 1)}`).join(', ');
+  const res = await db.query(`DELETE FROM ${table} WHERE id IN (${placeholders})`, ids);
+  return res.affectedRows ?? 0;
 }
 
 /**

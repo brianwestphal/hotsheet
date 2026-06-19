@@ -243,6 +243,17 @@ telemetryRoutes.delete('/telemetry/project-data', async (c) => {
   const result = project !== undefined
     ? await runWithTelemetryDb(project.dataDir, () => clearProjectTelemetry(projectSecret))
     : await clearProjectTelemetry(projectSecret);
+  // HS-8884 / §74 — DELETE alone doesn't return disk to the OS in PGLite, so the
+  // just-cleared DB stays its old (often bloated) size on disk. Schedule a FULL
+  // reclaim off-loop so the files actually shrink. Best-effort + fire-and-forget:
+  // the request returns the deleted count immediately. Only when the project is
+  // registered (we have its dataDir).
+  if (project !== undefined) {
+    try {
+      const { scheduleTelemetryReclaim } = await import('../db/telemetryVacuum.js');
+      void scheduleTelemetryReclaim(project.dataDir);
+    } catch { /* reclaim is a nicety — never fail the clear */ }
+  }
   return c.json(result);
 });
 

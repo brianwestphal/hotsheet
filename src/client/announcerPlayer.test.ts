@@ -182,6 +182,23 @@ describe('AnnouncerPlayer', () => {
     expect(player.getIndex()).toBe(1);
   });
 
+  // HS-8883 — empty open then background-generated entries: the PIP opens with
+  // no entries (startAt finishes immediately), then appendEntries fills it and
+  // starts playing the first one.
+  it('appendEntries starts playback when opened empty (HS-8883)', () => {
+    const engine = new FakeEngine();
+    const player = new AnnouncerPlayer<Announcement>([], engine);
+    player.startAt(0, true);
+    expect(player.getState()).toBe('done');
+    expect(player.getCount()).toBe(0);
+
+    player.appendEntries([entry(1, 'A', 'a'), entry(2, 'B', 'b')]);
+    expect(player.getState()).toBe('playing');
+    expect(player.getCount()).toBe(2);
+    expect(player.getIndex()).toBe(0);
+    expect(engine.spoken).toEqual(['a']);
+  });
+
   it('appendEntries while playing just extends the queue (no restart)', () => {
     const engine = new FakeEngine();
     const player = new AnnouncerPlayer([entry(1, 'A', 'a')], engine);

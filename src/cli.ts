@@ -251,6 +251,21 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     } catch (e: unknown) {
       console.warn(`[startup] Per-project telemetry migration failed (non-fatal): ${getErrorMessage(e)}`);
     }
+    // HS-8884 — reclaim telemetry-DB disk left bloated by retention deletes
+    // (§67.6) + the migration's source-deletes (HS-8885). PGLite doesn't return
+    // disk on DELETE, so a VACUUM pass is needed. This only SUBMITS jobs to the
+    // §75 scheduler (off the main loop, GC priority, deferred under lag,
+    // size-gated + throttled) — it must never run VACUUM FULL synchronously here,
+    // which would wedge startup. Fire-and-forget: the jobs drain in the
+    // background while the server serves.
+    startupMark('post-startup: scheduling telemetry vacuum');
+    try {
+      const { scheduleTelemetryMaintenance } = await import('./db/telemetryVacuum.js');
+      // Fire-and-forget: the jobs drain in the background; we don't await them.
+      void scheduleTelemetryMaintenance(dataDir);
+    } catch (e: unknown) {
+      console.warn(`[startup] Scheduling telemetry vacuum failed (non-fatal): ${getErrorMessage(e)}`);
+    }
     startupMark('post-startup: migrating global config');
     await migrateGlobalConfig();
     startupMark('post-startup: cleaning up stale channels');

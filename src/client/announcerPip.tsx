@@ -96,11 +96,29 @@ function saveStoredPosition(pos: Point): void {
 /** "All Projects" sentinel for the context dropdown (HS-8762). */
 export const ALL_PROJECTS = 'all';
 
+/** HS-8883 — in-panel placeholders shown when a context has no entries, instead
+ *  of a dead-end toast. The panel still opens, so the user can switch projects
+ *  via the dropdown or wait for background generation to land. */
+const NOTHING_YET_MESSAGE = 'Nothing to announce here yet — do some work and press Listen again, or switch projects above.';
+const PREPARING_MESSAGE = 'Preparing your narration…';
+
 /** A reel entry annotated with its owning project so the PIP can show a chip and
  *  dismiss against the right project's DB (HS-8762). */
 export interface ReelEntry extends Announcement {
   projectSecret: string;
   projectName: string;
+}
+
+/**
+ * HS-8883 — which entries in `fresh` aren't already in `current` (matched on
+ * owning-project + id, since ids aren't unique across projects). Used to merge a
+ * background-generated reel into the open PIP without re-adding what's shown.
+ * Pure + exported for unit testing.
+ */
+export function newReelEntries(current: ReelEntry[], fresh: ReelEntry[]): ReelEntry[] {
+  const key = (e: ReelEntry): string => `${e.projectSecret}:${String(e.id)}`;
+  const known = new Set(current.map(key));
+  return fresh.filter(e => !known.has(key(e)));
 }
 
 /**
@@ -155,6 +173,12 @@ export interface OpenPipOptions {
   startIndex?: number;
   startPaused?: boolean;
   startMinimized?: boolean;
+  /** HS-8883 — generate fresh narration for the launch context in the
+   *  background. When provided, the PIP opens immediately (showing existing
+   *  entries, or a "preparing" placeholder when empty), runs this, then merges
+   *  any new entries it returns. Resolves to the reloaded reel for the launch
+   *  context; generation policy (which contexts/keys) stays with the host. */
+  generate?: () => Promise<ReelEntry[]>;
 }
 
 let openHandle: AnnouncerPipHandle | null = null;
@@ -365,6 +389,10 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
         currentContext = next;
         currentEntries = reel;
         player.setEntries(reel);
+        // HS-8883 — setEntries on an empty reel finishes without an entry-change,
+        // so render the placeholder explicitly (else the prior entry's text
+        // lingers). This is the "switch projects even if nothing's ready" path.
+        if (reel.length === 0) renderEmptyState(NOTHING_YET_MESSAGE);
         persistSession(); // HS-8804 — context changed
         if (wasLive) await startLive(); // HS-8827 — retarget live to the new context
       } catch {
@@ -569,9 +597,11 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
 
   // HS-8827 — render the "nothing to show" state after a Clear All (or any time
   // the reel empties). Leaves the panel open so live tailing can refill it.
-  const renderEmptyState = (): void => {
+  // HS-8883 — the message is a parameter so an empty *open* / context switch can
+  // show a friendlier placeholder than the Clear-All "No announcements.".
+  const renderEmptyState = (message: string): void => {
     titleEl.textContent = '';
-    scriptEl.textContent = 'No announcements.';
+    scriptEl.textContent = message;
     positionEl.textContent = '0 / 0';
     timestampEl.textContent = '';
     timestampEl.title = '';
@@ -596,9 +626,26 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
     await Promise.all(secrets.map(s => clearAnnouncements(s).catch(() => { /* best-effort per project */ })));
     currentEntries = [];
     player.setEntries([]); // interrupts narration + transitions to 'done'
-    renderEmptyState();
+    renderEmptyState('No announcements.');
     persistSession();
   };
+
+  // HS-8883 — generate fresh narration for the launch context in the background
+  // (the panel is already on screen), then merge any new entries. Bails if the
+  // panel closed or the user switched context meanwhile, and flips the
+  // "preparing" placeholder to the "nothing yet" message when nothing landed.
+  async function runInitialGeneration(generate: () => Promise<ReelEntry[]>): Promise<void> {
+    let fresh: ReelEntry[] = [];
+    try { fresh = await generate(); } catch { /* host already surfaced any error */ }
+    if (closed || currentContext !== opts.context) return;
+    const added = newReelEntries(currentEntries, fresh);
+    if (added.length > 0) {
+      currentEntries.push(...added);
+      player.appendEntries(added); // resumes into the first new entry if the reel was empty
+    } else if (player.getCount() === 0) {
+      renderEmptyState(NOTHING_YET_MESSAGE);
+    }
+  }
 
   const onKeydown = (e: KeyboardEvent): void => {
     // Only handle keys when the PIP holds focus, so global shortcuts and
@@ -640,12 +687,22 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
   // entry, in the saved play/paused state, and minimized if it was minimized;
   // otherwise the default fresh open is index 0, auto-playing, visible.
   player.startAt(opts.startIndex ?? 0, opts.startPaused !== true);
+  // HS-8883 — an empty open shows an in-panel placeholder (was: a dead-end toast
+  // that left the panel closed), so the user can still switch focus projects via
+  // the dropdown. If generation is pending, say so; otherwise invite a retry.
+  if (player.getCount() === 0) {
+    renderEmptyState(opts.generate !== undefined ? PREPARING_MESSAGE : NOTHING_YET_MESSAGE);
+  }
   if (opts.startMinimized === true) {
     minimize();
   } else {
     // Focus the play/pause button so the keyboard shortcuts work immediately.
     playPauseBtn.focus();
   }
+
+  // HS-8883 — generate fresh narration in the background now that the panel is
+  // visible; new entries merge in (and start playing if the reel was empty).
+  if (opts.generate !== undefined) void runInitialGeneration(opts.generate);
 
   return handle;
 }

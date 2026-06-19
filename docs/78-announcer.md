@@ -609,10 +609,19 @@ now switchable while Live** — switching stops live on the old context, swaps t
 reel, and resumes live tailing on the new context's secrets (pre-fix the dropdown
 was disabled in live mode).
 
-**Busy feedback (HS-8753).** Clicking Listen shows an immediate "Preparing your
-narration…" toast and the button shows a spinner (`.is-busy`) for the whole
-generation round-trip, so a multi-second Anthropic call no longer looks like a
-dead click.
+**Busy feedback (HS-8753 → HS-8883).** Clicking Listen shows a button spinner
+(`.is-busy`) while the overview + existing reel load. **HS-8883 — the PIP now
+opens *immediately*** with whatever entries already exist (often none on a first
+run) rather than waiting for the generation round-trip behind a toast. Generation
+runs in the **background** inside the PIP via the `generate` callback
+(`OpenPipOptions.generate` → `generateAnnouncements` + reload), and the new
+entries are merged in (`newReelEntries` dedups on owning-project + id, then
+`player.appendEntries` — which starts playback if the reel had been empty). An
+**empty open is no longer a dead-end toast**: the panel opens showing an in-panel
+placeholder (`PREPARING_MESSAGE` while generation runs, then `NOTHING_YET_MESSAGE`
+if nothing landed), so the user can still **switch focus projects via the context
+dropdown** while waiting. Switching to a context with no entries renders the same
+placeholder instead of leaving the prior entry's text stale.
 
 **Cross-project / context dropdown (HS-8762 + HS-8758).** The announcer is no
 longer strictly per-project. A new `GET /api/announcer/overview` enumerates every

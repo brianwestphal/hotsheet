@@ -84,11 +84,9 @@ test('announcer Listen button → PIP playback controls (HS-8747)', async ({ pag
   await expect(listen).toBeVisible({ timeout: 8000 });
   await listen.click();
 
-  // HS-8753 — clicking gives immediate feedback (a toast) that the click
-  // registered, even before generation resolves.
-  await expect(page.locator('.hs-toast')).toContainText('Preparing your narration');
-
-  // PIP mounts and plays the first entry.
+  // HS-8883 — the PIP mounts IMMEDIATELY with the existing reel (generation runs
+  // in the background), so the click feedback is the panel itself appearing
+  // rather than a "Preparing…" toast.
   const pip = page.locator('.announcer-pip');
   await expect(pip).toBeVisible({ timeout: 8000 });
   await expect(pip.locator('.announcer-pip-title')).toHaveText('Shipped the export feature');
@@ -394,6 +392,56 @@ test('soft summarization error shows a gentle toast, not the Connection Error ov
   await expect(page.locator('.announcer-pip')).toBeVisible({ timeout: 8000 });
   // The alarming global overlay must NOT appear.
   await expect(page.locator('#network-error-popup')).toHaveCount(0);
+});
+
+// HS-8883 — an empty launch context no longer dead-ends in a "Nothing new to
+// announce yet" toast: the PIP opens immediately with an in-panel placeholder,
+// so the user can still switch focus projects via the context dropdown. Here the
+// active project (Alpha) has nothing and generation adds nothing, but Beta has an
+// entry — switching to Beta surfaces it.
+test('empty launch context opens the PIP with a placeholder + lets you switch projects (HS-8883)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+  });
+
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'sec-a', projects: [
+      { secret: 'sec-a', name: 'Alpha', enabled: true, hasKey: true, entryCount: 0 },
+      { secret: 'sec-b', name: 'Beta', enabled: true, hasKey: true, entryCount: 1 },
+    ] }),
+  }));
+  // Generation produces nothing for the empty active project.
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }));
+  // Alpha has no entries; Beta has one — keyed off the per-project secret header.
+  await page.route('**/api/announcer/entries**', (route) => {
+    const secret = route.request().headers()['x-hotsheet-secret'];
+    const entries = secret === 'sec-b'
+      ? [{ id: 1, created_at: '2026-06-05T00:00:00.000Z', covers_from: null, covers_to: null, title: 'Beta work', script: 'Beta did things.', position: 0, dismissed: false }]
+      : [];
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries }) });
+  });
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  await page.locator('#announcer-listen-btn').click();
+
+  // The PIP opens despite the active project having nothing — NO dead-end toast.
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('0 / 0');
+  // After background generation lands nothing, the placeholder invites a retry.
+  await expect(pip.locator('.announcer-pip-script')).toContainText('Nothing to announce here yet', { timeout: 8000 });
+
+  // The user can still switch to another project that DOES have work.
+  await pip.locator('.announcer-pip-context-select').selectOption('sec-b');
+  await expect(pip.locator('.announcer-pip-position')).toHaveText('1 / 1');
+  await expect(pip.locator('.announcer-pip-title')).toHaveText('Beta work');
 });
 
 // HS-8804 — a PIP session that was open when the app last quit is restored on

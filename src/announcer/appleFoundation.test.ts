@@ -99,6 +99,26 @@ describe('runAppleFoundationSummarize', () => {
     await expect(runAppleFoundationSummarize('s', 'm')).rejects.toThrow(/exited with code 3/);
   });
 
+  it('surfaces the helper stderr reason in the error (HS-8883)', async () => {
+    // The Swift helper writes its diagnostic to stderr (e.g. code 4 =
+    // "inference failed: <error>"); discarding it left only a bare exit code,
+    // so the soft-failure log couldn't say WHY narration failed.
+    process.env.HOTSHEET_APPLE_FM_BIN = PRESENT_BIN;
+    _setAppleFoundationForTesting({
+      darwin: true,
+      runner: () => Promise.resolve({ stdout: '', code: 4, stderr: 'inference failed: exceededContextWindowSize\n' }),
+    });
+    await expect(runAppleFoundationSummarize('s', 'm')).rejects.toThrow(
+      /exited with code 4: inference failed: exceededContextWindowSize/,
+    );
+  });
+
+  it('omits the trailing colon when the helper provides no stderr', async () => {
+    process.env.HOTSHEET_APPLE_FM_BIN = PRESENT_BIN;
+    _setAppleFoundationForTesting({ darwin: true, runner: () => Promise.resolve({ stdout: '', code: 4, stderr: '   ' }) });
+    await expect(runAppleFoundationSummarize('s', 'm')).rejects.toThrow(/exited with code 4$/);
+  });
+
   it('throws when no helper binary is present', async () => {
     process.env.HOTSHEET_APPLE_FM_BIN = '/no/such/bin';
     cwdWithoutHelper();

@@ -21,17 +21,27 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
-/** Spawn a process, write `stdin`, resolve with its stdout + exit code. */
-export type ProcessRunner = (bin: string, args: string[], stdin: string) => Promise<{ stdout: string; code: number }>;
+/** Spawn a process, write `stdin`, resolve with its stdout, stderr + exit code.
+ *  `stderr` is optional so test runners can omit it; production callers capture
+ *  it because the Swift helper writes its failure detail there (e.g. the exact
+ *  `inference failed: <error>` behind a non-zero exit). */
+export type ProcessRunner = (bin: string, args: string[], stdin: string) => Promise<{ stdout: string; code: number; stderr?: string }>;
 
 const defaultRunner: ProcessRunner = (bin, args, stdin) =>
   new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'ignore'] });
+    // stderr is PIPED (not ignored): the helper writes its diagnostic reason
+    // there (`fail(message, code)` in main.swift). Discarding it left every
+    // failure as a bare "exited with code N" with no way to tell WHY on-device
+    // inference failed (HS-8883).
+    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
+    let stderr = '';
     child.stdout.setEncoding('utf-8');
     child.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding('utf-8');
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.on('error', reject);
-    child.on('close', (code) => resolve({ stdout, code: code ?? 0 }));
+    child.on('close', (code) => resolve({ stdout, stderr, code: code ?? 0 }));
     child.stdin.end(stdin);
   });
 
@@ -83,8 +93,17 @@ async function probeAvailability(): Promise<boolean> {
 export async function runAppleFoundationSummarize(system: string, material: string): Promise<string> {
   const bin = appleFmBinPath();
   if (bin === null) throw new Error('Apple Foundation Models helper not found');
-  const { stdout, code } = await runner(bin, ['--summarize'], JSON.stringify({ system, material }));
-  if (code !== 0) throw new Error(`Apple Foundation Models helper exited with code ${code}`);
+  const { stdout, stderr, code } = await runner(bin, ['--summarize'], JSON.stringify({ system, material }));
+  if (code !== 0) {
+    // Surface the helper's stderr reason (HS-8883) — e.g. "inference failed:
+    // <FoundationModels error>" — so the soft-failure log is actionable instead
+    // of a bare exit code. Common code-4 causes: the on-device model throwing on
+    // a guardrail violation or an oversized prompt past its small context window.
+    const detail = stderr?.trim();
+    throw new Error(
+      `Apple Foundation Models helper exited with code ${code}${detail !== undefined && detail !== '' ? `: ${detail}` : ''}`,
+    );
+  }
   return stdout;
 }
 

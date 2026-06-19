@@ -651,7 +651,7 @@ The collector, merge gating, and importance filter are unit-tested; this verifie
 
 ### Generate + transcript PIP
 - [ ] With some recent completed tickets / notes, click Listen. The button shows a busy state, then a corner-docked PIP appears (bottom-right) with the first entry's title + spoken script and a "1 / N" position. The transcript reads as a coherent spoken summary of recent work (not raw notes).
-- [ ] Click Listen with no new work since last listen → a "Nothing new to announce yet" toast; no PIP.
+- [ ] (HS-8883) Click Listen with no new work for the active project → the PIP opens immediately showing an in-panel placeholder ("Preparing your narration…" briefly, then "Nothing to announce here yet…") at "0 / 0" — NOT a dead-end toast. You can still switch the context dropdown to another project that has work and hear it.
 - [ ] PIP stacking: open a feedback dialog / permission popup while the PIP is open — the dialog/popup renders ABOVE the PIP (never obscured).
 
 ### PIP visuals — resize + emphasis + code diff (HS-8749 / HS-8772, §78.5)

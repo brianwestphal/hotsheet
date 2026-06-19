@@ -144,10 +144,6 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
   btn.classList.add('is-busy');
   btn.disabled = true;
   btn.setAttribute('aria-busy', 'true');
-  // HS-8753 — generation can take several seconds (an Anthropic round-trip), so
-  // give immediate feedback that the click registered. The button also shows a
-  // spinner via `.is-busy` (styles.scss) for the whole wait.
-  showToast('Preparing your narration…', { variant: 'info', durationMs: 2500 });
   try {
     const overview = await getAnnouncerOverview();
     const projects = overview.projects;
@@ -169,28 +165,33 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
     // HS-8790/8792 — generation needs an Anthropic key OR an on-device provider
     // (Apple Foundation Models / a reachable local endpoint).
     const canGenerate = (projects.find(p => p.secret === context)?.hasKey ?? false) || overview.appleAvailable || overview.localAvailable;
-    if (context !== ALL_PROJECTS && canGenerate) {
-      try {
-        // HS-8805 — a summarization hiccup now comes back as a soft `error` on a
-        // 200 (not a 5xx), so it no longer trips the global "Connection Error"
-        // overlay. Surface it as a gentle toast; existing entries still play.
-        const gen = await generateAnnouncements({}, context);
-        if (gen.error !== undefined && gen.error !== '') {
-          showToast('Announcer: couldn’t generate new narration just now — showing what’s already here.', { variant: 'warning', durationMs: 5000 });
+    // HS-8883 — generation runs in the BACKGROUND (inside the PIP) so the panel
+    // appears immediately. This callback does the Anthropic/on-device round-trip,
+    // surfaces a soft error as a gentle toast (HS-8805 — it comes back as a soft
+    // `error` on a 200, so existing entries still play), then returns the
+    // reloaded reel for the PIP to merge in.
+    const generate = (context !== ALL_PROJECTS && canGenerate)
+      ? async (): Promise<ReelEntry[]> => {
+          try {
+            const gen = await generateAnnouncements({}, context);
+            if (gen.error !== undefined && gen.error !== '') {
+              showToast('Announcer: couldn’t generate new narration just now — showing what’s already here.', { variant: 'warning', durationMs: 5000 });
+            }
+          } catch {
+            showToast('Announcer: could not generate new entries (check your API key).', { variant: 'warning', durationMs: 5000 });
+          }
+          return loadReel(context, projects);
         }
-      } catch {
-        showToast('Announcer: could not generate new entries (check your API key).', { variant: 'warning', durationMs: 5000 });
-      }
-    }
+      : undefined;
 
-    const reel = await loadReel(context, projects);
-    if (reel.length === 0) {
-      showToast('Nothing new to announce yet — do some work and try again.', { durationMs: 4000 });
-      return;
-    }
-
+    // HS-8883 — open the PIP right away with whatever already exists (often
+    // nothing on a first run). An empty reel now shows an in-panel placeholder
+    // instead of a dead-end "Nothing new to announce yet" toast, so the user can
+    // still switch focus projects via the context dropdown while generation
+    // finishes in the background.
     // HS-8803 — a fresh open starts on the first page the user hasn't heard yet.
-    openAnnouncerPip(reel, { context, startIndex: firstUnlistenedIndex(reel), ...buildPipOptions(btn, projects) });
+    const reel = await loadReel(context, projects);
+    openAnnouncerPip(reel, { context, startIndex: firstUnlistenedIndex(reel), generate, ...buildPipOptions(btn, projects) });
   } finally {
     btn.classList.remove('is-busy');
     btn.disabled = false;
