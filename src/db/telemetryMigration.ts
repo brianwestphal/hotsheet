@@ -59,9 +59,25 @@ function readProjectSecret(dataDir: string): string | null {
   }
 }
 
+/** Rows read from a source DB before being routed to a destination. */
+type TelemetryRow = Record<string, unknown>;
+
+/** Keyset page size: rows pulled from a source table per round-trip, and the
+ *  max rows per batched destination insert. Kept well under PostgreSQL's 65535
+ *  bind-parameter ceiling (widest table = otel_spans at 11 cols → 11×300). */
+const BATCH = 300;
+
+/** Yield the event loop between batches so a large migration never starves the
+ *  already-listening server (the HS-8874 startup wedge). */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>(resolve => { setImmediate(resolve); });
+}
+
 /**
  * Public entry point. Returns counts; logs a one-line summary. Safe to call on
- * every startup — it self-guards via the `telemetryMigratedV1` config flag.
+ * every startup — it self-guards via the `telemetryMigratedV1` config flag, and
+ * resumes per-source-DB via `telemetryMigrationV1DoneDirs` if a prior run was
+ * interrupted.
  */
 export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
   const empty: MigrationResult = { moved: 0, perTable: {}, scannedDbs: 0 };
@@ -75,11 +91,15 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
     if (secret !== null) secretToDataDir.set(secret, dir);
   }
 
+  // Resumability: skip source DBs a prior (interrupted) run already drained.
+  const doneDirs = new Set(readGlobalConfig().telemetryMigrationV1DoneDirs ?? []);
+
   const perTable: Record<string, number> = {};
   let moved = 0;
   let scannedDbs = 0;
 
   for (const sourceDir of projectDirs) {
+    if (doneDirs.has(sourceDir)) { scannedDbs++; continue; }
     // A source DB's "own" secret — rows with this secret already live where they
     // belong, so they're skipped.
     const ownSecret = readProjectSecret(sourceDir);
@@ -88,12 +108,18 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
       moved += result.moved;
       for (const [t, n] of Object.entries(result.perTable)) perTable[t] = (perTable[t] ?? 0) + n;
       scannedDbs++;
+      // Record progress AFTER this DB is fully drained, so a crash/quit before
+      // here re-runs it (the dedupe guard makes the re-run a no-op for rows
+      // already copied).
+      doneDirs.add(sourceDir);
+      writeGlobalConfig({ telemetryMigrationV1DoneDirs: [...doneDirs] });
     } catch (err) {
       console.error(`[telemetry-migration] skipping unreadable source DB ${sourceDir}:`, err);
     }
   }
 
-  writeGlobalConfig({ telemetryMigratedV1: true });
+  // Done — set the completion flag and drop the now-redundant progress list.
+  writeGlobalConfig({ telemetryMigratedV1: true, telemetryMigrationV1DoneDirs: [] });
   const summary = Object.entries(perTable).map(([t, n]) => `${t}=${String(n)}`).join(' ');
   console.log(`  [telemetry-migration] HS-8874: scanned ${String(scannedDbs)} DB(s), moved ${String(moved)} row(s) to their owning project / central${summary === '' ? '' : ` (${summary})`}.`);
   return { moved, perTable, scannedDbs };
@@ -101,8 +127,11 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
 
 /**
  * Scan one source DB for foreign rows (rows whose `project_secret` != the source
- * project's own secret) and copy each into the DB matching its secret (or
- * central for a NULL secret). Returns per-table moved counts.
+ * project's own secret) and copy them into the DB matching each row's secret (or
+ * central for a NULL secret). Reads are keyset-paginated and inserts are batched
+ * per destination (one statement per page, not per row) so the pass stays
+ * O(n log n) against the dedupe indexes instead of the old O(n^2) per-row scan.
+ * Returns per-table moved counts.
  */
 async function migrateFromSourceDb(
   sourceDir: string,
@@ -113,34 +142,46 @@ async function migrateFromSourceDb(
   let moved = 0;
 
   for (const table of TELEMETRY_TABLES) {
-    // Pull the foreign rows out of the source DB.
-    const rows = await runWithTelemetryDb(sourceDir, async () => {
-      const db = await getTelemetryDb();
+    let lastId = 0;
+    for (;;) {
+      // Keyset page of foreign rows from the source, ordered by the SERIAL `id`.
       // Foreign = a different secret than the source's own, OR a NULL secret
-      // (those belong in central). `IS DISTINCT FROM` is null-safe: a NULL
-      // project_secret is DISTINCT FROM any concrete ownSecret, so NULL rows are
-      // selected. When ownSecret is null (source has no secret), every row is
-      // foreign — fine, they get routed to their true destination below.
-      const res = await db.query<Record<string, unknown>>(
-        ownSecret === null
-          ? `SELECT * FROM ${table}`
-          : `SELECT * FROM ${table} WHERE project_secret IS DISTINCT FROM $1`,
-        ownSecret === null ? [] : [ownSecret],
-      );
-      return res.rows;
-    });
+      // (those belong in central). When ownSecret is null (source has no secret)
+      // every row is foreign and routed to its true destination below.
+      const rows = await runWithTelemetryDb(sourceDir, async () => {
+        const db = await getTelemetryDb();
+        const res = await db.query<TelemetryRow>(
+          ownSecret === null
+            ? `SELECT * FROM ${table} WHERE id > $1 ORDER BY id LIMIT $2`
+            : `SELECT * FROM ${table} WHERE id > $1 AND project_secret IS DISTINCT FROM $2 ORDER BY id LIMIT $3`,
+          ownSecret === null ? [lastId, BATCH] : [lastId, ownSecret, BATCH],
+        );
+        return res.rows;
+      });
+      if (rows.length === 0) break;
+      lastId = Number(rows[rows.length - 1].id);
 
-    for (const row of rows) {
-      const secret = typeof row.project_secret === 'string' ? row.project_secret : null;
-      const destDir = secret === null
-        ? centralTelemetryDataDir()
-        : secretToDataDir.get(secret) ?? centralTelemetryDataDir();
-      // Don't copy a row back into its own source DB (would only happen for the
-      // central edge case where source IS central; the dedupe guard makes it a
-      // no-op regardless, but skip the round-trip).
-      if (destDir === sourceDir) continue;
-      const inserted = await runWithTelemetryDb(destDir, () => insertIfAbsent(table, row));
-      if (inserted) { moved++; perTable[table] = (perTable[table] ?? 0) + 1; }
+      // Group the page by destination DB, then one batched insert per group.
+      const byDest = new Map<string, TelemetryRow[]>();
+      for (const row of rows) {
+        const secret = typeof row.project_secret === 'string' ? row.project_secret : null;
+        const destDir = secret === null
+          ? centralTelemetryDataDir()
+          : secretToDataDir.get(secret) ?? centralTelemetryDataDir();
+        // Don't copy a row back into its own source DB.
+        if (destDir === sourceDir) continue;
+        const bucket = byDest.get(destDir);
+        if (bucket === undefined) byDest.set(destDir, [row]);
+        else bucket.push(row);
+      }
+
+      for (const [destDir, group] of byDest) {
+        const inserted = await runWithTelemetryDb(destDir, () => insertBatchIfAbsent(table, group));
+        if (inserted > 0) { moved += inserted; perTable[table] = (perTable[table] ?? 0) + inserted; }
+      }
+
+      if (rows.length < BATCH) break;
+      await yieldToEventLoop();
     }
   }
 
@@ -148,32 +189,76 @@ async function migrateFromSourceDb(
 }
 
 /**
- * Insert one row into `table` in the CURRENT telemetry-DB context unless a row
- * with the same natural key already exists (idempotency). Returns whether a row
- * was inserted. Dedupe keys (no table has a stable unique business key, so we
- * compose one):
- *   - otel_spans: (trace_id, span_id)
- *   - otel_metrics: (ts, project_secret, metric_name, attributes_json::text, value_json::text)
- *   - otel_events: (ts, project_secret, event_name, body_json::text)
- *   - announcer_usage: (ts, project_secret, model, input_tokens, output_tokens)
- *   - ticket_work_intervals: (project_secret, ticket_number, started_at)
+ * Batch-insert `rows` into `table` in the CURRENT telemetry-DB context, skipping
+ * any row whose natural key already exists there (idempotency). One statement
+ * for the whole batch: `INSERT … SELECT … FROM (VALUES …) WHERE NOT EXISTS(…)`.
+ * The `NOT EXISTS` probe is index-backed (the `*_dedupe` indexes in
+ * connection.ts) because the NOT-NULL scalar key columns are compared with `=`.
+ * Intra-batch duplicates (rows with identical natural keys in the same page —
+ * the target can't yet contain them, so `NOT EXISTS` wouldn't catch them) are
+ * removed in JS first. Returns the number of rows inserted.
+ *
  * `id` (SERIAL) is intentionally dropped so the destination assigns its own.
  */
-async function insertIfAbsent(table: TelemetryTable, row: Record<string, unknown>): Promise<boolean> {
+async function insertBatchIfAbsent(table: TelemetryTable, rows: TelemetryRow[]): Promise<number> {
+  const unique = dedupeWithinBatch(table, rows);
+  if (unique.length === 0) return 0;
+
   const db = await getTelemetryDb();
   const cols = COLUMNS[table];
-  // PGLite returns JSONB columns as parsed JS objects; re-inserting through a
-  // `::jsonb` cast needs a JSON string (mirrors the writers' `JSON.stringify`).
-  const values = cols.map(c => jsonbValue(table, c, row[c]));
-  const placeholders = cols.map((_, i) => `$${String(i + 1)}`);
-  const valueExprs = cols.map((c, i) => JSONB_COLUMNS[table].includes(c) ? `${placeholders[i]}::jsonb` : placeholders[i]);
+  // Every cell is explicitly cast to its column type so the VALUES alias has
+  // stable column types (timestamptz / jsonb / etc.) — both for the INSERT and
+  // for the `t.col = v.col` dedupe comparisons. PGLite returns JSONB as parsed
+  // objects; `jsonbValue` re-stringifies them so the `::jsonb` cast re-parses.
+  const params: unknown[] = [];
+  const valueRows = unique.map(row => {
+    const cells = cols.map(c => {
+      params.push(jsonbValue(table, c, row[c]));
+      return `$${String(params.length)}::${COLUMN_TYPES[table][c]}`;
+    });
+    return `(${cells.join(', ')})`;
+  });
 
-  const { whereSql, whereParams } = dedupeWhere(table, row, cols.length);
+  const keyMatch = DEDUPE_KEYS[table].map(k => {
+    if (k.kind === 'jsonbtext') return `t.${k.col}::text IS NOT DISTINCT FROM v.${k.col}::text`;
+    if (k.kind === 'nullsafe') return `t.${k.col} IS NOT DISTINCT FROM v.${k.col}`;
+    return `t.${k.col} = v.${k.col}`;
+  }).join(' AND ');
+
+  const selectList = cols.map(c => `v.${c}`).join(', ');
   const sql = `INSERT INTO ${table} (${cols.join(', ')})
-     SELECT ${valueExprs.join(', ')}
-     WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${whereSql})`;
-  const res = await db.query(sql, [...values, ...whereParams]);
-  return (res.affectedRows ?? 0) > 0;
+     SELECT ${selectList} FROM (VALUES ${valueRows.join(', ')}) AS v(${cols.join(', ')})
+     WHERE NOT EXISTS (SELECT 1 FROM ${table} t WHERE ${keyMatch})`;
+  const res = await db.query(sql, params);
+  return res.affectedRows ?? 0;
+}
+
+/** Remove rows that duplicate an earlier row's natural key within the same page
+ *  (keep first). The batched `NOT EXISTS` only guards against rows ALREADY in
+ *  the target; two identical rows in one page would both pass it. */
+function dedupeWithinBatch(table: TelemetryTable, rows: TelemetryRow[]): TelemetryRow[] {
+  const seen = new Set<string>();
+  const out: TelemetryRow[] = [];
+  for (const row of rows) {
+    const key = naturalKeyString(table, row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+/** Canonical string form of a row's natural key, for in-JS intra-batch dedupe.
+ *  JSONB key columns are compared by their text form; scalars use their JSON
+ *  form so types stay distinct (number 0 vs string "0"). */
+function naturalKeyString(table: TelemetryTable, row: TelemetryRow): string {
+  return DEDUPE_KEYS[table]
+    .map(k => {
+      const v = row[k.col];
+      if (k.kind === 'jsonbtext') return typeof v === 'string' ? v : JSON.stringify(v ?? null);
+      return JSON.stringify(v ?? null);
+    })
+    .join(' ');
 }
 
 /** Normalize a column value for re-insert: JSONB objects → JSON string (the
@@ -202,46 +287,47 @@ const JSONB_COLUMNS: Record<TelemetryTable, string[]> = {
   ticket_work_intervals: [],
 };
 
-/**
- * Build the `NOT EXISTS` dedupe predicate + its params for a row. Placeholder
- * indices start AFTER the insert-value params (which occupy `$1..$baseCount`).
- * Each key column uses `IS NOT DISTINCT FROM` so a NULL on both sides matches
- * (a concrete-value equality would treat NULL=NULL as unknown and let a dup
- * through). JSONB key columns are compared by their `::text` rendering, matching
- * the natural keys documented on `insertIfAbsent`.
- */
-function dedupeWhere(
-  table: TelemetryTable,
-  row: Record<string, unknown>,
-  baseCount: number,
-): { whereSql: string; whereParams: unknown[] } {
-  const keys = DEDUPE_KEYS[table];
-  const parts: string[] = [];
-  const params: unknown[] = [];
-  for (const key of keys) {
-    const idx = baseCount + params.length + 1;
-    if (JSONB_COLUMNS[table].includes(key)) {
-      // Compare the canonical text form on both sides (the stored value and the
-      // incoming JSON re-parsed via `::jsonb`).
-      params.push(jsonbValue(table, key, row[key]));
-      parts.push(`${key}::text IS NOT DISTINCT FROM $${String(idx)}::jsonb::text`);
-    } else {
-      params.push(row[key] ?? null);
-      parts.push(`${key} IS NOT DISTINCT FROM $${String(idx)}`);
-    }
-  }
-  return { whereSql: parts.join(' AND '), whereParams: params };
-}
+/** PostgreSQL type each insert column is cast to in the VALUES list (see
+ *  `insertBatchIfAbsent`). Casting every cell keeps the VALUES alias's column
+ *  types stable for both the INSERT target and the `t.col = v.col` dedupe. */
+const COLUMN_TYPES: Record<TelemetryTable, Record<string, string>> = {
+  otel_metrics: { ts: 'timestamptz', project_secret: 'text', session_id: 'text', metric_name: 'text', attributes_json: 'jsonb', value_json: 'jsonb', aggregation_temporality: 'text', is_monotonic: 'boolean' },
+  otel_events: { ts: 'timestamptz', project_secret: 'text', session_id: 'text', prompt_id: 'text', event_name: 'text', attributes_json: 'jsonb', body_json: 'jsonb' },
+  otel_spans: { trace_id: 'text', span_id: 'text', parent_span_id: 'text', project_secret: 'text', session_id: 'text', prompt_id: 'text', span_name: 'text', start_ts: 'timestamptz', end_ts: 'timestamptz', attributes_json: 'jsonb', status_code: 'text' },
+  announcer_usage: { ts: 'timestamptz', project_secret: 'text', model: 'text', input_tokens: 'integer', output_tokens: 'integer', cost: 'numeric' },
+  ticket_work_intervals: { project_secret: 'text', ticket_number: 'text', started_at: 'timestamptz', ended_at: 'timestamptz' },
+};
 
-/** Natural-key columns per table (see `insertIfAbsent` doc). */
-const DEDUPE_KEYS: Record<TelemetryTable, string[]> = {
-  otel_spans: ['trace_id', 'span_id'],
-  otel_metrics: ['ts', 'project_secret', 'metric_name', 'attributes_json', 'value_json'],
-  otel_events: ['ts', 'project_secret', 'event_name', 'body_json'],
-  announcer_usage: ['ts', 'project_secret', 'model', 'input_tokens', 'output_tokens'],
+/** A natural-key column + how to compare it. `eq` (`=`) is used ONLY for
+ *  NOT-NULL scalar columns — these lead the `*_dedupe` indexes so the existence
+ *  probe is index-seekable. `nullsafe` (`IS NOT DISTINCT FROM`) is for the
+ *  nullable `project_secret`; `jsonbtext` compares JSONB columns by `::text`. */
+interface DedupeKey { col: string; kind: 'eq' | 'nullsafe' | 'jsonbtext'; }
+
+/** Natural-key columns per table (no table has a stable unique business key, so
+ *  we compose one). Order leads with the index-seekable `eq` columns. */
+const DEDUPE_KEYS: Record<TelemetryTable, DedupeKey[]> = {
+  otel_spans: [{ col: 'trace_id', kind: 'eq' }, { col: 'span_id', kind: 'eq' }],
+  otel_metrics: [
+    { col: 'ts', kind: 'eq' }, { col: 'metric_name', kind: 'eq' },
+    { col: 'project_secret', kind: 'nullsafe' },
+    { col: 'attributes_json', kind: 'jsonbtext' }, { col: 'value_json', kind: 'jsonbtext' },
+  ],
+  otel_events: [
+    { col: 'ts', kind: 'eq' }, { col: 'event_name', kind: 'eq' },
+    { col: 'project_secret', kind: 'nullsafe' }, { col: 'body_json', kind: 'jsonbtext' },
+  ],
+  announcer_usage: [
+    { col: 'ts', kind: 'eq' }, { col: 'model', kind: 'eq' },
+    { col: 'input_tokens', kind: 'eq' }, { col: 'output_tokens', kind: 'eq' },
+    { col: 'project_secret', kind: 'nullsafe' },
+  ],
   // A ticket can't open two work intervals at the same instant; (project, ticket,
-  // started_at) is a stable natural key for idempotent re-copies.
-  ticket_work_intervals: ['project_secret', 'ticket_number', 'started_at'],
+  // started_at) is a stable natural key for idempotent re-copies. All NOT NULL.
+  ticket_work_intervals: [
+    { col: 'project_secret', kind: 'eq' }, { col: 'ticket_number', kind: 'eq' },
+    { col: 'started_at', kind: 'eq' },
+  ],
 };
 
 /** HS-8874 — exported only so the unit test can open destination DBs the same

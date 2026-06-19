@@ -14,6 +14,7 @@ import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { setDemoMode } from './demo-mode.js';
+import { startEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
 import { ensureSecret, writeFileSettings } from './file-settings.js';
@@ -25,7 +26,7 @@ import { registerExistingProject, registerProject } from './projects.js';
 import { ErrorBodySchema, ProjectNameOnlySchema } from './schemas.js';
 import { startServer } from './server.js';
 import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
-import { createStartupWatchdog, getCurrentPhase, getElapsedMs, initStartupLog, startupLog, startupMark } from './startup-log.js';
+import { createStartupWatchdog, getCurrentPhase, getElapsedMs, getStartupLogPath, initStartupLog, startupLog, startupMark } from './startup-log.js';
 import { initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { checkForUpdates } from './update-check.js';
 import { getErrorMessage } from './utils/errorMessage.js';
@@ -623,6 +624,14 @@ async function main() {
   // to. See `src/startup-log.ts` for the full rationale.
   initStartupLog();
   startupMark('main: entered');
+
+  // FOLLOW-UP-1 (load resilience) — arm the thread-based event-loop watchdog
+  // FIRST so it covers the entire startup (the most wedge-prone window). Unlike
+  // the diagnostic `createStartupWatchdog` below (main-loop timers that can't
+  // fire while the loop is pinned), this runs on a worker thread and SIGKILLs a
+  // genuinely-wedged process so it can't hold the port + locks forever. It logs
+  // its FATAL line to the same durable startup log.
+  startEventLoopWatchdog({ logPath: getStartupLogPath() });
 
   // HS-8096: install signal handlers before any HTTP listener can respond,
   // so a SIGINT arriving between `tryServe`'s listen-callback firing and

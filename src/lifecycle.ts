@@ -14,6 +14,7 @@ import type { Server as HttpServer } from 'http';
 
 import { closeAllDatabases } from './db/connection.js';
 import { stopServerEventLoopHeartbeat } from './diagnostics/freezeLogger.js';
+import { stopEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { removeInstanceFile } from './instance.js';
 import { releaseAllLocks } from './lock.js';
 
@@ -166,6 +167,13 @@ export function _shutdownStarted(): boolean {
 
 async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   console.log(`[lifecycle] gracefulShutdown(${reason}) — starting`);
+
+  // FOLLOW-UP-1 — disarm the event-loop watchdog FIRST. The heavy steps below
+  // (snapshot CHECKPOINT, DB close + fsync) legitimately block the loop for
+  // seconds; without this the watchdog could mistake an intentional slow
+  // shutdown for a wedge and SIGKILL mid-write. A shutdown that genuinely wedges
+  // is covered by the Tauri-side SIGKILL escalation instead.
+  stopEventLoopWatchdog();
 
   // HS-8828 — every step runs under `runStep`'s per-step timeout so a single
   // hung cleanup can't wedge the whole quit (see `gracefulShutdown` above).

@@ -16,7 +16,7 @@ Two launch modes:
 - **Direct sidecar** — If no pre-started server is detected, the Tauri app spawns the Node sidecar itself via `hotsheet-node`, passing `--no-open` and `--data-dir` arguments. It watches stdout for the "running at" message to know when to navigate.
 
 On app exit, the sidecar process is terminated:
-- Unix: `SIGTERM` to the process directly, then to the process group as fallback.
+- Unix: `SIGTERM` to the process directly, then to the process group as fallback, then **poll for it to actually exit and escalate to `SIGKILL` if it doesn't**. The poll loop (`teardown_action` in `src-tauri/src/lib.rs`, a pure/unit-tested escalation policy) waits a generous TERM grace (10s — long enough for a legitimate `gracefulShutdown` CHECKPOINT/snapshot, which can take seconds) detecting a clean exit within one poll, then `SIGKILL`s (pid + group) and waits a short KILL grace. This replaced a fixed 300 ms sleep that left a **wedged** server (event loop blocked, so `SIGTERM` never ran its handler) orphaned — still holding the HTTP port and every project lock — which made the next launch see a live lock and FATAL-exit.
 - Windows: `taskkill /PID /T /F`.
 
 ### 10.3 Welcome Screen

@@ -956,6 +956,20 @@ async function initSchema(db: PGlite): Promise<void> {
       cost NUMERIC NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_announcer_usage_project_ts ON announcer_usage(project_secret, ts DESC);
+
+    -- HS-8874 (migration efficiency) — dedupe-support indexes for the
+    -- per-project telemetry migration's idempotent NOT EXISTS check. Each
+    -- leads with the NOT-NULL scalar prefix of that table's natural key
+    -- (migratePerProjectTelemetry's DEDUPE_KEYS), so the existence probe is an
+    -- index seek to a tiny candidate set instead of a full table scan — the
+    -- O(n^2) per-row scan was what wedged startup on a large telemetry DB.
+    -- Non-unique (existing rows may legitimately collide; a UNIQUE constraint
+    -- could fail to create on already-duplicated data).
+    CREATE INDEX IF NOT EXISTS idx_otel_spans_dedupe ON otel_spans(trace_id, span_id);
+    CREATE INDEX IF NOT EXISTS idx_otel_metrics_dedupe ON otel_metrics(ts, metric_name);
+    CREATE INDEX IF NOT EXISTS idx_otel_events_dedupe ON otel_events(ts, event_name);
+    CREATE INDEX IF NOT EXISTS idx_announcer_usage_dedupe ON announcer_usage(ts, model);
+    CREATE INDEX IF NOT EXISTS idx_twi_dedupe ON ticket_work_intervals(project_secret, ticket_number, started_at);
   `);
 
   // HS-8874 — telemetry is now stored per-project, plus a centralized store

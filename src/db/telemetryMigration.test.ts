@@ -22,18 +22,22 @@ afterAll(async () => {
   rmSync(centralOverrideDir, { recursive: true, force: true });
 });
 
-// --- Mocks: control the project list + the one-time migration flag. ---
+// --- Mocks: control the project list + the one-time migration flag + the
+//     per-source-DB resumability list. ---
 const mockReadProjectList = vi.fn<() => string[]>();
 let migratedFlag = false;
+let doneDirs: string[] = [];
 
 vi.mock('../project-list.js', () => ({
   readProjectList: (): string[] => mockReadProjectList(),
 }));
 
+interface MigrationConfig { telemetryMigratedV1?: boolean; telemetryMigrationV1DoneDirs?: string[]; }
 vi.mock('../global-config.js', () => ({
-  readGlobalConfig: (): { telemetryMigratedV1?: boolean } => ({ telemetryMigratedV1: migratedFlag }),
-  writeGlobalConfig: (updates: { telemetryMigratedV1?: boolean }): void => {
+  readGlobalConfig: (): MigrationConfig => ({ telemetryMigratedV1: migratedFlag, telemetryMigrationV1DoneDirs: doneDirs }),
+  writeGlobalConfig: (updates: MigrationConfig): void => {
     if (updates.telemetryMigratedV1 !== undefined) migratedFlag = updates.telemetryMigratedV1;
+    if (updates.telemetryMigrationV1DoneDirs !== undefined) doneDirs = updates.telemetryMigrationV1DoneDirs;
   },
 }));
 
@@ -100,6 +104,7 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
 
   beforeEach(() => {
     migratedFlag = false;
+    doneDirs = [];
     mockReadProjectList.mockReset();
     dirA = makeProjectDir(SECRET_A);
     dirB = makeProjectDir(SECRET_B);
@@ -181,5 +186,47 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     // It now lives in B's DB; A's copy is left intact (non-destructive).
     expect(await countWorkIntervals(dirB, SECRET_B)).toBe(1);
     expect(await countWorkIntervals(dirA, SECRET_B)).toBe(1);
+  });
+
+  it('migrates a volume that spans multiple keyset pages (batching)', async () => {
+    // 700 distinct foreign rows for B in the launch-default A — well past the
+    // 300-row page size, so this exercises keyset pagination + batched inserts.
+    const N = 700;
+    await runWithTelemetryDb(dirA, async () => {
+      const db = await getDbForDir(dirA);
+      await db.query(
+        `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
+         SELECT now(), $1, 'sess', 'claude_code.cost.usage', '{"model":"sonnet"}'::jsonb, jsonb_build_object('asDouble', g)
+         FROM generate_series(1, $2) AS g`,
+        [SECRET_B, N],
+      );
+    });
+    const result = await migratePerProjectTelemetry();
+    expect(result.moved).toBe(N);
+    expect(await countCost(dirB, SECRET_B)).toBe(N);
+  });
+
+  it('collapses intra-page duplicate rows to a single insert', async () => {
+    // Two byte-identical foreign rows in the same page. The target can't yet
+    // contain them, so the NOT EXISTS guard wouldn't catch the second — the
+    // in-JS intra-batch dedupe must.
+    await insertCost(dirA, SECRET_B, 1.0);
+    await insertCost(dirA, SECRET_B, 1.0);
+    const result = await migratePerProjectTelemetry();
+    expect(result.moved).toBe(1);
+    expect(await countCost(dirB, SECRET_B)).toBe(1);
+  });
+
+  it('skips source DBs already recorded as drained (resumability)', async () => {
+    // A prior interrupted run had finished draining dirA.
+    doneDirs = [dirA];
+    await insertCost(dirA, SECRET_B, 1.0);
+    const result = await migratePerProjectTelemetry();
+    // dirA is skipped (counted as scanned), so its B-row is NOT moved.
+    expect(result.moved).toBe(0);
+    expect(await countCost(dirB, SECRET_B)).toBe(0);
+    // Completing the pass sets the one-time flag and clears the progress list.
+    expect(migratedFlag).toBe(true);
+    expect(doneDirs).toEqual([]);
   });
 });

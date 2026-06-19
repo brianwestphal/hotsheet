@@ -263,6 +263,12 @@ export const GlobalConfigSchema = z.object({
   // destructive copy of legacy launch-default telemetry rows into each row's
   // owning project DB / the central store. Skipped on subsequent startups.
   telemetryMigratedV1: z.boolean().optional(),
+  // HS-8874 (migration efficiency) — per-source-DB resumability for the
+  // telemetry migration. Each source project dir is appended here once all its
+  // foreign rows have been copied, so a crash/quit mid-migration resumes at the
+  // first incomplete DB instead of restarting from zero (the boot-loop the
+  // end-only `telemetryMigratedV1` flag caused). Cleared when migration completes.
+  telemetryMigrationV1DoneDirs: z.array(z.string()).optional(),
   // HS-8877 — retention window (days) for the centralized non-project telemetry
   // store (`~/.hotsheet/telemetry`). Projects have a per-project
   // `telemetry_retention_days`; central isn't a project, so its sweep window

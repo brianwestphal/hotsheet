@@ -1670,9 +1670,53 @@ pub fn run() {
                                     "RunEvent::Exit — kill(pid)={r1} kill(-pid)={r2}"
                                 ));
                             }
-                            // Wait briefly for cleanup before the process is force-killed by OS
-                            std::thread::sleep(std::time::Duration::from_millis(300));
-                            shutdown_log("RunEvent::Exit — 300ms grace elapsed, exiting");
+                            // Poll for the server to actually exit, escalating to
+                            // SIGKILL if it doesn't. The old fixed 300ms-then-exit
+                            // left a WEDGED server (event loop blocked, so SIGTERM
+                            // never runs its handler) orphaned — still holding the
+                            // HTTP port and every project lock — which made the
+                            // NEXT launch see a live lock and FATAL-exit. The TERM
+                            // grace is generous so a legitimate gracefulShutdown
+                            // (CHECKPOINT/snapshot can take seconds) completes
+                            // cleanly; a clean exit is detected within one poll so
+                            // a normal quit isn't slowed.
+                            let term_grace = std::time::Duration::from_secs(10);
+                            let kill_grace = std::time::Duration::from_secs(3);
+                            let poll = std::time::Duration::from_millis(100);
+                            let start = std::time::Instant::now();
+                            let mut escalated = false;
+                            loop {
+                                let action = teardown_action(
+                                    server_alive(pid as i32),
+                                    start.elapsed(),
+                                    term_grace,
+                                    kill_grace,
+                                    escalated,
+                                );
+                                match action {
+                                    TeardownAction::Done => {
+                                        shutdown_log(&format!(
+                                            "RunEvent::Exit — server exited after {}ms",
+                                            start.elapsed().as_millis()
+                                        ));
+                                        break;
+                                    }
+                                    TeardownAction::Escalate => {
+                                        shutdown_log("RunEvent::Exit — TERM grace elapsed; escalating to SIGKILL");
+                                        unsafe {
+                                            libc::kill(pid as i32, libc::SIGKILL);
+                                            libc::kill(-(pid as i32), libc::SIGKILL);
+                                        }
+                                        escalated = true;
+                                        std::thread::sleep(poll);
+                                    }
+                                    TeardownAction::Abandon => {
+                                        shutdown_log("RunEvent::Exit — server still alive after SIGKILL grace; abandoning");
+                                        break;
+                                    }
+                                    TeardownAction::WaitMore => std::thread::sleep(poll),
+                                }
+                            }
                         }
                         #[cfg(windows)]
                         {
@@ -1688,6 +1732,101 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+/// Next action for the server-teardown poll loop in `RunEvent::Exit`. Pure (no
+/// syscalls / no clock), so the escalation policy is unit-testable on any host;
+/// the real loop just executes the returned action.
+#[cfg(unix)]
+#[derive(Debug, PartialEq, Eq)]
+enum TeardownAction {
+    /// The server is gone — stop polling.
+    Done,
+    /// Still within a grace window — keep waiting.
+    WaitMore,
+    /// TERM grace elapsed and the server is still alive — send SIGKILL.
+    Escalate,
+    /// SIGKILL grace also elapsed and it's STILL alive — give up (exit anyway).
+    Abandon,
+}
+
+/// Decide the next teardown step from the child's liveness, time elapsed since
+/// SIGTERM, and whether we've already escalated to SIGKILL.
+#[cfg(unix)]
+fn teardown_action(
+    alive: bool,
+    elapsed: std::time::Duration,
+    term_grace: std::time::Duration,
+    kill_grace: std::time::Duration,
+    escalated: bool,
+) -> TeardownAction {
+    if !alive {
+        TeardownAction::Done
+    } else if !escalated {
+        if elapsed >= term_grace {
+            TeardownAction::Escalate
+        } else {
+            TeardownAction::WaitMore
+        }
+    } else if elapsed >= term_grace + kill_grace {
+        TeardownAction::Abandon
+    } else {
+        TeardownAction::WaitMore
+    }
+}
+
+/// True if `pid` is still a live process. Best-effort reaps it first
+/// (`waitpid(WNOHANG)`) so a child that already exited isn't read as alive via a
+/// lingering zombie entry (which would needlessly slow a clean quit); the reap
+/// is a harmless no-op when `pid` isn't our child.
+#[cfg(unix)]
+fn server_alive(pid: i32) -> bool {
+    unsafe {
+        let mut status: libc::c_int = 0;
+        libc::waitpid(pid, &mut status, libc::WNOHANG);
+        libc::kill(pid, 0) == 0
+    }
+}
+
+#[cfg(all(test, unix))]
+mod teardown_action_tests {
+    //! HS-8874 follow-up — escalation policy for the `RunEvent::Exit` server
+    //! teardown. A wedged server (event loop blocked) ignores SIGTERM; the loop
+    //! must escalate to SIGKILL so it can't orphan and hold the port + locks.
+    use super::{teardown_action, TeardownAction};
+    use std::time::Duration;
+
+    const TERM: Duration = Duration::from_secs(10);
+    const KILL: Duration = Duration::from_secs(3);
+
+    #[test]
+    fn dead_process_is_done_regardless_of_timing() {
+        assert_eq!(teardown_action(false, Duration::ZERO, TERM, KILL, false), TeardownAction::Done);
+        assert_eq!(teardown_action(false, Duration::from_secs(100), TERM, KILL, true), TeardownAction::Done);
+    }
+
+    #[test]
+    fn waits_within_term_grace() {
+        assert_eq!(teardown_action(true, Duration::from_secs(5), TERM, KILL, false), TeardownAction::WaitMore);
+        assert_eq!(teardown_action(true, Duration::from_millis(9_999), TERM, KILL, false), TeardownAction::WaitMore);
+    }
+
+    #[test]
+    fn escalates_once_term_grace_elapses() {
+        assert_eq!(teardown_action(true, TERM, TERM, KILL, false), TeardownAction::Escalate);
+        assert_eq!(teardown_action(true, Duration::from_secs(11), TERM, KILL, false), TeardownAction::Escalate);
+    }
+
+    #[test]
+    fn waits_within_kill_grace_after_escalation() {
+        assert_eq!(teardown_action(true, Duration::from_secs(11), TERM, KILL, true), TeardownAction::WaitMore);
+    }
+
+    #[test]
+    fn abandons_after_kill_grace() {
+        assert_eq!(teardown_action(true, TERM + KILL, TERM, KILL, true), TeardownAction::Abandon);
+        assert_eq!(teardown_action(true, Duration::from_secs(20), TERM, KILL, true), TeardownAction::Abandon);
+    }
 }
 
 #[cfg(test)]

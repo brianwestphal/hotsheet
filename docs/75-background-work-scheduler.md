@@ -252,3 +252,28 @@ responsive while it's slow*, by doing less background work and doing it off-loop
 Phases 1 and 3 alone would have prevented the reported incident; Phases 2 and 4 are
 what make it scale to 20+ tabs and survive sustained load gracefully; Phase 5 removes
 the last loop-blocking paths at extreme data sizes.
+
+## 75.8 Backstop — the event-loop watchdog (2026-06-19)
+
+The principles above keep heavy work off the loop, but a *bug* can still wedge it
+(e.g. the HS-8874 row-by-row telemetry migration spun the loop at 100% CPU for
+minutes during startup — a single unbounded synchronous-ish pass the scheduler's
+backpressure couldn't preempt mid-job). A wedged loop can't run its SIGTERM
+handler, so the process survived holding the HTTP port + every project lock, and
+the next launch FATAL-exited on the live lock — a permanent lockout requiring a
+manual kill.
+
+`src/diagnostics/watchdog.ts` is the backstop. The `freezeLogger` heartbeat
+(§75 P2 lag signal) runs on the main loop, so it can only *log* a block after the
+loop frees up — useless for a loop that never frees. The watchdog runs its checker
+on a **worker thread**: the main thread bumps a `SharedArrayBuffer` heartbeat each
+tick, and the worker `process.kill(pid, 'SIGKILL')`s the shared process once the
+heartbeat is stale past a timeout (default 60 s). That converts a permanent hang
+into a clean crash the lock layer reclaims as stale + a relaunch recovers from. A
+large checker self-gap is treated as a system suspend/resume (wake), never a wedge
+(same `WAKE_GAP_THRESHOLD_MS` guard as the heartbeat), so a laptop sleep can't
+false-fire. Armed first in `cli.ts::main` (covers startup); disarmed at the start
+of `gracefulShutdown` so a legitimately-slow snapshot/close isn't mistaken for a
+wedge (a shutdown that genuinely wedges is covered by the Tauri-side SIGKILL
+escalation). Tunable via `HOTSHEET_WATCHDOG_TIMEOUT_MS`; disable with
+`HOTSHEET_DISABLE_WATCHDOG=1`.
