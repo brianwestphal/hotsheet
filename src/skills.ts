@@ -485,7 +485,16 @@ function ensureWindsurfRules(cwd: string): boolean {
  *  project ran without the Hot Sheet skill in scope. Copilot keeps
  *  the folder-only gate because there's no reliable executable
  *  name to probe for (it lives inside VS Code as an extension). */
-export function ensureSkillsForDir(projectRoot: string): string[] {
+export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef[]): string[] {
+  // HS-8910 — generate against THIS project's categories, not whatever the
+  // process-global `skillsState.categories` was last set to. The "ensure skills
+  // for ALL projects" loops (dashboard.ts / channel.ts / cli.ts) pass each
+  // project's own categories so one project's custom category (e.g. a Marketing
+  // `m`) can't leak an `hs-m` skill into every OTHER project. Set immediately
+  // before the fully SYNCHRONOUS generation below — no await follows, so
+  // concurrent callers can't interleave between this assignment and its use in
+  // `buildTicketSkills`. Falls back to the global when omitted (bare `ensureSkills`).
+  if (categories !== undefined) skillsState.categories = categories;
   const platforms: string[] = [];
 
   if (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude'))) {

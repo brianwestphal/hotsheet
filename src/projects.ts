@@ -78,9 +78,14 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   // against the registered project's root so skills land in the
   // right project on Open Folder.
   initSkills(port);
-  setSkillCategories(await runWithDataDir(absDataDir, () => getCategories()));
+  // HS-8910 — pass THIS project's categories explicitly so skill generation can
+  // never use another project's (the process-global is a foot-gun; see
+  // `ensureSkillsForAllProjects`). `setSkillCategories` is kept for the global
+  // default used by the bare `ensureSkills()` back-compat path.
+  const projectCategories = await runWithDataDir(absDataDir, () => getCategories());
+  setSkillCategories(projectCategories);
   const projectRoot = absDataDir.replace(/\/.hotsheet\/?$/, '');
-  ensureSkillsForDir(projectRoot);
+  ensureSkillsForDir(projectRoot, projectCategories);
 
   // HS-8491 (2026-05-22) — auto-seed a Claude configured terminal on
   // first run. See `seedClaudeTerminalIfNew` below.
@@ -200,6 +205,28 @@ export function getProjectByDataDir(dataDir: string): ProjectContext | undefined
 /** Get all registered projects. */
 export function getAllProjects(): ProjectContext[] {
   return Array.from(projects.values());
+}
+
+/**
+ * HS-8910 — (re)generate AI-tool skills for EVERY registered project, each
+ * against ITS OWN categories. The previous "for (p of getAllProjects())
+ * ensureSkillsForDir(p)" loops in dashboard.ts / channel.ts / cli.ts relied on
+ * the process-global `skillsState.categories`, which held whatever project last
+ * called `setSkillCategories` — so one project's custom category (e.g. a
+ * Marketing `m`) leaked an `hs-m` skill into every other project. Loading each
+ * project's `getCategories()` in its own DB context and passing it through fixes
+ * that. Sequential awaits + a synchronous `ensureSkillsForDir` keep each
+ * project's set→generate atomic. Returns whether any file changed (for the
+ * skills-created banner).
+ */
+export async function ensureSkillsForAllProjects(): Promise<boolean> {
+  let updated = false;
+  for (const p of getAllProjects()) {
+    const root = p.dataDir.replace(/\/.hotsheet\/?$/, '');
+    const cats = await runWithDataDir(p.dataDir, () => getCategories());
+    if (ensureSkillsForDir(root, cats).length > 0) updated = true;
+  }
+  return updated;
 }
 
 /** Unregister a project by secret. Does not close the database. */

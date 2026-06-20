@@ -11,8 +11,8 @@ import { getDashboardStats, getSnapshots } from '../db/stats.js';
 import { ensureGitignore, isGitRepo, isHotsheetGitignored } from '../gitignore.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { openInFileManager } from '../open-in-file-manager.js';
-import { getAllProjects } from '../projects.js';
-import { consumeSkillsCreatedFlag, ensureSkillsForDir } from '../skills.js';
+import { ensureSkillsForAllProjects } from '../projects.js';
+import { consumeSkillsCreatedFlag } from '../skills.js';
 import type { AppEnv } from '../types.js';
 import { extraSearchDirs } from '../utils/isExecutableOnPath.js';
 import { addPollWaiter, getChangeVersion, getDataVersion } from './notify.js';
@@ -63,16 +63,14 @@ dashboardRoutes.get('/dashboard', async (c) => {
 
 // --- Worklist info & Claude skill ---
 
-dashboardRoutes.get('/worklist-info', (c) => {
+dashboardRoutes.get('/worklist-info', async (c) => {
   const dataDir = c.get('dataDir');
   const cwd = process.cwd();
   const worklistRel = relative(cwd, join(dataDir, 'worklist.md'));
   const prompt = `Read ${worklistRel} for current work items.`;
 
-  // Ensure skills are up-to-date for all projects
-  for (const p of getAllProjects()) {
-    ensureSkillsForDir(p.dataDir.replace(/\/.hotsheet\/?$/, ''));
-  }
+  // HS-8910 — ensure skills for all projects, each against its OWN categories.
+  await ensureSkillsForAllProjects();
   const skillCreated = consumeSkillsCreatedFlag();
 
   return c.json({ prompt, skillCreated });
@@ -126,12 +124,11 @@ dashboardRoutes.patch('/global-config', async (c) => {
 
 // --- Ensure skills ---
 
-dashboardRoutes.post('/ensure-skills', (c) => {
-  // Ensure skills for ALL registered projects, not just the active one
-  for (const p of getAllProjects()) {
-    const projectRoot = p.dataDir.replace(/\/.hotsheet\/?$/, '');
-    ensureSkillsForDir(projectRoot);
-  }
+dashboardRoutes.post('/ensure-skills', async (c) => {
+  // HS-8910 — ensure skills for ALL registered projects, each against its OWN
+  // categories (not the process-global, which would leak one project's custom
+  // categories into every other project's skill files).
+  await ensureSkillsForAllProjects();
   const updated = consumeSkillsCreatedFlag();
   return c.json({ updated });
 });

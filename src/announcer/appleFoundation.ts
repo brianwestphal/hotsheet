@@ -32,6 +32,22 @@ let generateFn: AppleGenerate = realGenerate;
 let availabilityCache: boolean | null = null;
 
 /**
+ * HS-8909 — bound how long a single on-device generation may run before we give
+ * up and let the caller's fallback take over. Apple's on-device model has a tiny
+ * ~4096-token context window; when the announcer's system prompt + guided-output
+ * schema + material exceed it, FoundationModels still **prefills the whole
+ * oversized context before erroring**, so the `contextWindowExceeded` failure
+ * takes ~70 s (measured on macOS 26.5 / M-series) — whereas a request that fits
+ * returns in ~10–18 s. The token cost is dominated by the injected guided-output
+ * schema, which `apple-fm`'s char/4 `estimateTokens` can't see, so a pre-flight
+ * token check would be unreliable. A wall-clock cap is schema-agnostic and robust:
+ * it lets real successes through with headroom and turns the ~70 s doomed-call
+ * wait into a fast(er) failure that the HS-8805/8891 fallback picks up. 30 s ≈
+ * 1.7× the slowest observed success. The default `apple-fm` timeout is 120 s.
+ */
+export const APPLE_GENERATE_TIMEOUT_MS = 30_000;
+
+/**
  * Whether on-device Apple Foundation Models can be used right now: `apple-fm`'s
  * `probe()` checks the platform (macOS on Apple Silicon), that Apple Intelligence
  * is enabled, and that the model is downloaded. A probe failure (helper missing /
@@ -62,7 +78,9 @@ async function probeAvailability(): Promise<boolean> {
  * caller's fallback (HS-8805 / HS-8891) handles it.
  */
 export async function runAppleFoundationSummarize(system: string, material: string, schema: unknown): Promise<string> {
-  return generateFn({ system, prompt: material, schema });
+  // HS-8909 — cap the call so an over-context request fails fast (and falls back)
+  // instead of prefilling a doomed oversized context for ~70 s.
+  return generateFn({ system, prompt: material, schema }, { timeoutMs: APPLE_GENERATE_TIMEOUT_MS });
 }
 
 /** **TEST ONLY** — inject fake `apple-fm` `probe` / `generate` implementations. */

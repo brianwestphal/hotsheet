@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   _resetAppleFoundationForTesting, _setAppleFoundationForTesting,
-  isAppleFoundationAvailable, runAppleFoundationSummarize,
+  APPLE_GENERATE_TIMEOUT_MS, isAppleFoundationAvailable, runAppleFoundationSummarize,
 } from './appleFoundation.js';
 
 afterEach(() => {
@@ -52,6 +52,15 @@ describe('runAppleFoundationSummarize', () => {
     const out = await runAppleFoundationSummarize('SYS', 'MAT', SCHEMA);
     expect(out).toBe('{"entries":[]}');
     expect(seen).toEqual({ system: 'SYS', prompt: 'MAT', schema: SCHEMA });
+  });
+
+  it('passes a wall-clock timeout to apple-fm generate so an over-context call fails fast (HS-8909)', async () => {
+    let seenOpts: unknown = null;
+    _setAppleFoundationForTesting({
+      generate: (_req, opts) => { seenOpts = opts; return Promise.resolve('{"entries":[]}'); },
+    });
+    await runAppleFoundationSummarize('SYS', 'MAT', SCHEMA);
+    expect(seenOpts).toEqual({ timeoutMs: APPLE_GENERATE_TIMEOUT_MS });
   });
 
   it('propagates a generation failure so the caller can fall back', async () => {

@@ -13,6 +13,8 @@ import type { AppEnv } from '../types.js';
 vi.mock('../projects.js', () => ({
   getAllProjects: vi.fn(() => []),
   getProjectBySecret: vi.fn(() => null),
+  // HS-8910 — dashboard routes now ensure skills via the per-project helper.
+  ensureSkillsForAllProjects: vi.fn(() => Promise.resolve(false)),
 }));
 
 vi.mock('../skills.js', () => ({

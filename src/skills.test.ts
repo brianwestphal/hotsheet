@@ -303,6 +303,53 @@ describe('skill install is cwd-independent (HS-8706 launch hang)', () => {
   });
 });
 
+// HS-8910 — skill generation must use the project's OWN categories, not the
+// process-global `skillsState.categories` (which holds whatever project last
+// called `setSkillCategories`). Pre-fix, the "ensure ALL projects" loops leaked
+// one project's custom category (e.g. a Marketing `m`) into every other project,
+// so a project with only the defaults kept getting a spurious `hs-m` skill.
+describe('ensureSkillsForDir uses the passed categories, not the stale global (HS-8910)', () => {
+  let projectDir: string;
+  const MARKETING = { id: 'm', label: 'Marketing', shortLabel: 'MKT', color: '#8b5cf6', shortcutKey: 'm', description: 'Marketing tasks' };
+
+  beforeEach(() => {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    projectDir = join(tmpdir(), `hs-skills-8910-${stamp}`);
+    mkdirSync(join(projectDir, '.hotsheet'), { recursive: true });
+    mkdirSync(join(projectDir, '.claude'), { recursive: true });
+    writeFileSync(join(projectDir, '.hotsheet', 'settings.json'), JSON.stringify({ secret: 'test-secret', port: 4174 }));
+    initSkills(4174);
+    _resetSkillsStateForTesting();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    _resetSkillsStateForTesting();
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('does NOT write hs-m when the global has Marketing but the passed categories do not', () => {
+    // Simulate another project (with a Marketing category) having set the global.
+    setSkillCategories([...DEFAULT_CATEGORIES, MARKETING]);
+    // This project owns only the defaults — pass them explicitly.
+    ensureSkillsForDir(projectDir, DEFAULT_CATEGORIES);
+
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'))).toBe(true);
+  });
+
+  it('DOES write hs-m when the passed categories include Marketing', () => {
+    ensureSkillsForDir(projectDir, [...DEFAULT_CATEGORIES, MARKETING]);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(true);
+  });
+
+  it('falls back to the global when no categories are passed (back-compat)', () => {
+    setSkillCategories([...DEFAULT_CATEGORIES, MARKETING]);
+    ensureSkillsForDir(projectDir);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(true);
+  });
+});
+
 describe('ensureClaudePermissions', () => {
   let tempDir: string;
   let settingsDir: string;

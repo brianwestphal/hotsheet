@@ -12,9 +12,8 @@ import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { extractPrimaryValue, findMatchingAllowRule, parseAllowRules } from '../permissionAllowRules.js';
-import { getAllProjects } from '../projects.js';
+import { ensureSkillsForAllProjects, getAllProjects } from '../projects.js';
 import { PendingPermissionSchema } from '../schemas.js';
-import { ensureSkillsForDir } from '../skills.js';
 import { flushPendingSyncs } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
@@ -308,7 +307,7 @@ channelRoutes.post('/channel/done', (_c) => {
   return _c.json({ ok: true });
 });
 
-channelRoutes.post('/channel/enable', (c) => {
+channelRoutes.post('/channel/enable', async (c) => {
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: true });
   // Register .mcp.json and ensure skills for ALL projects
@@ -316,9 +315,9 @@ channelRoutes.post('/channel/enable', (c) => {
   try {
     const projects = getAllProjects();
     registerChannelForAll(projects.map(p => p.dataDir));
-    for (const p of projects) {
-      ensureSkillsForDir(p.dataDir.replace(/\/.hotsheet\/?$/, ''));
-    }
+    // HS-8910 — per-project categories (not the process-global) so one project's
+    // custom category can't leak its `hs-*` skill into every other project.
+    await ensureSkillsForAllProjects();
   } catch {
     registerChannel(dataDir);
   }

@@ -187,7 +187,10 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
 
   const { runWithDataDir: runWith } = await import('./db/connection.js');
   initSkills(actualPort);
-  setSkillCategories(await runWith(dataDir, () => getCategories()));
+  // HS-8910 — capture the launched project's categories and pass them explicitly
+  // to `ensureSkillsForDir` below, so generation can't fall back to a stale global.
+  const launchedCategories = await runWith(dataDir, () => getCategories());
+  setSkillCategories(launchedCategories);
   // HS-8706 — derive the project root from `dataDir` instead of the old
   // cwd-keyed skill installer. On a GUI launch the
   // Tauri shell spawns this sidecar with `cwd = /`, so `process.cwd()` pointed
@@ -202,7 +205,7 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   // startup: a write failure here (bad path, read-only fs, permissions) is a
   // missing convenience, not a reason to kill an already-listening server.
   try {
-    const updatedPlatforms = ensureSkillsForDir(projectRoot);
+    const updatedPlatforms = ensureSkillsForDir(projectRoot, launchedCategories);
     if (updatedPlatforms.length > 0) {
       console.log(`\n  AI tool skills created/updated for: ${updatedPlatforms.join(', ')}`);
       console.log('  Restart your AI tool to pick up the new ticket creation skills.\n');
@@ -428,12 +431,10 @@ async function cleanupStaleChannels(): Promise<void> {
 
 /** Ensure skills and .mcp.json are set up for all projects. */
 async function setupSkillsAndChannels(port: number): Promise<void> {
-  const { getAllProjects } = await import('./projects.js');
-  const { ensureSkillsForDir } = await import('./skills.js');
-  for (const p of getAllProjects()) {
-    const root = p.dataDir.replace(/\/.hotsheet\/?$/, '');
-    ensureSkillsForDir(root);
-  }
+  const { getAllProjects, ensureSkillsForAllProjects } = await import('./projects.js');
+  // HS-8910 — generate each project's skills against its OWN categories, not the
+  // process-global (which would leak one project's custom categories everywhere).
+  await ensureSkillsForAllProjects();
   const { readGlobalConfig } = await import('./global-config.js');
   if (readGlobalConfig().channelEnabled === true) {
     const { registerChannelForAll } = await import('./channel-config.js');
