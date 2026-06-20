@@ -171,14 +171,18 @@ describe('cwd-relative skill-install launch-hang contract (HS-8706)', () => {
     // stripped — same derivation registerProject uses (HS-8486). Asserted as
     // robust substrings rather than a regex-of-the-regex.
     expect(cli).toContain('resolve(dataDir).replace(');
-    expect(cli).toContain('ensureSkillsForDir(projectRoot)');
+    // HS-8910 — `ensureSkillsForDir(projectRoot, launchedCategories)` now passes
+    // the launched project's own categories; match without the closing paren so
+    // the contract tolerates the extra arg.
+    expect(cli).toContain('ensureSkillsForDir(projectRoot');
   });
 
   it('cli.ts wraps the skill install so a write failure can never abort startup', () => {
     // Defense-in-depth: even with the right path, a read-only fs / permission
     // error must degrade to a warning, never a FATAL exit of a live server.
     const cli = read('src', 'cli.ts');
-    const callIdx = cli.indexOf('ensureSkillsForDir(projectRoot)');
+    // HS-8910 — match without the closing paren (the call gained a categories arg).
+    const callIdx = cli.indexOf('ensureSkillsForDir(projectRoot');
     expect(callIdx).toBeGreaterThanOrEqual(0);
     // A `try {` must open before the call and a `[skills]` warn catch follow it.
     const tryIdx = cli.lastIndexOf('try {', callIdx);
