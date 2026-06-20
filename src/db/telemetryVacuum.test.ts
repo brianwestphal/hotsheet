@@ -43,8 +43,8 @@ const { mockReadProjectList } = vi.hoisted(() => ({ mockReadProjectList: vi.fn<(
 vi.mock('../project-list.js', () => ({ readProjectList: mockReadProjectList }));
 
 const {
-  decideVacuumMode, dirSizeBytes, maintainTelemetryDb,
-  scheduleTelemetryMaintenance, scheduleTelemetryReclaim, telemetryDbDir,
+  decideVacuumMode, dirSizeBytes, isVacuumFullCatalogError, maintainTelemetryDb,
+  performVacuum, scheduleTelemetryMaintenance, scheduleTelemetryReclaim, telemetryDbDir,
 } = await import('./telemetryVacuum.js');
 
 const MB = 1024 * 1024;
@@ -74,6 +74,75 @@ describe('decideVacuumMode (HS-8884)', () => {
     const now = 30 * 24 * 60 * 60 * 1000;
     const lastFull = now - 8 * 24 * 60 * 60 * 1000; // 8 days ago, > 7-day throttle
     expect(decideVacuumMode(200 * MB, lastFull, now, opts)).toBe('full');
+  });
+});
+
+describe('isVacuumFullCatalogError (HS-8897)', () => {
+  // The exact error PGLite raised on the user's telemetry DBs: VACUUM FULL hit a
+  // pg_class (relname, relnamespace) unique violation rebuilding an index.
+  const realError = Object.assign(new Error('duplicate key value violates unique constraint "pg_class_relname_nsp_index"'), {
+    code: '23505',
+    constraint: 'pg_class_relname_nsp_index',
+    detail: 'Key (relname, relnamespace)=(idx_command_log_created, 2200) already exists.',
+    query: 'VACUUM FULL',
+  });
+
+  it('matches the real PGLite pg_class catalog violation by code + constraint', () => {
+    expect(isVacuumFullCatalogError(realError)).toBe(true);
+  });
+
+  it('matches when only the message is present (degraded error shape)', () => {
+    expect(isVacuumFullCatalogError(new Error('… duplicate key value violates unique constraint "pg_class_relname_nsp_index"'))).toBe(true);
+  });
+
+  it('does not match an unrelated SQL error', () => {
+    expect(isVacuumFullCatalogError(Object.assign(new Error('deadlock detected'), { code: '40P01' }))).toBe(false);
+    expect(isVacuumFullCatalogError(Object.assign(new Error('dup'), { code: '23505', constraint: 'tickets_pkey' }))).toBe(false);
+  });
+
+  it('is safe on non-error values', () => {
+    expect(isVacuumFullCatalogError(null)).toBe(false);
+    expect(isVacuumFullCatalogError('boom')).toBe(false);
+    expect(isVacuumFullCatalogError(undefined)).toBe(false);
+  });
+});
+
+describe('performVacuum (HS-8897)', () => {
+  const catalogError = Object.assign(new Error('duplicate key value violates unique constraint "pg_class_relname_nsp_index"'), {
+    code: '23505', constraint: 'pg_class_relname_nsp_index',
+  });
+
+  it('runs a plain VACUUM and never attempts full for plain mode', async () => {
+    const calls: string[] = [];
+    const r = await performVacuum((sql: string): Promise<void> => { calls.push(sql); return Promise.resolve(); }, 'plain');
+    expect(calls).toEqual(['VACUUM']);
+    expect(r).toEqual({ ranMode: 'plain', fullAttempted: false });
+  });
+
+  it('runs VACUUM FULL when it succeeds', async () => {
+    const calls: string[] = [];
+    const r = await performVacuum((sql: string): Promise<void> => { calls.push(sql); return Promise.resolve(); }, 'full');
+    expect(calls).toEqual(['VACUUM FULL']);
+    expect(r).toEqual({ ranMode: 'full', fullAttempted: true });
+  });
+
+  it('degrades a catalog-limited VACUUM FULL to a plain VACUUM (HS-8897)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const calls: string[] = [];
+    const r = await performVacuum((sql: string): Promise<void> => {
+      calls.push(sql);
+      if (sql === 'VACUUM FULL') throw catalogError;
+      return Promise.resolve();
+    }, 'full');
+    expect(calls).toEqual(['VACUUM FULL', 'VACUUM']); // attempted full, then fell back
+    expect(r).toEqual({ ranMode: 'plain', fullAttempted: true });
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+
+  it('rethrows a non-catalog VACUUM FULL failure', async () => {
+    const boom = Object.assign(new Error('out of disk'), { code: '53100' });
+    await expect(performVacuum((sql: string): Promise<void> => { if (sql === 'VACUUM FULL') throw boom; return Promise.resolve(); }, 'full')).rejects.toBe(boom);
   });
 });
 

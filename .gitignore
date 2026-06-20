@@ -21,6 +21,3 @@ test-results/
 src-tauri/target/
 src-tauri/binaries/
 src-tauri/server/
-
-# Apple Foundation Models helper — compiled build artifact (HS-8790)
-/apple-fm-helper

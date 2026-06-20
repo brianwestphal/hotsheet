@@ -104,33 +104,13 @@ jobs:
             });
             return data.id;
 
-  # HS-8876 — compile the Apple Foundation Models helper on GitHub's macOS 26
-  # runner (Xcode 26 / FoundationModels SDK; `macos-latest` is macOS 15 / Xcode 16
-  # and can't build it). Isolated to its OWN job on the `macos-26` PREVIEW runner
-  # so the main app build + sign + notarize stays on stable `macos-latest`.
-  # `continue-on-error: true` means preview-runner flakiness can NEVER block a
-  # release — the arm64 build then just ships without the on-device helper that
-  # round (verify-bundle logs the absence as non-fatal). The build job consumes
-  # the artifact best-effort.
-  apple-fm-helper:
-    runs-on: macos-26
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - name: Compile Apple FM helper (macOS 26 SDK)
-        run: bash scripts/build-apple-fm-helper.sh apple-fm-helper
-      - uses: actions/upload-artifact@v7
-        with:
-          name: apple-fm-helper
-          path: apple-fm-helper
-          if-no-files-found: error
-
+  # HS-8907 — the Apple Foundation Models helper is no longer compiled from our
+  # own Swift on a macOS-26 preview runner. It now ships prebuilt + signed +
+  # notarized inside the `apple-fm` npm package, and build-sidecar.sh copies it
+  # from node_modules into the staged server dir during the normal build. The
+  # separate `apple-fm-helper` job (and its Xcode-26 dependency) is gone.
   build:
-    # `needs: apple-fm-helper` is for ORDERING only (so the artifact exists before
-    # the download step). The `if` runs this job whenever create-release succeeded
-    # and we weren't cancelled — i.e. a failed/skipped helper job does NOT skip the
-    # release build (it just ships without the on-device helper that round).
-    needs: [create-release, apple-fm-helper]
+    needs: [create-release]
     if: ${{ !cancelled() && needs.create-release.result == 'success' }}
 
     strategy:
@@ -181,30 +161,20 @@ jobs:
         run: bash scripts/build-sidecar.sh ${{ matrix.target }}
         shell: bash
 
-      # HS-8876 — overlay the macOS-26-built Apple FM helper into the staged
-      # server dir (build-sidecar just wiped+repopulated src-tauri/server, and it
-      # self-skips the helper on this macOS-15 runner). Best-effort: if the
-      # helper job didn't produce it, the bundle ships without on-device Apple
-      # Intelligence (non-fatal). Must run AFTER build-sidecar (which wipes
-      # server/) and BEFORE the pre-sign + tauri build steps.
-      - name: Stage Apple FM helper (arm64 macOS)
-        if: matrix.target == 'aarch64-apple-darwin'
-        continue-on-error: true
-        uses: actions/download-artifact@v7
-        with:
-          name: apple-fm-helper
-          path: src-tauri/server
-      - name: Mark Apple FM helper present (arm64 macOS)
+      # HS-8907 — build-sidecar.sh already copied the prebuilt apple-fm helper
+      # from node_modules into src-tauri/server (arm64 macOS only). Just confirm
+      # it landed and activate verify-bundle's hard assertion; `npm ci` ran above
+      # so it should always be present now (no Xcode-26 / artifact dependency).
+      - name: Confirm Apple FM helper bundled (arm64 macOS)
         if: matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
           if [ -f src-tauri/server/apple-fm-helper ]; then
             chmod +x src-tauri/server/apple-fm-helper
-            # Activates verify-bundle's hard assertion that it's actually bundled.
             echo "EXPECT_APPLE_FM_HELPER=1" >> "$GITHUB_ENV"
-            echo "Apple FM helper staged: $(wc -c < src-tauri/server/apple-fm-helper) bytes."
+            echo "Apple FM helper bundled: $(wc -c < src-tauri/server/apple-fm-helper) bytes."
           else
-            echo "Apple FM helper artifact absent — bundle omits it (non-fatal; on-device Apple FM disabled this build)."
+            echo "Apple FM helper absent after build-sidecar — bundle omits it (non-fatal; on-device Apple FM disabled this build)."
           fi
 
       # macOS-only: pre-sign native binaries embedded in the sidecar's
@@ -234,11 +204,12 @@ jobs:
           set -euo pipefail
           # macOS runners default to bash 3.x which lacks `mapfile`; use a
           # newline-delimited string + portable `while IFS= read` loop.
-          # HS-8876 — also sign `apple-fm-helper` (the Swift Apple Foundation
-          # Models helper built into src-tauri/server/ on arm64). It's a Mach-O
-          # executable in the resource tree, so the notary rejects it unsigned —
-          # same reason as node-pty's spawn-helper. Search all of server/ (not
-          # just node_modules) so the helper at server/apple-fm-helper is caught.
+          # HS-8876 → HS-8907 — also sign `apple-fm-helper` (the Apple Foundation
+          # Models helper from the `apple-fm` package, copied into src-tauri/server/
+          # on arm64). apple-fm ships it signed with its OWN identity; re-signing
+          # with ours here is required so the notary accepts it inside our bundle —
+          # same reason as node-pty's spawn-helper. Search all of server/ (not just
+          # node_modules) so the helper at server/apple-fm-helper is caught.
           NODE_BINS=$(find src-tauri/server \( -name '*.node' -o -name 'spawn-helper' -o -name 'apple-fm-helper' \) -type f 2>/dev/null || true)
           if [ -z "$NODE_BINS" ]; then
             echo "No native binaries under src-tauri/server — nothing to pre-sign."

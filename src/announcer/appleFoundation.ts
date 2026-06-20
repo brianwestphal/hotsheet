@@ -1,70 +1,41 @@
 /**
- * §78 Announcer (HS-8790) — the **Apple Foundation Models** provider.
+ * §78 Announcer — the **Apple Foundation Models** provider, backed by the
+ * `apple-fm` npm package (HS-8907, replacing the previously hand-maintained
+ * Swift helper at `src-tauri/apple-fm-helper/main.swift`).
  *
- * Apple's on-device LLM is only reachable from native macOS (Swift
- * `FoundationModels`), which the Node server can't call directly. The fix (per
- * the design discussion): a tiny bundled **Swift CLI helper** that the server
- * shells out to — `--probe` reports availability, `--summarize` reads
- * `{system, material}` JSON on stdin and writes `{entries:[…]}` JSON on stdout.
- * Because the *server* runs it, this works in BOTH the manual "Listen" path and
- * the server-driven live-mode generator (no client round-trip needed).
+ * `apple-fm` bundles a signed + notarized Swift helper that wraps Apple's
+ * on-device `FoundationModels` and exposes a small Node API: `probe()` reports
+ * availability and `generate({system, prompt, schema})` runs one generation with
+ * **guided/structured output** that's guaranteed to conform to a JSON Schema
+ * (the on-device equivalent of the Anthropic path's `output_config`). The server
+ * calls it directly, so on-device narration works in BOTH the manual "Listen"
+ * path and the live-mode generator (no client round-trip).
  *
- * Resolution: the bundled-binary path comes from `HOTSHEET_APPLE_FM_BIN`
- * (set by the Tauri launcher / build), with a `cwd` fallback. On non-darwin, a
- * missing binary, or a failing probe, the provider reports unavailable and the
- * caller falls back to Anthropic. The native compile + code-sign + on-device run
- * are a desktop concern (see docs/tauri-architecture.md); everything here is
- * pure Node and unit-tested with an injected runner.
+ * Helper resolution is `apple-fm`'s concern: `APPLE_FM_BIN`, then its bundled
+ * `bin/apple-fm-helper`, then `PATH`. In dev that's found in `node_modules`
+ * automatically (no build step); the Tauri build copies the bundled helper into
+ * the app and points `APPLE_FM_BIN` at it (see docs/tauri-architecture.md).
+ * Off-platform (non-macOS / not Apple Silicon / Apple Intelligence off),
+ * `probe()` reports unavailable and the caller falls back to Anthropic / local.
+ * Everything here is pure Node and unit-tested with injected `probe`/`generate`.
  */
-import { spawn } from 'node:child_process';
+import { generate as realGenerate, probe as realProbe } from 'apple-fm';
 
-import { existsSync } from 'fs';
-import { join } from 'path';
+/** The `apple-fm` surface this module uses — injectable so the helper is never
+ *  spawned in tests and the availability matrix is testable on Linux CI. */
+export type AppleProbe = typeof realProbe;
+export type AppleGenerate = typeof realGenerate;
 
-/** Spawn a process, write `stdin`, resolve with its stdout, stderr + exit code.
- *  `stderr` is optional so test runners can omit it; production callers capture
- *  it because the Swift helper writes its failure detail there (e.g. the exact
- *  `inference failed: <error>` behind a non-zero exit). */
-export type ProcessRunner = (bin: string, args: string[], stdin: string) => Promise<{ stdout: string; code: number; stderr?: string }>;
-
-const defaultRunner: ProcessRunner = (bin, args, stdin) =>
-  new Promise((resolve, reject) => {
-    // stderr is PIPED (not ignored): the helper writes its diagnostic reason
-    // there (`fail(message, code)` in main.swift). Discarding it left every
-    // failure as a bare "exited with code N" with no way to tell WHY on-device
-    // inference failed (HS-8883).
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf-8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.stderr.setEncoding('utf-8');
-    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ stdout, stderr, code: code ?? 0 }));
-    child.stdin.end(stdin);
-  });
-
-let runner: ProcessRunner = defaultRunner;
-/** Apple Foundation Models are macOS-only; injectable so the availability matrix
- *  is testable on Linux CI. */
-let isDarwin: boolean = process.platform === 'darwin';
+let probeFn: AppleProbe = realProbe;
+let generateFn: AppleGenerate = realGenerate;
 /** Cached availability — the OS-model state changes rarely within a session. */
 let availabilityCache: boolean | null = null;
 
-/** Absolute path to the bundled Swift helper, or null when it isn't present. */
-export function appleFmBinPath(): string | null {
-  const env = process.env.HOTSHEET_APPLE_FM_BIN;
-  if (env !== undefined && env !== '' && existsSync(env)) return env;
-  const fallback = join(process.cwd(), 'apple-fm-helper');
-  if (existsSync(fallback)) return fallback;
-  return null;
-}
-
 /**
- * Whether on-device Apple Foundation Models can be used right now: macOS, the
- * helper binary present, and its `--probe` reporting `available` (macOS 26 +
- * Apple Intelligence enabled + model downloaded). Cached after the first check.
+ * Whether on-device Apple Foundation Models can be used right now: `apple-fm`'s
+ * `probe()` checks the platform (macOS on Apple Silicon), that Apple Intelligence
+ * is enabled, and that the model is downloaded. A probe failure (helper missing /
+ * spawn error) counts as unavailable. Cached after the first check.
  */
 export async function isAppleFoundationAvailable(): Promise<boolean> {
   if (availabilityCache !== null) return availabilityCache;
@@ -73,50 +44,37 @@ export async function isAppleFoundationAvailable(): Promise<boolean> {
 }
 
 async function probeAvailability(): Promise<boolean> {
-  if (!isDarwin) return false;
-  const bin = appleFmBinPath();
-  if (bin === null) return false;
   try {
-    const { stdout, code } = await runner(bin, ['--probe'], '');
-    return code === 0 && stdout.trim().toLowerCase().startsWith('available');
+    return (await probeFn()).available;
   } catch {
+    // Off-platform `probe()` resolves `{available:false}` rather than throwing;
+    // a throw here would be an unexpected helper/spawn failure → unavailable.
     return false;
   }
 }
 
 /**
- * Run one on-device summarization. Returns the helper's raw stdout (expected to
- * be `{entries:[…]}` JSON — the caller validates it with the shared schema, the
- * same way the Anthropic path validates the model's JSON). Throws if the helper
- * is missing or exits non-zero.
+ * Run one on-device summarization via guided generation. `schema` is the
+ * `{entries:[…]}` JSON Schema the caller also enforces on the Anthropic path; the
+ * returned string is the guaranteed-conforming JSON, which the caller validates
+ * with the shared zod schema (the same way it validates the Anthropic output).
+ * Rejects (propagating `apple-fm`'s error) when the on-device run fails — the
+ * caller's fallback (HS-8805 / HS-8891) handles it.
  */
-export async function runAppleFoundationSummarize(system: string, material: string): Promise<string> {
-  const bin = appleFmBinPath();
-  if (bin === null) throw new Error('Apple Foundation Models helper not found');
-  const { stdout, stderr, code } = await runner(bin, ['--summarize'], JSON.stringify({ system, material }));
-  if (code !== 0) {
-    // Surface the helper's stderr reason (HS-8883) — e.g. "inference failed:
-    // <FoundationModels error>" — so the soft-failure log is actionable instead
-    // of a bare exit code. Common code-4 causes: the on-device model throwing on
-    // a guardrail violation or an oversized prompt past its small context window.
-    const detail = stderr?.trim();
-    throw new Error(
-      `Apple Foundation Models helper exited with code ${code}${detail !== undefined && detail !== '' ? `: ${detail}` : ''}`,
-    );
-  }
-  return stdout;
+export async function runAppleFoundationSummarize(system: string, material: string, schema: unknown): Promise<string> {
+  return generateFn({ system, prompt: material, schema });
 }
 
-/** **TEST ONLY** — inject a fake process runner + pretend-platform. */
-export function _setAppleFoundationForTesting(opts: { runner?: ProcessRunner; darwin?: boolean }): void {
-  if (opts.runner !== undefined) runner = opts.runner;
-  if (opts.darwin !== undefined) isDarwin = opts.darwin;
+/** **TEST ONLY** — inject fake `apple-fm` `probe` / `generate` implementations. */
+export function _setAppleFoundationForTesting(opts: { probe?: AppleProbe; generate?: AppleGenerate }): void {
+  if (opts.probe !== undefined) probeFn = opts.probe;
+  if (opts.generate !== undefined) generateFn = opts.generate;
   availabilityCache = null;
 }
 
-/** **TEST ONLY** — clear the availability cache + restore real wiring. */
+/** **TEST ONLY** — clear the availability cache + restore real `apple-fm` wiring. */
 export function _resetAppleFoundationForTesting(): void {
-  runner = defaultRunner;
-  isDarwin = process.platform === 'darwin';
+  probeFn = realProbe;
+  generateFn = realGenerate;
   availabilityCache = null;
 }

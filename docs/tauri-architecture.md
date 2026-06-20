@@ -209,7 +209,7 @@ Each platform has a launcher script bundled as a Tauri resource:
 
 The macOS launcher is significantly more complex due to the stub app mechanism. Linux and Windows launchers are straightforward — they just exec the Tauri binary with `--data-dir`.
 
-## Apple Foundation Models helper (Announcer on-device provider, HS-8790)
+## Apple Foundation Models helper (Announcer on-device provider, HS-8790 → HS-8907)
 
 The Announcer can summarize on-device via Apple Foundation Models (§78, macOS 26
 + Apple Intelligence) instead of the Anthropic cloud API. Apple's `FoundationModels`
@@ -218,54 +218,51 @@ framework is native-only, and the **Node sidecar can't call Tauri/Swift** (the
 helper** the server shells out to — keeping summarization server-side, so it works
 in both the manual "Listen" path and the live-mode generator.
 
-- **Source:** `src-tauri/apple-fm-helper/main.swift` (NOT compiled by cargo).
-  `--probe` prints `available`/`unavailable`; `--summarize` reads
-  `{"system","material"}` JSON on stdin and writes `{"entries":[…]}` JSON on
-  stdout. Uses **guided generation** (`@Generable`/`@Guide` + `respond(to:generating:)`)
-  so the structure is guaranteed, then re-encodes the exact wire shape — no fragile
-  prompt-to-JSON. **Verified compiling + running on macOS 26.5 / Xcode 26.5**
-  (`swiftc -target arm64-apple-macos26`; `--probe` → `available`, `--summarize`
-  produced clean structured entries on-device).
-- **Build:** `scripts/build-apple-fm-helper.sh [outPath]` compiles (and, with
-  `CODESIGN_IDENTITY` set, signs) it. It is **guarded** — a no-op (exit 0) on
-  non-macOS, when `swiftc` is missing, or when the macOS 26 SDK isn't present —
-  so it can be called from any build without breaking it. `npm run build:apple-fm-helper`
-  is the alias (outputs `./apple-fm-helper` at the repo root); **`npm run tauri:dev`
-  calls it automatically** (the guard no-ops it off macOS).
-- **Server resolution:** `src/announcer/appleFoundation.ts` finds the binary via
-  `HOTSHEET_APPLE_FM_BIN` (preferred), else `<cwd>/apple-fm-helper`. On non-darwin
-  / missing binary / failing probe it reports unavailable and the Announcer falls
-  back to Anthropic.
+**HS-8907 — the helper is no longer our own Swift source.** It now comes from the
+[`apple-fm`](https://github.com/brianwestphal/apple-fm) npm package (a direct
+dependency), which ships a **prebuilt, signed + notarized** `bin/apple-fm-helper`
+and a small Node wrapper (`probe()`, `generate({system, prompt, schema})` with
+guided/structured JSON output). We removed `src-tauri/apple-fm-helper/main.swift`
+and `scripts/build-apple-fm-helper.sh`; there is no swiftc/Xcode-26 build step
+anymore.
 
-**Dev (`npm run tauri:dev`) works out of the box on macOS:** `tauri:dev` builds
-the helper to `./apple-fm-helper`, and the Rust app spawns the dev server (`npx
-tsx src/cli.ts`) with **cwd = repo root** (`lib.rs`), so the server discovers the
-helper via the `<cwd>/apple-fm-helper` fallback — no env var or bundling needed.
-A swiftc-built binary is ad-hoc-signed and could call `FoundationModels` locally
-in testing. (For the plain `npm run dev` browser path, run `npm run build:apple-fm-helper`
-once first.)
+- **Server layer:** `src/announcer/appleFoundation.ts` is a thin wrapper over
+  `apple-fm` — `isAppleFoundationAvailable()` → `probe().available` (cached);
+  `runAppleFoundationSummarize(system, material, schema)` → `generate({system,
+  prompt: material, schema})`, returning the guaranteed-conforming `{entries:[…]}`
+  JSON. On a failing probe / unsupported platform it reports unavailable and the
+  Announcer falls back to Anthropic / local.
+- **Helper resolution** is `apple-fm`'s: `APPLE_FM_BIN` env → its bundled
+  `bin/apple-fm-helper` → `PATH`.
 
-**Signed, packaged bundle (HS-8876 — shipped wiring):**
-1. **Build:** `build-sidecar.sh` calls `build-apple-fm-helper.sh` for the
-   `aarch64-apple-darwin` target only (Apple Intelligence is Apple-Silicon +
-   macOS 26 only), emitting the binary INTO the already-bundled `src-tauri/server/`
-   dir. Tauri's existing `server/**/*` resource glob then packages it to
-   `Contents/Resources/server/apple-fm-helper` — no `tauri.conf.json` change, and
-   it's simply absent on every other target.
-2. **Sign:** the workflows' "Pre-sign native binaries (macOS)" step signs it
-   (Hardened Runtime, Developer ID) along with node-pty's Mach-O binaries BEFORE
-   `tauri build`, so the whole `.app` passes notarization in one submission (the
-   notary rejects any unsigned Mach-O in the resource tree).
+**Dev (`npm run tauri:dev` / `npm run dev`) works out of the box on macOS:**
+`apple-fm` is in `node_modules`, so `resolveHelperPath()` finds
+`node_modules/apple-fm/bin/apple-fm-helper` automatically — **no build step, no env
+var** (the old `npm run build:apple-fm-helper` is gone). The bundled helper is
+signed + notarized by apple-fm, so it can call `FoundationModels` locally.
+
+**Signed, packaged bundle (HS-8876 wiring → HS-8907 source):**
+1. **Bundle:** `build-sidecar.sh` **copies** `node_modules/apple-fm/bin/apple-fm-helper`
+   into the already-bundled `src-tauri/server/` dir for the `aarch64-apple-darwin`
+   target only (Apple Intelligence is Apple-Silicon only). Tauri's existing
+   `server/**/*` resource glob packages it to `Contents/Resources/server/apple-fm-helper`
+   — no `tauri.conf.json` change, absent on every other target. (The sidecar is a
+   single tsup-bundled JS file with no `node_modules`, so the binary must be copied
+   out and pointed at explicitly.)
+2. **Sign:** the workflows' "Pre-sign native binaries (macOS)" step **re-signs** it
+   with our identity (Hardened Runtime, Developer ID) along with node-pty's Mach-O
+   binaries BEFORE `tauri build` (apple-fm signs it with its own identity; ours must
+   replace that so the whole `.app` passes notarization in one submission — the
+   notary rejects any nested Mach-O not covered by the app's signature).
 3. **Resolve:** the Rust launcher (`lib.rs` `spawn_sidecar_and_navigate`) sets
-   `HOTSHEET_APPLE_FM_BIN = <resource_dir>/server/apple-fm-helper` on the sidecar
-   env when that file exists, so the server discovers it inside the `.app`.
-4. **Guard:** `verify-bundle.mjs` asserts a non-empty, executable
-   `apple-fm-helper` is in the arm64 bundle when `EXPECT_APPLE_FM_HELPER=1` — so a
-   runner that can't compile it (no Xcode 26) fails the build instead of silently
-   shipping without on-device support.
+   `APPLE_FM_BIN = <resource_dir>/server/apple-fm-helper` on the sidecar env when
+   that file exists, so `apple-fm` discovers it inside the `.app`.
+4. **Guard:** `verify-bundle.mjs` asserts a non-empty, executable `apple-fm-helper`
+   is in the arm64 bundle when `EXPECT_APPLE_FM_HELPER=1`.
 
-**CI runner caveat:** the helper needs the macOS 26 SDK (Xcode 26). GitHub's
-`macos-latest` is **macOS 15 / Xcode 16**, so the arm64 macOS build job must run on
-the **`macos-26`** runner (currently GitHub *preview*) for CI to ship the helper;
-otherwise `build-apple-fm-helper.sh` self-skips and the bundle omits it. The
-local `npm run tauri:build` path works today on a macOS 26 + Xcode 26 machine.
+**No special CI runner needed anymore.** Because the helper is a prebuilt
+dependency artifact (copied during the normal build after `npm ci`), the arm64
+macOS build no longer requires the macOS-26 / Xcode-26 runner — the dedicated
+`apple-fm-helper` compile job was removed from both release workflows. The binary
+is an arm64 Mach-O that only *runs* on macOS 26 + Apple Intelligence, but it
+*bundles* on any arm64-darwin runner.

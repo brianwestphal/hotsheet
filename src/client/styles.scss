@@ -2583,7 +2583,13 @@ body.cross-project-stats-active {
     }
   }
 
-  .command-auto-show-label {
+  // HS-8894 — both shell sub-option checkbox rows share this. Without the
+  // `.command-launch-terminal-label` selector here, that label fell through to
+  // the generic `.cmd-editor-dialog-body label` rule below (`--text-muted`,
+  // 11px), so a *checked* "Launch in new terminal" rendered in the lightest gray
+  // and read as disabled next to its active checkbox. They must look identical.
+  .command-auto-show-label,
+  .command-launch-terminal-label {
     display: flex;
     align-items: center;
     gap: 6px;

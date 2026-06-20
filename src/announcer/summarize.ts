@@ -256,7 +256,7 @@ export async function summarizeWork(
     // the same system prompt and just validate the JSON it returns. On-device =
     // free, so no usage/cost is recorded.
     try {
-      const out = await runAppleFoundationSummarize(system, material);
+      const out = await runAppleFoundationSummarize(system, material, OUTPUT_SCHEMA);
       return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow), usage: null };
     } catch (err) {
       return onDeviceFallbackOrThrow(err, 'Apple Foundation Models', material, system, opts, excludeLow);

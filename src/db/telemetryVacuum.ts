@@ -45,6 +45,66 @@ const FULL_VACUUM_THROTTLE_MS = FULL_VACUUM_THROTTLE_DAYS * 24 * 60 * 60 * 1000;
 
 export type VacuumMode = 'none' | 'plain' | 'full';
 
+/**
+ * HS-8897 — does this error look like PGLite's `VACUUM FULL` catalog
+ * unique-violation? On some telemetry clusters `VACUUM FULL` fails while
+ * rewriting a relation, with Postgres error `23505` on `pg_class`'s
+ * `(relname, relnamespace)` unique index (`duplicate key … pg_class_relname_nsp_index`,
+ * e.g. `idx_command_log_created` "already exists"). It's a known PGLite
+ * limitation — plain `VACUUM` (which never rewrites the catalog) is unaffected —
+ * so we treat it as a soft, expected failure rather than an alarming error.
+ *
+ * Pure + exported for unit testing. Matches on the SQLSTATE + constraint name,
+ * with a message-text fallback for error shapes that only surface `.message`.
+ */
+export function isVacuumFullCatalogError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  // `as Record<string,unknown>` only to read optional fields off an unknown
+  // error; every access is type-guarded below, so no unchecked assumption ships.
+  const rec = err as Record<string, unknown>;
+  const code = typeof rec.code === 'string' ? rec.code : '';
+  const constraint = typeof rec.constraint === 'string' ? rec.constraint : '';
+  const message = typeof rec.message === 'string' ? rec.message : '';
+  if (code === '23505' && constraint.startsWith('pg_class')) return true;
+  return /duplicate key value violates unique constraint "pg_class/.test(message);
+}
+
+export interface VacuumExecResult {
+  /** The mode that actually completed (`'full'` may degrade to `'plain'`). */
+  ranMode: 'plain' | 'full';
+  /** Whether a `VACUUM FULL` was attempted (true even when it degraded). Drives
+   *  the throttle stamp so a degrading DB backs off future FULL retries. */
+  fullAttempted: boolean;
+}
+
+/**
+ * HS-8897 — run the chosen VACUUM against an injected `exec`, degrading a failing
+ * `VACUUM FULL` to a plain `VACUUM` when the failure is the known PGLite
+ * `pg_class` catalog limitation (see {@link isVacuumFullCatalogError}). Any other
+ * failure propagates. Pure but for `exec`/logging, so it unit-tests without a
+ * real cluster.
+ */
+export async function performVacuum(
+  exec: (sql: string) => Promise<void>,
+  mode: 'plain' | 'full',
+): Promise<VacuumExecResult> {
+  if (mode === 'plain') {
+    await exec('VACUUM');
+    return { ranMode: 'plain', fullAttempted: false };
+  }
+  try {
+    await exec('VACUUM FULL');
+    return { ranMode: 'full', fullAttempted: true };
+  } catch (err) {
+    if (!isVacuumFullCatalogError(err)) throw err;
+    console.warn(
+      '  Telemetry VACUUM FULL unsupported on this cluster (PGLite pg_class catalog limitation) — falling back to plain VACUUM and backing off full retries.',
+    );
+    await exec('VACUUM');
+    return { ranMode: 'plain', fullAttempted: true };
+  }
+}
+
 export interface VacuumThresholds {
   plainMinBytes?: number;
   fullMinBytes?: number;
@@ -145,24 +205,35 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
     : decideVacuumMode(sizeBytes, lastFullVacuumAtMs(dbDir), now(), opts);
   if (mode === 'none') return { mode, sizeBytes };
 
+  let ranMode: VacuumMode = mode;
+  let fullAttempted = false;
   try {
-    await runWithTelemetryDb(dataDir, async () => {
+    // Return the result OUT of the DB context (rather than mutating closure vars)
+    // so the post-context `if (fullAttempted)` keeps its real `boolean` type.
+    const result = await runWithTelemetryDb(dataDir, async () => {
       const db = await getTelemetryDb();
       // VACUUM can't run inside a transaction block — `exec` issues it as a bare
-      // statement (PGLite autocommits each).
-      await db.exec(mode === 'full' ? 'VACUUM FULL' : 'VACUUM');
+      // statement (PGLite autocommits each). HS-8897 — `performVacuum` degrades a
+      // PGLite-catalog-limited VACUUM FULL to a plain VACUUM instead of throwing.
+      return performVacuum(async (sql) => { await db.exec(sql); }, mode);
     });
-    if (mode === 'full') {
+    ranMode = result.ranMode;
+    fullAttempted = result.fullAttempted;
+    // Stamp the throttle whenever a FULL was attempted — on success it records
+    // the last reclaim; on a degraded fallback (HS-8897) it backs off future
+    // FULL retries so a known-unsupported cluster doesn't re-attempt (and re-warn)
+    // on every maintenance pass, only once per throttle window.
+    if (fullAttempted) {
       const map = { ...(readGlobalConfig().telemetryVacuumFullAt ?? {}) };
       map[dbDir] = new Date(now()).toISOString();
       writeGlobalConfig({ telemetryVacuumFullAt: map });
     }
-    console.log(`  Telemetry VACUUM${mode === 'full' ? ' FULL' : ''}: reclaimed ${dbDir} (was ${String(Math.round(sizeBytes / (1024 * 1024)))} MB).`);
+    console.log(`  Telemetry VACUUM${ranMode === 'full' ? ' FULL' : ''}: reclaimed ${dbDir} (was ${String(Math.round(sizeBytes / (1024 * 1024)))} MB).`);
   } catch (err) {
     console.error(`Telemetry VACUUM (${mode}) failed for ${dbDir}:`, err);
     return { mode: 'none', sizeBytes };
   }
-  return { mode, sizeBytes };
+  return { mode: ranMode, sizeBytes };
 }
 
 export interface ScheduleOptions {

@@ -809,16 +809,20 @@ registry (`src/announcer/models.ts`) is now **provider-tagged** (`providerForMod
 and `summarizeWork` routes by provider: `anthropic` calls the Messages API with
 the user's key (cloud); **`apple`** runs **on-device** via Apple Foundation Models
 (macOS 26 + Apple Intelligence) — free, private, no key, `usage = null`. Apple
-inference goes through a bundled **Swift CLI helper** the *server* shells out to
-(`src/announcer/appleFoundation.ts` → `src-tauri/apple-fm-helper/main.swift`), so
-it works in both Listen and live mode (see docs/tauri-architecture.md §"Apple
-Foundation Models helper" for build/bundle/signing). **HS-8876** — the packaged
-desktop app now actually ships the helper: `build-sidecar.sh` compiles it into the
-bundled `server/` dir for arm64 macOS, the macOS pre-sign step signs it for
-notarization, and the Rust launcher points the server at it via
-`HOTSHEET_APPLE_FM_BIN` — so `appleAvailable` is true in the installed app, not
-just in `npm run tauri:dev`. (CI must build the arm64 job on a `macos-26` runner —
-`macos-latest` is macOS 15 / Xcode 16 and self-skips the helper.) Availability is probed once
+inference goes through a **Swift CLI helper** the *server* shells out to via
+`src/announcer/appleFoundation.ts`, so it works in both Listen and live mode (see
+docs/tauri-architecture.md §"Apple Foundation Models helper"). **HS-8907** — that
+helper is no longer our own Swift source: `appleFoundation.ts` is now a thin
+wrapper over the **`apple-fm`** npm package (a direct dependency that ships a
+prebuilt, signed + notarized `bin/apple-fm-helper` plus a Node `probe()` /
+`generate({system, prompt, schema})` API with guided JSON output). We removed
+`src-tauri/apple-fm-helper/main.swift` + `scripts/build-apple-fm-helper.sh`. **HS-8876
+→ HS-8907** — the packaged desktop app still ships the helper, now by COPYING
+`apple-fm`'s prebuilt binary into the bundled `server/` dir for arm64 macOS (no
+swiftc/Xcode-26 build, so the dedicated macOS-26 CI job is gone); the macOS pre-sign
+step re-signs it with our identity for notarization, and the Rust launcher points
+the server at it via `APPLE_FM_BIN` — so `appleAvailable` is true in the installed
+app, not just in `npm run tauri:dev`. Availability is probed once
 + cached and surfaced via `appleAvailable` on `/announcer/status` + `/overview`;
 when available it becomes the **default** model (explicit `announcerModel` still
 wins), and the Listen button/generation no longer require an Anthropic key. The

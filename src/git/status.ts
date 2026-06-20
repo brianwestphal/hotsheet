@@ -143,7 +143,12 @@ async function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): 
     branch = sha.status === 0 && sha.stdout.trim() !== '' ? sha.stdout.trim() : '(detached)';
   }
 
-  const porcelain = await invoker(['status', '--porcelain=v1', '--no-renames'], root);
+  // HS-8895 — `--untracked-files=all` (default is `normal`, which collapses a
+  // newly-added directory to a single `?? dir/` entry). Without it the chip's
+  // dirty/untracked count under-reports: adding a directory of N files shows as
+  // 1, and the popover lists `dir/` instead of its contents. `all` expands
+  // untracked directories to individual files (gitignored files stay excluded).
+  const porcelain = await invoker(['status', '--porcelain=v1', '--no-renames', '--untracked-files=all'], root);
   const counts = porcelain.status === 0
     ? bucketPorcelain(porcelain.stdout)
     : { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 };
@@ -282,7 +287,10 @@ export async function getGitStatusFiles(projectRoot: string, invoker: GitInvoker
   // latency. Triggered on demand by the gitStatusChip popover click.
   return instrumentAsync(join(projectRoot, '.hotsheet'), 'git.getStatusFiles', async () => {
     const root = getGitRoot(projectRoot) ?? projectRoot;
-    const res = await invoker(['status', '--porcelain=v1', '--no-renames', '-z'], root);
+    // HS-8895 — `--untracked-files=all` so the popover lists every file in a
+    // newly-added directory (matching the expanded count) instead of a single
+    // `dir/` entry. See the rationale on the count invocation in `getGitStatusUnwrapped`.
+    const res = await invoker(['status', '--porcelain=v1', '--no-renames', '-z', '--untracked-files=all'], root);
     if (res.status !== 0) return null;
     return bucketPorcelainFiles(res.stdout);
   });

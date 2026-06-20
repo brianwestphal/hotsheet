@@ -130,6 +130,41 @@ test.describe('Custom commands', () => {
     await expect(modal).toBeHidden({ timeout: 3000 });
   });
 
+  // HS-8894 — the "Launch in new terminal" shell sub-option label fell through
+  // to the generic muted `.cmd-editor-dialog-body label` rule, so a checked box
+  // rendered with disabled-looking light-gray text. It must match the sibling
+  // "Show log on completion" label exactly. Guard by comparing computed colors.
+  test('shell sub-option labels render with the same (non-disabled) color (HS-8894)', async ({ page }) => {
+    await setCommandsAndReload(page, [
+      { name: 'Shell Cmd', prompt: 'echo hi', target: 'shell' },
+    ]);
+
+    await openExperimentalSettings(page);
+    await page.locator('.cmd-outline-row .cmd-outline-edit-btn').first().click();
+
+    const modal = page.locator('.cmd-editor-overlay');
+    await expect(modal).toBeVisible({ timeout: 3000 });
+    // Ensure the Shell target is active so both sub-option rows are shown.
+    await modal.locator('.seg-btn[data-target="shell"]').click();
+
+    const autoShow = modal.locator('.command-auto-show-label');
+    const launchTerminal = modal.locator('.command-launch-terminal-label');
+    await expect(autoShow).toBeVisible();
+    await expect(launchTerminal).toBeVisible();
+
+    const colorOf = (loc: import('@playwright/test').Locator) =>
+      loc.evaluate((el) => getComputedStyle(el).color);
+    const autoShowColor = await colorOf(autoShow);
+    const launchColor = await colorOf(launchTerminal);
+
+    // Identical to its sibling, and NOT the muted/disabled-looking gray
+    // (#9ca3af === rgb(156, 163, 175)) the generic label rule applies.
+    expect(launchColor).toBe(autoShowColor);
+    expect(launchColor).not.toBe('rgb(156, 163, 175)');
+
+    await modal.locator('.cmd-editor-close-btn').click();
+  });
+
   test('delete a command from the outline', async ({ page }) => {
     await setCommandsAndReload(page, [
       { name: 'Cmd A', prompt: 'a' },

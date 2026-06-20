@@ -1084,15 +1084,17 @@ async fn spawn_sidecar_and_navigate(
         .sidecar("hotsheet-node")
         .map_err(|e| format!("Failed to create sidecar command: {e}"))?;
 
-    // HS-8876 — point the server at the bundled Apple Foundation Models helper
-    // (built into `server/apple-fm-helper` by build-sidecar.sh on arm64 macOS).
-    // `appleFmBinPath()` reads HOTSHEET_APPLE_FM_BIN; without this the helper is
-    // unreachable inside the .app even when bundled, so on-device Apple
-    // Intelligence narration is unavailable. Set only when the binary is present
-    // (absent on non-arm64 / non-macOS-26 builds), so it's a no-op elsewhere.
+    // HS-8876 → HS-8907 — point the server at the bundled Apple Foundation Models
+    // helper (copied into `server/apple-fm-helper` by build-sidecar.sh on arm64
+    // macOS, from the `apple-fm` npm package). The `apple-fm` library reads the
+    // `APPLE_FM_BIN` env var to locate the helper; without this it would try its
+    // own bundled path, which doesn't exist in the tsup'd sidecar (a single JS
+    // file with no node_modules), so on-device Apple Intelligence narration would
+    // be unavailable. Set only when the binary is present (absent on non-arm64 /
+    // non-macOS builds), so it's a no-op elsewhere.
     let apple_fm = resource_dir.join("server").join("apple-fm-helper");
     if apple_fm.exists() {
-        sidecar = sidecar.env("HOTSHEET_APPLE_FM_BIN", apple_fm.to_string_lossy().to_string());
+        sidecar = sidecar.env("APPLE_FM_BIN", apple_fm.to_string_lossy().to_string());
     }
 
     let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();

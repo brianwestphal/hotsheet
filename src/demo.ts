@@ -838,6 +838,18 @@ async function seedDemoTelemetryRows(
 
       const sourceIdx = rand(counter * 23) < 0.85 ? 0 : 1; // main_agent dominant
       const querySource = querySources[sourceIdx];
+      const sessionId = `sess-demo-${projectIndex}-${dayOffset}-${p}`;
+
+      // HS-8900 — the window-total chips show cost + tokens + prompts. Cost comes
+      // from `claude_code.cost.usage`; tokens from `claude_code.token.usage`
+      // (`type` = input/output); the prompt count falls back to distinct
+      // `attributes_json->>'session.id'` on cost rows when no log events carry a
+      // prompt_id (the demo seeds no otel_events). Seeding only the cost row left
+      // the chips reading "0 tokens · 0 prompts" next to a real dollar figure. So
+      // stamp `session.id` on the cost row AND emit a paired input/output
+      // token.usage row, with plausible counts derived from the same PRNG.
+      const inputTokens = Math.round(1500 + rand(counter * 29) * 18_500); // ~1.5k–20k
+      const outputTokens = Math.round(300 + rand(counter * 31) * 4_700); // ~0.3k–5k
 
       await db.query(
         `INSERT INTO otel_metrics
@@ -846,14 +858,32 @@ async function seedDemoTelemetryRows(
         [
           ts.toISOString(),
           projectSecret,
-          `sess-demo-${projectIndex}-${dayOffset}-${p}`,
+          sessionId,
           'claude_code.cost.usage',
-          JSON.stringify({ model, 'query.source': querySource }),
+          JSON.stringify({ model, 'query.source': querySource, 'session.id': sessionId }),
           JSON.stringify({ asDouble: cost }),
           'delta',
           true,
         ],
       );
+
+      for (const [type, count] of [['input', inputTokens], ['output', outputTokens]] as const) {
+        await db.query(
+          `INSERT INTO otel_metrics
+             (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+           VALUES ($1::timestamptz, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
+          [
+            ts.toISOString(),
+            projectSecret,
+            sessionId,
+            'claude_code.token.usage',
+            JSON.stringify({ model, 'query.source': querySource, 'session.id': sessionId, type }),
+            JSON.stringify({ asInt: count }),
+            'delta',
+            true,
+          ],
+        );
+      }
     }
   }
 }

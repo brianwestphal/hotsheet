@@ -138,18 +138,27 @@ fi
 
 echo "Server resources: $SERVER_DIR/ ($(du -sh "$SERVER_DIR" | cut -f1))"
 
-# --- Step 3b (HS-8876): bundle the Apple Foundation Models helper (arm64 macOS only) ---
-# Apple Intelligence / FoundationModels is Apple-Silicon + macOS 26 only, so the
-# helper is built ONLY for the aarch64-apple-darwin target, INTO the already-
-# bundled server dir (picked up by tauri.conf.json's `server/**/*` resource glob
-# — no separate bundle entry needed, and absent on every other target). The
-# helper script self-guards (exit 0) when swiftc / the macOS 26 SDK isn't
-# present, so a runner without Xcode 26 simply omits it; the apple-fm check in
-# verify-bundle.mjs turns that silent skip into a red build. Left UNSIGNED here —
-# the workflow's "Pre-sign native binaries (macOS)" step signs it (with the
-# FoundationModels-capable identity) before notarization.
+# --- Step 3b (HS-8876 → HS-8907): bundle the Apple Foundation Models helper (arm64 macOS only) ---
+# Apple Intelligence / FoundationModels is Apple-Silicon + macOS 26 only. The
+# helper is no longer compiled here from our own Swift source — HS-8907 switched
+# the Announcer's on-device provider to the `apple-fm` npm package, which ships a
+# prebuilt, signed + notarized `bin/apple-fm-helper`. We just COPY that binary
+# into the already-bundled server dir for the aarch64-apple-darwin target (picked
+# up by tauri.conf.json's `server/**/*` resource glob — no separate bundle entry,
+# and absent on every other target). lib.rs points `APPLE_FM_BIN` at this copy so
+# the sidecar (a single bundled JS file with no node_modules) can still find it.
+# verify-bundle.mjs turns a missing copy into a red build. apple-fm signs the
+# binary with ITS identity; the workflow's "Pre-sign native binaries (macOS)" step
+# re-signs it with our identity before notarizing the app.
 if [ "$TARGET" = "aarch64-apple-darwin" ]; then
-  bash "$(dirname "$0")/build-apple-fm-helper.sh" "$SERVER_DIR/apple-fm-helper"
+  APPLE_FM_HELPER="$(dirname "$0")/../node_modules/apple-fm/bin/apple-fm-helper"
+  if [ -f "$APPLE_FM_HELPER" ]; then
+    cp "$APPLE_FM_HELPER" "$SERVER_DIR/apple-fm-helper"
+    chmod +x "$SERVER_DIR/apple-fm-helper"
+    echo "[apple-fm] bundled helper from $APPLE_FM_HELPER -> $SERVER_DIR/apple-fm-helper"
+  else
+    echo "[apple-fm] WARNING: $APPLE_FM_HELPER not found — run 'npm ci' first. On-device Apple narration will be unavailable in this build." >&2
+  fi
 fi
 
 # HS-8867 — fail LOUD if the sidecar is missing/empty rather than letting a

@@ -106,23 +106,24 @@ function verifyTree(root, sidecarRel, serverRel, label) {
   }
 }
 
-// HS-8876 — the Apple Foundation Models helper (`apple-fm-helper`) is built ONLY
-// for arm64 macOS on a macOS 26 / Xcode 26 runner (FoundationModels SDK). It's a
-// hard requirement ONLY when `EXPECT_APPLE_FM_HELPER=1` is set — the workflow
-// sets it on the macOS-26 arm64 job. On a `macos-latest` (macOS 15 / no Xcode 26)
-// build the helper can't compile and is legitimately absent, so without the flag
-// we only log presence/absence rather than failing — otherwise this gate would
-// red the pipeline until the runner is moved. A non-empty Swift binary is tens of
-// KB; the 1 KB floor sits far below that and above any stub.
+// HS-8876 → HS-8907 — the Apple Foundation Models helper (`apple-fm-helper`) is
+// bundled ONLY for arm64 macOS. It's no longer compiled from our own Swift on a
+// macOS-26/Xcode-26 runner; build-sidecar.sh COPIES the prebuilt, signed +
+// notarized binary from the `apple-fm` npm package (`node_modules/apple-fm/bin`),
+// so it's present on ANY arm64-darwin runner that ran `npm ci`. It's a hard
+// requirement when `EXPECT_APPLE_FM_HELPER=1` is set (the workflow's arm64 job);
+// without the flag we only log presence/absence rather than failing, so a one-off
+// build done without installing deps doesn't red the pipeline. The apple-fm
+// helper is ~190 KB; the 1 KB floor sits far below that and above any stub.
 function verifyAppleFmHelper(root, serverRel, label) {
   if (triple !== 'aarch64-apple-darwin') return;
   const helper = join(root, serverRel, 'apple-fm-helper');
   const expected = process.env.EXPECT_APPLE_FM_HELPER === '1';
   if (!existsSync(helper)) {
     if (expected) {
-      fail(`${label}: apple-fm-helper missing at ${helper} — the macOS 26 SDK build step didn't produce it (is this runner on Xcode 26?)`);
+      fail(`${label}: apple-fm-helper missing at ${helper} — build-sidecar.sh didn't copy it from node_modules/apple-fm/bin (did 'npm ci' run before the build?)`);
     } else {
-      console.log(`  • ${label}: apple-fm-helper not bundled — ok on a non-macOS-26 runner (set EXPECT_APPLE_FM_HELPER=1 to require it)`);
+      console.log(`  • ${label}: apple-fm-helper not bundled — ok if apple-fm wasn't installed (set EXPECT_APPLE_FM_HELPER=1 to require it)`);
     }
     return;
   }

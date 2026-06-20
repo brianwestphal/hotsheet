@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { bucketPorcelain, bucketPorcelainFiles, getPendingCommits, parsePendingCommits } from './status.js';
+import { bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, parsePendingCommits } from './status.js';
 
 const US = '\x1f';
 const RS = '\x1e';
@@ -151,5 +151,37 @@ describe('getPendingCommits (HS-8472)', () => {
   it('returns empty (not null) when git fails — e.g. no upstream', async () => {
     const res = await getPendingCommits(process.cwd(), () => Promise.resolve({ stdout: '', status: 128 }));
     expect(res).toEqual({ commits: [], truncated: false });
+  });
+});
+
+describe('untracked-files=all (HS-8895)', () => {
+  // Regression guard: without `--untracked-files=all`, `git status --porcelain`
+  // collapses a newly-added directory into one `?? dir/` entry, so the chip's
+  // count under-reports and the popover lists the directory instead of its
+  // files. Both status invocations must request `all`. Uses the repo root (a
+  // real git repo so `isGitRepo` passes) + a recording invoker.
+  function recordingInvoker(calls: string[][]): (args: string[], cwd: string) => Promise<{ stdout: string; status: number }> {
+    return (args: string[]): Promise<{ stdout: string; status: number }> => {
+      calls.push(args);
+      // A branch for `symbolic-ref`; canned-empty success for everything else.
+      if (args[0] === 'symbolic-ref') return Promise.resolve({ stdout: 'main\n', status: 0 });
+      return Promise.resolve({ stdout: '', status: 0 });
+    };
+  }
+
+  it('getGitStatus passes --untracked-files=all on the dirty-count invocation', async () => {
+    const calls: string[][] = [];
+    await getGitStatus(process.cwd(), recordingInvoker(calls));
+    const statusCall = calls.find(a => a[0] === 'status' && a.includes('--porcelain=v1'));
+    expect(statusCall).toBeDefined();
+    expect(statusCall).toContain('--untracked-files=all');
+  });
+
+  it('getGitStatusFiles passes --untracked-files=all so new directories expand', async () => {
+    const calls: string[][] = [];
+    await getGitStatusFiles(process.cwd(), recordingInvoker(calls));
+    const statusCall = calls.find(a => a[0] === 'status' && a.includes('--porcelain=v1'));
+    expect(statusCall).toBeDefined();
+    expect(statusCall).toContain('--untracked-files=all');
   });
 });
