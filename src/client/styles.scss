@@ -808,6 +808,67 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
   to   { background: rgba(0, 0, 0, 0.45); }
 }
 
+// HS-8911 — desktop "Shutting Down" overlay (§37.11). Shown while the sidecar's
+// bounded gracefulShutdown drains; the current step name streams in. Above the
+// quit-confirm overlay (it appears after that dialog closes on "proceed").
+.shutdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3600;
+  animation: quit-confirm-overlay-fade 160ms ease-out;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.shutdown-overlay-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 40px;
+  text-align: center;
+}
+
+.shutdown-overlay-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.shutdown-overlay-step {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-height: 18px;
+}
+
+.shutdown-overlay-bar {
+  width: 220px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+// Indeterminate sweep — a true % isn't meaningful (snapshot + DB-close dominate
+// and vary), so this just communicates "work in progress" (HS-8911 option b).
+.shutdown-overlay-bar-fill {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: shutdown-overlay-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes shutdown-overlay-sweep {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(310%); }
+}
+
 .quit-confirm-dialog {
   width: 480px;
   max-width: 90vw;

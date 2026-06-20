@@ -39,6 +39,14 @@ struct TtsChild(Mutex<Option<u32>>);
 /// — if true, the close proceeds normally.
 struct QuitConfirmed(AtomicBool);
 
+/// HS-8911 — set by `confirm_quit` once the user has committed to quitting and
+/// the sidecar's graceful shutdown has been started. While true, the sidecar's
+/// stdout `[lifecycle:progress]` markers are streamed to the webview (so the
+/// "Shutting Down" overlay can name the current step), and the sidecar's exit
+/// triggers `app.exit(0)` — instead of `confirm_quit` exiting immediately and
+/// leaving the OS to beachball the app while the sidecar drains.
+struct ShuttingDown(AtomicBool);
+
 /// Returns the expected symlink/install path for the CLI on this platform.
 fn cli_install_path() -> PathBuf {
     #[cfg(target_os = "macos")]
@@ -796,10 +804,53 @@ fn set_window_title(app: tauri::AppHandle, title: String) -> Result<(), String> 
 /// as before.
 #[tauri::command]
 fn confirm_quit(app: tauri::AppHandle) -> Result<(), String> {
-    shutdown_log("confirm_quit invoked — setting QuitConfirmed + app.exit(0)");
-    let confirmed = app.state::<QuitConfirmed>();
-    confirmed.0.store(true, Ordering::SeqCst);
-    app.exit(0);
+    shutdown_log("confirm_quit invoked");
+    app.state::<QuitConfirmed>().0.store(true, Ordering::SeqCst);
+
+    // HS-8911 — instead of `app.exit(0)` immediately (which tears down the
+    // webview before the sidecar's bounded `gracefulShutdown` drains, leaving the
+    // OS to beachball the exiting app), drive the drain WHILE the webview stays up
+    // showing the "Shutting Down" overlay. SIGTERM the sidecar to start the
+    // graceful shutdown; its stdout `[lifecycle:progress]` markers are streamed to
+    // the overlay by the stdout readers below, and the sidecar's exit triggers
+    // `app.exit(0)`. A safety timer force-exits if the sidecar never reports done.
+    let pid = *app.state::<SidecarPid>().0.lock().unwrap();
+    match pid {
+        Some(pid) => {
+            app.state::<ShuttingDown>().0.store(true, Ordering::SeqCst);
+            shutdown_log(&format!("confirm_quit: starting graceful drain of sidecar pid={pid}"));
+            #[cfg(unix)]
+            unsafe {
+                // SIGTERM → cli.ts's signal handler runs gracefulShutdown (snapshot,
+                // DB close, …) then process.exit. Both the process and its group.
+                libc::kill(pid as i32, libc::SIGTERM);
+                libc::kill(-(pid as i32), libc::SIGTERM);
+            }
+            #[cfg(windows)]
+            {
+                // Windows has no graceful SIGTERM for Node; taskkill is immediate,
+                // so the overlay just flashes before the exit hook fires.
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .status();
+            }
+            // Safety net: never let the overlay hang. gracefulShutdown is bounded to
+            // ~8 s (HS-8828 OVERALL_TIMEOUT_MS); force-exit a few seconds past that
+            // in case the sidecar somehow never exits (the exit hook is the normal
+            // path; a second `app.exit` after the app is already gone is harmless).
+            let app2 = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(12_000));
+                shutdown_log("confirm_quit: safety timer fired — app.exit(0)");
+                app2.exit(0);
+            });
+        }
+        None => {
+            // No sidecar to drain (rare) — exit immediately, the pre-HS-8911 path.
+            shutdown_log("confirm_quit: no sidecar pid — app.exit(0)");
+            app.exit(0);
+        }
+    }
     Ok(())
 }
 
@@ -1126,6 +1177,12 @@ async fn spawn_sidecar_and_navigate(
                 CommandEvent::Stdout(line) => {
                     let line_str = String::from_utf8_lossy(&line);
                     eprintln!("[sidecar stdout] {}", line_str.trim());
+                    // HS-8911 — stream graceful-shutdown step progress to the
+                    // "Shutting Down" overlay (the only channel that survives
+                    // `closeHttpServer`, step 1).
+                    if let Some(label) = line_str.trim().strip_prefix("[lifecycle:progress] ") {
+                        let _ = window.emit("shutdown-progress", label.trim().to_string());
+                    }
                     if !navigated {
                         // HS-8704 — LOAD-BEARING string match. These two
                         // substrings are emitted by `src/server.ts` ("running
@@ -1167,6 +1224,15 @@ async fn spawn_sidecar_and_navigate(
                 }
                 _ => {}
             }
+        }
+        // HS-8911 — the event channel closed = the sidecar process exited. If the
+        // user initiated a quit, the graceful drain is done (it was bounded ≤ 8 s)
+        // so finish the app exit now — the overlay has been showing progress the
+        // whole time, so there's no beachball.
+        if window.app_handle().state::<ShuttingDown>().0.load(Ordering::SeqCst) {
+            shutdown_log("[sidecar] exited during shutdown — app.exit(0)");
+            window.app_handle().exit(0);
+            return;
         }
         // Fallback: if sidecar exited without navigating, try reading port from settings.json.
         // Skipped in demo mode — the sidecar picks a temp dataDir we don't know up front.
@@ -1225,6 +1291,7 @@ pub fn run() {
         .manage(PendingUpdate(Mutex::new(None)))
         .manage(TtsChild(Mutex::new(None)))
         .manage(QuitConfirmed(AtomicBool::new(false)))
+        .manage(ShuttingDown(AtomicBool::new(false)))
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // HS-7596 / §37 — quit-confirm gate. The first time the user
@@ -1440,32 +1507,49 @@ pub fn run() {
                 *app.state::<SidecarPid>().0.lock().unwrap() = Some(child.id());
 
                 let stdout = child.stdout.take().expect("Failed to capture stdout");
+                let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
                     use std::io::{BufRead, BufReader};
                     let reader = BufReader::new(stdout);
+                    // HS-8911 — keep reading stdout AFTER navigation (the pre-fix loop
+                    // `break`d on the first "running at" line) so the graceful-shutdown
+                    // `[lifecycle:progress]` markers reach the overlay during quit.
+                    let mut navigated = false;
                     for line in reader.lines() {
                         let Ok(line) = line else { break };
                         println!("{}", line);
-                        // Case 1: server started fresh
-                        if let Some(idx) = line.find("running at ") {
-                            let url = line[idx + "running at ".len()..].trim().to_string();
-                            if let Ok(parsed) = url.parse() {
-                                let _ = window.navigate(parsed);
-                            }
-                            break;
+                        // HS-8911 — stream shutdown step progress to the overlay.
+                        if let Some(label) = line.trim().strip_prefix("[lifecycle:progress] ") {
+                            let _ = window.emit("shutdown-progress", label.trim().to_string());
+                            continue;
                         }
-                        // Case 2: joined an existing running instance
-                        if let Some(idx) = line.find("running instance on port ") {
-                            let port_str = line[idx + "running instance on port ".len()..].trim().to_string();
-                            let url = format!("http://localhost:{}", port_str);
-                            if let Ok(parsed) = url.parse() {
-                                let _ = window.navigate(parsed);
+                        if !navigated {
+                            // Case 1: server started fresh
+                            if let Some(idx) = line.find("running at ") {
+                                let url = line[idx + "running at ".len()..].trim().to_string();
+                                if let Ok(parsed) = url.parse() {
+                                    let _ = window.navigate(parsed);
+                                    navigated = true;
+                                }
                             }
-                            break;
+                            // Case 2: joined an existing running instance
+                            else if let Some(idx) = line.find("running instance on port ") {
+                                let port_str = line[idx + "running instance on port ".len()..].trim().to_string();
+                                let url = format!("http://localhost:{}", port_str);
+                                if let Ok(parsed) = url.parse() {
+                                    let _ = window.navigate(parsed);
+                                    navigated = true;
+                                }
+                            }
                         }
                     }
-                    // Keep child alive until app exits
+                    // stdout EOF = the dev server exited. Wait, then (if the user quit)
+                    // finish the app exit — the overlay showed progress the whole time.
                     let _ = child.wait();
+                    if app_handle.state::<ShuttingDown>().0.load(Ordering::SeqCst) {
+                        shutdown_log("[dev] server exited during shutdown — app.exit(0)");
+                        app_handle.exit(0);
+                    }
                 });
             }
 

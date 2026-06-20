@@ -2,6 +2,8 @@ import { getQuitSummary, updateFileSettings } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
+import { showShutdownOverlay } from './shutdownOverlay.js';
+import { friendlyShutdownLabel } from './shutdownProgress.js';
 import { getTauriEventListener, getTauriInvoke } from './tauriIntegration.js';
 import { resolveAppearance, resolveAppearanceBackground } from './terminalAppearance.js';
 import { checkout,type CheckoutHandle } from './terminalCheckout.js';
@@ -127,6 +129,16 @@ export function initQuitConfirm(): void {
     void (async () => {
       const outcome = await runQuitConfirmFlow();
       if (outcome === 'proceed') {
+        // HS-8911 — show the "Shutting Down" overlay and stream the sidecar's
+        // graceful-shutdown step progress into it (via Tauri `shutdown-progress`
+        // events) so the user sees what's happening instead of a beachball while
+        // `gracefulShutdown` drains. The window closes when the Rust side calls
+        // `app.exit(0)` once the sidecar has exited. Register the listener BEFORE
+        // invoking `confirm_quit` so no early step is missed.
+        const setStep = showShutdownOverlay();
+        await listen('shutdown-progress', (e: { payload: unknown }) => {
+          if (typeof e.payload === 'string') setStep(friendlyShutdownLabel(e.payload));
+        }).catch(() => undefined);
         const invoke = getTauriInvoke();
         if (invoke !== null) {
           await invoke('confirm_quit').catch((err: unknown) => {

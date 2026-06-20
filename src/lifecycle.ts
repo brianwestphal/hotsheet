@@ -112,6 +112,14 @@ async function runStep(label: string, fn: () => Promise<void> | void): Promise<v
   const ms = stepTimeoutOverrideMs ?? STEP_TIMEOUT_MS;
   const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // HS-8911 — a stable, machine-parseable progress marker (separate from the
+  // human "step … — starting" line below). The Tauri shell reads the sidecar's
+  // stdout; on quit it parses these markers and emits a `shutdown-progress`
+  // event so the desktop "Shutting Down" overlay can name the current step
+  // (e.g. "Saving a snapshot…") instead of leaving the user staring at a
+  // beachball. Plain stdout is the only channel that survives `closeHttpServer`
+  // (step 1), which kills the HTTP API the webview would otherwise poll.
+  console.log(`[lifecycle:progress] ${label}`);
   console.log(`[lifecycle] step "${label}" — starting`);
   try {
     await Promise.race([
