@@ -90,7 +90,7 @@ Project tabs are persisted to `~/.hotsheet/projects.json` and restored on restar
 
 ### 8.8 Demo Mode
 
-Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–10).
+Demo mode launches the application with pre-populated sample data, intended for screenshots, demonstrations, and feature exploration. Invoked via `--demo:<N>` where N is a scenario number (1–14).
 
 #### Behavior
 - Creates a temporary, isolated data directory in the OS temp folder (not inside the project).
@@ -119,13 +119,17 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 | 10 | Multi-Project Tabs | Multiple projects in one window — registers additional projects with independent ticket data |
 | 11 | Embedded Terminal | Drawer terminal with named tabs and canned PTY output (Dev Server, Tests, Claude) |
 | 12 | Terminal Dashboard | Multi-project dashboard — primary project plus Mobile App + API Platform, each with its own terminals; click the `square-terminal` toolbar button to enter the grid |
+| 13 | Telemetry | Cross-project Claude Code cost tracking — primary plus Mobile App + API Platform with seeded `otel_metrics`; click the header `line-chart` button to enter the cross-project stats page |
+| 14 | Announcer | A/V narration of project work — clicks the header **Listen** button to open the transcript PIP over the hero board; the announcer endpoints are mocked client-side by `scripts/capture-demos.ts` with a curated reel (emphasis + a code-diff visual) since the real PIP needs an Anthropic key / on-device provider that can't be seeded headlessly |
 
 #### Scenario-Specific Settings
-- **Scenarios 1, 3, 4, 5, 7, 9, 10, 11, 12** set `layout` to `columns` (HS-8430). Column view is the more visually compelling + representative mode, so it's the default for the marketing-screenshot scenarios. Scenarios 2 and 6 stay in list view because list view IS what they demonstrate (bullet-list quick entry / bottom detail panel respectively). Scenario 8 (Dashboard) overrides the layout entirely with its own view, so the setting is omitted.
+- **Scenarios 1, 3, 4, 5, 7, 9, 10, 11, 12, 13, 14** set `layout` to `columns` (HS-8430). Column view is the more visually compelling + representative mode, so it's the default for the marketing-screenshot scenarios. Scenarios 2 and 6 stay in list view because list view IS what they demonstrate (bullet-list quick entry / bottom detail panel respectively). Scenario 8 (Dashboard) overrides the layout entirely with its own view, so the setting is omitted.
 - Scenario 6 sets `detail_position` to `bottom` and `detail_height` to `280`.
 - Scenario 10 creates and registers two additional projects ("Mobile App" and "API Platform") with their own ticket data, demonstrating the tabbed multi-project interface.
 - Scenario 11 sets `drawer_open=true`, `drawer_expanded=true`, `drawer_active_tab=terminal:dev-server`, plus three configured terminals (Dev Server, Tests, Claude) with canned PTY output so the embedded-terminal screenshot has visible content.
 - Scenario 12 reuses scenario 11's primary-project terminals AND registers Mobile App + API Platform from scenario 10, with each extra project carrying its own 2-terminal config (Metro + logcat for Mobile App; API Server + pg log for API Platform). The dashboard-open flag is in-memory only (§25), so the screenshot workflow is "launch demo:12, click the square-terminal toolbar button, capture the grid".
+- Scenario 13 enables `telemetry_enabled` on the primary plus the two extra projects (Mobile App + API Platform) and seeds ~30 days of `otel_metrics` cost rows per project into the shared telemetry DB (HS-8682). The cross-project stats page is reached via the header `line-chart` button (visible only when telemetry is enabled on at least one project), so the screenshot workflow is "launch demo:13, click the button, capture the page".
+- Scenario 14 (Announcer) needs no server-side announcer settings — the transcript PIP is gated on an API key / on-device provider that can't be reproduced headlessly, so `scripts/capture-demos.ts` mocks the `/api/announcer/*` read endpoints client-side (the same hermetic pattern as `e2e/announcer.spec.ts`) with a hand-authored reel and stubs the Web Speech API so playback parks on the lead, code-diff-carrying entry. It reuses the hero (`SCENARIO_1`) tickets for the board behind the PIP.
 
 #### Demo Data Characteristics
 - Tickets have realistic titles, detailed descriptions, and timestamped notes showing work progress.

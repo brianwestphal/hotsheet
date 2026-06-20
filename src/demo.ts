@@ -23,6 +23,7 @@ export const DEMO_SCENARIOS: DemoScenario[] = [
   { id: 11, label: 'Embedded terminal — drawer with named terminal tabs and PTY output' },
   { id: 12, label: 'Terminal dashboard — every terminal across every project at once' },
   { id: 13, label: 'Telemetry — cross-project Claude Code cost tracking (HS-8682)' },
+  { id: 14, label: 'Announcer — A/V narration of project work (transcript PIP)' },
 ];
 
 // --- Ticket data model ---
@@ -627,6 +628,7 @@ const SCENARIO_DATA: Record<number, DemoTicket[]> = {
   11: SCENARIO_1, // Reuses hero tickets so the screenshot shows tickets + terminal drawer together
   12: SCENARIO_1, // Primary project for the dashboard demo; extra projects + terminal config added by seedDemoExtraProjects
   13: SCENARIO_1, // Primary project for the cross-project telemetry demo (HS-8682); extra projects + otel_metrics seeded by seedDemoExtraProjects
+  14: SCENARIO_1, // Announcer demo — hero tickets fill the board behind the transcript PIP; the announcer endpoints themselves are mocked client-side by capture-demos.ts (the PIP needs an Anthropic key / on-device provider that can't be seeded headlessly)
 };
 
 // --- Custom views for scenario 3 ---
@@ -898,7 +900,7 @@ export async function seedDemoData(scenario: number): Promise<void> {
   // already column; that's preserved. Scenario 8 (Dashboard) overrides
   // the layout entirely with its own view so the setting doesn't
   // matter — left out for clarity.
-  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11, 12, 13]);
+  const COLUMN_VIEW_SCENARIOS = new Set([1, 3, 4, 5, 7, 9, 10, 11, 12, 13, 14]);
   if (COLUMN_VIEW_SCENARIOS.has(scenario)) {
     writeProjectSettings(dataDir, { layout: 'columns' });
   }

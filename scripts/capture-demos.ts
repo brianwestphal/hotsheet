@@ -4,7 +4,10 @@
  * per scenario in a temp data dir + temp HOME, opens it in headless Chromium,
  * performs the scenario-specific in-app navigation (sidebar widget click for
  * the dashboard demo, toolbar buttons for the terminal-dashboard / cross-
- * project-stats demos), and writes `docs/demo-N.png` + `docs/demo-N.svg`.
+ * project-stats demos, Listen button for the announcer demo), and writes
+ * `docs/demo-N.png` + `docs/demo-N.svg`. The announcer demo (14) additionally
+ * mocks the `/api/announcer/*` read endpoints client-side (the PIP can't be
+ * seeded headlessly — see `setupRoutesForScenario`).
  *
  * Usage:
  *   npx tsx scripts/capture-demos.ts            # capture all scenarios
@@ -32,6 +35,103 @@ const TSX_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 const VIEWPORT = { width: 1400, height: 900 } as const;
+
+/**
+ * Scenario 14 (Announcer) curated reel. The announcer's transcript PIP is gated
+ * on an Anthropic key / on-device provider and is fed by an AI summarization
+ * pass — neither is reproducible in a headless capture (no key in the temp
+ * keychain, no Ollama/Apple helper guaranteed on the runner). So this demo
+ * mocks the announcer read endpoints client-side (the same hermetic recipe
+ * `e2e/announcer.spec.ts` uses) with a hand-authored reel: marketing-quality
+ * entries, tier-1 `emphasis` phrases, and a tier-2 code-diff `visuals` pane on
+ * the lead entry so the screenshot shows the richest PIP content. The board
+ * behind it is the real seeded hero data (`SCENARIO_1`).
+ */
+const ANNOUNCER_ENTRIES = [
+  {
+    id: 301,
+    created_at: '2026-06-20T09:14:00.000Z',
+    covers_from: null,
+    covers_to: null,
+    title: 'Shipped the dark-mode toggle',
+    script: 'While you were away, Claude finished the dark-mode toggle in the settings dialog — added the theme switch, wired the CSS custom properties, and the tests are green.',
+    emphasis: ['dark-mode toggle', 'tests are green'],
+    visuals: [{
+      type: 'diff',
+      oldStr: 'const theme = "light";',
+      newStr: 'const theme = prefersDark() ? "dark" : "light";',
+      filePath: 'src/client/settingsDialog.tsx',
+      replaceAll: false,
+    }],
+    position: 0,
+    dismissed: false,
+  },
+  {
+    id: 302,
+    created_at: '2026-06-20T09:21:00.000Z',
+    covers_from: null,
+    covers_to: null,
+    title: 'Fixed the checkout shipping bug',
+    script: 'Claude tracked down the mixed-shipping checkout failure to ShippingCalculator.consolidate and is now grouping items by method before merging the rates.',
+    emphasis: ['mixed-shipping checkout failure'],
+    visuals: [],
+    position: 1,
+    dismissed: false,
+  },
+  {
+    id: 303,
+    created_at: '2026-06-20T09:33:00.000Z',
+    covers_from: null,
+    covers_to: null,
+    title: 'Database backups landed',
+    script: 'Automated S3 database backups are configured with a 30-day retention policy, running nightly at 3 a.m. UTC.',
+    emphasis: ['30-day retention policy'],
+    visuals: [],
+    position: 2,
+    dismissed: false,
+  },
+];
+
+/**
+ * Per-scenario route mocks + init scripts that must be registered BEFORE
+ * `page.goto` (so the announcer Listen button's visibility check sees the
+ * mocked overview at init, and the TTS stub is installed before any playback).
+ * Only scenario 14 uses this today.
+ */
+async function setupRoutesForScenario(page: Page, id: number): Promise<void> {
+  if (id !== 14) return;
+  const secret = 'demo-announcer';
+  const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+
+  // Stub the Web Speech API so playback parks on the lead (diff-carrying) entry
+  // instead of auto-advancing before the screenshot. The utterance is recorded
+  // but `onend` never fires, so the player stays put.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ }, getVoices: () => [] },
+    });
+    if (typeof (window as unknown as { SpeechSynthesisUtterance?: unknown }).SpeechSynthesisUtterance === 'undefined') {
+      (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+    }
+  });
+
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill(json({
+    activeSecret: secret,
+    projects: [{ secret, name: 'Hot Sheet Web App', enabled: true, hasKey: true, entryCount: ANNOUNCER_ENTRIES.length }],
+    appleAvailable: false,
+    localAvailable: false,
+  })));
+  await page.route('**/api/announcer/status**', (route) => route.fulfill(json({
+    enabled: true, hasKey: true, selectedKeyId: null, entryCount: ANNOUNCER_ENTRIES.length, lastListenedAt: null,
+  })));
+  // Generation is a no-op success — the reel comes from /entries.
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill(json({ entries: [], generated: 0 })));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill(json({ entries: ANNOUNCER_ENTRIES })));
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill(json({ ok: true })));
+  await page.route('**/api/announcer/listened**', (route) => route.fulfill(json({ ok: true })));
+  await page.route('**/api/announcer/dismiss/**', (route) => route.fulfill(json({ ok: true })));
+}
 
 /**
  * HS-8688 — click the first visible ticket row so the detail panel renders
@@ -187,9 +287,35 @@ async function navigateForScenario(page: Page, id: number): Promise<void> {
       // least one registered project.
       await page.waitForSelector('#cross-project-stats-toggle', { state: 'visible', timeout: 15_000 });
       await page.click('#cross-project-stats-toggle');
-      await page.waitForSelector('.cross-project-stats-page, .telemetry-dashboard-title', { timeout: 5000 });
+      // The page wrapper (`.cross-project-stats-page`) only appears after the
+      // async `fetchAndRender` succeeds; on a fetch failure the container shows
+      // `.telemetry-dashboard-error` instead. Wait for whichever lands, then
+      // surface an error so a regression in the telemetry path doesn't ship a
+      // broken (error-state) marketing shot silently.
+      await page.waitForSelector('.cross-project-stats-page, .telemetry-dashboard-error', { timeout: 20_000 });
+      const errBox = await page.$('.telemetry-dashboard-error');
+      if (errBox) {
+        const detail = await page.locator('.telemetry-dashboard-error-detail').textContent().catch(() => '');
+        throw new Error(`Cross-project stats rendered the error state: ${detail ?? '(no detail)'}`);
+      }
       // Sections render asynchronously via fetchAndRender — let them paint.
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(1500);
+      break;
+    }
+    case 14: {
+      // Announcer demo. Pre-select a ticket so the board behind the PIP has a
+      // populated detail panel, then click the header Listen button to open the
+      // transcript PIP over the work. The announcer endpoints are mocked in
+      // `setupRoutesForScenario` (the Listen button's visibility check reads the
+      // mocked overview → `hasKey: true` → button shown). Clicking generates
+      // (mocked no-op) then loads + plays the curated reel; the TTS stub parks
+      // playback on the lead entry so the code-diff visual pane is on screen.
+      await selectFirstTicket(page);
+      await page.waitForSelector('#announcer-listen-btn', { state: 'visible', timeout: 10_000 });
+      await page.click('#announcer-listen-btn');
+      await page.waitForSelector('.announcer-pip', { state: 'visible', timeout: 5000 });
+      // Let the reel load, the emphasis render, and the diff pane paint.
+      await page.waitForTimeout(1200);
       break;
     }
     default:
@@ -288,6 +414,10 @@ async function captureScenario(scenario: Scenario): Promise<void> {
           window.localStorage.setItem('hotsheet_upgrade_nudge_last_shown', String(Number.MAX_SAFE_INTEGER));
         } catch { /* private mode */ }
       });
+
+      // Per-scenario route mocks / init scripts (announcer demo) must be wired
+      // before the first navigation so the app sees them at init.
+      await setupRoutesForScenario(page, scenario.id);
 
       // `'load'` not `'networkidle'` — Hot Sheet's `/api/poll` long-poll keeps
       // the network active forever, so `'networkidle'` (Playwright's "500 ms

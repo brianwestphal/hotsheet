@@ -10,7 +10,7 @@
 
 <br>
 
-**Hot Sheet** is a local-first project management tool wired into your AI coding workflow. Create tickets with a bullet-list interface, drag them into priority order, and your AI tools automatically get a structured worklist they can act on. A real PTY-backed terminal lives in the footer drawer — switch to the dashboard view to see every terminal across every project as a tile grid — so you can keep an eye on dev servers, tests, and the AI's own Claude Code session from the same window.
+**Hot Sheet** is a local-first project management tool wired into your AI coding workflow. Create tickets with a bullet-list interface, drag them into priority order, and your AI tools automatically get a structured worklist they can act on. A real PTY-backed terminal lives in the footer drawer — switch to the dashboard view to see every terminal across every project as a tile grid — so you can keep an eye on dev servers, tests, and the AI's own Claude Code session from the same window. Step away, and the **Announcer** narrates what the AI got done while you were gone.
 
 No cloud. No logins. No JIRA. Just tickets, terminals, and a tight feedback loop.
 
@@ -191,16 +191,33 @@ Hot Sheet can push events directly to a running Claude Code session via MCP chan
 - **Auto mode** — double-click the play button to enable automatic mode. Claude is triggered immediately, then continues monitoring for new Up Next items with debounce. Exponential backoff prevents runaway retries.
 - **Auto-prioritize** — when no tickets are flagged as Up Next, Claude automatically evaluates open tickets and picks the most important ones to work on.
 - **Feedback loop** — Claude can request user input by adding notes prefixed with `FEEDBACK NEEDED:` or `IMMEDIATE FEEDBACK NEEDED:`. A rich dialog appears in the UI with inline-response slots between every prompt block, a catch-all field, and file attachment support. Save Draft to come back later (text + attachments survive); Submit re-triggers Claude with your response. Blue dots on project tabs indicate pending feedback.
-- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Organize into collapsible groups. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr streamed to the commands log in real time.
+- **Custom commands** — create named buttons that send custom prompts to Claude **or run shell commands** directly. Organize into collapsible groups. Toggle between "Claude Code" and "Shell" targets per command. Shell commands execute server-side with stdout/stderr streamed to the commands log in real time. **Long-press** a button for a secondary action (a shell command runs in a fresh terminal; a Claude command files a task ticket), and **hover** any button to see when it last ran.
 - **Permission relay** — when Claude needs tool approval (Bash, Edit, etc.), a full-screen overlay shows the tool name and command preview with Allow/Deny/Dismiss buttons — no need to switch to the terminal. Per-project **allow-rules** can auto-approve specific tool+pattern pairs (e.g. always allow `Bash:npm test`) so trusted commands skip the overlay entirely.
 - **Commands log + embedded terminal** — the footer drawer hosts both a resizable commands log (every trigger, completion, permission request, shell output) AND tabs for any number of project-scoped terminals. Hop between an `npm run dev` terminal, the Claude session, and the audit log without leaving Hot Sheet.
-- **MCP tools** — Claude Code sees Hot Sheet as a connected MCP server with schema-validated tools: `hotsheet_create_ticket`, `hotsheet_update_ticket`, `hotsheet_query_tickets`, `hotsheet_batch`, `hotsheet_signal_done`, `hotsheet_request_feedback`, and 8 more. Tickets, notes, and attachments all round-trip without the AI hand-crafting curl commands.
+- **MCP tools** — Claude Code sees Hot Sheet as a connected MCP server with schema-validated tools: `hotsheet_create_ticket`, `hotsheet_update_ticket`, `hotsheet_query_tickets`, `hotsheet_batch`, `hotsheet_signal_done`, `hotsheet_request_feedback`, `hotsheet_announce`, and 8 more. Tickets, notes, and attachments all round-trip without the AI hand-crafting curl commands.
 - **Status indicator** — shows "Claude working" / "Shell running" / idle in the footer.
 
 Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
 
 <p align="center">
   <img src="docs/demo-9.png" alt="Claude Channel integration with play button, custom command buttons, and AI-driven workflow" width="900">
+</p>
+
+### Announcer — narrated playback of project work (Beta)
+
+Step away while Claude works, and the **Announcer** catches you up. It turns completion notes, the command log, and Claude Code's own telemetry stream into a short spoken-and-visual digest — a draggable, resizable picture-in-picture transcript that reads each update aloud, emphasizes the key phrases, and shows the actual before/after code diff for the change it's describing.
+
+- **After-the-fact digest** — click **Listen** to hear everything that happened since you last checked in, narrated in order. The PIP shows the running transcript with playback controls (play/pause, previous, next, speed) and tier-1 emphasis on the phrases that matter.
+- **Live mode** — narrates work as it happens, coalescing bursts of activity into coherent entries and learning from the ones you skip. It's **off unless you're listening** — a client-renewed lease gates generation so it never spends your key in the background, with a per-project call budget on top.
+- **Cross-project** — an "All Projects" context interleaves every enabled project's reel chronologically, each entry tagged with a project chip and prefixed with its project name when spoken.
+- **Spoken permission checks** — hear "Permission needed in *Project*: …" read aloud when Claude needs tool approval, even with no PIP open and no API key required.
+- **Bring your own model — or none** — summarize with your Anthropic key, **on-device with Apple Foundation Models** (macOS 26, free and fully private, no key), or a local **Ollama / OpenAI-compatible** endpoint. Playback uses the built-in OS/browser voice by default.
+- **Code-diff visuals** — the working agent can hand the Announcer the exact before/after through the `hotsheet_announce` MCP tool, rendered inline in the PIP next to the narration.
+
+API keys are managed once in **Settings → API Keys** — a machine-global registry of named keys stored in the OS keychain, selected by name per project so you never paste a secret twice. Enable narration in **Settings → Announcer**.
+
+<p align="center">
+  <img src="docs/demo-14.png" alt="Announcer transcript picture-in-picture narrating recent work over the ticket board, with emphasized phrases and an inline before/after code diff" width="900">
 </p>
 
 ### Telemetry & Cost Tracking
@@ -213,7 +230,7 @@ Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.
 - **Per-ticket Claude usage** — when you trigger Claude via the channel with an active ticket selected, Hot Sheet prepends an invisible `<!-- hotsheet:ticket=HS-NNNN -->` marker to the prompt so the cost / tokens / wall-clock from that work attribute back to the ticket and appear as a "Claude usage on this ticket" block in the detail panel.
 - **Beta enhanced tracing** — separate toggle wires `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1` so each prompt's drilldown switches from a flat event timeline to a parent-child span tree with an inline waterfall chart. New `claude` sessions started after the toggle begin capturing spans.
 
-Security model: localhost-bound OTLP receiver + `hotsheet_project` resource-attribute filter — foreign OTLP traffic from other tools on the same machine can't pollute Hot Sheet's tables even if it tries. 30-day default retention via the cleanup sweep; **Clear telemetry data** in Settings wipes the project's rows on demand.
+Security model: localhost-bound OTLP receiver + `hotsheet_project` resource-attribute filter — foreign OTLP traffic from other tools on the same machine can't pollute Hot Sheet's tables even if it tries. Telemetry is stored per-project with a configurable retention window (30-day default) enforced by a periodic sweep with per-table windows and a row cap, so the database can't grow without bound; **Clear telemetry data** in Settings wipes the project's rows on demand.
 
 <p align="center">
   <img src="docs/demo-13.png" alt="Cross-project telemetry stats page with cost-over-time chart, cost-by-project table, model donut, and hourly activity heatmap" width="900">
