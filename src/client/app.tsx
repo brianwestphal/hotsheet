@@ -1,6 +1,7 @@
 import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
 import { createTicket, getGitStatus, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
 import { flashAnchoredHint } from './anchoredHint.js';
 import { suppressAnimation } from './animate.js';
 import { initAnnouncer, refreshAnnouncerVisibility } from './announcer.js';
@@ -208,6 +209,10 @@ function bindAllUiHandlers(): void {
   bindTicketRefGlobalClickHandler();
   // HS-7962 — non-Tauri throttled upgrade nudge. Skips under Tauri.
   maybeShowUpgradeNudge();
+  // HS-8913 — once-per-project nudge to install Hot Sheet's recommended
+  // AI-assistant instruction sections into CLAUDE.md (silently auto-updates
+  // already-installed sections that are behind the current version).
+  maybeShowAiInstructionsNudge();
   void reloadPluginToolbar();
   bindGlassbox();
   initCustomViews(() => { void loadTickets(); });

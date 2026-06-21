@@ -608,6 +608,14 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward. Demo mode always uses CPU rendering regardless of this setting.</span>
                 </div>
               </div>
+              {/* HS-8913 — install / update Hot Sheet's recommended AI-assistant
+                  instruction sections in this project's CLAUDE.md. */}
+              <div className="settings-divider"></div>
+              <div className="settings-field">
+                <label>AI assistant instructions</label>
+                <button className="btn btn-sm" id="ai-instructions-update-btn">Update CLAUDE.md</button>
+                <span className="settings-hint" id="ai-instructions-status">Adds (or updates) Hot Sheet's recommended sections — ticket-driven work, double test coverage, requirements docs — to this project's <code>CLAUDE.md</code>, preserving everything else.</span>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories">
               <div className="settings-section-header">

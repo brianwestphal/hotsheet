@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import type { AppEnv } from '../types.js';
+import { aiInstructionsRoutes } from './aiInstructions.js';
 import { attachmentRoutes } from './attachments.js';
 import { channelRoutes } from './channel.js';
 import { commandLogRoutes } from './commandLog.js';
@@ -34,5 +35,6 @@ apiRoutes.route('/', settingsRoutes);
 apiRoutes.route('/', dashboardRoutes);
 apiRoutes.route('/', shellRoutes);
 apiRoutes.route('/', diagnosticsRoutes);
+apiRoutes.route('/', aiInstructionsRoutes);
 apiRoutes.route('/terminal', terminalRoutes);
 if (PLUGINS_ENABLED) apiRoutes.route('/', pluginRoutes);

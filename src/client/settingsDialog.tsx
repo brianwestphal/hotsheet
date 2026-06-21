@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { getFileSettings, getSettings, getTags, updateFileSettings, updateSettings } from '../api/index.js';
+import { applyAiInstructions, getFileSettings, getSettings, getTags, updateFileSettings, updateSettings } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { parseJsonOrNull } from '../schemas.js';
 import { setAppTitle } from './appTitle.js';
@@ -314,6 +314,25 @@ function bindGeneralTab() {
     }
     checkUpdatesBtn.textContent = 'Check for Updates';
     checkUpdatesBtn.disabled = false;
+  });
+
+  // HS-8913 — install / update the recommended AI-assistant instruction
+  // sections in this project's CLAUDE.md.
+  const aiInstrBtn = byId<HTMLButtonElement>('ai-instructions-update-btn');
+  const aiInstrStatus = byId('ai-instructions-status');
+  aiInstrBtn.addEventListener('click', async () => {
+    aiInstrBtn.disabled = true;
+    aiInstrBtn.textContent = 'Updating…';
+    try {
+      const { written } = await applyAiInstructions();
+      aiInstrStatus.textContent = written
+        ? "Updated this project's CLAUDE.md with Hot Sheet's recommended sections."
+        : 'Already up to date — no changes needed.';
+    } catch {
+      aiInstrStatus.textContent = 'Could not update CLAUDE.md. Check file permissions and try again.';
+    }
+    aiInstrBtn.textContent = 'Update CLAUDE.md';
+    aiInstrBtn.disabled = false;
   });
 }
 

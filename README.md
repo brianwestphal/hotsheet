@@ -183,6 +183,68 @@ Read .hotsheet/worklist.md for current work items.
 
 Hot Sheet automatically generates skill files for Claude Code (as well as Cursor, GitHub Copilot, and Windsurf) so your AI tool can create tickets directly. Run `/hotsheet` in Claude Code to process the worklist.
 
+### Recommended project instructions
+
+Hot Sheet works best when your AI assistant follows a few conventions: drive work through Hot Sheet tickets, keep double test coverage, and keep requirements docs in sync. Add these sections to your project's `CLAUDE.md` (Claude Code) — Hot Sheet can do it for you, or copy them by hand.
+
+- **Automatic:** when Hot Sheet detects Claude Code in a project, it offers (once per project) to add these sections to your `CLAUDE.md`. Your existing file is preserved — the sections are wrapped in markers so Hot Sheet can keep them up to date without touching anything else, and the test/docs *specifics* are filled in by your assistant for that project.
+- **Manual:** click **Update CLAUDE.md** in **Settings → General** at any time, or copy the blocks below.
+
+<details>
+<summary><strong>Ticket-Driven Work</strong></summary>
+
+```markdown
+## Ticket-Driven Work
+
+When the user gives you work directly (not via the Hot Sheet channel or events), create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work.
+
+- **Do create tickets** for: features, bug fixes, refactoring, multi-step tasks, anything changing code. **Don't** for: simple questions, git commits, quick lookups, trivial one-liners. **When in doubt, create them.**
+- Create via the Hot Sheet API (prefer the `hotsheet_*` MCP tools), mark Up Next, then work through them: set status `started` → implement → set `completed` with notes.
+- **Always create follow-up tickets** for incomplete work (unfinished steps, open design questions, known gaps, designed-but-unbuilt features). If it's not in a ticket, it's forgotten.
+- **Incomplete-work checklist** — before marking a ticket `completed`, file follow-ups for any: (1) UI placeholder text ("coming soon"), (2) TODO/FIXME comments, (3) documented-but-unimplemented requirements, (4) empty/stub functions returning mock data.
+- **Use FEEDBACK NEEDED before deferring or asking about follow-ups.** When about to (a) defer a ticket needing more work, (b) ask whether to file follow-ups, or (c) close with a question buried in notes — DON'T. Leave the ticket `started`, add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), signal channel done, and wait. It's the only reliable way to surface a question.
+```
+
+</details>
+
+<details>
+<summary><strong>Testing Philosophy</strong></summary>
+
+```markdown
+## Testing Philosophy
+
+- **Double coverage**: every feature covered by both unit tests AND E2E tests. Unit = logic in isolation; E2E = real user flows through the running app with minimal mocking.
+- **Unit tests**: Mock external deps (filesystem, network), test real logic.
+- **E2E tests**: As much as possible, use test automation tools to run realistic, user-facing flows. Minimize mocks.
+- **Coverage**: Merge all test coverage (e.g. unit, E2E server, E2E browser) into one report. Low-coverage files should get more of both test types. Aim for 100% coverage of code lines, 100% coverage of branches, and 100% of features described in the requirements documentation.
+- **Manual test plan**: keep a manual test plan doc (e.g. `docs/manual-test-plan.md`) for features that can't be reliably automated. **Keep it up to date** — add such features there; when you add automated coverage for a previously-manual item, remove it and note it in an "Automated Coverage Summary".
+- **Always fix lint and type errors before finishing**: Fix as you go, don't batch.
+```
+
+When Hot Sheet adds this section it also scaffolds a self-healing **"this project's test setup"** block: a short prompt that asks your assistant to detect and record the project's actual test runner, file locations, and commands the first time it does test work — so the generic principles get project-specific teeth for any language.
+
+</details>
+
+<details>
+<summary><strong>Requirements Documentation</strong></summary>
+
+```markdown
+## Requirements Documentation
+
+Keep human-readable requirements documents as the source of truth for what the project does, and **keep them up to date in the same change as the code** (add/remove/modify a requirement → update its doc). Create new docs for major new functional areas. Cross-reference related docs with relative links.
+
+### AI Summaries
+
+Maintain two synthesis docs an AI assistant reads at the start of a fresh session — keep them in sync with reality (source doc/code wins on conflict), and prefer small targeted edits over rewrites:
+
+- A **codebase map** — directory tree, entry points, data schema, build, tests, settings, and a "where do I look for X" index. Update it in the same change when you add a file or directory, add a route/endpoint, change the schema, add a client module, or add a setting key.
+- A **requirements summary** — a synthesized view of every requirements doc with status markers (e.g. Shipped / Partial / Design only / Deferred). Update it in the same change when you add a requirements doc, ship a design-only feature, or defer/regress a shipped one.
+```
+
+</details>
+
+See [docs/86-ai-assistant-setup.md](docs/86-ai-assistant-setup.md) for how the auto-install / auto-update mechanism works.
+
 ### Claude Channel Integration (Experimental)
 
 Hot Sheet can push events directly to a running Claude Code session via MCP channels. Enable it in Settings:
