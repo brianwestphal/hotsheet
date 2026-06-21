@@ -9,6 +9,7 @@ import {
 } from '../db/queries.js';
 import { readFileSettings, writeFileSettings } from '../file-settings.js';
 import { getProjectByDataDir } from '../projects.js';
+import { scheduleAllSync } from '../sync/markdown.js';
 import { eagerSpawnTerminals } from '../terminals/eagerSpawn.js';
 import type { AppEnv } from '../types.js';
 import { CATEGORY_PRESETS } from '../types.js';
@@ -101,6 +102,11 @@ settingsRoutes.patch('/file-settings', async (c) => {
   // When the terminals list changes, eager-spawn any non-lazy entries that are
   // not yet running (HS-6310). Fires after the write so the new config is read
   // by listTerminalConfigs.
+  // HS-8917 — the worklist preamble is rendered into worklist.md, so a change
+  // must regenerate it (file-settings PATCH otherwise doesn't trigger a sync).
+  if ('worklist_preamble' in parsed.data) {
+    scheduleAllSync(dataDir);
+  }
   if ('terminals' in parsed.data) {
     eagerSpawnTerminals(secret, dataDir);
     // HS-8290 — visibility groupings + hidden_terminals moved to global

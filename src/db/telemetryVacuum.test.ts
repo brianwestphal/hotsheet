@@ -43,7 +43,8 @@ const { mockReadProjectList } = vi.hoisted(() => ({ mockReadProjectList: vi.fn<(
 vi.mock('../project-list.js', () => ({ readProjectList: mockReadProjectList }));
 
 const {
-  decideVacuumMode, dirSizeBytes, isVacuumFullCatalogError, maintainTelemetryDb,
+  decideVacuumMode, dirSizeBytes, isExpectedVacuumLimitation, isVacuumFreezeError,
+  isVacuumFullCatalogError, maintainTelemetryDb,
   performVacuum, scheduleTelemetryMaintenance, scheduleTelemetryReclaim, telemetryDbDir,
 } = await import('./telemetryVacuum.js');
 
@@ -143,6 +144,69 @@ describe('performVacuum (HS-8897)', () => {
   it('rethrows a non-catalog VACUUM FULL failure', async () => {
     const boom = Object.assign(new Error('out of disk'), { code: '53100' });
     await expect(performVacuum((sql: string): Promise<void> => { if (sql === 'VACUUM FULL') throw boom; return Promise.resolve(); }, 'full')).rejects.toBe(boom);
+  });
+
+  // HS-8915 — the exact plain-VACUUM error PGLite raised on the user's Glassbox
+  // telemetry DB: heap_pre_freeze_checks aborting on an unfrozen catalog tuple.
+  const freezeError = Object.assign(new Error('uncommitted xmin 8486 needs to be frozen'), {
+    code: 'XX001',
+    where: 'while scanning block 63 of relation "pg_catalog.pg_attribute"',
+    file: 'heapam.c', line: '7288', routine: 'heap_pre_freeze_checks', query: 'VACUUM',
+  });
+
+  it('skips (does not throw) a plain VACUUM that hits the freeze limitation (HS-8915)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await performVacuum((sql: string): Promise<void> => { if (sql === 'VACUUM') throw freezeError; return Promise.resolve(); }, 'plain');
+    expect(r).toEqual({ ranMode: 'skipped', fullAttempted: false });
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+
+  it('skips a VACUUM FULL that hits the freeze limitation directly (HS-8915)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await performVacuum((sql: string): Promise<void> => { if (sql === 'VACUUM FULL') throw freezeError; return Promise.resolve(); }, 'full');
+    expect(r).toEqual({ ranMode: 'skipped', fullAttempted: true });
+    warn.mockRestore();
+  });
+
+  it('degrades a catalog-limited FULL to plain, then skips if plain also freezes (HS-8915)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const calls: string[] = [];
+    const r = await performVacuum((sql: string): Promise<void> => {
+      calls.push(sql);
+      if (sql === 'VACUUM FULL') throw catalogError;
+      throw freezeError; // the degraded plain VACUUM also fails on this cluster
+    }, 'full');
+    expect(calls).toEqual(['VACUUM FULL', 'VACUUM']);
+    expect(r).toEqual({ ranMode: 'skipped', fullAttempted: true });
+    warn.mockRestore();
+  });
+});
+
+describe('isVacuumFreezeError / isExpectedVacuumLimitation (HS-8915)', () => {
+  const freezeByFields = Object.assign(new Error('uncommitted xmin 8486 needs to be frozen'), {
+    code: 'XX001', routine: 'heap_pre_freeze_checks',
+  });
+
+  it('matches the real freeze error by code + routine', () => {
+    expect(isVacuumFreezeError(freezeByFields)).toBe(true);
+  });
+
+  it('matches by message when fields are absent (degraded shape)', () => {
+    expect(isVacuumFreezeError(new Error('… needs to be frozen'))).toBe(true);
+  });
+
+  it('does not match an unrelated error or non-objects', () => {
+    expect(isVacuumFreezeError(Object.assign(new Error('deadlock'), { code: '40P01' }))).toBe(false);
+    expect(isVacuumFreezeError(Object.assign(new Error('corrupt page'), { code: 'XX001' }))).toBe(false); // XX001 alone isn't enough
+    expect(isVacuumFreezeError(null)).toBe(false);
+    expect(isVacuumFreezeError('boom')).toBe(false);
+  });
+
+  it('isExpectedVacuumLimitation covers both the catalog and freeze cases', () => {
+    expect(isExpectedVacuumLimitation(freezeByFields)).toBe(true);
+    expect(isExpectedVacuumLimitation(Object.assign(new Error('dup'), { code: '23505', constraint: 'pg_class_relname_nsp_index' }))).toBe(true);
+    expect(isExpectedVacuumLimitation(Object.assign(new Error('out of disk'), { code: '53100' }))).toBe(false);
   });
 });
 

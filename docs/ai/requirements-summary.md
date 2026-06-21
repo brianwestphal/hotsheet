@@ -70,6 +70,7 @@ The bridge from Hot Sheet to AI tools.
 
 - **Exports:** `.hotsheet/worklist.md` (Up Next, 500 ms debounced), `.hotsheet/open-tickets.md` (all open, 5 s debounced). Worklist includes curl examples for status updates and ticket creation.
 - **Auto-prioritize** (default on, settings key `auto_order`): when Up Next is empty, the worklist contains instructions for the AI to select the next items itself.
+- **Worklist preamble** (HS-8917, §6.1.1, settings key `worklist_preamble`): optional per-project free-text injected under a `## Project Notes` heading near the top of `worklist.md`, before the protocol sections. The template itself is intentionally NOT user-replaceable (it carries the channel/skill/MCP contract); from the HS-8914 investigation, durable project AI-guidance belongs in `CLAUDE.md` (§86). Edited in Settings → General.
 - **Skill generation:** `.claude/skills/hotsheet/SKILL.md` + per-category `hs-{category}/SKILL.md` for Claude Code; `.cursor/rules/hotsheet.mdc`, `.github/prompts/hotsheet.prompt.md`, `.windsurf/rules/hotsheet.md`. Per-category skills parse prefixes like "next" / "up next" / "do next" to set `up_next: true`.
 - **Version-gated regeneration:** skills include `<!-- hotsheet-skill-version: N -->`; only regenerated when the code's version bumps. Bump it whenever generated skill content should change.
 - **Secret validation:** mutations outside localhost require `X-Hotsheet-Secret` header.

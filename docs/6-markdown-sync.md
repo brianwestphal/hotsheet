@@ -13,7 +13,14 @@
   - Per-ticket details: ID, type, priority, status, title, details, notes (with timestamps), and attachment list.
   - A category descriptions reference.
   - Guidance that status updates and completion notes are required.
+  - **Optional per-project preamble** (HS-8917) — see §6.1.1.
 - Updated on a 500ms debounce after any ticket change.
+
+#### 6.1.1 Worklist preamble (limited customization)
+
+From the HS-8914 investigation: the worklist is mostly a **protocol document** the channel / `/hotsheet` skill / MCP tools depend on (status-update + signal-done commands, the `FEEDBACK NEEDED:` prefixes, the per-ticket block format), so the template itself is **not** user-replaceable — mangling it would silently break the auto-loop. Durable "how to work on this project" guidance belongs in `CLAUDE.md` instead (see [86-ai-assistant-setup.md](86-ai-assistant-setup.md)).
+
+What **is** customizable is an additive, free-text **preamble**: the `worklist_preamble` string setting (`<dataDir>/settings.json`, edited via Settings → General) is injected under a `## Project Notes` heading near the top of `worklist.md` — after the intro line, **before** the protocol sections — so it can't corrupt the contract. It's omitted entirely when unset/blank. Rendered by the pure `buildPreambleSection` in `src/sync/markdown.ts`; the `/file-settings` PATCH handler calls `scheduleAllSync` when the key changes so the worklist regenerates immediately. Intro-line override, optional-section toggles, and full template replacement were considered and deliberately deferred (HS-8914).
 
 ### 6.2 Auto-Prioritize Mode
 

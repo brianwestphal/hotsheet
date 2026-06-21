@@ -198,6 +198,18 @@ async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<
   return lines.join('\n');
 }
 
+/**
+ * HS-8917 — render the optional per-project worklist preamble (the
+ * `worklist_preamble` file-setting). Returns `[]` when unset/blank so nothing is
+ * injected; otherwise a `## Project Notes` heading + the verbatim (trimmed) text.
+ * Pure + exported for unit testing. Tolerant of a non-string stored value.
+ */
+export function buildPreambleSection(preamble: unknown): string[] {
+  const text = typeof preamble === 'string' ? preamble.trim() : '';
+  if (text === '') return [];
+  return ['## Project Notes', '', text, ''];
+}
+
 async function buildWorkflowInstructions(port: number, secretHeader: string): Promise<string[]> {
   const sections: string[] = [];
   sections.push('## Workflow');
@@ -364,6 +376,11 @@ async function syncWorklist(state: SyncState): Promise<void> {
     const settings = readFileSettings(dataDir);
     const secret = settings.secret ?? '';
     const secretHeader = secret ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
+
+    // HS-8917 — optional per-project preamble, injected near the top BEFORE the
+    // protocol sections (Workflow / Creating Tickets / …) so user customization
+    // can't break the channel/skill/MCP contract. See docs/6-markdown-sync.md.
+    sections.push(...buildPreambleSection(settings.worklist_preamble));
 
     sections.push(...await buildWorkflowInstructions(port, secretHeader));
 

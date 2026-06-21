@@ -5,8 +5,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getDb } from '../db/connection.js';
 import { addAttachment, createTicket, updateTicket } from '../db/queries.js';
 import { updateSetting } from '../db/settings.js';
+import { writeFileSettings } from '../file-settings.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { flushPendingSyncs, initMarkdownSync, scheduleOpenTicketsSync, scheduleWorklistSync } from './markdown.js';
+import { buildPreambleSection, flushPendingSyncs, initMarkdownSync, scheduleOpenTicketsSync, scheduleWorklistSync } from './markdown.js';
 
 let tempDir: string;
 
@@ -59,6 +60,25 @@ describe('worklist sync', () => {
     expect(content).toContain('localhost:9999');
     // Should no longer say "No items"
     expect(content).not.toContain('No items in the Up Next list.');
+  });
+
+  // HS-8917 — per-project worklist preamble.
+  it('injects the worklist preamble above the Workflow section, then omits it when cleared', async () => {
+    writeFileSettings(tempDir, { worklist_preamble: 'Deploy only on Fridays. Ask before touching billing.' });
+    scheduleWorklistSync();
+    let content = await syncedWorklist();
+    expect(content).toContain('## Project Notes');
+    expect(content).toContain('Deploy only on Fridays. Ask before touching billing.');
+    // Placed before the protocol section, which must remain intact.
+    expect(content.indexOf('## Project Notes')).toBeLessThan(content.indexOf('## Workflow'));
+    expect(content).toContain('## Workflow');
+
+    // Clearing the preamble removes the block entirely.
+    writeFileSettings(tempDir, { worklist_preamble: '' });
+    scheduleWorklistSync();
+    content = await syncedWorklist();
+    expect(content).not.toContain('## Project Notes');
+    expect(content).toContain('## Workflow');
   });
 
   it('includes workflow section with curl examples', () => {
@@ -466,5 +486,30 @@ describe('debounce behavior', () => {
     await waitFor(4800);
     const openTicketsContent = readFileSync(join(tempDir, 'open-tickets.md'), 'utf-8');
     expect(openTicketsContent).toContain('# Hot Sheet - Open Tickets');
+  });
+});
+
+describe('buildPreambleSection (HS-8917)', () => {
+  it('returns an empty array for unset / blank / non-string input', () => {
+    expect(buildPreambleSection(undefined)).toEqual([]);
+    expect(buildPreambleSection('')).toEqual([]);
+    expect(buildPreambleSection('   \n  ')).toEqual([]);
+    expect(buildPreambleSection(42)).toEqual([]);
+    expect(buildPreambleSection(null)).toEqual([]);
+  });
+
+  it('renders a Project Notes heading + trimmed verbatim text', () => {
+    expect(buildPreambleSection('  Be careful with migrations.  ')).toEqual([
+      '## Project Notes',
+      '',
+      'Be careful with migrations.',
+      '',
+    ]);
+  });
+
+  it('preserves internal multi-line formatting', () => {
+    const section = buildPreambleSection('Line one\n\n- bullet\n- bullet two');
+    expect(section[0]).toBe('## Project Notes');
+    expect(section[2]).toBe('Line one\n\n- bullet\n- bullet two');
   });
 });

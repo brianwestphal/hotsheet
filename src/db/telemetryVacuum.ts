@@ -69,18 +69,77 @@ export function isVacuumFullCatalogError(err: unknown): boolean {
   return /duplicate key value violates unique constraint "pg_class/.test(message);
 }
 
-export interface VacuumExecResult {
-  /** The mode that actually completed (`'full'` may degrade to `'plain'`). */
-  ranMode: 'plain' | 'full';
-  /** Whether a `VACUUM FULL` was attempted (true even when it degraded). Drives
-   *  the throttle stamp so a degrading DB backs off future FULL retries. */
-  fullAttempted: boolean;
+/**
+ * HS-8915 — does this error look like PGLite's plain-`VACUUM` "freeze" failure?
+ * On some telemetry clusters even a plain `VACUUM` aborts with Postgres error
+ * `XX001` (`data_corrupted`) from `heap_pre_freeze_checks` — e.g.
+ * `uncommitted xmin <n> needs to be frozen` while scanning a system catalog
+ * (`pg_catalog.pg_attribute`). It's another known PGLite/embedded-Postgres edge
+ * (the WASM build doesn't run the same anti-wraparound freeze machinery a server
+ * does), and there's nothing the app can do about it — so, like the HS-8897
+ * catalog case, we treat it as a soft, expected skip rather than an alarming
+ * error with a stack trace on startup.
+ *
+ * Pure + exported for unit testing. Matches on SQLSTATE + the failing routine,
+ * with a message-text fallback for error shapes that only surface `.message`.
+ */
+export function isVacuumFreezeError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  // `as Record<string,unknown>` only to read optional fields off an unknown
+  // error; every access is type-guarded below, so no unchecked assumption ships.
+  const rec = err as Record<string, unknown>;
+  const code = typeof rec.code === 'string' ? rec.code : '';
+  const routine = typeof rec.routine === 'string' ? rec.routine : '';
+  const message = typeof rec.message === 'string' ? rec.message : '';
+  if (code === 'XX001' && routine === 'heap_pre_freeze_checks') return true;
+  return /needs to be frozen/i.test(message);
 }
 
 /**
- * HS-8897 — run the chosen VACUUM against an injected `exec`, degrading a failing
- * `VACUUM FULL` to a plain `VACUUM` when the failure is the known PGLite
- * `pg_class` catalog limitation (see {@link isVacuumFullCatalogError}). Any other
+ * Either of the known, benign PGLite VACUUM limitations we skip rather than
+ * surface as an error: the HS-8897 `pg_class` catalog rewrite (FULL only) or the
+ * HS-8915 `heap_pre_freeze_checks` freeze failure (can hit plain VACUUM too).
+ */
+export function isExpectedVacuumLimitation(err: unknown): boolean {
+  return isVacuumFullCatalogError(err) || isVacuumFreezeError(err);
+}
+
+export interface VacuumExecResult {
+  /** What actually happened. `'full'` may degrade to `'plain'`; either may
+   *  `'skipped'` when the cluster hits a known PGLite limitation (HS-8915). */
+  ranMode: 'plain' | 'full' | 'skipped';
+  /** Whether a `VACUUM FULL` was attempted (true even when it degraded/skipped).
+   *  Drives the throttle stamp so a degrading DB backs off future FULL retries. */
+  fullAttempted: boolean;
+}
+
+/** Run one VACUUM statement, converting a known-benign PGLite limitation
+ *  (HS-8915 freeze failure) into a soft `'skipped'` instead of throwing. Any
+ *  other failure propagates. */
+async function runVacuumStmt(exec: (sql: string) => Promise<void>, sql: string): Promise<'plain' | 'skipped'> {
+  try {
+    await exec(sql);
+    return 'plain';
+  } catch (err) {
+    if (!isVacuumFreezeError(err)) throw err;
+    warnVacuumSkipped(sql, err);
+    return 'skipped';
+  }
+}
+
+function warnVacuumSkipped(stmt: string, err: unknown): void {
+  const reason = isVacuumFreezeError(err)
+    ? "a known PGLite freeze limitation (an uncommitted catalog tuple VACUUM can't freeze)"
+    : 'a known PGLite catalog limitation';
+  console.warn(`  Telemetry ${stmt} skipped on this cluster — ${reason}; disk reclaim left for a future pass.`);
+}
+
+/**
+ * HS-8897 / HS-8915 — run the chosen VACUUM against an injected `exec`. A failing
+ * `VACUUM FULL` degrades to a plain `VACUUM` when it's the known PGLite `pg_class`
+ * catalog limitation ({@link isVacuumFullCatalogError}); any VACUUM that fails
+ * with the PGLite "needs to be frozen" limitation ({@link isVacuumFreezeError})
+ * is skipped softly (`ranMode: 'skipped'`) rather than thrown. Every other
  * failure propagates. Pure but for `exec`/logging, so it unit-tests without a
  * real cluster.
  */
@@ -89,19 +148,23 @@ export async function performVacuum(
   mode: 'plain' | 'full',
 ): Promise<VacuumExecResult> {
   if (mode === 'plain') {
-    await exec('VACUUM');
-    return { ranMode: 'plain', fullAttempted: false };
+    const ranMode = await runVacuumStmt(exec, 'VACUUM');
+    return { ranMode, fullAttempted: false };
   }
   try {
     await exec('VACUUM FULL');
     return { ranMode: 'full', fullAttempted: true };
   } catch (err) {
+    if (isVacuumFreezeError(err)) {
+      warnVacuumSkipped('VACUUM FULL', err);
+      return { ranMode: 'skipped', fullAttempted: true };
+    }
     if (!isVacuumFullCatalogError(err)) throw err;
     console.warn(
       '  Telemetry VACUUM FULL unsupported on this cluster (PGLite pg_class catalog limitation) — falling back to plain VACUUM and backing off full retries.',
     );
-    await exec('VACUUM');
-    return { ranMode: 'plain', fullAttempted: true };
+    const ranMode = await runVacuumStmt(exec, 'VACUUM');
+    return { ranMode, fullAttempted: true };
   }
 }
 
@@ -205,7 +268,7 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
     : decideVacuumMode(sizeBytes, lastFullVacuumAtMs(dbDir), now(), opts);
   if (mode === 'none') return { mode, sizeBytes };
 
-  let ranMode: VacuumMode = mode;
+  let execMode: VacuumExecResult['ranMode'] = mode;
   let fullAttempted = false;
   try {
     // Return the result OUT of the DB context (rather than mutating closure vars)
@@ -214,26 +277,33 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
       const db = await getTelemetryDb();
       // VACUUM can't run inside a transaction block — `exec` issues it as a bare
       // statement (PGLite autocommits each). HS-8897 — `performVacuum` degrades a
-      // PGLite-catalog-limited VACUUM FULL to a plain VACUUM instead of throwing.
+      // PGLite-catalog-limited VACUUM FULL to a plain VACUUM; HS-8915 — it skips
+      // (rather than throws) a VACUUM that hits the PGLite "needs to be frozen"
+      // limitation, so it never surfaces as a startup error.
       return performVacuum(async (sql) => { await db.exec(sql); }, mode);
     });
-    ranMode = result.ranMode;
+    execMode = result.ranMode;
     fullAttempted = result.fullAttempted;
     // Stamp the throttle whenever a FULL was attempted — on success it records
-    // the last reclaim; on a degraded fallback (HS-8897) it backs off future
-    // FULL retries so a known-unsupported cluster doesn't re-attempt (and re-warn)
-    // on every maintenance pass, only once per throttle window.
+    // the last reclaim; on a degraded/skipped fallback (HS-8897 / HS-8915) it
+    // backs off future FULL retries so a known-unsupported cluster doesn't
+    // re-attempt (and re-warn) on every pass, only once per throttle window.
     if (fullAttempted) {
       const map = { ...(readGlobalConfig().telemetryVacuumFullAt ?? {}) };
       map[dbDir] = new Date(now()).toISOString();
       writeGlobalConfig({ telemetryVacuumFullAt: map });
     }
-    console.log(`  Telemetry VACUUM${ranMode === 'full' ? ' FULL' : ''}: reclaimed ${dbDir} (was ${String(Math.round(sizeBytes / (1024 * 1024)))} MB).`);
+    // A soft skip already logged its own calm warning in `performVacuum`; only
+    // announce a real reclaim here.
+    if (execMode !== 'skipped') {
+      console.log(`  Telemetry VACUUM${execMode === 'full' ? ' FULL' : ''}: reclaimed ${dbDir} (was ${String(Math.round(sizeBytes / (1024 * 1024)))} MB).`);
+    }
   } catch (err) {
     console.error(`Telemetry VACUUM (${mode}) failed for ${dbDir}:`, err);
     return { mode: 'none', sizeBytes };
   }
-  return { mode: ranMode, sizeBytes };
+  // 'skipped' means nothing was reclaimed — report it as 'none' to callers.
+  return { mode: execMode === 'skipped' ? 'none' : execMode, sizeBytes };
 }
 
 export interface ScheduleOptions {

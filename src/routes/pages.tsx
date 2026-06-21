@@ -616,6 +616,13 @@ pageRoutes.get('/', (c) => {
                 <button className="btn btn-sm" id="ai-instructions-update-btn">Update CLAUDE.md</button>
                 <span className="settings-hint" id="ai-instructions-status">Adds (or updates) Hot Sheet's recommended sections — ticket-driven work, double test coverage, requirements docs — to this project's <code>CLAUDE.md</code>, preserving everything else.</span>
               </div>
+              {/* HS-8917 — per-project worklist preamble injected near the top of
+                  worklist.md (above the protocol sections). */}
+              <div className="settings-field">
+                <label>Worklist preamble</label>
+                <textarea id="settings-worklist-preamble" rows={4} placeholder="Optional project-specific notes for the AI, added near the top of worklist.md."></textarea>
+                <span className="settings-hint" id="settings-worklist-preamble-hint">Free-text notes added under a "Project Notes" heading near the top of <code>.hotsheet/worklist.md</code>, before the standard workflow instructions. Leave empty to omit.</span>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories">
               <div className="settings-section-header">

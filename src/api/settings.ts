@@ -50,6 +50,8 @@ export const FileSettingsSchema = z.object({
   appIcon: z.string().optional().catch(undefined),
   backupDir: z.string().optional().catch(undefined),
   ticketPrefix: z.string().optional().catch(undefined),
+  // HS-8917 — per-project free-text preamble injected near the top of worklist.md.
+  worklist_preamble: z.string().optional().catch(undefined),
   // JSON-valued keys (stored native; some readers tolerate the stringified form).
   terminals: z.union([z.string(), z.array(z.unknown())]).optional().catch(undefined),
   terminal_default: z.unknown().optional(),

@@ -130,6 +130,7 @@ function bindGeneralTab() {
   const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
   const appNameInput = byId<HTMLInputElement>('settings-app-name');
   const prefixInput = byId<HTMLInputElement>('settings-ticket-prefix');
+  const worklistPreambleInput = byId<HTMLTextAreaElement>('settings-worklist-preamble');
 
   // Populate values + load file-settings fields when dialog opens.
   settingsBtn.addEventListener('click', () => {
@@ -155,6 +156,7 @@ function bindGeneralTab() {
     void getFileSettings().then((fs) => {
       appNameInput.value = fs.appName ?? '';
       prefixInput.value = fs.ticketPrefix ?? '';
+      worklistPreambleInput.value = fs.worklist_preamble ?? '';
     });
   });
 
@@ -286,6 +288,22 @@ function bindGeneralTab() {
       }
       void updateFileSettings({ ticketPrefix: val }).then(() => {
         prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
+      });
+    }, 800);
+  });
+
+  // HS-8917 — worklist preamble (file-based setting). Saving triggers a worklist
+  // re-sync server-side; the hint confirms the save.
+  const worklistPreambleHint = byId('settings-worklist-preamble-hint');
+  let worklistPreambleTimeout: ReturnType<typeof setTimeout> | null = null;
+  worklistPreambleInput.addEventListener('input', () => {
+    if (worklistPreambleTimeout) clearTimeout(worklistPreambleTimeout);
+    worklistPreambleTimeout = setTimeout(() => {
+      const val = worklistPreambleInput.value;
+      void updateFileSettings({ worklist_preamble: val }).then(() => {
+        worklistPreambleHint.textContent = val.trim()
+          ? 'Saved — added near the top of worklist.md.'
+          : 'Cleared — no preamble in worklist.md.';
       });
     }, 800);
   });
