@@ -321,7 +321,11 @@ pluginRoutes.post('/plugins/:id/sync', async (c) => {
   const reloaded = await getActivatedBackend(pluginId);
   if (!reloaded) return c.json({ error: getPluginById(pluginId)?.error ?? 'No backend' }, 400);
 
-  const result = await runSync(pluginId);
+  // HS-8931 — a user-initiated sync does a FULL pull so it reconciles remote
+  // items lacking a local sync record (e.g. an issue whose ticket was deleted, or
+  // one older than the incremental watermark that was never ingested). Scheduled
+  // syncs stay incremental.
+  const result = await runSync(pluginId, { fullPull: true });
   if ((result.pulled ?? 0) > 0 || (result.pushed ?? 0) > 0) {
     notifyMutation(c.get('dataDir'));
   }

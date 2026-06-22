@@ -77,7 +77,14 @@ export function stopAllScheduledSyncs(): void {
  *  slightly-stale coalesced result missed. */
 const inFlightSyncs = new Map<string, Promise<SyncResult>>();
 
-export async function runSync(pluginId: string): Promise<SyncResult> {
+/**
+ * HS-8931 — `options.fullPull`: when true, pull EVERY remote item (since=null)
+ * instead of the incremental `since=max(last_synced_at)` window. Set for
+ * user-initiated ("Sync" button) syncs so they reconcile remote items that have
+ * no local sync record and are older than the watermark — which incremental
+ * pulls can never reach. Scheduled/auto syncs omit it and stay incremental.
+ */
+export async function runSync(pluginId: string, options: { fullPull?: boolean } = {}): Promise<SyncResult> {
   // Resolve the current project context defensively — the no-dataDir scheduled
   // branch can call runSync outside a runWithDataDir scope, where getDataDir throws.
   let dataDirKey = '';
@@ -87,7 +94,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
   const existing = inFlightSyncs.get(key);
   if (existing) return existing;
 
-  const run = runSyncInner(pluginId);
+  const run = runSyncInner(pluginId, options);
   inFlightSyncs.set(key, run);
   try {
     return await run;
@@ -96,7 +103,7 @@ export async function runSync(pluginId: string): Promise<SyncResult> {
   }
 }
 
-async function runSyncInner(pluginId: string): Promise<SyncResult> {
+async function runSyncInner(pluginId: string, options: { fullPull?: boolean } = {}): Promise<SyncResult> {
   cancelPendingPush(); // Manual sync supersedes debounced push
   const backend = getBackendForPlugin(pluginId);
   if (!backend) return { ok: false, error: 'Backend not found or disabled' };
@@ -104,7 +111,7 @@ async function runSyncInner(pluginId: string): Promise<SyncResult> {
   const result: SyncResult = { ok: true, pulled: 0, pushed: 0, conflicts: 0 };
 
   try {
-    const pullResult = await pullFromRemote(backend);
+    const pullResult = await pullFromRemote(backend, options.fullPull === true);
     result.pulled = pullResult.applied;
     result.conflicts = (result.conflicts ?? 0) + pullResult.conflicts;
   } catch (e) {
@@ -156,11 +163,18 @@ export interface SyncResult {
 
 // --- Pull: remote → local ---
 
-async function pullFromRemote(backend: TicketingBackend): Promise<{ applied: number; conflicts: number }> {
+async function pullFromRemote(backend: TicketingBackend, fullPull = false): Promise<{ applied: number; conflicts: number }> {
   const records = await getSyncRecordsForPlugin(backend.id);
-  const lastSyncDate = records.length > 0
-    ? new Date(Math.max(...records.map(r => new Date(r.last_synced_at).getTime())))
-    : null;
+  // HS-8931 — the incremental cursor is the latest sync-run time across records.
+  // GitHub (and similar) `since` filters by remote updated_at, so any remote item
+  // updated BEFORE this cursor that has no local sync record can never be pulled:
+  // e.g. an issue whose local ticket was deleted (its record went with it), or one
+  // missed by an earlier transient apply failure. Once the cursor advances past it,
+  // clicking "Sync" repeatedly never brings it back. A `fullPull` (user-initiated
+  // sync) passes since=null to reconcile the entire remote, surfacing those items.
+  const lastSyncDate = fullPull || records.length === 0
+    ? null
+    : new Date(Math.max(...records.map(r => new Date(r.last_synced_at).getTime())));
 
   const changes = await backend.pullChanges(lastSyncDate);
   let applied = 0;

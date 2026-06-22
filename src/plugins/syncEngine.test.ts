@@ -216,6 +216,41 @@ describe('sync engine — pull', () => {
     expect(rec!.ticket_id).toBe(local.id); // linked to the existing ticket, no duplicate created
   });
 
+  it('HS-8931: a manual full sync reconciles a remote issue older than the incremental watermark with no sync record', async () => {
+    // Reproduces the "issues not syncing" bug: GitHub's incremental `since`
+    // cursor is max(last_synced_at). Any remote issue updated BEFORE that cursor
+    // that has no local sync record (e.g. its ticket was deleted, or an earlier
+    // sync missed it) can never be pulled incrementally — clicking "Sync"
+    // forever does nothing. A user-initiated FULL pull (since=null) reconciles it.
+
+    // 1. Sync one current issue -> establishes a watermark (~now).
+    const backend = createMockBackend([
+      { id: 'gh-current', fields: { title: 'Current Issue', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend');
+    expect(await getSyncRecordByRemoteId('mock-backend', 'gh-current')).not.toBeNull();
+
+    // 2. A remote issue updated a week ago (well before the watermark), unsynced.
+    backend.issues.push({
+      id: 'gh-stranded',
+      fields: { title: 'Stranded Issue', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false },
+      updatedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      deleted: false,
+    });
+
+    // 3. Incremental sync (scheduled-style) never reaches it.
+    const incremental = await runSync('mock-backend');
+    expect(incremental.pulled).toBe(0);
+    expect(await getSyncRecordByRemoteId('mock-backend', 'gh-stranded')).toBeNull();
+
+    // 4. A user-initiated full sync reconciles it.
+    await runSync('mock-backend', { fullPull: true });
+    const rec = await getSyncRecordByRemoteId('mock-backend', 'gh-stranded');
+    expect(rec).not.toBeNull();
+    expect(rec!.sync_status).toBe('synced');
+  });
+
   it('updates existing local tickets when remote changes', async () => {
     // Create a local ticket and sync record
     const ticket = await createTicket('Original Title');
