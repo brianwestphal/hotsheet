@@ -233,6 +233,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 86. `86-ai-assistant-setup.md` — recommended AI-assistant instruction sections in CLAUDE.md (versioned managed-section markers + self-healing per-project specifics; once-per-project nudge + Settings button)
 87. `87-test-instance.md` — isolated test instance (`HOTSHEET_HOME` + `globalHotsheetDir()` + `--test` launcher + TEST badge shipped; keychain namespacing deferred)
 88. `88-scheduled-sync.md` — scheduled periodic plugin auto-sync (per-project interval, incremental + ~hourly full reconcile; GitHub default 15 min)
+89. `89-git-worktrees.md` — git worktrees + per-worktree AI agents sharing one Hot Sheet via a follower `.hotsheet/settings.json` pointer (design only; parallel/claiming gated on HS-8861–8865 + §46)
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source), `docs/demo-plan.md` (story-driven demo script for showing Hot Sheet + Glassbox to potential users).
 
