@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.20.0] - 2026-06-22
+
+
+
+- New **Announcer**: narrated audio/visual playback of your project's work -- a "Listen" button opens a transcript picture-in-picture panel that summarizes recent work and reads it aloud.
+- **Live mode** narrates work as Claude does it (mid-task), off the telemetry stream, and only while you're actively listening so it never silently spends your API key.
+- Multiple summarization providers: Anthropic (your own key), on-device **Apple Foundation Models** (free, private, no key), and **local Ollama / OpenAI-compatible** models -- with an opt-in fallback model when Apple Intelligence is unavailable.
+- Cross-project **"All Projects"** reel that speaks the owning project before each entry; reliably narrates ticket completions and feedback-needed tickets.
+- Spoken **permission checks** that name the owning project.
+- Playback session (context, position, play/paused, open/minimized) persists and restores across reloads and app relaunches; heard pages clear after a 1-hour grace window.
+- Resizable PiP with code-diff visuals and text emphasis; Announcer token + cost tracking on the per-project and cross-project stats pages.
+- Keeps the "Listen" button available on the terminal dashboard and cross-project stats pages.
+
+
+- **Global API-key registry** (Settings -- API Keys): register named Anthropic keys and have projects select them by name.
+- **Recommended AI-assistant instructions** for CLAUDE.md: install and self-heal the canonical Hot Sheet conventions, with a once-per-project nudge and a Settings button.
+- **Always-tabbed projects list** with a "+" button to add a project, **drag tickets across projects** (drop onto a project tab or "+" to copy, Option-move to move), and **paste files/images from the clipboard** to create attachments.
+- **Smarter search**: a multi-word query now matches when every word appears in any searched column, in any order (e.g. `login bug` finds "bug in the login flow").
+- **Long-press command buttons**: long-press a shell command to run it in a new terminal; long-press a Claude command to create a Task ticket from it.
+- Hover a custom command button for a styled tooltip showing its command text and last-run time.
+- "Read Latest Note" now falls back to reading the ticket's Details (relabeled "Read Description") when there are no notes.
+- Git-status popover now lists pending (unpushed) commits with Glassbox review links.
+- Feedback dialog gains prev/next navigation; the bottom drawer now defaults to open on a project's first use.
+
+
+- Quitting the desktop app no longer hangs or beachballs -- fixes a Tauri 2.11 regression and adds a "Shutting Down" progress overlay while the database drains.
+- Fixed a beta desktop build that shipped an empty sidecar and white-screened at launch.
+- Renaming a project in Settings now updates its tab label immediately.
+- Fixed "Open Glassbox" and Claude-terminal auto-seed doing nothing when the app is launched from Finder/Dock (CLIs in Homebrew/`/usr/local/bin` are now found).
+- Skill generation no longer leaks one project's custom categories into other projects.
+- Tag autocomplete suggestions are now project-scoped and stay consistent after switching projects.
+- Telemetry is now stored per-project so the cross-project dashboard reflects all projects; recent-prompts and hourly-activity views are more informative.
+- Silenced an alarming telemetry VACUUM stack trace on startup (a benign embedded-Postgres limitation).
+- Announcer fixes: overlapping audio segments, an empty "nothing new" reel, valueless tool-churn narration, and a recoverable summarization failure that wrongly popped a "Connection Error" overlay.
+
+
+- Sidebar count badges are debounced and use count-only queries, avoiding redundant fetches and wasted row materialization.
+- Bounded telemetry growth with periodic sweeps, per-table retention windows, and a span-row cap, plus disk reclaim.
+
+
+- Updated esbuild (dev-server RCE / arbitrary file read), hono (Windows path traversal), and protobufjs to clear high-severity advisories.
+
 ## [0.19.0] - 2026-06-05
 
 
