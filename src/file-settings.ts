@@ -11,10 +11,14 @@ const FileSettingsSchema = z.object({
   secret: z.string().optional(),
   secretPathHash: z.string().optional(),
   port: z.number().optional(),
+  // HS-8934 — git-worktree follower pointer: when set, this `.hotsheet/` owns no
+  // DB/project of its own and redirects all project-data resolution to the named
+  // authoritative `.hotsheet` folder (docs/89-git-worktrees.md §89.1).
+  authoritativeDataDir: z.string().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */
-const RESERVED_KEYS = new Set(['appName', 'appIcon', 'backupDir', 'ticketPrefix', 'secret', 'secretPathHash', 'port']);
+const RESERVED_KEYS = new Set(['appName', 'appIcon', 'backupDir', 'ticketPrefix', 'secret', 'secretPathHash', 'port', 'authoritativeDataDir']);
 
 /** Setting keys whose values are JSON (arrays/objects) rather than plain strings.
  *  These are stored as native JSON in settings.json and stringified for the API. */
@@ -54,11 +58,47 @@ export interface FileSettings {
   secret?: string;
   secretPathHash?: string;
   port?: number;
+  /** HS-8934 — git-worktree follower pointer (abs path to an owner `.hotsheet`). */
+  authoritativeDataDir?: string;
   [key: string]: unknown;
 }
 
 function settingsPath(dataDir: string): string {
   return join(dataDir, 'settings.json');
+}
+
+/**
+ * HS-8934 — git-worktree follower resolution (docs/89-git-worktrees.md §89.1).
+ *
+ * A worktree's `.hotsheet/settings.json` can carry `authoritativeDataDir`
+ * pointing at an owner repo's `.hotsheet` folder. When present, this directory
+ * is a *follower*: it owns no PGLite DB / project, and all project-data
+ * resolution redirects to the owner so the worktree shares the one ticket DB /
+ * running instance.
+ *
+ * Returns the resolved authoritative dir (absolute), or the (absolute) input
+ * when there is no pointer. **Throws** on an invalid pointer — a self-reference,
+ * a missing target, or a target that is itself a follower (chains not allowed) —
+ * so a misconfigured follower errors loudly rather than silently spinning up a
+ * second, empty database. One validated hop only.
+ */
+export function resolveAuthoritativeDataDir(dataDir: string): string {
+  const here = resolve(dataDir);
+  const pointer = readFileSettings(here).authoritativeDataDir;
+  if (typeof pointer !== 'string' || pointer.trim() === '') return here;
+
+  const target = resolve(pointer.trim());
+  if (target === here) {
+    throw new Error(`[worktree] .hotsheet/settings.json authoritativeDataDir points at itself: ${target}`);
+  }
+  if (!existsSync(target)) {
+    throw new Error(`[worktree] .hotsheet/settings.json authoritativeDataDir target does not exist: ${target}`);
+  }
+  const targetPointer = readFileSettings(target).authoritativeDataDir;
+  if (typeof targetPointer === 'string' && targetPointer.trim() !== '') {
+    throw new Error(`[worktree] authoritativeDataDir target is itself a follower (chains not allowed): ${target}`);
+  }
+  return target;
 }
 
 export function readFileSettings(dataDir: string): FileSettings {

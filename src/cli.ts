@@ -17,7 +17,7 @@ import { setDemoMode } from './demo-mode.js';
 import { startEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
-import { ensureSecret, writeFileSettings } from './file-settings.js';
+import { ensureSecret, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { cleanupStaleInstance, isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';
 import { acquireLockWaitingForShutdown } from './lock.js';
@@ -708,6 +708,20 @@ async function main() {
 
   const { port, demo, forceUpdateCheck, noOpen, strictPort, replace } = parsed;
   let { dataDir } = parsed;
+
+  // HS-8934 — git-worktree follower: if this `.hotsheet/` points at an
+  // authoritative owner, redirect ALL project-data resolution to it so launching
+  // Hot Sheet from a worktree shares the owner's one ticket DB / instance
+  // (docs/89-git-worktrees.md §89.1). A bad pointer is fatal (clear error) rather
+  // than silently creating a fresh DB. Skipped for demo (its dataDir is set below).
+  if (demo === null) {
+    try {
+      dataDir = resolveAuthoritativeDataDir(dataDir);
+    } catch (e: unknown) {
+      startupLog(`[fatal] ${getErrorMessage(e)}`);
+      process.exit(1);
+    }
+  }
 
   startupMark('parsed args');
 

@@ -5,7 +5,7 @@ import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
-import { ensureSecret, readFileSettings, writeFileSettings } from './file-settings.js';
+import { ensureSecret, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
 import { acquireLock } from './lock.js';
 import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
 import { startupLog } from './startup-log.js';
@@ -32,7 +32,10 @@ const dataDirToSecret = new Map<string, string>();
  * backup scheduler, and AI tool skills for the given dataDir.
  */
 export async function registerProject(dataDir: string, port: number): Promise<ProjectContext> {
-  const absDataDir = resolve(dataDir);
+  // HS-8934 — a git-worktree follower redirects to its authoritative owner so it
+  // joins the owner's project instead of registering a separate one (the dedup
+  // below then maps the follower onto the owner's existing context).
+  const absDataDir = resolveAuthoritativeDataDir(dataDir);
 
   // Check if already registered by dataDir
   const existingSecret = dataDirToSecret.get(absDataDir);
@@ -167,7 +170,9 @@ export function seedClaudeTerminalIfNew(
  * This avoids re-running lock/db/sync/backup init that cli.ts already did.
  */
 export function registerExistingProject(dataDir: string, secret: string, db: PGlite): ProjectContext {
-  const absDataDir = resolve(dataDir);
+  // HS-8934 — follower → authoritative owner (idempotent; the CLI primary path
+  // already resolves before calling this, so the owner dir resolves to itself).
+  const absDataDir = resolveAuthoritativeDataDir(dataDir);
 
   // Check if already registered
   const existingSecret = dataDirToSecret.get(absDataDir);

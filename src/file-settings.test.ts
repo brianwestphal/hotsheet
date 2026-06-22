@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ensureSecret, getBackupDir, readFileSettings, writeFileSettings } from './file-settings.js';
+import { ensureSecret, getBackupDir, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
 
 let tempDir: string;
 
@@ -222,5 +222,53 @@ describe('HS-8290 — dashboard keys stripped on read + dropped on next write', 
     expect(onDisk.appName).toBe('updated');
     expect(onDisk.visibility_groupings).toBeUndefined();
     expect(onDisk.hidden_terminals).toBeUndefined();
+  });
+});
+
+describe('resolveAuthoritativeDataDir (HS-8934 — git-worktree follower)', () => {
+  function makeDir(name: string, settings?: Record<string, unknown>): string {
+    const dir = join(tempDir, 'wt', name);
+    mkdirSync(dir, { recursive: true });
+    if (settings) writeFileSync(join(dir, 'settings.json'), JSON.stringify(settings));
+    return dir;
+  }
+
+  it('returns the (resolved) input dir when there is no pointer', () => {
+    const owner = makeDir('owner-noptr', { appName: 'Owner' });
+    expect(resolveAuthoritativeDataDir(owner)).toBe(owner);
+  });
+
+  it('returns the input dir when settings.json is absent', () => {
+    const dir = makeDir('no-settings');
+    expect(resolveAuthoritativeDataDir(dir)).toBe(dir);
+  });
+
+  it('redirects a follower to its authoritative owner', () => {
+    const owner = makeDir('owner-a', { appName: 'Owner A' });
+    const follower = makeDir('follower-a', { authoritativeDataDir: owner });
+    expect(resolveAuthoritativeDataDir(follower)).toBe(owner);
+  });
+
+  it('treats an empty/whitespace pointer as no pointer', () => {
+    const dir = makeDir('blank-ptr', { authoritativeDataDir: '   ' });
+    expect(resolveAuthoritativeDataDir(dir)).toBe(dir);
+  });
+
+  it('throws on a self-referential pointer', () => {
+    const dir = makeDir('self-ptr');
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ authoritativeDataDir: dir }));
+    expect(() => resolveAuthoritativeDataDir(dir)).toThrow(/points at itself/);
+  });
+
+  it('throws when the target does not exist', () => {
+    const follower = makeDir('follower-missing', { authoritativeDataDir: join(tempDir, 'wt', 'does-not-exist') });
+    expect(() => resolveAuthoritativeDataDir(follower)).toThrow(/does not exist/);
+  });
+
+  it('throws on a chained follower (target is itself a follower)', () => {
+    const owner = makeDir('owner-chain', { appName: 'Owner' });
+    const mid = makeDir('mid-chain', { authoritativeDataDir: owner });
+    const follower = makeDir('follower-chain', { authoritativeDataDir: mid });
+    expect(() => resolveAuthoritativeDataDir(follower)).toThrow(/chains not allowed/);
   });
 });

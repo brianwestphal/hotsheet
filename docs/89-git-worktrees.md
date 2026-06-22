@@ -1,11 +1,11 @@
 # 89. Git Worktrees + Per-Worktree AI Agents
 
-**Status: DESIGN ONLY** (HS-8905, 2026-06-22). No implementation yet — this doc
-+ its follow-up tickets are the deliverable. The parallel/claiming half is gated
-on the distributed-execution epic (HS-8861–8865) and the §46 service/client
-decoupling epic (HS-7940 / HS-7944 / HS-7945). Scope decision (HS-8905
-feedback): **design-only, standalone doc, follower `.hotsheet/settings.json`
-pointer model.**
+**Status: PARTIAL** (HS-8905 design, 2026-06-22). **Phase A shipped (HS-8934)** —
+the follower `.hotsheet/settings.json` pointer + project-data redirect. Phases
+B–D pending; the parallel/claiming half (Phase D) is gated on the
+distributed-execution epic (HS-8861–8865) and the §46 service/client decoupling
+epic (HS-7940 / HS-7944 / HS-7945). Scope decision (HS-8905 feedback):
+**standalone doc, follower `.hotsheet/settings.json` pointer model.**
 
 ## 89.0 Goal
 
@@ -74,10 +74,23 @@ worktree root + point them at the authoritative project.
 
 ## 89.2 Components (phased)
 
-### Phase A — Follower pointer + redirect resolution
-The `.hotsheet/settings.json` authoritative-dir pointer + the resolver that
-redirects project-data lookups to the owner. Buildable + testable single-machine,
-independent of the remote/claiming epics. **This is the keystone.**
+### Phase A — Follower pointer + redirect resolution ✅ SHIPPED (HS-8934)
+The `.hotsheet/settings.json` `authoritativeDataDir` pointer + the resolver that
+redirects project-data lookups to the owner. **The keystone.**
+
+Implemented as `resolveAuthoritativeDataDir(dataDir)` in `src/file-settings.ts`:
+reads the follower's settings.json, and when `authoritativeDataDir` is set,
+returns the (absolute) owner dir after validating **one hop** — rejects a
+self-reference, a missing target, or a target that is itself a follower (chains),
+throwing rather than silently creating a second DB. Applied at the two data-dir
+entry chokepoints so everything downstream uses the owner: `src/cli.ts::main`
+(primary launch — a bad pointer is a fatal startup error) and
+`src/projects.ts::registerProject`/`registerExistingProject` (Open Folder /
+multi-project; the dedup-by-dataDir then maps the follower onto the owner's
+existing context). The `authoritativeDataDir` key is a reserved setting (not a
+project setting). Tests: `file-settings.test.ts` (resolver unit cases) +
+`worktreeFollower.e2e.test.ts` (spawns against a follower dir → owner DB gets the
+data, no follower DB; bad pointer fails fast).
 
 ### Phase B — Worktree management (create / list / remove)
 Hot Sheet UI + API to create a git worktree for the project (sensible default
