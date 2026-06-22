@@ -64,8 +64,8 @@
     "!dist/*.map"
   ],
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.2",
-    "@electric-sql/pglite": "^0.4.5",
+    "@anthropic-ai/sdk": "^0.105.0",
+    "@electric-sql/pglite": "^0.5.3",
     "@hono/node-server": "^2.0.5",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@xterm/addon-fit": "^0.11.0",
@@ -93,7 +93,7 @@
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.0",
     "c8": "^11.0.0",
-    "domotion-svg": "^0.12.0",
+    "domotion-svg": "^0.13.3",
     "dotenv": "^17.4.1",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
