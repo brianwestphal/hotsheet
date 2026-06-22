@@ -1,8 +1,9 @@
 # 89. Git Worktrees + Per-Worktree AI Agents
 
 **Status: PARTIAL** (HS-8905 design, 2026-06-22). **Phase A shipped (HS-8934)** —
-the follower `.hotsheet/settings.json` pointer + project-data redirect. Phases
-B–D pending; the parallel/claiming half (Phase D) is gated on the
+the follower pointer + project-data redirect. **Phase B server core shipped
+(HS-8935)** — create/list/remove worktrees + follower-pointer write + API. Phase
+B UI + Phases C–D pending; the parallel/claiming half (Phase D) is gated on the
 distributed-execution epic (HS-8861–8865) and the §46 service/client decoupling
 epic (HS-7940 / HS-7944 / HS-7945). Scope decision (HS-8905 feedback):
 **standalone doc, follower `.hotsheet/settings.json` pointer model.**
@@ -93,18 +94,34 @@ project setting). Tests: `file-settings.test.ts` (resolver unit cases) +
 data, no follower DB; bad pointer fails fast).
 
 ### Phase B — Worktree management (create / list / remove)
-Hot Sheet UI + API to create a git worktree for the project (sensible default
-location, e.g. a sibling `../<repo>-worktrees/<branch>`; branch new or existing),
-list active worktrees, and remove one (with the usual `git worktree remove`
-safety + cleanup of its follower `.hotsheet/` + `.mcp.json`/skills). Writes the
-follower pointer + MCP + skills (§89.1) on create.
+**Server core ✅ SHIPPED (HS-8935).** `src/worktrees.ts` —
+`listWorktrees(repoRoot)` (parses `git worktree list --porcelain`, annotates each
+entry with its follower pointer, main first), `createWorktree(repoRoot,
+ownerDataDir, {branch, path?, newBranch?, baseRef?})` (`git worktree add` →
+default sibling `../<repo>-worktrees/<branch>`, then writes the follower
+`.hotsheet/settings.json` pointing at the owner + defensively ensures it's
+gitignored), `removeWorktree(repoRoot, path, {force?, deleteBranch?})`. Git is
+shelled async with an injectable runner; path matching is symlink-robust
+(`realpathSync` — macOS `/var`→`/private/var`). API: `GET /api/worktrees`,
+`POST /api/worktrees`, `POST /api/worktrees/remove` (`src/routes/worktrees.ts`,
+typed in `src/api/worktrees.ts`). Tests: `worktrees.test.ts` (parse + real-git
+create/list/remove/deleteBranch) + `api/worktrees.test.ts`.
 
-### Phase C — Per-worktree AI terminal
-"Open a Claude terminal in this worktree" — reuses the existing terminal system
-(`src/terminals/**`, the §HS-8491 Claude-terminal seeding) but spawns the PTY
-with the worktree as cwd, the agent wired (via the follower pointer + MCP) to the
-authoritative Hot Sheet. Choice of AI tool is the existing terminal-target
-config.
+**Re-slice:** the `.mcp.json` + skills writes (and making the owner's worklist
+reachable from the follower) moved to **Phase C** — they're the agent-wiring the
+per-worktree terminal consumes, and the follower-has-no-worklist problem needs
+solving where it's exercised. **UI** is a separate follow-up (a worktree
+management panel).
+
+### Phase C — Per-worktree AI terminal (+ agent wiring)
+"Open a Claude (or configured AI tool) terminal in this worktree" — reuses the
+existing terminal system (`src/terminals/**`, the §HS-8491 Claude-terminal
+seeding) with the worktree as cwd. **Includes the agent wiring moved from Phase
+B:** write the worktree's `.mcp.json` (channel → owner) + `.claude/skills/**`,
+and make the owner's worklist reachable from the follower (the follower has no
+worklist of its own — decide: skills reference the owner's worklist, or the
+owner's markdown sync mirrors/symlinks it into each follower). Choice of AI tool
+is the existing terminal-target config.
 
 ### Phase D — Auto-parallelization across worktrees
 The end-state vision: a coordinator spins up N worktrees + agents that each
@@ -166,13 +183,15 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
 
 ## 89.6 Follow-up tickets
 
-Filed alongside this doc (all backlog):
 - **HS-8934 — Phase A:** follower `.hotsheet/settings.json` pointer + project-data
-  redirect resolution (keystone; single-machine).
-- **HS-8935 — Phase B:** create / list / remove git worktrees from Hot Sheet
-  (writes the follower pointer + `.mcp.json` + skills). Depends on HS-8934.
-- **HS-8936 — Phase C:** open an AI terminal per worktree wired to the
-  authoritative Hot Sheet. Depends on HS-8934 + HS-8935.
-- **HS-8937 — Phase D:** auto-parallelize tickets across worktrees. Gated on the
-  claim/lease epic (HS-8862/8863/8861/8864/8865) + §46 (HS-7940/7944/7945 for
-  remote workers).
+  redirect resolution. **✅ Shipped.**
+- **HS-8935 — Phase B (server core):** create / list / remove git worktrees +
+  follower-pointer write + API. **✅ Shipped.**
+- **HS-8938 — Phase B (UI):** worktree management panel (list/create/remove).
+  Backlog. Depends on HS-8935.
+- **HS-8936 — Phase C:** open an AI terminal per worktree + the agent wiring
+  (`.mcp.json` + skills + owner-worklist reachability, moved from Phase B).
+  Backlog. Depends on HS-8934 + HS-8935.
+- **HS-8937 — Phase D:** auto-parallelize tickets across worktrees. Backlog;
+  gated on the claim/lease epic (HS-8862/8863/8861/8864/8865) + §46
+  (HS-7940/7944/7945 for remote workers).
