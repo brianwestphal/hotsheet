@@ -88,7 +88,12 @@ unfilled (informational; it does not by itself trigger the nudge — see §86.4)
 Three ways the sections get into `CLAUDE.md`:
 
 1. **Once-per-project nudge** (`src/client/aiInstructionsNudge.tsx`,
-   `maybeShowAiInstructionsNudge()` at app boot). Decision logic
+   `maybeShowAiInstructionsNudge()`). Runs for the **active** project at app boot
+   **and** again each time a different project is first selected (`switchProject`
+   in `projectTabs.tsx`) — so a second project opened in another tab gets checked
+   too, not only the initially-loaded one. A per-session `checkedSecrets` guard
+   keeps a project from being re-checked when the user toggles back to it (the
+   status/apply calls would otherwise re-fire on every switch). Decision logic
    (`decideNudgeAction`):
    - If **some** managed sections are already present but `setupNeeded` (a section
      is outdated, or a newly-added section is missing) → **silently auto-update**,
@@ -98,7 +103,7 @@ Three ways the sections get into `CLAUDE.md`:
      `.claude/` dir, or an existing `CLAUDE.md`) **and** a per-project
      `ai_instructions_nudge_dismissed` flag in `settings.json`. Any dismissal
      (Set up / Not now / X / backdrop) sets the flag, so the prompt is genuinely
-     once per project.
+     once per project (and persists across sessions).
 2. **Settings → General → "Update CLAUDE.md"** button — installs or updates the
    sections on demand, always available (even after the nudge is dismissed).
 3. **README copy-paste** — for manual adoption.
@@ -113,7 +118,10 @@ Three ways the sections get into `CLAUDE.md`:
   `POST /api/ai-instructions/apply` (active-project scoped via `dataDir`).
 - **`src/api/aiInstructions.ts`** — typed callers + wire schemas
   (`getAiInstructionsStatus`, `applyAiInstructions`).
-- **`src/client/aiInstructionsNudge.tsx`** — boot nudge + dialog.
+- **`src/client/aiInstructionsNudge.tsx`** — boot + per-switch nudge + dialog
+  (per-session `checkedSecrets` guard).
+- **`src/client/projectTabs.tsx`** — `switchProject` re-invokes the nudge for the
+  newly-selected project.
 - **`src/client/settingsDialog.tsx`** — the Settings → General button binding.
 
 ## 86.6 Scope + follow-ups

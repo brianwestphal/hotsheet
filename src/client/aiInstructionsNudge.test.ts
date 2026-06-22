@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setApiTransport } from '../api/_runner.js';
 import type { AiInstructionsStateResp } from '../api/aiInstructions.js';
-import { decideNudgeAction, type NudgeAction, showAiInstructionsNudgeDialog } from './aiInstructionsNudge.js';
+import { _resetCheckedSecretsForTesting, decideNudgeAction, maybeShowAiInstructionsNudge, type NudgeAction, showAiInstructionsNudgeDialog } from './aiInstructionsNudge.js';
+import { setActiveProject } from './state.js';
 
 function makeState(partial: Partial<AiInstructionsStateResp> & { present?: boolean }): AiInstructionsStateResp {
   const present = partial.present ?? false;
@@ -93,5 +94,56 @@ describe('showAiInstructionsNudgeDialog', () => {
     showAiInstructionsNudgeDialog();
     showAiInstructionsNudgeDialog();
     expect(document.querySelectorAll('.ai-instructions-nudge-overlay').length).toBe(1);
+  });
+});
+
+describe('maybeShowAiInstructionsNudge per-project guard (HS-8913)', () => {
+  let statusCalls: number;
+
+  beforeEach(() => {
+    statusCalls = 0;
+    _resetCheckedSecretsForTesting();
+    setApiTransport((path) => {
+      if (path === '/ai-instructions/status') {
+        statusCalls += 1;
+        // present + current → action 'none', so no dialog / no apply fires.
+        return Promise.resolve(makeState({ present: true, setupNeeded: false }));
+      }
+      if (path === '/file-settings') return Promise.resolve({});
+      return Promise.resolve({});
+    });
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('.ai-instructions-nudge-overlay').forEach(el => el.remove());
+  });
+
+  function activate(secret: string): void {
+    setActiveProject({ name: secret, dataDir: `/tmp/${secret}`, secret });
+  }
+
+  it('checks each project once, re-checks a newly-selected project, and skips a re-toggle', async () => {
+    activate('project-a');
+    maybeShowAiInstructionsNudge();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusCalls).toBe(1);
+
+    // Toggling back to the same project does not re-fire the status call.
+    maybeShowAiInstructionsNudge();
+    await Promise.resolve();
+    expect(statusCalls).toBe(1);
+
+    // A different, newly-selected project IS checked.
+    activate('project-b');
+    maybeShowAiInstructionsNudge();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusCalls).toBe(2);
+
+    // ...and only once.
+    maybeShowAiInstructionsNudge();
+    await Promise.resolve();
+    expect(statusCalls).toBe(2);
   });
 });

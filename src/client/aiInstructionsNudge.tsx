@@ -1,11 +1,14 @@
 import { type AiInstructionsStateResp, applyAiInstructions, getAiInstructionsStatus, getFileSettings, updateFileSettings } from '../api/index.js';
 import { toElement } from './dom.js';
+import { getActiveProject } from './state.js';
 
 /**
  * HS-8913 — once-per-project nudge to install Hot Sheet's recommended
  * AI-assistant instruction sections into the project's CLAUDE.md.
  *
- * Boot behavior (active project only), per the ticket:
+ * Behavior (per the ticket): check the active project once at boot AND once
+ * each time a different project is first selected — not only the initially-
+ * loaded project. For whichever project is active:
  *   - If the project ALREADY has some managed sections but they're behind the
  *     current version (or a newly-added section is missing), silently auto-update
  *     them — no prompt. The user already opted in; we just keep the text current.
@@ -14,9 +17,23 @@ import { toElement } from './dom.js';
  *     settings.json). Any dismissal — Set up, Not now, X, or backdrop — sets the
  *     flag, so the prompt is genuinely once per project. The Settings → General
  *     button is the re-entry point afterward.
+ *
+ * The per-session `checkedSecrets` guard keeps a project from being re-checked
+ * every time the user toggles back to it (the API status + apply calls would
+ * otherwise re-fire on every switch). Persisted dismissal still lives in the
+ * project's `settings.json`, so the prompt stays suppressed across sessions too.
  */
 
 const DISMISSED_KEY = 'ai_instructions_nudge_dismissed';
+
+/** Project secrets already checked this session (boot or switch). Guards
+ *  against re-firing the status/apply calls on every project toggle. */
+const checkedSecrets = new Set<string>();
+
+/** **TEST ONLY** — clear the per-session checked-projects guard. */
+export function _resetCheckedSecretsForTesting(): void {
+  checkedSecrets.clear();
+}
 
 export type NudgeAction = 'silent-update' | 'prompt' | 'none';
 
@@ -34,8 +51,19 @@ function readDismissed(value: unknown): boolean {
   return value === true || value === 'true';
 }
 
-/** Public entry point — called once on app boot. Fire-and-forget, best-effort. */
+/** Public entry point — called on app boot and after each project switch.
+ *  Fire-and-forget, best-effort. Skips a project already checked this session
+ *  so toggling between projects doesn't re-fire the status/apply calls. */
 export function maybeShowAiInstructionsNudge(): void {
+  const secret = getActiveProject()?.secret;
+  // A known secret is recorded up-front so a rapid second switch back can't
+  // start a concurrent in-flight check. An unknown secret (boot before the
+  // first project resolves) is let through but not recorded, so the real
+  // check still runs once the active project is known.
+  if (secret !== undefined) {
+    if (checkedSecrets.has(secret)) return;
+    checkedSecrets.add(secret);
+  }
   void (async () => {
     try {
       const [state, fs] = await Promise.all([getAiInstructionsStatus(), getFileSettings()]);

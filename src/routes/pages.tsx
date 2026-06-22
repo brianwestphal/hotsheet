@@ -620,7 +620,7 @@ pageRoutes.get('/', (c) => {
                   worklist.md (above the protocol sections). */}
               <div className="settings-field">
                 <label>Worklist preamble</label>
-                <textarea id="settings-worklist-preamble" rows={4} placeholder="Optional project-specific notes for the AI, added near the top of worklist.md."></textarea>
+                <textarea id="settings-worklist-preamble" className="settings-textarea" rows={4} placeholder="Optional project-specific notes for the AI, added near the top of worklist.md."></textarea>
                 <span className="settings-hint" id="settings-worklist-preamble-hint">Free-text notes added under a "Project Notes" heading near the top of <code>.hotsheet/worklist.md</code>, before the standard workflow instructions. Leave empty to omit.</span>
               </div>
             </div>

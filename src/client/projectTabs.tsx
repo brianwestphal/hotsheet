@@ -1,5 +1,6 @@
 import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, listProjects, reorderProjects, revealProject } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
+import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
@@ -167,6 +168,11 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
   if (reloadCallback) {
     await reloadCallback();
   }
+  // HS-8913 — also check the newly-selected project for the AI-instructions
+  // nudge. Boot only covers the initially-loaded project; without this, a
+  // second project opened in another tab never gets prompted. Guarded
+  // per-secret inside, so toggling back and forth re-fires nothing.
+  maybeShowAiInstructionsNudge();
 }
 
 /** **HS-8431** — secrets of the user's most recent drag-reorder, held
