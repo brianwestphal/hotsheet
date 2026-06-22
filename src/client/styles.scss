@@ -9926,6 +9926,118 @@ label.detail-details-label {
   overflow: hidden;
 }
 
+// HS-8938 — "Manage worktrees…" entry in the git popover.
+.git-popover-worktrees-btn {
+  margin-top: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+
+  &:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+}
+
+// HS-8938 — git worktree management overlay.
+.worktrees-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.worktrees-dialog {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.worktrees-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+
+  .worktrees-title { font-weight: 700; font-size: 14px; }
+  .worktrees-close {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 20px; line-height: 1; cursor: pointer;
+    &:hover { color: var(--text); }
+  }
+}
+
+.worktrees-body {
+  padding: 8px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.worktrees-loading, .worktrees-empty, .worktrees-error {
+  color: var(--text-muted);
+  padding: 16px 0;
+  text-align: center;
+}
+.worktrees-error { color: var(--danger); }
+
+.worktree-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "main remove" "path remove";
+  gap: 2px 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+
+  &:last-child { border-bottom: none; }
+
+  .worktree-row-main { grid-area: main; display: flex; align-items: center; gap: 6px; }
+  .worktree-branch { font-weight: 600; }
+  .worktree-badge {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 6px;
+    background: var(--bg-hover); color: var(--text-muted);
+  }
+  .worktree-badge-follower { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .worktree-path {
+    grid-area: path; font-size: 11px; color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .worktree-remove-btn { grid-area: remove; }
+}
+
+.worktrees-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+
+  .worktrees-branch-input {
+    flex: 1;
+    padding: 6px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .worktrees-newbranch { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+}
+
 .git-popover-header {
   display: flex;
   align-items: center;

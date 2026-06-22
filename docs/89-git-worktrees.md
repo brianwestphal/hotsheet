@@ -1,9 +1,9 @@
 # 89. Git Worktrees + Per-Worktree AI Agents
 
 **Status: PARTIAL** (HS-8905 design, 2026-06-22). **Phase A shipped (HS-8934)** —
-the follower pointer + project-data redirect. **Phase B server core shipped
-(HS-8935)** — create/list/remove worktrees + follower-pointer write + API. Phase
-B UI + Phases C–D pending; the parallel/claiming half (Phase D) is gated on the
+the follower pointer + project-data redirect. **Phase B shipped** — server core
+(HS-8935: create/list/remove + API) + UI (HS-8938: management panel from the git
+popover). Phases C–D pending; the parallel/claiming half (Phase D) is gated on the
 distributed-execution epic (HS-8861–8865) and the §46 service/client decoupling
 epic (HS-7940 / HS-7944 / HS-7945). Scope decision (HS-8905 feedback):
 **standalone doc, follower `.hotsheet/settings.json` pointer model.**
@@ -107,11 +107,18 @@ shelled async with an injectable runner; path matching is symlink-robust
 typed in `src/api/worktrees.ts`). Tests: `worktrees.test.ts` (parse + real-git
 create/list/remove/deleteBranch) + `api/worktrees.test.ts`.
 
+**UI ✅ SHIPPED (HS-8938).** `src/client/worktreesPanel.tsx` — an overlay that
+lists worktrees (main + follower badges + path), creates one (branch input +
+"New branch" checkbox → `createWorktree`), and removes one (`confirmDialog`
+danger → `removeWorktree({force})`). Opened from a "Manage worktrees…" button in
+the sidebar git popover (`gitStatusPopover.tsx`). Tests:
+`client/worktreesPanel.test.ts` (row render, list/empty/error states, create +
+remove flows, Escape-to-close).
+
 **Re-slice:** the `.mcp.json` + skills writes (and making the owner's worklist
 reachable from the follower) moved to **Phase C** — they're the agent-wiring the
 per-worktree terminal consumes, and the follower-has-no-worklist problem needs
-solving where it's exercised. **UI** is a separate follow-up (a worktree
-management panel).
+solving where it's exercised.
 
 ### Phase C — Per-worktree AI terminal (+ agent wiring)
 "Open a Claude (or configured AI tool) terminal in this worktree" — reuses the
@@ -188,7 +195,7 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
 - **HS-8935 — Phase B (server core):** create / list / remove git worktrees +
   follower-pointer write + API. **✅ Shipped.**
 - **HS-8938 — Phase B (UI):** worktree management panel (list/create/remove).
-  Backlog. Depends on HS-8935.
+  **✅ Shipped.**
 - **HS-8936 — Phase C:** open an AI terminal per worktree + the agent wiring
   (`.mcp.json` + skills + owner-worklist reachability, moved from Phase B).
   Backlog. Depends on HS-8934 + HS-8935.

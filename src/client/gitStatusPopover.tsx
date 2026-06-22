@@ -2,6 +2,7 @@ import type { GitStatusFiles, GitStatusWithFiles, PendingCommit } from '../api/g
 import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
+import { openWorktreesPanel } from './worktreesPanel.js';
 
 /**
  * HS-7956 — Phase 3 expanded popover for the sidebar git status chip.
@@ -165,6 +166,12 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
     });
   });
 
+  // HS-8938 — entry point to the git-worktree management panel (docs/89).
+  const worktreesBtn = toElement(
+    <button type="button" className="git-popover-worktrees-btn">Manage worktrees…</button>,
+  );
+  worktreesBtn.addEventListener('click', () => { openWorktreesPanel(); });
+  bodyEl.appendChild(worktreesBtn);
 }
 
 /** Opaque `isConnected` read so TS can't narrow it across an `await`. */

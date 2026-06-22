@@ -706,6 +706,17 @@ The sync engine + counts are unit-tested; these cover the live-GitHub + visual p
 
 ---
 
+## 17. Git Worktrees (HS-8934/8935/8938, docs/89)
+
+The follower-redirect, server git-ops, and panel render/wiring are automated; these cover the real-git + visual flow:
+
+- [ ] Git popover shows a **"Manage worktrees…"** button (git repos only); it opens the worktrees overlay listing the main worktree.
+- [ ] Create a worktree (branch name + "New branch") — it appears in the list with a **follower** badge, and a sibling `../<repo>-worktrees/<branch>` directory is created with a `.hotsheet/settings.json` pointing at the main project's `.hotsheet`.
+- [ ] Launching Hot Sheet (or a Claude terminal) from the worktree shares the **same** tickets as the main project (no separate DB); the real `<worktree>/.hotsheet/db` is not created.
+- [ ] Remove a worktree from the panel (confirm dialog) — it disappears from the list and the directory is gone; the branch is kept.
+
+---
+
 ## Automated Coverage Summary
 
 For reference, here's what IS covered by automated tests (no manual check needed):
