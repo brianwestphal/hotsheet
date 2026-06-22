@@ -18,18 +18,45 @@ import type { RemoteChange, RemoteTicketFields, TicketingBackend,TicketSyncRecor
 
 // --- Sync scheduling ---
 
-/** Per-plugin sync timers. Each scheduled sync replaces any previous timer for
- *  the same pluginId (startScheduledSync calls stopScheduledSync first).
- *  Overlapping execution is now guarded by `runSync` (HS-8669) — a tick that
+/** Per-(plugin, project) sync timers (HS-8933 — keyed `${pluginId}::${dataDir}`
+ *  so each project schedules independently; previously a single per-plugin timer
+ *  meant a second project clobbered the first's schedule). Each scheduled sync
+ *  replaces any previous timer for the same key (startScheduledSync stops it
+ *  first). Overlapping execution is guarded by `runSync` (HS-8669) — a tick that
  *  fires while a previous run for the same (plugin, project) is still in flight
  *  coalesces onto it rather than starting a second concurrent pass.
  *  Modified by: startScheduledSync(), stopScheduledSync(), stopAllScheduledSyncs(). */
 const syncTimers = new Map<string, ReturnType<typeof setInterval>>();
+/** Per-timer run counter, used to decide when a scheduled run does a FULL pull
+ *  vs. an incremental one (HS-8933). Same key as `syncTimers`. */
+const syncRunCounts = new Map<string, number>();
 
+function timerKey(pluginId: string, dataDir?: string): string {
+  return `${pluginId}::${dataDir ?? ''}`;
+}
+
+/**
+ * HS-8933 — scheduled periodic auto-sync. Runs `runSync` every `intervalMs`.
+ *
+ * To self-heal the HS-8931 "stranded issue" class (a remote item with no local
+ * sync record that is older than the incremental watermark is invisible to
+ * incremental pulls), each timer does a FULL reconcile on its FIRST run and then
+ * roughly once an hour thereafter; all other runs are incremental for
+ * efficiency. `fullEvery` is derived so the cadence is ~hourly regardless of the
+ * interval (e.g. 15 min → every 4th run; 1 min → every 60th; 60 min → every run).
+ */
 export function startScheduledSync(pluginId: string, intervalMs: number, dataDir?: string): void {
-  stopScheduledSync(pluginId);
-  const timer = setInterval(async () => {
-    // Run in the correct project context
+  stopScheduledSync(pluginId, dataDir);
+  const key = timerKey(pluginId, dataDir);
+  const intervalMin = Math.max(1, Math.round(intervalMs / 60_000));
+  const fullEvery = Math.max(1, Math.round(60 / intervalMin));
+  syncRunCounts.set(key, 0);
+
+  const tick = async (): Promise<void> => {
+    const runNo = (syncRunCounts.get(key) ?? 0) + 1;
+    syncRunCounts.set(key, runNo);
+    // Full reconcile on the first run + ~hourly thereafter; incremental otherwise.
+    const fullPull = runNo === 1 || runNo % fullEvery === 0;
     if (dataDir != null && dataDir !== '') {
       const { runWithDataDir } = await import('../db/connection.js');
       const { instrumentAsync } = await import('../diagnostics/freezeLogger.js');
@@ -42,26 +69,126 @@ export function startScheduledSync(pluginId: string, intervalMs: number, dataDir
         // multi-project workstation the cumulative load is the dominant
         // candidate for the continuous unattributed block stream.
         await reactivatePlugin(pluginId);
-        await runSync(pluginId);
+        await runSync(pluginId, { fullPull });
       }));
     } else {
-      void runSync(pluginId);
+      void runSync(pluginId, { fullPull });
     }
-  }, intervalMs);
-  syncTimers.set(pluginId, timer);
-  console.log(`[sync] Scheduled sync for ${pluginId} every ${intervalMs / 1000}s`);
+  };
+
+  const timer = setInterval(() => { void tick(); }, intervalMs);
+  syncTimers.set(key, timer);
+  console.log(`[sync] Scheduled sync for ${pluginId} every ${intervalMin} min (full reconcile every ${fullEvery} run(s))`);
 }
 
-export function stopScheduledSync(pluginId: string): void {
-  const timer = syncTimers.get(pluginId);
-  if (timer) {
-    clearInterval(timer);
-    syncTimers.delete(pluginId);
+/** Stop a scheduled sync. With `dataDir`, stops only that project's timer; without
+ *  it, stops every project's timer for the plugin (back-compat for callers that
+ *  pass only a pluginId). */
+export function stopScheduledSync(pluginId: string, dataDir?: string): void {
+  const keys = dataDir !== undefined
+    ? [timerKey(pluginId, dataDir)]
+    : [...syncTimers.keys()].filter(k => k === pluginId || k.startsWith(`${pluginId}::`));
+  for (const key of keys) {
+    const timer = syncTimers.get(key);
+    if (timer) {
+      clearInterval(timer);
+      syncTimers.delete(key);
+      syncRunCounts.delete(key);
+    }
   }
 }
 
 export function stopAllScheduledSyncs(): void {
-  for (const [id] of syncTimers) stopScheduledSync(id);
+  for (const key of [...syncTimers.keys()]) {
+    const timer = syncTimers.get(key);
+    if (timer) clearInterval(timer);
+  }
+  syncTimers.clear();
+  syncRunCounts.clear();
+}
+
+/** Whether a scheduled-sync timer is currently armed for this (plugin, project).
+ *  Without `dataDir`, true if ANY project has the plugin scheduled. */
+export function isSyncScheduled(pluginId: string, dataDir?: string): boolean {
+  if (dataDir !== undefined) return syncTimers.has(timerKey(pluginId, dataDir));
+  return [...syncTimers.keys()].some(k => k === pluginId || k.startsWith(`${pluginId}::`));
+}
+
+/** HS-8933 — interval setting key + bounds shared by the engine, the manifest,
+ *  and the boot wiring. */
+export const SYNC_INTERVAL_SETTING = 'sync_interval_minutes';
+export const MIN_SYNC_INTERVAL_MINUTES = 1;
+
+/**
+ * HS-8933 — start/stop a plugin's scheduled sync for a project based on its
+ * configured `sync_interval_minutes` (read from the project DB; falls back to the
+ * plugin manifest's default for that preference). `0`/empty/invalid → off. Only
+ * schedules when the plugin is enabled for the project. Idempotent. Must be
+ * called inside the project's `runWithDataDir` context.
+ */
+export async function applyScheduledSyncFromConfig(pluginId: string, dataDir: string): Promise<void> {
+  const { getPluginById } = await import('./loader.js');
+  const plugin = getPluginById(pluginId);
+  // Only plugins that actually declare the interval preference participate.
+  const pref = plugin?.manifest.preferences?.find(p => p.key === SYNC_INTERVAL_SETTING);
+  if (!plugin || !pref) return;
+
+  const { getDb } = await import('../db/connection.js');
+  const db = await getDb();
+
+  // Per-project opt-in (mirrors routes/plugins.ts::isPluginEnabledForProject —
+  // inlined to avoid a routes→syncEngine import cycle).
+  const enabledRow = await db.query<{ value: string }>(
+    'SELECT value FROM settings WHERE key = $1', [`plugin_enabled:${pluginId}`],
+  );
+  if (enabledRow.rows[0]?.value !== 'true') {
+    stopScheduledSync(pluginId, dataDir);
+    return;
+  }
+
+  const row = await db.query<{ value: string }>(
+    'SELECT value FROM settings WHERE key = $1', [`plugin:${pluginId}:${SYNC_INTERVAL_SETTING}`],
+  );
+  const raw = row.rows[0]?.value ?? (typeof pref.default === 'string' ? pref.default : '15');
+  const minutes = Number.parseInt(raw, 10);
+  if (!Number.isFinite(minutes) || minutes < MIN_SYNC_INTERVAL_MINUTES) {
+    stopScheduledSync(pluginId, dataDir);
+    return;
+  }
+  startScheduledSync(pluginId, minutes * 60_000, dataDir);
+}
+
+/**
+ * HS-8933 — (re)apply scheduled sync for every loaded plugin across every
+ * registered project, each in its own DB context. Called after plugins finish
+ * loading at boot and whenever a project registers, so auto-sync starts without
+ * needing a client to be connected. Best-effort: a failure for one
+ * plugin/project is logged and skipped.
+ */
+export async function scheduleSyncsForAllProjects(): Promise<void> {
+  const { getAllProjects } = await import('../projects.js');
+  for (const project of getAllProjects()) {
+    await scheduleSyncsForProject(project.dataDir);
+  }
+}
+
+/**
+ * HS-8933 — (re)apply scheduled sync for every loaded plugin in a single project.
+ * Called when a project registers (e.g. Open Folder after boot) so its auto-sync
+ * starts even though it missed the boot-time pass. Best-effort per plugin.
+ */
+export async function scheduleSyncsForProject(dataDir: string): Promise<void> {
+  const [{ getLoadedPlugins }, { runWithDataDir }] = await Promise.all([
+    import('./loader.js'),
+    import('../db/connection.js'),
+  ]);
+  for (const plugin of getLoadedPlugins()) {
+    try {
+      await runWithDataDir(dataDir, () => applyScheduledSyncFromConfig(plugin.manifest.id, dataDir));
+    } catch (e) {
+      console.warn(`[sync] Failed to schedule ${plugin.manifest.id} for ${dataDir}: ${getErrorMessage(e)}`);
+    }
+  }
 }
 
 // --- Full sync (pull + push) ---
@@ -101,6 +228,71 @@ export async function runSync(pluginId: string, options: { fullPull?: boolean } 
   } finally {
     inFlightSyncs.delete(key);
   }
+}
+
+export interface PendingSyncCounts {
+  /** Remote changes a sync would apply (incoming). */
+  toPull: number;
+  /** Local changes a sync would push (outgoing). */
+  toPush: number;
+  /** `toPull + toPush` — the single "how out of sync" number for the badge. */
+  total: number;
+}
+
+/**
+ * HS-8791 — compute how out of sync a project is for one backend, in BOTH
+ * directions, WITHOUT mutating anything. Used by the sync-button badge (polled
+ * ~every 5 min for the active tab).
+ *
+ * - **toPull** (incoming): remote items a sync would apply — new remote items, or
+ *   ones updated since we last ingested them — counted against the incremental
+ *   watermark (same `since` a scheduled incremental run uses). A network read.
+ * - **toPush** (outgoing): local tickets modified since their last sync (dirty) +
+ *   queued outbox create/delete ops. Only when the backend can write.
+ *
+ * Best-effort: a network/parse failure on the remote side yields `toPull = 0`
+ * rather than throwing, so the badge degrades quietly.
+ */
+export async function getPendingSyncCounts(backend: TicketingBackend): Promise<PendingSyncCounts> {
+  let toPull = 0;
+  try {
+    const records = await getSyncRecordsForPlugin(backend.id);
+    const since = records.length > 0
+      ? new Date(Math.max(...records.map(r => new Date(r.last_synced_at).getTime())))
+      : null;
+    const changes = await backend.pullChanges(since);
+    for (const change of changes) {
+      if (change.deleted === true) continue;
+      const rec = await getSyncRecordByRemoteId(backend.id, change.remoteId);
+      if (!rec) { toPull++; continue; }
+      const base = new Date(rec.remote_updated_at ?? rec.last_synced_at).getTime();
+      if (change.remoteUpdatedAt.getTime() > base) toPull++;
+    }
+  } catch {
+    // Remote unreachable / rate-limited — show 0 incoming rather than error out.
+  }
+
+  let toPush = 0;
+  const canPush = backend.capabilities.create || backend.capabilities.update;
+  if (canPush) {
+    try {
+      const { getDb } = await import('../db/connection.js');
+      const db = await getDb();
+      const dirty = await db.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM ticket_sync ts
+           JOIN tickets t ON t.id = ts.ticket_id
+          WHERE ts.plugin_id = $1 AND t.status != 'deleted'
+            AND t.updated_at > ts.local_updated_at`,
+        [backend.id],
+      );
+      const outbox = await getOutboxEntries(backend.id);
+      toPush = (dirty.rows[0]?.n ?? 0) + outbox.length;
+    } catch {
+      // DB read failure — show 0 outgoing.
+    }
+  }
+
+  return { toPull, toPush, total: toPull + toPush };
 }
 
 async function runSyncInner(pluginId: string, options: { fullPull?: boolean } = {}): Promise<SyncResult> {

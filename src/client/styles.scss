@@ -6553,6 +6553,7 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 }
 
 .plugin-toolbar-btn {
+  position: relative; // anchor for the HS-8791 out-of-sync badge
   background: none;
   border: none;
   color: var(--text-muted);
@@ -6571,6 +6572,26 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &:disabled { opacity: 0.4; cursor: default; }
 
   svg { display: block; }
+}
+
+// HS-8791 — count badge on a plugin sync button: how out of sync the project is
+// (incoming + outgoing). Top-right corner pill; hidden (not rendered) at 0.
+.plugin-sync-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
 }
 
 .plugin-busy-indicator {

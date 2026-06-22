@@ -3,6 +3,7 @@ import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { refreshSyncBadges } from './pluginSyncBadge.js';
 import { loadTickets } from './ticketList.js';
 import { showToast } from './toast.js';
 
@@ -81,6 +82,8 @@ export async function refreshPluginUI(): Promise<void> {
   renderPluginLocationElements('plugin-status-bar', 'status_bar');
   renderPluginLocationElements('plugin-sidebar-top', 'sidebar_actions_top');
   renderPluginLocationElements('plugin-sidebar-bottom', 'sidebar_actions_bottom');
+  // HS-8791 — the toolbar rebuild wiped any sync badges; recompute them.
+  void refreshSyncBadges();
 }
 
 /** Render plugin UI elements into a container by DOM id and plugin location. */
@@ -144,6 +147,10 @@ function createPluginButton(el: PluginUIElement): HTMLElement | null {
     <button
       className={`plugin-toolbar-btn${el.style === 'primary' ? ' primary' : ''}${el.style === 'danger' ? ' danger' : ''}`}
       title={el.title ?? el.label ?? ''}
+      // HS-8791 — tag with plugin id + action so the sync-badge updater can find
+      // the sync button and the post-sync refresh can target the right plugin.
+      data-plugin-id={el._pluginId ?? ''}
+      data-plugin-action={el.action ?? ''}
     >
       {el.icon != null
         // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry (trusted plugin data).
@@ -189,6 +196,7 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
       try {
         await triggerPluginSync(el._pluginId);
         void loadTickets();
+        void refreshSyncBadges(); // HS-8791 — sync just ran; recompute the badge.
       } finally {
         setPluginBusy(el._pluginId, pluginName, false);
       }

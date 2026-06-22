@@ -217,6 +217,10 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   // Load plugins (non-critical, feature-flagged)
   if (PLUGINS_ENABLED) {
     import('./plugins/loader.js').then(({ loadAllPlugins }) => loadAllPlugins())
+      // HS-8933 — once plugins are loaded, start scheduled auto-sync for every
+      // registered project per its configured interval (default 15 min). Runs
+      // server-side so it doesn't depend on a client being connected.
+      .then(() => import('./plugins/syncEngine.js').then(({ scheduleSyncsForAllProjects }) => scheduleSyncsForAllProjects()))
       .catch((e: unknown) => console.warn(`[plugins] Failed to load plugins: ${getErrorMessage(e)}`));
   }
 

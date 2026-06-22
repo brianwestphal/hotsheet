@@ -16,7 +16,7 @@ import {
   setGlobalPluginSetting, undismissBundledPlugin, unregisterPlugin,
 } from '../plugins/loader.js';
 import {
-  resolveConflict, runSync, startScheduledSync, stopScheduledSync, syncSingleTicketContent,
+  applyScheduledSyncFromConfig, getPendingSyncCounts, resolveConflict, runSync, startScheduledSync, stopScheduledSync, syncSingleTicketContent,
 } from '../plugins/syncEngine.js';
 import type { LoadedPlugin } from '../plugins/types.js';
 import { getAllProjects } from '../projects.js';
@@ -236,6 +236,8 @@ pluginRoutes.post('/plugins/:id/enable', async (c) => {
   // Ensure the plugin module is activated globally
   const plugin = getPluginById(pluginId);
   if (plugin && !plugin.enabled) await enablePlugin(pluginId);
+  // HS-8933 — start scheduled auto-sync per the plugin's configured interval.
+  await applyScheduledSyncFromConfig(pluginId, c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -243,6 +245,8 @@ pluginRoutes.post('/plugins/:id/enable', async (c) => {
 pluginRoutes.post('/plugins/:id/disable', async (c) => {
   const pluginId = c.req.param('id');
   await setPluginEnabledForProject(pluginId, false);
+  // HS-8933 — stop scheduled auto-sync for this project before clearing records.
+  stopScheduledSync(pluginId, c.get('dataDir'));
   // Clean up sync records and outbox for this plugin in this project
   const db = await getDb();
   await db.query('DELETE FROM ticket_sync WHERE plugin_id = $1', [pluginId]);
@@ -252,8 +256,11 @@ pluginRoutes.post('/plugins/:id/disable', async (c) => {
 
 /** Re-activate a plugin (picks up config changes without restart). */
 pluginRoutes.post('/plugins/:id/reactivate', async (c) => {
-  const ok = await reactivatePlugin(c.req.param('id'));
+  const pluginId = c.req.param('id');
+  const ok = await reactivatePlugin(pluginId);
   if (!ok) return c.json({ error: 'Failed to reactivate plugin' }, 400);
+  // HS-8933 — config may have changed the sync interval; re-apply the schedule.
+  await applyScheduledSyncFromConfig(pluginId, c.get('dataDir'));
   return c.json({ ok: true });
 });
 
@@ -304,6 +311,19 @@ pluginRoutes.get('/plugins/:id/status', async (c) => {
 pluginRoutes.get('/plugins/:id/sync', async (c) => {
   const records = await getSyncRecordsForPlugin(c.req.param('id'));
   return c.json(records);
+});
+
+/** HS-8791 — how out of sync this project is for the plugin (incoming + outgoing),
+ *  for the sync-button badge. Read-only; no mutation. */
+pluginRoutes.get('/plugins/:id/pending-count', async (c) => {
+  const pluginId = c.req.param('id');
+  if (!await isPluginEnabledForProject(pluginId)) {
+    return c.json({ toPull: 0, toPush: 0, total: 0, ok: false });
+  }
+  const reloaded = await getActivatedBackend(pluginId);
+  if (!reloaded?.backend) return c.json({ toPull: 0, toPush: 0, total: 0, ok: false });
+  const counts = await getPendingSyncCounts(reloaded.backend);
+  return c.json({ ...counts, ok: true });
 });
 
 /** Trigger an immediate sync for a plugin. */
@@ -388,7 +408,7 @@ pluginRoutes.post('/plugins/:id/sync/schedule', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const body = parsed.data;
   if (body.interval_minutes === null || body.interval_minutes === 0) {
-    stopScheduledSync(pluginId);
+    stopScheduledSync(pluginId, c.get('dataDir'));
     return c.json({ ok: true, scheduled: false });
   }
   const intervalMs = body.interval_minutes * 60 * 1000;

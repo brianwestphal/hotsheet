@@ -221,6 +221,12 @@ The sync engine orchestrates bidirectional synchronization between the local dat
   - If both modified → creates a conflict record.
 - Stale sync records (404/410 from remote) are automatically cleaned up — both via push errors (updateRemote throws 404) and via comment sync (getComments throws 404).
 
+**Out-of-sync badge (HS-8791):**
+- The sync toolbar button shows a count badge of **how out of sync the project is in both directions** — `total = toPull + toPush`. Hidden when 0; capped display `99+`.
+- `getPendingSyncCounts(backend)` (`src/plugins/syncEngine.ts`) computes it read-only: **toPull** = remote items a sync would apply (new, or updated since last ingested — counted against the incremental watermark; one remote read), **toPush** = local tickets modified since their last sync (dirty) + queued outbox create/delete ops (only when the backend can write). A remote read failure degrades to `toPull = 0` rather than erroring.
+- Server: `GET /api/plugins/:id/pending-count` → `{ toPull, toPush, total, ok }` (typed caller `getPluginPendingCount`); `ok:false` when the plugin is disabled/unconfigured for the project.
+- Client (`src/client/pluginSyncBadge.tsx`): polls **every 5 minutes while the tab is visible** for the active project's sync buttons (tagged `data-plugin-action="sync"`), and also refreshes right after a manual sync and after the toolbar re-renders. Started from `app.tsx`'s `reloadPluginToolbar`.
+
 **Conflict resolution:**
 - When a conflict is detected, `sync_status` is set to `conflict` and both local and remote field snapshots are stored in `conflict_data`.
 - `keep_local`: sets status to `synced` first, then calls `pushToRemote()` so the direct-comparison loop immediately pushes the local values to the remote.

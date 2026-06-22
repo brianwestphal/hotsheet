@@ -116,6 +116,14 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   projects.set(secret, ctx);
   dataDirToSecret.set(absDataDir, secret);
 
+  // HS-8933 — start scheduled plugin auto-sync (e.g. GitHub, default 15 min) for
+  // this project. No-op until plugins finish loading; the boot-time pass in
+  // cli.ts (after loadAllPlugins) covers projects registered before then, and
+  // this covers projects opened later. Fire-and-forget — never block registration.
+  void import('./plugins/syncEngine.js')
+    .then(({ scheduleSyncsForProject }) => scheduleSyncsForProject(absDataDir))
+    .catch(() => { /* non-critical */ });
+
   return ctx;
 }
 
@@ -185,6 +193,14 @@ export function registerExistingProject(dataDir: string, secret: string, db: PGl
 
   projects.set(secret, ctx);
   dataDirToSecret.set(absDataDir, secret);
+
+  // HS-8933 — start scheduled plugin auto-sync (e.g. GitHub, default 15 min) for
+  // this project. No-op until plugins finish loading; the boot-time pass in
+  // cli.ts (after loadAllPlugins) covers projects registered before then, and
+  // this covers projects opened later. Fire-and-forget — never block registration.
+  void import('./plugins/syncEngine.js')
+    .then(({ scheduleSyncsForProject }) => scheduleSyncsForProject(absDataDir))
+    .catch(() => { /* non-critical */ });
 
   return ctx;
 }

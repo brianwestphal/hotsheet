@@ -694,6 +694,18 @@ Still manual (need the actual Tauri *desktop app* GUI on each OS, which the scri
 
 ---
 
+## 16. GitHub Plugin Sync (HS-8933 scheduled auto-sync, HS-8791 badge)
+
+The sync engine + counts are unit-tested; these cover the live-GitHub + visual parts:
+
+- [ ] **Auto-sync default:** with the GitHub plugin configured + enabled, the config dialog shows "Auto-sync every" defaulting to **15 minutes**; background sync runs on its own (a new issue created on GitHub appears locally within the interval without clicking Sync).
+- [ ] **Interval change takes effect:** set it to **1 minute**, save; a remote change appears within ~1 min. Set to **Off**; background sync stops.
+- [ ] **Self-heal:** after the first scheduled run (or a manual Sync), an issue that previously wouldn't sync (older than the watermark) is pulled in.
+- [ ] **Out-of-sync badge:** make a change on GitHub (or edit a synced ticket locally) and within ~5 min the sync toolbar button shows an amber count badge; the tooltip reads "N changes to sync (X in, Y out)". Clicking Sync clears it to 0 (badge disappears).
+- [ ] **Badge respects direction / disabled:** disabling the plugin or an unconfigured plugin shows no badge.
+
+---
+
 ## Automated Coverage Summary
 
 For reference, here's what IS covered by automated tests (no manual check needed):

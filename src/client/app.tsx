@@ -71,6 +71,10 @@ async function reloadPluginToolbar() {
       renderPluginToolbarButtons(container);
     }
   }
+  // HS-8791 — start the 5-minute out-of-sync badge poll (idempotent; refreshes
+  // immediately for the active project's sync buttons).
+  const { startSyncBadgePolling } = await import('./pluginSyncBadge.js');
+  startSyncBadgePolling();
 }
 
 async function reloadAppState() {

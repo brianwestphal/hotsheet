@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getDb } from '../db/connection.js';
 import { createTicket, getTicket, updateTicket } from '../db/queries.js';
@@ -12,14 +12,19 @@ import type { LoadedPlugin, RemoteTicketFields, TicketingBackend  } from './type
 // We need to mock the loader module so the sync engine can find our test backend
 vi.mock('./loader.js', () => {
   const backends = new Map<string, TicketingBackend>();
+  const plugins = new Map<string, LoadedPlugin>();
   return {
     getBackendForPlugin: (id: string) => backends.get(id) ?? null,
     getAllBackends: () => Array.from(backends.values()),
-    getLoadedPlugins: () => [] as LoadedPlugin[],
-    getPluginById: () => undefined,
+    getLoadedPlugins: () => Array.from(plugins.values()),
+    getPluginById: (id: string) => plugins.get(id),
     // Test helper to register/unregister backends
     __registerBackend: (backend: TicketingBackend) => backends.set(backend.id, backend),
     __clearBackends: () => backends.clear(),
+    // HS-8933 — register a fake LoadedPlugin so applyScheduledSyncFromConfig can
+    // read its manifest preferences (it only needs id + manifest.preferences).
+    __registerPlugin: (plugin: LoadedPlugin) => plugins.set(plugin.manifest.id, plugin),
+    __clearPlugins: () => plugins.clear(),
   };
 });
 
@@ -34,8 +39,10 @@ vi.mock('../routes/plugins.js', () => ({
 const loaderMock = await import('./loader.js') as typeof import('./loader.js') & {
   __registerBackend: (b: TicketingBackend) => void;
   __clearBackends: () => void;
+  __registerPlugin: (p: LoadedPlugin) => void;
+  __clearPlugins: () => void;
 };
-const { runSync, resolveConflict, onTicketChanged, onTicketCreated, stopAllScheduledSyncs, cancelPendingPush, startScheduledSync, stopScheduledSync } = await import('./syncEngine.js');
+const { runSync, resolveConflict, onTicketChanged, onTicketCreated, stopAllScheduledSyncs, cancelPendingPush, startScheduledSync, stopScheduledSync, applyScheduledSyncFromConfig, isSyncScheduled, getPendingSyncCounts } = await import('./syncEngine.js');
 
 let tempDir: string;
 
@@ -122,6 +129,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   loaderMock.__clearBackends();
+  loaderMock.__clearPlugins();
   stopAllScheduledSyncs();
   cancelPendingPush();
   pluginEnabledForProject = true; // reset to default
@@ -681,6 +689,53 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
     expect(pullCount).toBe(countAfterStop);
   });
 
+  it('HS-8933: the first scheduled run does a FULL pull, reconciling a stranded issue', async () => {
+    // Auto-sync must self-heal the HS-8931 stranding class: an issue older than
+    // the incremental watermark with no sync record. The first scheduled run is a
+    // full pull, so background sync recovers it without a manual click.
+    const backend = createMockBackend([
+      { id: 'gh-current', fields: { title: 'Current', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend'); // establish the watermark
+
+    backend.issues.push({
+      id: 'gh-stranded',
+      fields: { title: 'Stranded', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false },
+      updatedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      deleted: false,
+    });
+
+    startScheduledSync('mock-backend', 120);
+    await new Promise(r => setTimeout(r, 450)); // let the first (full) tick run
+    stopScheduledSync('mock-backend');
+
+    expect(await getSyncRecordByRemoteId('mock-backend', 'gh-stranded')).not.toBeNull();
+  });
+
+  it('HS-8933: stopScheduledSync targets only the given project (per-(plugin,dataDir) keying)', async () => {
+    const backend = createMockBackend();
+    let pulls = 0;
+    const orig = backend.pullChanges.bind(backend);
+    backend.pullChanges = (s) => { pulls++; return orig(s); };
+    loaderMock.__registerBackend(backend);
+
+    startScheduledSync('mock-backend', 120); // key "mock-backend::"
+    await new Promise(r => setTimeout(r, 320));
+    expect(pulls).toBeGreaterThanOrEqual(1);
+
+    // Stopping a DIFFERENT project's timer must NOT stop this one.
+    stopScheduledSync('mock-backend', '/some/other/project');
+    const before = pulls;
+    await new Promise(r => setTimeout(r, 320));
+    expect(pulls).toBeGreaterThan(before);
+
+    stopScheduledSync('mock-backend'); // no dataDir → stops all for the plugin
+    const after = pulls;
+    await new Promise(r => setTimeout(r, 300));
+    expect(pulls).toBe(after);
+  });
+
   it('outbox create entry is skipped when ticket already has a sync record (HS-5083)', async () => {
     // Exact repro: user creates a ticket (onTicketCreated queues a create outbox
     // entry via the legacy auto-create path), then pushes via push-ticket (which
@@ -844,5 +899,122 @@ describe('sync engine — overlapping run guard (HS-8669)', () => {
     await runSync('mock-backend'); // sequential — the first already settled
 
     expect(pullCount).toBe(2); // guard released, second sync ran for real
+  });
+});
+
+describe('sync engine — applyScheduledSyncFromConfig (HS-8933)', () => {
+  const fakePlugin = (): LoadedPlugin => ({
+    manifest: {
+      id: 'mock-backend', name: 'Mock', version: '1',
+      preferences: [{ key: 'sync_interval_minutes', label: 'Auto-sync every', type: 'select', default: '15' }],
+    },
+    path: '', instance: {}, backend: null, enabled: true, error: null,
+  } as unknown as LoadedPlugin);
+
+  async function setSetting(key: string, value: string): Promise<void> {
+    const db = await getDb();
+    await db.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [key, value]);
+  }
+  async function clearSetting(key: string): Promise<void> {
+    const db = await getDb();
+    await db.query('DELETE FROM settings WHERE key = $1', [key]);
+  }
+
+  it('schedules when enabled with a valid interval', async () => {
+    loaderMock.__registerPlugin(fakePlugin());
+    await setSetting('plugin_enabled:mock-backend', 'true');
+    await setSetting('plugin:mock-backend:sync_interval_minutes', '5');
+    await applyScheduledSyncFromConfig('mock-backend', tempDir);
+    expect(isSyncScheduled('mock-backend', tempDir)).toBe(true);
+  });
+
+  it('falls back to the manifest default (15 min) when the interval is unset', async () => {
+    loaderMock.__registerPlugin(fakePlugin());
+    await setSetting('plugin_enabled:mock-backend', 'true');
+    await clearSetting('plugin:mock-backend:sync_interval_minutes');
+    await applyScheduledSyncFromConfig('mock-backend', tempDir);
+    expect(isSyncScheduled('mock-backend', tempDir)).toBe(true);
+  });
+
+  it('does NOT schedule when the plugin is disabled for the project', async () => {
+    loaderMock.__registerPlugin(fakePlugin());
+    await setSetting('plugin_enabled:mock-backend', 'false');
+    await setSetting('plugin:mock-backend:sync_interval_minutes', '5');
+    await applyScheduledSyncFromConfig('mock-backend', tempDir);
+    expect(isSyncScheduled('mock-backend', tempDir)).toBe(false);
+  });
+
+  it('stops scheduling when the interval is set to Off (0)', async () => {
+    loaderMock.__registerPlugin(fakePlugin());
+    await setSetting('plugin_enabled:mock-backend', 'true');
+    await setSetting('plugin:mock-backend:sync_interval_minutes', '5');
+    await applyScheduledSyncFromConfig('mock-backend', tempDir);
+    expect(isSyncScheduled('mock-backend', tempDir)).toBe(true);
+
+    await setSetting('plugin:mock-backend:sync_interval_minutes', '0');
+    await applyScheduledSyncFromConfig('mock-backend', tempDir);
+    expect(isSyncScheduled('mock-backend', tempDir)).toBe(false);
+  });
+
+  it('ignores plugins that do not declare the interval preference', async () => {
+    const noPref = { ...fakePlugin(), manifest: { id: 'mock-backend', name: 'Mock', version: '1', preferences: [] } } as unknown as LoadedPlugin;
+    loaderMock.__registerPlugin(noPref);
+    await setSetting('plugin_enabled:mock-backend', 'true');
+    await applyScheduledSyncFromConfig('mock-backend', tempDir);
+    expect(isSyncScheduled('mock-backend', tempDir)).toBe(false);
+  });
+});
+
+describe('sync engine — getPendingSyncCounts (HS-8791)', () => {
+  // The file shares one DB across all tests; wipe sync state so each count test
+  // starts from a clean baseline rather than inheriting earlier tests' tickets.
+  beforeEach(async () => {
+    const db = await getDb();
+    await db.query('DELETE FROM ticket_sync');
+    await db.query('DELETE FROM sync_outbox');
+    await db.query('DELETE FROM tickets');
+  });
+
+  const issue = (id: string, title: string, updatedAt: Date) => ({
+    id, fields: { title, details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false } as RemoteTicketFields, updatedAt, deleted: false,
+  });
+
+  it('counts un-synced remote items as toPull (incoming)', async () => {
+    const backend = createMockBackend([issue('r1', 'One', new Date()), issue('r2', 'Two', new Date())]);
+    loaderMock.__registerBackend(backend);
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPull).toBe(2);
+    expect(counts.toPush).toBe(0);
+    expect(counts.total).toBe(2);
+  });
+
+  it('reports 0 toPull once everything is synced', async () => {
+    const backend = createMockBackend([issue('r1', 'One', new Date())]);
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend');
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPull).toBe(0);
+    expect(counts.total).toBe(0);
+  });
+
+  it('counts a locally-modified synced ticket as toPush (outgoing)', async () => {
+    const backend = createMockBackend([issue('r1', 'One', new Date())]);
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend');
+    const rec = await getSyncRecordByRemoteId('mock-backend', 'r1');
+    await new Promise(r => setTimeout(r, 10)); // ensure updated_at advances past local_updated_at
+    await updateTicket(rec!.ticket_id, { title: 'Edited locally' });
+
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPush).toBeGreaterThanOrEqual(1);
+    expect(counts.total).toBe(counts.toPull + counts.toPush);
+  });
+
+  it('degrades to 0 incoming when the remote read throws', async () => {
+    const backend = createMockBackend();
+    backend.pullChanges = () => Promise.reject(new Error('rate limited'));
+    loaderMock.__registerBackend(backend);
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPull).toBe(0); // best-effort: no throw
   });
 });

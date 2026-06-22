@@ -11,7 +11,7 @@ import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.
 import {
   BackendInfoSchema, BundledPluginInfoSchema, disablePlugin, enablePlugin, enablePluginEverywhere,
   getBackends, getBundledPlugins, getPlugin, getPluginConfigLabels, getPluginGlobalConfig,
-  getPluginUiElements, getSyncConflicts, getSyncedTickets, installBundledPlugin, installPlugin,
+  getPluginPendingCount, getPluginUiElements, getSyncConflicts, getSyncedTickets, installBundledPlugin, installPlugin,
   listPlugins, PluginInfoSchema, PluginUIElementSchema, resolveSyncConflict, revealPlugin,
   runPluginAction, setPluginGlobalConfig, SyncConflictSchema, SyncResultSchema, triggerPluginSync,
   uninstallPlugin, validatePluginField,
@@ -113,6 +113,12 @@ describe('plugins callers route to the right endpoint (HS-8637)', () => {
     stub({ ok: true, pulled: 1, pushed: 0 });
     expect(await triggerPluginSync('github')).toEqual({ ok: true, pulled: 1, pushed: 0 });
     expect(lastCall).toEqual({ path: '/plugins/github/sync', opts: { method: 'POST' } });
+  });
+
+  it('getPluginPendingCount → GET /plugins/:id/pending-count (HS-8791)', async () => {
+    stub({ toPull: 2, toPush: 1, total: 3, ok: true });
+    expect(await getPluginPendingCount('github')).toEqual({ toPull: 2, toPush: 1, total: 3, ok: true });
+    expect(lastCall?.path).toBe('/plugins/github/pending-count');
   });
 
   it('runPluginAction → POST /plugins/:id/action with the action body', async () => {

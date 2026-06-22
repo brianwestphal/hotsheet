@@ -163,6 +163,16 @@ export const SyncResultSchema = z.object({
 });
 export type SyncResult = z.infer<typeof SyncResultSchema>;
 
+/** HS-8791 — `GET /plugins/:id/pending-count`: how out of sync the project is in
+ *  both directions, for the sync-button badge. */
+export const PendingSyncCountSchema = z.object({
+  toPull: z.number(),
+  toPush: z.number(),
+  total: z.number(),
+  ok: z.boolean(),
+});
+export type PendingSyncCount = z.infer<typeof PendingSyncCountSchema>;
+
 /** `POST /plugins/:id/action` result. The plugin's `onAction` return value is
  *  opaque except for the two control fields the UI acts on (`redirect` triggers
  *  a follow-up sync; `message` becomes a toast); `.loose()` keeps any
@@ -251,6 +261,11 @@ export async function revealPlugin(id: string): Promise<OkResponse> {
 /** POST `/plugins/:id/sync` → trigger an immediate sync; returns the `SyncResult`. */
 export async function triggerPluginSync(id: string): Promise<SyncResult> {
   return apiCall(SyncResultSchema, `/plugins/${encodeURIComponent(id)}/sync`, { method: 'POST' });
+}
+
+/** GET `/plugins/:id/pending-count` → how out of sync the project is (HS-8791). */
+export async function getPluginPendingCount(id: string): Promise<PendingSyncCount> {
+  return apiCall(PendingSyncCountSchema, `/plugins/${encodeURIComponent(id)}/pending-count`);
 }
 
 /** `POST /plugins/:id/push-ticket/:ticketId` result. */

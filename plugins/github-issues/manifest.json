@@ -1,7 +1,7 @@
 {
   "id": "github-issues",
   "name": "GitHub Issues",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Sync tickets with GitHub Issues",
   "author": "Hot Sheet",
   "entry": "index.js",
@@ -110,6 +110,21 @@
       "type": "string",
       "default": "",
       "description": "Only sync issues with these labels (comma-separated, empty = all issues)"
+    },
+    {
+      "key": "sync_interval_minutes",
+      "label": "Auto-sync every",
+      "type": "select",
+      "default": "15",
+      "description": "Automatically sync in the background on this interval. A full reconcile runs about once an hour; other runs are incremental.",
+      "options": [
+        { "value": "0", "label": "Off" },
+        { "value": "1", "label": "1 minute" },
+        { "value": "5", "label": "5 minutes" },
+        { "value": "15", "label": "15 minutes" },
+        { "value": "30", "label": "30 minutes" },
+        { "value": "60", "label": "1 hour" }
+      ]
     }
   ],
   "configLayout": [
@@ -121,6 +136,7 @@
     { "type": "label", "id": "connection-status", "text": "Not tested", "color": "transient" },
     { "type": "button", "id": "test-connection", "label": "Test Connection", "action": "test_connection" },
     { "type": "group", "title": "Synchronization", "collapsed": false, "items": [
+      { "type": "preference", "key": "sync_interval_minutes" },
       { "type": "preference", "key": "auto_sync_new" },
       { "type": "preference", "key": "sync_direction" },
       { "type": "preference", "key": "filter_labels" }
