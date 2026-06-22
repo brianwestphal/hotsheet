@@ -9,6 +9,7 @@ import { Hono } from 'hono';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { setDemoMode } from '../demo-mode.js';
+import { setTestMode } from '../test-mode.js';
 import type { AppEnv } from '../types.js';
 import { pageRoutes } from './pages.js';
 
@@ -17,6 +18,7 @@ app.route('/', pageRoutes);
 
 afterEach(() => {
   setDemoMode(false); // module-global — reset so tests don't leak state
+  setTestMode(false);
 });
 
 describe('page shell demo-mode stamp (HS-8612)', () => {
@@ -32,6 +34,32 @@ describe('page shell demo-mode stamp (HS-8612)', () => {
     const res = await app.request('/');
     const html = await res.text();
     expect(html).not.toContain('__HOTSHEET_DEMO__');
+  });
+});
+
+describe('page shell TEST badge (HS-8922)', () => {
+  it('renders the TEST badge with the connected port when in test mode', async () => {
+    setTestMode(true);
+    const res = await app.request('/', { headers: { host: 'localhost:4274' } });
+    const html = await res.text();
+    expect(html).toContain('test-instance-badge');
+    expect(html).toContain('TEST :4274');
+  });
+
+  it('renders TEST without a port when the Host header carries none', async () => {
+    setTestMode(true);
+    const res = await app.request('/', { headers: { host: 'localhost' } });
+    const html = await res.text();
+    expect(html).toContain('test-instance-badge');
+    expect(html).toContain('TEST');
+    expect(html).not.toContain('TEST :');
+  });
+
+  it('omits the badge entirely on a normal (non-test) launch', async () => {
+    setTestMode(false);
+    const res = await app.request('/', { headers: { host: 'localhost:4174' } });
+    const html = await res.text();
+    expect(html).not.toContain('test-instance-badge');
   });
 });
 

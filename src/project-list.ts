@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
+import { globalHotsheetDir } from './global-dir.js';
+
 function getProjectListPath(): string {
-  return join(homedir(), '.hotsheet', 'projects.json');
+  return join(globalHotsheetDir(), 'projects.json');
 }
 
 /** Read the persisted list of project dataDirs. */
@@ -22,7 +23,7 @@ export function readProjectList(): string[] {
 
 /** Save the list of project dataDirs. */
 function writeProjectList(dataDirs: string[]): void {
-  const dir = join(homedir(), '.hotsheet');
+  const dir = globalHotsheetDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(getProjectListPath(), JSON.stringify(dataDirs, null, 2));
 }

@@ -1,9 +1,9 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { z } from 'zod';
 
+import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import type { ConfigLabelColor, HotSheetPlugin, LoadedPlugin, PluginContext, PluginManifest, PluginUIElement, PluginUIRegistration, TicketingBackend } from './types.js';
 
@@ -76,7 +76,7 @@ export function getAllBackends(): TicketingBackend[] {
 // --- Plugin directory ---
 
 function getPluginDir(): string {
-  return join(homedir(), '.hotsheet', 'plugins');
+  return join(globalHotsheetDir(), 'plugins');
 }
 
 // --- Plugin discovery ---
@@ -166,7 +166,7 @@ function validateManifest(raw: unknown): PluginManifest | null {
 // --- Bundled plugin auto-install ---
 
 function getDismissedPluginsPath(): string {
-  return join(homedir(), '.hotsheet', 'dismissed-plugins.json');
+  return join(globalHotsheetDir(), 'dismissed-plugins.json');
 }
 
 function getDismissedPlugins(): Set<string> {
@@ -362,7 +362,7 @@ async function loadPlugin(pluginPath: string, manifest: PluginManifest, enabled:
 // --- Global plugin config (stored in ~/.hotsheet/plugin-config.json) ---
 
 function getGlobalConfigPath(): string {
-  return join(homedir(), '.hotsheet', 'plugin-config.json');
+  return join(globalHotsheetDir(), 'plugin-config.json');
 }
 
 function readGlobalConfig(): Record<string, Record<string, string> | undefined> {

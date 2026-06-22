@@ -85,6 +85,10 @@ export interface SpawnHotSheetOptions {
    *  HOME is created so the child never stomps the developer's real one. */
   homeDir?: string;
   port?: number;
+  /** Extra environment variables merged into the child's env (after HOME /
+   *  USERPROFILE / PLUGINS_ENABLED). Used e.g. to set `HOTSHEET_HOME` for the
+   *  global-dir relocation e2e (HS-8920). */
+  extraEnv?: Record<string, string>;
 }
 
 /**
@@ -99,7 +103,7 @@ export function spawnHotSheet(options: SpawnHotSheetOptions = {}): SpawnedHotShe
   const tsxBin = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
   const proc = spawn(tsxBin, [CLI_ENTRY, '--data-dir', dataDir, '--no-open', '--port', String(port)], {
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false' },
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false', ...options.extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

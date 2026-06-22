@@ -1871,6 +1871,29 @@ body.cross-project-stats-active {
   }
 }
 
+// HS-8922 — TEST instance badge. Rendered as the first header child only when
+// the process was launched with `--test` (`isTestMode()`). Amber pill with
+// near-black bold text so it reads as "caution: not prod" and is impossible to
+// confuse with a real instance — and a distinct color from anything else in
+// the header (categories/priorities use red/orange/green/blue/violet dots).
+.test-instance-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: #f59e0b;
+  color: #1c1917;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  text-transform: uppercase;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15) inset;
+  cursor: default;
+  user-select: none;
+}
+
 .app-title {
   min-width: 179px;
   flex: 1;

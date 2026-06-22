@@ -29,6 +29,7 @@
   },
   "scripts": {
     "dev": "npm run build:client && npm run build:plugins && tsx --tsconfig tsconfig.json src/cli.ts --replace",
+    "dev:test": "npm run dev -- --test",
     "build": "tsup",
     "build:client": "node scripts/build-client.mjs",
     "build:plugins": "for d in plugins/*/; do if [ -f \"$d/manifest.json\" ]; then name=$(basename $d); mkdir -p dist/plugins/$name && npx esbuild $d/src/index.ts --bundle --format=esm --outfile=dist/plugins/$name/index.js --platform=node --target=node20 && cp $d/manifest.json dist/plugins/$name/; fi; done",
@@ -53,6 +54,7 @@
     "tauri": "tauri",
     "tauri:clean": "rm -rf src-tauri/target",
     "tauri:dev": "bash scripts/ensure-sidecar-stub.sh && tauri dev --no-watch",
+    "tauri:dev:test": "bash scripts/ensure-sidecar-stub.sh && tauri dev --no-watch -- --test",
     "tauri:dev:watch": "bash scripts/ensure-sidecar-stub.sh && tauri dev",
     "tauri:build": "bash scripts/build-sidecar.sh && tauri build",
     "tauri:build:local": "read -rsp \"Password: \" MYPASS && echo && TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$MYPASS TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/hotsheet.key) npm run tauri:build"

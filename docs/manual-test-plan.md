@@ -192,6 +192,14 @@ This document lists features that require manual verification before each releas
 - [ ] Browser title shows "Hot Sheet Demo"
 - [ ] Demo data is ephemeral (gone after closing)
 
+### Test Instance (`--test`, HS-8921 / HS-8922)
+
+Presence/absence of the badge + the isolation are automated (`src/cli.testMode.e2e.test.ts`, `e2e/test-badge.spec.ts`); these check the visual styling + the run-alongside-prod experience:
+
+- [ ] `hotsheet --test` opens on port 4274 and the header shows an amber **TEST :4274** pill in the top-left — visually unmistakable next to a normal instance
+- [ ] A normal `hotsheet` (4174) and `hotsheet --test` (4274) run at the same time without interfering
+- [ ] The badge color/placement reads as "caution, not prod" and isn't confused with category/priority colors
+
 ---
 
 ## 9. Backup / Restore

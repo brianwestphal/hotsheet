@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { get } from 'https';
-import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { globalHotsheetDir } from './global-dir.js';
 import { PackageVersionSchema, parseJsonOrNull } from './schemas.js';
 
-const DATA_DIR = join(homedir(), '.hotsheet');
-const CHECK_FILE = join(DATA_DIR, 'last-update-check');
+// HS-8920 — resolved lazily (functions, not import-time consts) so the
+// `HOTSHEET_HOME` relocation is honored regardless of when this module loads.
+function dataDir(): string { return globalHotsheetDir(); }
+function checkFile(): string { return join(dataDir(), 'last-update-check'); }
 const PACKAGE_NAME = 'hotsheet';
 
 function getCurrentVersion(): string {
@@ -24,16 +26,16 @@ function getCurrentVersion(): string {
 
 function getLastCheckDate(): string | null {
   try {
-    if (existsSync(CHECK_FILE)) {
-      return readFileSync(CHECK_FILE, 'utf-8').trim();
+    if (existsSync(checkFile())) {
+      return readFileSync(checkFile(), 'utf-8').trim();
     }
   } catch { /* ignore */ }
   return null;
 }
 
 function saveCheckDate(): void {
-  mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(CHECK_FILE, new Date().toISOString().slice(0, 10), 'utf-8');
+  mkdirSync(dataDir(), { recursive: true });
+  writeFileSync(checkFile(), new Date().toISOString().slice(0, 10), 'utf-8');
 }
 
 function isFirstUseToday(): boolean {

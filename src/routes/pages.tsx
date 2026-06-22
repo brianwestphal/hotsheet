@@ -4,15 +4,28 @@ import { ANNOUNCER_MODELS } from '../announcer/models.js';
 import { Layout } from '../components/layout.js';
 import { isDemoMode } from '../demo-mode.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { isTestMode } from '../test-mode.js';
 import type { AppEnv } from '../types.js';
 
 export const pageRoutes = new Hono<AppEnv>();
 
 pageRoutes.get('/', (c) => {
+  // HS-8922 — when launched with `--test`, render an unmistakable TEST badge so
+  // the isolated test window can never be confused with the real instance. The
+  // port comes from the Host header the client actually connected on (the whole
+  // point is running alongside prod on a different port, e.g. `TEST :4274`).
+  const testMode = isTestMode();
+  const hostHeader = c.req.header('host') ?? '';
+  const testPort = hostHeader.includes(':') ? hostHeader.slice(hostHeader.lastIndexOf(':') + 1) : '';
   const html = (
     <Layout title="Hot Sheet" demoMode={isDemoMode()}>
       <div className="app">
         <header className="app-header">
+          {testMode ? (
+            <div className="test-instance-badge" title="Isolated test instance (launched with --test) — separate global state + sandbox project; not your real instance">
+              TEST{testPort !== '' ? ` :${testPort}` : ''}
+            </div>
+          ) : null}
           <button className="terminal-dashboard-toggle" id="terminal-dashboard-toggle" title="Terminal dashboard" style="display:none">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
           </button>

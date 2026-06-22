@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import { z } from 'zod';
+
+import { globalHotsheetDir } from './global-dir.js';
 
 const InstanceInfoSchema = z.object({
   port: z.number(),
@@ -11,11 +12,11 @@ const InstanceInfoSchema = z.object({
 type InstanceInfo = z.infer<typeof InstanceInfoSchema>;
 
 function getInstanceFilePath(): string {
-  return join(homedir(), '.hotsheet', 'instance.json');
+  return join(globalHotsheetDir(), 'instance.json');
 }
 
 export function writeInstanceFile(port: number): void {
-  const dir = join(homedir(), '.hotsheet');
+  const dir = globalHotsheetDir();
   mkdirSync(dir, { recursive: true });
   writeFileSync(getInstanceFilePath(), JSON.stringify({ port, pid: process.pid }));
 }

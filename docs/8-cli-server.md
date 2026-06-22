@@ -17,6 +17,7 @@ The application is launched from the command line via the `hotsheet` command (in
 | `--replace` | Shut down any running Hot Sheet instance before starting a fresh one (used by `npm run tauri:dev`; see §8.4) |
 | `--close` | Unregister the current project from the running instance and exit |
 | `--list` | List all projects registered with the running instance and exit |
+| `--test` | Run a fully-isolated test instance (see §8.8.1): own `~/.hotsheet-test` global state, sandbox project data-dir, default port `4274`, TEST badge — never touches the real instance/projects |
 | `--check-for-updates` | Check the npm registry for a newer version immediately |
 | `--demo:<scenario>` | Launch with demo data (see §8.8) |
 | `--help` | Display usage information |
@@ -135,6 +136,31 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 - Tickets have realistic titles, detailed descriptions, and timestamped notes showing work progress.
 - Dates are relative (e.g., "5 days ago") so demos always look current.
 - Ticket numbers start at HS-1; the sequence is advanced past seeded data so new tickets don't collide.
+
+### 8.8.1 Test Instance (`--test`, HS-8921)
+
+`--test` runs a fully-isolated instance for dogfooding a dev build without
+risking the real running copy. It applies these defaults, **each only when the
+user didn't pass the explicit flag** (`--port` / `--data-dir` / a pre-set
+`HOTSHEET_HOME` always win, order-independent):
+
+- Sets `HOTSHEET_HOME` to a stable `~/.hotsheet-test` (when unset/blank) so ALL
+  global state (registry, config, instance file, telemetry, startup log,
+  plugins) is isolated — see [87-test-instance.md](87-test-instance.md).
+- Defaults the port to `4274` so the test instance and prod (`4174`) coexist.
+- Defaults the data-dir to a sandbox project under the isolated home
+  (`<HOTSHEET_HOME>/sandbox-project/.hotsheet`), so launching `--test` from
+  inside a real project never writes `.hotsheet/` into it.
+- Flags the process as test mode (`src/test-mode.ts::setTestMode`) for the TEST
+  badge (HS-8922).
+
+`HOTSHEET_HOME` is applied at the very top of `main()`
+(`maybeApplyTestModeHome`), before the startup log opens, so even diagnostics
+land in the isolated home. Because `instance.json` is isolated, `--test
+--replace` can only target a prior test instance, never prod. Convenience: `npm
+run dev:test`; the Tauri shell forwards `--test` to the sidecar. Full contract +
+the "what is / isn't isolated" table live in
+[87-test-instance.md](87-test-instance.md).
 
 ## Non-Functional Requirements
 

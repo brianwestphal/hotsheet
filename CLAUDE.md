@@ -231,6 +231,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 84. `84-command-last-run.md` — hover a custom command button to see its last-run time (per-device, localStorage)
 85. `85-telemetry-retention-bounding.md` — periodic 24h telemetry sweep + per-table windows (spans 7d) + ~500k span row cap (design; implementation in follow-ups)
 86. `86-ai-assistant-setup.md` — recommended AI-assistant instruction sections in CLAUDE.md (versioned managed-section markers + self-healing per-project specifics; once-per-project nudge + Settings button)
+87. `87-test-instance.md` — isolated test instance (`HOTSHEET_HOME` + `globalHotsheetDir()` shipped; `--test` launcher + TEST badge pending)
 
 Other docs: `docs/tauri-architecture.md` (Tauri v2 sidecar, launch/build/CI signing), `docs/tauri-setup.md` (build prereqs, signing keys, release workflow), `docs/dependency-security.md` (npm + cargo audit posture, Dependabot, triage), `docs/plugin-development-guide.md` (AI-focused plugin-building guide — **keep up to date** whenever the plugin system changes, so an AI can build a working plugin without reading source), `docs/demo-plan.md` (story-driven demo script for showing Hot Sheet + Glassbox to potential users).
 

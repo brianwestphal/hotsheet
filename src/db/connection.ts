@@ -2,10 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { type PGlite } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import { z } from 'zod';
 
+import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { createPglite } from './pglite.js';
 
@@ -238,7 +238,7 @@ export function centralTelemetryDataDir(): string {
   // home — which the rebuilt app would then read as live telemetry.
   const override = process.env.HOTSHEET_TELEMETRY_DIR;
   if (override !== undefined && override !== '') return override;
-  return join(homedir(), '.hotsheet', 'telemetry');
+  return join(globalHotsheetDir(), 'telemetry');
 }
 
 /** Get the current data directory from async context or legacy default.

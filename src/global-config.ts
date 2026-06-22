@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 
+import { globalHotsheetDir } from './global-dir.js';
 import type { GlobalConfig } from './routes/validation.js';
 // HS-8635 — the config schemas (`VisibilityGroupingSchema` / `DashboardConfigSchema`
 // / `GlobalConfigSchema`) are the wire SSOT in `routes/validation.ts` (client-safe,
@@ -13,7 +13,7 @@ import { GlobalConfigSchema } from './routes/validation.js';
 export type { DashboardConfig, GlobalConfig, VisibilityGroupingPersisted } from './routes/validation.js';
 
 function getConfigPath(): string {
-  return join(homedir(), '.hotsheet', 'config.json');
+  return join(globalHotsheetDir(), 'config.json');
 }
 
 export function readGlobalConfig(): GlobalConfig {
@@ -40,7 +40,7 @@ export function readGlobalConfig(): GlobalConfig {
 }
 
 export function writeGlobalConfig(updates: Partial<GlobalConfig>): GlobalConfig {
-  const dir = join(homedir(), '.hotsheet');
+  const dir = globalHotsheetDir();
   mkdirSync(dir, { recursive: true });
   const current = readGlobalConfig();
   // HS-8290 — single-level deep merge for nested object fields (currently

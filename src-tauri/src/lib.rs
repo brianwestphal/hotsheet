@@ -141,7 +141,10 @@ fn collect_forwarded_server_args(app_args: &[String]) -> Vec<String> {
         let a = &app_args[i];
         if a.starts_with("--demo:") {
             out.push(a.clone());
-        } else if a == "--check-for-updates" || a == "--strict-port" || a == "--force" {
+        } else if a == "--check-for-updates" || a == "--strict-port" || a == "--force" || a == "--test" {
+            // HS-8921 — `--test` forwards to the sidecar so a Tauri dev launch
+            // can run the isolated test instance. Its own `HOTSHEET_HOME` /
+            // `instance.json` keeps it from fighting the prod `--replace`.
             out.push(a.clone());
         } else if a == "--port" {
             if let Some(v) = app_args.get(i + 1) {
@@ -2061,6 +2064,20 @@ mod dev_server_args_tests {
         ]);
         let i = args.iter().position(|a| a == "--data-dir").expect("--data-dir forwarded");
         assert_eq!(args[i + 1], "/some/dir");
+    }
+
+    // HS-8921 — `--test` must reach the sidecar so a Tauri dev launch can run
+    // the isolated test instance.
+    #[test]
+    fn forwards_test_flag_to_the_server() {
+        let args = build_dev_server_args(&["--test".to_string()]);
+        assert!(args.iter().any(|a| a == "--test"), "--test forwarded to sidecar");
+    }
+
+    #[test]
+    fn omits_test_flag_when_not_requested() {
+        let args = build_dev_server_args(&[]);
+        assert!(!args.iter().any(|a| a == "--test"), "--test only forwarded when passed");
     }
 }
 

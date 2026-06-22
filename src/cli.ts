@@ -7,7 +7,7 @@ import { pathToFileURL } from 'url';
 
 import { initBackupScheduler } from './backup.js';
 import { cleanupAllProjectsTelemetry, cleanupAttachments } from './cleanup.js';
-import { parseArgs, type ParsedArgs, printUsage } from './cli/args.js';
+import { maybeApplyTestModeHome, parseArgs, type ParsedArgs, printUsage } from './cli/args.js';
 import { handleClose, handleList, joinRunningInstance, shutdownRunningInstance } from './cli/close.js';
 import { getDb, setDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
@@ -656,6 +656,13 @@ async function handleExistingInstance(
 }
 
 async function main() {
+  // HS-8921 — if launched with `--test`, point HOTSHEET_HOME at the isolated
+  // test dir BEFORE anything resolves a global path. This must precede
+  // `initStartupLog()` + `startEventLoopWatchdog` below so even the startup log
+  // lands under `~/.hotsheet-test` and the real `~/.hotsheet` stays untouched.
+  // (`parseArgs` re-applies it idempotently and sets the rest of the defaults.)
+  maybeApplyTestModeHome(process.argv);
+
   // HS-8704 — open the persisted startup log FIRST so every phase marker below
   // survives a GUI launch (Dock / Spotlight), which has no terminal to print
   // to. See `src/startup-log.ts` for the full rationale.

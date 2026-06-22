@@ -24,8 +24,9 @@
  * startup.
  */
 import { appendFileSync, mkdirSync, statSync, truncateSync } from 'fs';
-import { homedir } from 'os';
 import { dirname, join } from 'path';
+
+import { globalHotsheetDir } from './global-dir.js';
 
 /** Cap the persisted log so it can't grow without bound across launches. When
  *  the existing file exceeds this on init, it is truncated before the new
@@ -36,13 +37,14 @@ let logPath: string | null = null;
 let startMs = 0;
 let currentPhase = 'init';
 
-/** Path to the persisted startup log. Honors the `HOTSHEET_STARTUP_LOG`
- *  override env var (full path) — handy for support escalations and for
- *  tests; defaults to `~/.hotsheet/startup.log`. */
+/** Path to the persisted startup log. Precedence (HS-8920): the narrow
+ *  `HOTSHEET_STARTUP_LOG` override (full path) — handy for support escalations
+ *  and for tests — wins; then `HOTSHEET_HOME` relocates the whole `.hotsheet`
+ *  root; then the default `~/.hotsheet/startup.log`. */
 export function getStartupLogPath(): string {
   const override = process.env.HOTSHEET_STARTUP_LOG;
   if (typeof override === 'string' && override !== '') return override;
-  return join(homedir(), '.hotsheet', 'startup.log');
+  return join(globalHotsheetDir(), 'startup.log');
 }
 
 /** The phase the most recent `startupMark` recorded — read by the watchdog

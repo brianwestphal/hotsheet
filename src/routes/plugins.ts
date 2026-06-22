@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'fs';
 import { Hono } from 'hono';
-import { homedir } from 'os';
 import { basename, join } from 'path';
 
 import { getDb, runWithDataDir } from '../db/connection.js';
 import { getConflicts, getSyncRecordsForPlugin, upsertSyncRecord  } from '../db/sync.js';
 import { getTicket } from '../db/tickets.js';
+import { globalHotsheetDir } from '../global-dir.js';
 import { keychainGet, keychainSet } from '../keychain.js';
 import { openInFileManager } from '../open-in-file-manager.js';
 import {
@@ -482,7 +482,7 @@ pluginRoutes.post('/plugins/install', async (c) => {
     return c.json({ error: 'Directory must contain manifest.json or package.json with hotsheet field' }, 400);
   }
 
-  const pluginsDir = join(homedir(), '.hotsheet', 'plugins');
+  const pluginsDir = join(globalHotsheetDir(), 'plugins');
   mkdirSync(pluginsDir, { recursive: true });
 
   const linkName = basename(sourcePath);
@@ -514,7 +514,7 @@ pluginRoutes.post('/plugins/:id/uninstall', async (c) => {
     await disablePlugin(pluginId);
   }
 
-  const pluginsDir = join(homedir(), '.hotsheet', 'plugins');
+  const pluginsDir = join(globalHotsheetDir(), 'plugins');
   // Try the stored path first, then fall back to convention
   const candidates = [
     plugin?.path,
