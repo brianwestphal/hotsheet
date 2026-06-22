@@ -106,11 +106,13 @@ target a *prior test instance* — never prod.
 **Convenience.**
 - **Browser dev:** `npm run dev:test` → `npm run dev -- --test`.
 - **Desktop (Tauri) dev:** `npm run tauri:dev:test` → `tauri dev --no-watch --
-  --test`. The Tauri shell forwards `--test` to the sidecar
+  -- --test`. The Tauri shell forwards `--test` to the sidecar
   (`collect_forwarded_server_args` in `src-tauri/src/lib.rs`); its own isolated
   `instance.json` keeps it from fighting the dev launch's default `--replace`.
-  (The raw form is `npm run tauri:dev -- -- --test` — the double `--` is why the
-  dedicated script exists.)
+  The **double `--` is required** and is exactly why the dedicated script exists:
+  `tauri dev` treats args after the first `--` as runner (cargo) args and only
+  args after a *second* `--` as binary args — a single `--` lands `--test` on
+  `cargo run` and errors out (HS-8929).
 
 ## 87.1.2 The TEST badge (HS-8922)
 
