@@ -77,14 +77,6 @@ npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tau
 
 `test:fast` / `test:e2e:fast` exclude tests needing GitHub API credentials (plugin sync, live integration) — these run in CI by default. The full `test:e2e` suite (live GitHub integration) runs locally only when credentials are configured.
 
-### Testing Philosophy
-
-- **Double coverage**: every feature covered by both unit tests AND E2E tests. Unit = logic in isolation; E2E = real user flows through the running app with minimal mocking.
-- **Unit tests** (`src/**/*.test.ts`): vitest. Mock external deps (filesystem, network), test real logic. Use `setupTestDb`/`cleanupTestDb` from `test-helpers.ts` for DB tests.
-- **E2E tests** (`e2e/*.spec.ts`): Playwright + Chromium. Start a real server with a temp data dir; test through the browser. Minimize mocks.
-- **Coverage**: `npm run test:all` merges unit + E2E server + E2E browser into one report. Low-coverage files should get more of both test types.
-- **Manual test plan** (`docs/manual-test-plan.md`): features that can't be reliably automated (drag-and-drop, platform-specific behavior, Tauri desktop, Claude Channel UI, visual styling). **Keep it up to date** — add such features here; when you add automated coverage for a previously-manual item, remove it and note it in the "Automated Coverage Summary".
-
 ## Code Quality Gates
 
 - **Always fix lint and type errors before finishing.** Run `npx tsc --noEmit` and `npm run lint` — both must pass with zero errors. Fix as you go, don't batch.
@@ -94,16 +86,6 @@ npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tau
 
 - **NEVER create git commits unless the user explicitly asks** ("commit this" / "make a commit"). Do not commit after completing work, as part of a workflow, or "for convenience." Strict, non-negotiable.
 - **Drafting commit messages / release notes — use [gitgist](https://github.com/brianwestphal/gitgist)** (a devDependency; invoke via `npx gitgist`). For a commit message from staged work: `npx gitgist --staged --commit-message`. For release notes over a range: `npx gitgist <last_tag>..HEAD`. `release.sh` (`step_release_notes`) already uses it for the changelog/tag body. Note: gitgist's default `--provider auto` shells out to the signed-in `claude` CLI — a nested `claude` call — so when *you* are running inside a Claude session, prefer drafting the message/notes yourself (gitgist is the canonical tool for the user's own runs and for CI with `$ANTHROPIC_API_KEY`).
-
-## Ticket-Driven Work
-
-When the user gives you work directly via the CLI (not via MCP channel or Hot Sheet events), create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work.
-
-- **Do create tickets** for: features, bug fixes, refactoring, multi-step tasks, anything changing code. **Don't** for: simple questions, git commits, quick lookups, trivial one-liners. **When in doubt, create them.**
-- Create via the Hot Sheet API (prefer the `hotsheet_*` MCP tools), mark Up Next, then work through them: set status `started` → implement → set `completed` with notes.
-- **Always create follow-up tickets** for incomplete work (unfinished steps, open design questions, known gaps, designed-but-unbuilt features). If it's not in a ticket, it's forgotten.
-- **Incomplete-work checklist** — before marking a ticket `completed`, file follow-ups for any: (1) UI placeholder text ("coming soon"), (2) TODO/FIXME comments, (3) documented-but-unimplemented requirements, (4) empty/stub functions returning mock data.
-- **Use FEEDBACK NEEDED before deferring or asking about follow-ups.** When about to (a) defer a ticket needing more work, (b) ask whether to file follow-ups, or (c) close with a question buried in notes — DON'T. Leave the ticket `started`, add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), signal channel done, and wait. It's the only reliable way to surface a question.
 
 ## Conventions
 
@@ -270,3 +252,58 @@ Two synthesis docs to read at the start of a fresh session. **Maintained docs, n
   3. **`el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))`** — escape hatch for raw-HTML (e.g. server-rendered markdown).
 
   The `no-restricted-syntax` ESLint rule (§62) flags new `innerHTML =` outside an allowlist in `eslint.config.mjs`. When you touch an allowlisted file, opportunistically migrate its `innerHTML` callsite and remove it from the allowlist. Test files are exempt.
+
+<!-- hotsheet:begin section=ticket-driven-work v=1 -->
+## Ticket-Driven Work
+
+When the user gives you work directly (not via the Hot Sheet channel or events), create Hot Sheet tickets before starting implementation — especially for substantial or multi-step work.
+
+- **Do create tickets** for: features, bug fixes, refactoring, multi-step tasks, anything changing code. **Don't** for: simple questions, git commits, quick lookups, trivial one-liners. **When in doubt, create them.**
+- Create via the Hot Sheet API (prefer the `hotsheet_*` MCP tools), mark Up Next, then work through them: set status `started` → implement → set `completed` with notes.
+- **Always create follow-up tickets** for incomplete work (unfinished steps, open design questions, known gaps, designed-but-unbuilt features). If it's not in a ticket, it's forgotten.
+- **Incomplete-work checklist** — before marking a ticket `completed`, file follow-ups for any: (1) UI placeholder text ("coming soon"), (2) TODO/FIXME comments, (3) documented-but-unimplemented requirements, (4) empty/stub functions returning mock data.
+- **Use FEEDBACK NEEDED before deferring or asking about follow-ups.** When about to (a) defer a ticket needing more work, (b) ask whether to file follow-ups, or (c) close with a question buried in notes — DON'T. Leave the ticket `started`, add a `FEEDBACK NEEDED:` note (per `.hotsheet/worklist.md`), signal channel done, and wait. It's the only reliable way to surface a question.
+<!-- hotsheet:end section=ticket-driven-work -->
+
+<!-- hotsheet:begin section=testing-philosophy v=1 -->
+## Testing Philosophy
+
+- **Double coverage**: every feature covered by both unit tests AND E2E tests. Unit = logic in isolation; E2E = real user flows through the running app with minimal mocking.
+- **Unit tests**: Mock external deps (filesystem, network), test real logic.
+- **E2E tests**: As much as possible, use test automation tools to run realistic, user-facing flows. Minimize mocks.
+- **Coverage**: Merge all test coverage (e.g. unit, E2E server, E2E browser) into one report. Low-coverage files should get more of both test types. Aim for 100% coverage of code lines, 100% coverage of branches, and 100% of features described in the requirements documentation.
+- **Manual test plan**: keep a manual test plan doc (e.g. `docs/manual-test-plan.md`) for features that can't be reliably automated. **Keep it up to date** — add such features there; when you add automated coverage for a previously-manual item, remove it and note it in an "Automated Coverage Summary".
+- **Always fix lint and type errors before finishing**: Fix as you go, don't batch.
+
+<!-- hotsheet:begin specifics=testing-philosophy v=1 -->
+### This project's test setup
+
+- **Unit tests** (`src/**/*.test.ts`): vitest. Mock external deps (filesystem, network); use `setupTestDb`/`cleanupTestDb` from `test-helpers.ts` for DB tests.
+- **E2E tests** (`e2e/*.spec.ts`): Playwright + Chromium against a real server with a temp data dir; minimize mocks.
+- **Rust tests** (`src-tauri/`, `#[cfg(test)]` in `src/lib.rs`): `cargo test` — NOT run by `npm test`. Refactor `#[cfg(target_os)]` branches into pure, platform-parameterized functions so every OS branch is testable on any host.
+- **Commands & full reference**: see [Testing](#testing) and [Code Quality Gates](#code-quality-gates) above — unit `npm test`, watch `npm run test:watch`, E2E `npm run test:e2e` (fast subset `test:e2e:fast`, Docker CI parity `test:e2e:docker`), merged coverage `npm run test:all` (with plugins `test:all-including-plugins`), Rust `npm run test:rust`. `test:fast`/`test:e2e:fast` skip GitHub-credentialed tests; plugin tests run only when targeted.
+- **Quality gate**: `npx tsc --noEmit` and `npm run lint` must both pass with zero errors before finishing — fix as you go, don't batch.
+- **Manual test plan**: `docs/manual-test-plan.md` for features that can't be reliably automated (drag-and-drop, Tauri desktop, Claude Channel UI, visual styling). Keep it current.
+<!-- hotsheet:end specifics=testing-philosophy -->
+<!-- hotsheet:end section=testing-philosophy -->
+
+<!-- hotsheet:begin section=requirements-documentation v=1 -->
+## Requirements Documentation
+
+Keep human-readable requirements documents as the source of truth for what the project does, and **keep them up to date in the same change as the code** (add/remove/modify a requirement → update its doc). Create new docs for major new functional areas. Cross-reference related docs with relative links.
+
+### AI Summaries
+
+Maintain two synthesis docs an AI assistant reads at the start of a fresh session — keep them in sync with reality (source doc/code wins on conflict), and prefer small targeted edits over rewrites:
+
+- A **codebase map** — directory tree, entry points, data schema, build, tests, settings, and a "where do I look for X" index. Update it in the same change when you add a file or directory, add a route/endpoint, change the schema, add a client module, or add a setting key.
+- A **requirements summary** — a synthesized view of every requirements doc with status markers (e.g. Shipped / Partial / Design only / Deferred). Update it in the same change when you add a requirements doc, ship a design-only feature, or defer/regress a shipped one.
+
+<!-- hotsheet:begin specifics=requirements-documentation v=1 -->
+### This project's docs layout
+
+- Requirements docs live in `docs/`, numbered `N-area-name.md` with `N.X` section numbers, cross-referenced via relative markdown links. The full reading order and per-doc summaries are in the **Requirements Documentation** subsection under [Conventions](#conventions) above; create new docs for major new functional areas (renumbering as needed).
+- AI-summary files (read both at the start of a fresh session): `docs/ai/code-summary.md` (codebase map) and `docs/ai/requirements-summary.md` (status-marked synthesis — Shipped / Partial / Design only / Deferred). Both are maintained docs — update in the same change per their own trigger lists (`§17` and `§15` respectively).
+- Other docs: `docs/tauri-architecture.md`, `docs/tauri-setup.md`, `docs/dependency-security.md`, `docs/plugin-development-guide.md`, `docs/demo-plan.md`.
+<!-- hotsheet:end specifics=requirements-documentation -->
+<!-- hotsheet:end section=requirements-documentation -->

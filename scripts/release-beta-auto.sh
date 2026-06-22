@@ -24,10 +24,10 @@
 #      "Enter to keep current_version"). Beta tags target the upcoming
 #      stable version; CI's release-candidate.yml bumps it ephemerally via
 #      `npm version --no-git-tag-version` at publish time.
-#   3. Draft release notes via `claude -p` from the commit-subject log
-#      since the last tag — same prompt and post-process as the
-#      interactive flow's `step_release_notes`. Falls back to a generic
-#      "see git log" body if `claude` isn't on PATH or returns empty.
+#   3. Draft release notes with gitgist (the same tool release.sh uses) over
+#      `<lastTag>..HEAD`: AI draft, then gitgist `--no-ai` deterministic
+#      grouping, then a `git log` pointer. Override with `--notes <file>` /
+#      `--notes-stdin`.
 #   4. Build + test + lint + typecheck (same as interactive step 7).
 #   5. Auto-increment the beta number: find the highest existing
 #      `v<version>-beta.N` tag and pick N+1. Same logic as the
@@ -55,7 +55,7 @@
 #   git push origin :refs/tags/v<version>-beta.N
 #
 # Exit codes:
-#   0 — beta tag pushed; CI is running.
+#   0 — beta tag pushed (or --dry-run completed); CI is running.
 #   1 — preflight failure (dirty tree, wrong branch, missing tools).
 #   2 — local checks failed (test / lint / tsc).
 #   3 — git tag or push failed (often: tag already exists, or upstream
@@ -165,20 +165,36 @@ read_version() {
   info "Beta tag will be ${BOLD}v${VERSION}-beta.N${RESET} for the next free N"
 }
 
-draft_release_notes() {
-  # Mirror release.sh::step_release_notes minus the editor loop. Commits
-  # since the last tag drive a `claude -p` summarization. Bodies are
-  # intentionally not included — this repo's commit bodies are very long
-  # dev diaries and the subjects already encode enough scope.
-  #
-  # `--notes <file>` / `--notes-stdin` short-circuit the `claude -p` call
-  # entirely. Intended for callers (humans or other Claude sessions)
-  # that have the notes drafted already and don't want to spawn a nested
-  # Claude session that may fail the sandbox network-allowlist (HS-8439).
-  local last_tag
-  last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-  local log_range="${last_tag:+${last_tag}..HEAD}"
+# Prefer the locally-installed binary (devDependency), then a PATH gitgist.
+# Echoes the resolved command, or nothing if gitgist isn't available.
+resolve_gitgist() {
+  if [[ -x "node_modules/.bin/gitgist" ]]; then
+    echo "node_modules/.bin/gitgist"
+  elif command -v gitgist >/dev/null; then
+    echo "gitgist"
+  fi
+}
 
+draft_release_notes() {
+  # Draft notes with gitgist — the same engine release.sh::step_release_notes
+  # uses (HS-8870) — over the commit range since the last tag. gitgist owns the
+  # prompt, the AI-provider selection (its default `auto` backend reuses the
+  # signed-in `claude` CLI, then $ANTHROPIC_API_KEY, then the on-device Apple
+  # helper), code-fence stripping, and noise filtering (ticket IDs, refactors,
+  # tests, CI/doc-only changes). This replaces the bespoke `claude -p` plumbing
+  # this step used to carry: the hand-rolled prompt, the stdout auth-error
+  # string-matching (gitgist signals failure via a non-zero exit, not error
+  # text on stdout — HS-8439), and the ARG_MAX stdin workaround (gitgist reads
+  # the git range itself — HS-8453).
+  #
+  # Fallback chain mirrors glassbox: gitgist AI draft -> gitgist `--no-ai`
+  # deterministic grouping -> a bare `git log` pointer. The `--no-ai` rung means
+  # notes never collapse to "see git log" just because no AI provider was
+  # reachable.
+  #
+  # `--notes <file>` / `--notes-stdin` short-circuit gitgist entirely. Intended
+  # for callers (humans or other Claude sessions) that already have notes
+  # drafted and don't want to spawn a nested model call.
   if [[ -n "${NOTES_OVERRIDE:-}" ]]; then
     NOTES="$NOTES_OVERRIDE"
     info "Using release notes from ${BOLD}${NOTES_SOURCE_LABEL}${RESET}:"
@@ -187,69 +203,43 @@ draft_release_notes() {
     return
   fi
 
-  local commit_log
-  commit_log=$(git log ${log_range:-"-30"} --format="%s" --no-decorate)
+  # Beta notes anchor at the most recent tag (beta or stable) — they're
+  # incremental and shouldn't repeat bullets from an earlier beta. Same anchor
+  # as release.sh's beta path.
+  local last_tag range
+  last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+  range="${last_tag:+${last_tag}..HEAD}"
+  local pointer="- See \`git log ${range:-HEAD}\` for details."
 
-  if [[ -z "$commit_log" ]]; then
-    warn "No commits since ${last_tag:-the last 30}. Notes will be a placeholder."
-    NOTES="- (no new commits since ${last_tag:-HEAD~30})"
+  local gitgist
+  gitgist=$(resolve_gitgist)
+  if [[ -z "$gitgist" ]]; then
+    warn "'gitgist' not found (run 'npm install' — it's a devDependency). Using a git-log pointer."
+    NOTES="$pointer"
     return
   fi
 
-  if ! command -v claude >/dev/null; then
-    warn "'claude' CLI not on PATH — falling back to a generic placeholder body."
-    NOTES="- See \`git log ${log_range:-HEAD~30..HEAD}\` for details."
-    return
-  fi
+  info "Drafting release notes with gitgist (${range:-since last tag})..."
+  # gitgist is well-behaved on failure: it exits non-zero, writes the error to
+  # stderr, and prints nothing to stdout. We still guard against its
+  # "_No commits…_" sentinel becoming the tag body. Capture stderr so we can
+  # surface the last line if the AI draft falls through.
+  local errfile generated
+  errfile=$(mktemp "${TMPDIR:-/tmp}/gitgist-beta-auto.XXXXXX")
+  generated=$("$gitgist" ${range:+"$range"} 2>"$errfile" || true)
+  [[ "$generated" == _No\ * ]] && generated=""
 
-  info "Drafting release notes with Claude (commits since ${last_tag:-last 30})..."
-  local prompt
-  prompt=$(cat <<EOF
-Draft release notes for Hot Sheet (a developer-focused CLI project management tool) from the commit subjects below.
-
-Rules:
-- Output ONLY markdown bullets — no heading, no preamble, no closing remarks.
-- Each bullet is ONE short line (~80 chars max), user-facing.
-- Group related changes into single bullets.
-- INCLUDE: new features, UX improvements, bug fixes, breaking changes — anything a user upgrading would notice.
-- EXCLUDE: ticket IDs (HS-NNNN), internal refactors, test additions, doc-only changes, implementation rationale, build/CI tweaks.
-- Aim for 5–10 bullets total. Fewer is better.
-
-Commits:
-${commit_log}
-EOF
-)
-  # HS-8453 — pipe the prompt via stdin instead of as a positional argv so a
-  # commit-log spike (e.g. a long gap between betas where the diff balloons
-  # to 100+ commits) doesn't run into the kernel's ARG_MAX (1 MB on macOS).
-  # Betas in practice are 5–20 commits so this is defense-in-depth, but the
-  # cost is zero and it keeps the two release scripts symmetric with the
-  # stable path in release.sh::step_release_notes.
-  #
-  # Same post-processing as release.sh: strip code-fence wrappers, strip
-  # leading/trailing blank lines.
-  local generated
-  generated=$(printf '%s' "$prompt" | claude -p 2>/dev/null || true)
-  generated=$(echo "$generated" | sed -e '/^```/d' -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}')
-
-  # HS-8439 — `claude -p` can return 200 OK with an auth/network error
-  # text on stdout (e.g. "Failed to authenticate. API Error: 403 ...").
-  # Pre-fix that string passed the empty-stdout guard and became the
-  # annotated tag message + GitHub Release body. Treat known error
-  # signatures as empty so the placeholder fallback fires.
-  if echo "$generated" | head -1 | grep -qE '^(Failed to authenticate|API Error:|Error:)'; then
-    warn "Claude draft looks like an auth/network error — falling back to placeholder."
-    warn "  First line: $(echo "$generated" | head -1)"
-    generated=""
-  fi
-
+  # Fall back to gitgist's deterministic (no-AI) grouping if the AI draft failed
+  # or no provider was available — better than a bare log pointer.
   if [[ -z "$generated" ]]; then
-    warn "Claude draft was empty — falling back to placeholder."
-    NOTES="- See \`git log ${log_range:-HEAD~30..HEAD}\` for details."
-    return
+    warn "gitgist AI draft empty/failed — trying deterministic (--no-ai) grouping."
+    [[ -s "$errfile" ]] && warn "  $(tail -1 "$errfile" 2>/dev/null)"
+    generated=$("$gitgist" ${range:+"$range"} --no-ai 2>/dev/null || true)
+    [[ "$generated" == _No\ * ]] && generated=""
   fi
+  rm -f "$errfile"
 
-  NOTES="$generated"
+  NOTES="${generated:-$pointer}"
 
   echo ""
   echo -e "    ${DIM}Drafted notes:${RESET}"
@@ -299,6 +289,13 @@ tag_and_push() {
   done
   BETA_TAG="v${VERSION}-beta.${n}"
 
+  if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    echo ""
+    success "Dry run complete — would create + push ${BOLD}${BETA_TAG}${RESET} (commit $(git rev-parse --short HEAD)) with the drafted notes."
+    info "Re-run without --dry-run to cut the beta."
+    return
+  fi
+
   info "Creating tag ${BOLD}${BETA_TAG}${RESET} with the drafted release notes..."
   # Annotated tag, notes as the message.
   echo -e "$NOTES" | git tag -a "$BETA_TAG" -F - || { error "git tag -a failed."; exit 3; }
@@ -335,6 +332,7 @@ tag_and_push() {
 # a default beta release.
 OVERRIDE_VERSION=""
 SKIP_TESTS="false"
+DRY_RUN="false"
 NOTES_OVERRIDE=""
 NOTES_SOURCE_LABEL=""
 while [[ $# -gt 0 ]]; do
@@ -353,6 +351,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-tests)
       SKIP_TESTS="true"
+      shift
+      ;;
+    --dry-run)
+      DRY_RUN="true"
       shift
       ;;
     --notes)
@@ -385,7 +387,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<EOF
-Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests] [--notes <file> | --notes-stdin]
+Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests] [--dry-run] [--notes <file> | --notes-stdin]
 
 Non-interactive beta release for Hot Sheet. Matches \`npm run release:beta\`
 without prompts. By default targets the upcoming X.Y.0 (next minor from
@@ -399,15 +401,19 @@ flakes in feedback-state / lifecycle-e2e / cli.test --demo:0). Pass
 passes some other way (e.g. you just ran \`npm test\` clean in a
 separate terminal). CI re-runs everything on tag-push regardless.
 
-Release notes default to a \`claude -p\` summarization of commit subjects
-since the last tag. Pass --notes <file> (or --notes-stdin) to supply
-pre-drafted notes and skip the nested Claude invocation entirely —
-useful when running from inside another Claude session (the parent can
-draft notes directly) or when \`claude -p\` is unreachable.
+Release notes are drafted by gitgist (the tool the interactive release
+uses) over <lastTag>..HEAD — AI draft, then gitgist --no-ai, then a
+git-log pointer. Pass --notes <file> (or --notes-stdin) to supply
+pre-drafted notes and skip gitgist entirely.
+
+--dry-run does everything EXCEPT create and push the tag (preflight,
+version, notes, build, tests) so you can verify a release before
+committing to it.
 
 Examples:
   npm run release:beta:auto
   npm run release:beta:auto -- --version 0.18.0
+  npm run release:beta:auto -- --version 0.18.0 --dry-run
   npm run release:beta:auto -- --skip-tests
   npm run release:beta:auto -- --notes /tmp/notes.md
   echo "- fix bug X" | npm run release:beta:auto -- --notes-stdin
@@ -416,7 +422,7 @@ EOF
       ;;
     *)
       error "Unrecognized arg: $1"
-      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests] [--notes <file> | --notes-stdin]"
+      error "Usage: bash scripts/release-beta-auto.sh [--version X.Y.Z] [--skip-tests] [--dry-run] [--notes <file> | --notes-stdin]"
       exit 1
       ;;
   esac
@@ -425,6 +431,7 @@ done
 # --- Main ---
 echo ""
 echo -e "${BOLD}  Hot Sheet Beta — auto/non-interactive${RESET}"
+[[ "${DRY_RUN:-false}" == "true" ]] && echo -e "  ${DIM}--dry-run: no tag will be created or pushed.${RESET}"
 echo ""
 
 preflight
