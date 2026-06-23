@@ -10204,11 +10204,23 @@ label.detail-details-label {
 }
 
 .worker-pool-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border);
+
+  .worker-pool-controls-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .worker-pool-stepper { display: flex; align-items: center; gap: 8px; }
+  .worker-pool-step-up, .worker-pool-step-down {
+    min-width: 28px; font-weight: 700; line-height: 1;
+    &:disabled { opacity: 0.4; cursor: default; }
+  }
+  .worker-pool-target { min-width: 1.5em; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .worker-pool-running { font-size: 11px; color: var(--text-muted); }
+  .worker-pool-drain-all:disabled { opacity: 0.4; cursor: default; }
 }
 
 .git-popover-header {

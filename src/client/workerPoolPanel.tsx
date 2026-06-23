@@ -1,15 +1,17 @@
 // HS-8962 — worker-pool panel (docs/91 §91.5). A minimal dashboard over the
-// durable worker pool: one tile per worker (label, state, current ticket), an
-// "+ add worker" control, per-worker "Drain", and "Drain all". Scaling reuses the
-// HS-8863 launcher + §89 worktree primitives; graceful drain is server-coordinated
-// (the worker stops at its next claim-next, finishing its current ticket first),
-// and a worker that has acknowledged the drain (state `stopped`) is auto-cleaned
-// (terminal closed + worktree removed). Live updates are poll-based for now (the
-// §90.8 / HS-7945 event bus once it ships); dispatch drop targets (HS-8961) and
-// the richer claimed-by chip (HS-8864) layer onto these tiles later.
+// durable worker pool: one tile per worker (label, state, current ticket), a
+// target-N stepper the panel reconciles toward (HS-8971), per-worker "Drain", and
+// "Drain all". Scaling reuses the HS-8863 launcher + §89 worktree primitives;
+// graceful drain is server-coordinated (the worker stops at its next claim-next,
+// finishing its current ticket first), and a worker that has acknowledged the
+// drain (state `stopped`) is auto-cleaned (terminal closed + worktree removed).
+// Live updates are poll-based for now (the §90.8 / HS-7945 event bus once it
+// ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
+// layer onto these tiles later.
 import {
   drainAllPoolWorkers, drainPoolWorker, getWorkerPool, launchWorker,
-  registerPoolWorker, removePoolWorker, removeWorktree, type WorkerSlotView,
+  type PoolState, registerPoolWorker, removePoolWorker, removeWorktree,
+  setPoolTarget, type WorkerSlotView,
 } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { toElement } from './dom.js';
@@ -19,8 +21,13 @@ let activeOverlay: HTMLElement | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 /** Workers whose stopped-cleanup is already running, so a poll mid-cleanup doesn't double-run it. */
 const cleaningUp = new Set<string>();
+/** Adds launched but not yet registered, counted toward the live total so the
+ *  reconciler doesn't over-add while a launch is in flight (HS-8971). */
+let pendingAdds = 0;
 
 const POLL_MS = 3000;
+/** A small machine-sensible ceiling so the stepper can't accidentally fork-bomb. */
+const MAX_TARGET = 16;
 
 export function closeWorkerPoolPanel(): void {
   if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
@@ -38,6 +45,11 @@ function onKeydown(e: KeyboardEvent): void {
 const STATE_LABEL: Record<WorkerSlotView['state'], string> = {
   idle: 'Idle', working: 'Working', draining: 'Draining…', stopped: 'Stopped',
 };
+
+/** Workers that count toward the live total (everything not on its way out). */
+function activeCount(pool: PoolState): number {
+  return pool.workers.filter(w => w.state === 'idle' || w.state === 'working').length;
+}
 
 /** Build one worker tile. `onDrain` is omitted once the worker is draining/stopped.
  *  Exported for unit tests. */
@@ -67,6 +79,28 @@ export function renderWorkerTile(w: WorkerSlotView, onDrain?: (w: WorkerSlotView
   return tile;
 }
 
+/** Render the target-N stepper + "drain all" into the controls bar. Exported for
+ *  tests. `target` is the server's stored target; `running` is the live count. */
+export function renderPoolControls(
+  controlsEl: HTMLElement, target: number, running: number,
+  onStep: (delta: number) => void, onDrainAll: () => void,
+): void {
+  controlsEl.replaceChildren(toElement(
+    <div className="worker-pool-controls-inner">
+      <div className="worker-pool-stepper">
+        <button type="button" className="btn btn-sm worker-pool-step-down" disabled={target <= 0} title="Drain one worker">−</button>
+        <span className="worker-pool-target" title="Target worker count">{String(target)}</span>
+        <button type="button" className="btn btn-sm worker-pool-step-up" disabled={target >= MAX_TARGET} title="Add one worker">+</button>
+        <span className="worker-pool-running">{`${String(running)} running`}</span>
+      </div>
+      <button type="button" className="btn btn-sm worker-pool-drain-all" disabled={running === 0}>Drain all</button>
+    </div>,
+  ));
+  controlsEl.querySelector('.worker-pool-step-up')?.addEventListener('click', () => onStep(1));
+  controlsEl.querySelector('.worker-pool-step-down')?.addEventListener('click', () => onStep(-1));
+  controlsEl.querySelector('.worker-pool-drain-all')?.addEventListener('click', () => onDrainAll());
+}
+
 /** Tear down a worker that has acknowledged its drain (state `stopped`): close its
  *  terminal, remove its worktree, and unregister it from the pool. Idempotent per
  *  worker via `cleaningUp`. */
@@ -87,10 +121,11 @@ async function cleanupStopped(w: WorkerSlotView): Promise<void> {
   }
 }
 
-/** Fetch + render the pool into `bodyEl`, auto-cleaning any stopped workers.
- *  Exported for tests. */
+/** Fetch + render the pool into `bodyEl`, refresh the controls, auto-clean any
+ *  stopped workers, and reconcile the live count toward the target. Exported for
+ *  tests. */
 export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
-  let pool;
+  let pool: PoolState;
   try {
     pool = await getWorkerPool();
   } catch (e) {
@@ -98,14 +133,42 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
     return;
   }
   if (pool.workers.length === 0) {
-    bodyEl.replaceChildren(toElement(<div className="worker-pool-empty">No workers. Add one to start draining Up Next in parallel.</div>));
+    bodyEl.replaceChildren(toElement(<div className="worker-pool-empty">No workers. Use + to start workers draining Up Next in parallel.</div>));
   } else {
-    const tiles = pool.workers.map(w => renderWorkerTile(w, (ww) => void handleDrain(ww, bodyEl)));
+    const tiles = pool.workers.map(w => renderWorkerTile(w, (ww) => void handleDrain(ww, pool, bodyEl)));
     bodyEl.replaceChildren(...tiles);
+  }
+  // Controls live in the singleton overlay (absent in unit tests that pass a bare body).
+  const controlsEl = activeOverlay?.querySelector<HTMLElement>('.worker-pool-controls');
+  if (controlsEl) {
+    renderPoolControls(controlsEl, pool.targetN, activeCount(pool),
+      (delta) => void handleStep(pool, delta, bodyEl),
+      () => void handleDrainAll(bodyEl));
   }
   // Auto-clean drained workers (best-effort, in the background).
   for (const w of pool.workers) {
     if (w.state === 'stopped') void cleanupStopped(w).then(() => refreshPool(bodyEl));
+  }
+  // Reconcile the live count toward the target (HS-8971).
+  reconcile(pool, bodyEl);
+}
+
+/** Add/drain to move the live worker count toward `pool.targetN`. Idempotent +
+ *  guarded by `pendingAdds` so concurrent polls don't over-add. Scale-down always
+ *  uses graceful drain (never kills mid-ticket); idle workers are drained first. */
+function reconcile(pool: PoolState, bodyEl: HTMLElement): void {
+  const target = pool.targetN;
+  const active = activeCount(pool) + pendingAdds;
+  if (active < target) {
+    for (let i = 0; i < target - active; i++) void addOneWorker(bodyEl);
+  } else if (active > target) {
+    const candidates = [
+      ...pool.workers.filter(w => w.state === 'idle'),
+      ...pool.workers.filter(w => w.state === 'working'),
+    ];
+    for (let i = 0; i < active - target && i < candidates.length; i++) {
+      void drainPoolWorker({ worker: candidates[i].worker }).catch(() => { /* next poll retries */ });
+    }
   }
 }
 
@@ -117,7 +180,10 @@ function nextWorkerName(existing: WorkerSlotView[]): string {
   return `worker-${n}`;
 }
 
-async function handleAddWorker(bodyEl: HTMLElement): Promise<void> {
+/** Launch + open + register one worker. On failure, lower the target by one so the
+ *  reconciler doesn't retry the same failing launch every poll. */
+async function addOneWorker(bodyEl: HTMLElement): Promise<void> {
+  pendingAdds++;
   try {
     const pool = await getWorkerPool();
     const name = nextWorkerName(pool.workers);
@@ -129,15 +195,37 @@ async function handleAddWorker(bodyEl: HTMLElement): Promise<void> {
       branch: `hotsheet/${name}`, terminalId,
     });
     showToast(`Worker ${spec.label} started`);
-    await refreshPool(bodyEl);
   } catch (e) {
     showToast(`Couldn't add worker: ${getErrorMessage(e)}`);
+    try {
+      const pool = await getWorkerPool();
+      await setPoolTarget({ targetN: Math.max(0, pool.targetN - 1) });
+    } catch { /* best-effort target backoff */ }
+  } finally {
+    pendingAdds--;
+    await refreshPool(bodyEl);
   }
 }
 
-async function handleDrain(w: WorkerSlotView, bodyEl: HTMLElement): Promise<void> {
+/** Step the target up/down by `delta` (clamped to [0, MAX_TARGET]); the next
+ *  refresh reconciles toward it. */
+async function handleStep(pool: PoolState, delta: number, bodyEl: HTMLElement): Promise<void> {
+  const next = Math.max(0, Math.min(MAX_TARGET, pool.targetN + delta));
+  if (next === pool.targetN) return;
+  try {
+    await setPoolTarget({ targetN: next });
+    await refreshPool(bodyEl);
+  } catch (e) {
+    showToast(`Couldn't set worker count: ${getErrorMessage(e)}`);
+  }
+}
+
+/** Drain one specific worker AND lower the target by one so the reconciler doesn't
+ *  immediately replace it. */
+async function handleDrain(w: WorkerSlotView, pool: PoolState, bodyEl: HTMLElement): Promise<void> {
   try {
     await drainPoolWorker({ worker: w.worker });
+    await setPoolTarget({ targetN: Math.max(0, pool.targetN - 1) });
     showToast(`Draining ${w.label} — it'll stop after its current ticket`);
     await refreshPool(bodyEl);
   } catch (e) {
@@ -166,10 +254,7 @@ export function openWorkerPoolPanel(): void {
           <button type="button" className="worker-pool-close" title="Close">{'×'}</button>
         </div>
         <div className="worker-pool-body"></div>
-        <div className="worker-pool-controls">
-          <button type="button" className="btn btn-sm worker-pool-add">+ Add worker</button>
-          <button type="button" className="btn btn-sm worker-pool-drain-all">Drain all</button>
-        </div>
+        <div className="worker-pool-controls"></div>
       </div>
     </div>,
   );
@@ -179,8 +264,6 @@ export function openWorkerPoolPanel(): void {
   document.addEventListener('keydown', onKeydown, true);
 
   const bodyEl = overlay.querySelector<HTMLElement>('.worker-pool-body')!;
-  overlay.querySelector('.worker-pool-add')?.addEventListener('click', () => void handleAddWorker(bodyEl));
-  overlay.querySelector('.worker-pool-drain-all')?.addEventListener('click', () => void handleDrainAll(bodyEl));
 
   document.body.appendChild(overlay);
   activeOverlay = overlay;

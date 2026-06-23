@@ -87,11 +87,16 @@ than losing it.
 Shipped as a **sibling panel** `src/client/workerPoolPanel.tsx`, opened from the
 git popover's "Worker pool…" button (next to "Manage worktrees…"). It renders a
 tile per worker (label, state chip, current ticket from the live claims), a
-"+ Add worker" control (launch → open terminal → register), a per-worker "Drain",
-and "Drain all". A worker that has acknowledged its drain (`stopped`) is
-auto-cleaned (close terminal + `removeWorktree` + unregister). Tiles refresh by
-polling every 3 s. Still to layer on (separate tickets): the numeric target-N
-stepper + auto-reconcile, the §92 dispatch drop targets (HS-8961), the richer
+**target-N stepper** (`−  N  +` + "X running", HS-8971) the panel reconciles
+toward, a per-worker "Drain", and "Drain all". **Reconcile (HS-8971):** on every
+refresh `reconcile()` compares the live count (idle+working, plus in-flight adds)
+to the server's `targetN` and launches workers when below / gracefully drains the
+surplus (idle first) when above; a failed launch lowers the target by one so it
+doesn't retry forever. Target-N is the server's in-memory `targetN`
+(`setPoolTarget`/`POST /api/workers/pool/target`) — session-only (§91.9). A worker
+that has acknowledged its drain (`stopped`) is auto-cleaned (close terminal +
+`removeWorktree` + unregister). Tiles refresh by polling every 3 s. Still to layer
+on (separate tickets): the §92 dispatch drop targets (HS-8961), the richer
 claimed-by/lease-freshness chip (HS-8864), and the §90.8 live event bus
 (HS-7945, replacing the poll). Original design intent below:
 
@@ -164,7 +169,8 @@ A recommendation, never an automatic action — the owner always sets the actual
 ## 91.10 Follow-up tickets
 
 (1) pool manager + scale up/down + drain (server) and (2) the worker-pool panel UI
-shipped together in **HS-8962** (2026-06-23). Remaining: (3) the AI-suggest-N
-helper (**HS-8963**), the numeric target-N stepper + auto-reconcile (**HS-8971**),
-the dispatch drop targets (**HS-8961**/§92), the claimed-by/lease-freshness chip
-(**HS-8864**), and swapping the poll for the §90.8 live event bus (**HS-7945**).
+shipped together in **HS-8962** (2026-06-23); the numeric target-N stepper +
+auto-reconcile shipped in **HS-8971** (2026-06-23). Remaining: (3) the AI-suggest-N
+helper (**HS-8963**), the dispatch drop targets (**HS-8961**/§92), the
+claimed-by/lease-freshness chip (**HS-8864**), and swapping the poll for the §90.8
+live event bus (**HS-7945**).

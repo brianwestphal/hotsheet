@@ -1,15 +1,16 @@
 // @vitest-environment happy-dom
-// HS-8962 — worker-pool panel tests (docs/91 §91.5): tile rendering per state,
-// drain wiring, and auto-cleanup of a stopped worker (close terminal + remove
-// worktree + unregister).
+// HS-8962 + HS-8971 — worker-pool panel tests (docs/91 §91.5): tile rendering per
+// state, the target-N stepper + reconcile (add/drain toward N), drain wiring, and
+// auto-cleanup of a stopped worker (close terminal + remove worktree + unregister).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  drainPoolWorker, getWorkerPool, removePoolWorker, removeWorktree, type WorkerSlotView,
+  drainPoolWorker, getWorkerPool, launchWorker, registerPoolWorker,
+  removePoolWorker, removeWorktree, setPoolTarget, type WorkerSlotView,
 } from '../api/index.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  closeWorkerPoolPanel, refreshPool, renderWorkerTile,
+  closeWorkerPoolPanel, refreshPool, renderPoolControls, renderWorkerTile,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -20,14 +21,19 @@ vi.mock('../api/index.js', () => ({
   drainAllPoolWorkers: vi.fn(),
   removePoolWorker: vi.fn(),
   removeWorktree: vi.fn(),
+  setPoolTarget: vi.fn(),
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('./terminalInstanceLifecycle.js', () => ({ closeDynamicTerminal: vi.fn() }));
+vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new') }));
 
 const mockPool = vi.mocked(getWorkerPool);
+const mockLaunch = vi.mocked(launchWorker);
+const mockRegister = vi.mocked(registerPoolWorker);
 const mockDrain = vi.mocked(drainPoolWorker);
 const mockRemove = vi.mocked(removePoolWorker);
 const mockRemoveWt = vi.mocked(removeWorktree);
+const mockSetTarget = vi.mocked(setPoolTarget);
 const mockCloseTerm = vi.mocked(closeDynamicTerminal);
 
 const slot = (over: Partial<WorkerSlotView> = {}): WorkerSlotView => ({
@@ -43,7 +49,10 @@ beforeEach(() => {
   mockDrain.mockResolvedValue({ ok: true });
   mockRemove.mockResolvedValue({ ok: true });
   mockRemoveWt.mockResolvedValue({ ok: true });
+  mockSetTarget.mockResolvedValue({ ok: true });
   mockCloseTerm.mockResolvedValue(undefined);
+  mockLaunch.mockResolvedValue({ worker: 'pw2', label: 'worker-2', cwd: '/wt/pw2', command: 'claude "/hotsheet-worker"', worktreeCreated: true });
+  mockRegister.mockResolvedValue(slot({ worker: 'pw2', label: 'worker-2' }));
 });
 afterEach(() => closeWorkerPoolPanel());
 
@@ -65,8 +74,32 @@ describe('renderWorkerTile (HS-8962)', () => {
   });
 });
 
+describe('renderPoolControls — target stepper (HS-8971)', () => {
+  it('shows the target + running count and wires the steppers', () => {
+    const onStep = vi.fn();
+    const onDrainAll = vi.fn();
+    const el = document.createElement('div');
+    renderPoolControls(el, 2, 1, onStep, onDrainAll);
+    expect(el.querySelector('.worker-pool-target')?.textContent).toBe('2');
+    expect(el.querySelector('.worker-pool-running')?.textContent).toContain('1 running');
+    el.querySelector<HTMLButtonElement>('.worker-pool-step-up')!.click();
+    expect(onStep).toHaveBeenCalledWith(1);
+    el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.click();
+    expect(onStep).toHaveBeenCalledWith(-1);
+    el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.click();
+    expect(onDrainAll).toHaveBeenCalled();
+  });
+
+  it('disables − at target 0 and Drain all when nothing is running', () => {
+    const el = document.createElement('div');
+    renderPoolControls(el, 0, 0, vi.fn(), vi.fn());
+    expect(el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.disabled).toBe(true);
+  });
+});
+
 describe('refreshPool (HS-8962)', () => {
-  it('renders a tile per worker and wires Drain → drainPoolWorker', async () => {
+  it('renders a tile per worker and wires Drain → drainPoolWorker + lowers target', async () => {
     mockPool.mockResolvedValue({ targetN: 1, workers: [slot({ state: 'idle' })] });
     const body = document.createElement('div');
     await refreshPool(body);
@@ -74,6 +107,7 @@ describe('refreshPool (HS-8962)', () => {
     body.querySelector<HTMLButtonElement>('.worker-drain-btn')!.click();
     await flush();
     expect(mockDrain).toHaveBeenCalledWith({ worker: 'pw1' });
+    expect(mockSetTarget).toHaveBeenCalledWith({ targetN: 0 }); // drained one → target 1→0
   });
 
   it('shows an empty state when there are no workers', async () => {
@@ -84,7 +118,6 @@ describe('refreshPool (HS-8962)', () => {
   });
 
   it('auto-cleans a stopped worker: close terminal + remove worktree + unregister', async () => {
-    // First load reports the worker stopped; the cleanup re-fetch reports it gone.
     mockPool.mockResolvedValueOnce({ targetN: 0, workers: [slot({ state: 'stopped' })] });
     mockPool.mockResolvedValue({ targetN: 0, workers: [] });
     const body = document.createElement('div');
@@ -93,6 +126,30 @@ describe('refreshPool (HS-8962)', () => {
     expect(mockCloseTerm).toHaveBeenCalledWith('t-pw1', true);
     expect(mockRemoveWt).toHaveBeenCalledWith({ path: '/wt/pw1', force: true });
     expect(mockRemove).toHaveBeenCalledWith({ worker: 'pw1' });
+  });
+
+  it('reconcile adds a worker when the live count is below target (HS-8971)', async () => {
+    // Target 1 but no live workers → reconcile launches one; then the pool reports it.
+    mockPool.mockResolvedValueOnce({ targetN: 1, workers: [] });
+    mockPool.mockResolvedValue({ targetN: 1, workers: [slot({ worker: 'pw2', label: 'worker-2', state: 'idle' })] });
+    const body = document.createElement('div');
+    await refreshPool(body);
+    await flush();
+    expect(mockLaunch).toHaveBeenCalledWith({ branch: 'hotsheet/worker-1' });
+    expect(mockRegister).toHaveBeenCalled();
+  });
+
+  it('reconcile drains the surplus (idle first) when the live count exceeds target', async () => {
+    mockPool.mockResolvedValue({
+      targetN: 1,
+      workers: [slot({ worker: 'a', label: 'worker-1', state: 'working' }), slot({ worker: 'b', label: 'worker-2', state: 'idle' })],
+    });
+    const body = document.createElement('div');
+    await refreshPool(body);
+    await flush();
+    // 2 active, target 1 → drain one, the idle one (b) first.
+    expect(mockDrain).toHaveBeenCalledWith({ worker: 'b' });
+    expect(mockDrain).not.toHaveBeenCalledWith({ worker: 'a' });
   });
 
   it('renders an error state when the pool fetch fails', async () => {

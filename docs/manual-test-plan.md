@@ -740,8 +740,8 @@ The loop invariants (claim/complete/release, no-double-claim across two workers,
 
 The pool manager (drain semantics, state derivation) + panel render/drain wiring are automated; this covers the real launch/drain/teardown flow:
 
-- [ ] Open the git popover → **"Worker pool…"**. With Up Next tickets queued, click **"+ Add worker"**: a new worktree + a `claude` terminal running `/hotsheet-worker` opens, and a tile appears (state flips idle → working with the ticket it claimed).
-- [ ] Add a second worker — both drain the pool in parallel with no double-claim (tiles show distinct current tickets); the owner UI updates live.
+- [ ] Open the git popover → **"Worker pool…"**. With Up Next tickets queued, step the **target-N stepper** up to 1 (`+`): a new worktree + a `claude` terminal running `/hotsheet-worker` opens, and a tile appears (state flips idle → working with the ticket it claimed). The "X running" count tracks live workers.
+- [ ] Step the target to 2 — a second worker is launched; both drain the pool in parallel with no double-claim (tiles show distinct current tickets); the owner UI updates live. (HS-8971 reconcile: the panel adds/drains to match the target.)
 - [ ] Click **Drain** on a *working* tile: the worker finishes its current ticket (NOT interrupted mid-work), then stops; the tile goes draining → stopped and is auto-cleaned (its terminal closes + worktree is removed).
 - [ ] **Drain all** gracefully stops every worker the same way.
 - [ ] A worker started by hand (`/hotsheet-worker` not via the panel) is unaffected by pool drain (it's not in the registry).
