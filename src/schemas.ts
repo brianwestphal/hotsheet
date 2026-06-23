@@ -267,6 +267,12 @@ export const GithubCommentsArraySchema = z.array(z.object({
   body_html: z.string().optional(),
 }).loose());
 
+// A single GitHub issue fetched with `Accept: application/vnd.github.v3.html+json`
+// — `body_html` carries the rendered body with JWT-signed image URLs (HS-8956).
+export const GithubIssueBodyHtmlSchema = z.object({
+  body_html: z.string().optional(),
+}).loose();
+
 // ---------------------------------------------------------------------------
 // Custom views (settings `custom_views` JSON). HS-8511 — parsed server-side so
 // the sidebar-count endpoint can evaluate each view's ticket set via the same

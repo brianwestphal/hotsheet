@@ -3,7 +3,7 @@
  * Uses Hono test client with mocked plugin loader and sync engine.
  */
 import { Hono } from 'hono';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
@@ -67,6 +67,9 @@ vi.mock('../plugins/syncEngine.js', () => ({
   startScheduledSync: vi.fn(),
   stopScheduledSync: vi.fn(),
   syncSingleTicketContent: vi.fn(() => Promise.resolve()),
+  // HS-8933 — enable/reactivate routes apply the per-project scheduled-sync config.
+  applyScheduledSyncFromConfig: vi.fn(() => Promise.resolve()),
+  getPendingSyncCounts: vi.fn(() => Promise.resolve({ toPull: 0, toPush: 0, total: 0 })),
 }));
 
 vi.mock('../projects.js', () => ({
@@ -207,7 +210,8 @@ describe('plugin sync', () => {
     expect(data.ok).toBe(true);
     expect(data.pulled).toBe(1);
     expect(reactivatePlugin).toHaveBeenCalled();
-    expect(runSync).toHaveBeenCalledWith('mock-plugin');
+    // HS-8931 — a user-initiated sync runs a full pull.
+    expect(runSync).toHaveBeenCalledWith('mock-plugin', { fullPull: true });
 
     await db.query("DELETE FROM settings WHERE key = 'plugin_enabled:mock-plugin'");
   });
@@ -502,5 +506,128 @@ describe('sync schedule', () => {
     const data = await res.json() as { scheduled: boolean };
     expect(data.scheduled).toBe(false);
     expect(stopScheduledSync).toHaveBeenCalled();
+  });
+});
+
+describe('image-proxy (HS-8956)', () => {
+  const realFetch = global.fetch;
+  let calls: { url: string; init?: RequestInit }[] = [];
+
+  function stubFetch(handler: (url: string) => Response) {
+    global.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      calls.push({ url, init });
+      return Promise.resolve(handler(url));
+    };
+  }
+  function authOf(call?: { init?: RequestInit }): string | undefined {
+    return (call?.init?.headers as Record<string, string> | undefined)?.Authorization;
+  }
+
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+  beforeEach(async () => {
+    calls = [];
+    const { getGlobalPluginSetting } = await import('../plugins/loader.js');
+    vi.mocked(getGlobalPluginSetting).mockReturnValue('ghp_test');
+  });
+  afterEach(() => { global.fetch = realFetch; });
+
+  it('fetches a signed private-user-images URL WITHOUT an Authorization header', async () => {
+    // The jwt self-authorizes; a Bearer header would yield HTTP 400.
+    stubFetch(() => new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } }));
+    const signed = 'https://private-user-images.githubusercontent.com/240811/1-abc.png?jwt=tok';
+    const res = await app.request(`/api/plugins/mock-plugin/image-proxy?url=${encodeURIComponent(signed)}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    const call = calls.find(c => c.url.includes('private-user-images'));
+    expect(authOf(call)).toBeUndefined();
+  });
+
+  it('resolves a github.com/user-attachments body image via the issue body_html, then fetches the signed URL with no auth', async () => {
+    const uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const signed = `https://private-user-images.githubusercontent.com/9/55-${uuid}.png?jwt=tok`;
+
+    // Fixtures: a synced ticket whose BODY (details) references the UUID.
+    const { createTicket } = await import('../db/tickets.js');
+    const { upsertSyncRecord } = await import('../db/sync.js');
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    const ticket = await createTicket('body image ticket', { details: `<img src="https://github.com/user-attachments/assets/${uuid}">` });
+    await upsertSyncRecord(ticket.id, 'mock-plugin', '77', 'synced');
+    await db.query(
+      "INSERT INTO settings (key, value) VALUES ($1,$2),($3,$4) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+      ['plugin:mock-plugin:owner', 'octocat', 'plugin:mock-plugin:repo', 'hello'],
+    );
+
+    stubFetch((url) => {
+      if (url.includes('/issues/77/comments')) return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      if (url.includes('/issues/77')) return new Response(JSON.stringify({ body_html: `<p><img src="${signed}" /></p>` }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      if (url.includes('private-user-images')) return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } });
+      return new Response('nope', { status: 404 });
+    });
+
+    const assetUrl = `https://github.com/user-attachments/assets/${uuid}`;
+    const res = await app.request(`/api/plugins/mock-plugin/image-proxy?url=${encodeURIComponent(assetUrl)}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+
+    // The issue lookup used the API token; the signed image fetch did NOT.
+    expect(authOf(calls.find(c => c.url.includes('/issues/77') && !c.url.includes('comments')))).toBe('Bearer ghp_test');
+    expect(authOf(calls.find(c => c.url.includes('private-user-images')))).toBeUndefined();
+  });
+
+  it('returns 502 when the user-attachment UUID cannot be resolved', async () => {
+    stubFetch(() => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const assetUrl = 'https://github.com/user-attachments/assets/ffffffff-0000-0000-0000-000000000000';
+    const res = await app.request(`/api/plugins/mock-plugin/image-proxy?url=${encodeURIComponent(assetUrl)}`);
+    expect(res.status).toBe(502);
+  });
+
+  it('rejects a non-allowlisted host', async () => {
+    const res = await app.request(`/api/plugins/mock-plugin/image-proxy?url=${encodeURIComponent('https://evil.example.com/x.png')}`);
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('sync conflicts summary (HS-8959)', () => {
+  it('groups conflicts by plugin with count, name, and icon (sorted desc)', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const { createTicket } = await import('../db/tickets.js');
+    const { upsertSyncRecord, updateSyncStatus } = await import('../db/sync.js');
+    const db = await getDb();
+    await db.query('DELETE FROM ticket_sync');
+
+    // Two conflicts for mock-plugin, one for another plugin.
+    const t1 = await createTicket('c1');
+    const t2 = await createTicket('c2');
+    const t3 = await createTicket('c3');
+    await upsertSyncRecord(t1.id, 'mock-plugin', 'r1', 'synced');
+    await updateSyncStatus(t1.id, 'mock-plugin', 'conflict');
+    await upsertSyncRecord(t2.id, 'mock-plugin', 'r2', 'synced');
+    await updateSyncStatus(t2.id, 'mock-plugin', 'conflict');
+    await upsertSyncRecord(t3.id, 'other-plugin', 'r3', 'synced');
+    await updateSyncStatus(t3.id, 'other-plugin', 'conflict');
+
+    const res = await app.request('/api/sync/conflicts/summary');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { pluginId: string; pluginName: string; icon: string | null; count: number }[];
+    expect(data).toHaveLength(2);
+    // Sorted by count desc → mock-plugin (2) first.
+    expect(data[0]).toMatchObject({ pluginId: 'mock-plugin', count: 2, pluginName: 'Mock Plugin' });
+    expect(data[1]).toMatchObject({ pluginId: 'other-plugin', count: 1 });
+    // mockPlugin's manifest has no icon → null.
+    expect(data[0].icon).toBeNull();
+
+    await db.query('DELETE FROM ticket_sync');
+  });
+
+  it('returns an empty array when there are no conflicts', async () => {
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query('DELETE FROM ticket_sync');
+    const res = await app.request('/api/sync/conflicts/summary');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 });

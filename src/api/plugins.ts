@@ -135,6 +135,17 @@ export const SyncConflictSchema = z.object({
 });
 export type SyncConflict = z.infer<typeof SyncConflictSchema>;
 
+/** HS-8959 — `GET /sync/conflicts/summary`: per-plugin unresolved-conflict counts
+ *  (with display name + icon) for the global conflict banner. Generic across
+ *  plugins, not GitHub-specific. */
+export const SyncConflictSummaryEntrySchema = z.object({
+  pluginId: z.string(),
+  pluginName: z.string(),
+  icon: z.string().nullable(),
+  count: z.number(),
+});
+export type SyncConflictSummaryEntry = z.infer<typeof SyncConflictSummaryEntrySchema>;
+
 /** A connected backend (`GET /backends`). The server also returns
  *  `capabilities`; the context-menu consumer needs only id + name, so the
  *  extra field is stripped. */
@@ -322,6 +333,12 @@ export async function getSyncedTickets(): Promise<SyncTicketsMap> {
 /** GET `/sync/conflicts` → all unresolved sync conflicts. */
 export async function getSyncConflicts(): Promise<SyncConflict[]> {
   return apiCall(z.array(SyncConflictSchema), '/sync/conflicts');
+}
+
+/** HS-8959 — GET `/sync/conflicts/summary` → per-plugin conflict counts + icons
+ *  for the global conflict banner. */
+export async function getSyncConflictsSummary(): Promise<SyncConflictSummaryEntry[]> {
+  return apiCall(z.array(SyncConflictSummaryEntrySchema), '/sync/conflicts/summary');
 }
 
 /** POST `/sync/conflicts/:ticketId/resolve` → resolve a conflict keep-local / keep-remote. */

@@ -75,6 +75,9 @@ async function reloadPluginToolbar() {
   // immediately for the active project's sync buttons).
   const { startSyncBadgePolling } = await import('./pluginSyncBadge.js');
   startSyncBadgePolling();
+  // HS-8959 — start the sync-conflict banner poll (idempotent).
+  const { startSyncConflictBannerPolling } = await import('./syncConflictBanner.js');
+  startSyncConflictBannerPolling();
 }
 
 async function reloadAppState() {

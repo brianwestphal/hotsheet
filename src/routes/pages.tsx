@@ -148,6 +148,20 @@ pageRoutes.get('/', (c) => {
           </div>
         </div>
 
+        {/* HS-8959 — generic plugin sync-conflict banner. Shown by
+            `syncConflictBanner.tsx` whenever any plugin has unresolved sync
+            conflicts; clicking opens Settings → Plugins to resolve them. */}
+        <div id="sync-conflict-banner" className="sync-conflict-banner" style="display:none" role="button" tabIndex={0}>
+          <span className="sync-conflict-banner-main">
+            <span id="sync-conflict-banner-icon" className="sync-conflict-banner-icon"></span>
+            <span id="sync-conflict-banner-label">Sync conflicts need resolution</span>
+            <span id="sync-conflict-banner-count" className="sync-conflict-banner-count">0</span>
+          </span>
+          <div className="sync-conflict-banner-actions">
+            <button id="sync-conflict-resolve-btn" className="btn btn-sm btn-accent">Resolve…</button>
+          </div>
+        </div>
+
         {/* HS-8226 — server-slow banner (replaces the HS-8175 corner chip).
             Mirrors the `.update-banner` layout-flow strip (`flex-shrink: 0`)
             but in amber + non-dismissable: lights up whenever any non-long-poll

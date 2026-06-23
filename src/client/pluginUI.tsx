@@ -4,6 +4,7 @@ import { raw } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { refreshSyncBadges } from './pluginSyncBadge.js';
+import { refreshSyncConflictBanner } from './syncConflictBanner.js';
 import { loadTickets } from './ticketList.js';
 import { showToast } from './toast.js';
 
@@ -197,6 +198,7 @@ async function triggerAction(el: PluginUIElement, ticketIds?: number[]): Promise
         await triggerPluginSync(el._pluginId);
         void loadTickets();
         void refreshSyncBadges(); // HS-8791 — sync just ran; recompute the badge.
+        void refreshSyncConflictBanner(); // HS-8959 — a sync may surface new conflicts.
       } finally {
         setPluginBusy(el._pluginId, pluginName, false);
       }

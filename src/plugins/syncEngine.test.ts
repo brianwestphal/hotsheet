@@ -374,7 +374,11 @@ describe('sync engine — push', () => {
     const ticket = await createTicket('Push update');
     await upsertSyncRecord(ticket.id, 'mock-backend', 'remote-push-upd', 'synced');
 
-    // Modify the ticket locally (advances updated_at past the sync record's local_updated_at)
+    // Modify the ticket locally (advances updated_at past the sync record's
+    // local_updated_at). The sleep guarantees a strictly-later timestamp from the
+    // DB clock — without it a same-millisecond create+edit leaves localModified
+    // false and nothing is pushed (latent flake, sibling of HS-8957).
+    await new Promise(r => setTimeout(r, 10));
     await updateTicket(ticket.id, { title: 'Updated' });
 
     const result = await runSync('mock-backend');
@@ -720,7 +724,13 @@ describe('sync engine — HS-5058: stale records & outbox exhaustion', () => {
 
     const ticket = await createTicket('Stale push cleanup');
     await upsertSyncRecord(ticket.id, 'mock-backend', 'gone-remote-id', 'synced');
-    // Force local update so pushToRemote attempts an updateRemote call.
+    // Force local update so pushToRemote attempts an updateRemote call. The sleep
+    // guarantees the edit's updated_at is strictly AFTER the sync record's
+    // local_updated_at (both come from the DB clock) — otherwise, when the create
+    // and the edit land in the same millisecond, `localModified` is false, the
+    // push is skipped, the 404 cleanup never runs, and the record survives
+    // (the ~1/6 flake this test had — HS-8957).
+    await new Promise(r => setTimeout(r, 10));
     await updateTicket(ticket.id, { title: 'Edited to trigger push' });
 
     await runSync('mock-backend');

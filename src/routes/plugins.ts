@@ -20,7 +20,7 @@ import {
 } from '../plugins/syncEngine.js';
 import type { LoadedPlugin } from '../plugins/types.js';
 import { getAllProjects } from '../projects.js';
-import { GithubCommentsArraySchema } from '../schemas.js';
+import { GithubCommentsArraySchema, GithubIssueBodyHtmlSchema } from '../schemas.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { parseIntParam } from './helpers.js';
@@ -465,6 +465,28 @@ pluginRoutes.get('/sync/conflicts', async (c) => {
   return c.json(conflicts);
 });
 
+/** HS-8959 — per-plugin conflict counts (+ display name & icon) for the global
+ *  conflict banner. Generic across plugins, not GitHub-specific. */
+pluginRoutes.get('/sync/conflicts/summary', async (c) => {
+  const conflicts = await getConflicts();
+  const counts = new Map<string, number>();
+  for (const conflict of conflicts) {
+    counts.set(conflict.plugin_id, (counts.get(conflict.plugin_id) ?? 0) + 1);
+  }
+  const summary = [...counts.entries()]
+    .map(([pluginId, count]) => {
+      const plugin = getPluginById(pluginId);
+      return {
+        pluginId,
+        pluginName: plugin?.manifest.name ?? pluginId,
+        icon: plugin?.manifest.icon ?? null,
+        count,
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+  return c.json(summary);
+});
+
 /** Resolve a sync conflict. */
 pluginRoutes.post('/sync/conflicts/:ticketId/resolve', async (c) => {
   const ticketId = parseIntParam(c, 'ticketId');
@@ -628,26 +650,34 @@ pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
 
   try {
     let fetchUrl = url;
+    // A JWT-signed private-user-images URL self-authorizes via its `?jwt=` query
+    // param and MUST be fetched WITHOUT an Authorization header — sending a Bearer
+    // header yields HTTP 400 ("only one auth mechanism allowed"). Direct
+    // raw.githubusercontent.com URLs still need the Bearer token (HS-8956).
+    let useAuth = true;
 
     // github.com/user-attachments/assets/UUID can't be fetched with a PAT
     // directly — GitHub requires browser session cookies. But the API's
     // rendered-HTML response (body_html) contains a JWT-signed URL on
     // private-user-images.githubusercontent.com that DOES work. Resolve it
-    // by finding the comment that contains this UUID.
+    // by finding the issue body or comment that contains this UUID.
     if (parsed.hostname === 'github.com' && parsed.pathname.startsWith('/user-attachments/')) {
       const uuid = parsed.pathname.split('/').pop();
       if (uuid != null && uuid !== '') {
         const resolved = await resolveUserAttachmentUrl(pluginId, token, uuid);
         if (resolved == null || resolved === '') return c.json({ error: 'Could not resolve user-attachment URL' }, 502);
         fetchUrl = resolved;
+        useAuth = false;
       }
+    } else if (parsed.hostname === 'private-user-images.githubusercontent.com') {
+      useAuth = false;
     }
 
     const reqHeaders: Record<string, string> = {
-      Authorization: `Bearer ${token}`,
       Accept: '*/*',
       'User-Agent': 'HotSheet-Image-Proxy/1.0',
     };
+    if (useAuth) reqHeaders.Authorization = `Bearer ${token}`;
     const res = await fetch(fetchUrl, { headers: reqHeaders });
     if (!res.ok) return c.json({ error: `Upstream ${res.status}` }, 502);
 
@@ -665,22 +695,37 @@ pluginRoutes.get('/plugins/:id/image-proxy', async (c) => {
   }
 });
 
+/** Pick the signed `private-user-images` URL for a given attachment UUID out of a
+ *  rendered `body_html`. GitHub names each signed asset `<n>-<UUID>.<ext>`, so we
+ *  match by the embedded UUID; if there's exactly one signed URL we take it (a
+ *  single-image body/comment). HS-8956. */
+function pickSignedUrl(bodyHtml: string, uuid: string): string | null {
+  const all = [...bodyHtml.matchAll(
+    /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/gi,
+  )].map(m => m[1]);
+  return all.find(s => s.includes(uuid)) ?? (all.length === 1 ? all[0] : null);
+}
+
 /** Resolve a github.com/user-attachments/assets/UUID URL to a signed
- *  private-user-images.githubusercontent.com URL by finding the comment
- *  that contains it and reading its body_html from the API. */
+ *  private-user-images.githubusercontent.com URL by reading the rendered
+ *  `body_html` of the issue (body images) or its comments (comment images) that
+ *  references this UUID. The signed URL is then fetched with NO auth header — the
+ *  jwt self-authorizes (HS-8956). */
 async function resolveUserAttachmentUrl(pluginId: string, token: string, uuid: string): Promise<string | null> {
-  // Find which ticket/issue contains this UUID by scanning local notes.
+  // Find which ticket/issue references this UUID — it may live in the issue body
+  // (`details`) or in a comment (`notes`). HS-8956: pre-fix this scanned `notes`
+  // only, so body images never resolved.
   const db = await getDb();
-  const notesResult = await db.query<{ id: number; notes: string }>(
-    "SELECT id, notes FROM tickets WHERE notes LIKE $1 AND status != 'deleted' LIMIT 1",
+  const ticketResult = await db.query<{ id: number }>(
+    "SELECT id FROM tickets WHERE (details LIKE $1 OR notes LIKE $1) AND status != 'deleted' LIMIT 1",
     [`%${uuid}%`],
   );
-  if (notesResult.rows.length === 0) return null;
+  if (ticketResult.rows.length === 0) return null;
 
   // Look up the sync record to get the remote issue number.
   const syncResult = await db.query<{ remote_id: string }>(
     'SELECT remote_id FROM ticket_sync WHERE ticket_id = $1 AND plugin_id = $2',
-    [notesResult.rows[0].id, pluginId],
+    [ticketResult.rows[0].id, pluginId],
   );
   if (syncResult.rows.length === 0) return null;
   const remoteId = syncResult.rows[0].remote_id;
@@ -699,29 +744,35 @@ async function resolveUserAttachmentUrl(pluginId: string, token: string, uuid: s
   const repo = settings['repo'] ?? '';
   if (owner === '' || repo === '') return null;
 
-  // Fetch comments for this issue with body_html to get the signed URL.
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/issues/${remoteId}/comments?per_page=100`;
-  const res = await fetch(apiUrl, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/vnd.github.v3.html+json',
-      'User-Agent': 'HotSheet-Image-Proxy/1.0',
-    },
-  });
+  const ghHeaders = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github.v3.html+json',
+    'User-Agent': 'HotSheet-Image-Proxy/1.0',
+  };
+
+  // Body images are the common case — try the issue's body_html first.
+  const issueRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${remoteId}`, { headers: ghHeaders });
+  if (issueRes.ok) {
+    const rawIssue: unknown = await issueRes.json();
+    const issue = GithubIssueBodyHtmlSchema.safeParse(rawIssue);
+    if (issue.success && issue.data.body_html != null && issue.data.body_html !== '') {
+      const fromBody = pickSignedUrl(issue.data.body_html, uuid);
+      if (fromBody != null) return fromBody;
+    }
+  }
+
+  // Fall back to comment images.
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${remoteId}/comments?per_page=100`, { headers: ghHeaders });
   if (!res.ok) return null;
   // HS-8567 — validate the GitHub response shape at the wire boundary.
   const rawComments: unknown = await res.json();
   const commentsResult = GithubCommentsArraySchema.safeParse(rawComments);
   if (!commentsResult.success) return null;
-  const comments = commentsResult.data;
 
-  for (const comment of comments) {
+  for (const comment of commentsResult.data) {
     if (comment.body_html == null || comment.body_html === '' || !comment.body_html.includes(uuid)) continue;
-    // Extract the signed URL from body_html — it's in an <img src="..."> tag.
-    const match = comment.body_html.match(
-      /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/,
-    );
-    if (match) return match[1];
+    const match = pickSignedUrl(comment.body_html, uuid);
+    if (match != null) return match;
   }
   return null;
 }

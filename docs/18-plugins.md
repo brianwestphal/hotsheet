@@ -268,7 +268,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 **Image proxy:**
 - `GET /api/plugins/:id/image-proxy?url=&project=` proxies images from private GitHub repos using the plugin's stored PAT.
 - For `raw.githubusercontent.com` URLs: fetches directly with Bearer auth (handles expired `?token=` parameters in old URLs).
-- For `github.com/user-attachments/assets/UUID` URLs: resolves the UUID by fetching the relevant comment with `Accept: application/vnd.github.v3.html+json` to obtain a JWT-signed `private-user-images.githubusercontent.com` URL, then fetches that.
+- For `github.com/user-attachments/assets/UUID` URLs (HS-8956): resolves the UUID by locating the ticket whose **`details` (issue body) OR `notes` (comment)** contains it, then reading the issue's rendered `body_html` (`Accept: application/vnd.github.v3.html+json`) — falling back to the comments' `body_html` — to obtain the JWT-signed `private-user-images.githubusercontent.com` URL (matched by the embedded UUID). The signed URL is then fetched **with NO `Authorization` header** — the `?jwt=` self-authorizes and a Bearer header yields HTTP 400. (A directly-supplied `private-user-images…` URL is likewise fetched without auth.) Pre-HS-8956 this scanned `notes` only and sent the Bearer header, so issue-body images never displayed.
 - The client rewrites `<img>` tags in rendered note markdown to go through the proxy, including the `project` query param for multi-project routing (since `<img>` tags can't send custom headers).
 - Notes containing images also render download links below the content (web: blob download via programmatic `<a download>`; Tauri: opens in system browser via `invoke('open_url')`).
 
@@ -315,6 +315,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 | `GET` | `/api/backends` | List active backends with icons. Filtered to per-project-enabled plugins whose required preferences are all populated (HS-8018) |
 | `GET` | `/api/sync/tickets` | Get synced ticket map (for UI indicators) |
 | `GET` | `/api/sync/conflicts` | List sync conflicts |
+| `GET` | `/api/sync/conflicts/summary` | Per-plugin conflict counts + name/icon for the banner (HS-8959) |
 | `POST` | `/api/sync/conflicts/:ticketId/resolve` | Resolve a conflict |
 
 ### 18.11 Plugin Management UI
@@ -329,6 +330,7 @@ A **Plugins** tab in the settings dialog (Lucide plug icon) provides:
 - **Plugin configuration dialog**: Opens via gear button or "Configure..." in context menu. Title shows project name (e.g. "GitHub Issues — Small Tale Configuration"). Content driven by the plugin's `configLayout` (groups, dividers, labels, buttons) or flat preferences fallback.
 - **Right-click context menu**: Configure, Enable/Disable, separator, Enable on All Projects, Disable on All Projects, separator, Uninstall (inline confirmation), separator, Show in Finder.
 - **Conflict resolution**: When conflicts exist, shown in the Plugins settings panel with Keep Local / Keep Remote buttons per conflict.
+- **Conflict banner (HS-8959)**: a top-of-window banner (`#sync-conflict-banner`, `src/client/syncConflictBanner.tsx`) surfaces unresolved conflicts so they're noticed without opening Settings. Mirrors the software-update banner's layout strip but neutral gray, showing the conflicting plugin's icon, a label (`<plugin>: N sync conflict(s) need resolution`, or `N … across M plugins`), and a red count badge. Clicking it opens Settings → Plugins and scrolls to the conflicts section. Driven by `GET /sync/conflicts/summary` (typed `getSyncConflictsSummary`) — generic across plugins, not GitHub-specific. Polled every 60 s (visible tab) + refreshed after a sync and after a conflict is resolved.
 
 ### 18.12 Plugin UI Extensions
 

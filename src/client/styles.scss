@@ -5004,6 +5004,63 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   flex-shrink: 0;
 }
 
+// HS-8959 — generic plugin sync-conflict banner. Mirrors `.update-banner`'s
+// layout-flow strip but in neutral gray (a problem to resolve, not an update),
+// with the conflicting plugin's icon and a red conflict-count badge. The whole
+// strip is clickable → opens Settings → Plugins.
+.sync-conflict-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #f3f4f6;
+  border-bottom: 2px solid #9ca3af;
+  font-size: 13px;
+  color: #374151;
+  flex-shrink: 0;
+  cursor: pointer;
+
+  &:hover { background: #e5e7eb; }
+}
+
+.sync-conflict-banner-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sync-conflict-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: #374151;
+
+  svg { width: 16px; height: 16px; display: block; }
+}
+
+.sync-conflict-banner-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sync-conflict-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .btn-accent {
   color: white;
   background: #22c55e;
