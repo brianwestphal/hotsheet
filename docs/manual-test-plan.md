@@ -729,7 +729,7 @@ The follower-redirect, server git-ops, and panel render/wiring are automated; th
 
 ### Distributed worker loop (HS-8863, docs/90 §90.5/§90.7)
 
-The loop invariants (claim/complete/release, no-double-claim across two workers, dead-worker reclaim, lease-loss skip, park-on-error, graceful stop) are automated in `workers/workerLoop.test.ts`; the launcher + skill generation are automated. These cover the end-to-end *real-agent* flow that can't be unit-tested:
+The loop invariants (claim/complete/release, no-double-claim across two workers, dead-worker reclaim, lease-loss skip, park-on-error, graceful stop) are automated in `workers/workerLoop.test.ts`; the launcher + skill generation are automated, and the launch route is integration-tested against a real temp git repo (`routes/workers.test.ts`, HS-8969). These cover the end-to-end *real-agent* flow that can't be unit-tested:
 
 - [ ] In a worktree terminal (HS-8936), run the **`/hotsheet-worker`** skill with several Up Next tickets queued. The worker claims the top ticket, marks it `started`, does the work, marks it `completed` + notes, releases, and immediately claims the next — repeating until the pool is empty, then calls `hotsheet_signal_done` and stops.
 - [ ] Run **two** worker terminals (two worktrees) against the same Hot Sheet at once. Every ticket is worked exactly once — no two workers grab the same ticket — and you can watch the claimed-by columns flip live in the owner UI.
