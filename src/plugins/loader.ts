@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -243,9 +244,40 @@ export function installBundledPlugin(pluginId: string): boolean {
   return false;
 }
 
-/** Copy bundled plugins from dist/plugins/ into ~/.hotsheet/plugins/ if not already present. */
-export function installBundledPlugins(): void {
-  const bundledDir = getBundledDir();
+/** Stable content fingerprint of a plugin directory: every file's relative path +
+ *  bytes, folded into one SHA-1 over a sorted walk. Lets `installBundledPlugins()`
+ *  notice a freshly rebuilt bundle whose manifest `version` is UNCHANGED (the normal
+ *  dev case — `npm run tauri:dev` rebuilds `dist/plugins/` but the version stays put)
+ *  and refresh the runtime copy instead of skipping it (HS-8952/8954/8955 — fixed
+ *  plugin code never reached `~/.hotsheet/plugins/`, so the stale copy kept running). */
+function hashPluginDir(dir: string): string {
+  const hash = createHash('sha1');
+  const walk = (rel: string): void => {
+    const entries = readdirSync(join(dir, rel), { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const childRel = rel === '' ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(childRel);
+      } else if (entry.isFile()) {
+        hash.update(childRel);
+        hash.update('\0');
+        hash.update(readFileSync(join(dir, childRel)));
+        hash.update('\0');
+      }
+    }
+  };
+  walk('');
+  return hash.digest('hex');
+}
+
+/** Copy bundled plugins from dist/plugins/ into ~/.hotsheet/plugins/ when the
+ *  install is missing, an older version, or a same-version rebuild with changed
+ *  content (HS-8952/8954/8955). Installs that are strictly newer than the bundle,
+ *  or byte-identical to it, are left alone. `bundledDir` is overridable so tests
+ *  can point at an isolated temp source (the real default path is repo-shared and
+ *  parallel test files race on it). */
+export function installBundledPlugins(bundledDir: string | null = getBundledDir()): void {
   if (bundledDir == null) return;
 
   const pluginDir = getPluginDir();
@@ -267,8 +299,15 @@ export function installBundledPlugins(): void {
       if (installedManifest && bundledManifest) {
         const entryFile = installedManifest.entry ?? 'index.js';
         const entryExists = existsSync(join(targetPath, entryFile));
-        if (entryExists && compareSemver(installedManifest.version, bundledManifest.version) >= 0) {
-          continue; // Valid install with same or newer version
+        const versionCmp = compareSemver(installedManifest.version, bundledManifest.version);
+        if (entryExists && versionCmp > 0) {
+          continue; // Installed is strictly newer than the bundle — keep it.
+        }
+        // Same version: only skip when the bundle is byte-identical to the install.
+        // A same-version rebuild with changed content (the dev case) falls through
+        // to the refresh below so the running app picks up the new plugin code.
+        if (entryExists && versionCmp === 0 && hashPluginDir(sourcePath) === hashPluginDir(targetPath)) {
+          continue;
         }
       }
       // Remove stale/broken install (symlink or directory) before replacing

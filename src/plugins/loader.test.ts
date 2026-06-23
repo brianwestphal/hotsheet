@@ -22,6 +22,7 @@ vi.mock('../keychain.js', () => ({
 const {
   compareSemver,
   discoverPlugins,
+  installBundledPlugins,
   dismissBundledPlugin,
   disablePlugin,
   enablePlugin,
@@ -323,6 +324,96 @@ describe('compareSemver', () => {
   it('handles missing patch/minor as 0', () => {
     expect(compareSemver('1', '1.0.0')).toBe(0);
     expect(compareSemver('1.0', '1.0.0')).toBe(0);
+  });
+});
+
+// --- installBundledPlugins: refresh on same-version content change (HS-8952/8954/8955) ---
+
+describe('installBundledPlugins', () => {
+  // Use an isolated temp source dir (passed explicitly) — NOT the repo-shared
+  // `<loader dir>/plugins` that getBundledDir() reads, which parallel test files
+  // would race on.
+  const bundledDir = join(tempHome, 'bundled-src');
+  const installDir = join(tempHome, '.hotsheet', 'plugins');
+  const dismissedPath = join(tempHome, '.hotsheet', 'dismissed-plugins.json');
+
+  const writeBundle = (id: string, version: string, entryBody: string): void => {
+    const dir = join(bundledDir, id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ id, name: id, version }));
+    writeFileSync(join(dir, 'index.js'), entryBody);
+  };
+  const installedEntry = (id: string): string =>
+    readFileSync(join(installDir, id, 'index.js'), 'utf-8');
+
+  beforeEach(() => {
+    try { rmSync(bundledDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { rmSync(installDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { rmSync(dismissedPath); } catch { /* ignore */ }
+    mkdirSync(installDir, { recursive: true });
+  });
+
+  afterAll(() => {
+    // Remove the temp bundled dir so other suites fall back to the real dist/plugins.
+    try { rmSync(bundledDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('installs a bundled plugin that is not yet present', () => {
+    writeBundle('fresh-plugin', '1.0.0', 'export const v = 1;');
+    installBundledPlugins(bundledDir);
+    expect(existsSync(join(installDir, 'fresh-plugin', 'index.js'))).toBe(true);
+    expect(installedEntry('fresh-plugin')).toBe('export const v = 1;');
+  });
+
+  it('refreshes the install when the bundle is rebuilt at the SAME version (the HS-8952/8954/8955 bug)', () => {
+    // First install — version 0.6.0, original code.
+    writeBundle('refresh-plugin', '0.6.0', 'export const fix = false;');
+    installBundledPlugins(bundledDir);
+    expect(installedEntry('refresh-plugin')).toBe('export const fix = false;');
+
+    // Rebuild the bundle with new code but WITHOUT bumping the version — exactly
+    // what `npm run tauri:dev` produces after a plugin source edit. Pre-fix the
+    // copy was skipped (compareSemver >= 0) and the stale runtime code kept running.
+    writeBundle('refresh-plugin', '0.6.0', 'export const fix = true;');
+    installBundledPlugins(bundledDir);
+    expect(installedEntry('refresh-plugin')).toBe('export const fix = true;');
+  });
+
+  it('is a no-op when the bundle is byte-identical to the install', () => {
+    writeBundle('stable-plugin', '1.0.0', 'export const x = 1;');
+    installBundledPlugins(bundledDir);
+    const before = installedEntry('stable-plugin');
+    installBundledPlugins(bundledDir); // second pass, no content change
+    expect(installedEntry('stable-plugin')).toBe(before);
+  });
+
+  it('does not clobber an install that is strictly newer than the bundle', () => {
+    // Simulate a user-installed newer version on disk.
+    const dir = join(installDir, 'newer-plugin');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ id: 'newer-plugin', name: 'newer-plugin', version: '2.0.0' }));
+    writeFileSync(join(dir, 'index.js'), 'export const local = true;');
+
+    writeBundle('newer-plugin', '1.0.0', 'export const local = false;');
+    installBundledPlugins(bundledDir);
+    expect(installedEntry('newer-plugin')).toBe('export const local = true;');
+  });
+
+  it('upgrades the install when the bundle has a newer version', () => {
+    writeBundle('upgrade-plugin', '1.0.0', 'export const gen = 1;');
+    installBundledPlugins(bundledDir);
+    expect(installedEntry('upgrade-plugin')).toBe('export const gen = 1;');
+
+    writeBundle('upgrade-plugin', '1.1.0', 'export const gen = 2;');
+    installBundledPlugins(bundledDir);
+    expect(installedEntry('upgrade-plugin')).toBe('export const gen = 2;');
+  });
+
+  it('skips a dismissed bundled plugin', () => {
+    writeBundle('dismissed-plugin', '1.0.0', 'export const y = 1;');
+    dismissBundledPlugin('dismissed-plugin');
+    installBundledPlugins(bundledDir);
+    expect(existsSync(join(installDir, 'dismissed-plugin'))).toBe(false);
   });
 });
 

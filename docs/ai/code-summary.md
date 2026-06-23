@@ -613,7 +613,7 @@ All timestamp columns are `TIMESTAMPTZ` (older DBs migrated in place).
 ## 7. Plugin system (`src/plugins/`)
 
 - **Feature flag:** `PLUGINS_ENABLED` in `src/feature-flags.ts` (default true; browser-safe via global fallback).
-- **Install location:** `~/.hotsheet/plugins/<id>/` (global, user-wide). Bundled plugins under `plugins/*` are copied there by `installBundledPlugins()` on startup if missing or outdated; dismissed plugins tracked in `~/.hotsheet/dismissed-plugins.json`.
+- **Install location:** `~/.hotsheet/plugins/<id>/` (global, user-wide). Bundled plugins under `plugins/*` are copied there by `installBundledPlugins()` on startup when missing, an older version, **or the same version with byte-different content** (`hashPluginDir()` SHA-1 over the dir — catches a rebuilt bundle whose `version` didn't change, the `npm run tauri:dev` dev loop; HS-8952/8954/8955: pre-fix a same-version rebuild was skipped so plugin fixes never reached the running copy). A strictly-newer or byte-identical install is left untouched; dismissed plugins tracked in `~/.hotsheet/dismissed-plugins.json`.
 - **Manifest:** `manifest.json` (or `package.json#hotsheet`). Fields: `id`, `name`, `version`, `description?`, `author?`, `entry?`, `icon?` (inline SVG), `preferences?`, `configLayout?`.
 - **Preferences:** `{ key, label, type: string|boolean|number|select|dropdown|combo, default?, description?, required?, secret?, scope?: "global"|"project", options? }`. `secret:true` routes through the keychain (`src/keychain.ts`) with dual-write file fallback.
 - **Entry exports:** `activate(ctx)`, `onAction(actionId, ctx)`, `validateField(key, value)`.

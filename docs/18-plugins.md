@@ -33,7 +33,7 @@ Plugins are directories containing either:
 - **Global directory**: `~/.hotsheet/plugins/` — all plugins live here.
 - Each plugin is a subdirectory (e.g. `~/.hotsheet/plugins/github-issues/`).
 - Plugin configuration is per-project, stored in the project's `settings` table with keys prefixed by `plugin:<id>:`.
-- **Bundled plugins**: Official plugins ship in `dist/plugins/`. On startup, `installBundledPlugins()` copies them to `~/.hotsheet/plugins/` if not present or outdated (version comparison).
+- **Bundled plugins**: Official plugins ship in `dist/plugins/`. On startup, `installBundledPlugins()` copies them to `~/.hotsheet/plugins/`. It refreshes the install when it is missing, an **older** version, or the **same version but byte-different** content (a `hashPluginDir()` SHA-1 over the directory) — the last case covers a rebuilt bundle whose `version` didn't change, which is the normal dev loop (`npm run tauri:dev` rebuilds `dist/plugins/` without bumping the version). An install that is strictly newer than the bundle, or byte-identical to it, is left untouched. *(Pre-fix this gated solely on `version >= bundled` and silently kept the stale copy, so same-version plugin fixes never reached the running app — HS-8952/8954/8955.)*
 - **Dismissed plugins**: When a bundled plugin is uninstalled, its ID is saved to `~/.hotsheet/dismissed-plugins.json`. The auto-installer skips dismissed plugins. Re-installing via "Find Plugins" clears the dismiss flag.
 - **Symlinks**: The install-from-disk flow creates symlinks. The discovery engine follows symlinks via `statSync()`.
 
