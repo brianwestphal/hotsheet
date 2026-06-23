@@ -7,6 +7,7 @@
 // concurrent Postgres; a no-op-but-safe serialization under single-connection
 // PGLite where the single UPDATE … RETURNING already prevents double-claim).
 import type { Ticket } from '../schemas.js';
+import { BLOCKED_TICKET_IDS_SQL } from './blockedBy.js';
 import { getDb } from './connection.js';
 import { updateTicket } from './tickets.js';
 
@@ -30,9 +31,9 @@ export interface ClaimRow {
 }
 
 /** Atomically claim the top claimable Up Next ticket for `worker`, or null when
- *  nothing is claimable. "Claimable" = up_next, actionable status, and either
- *  unclaimed or its lease has expired. NOTE: the flat `blocked_by` exclusion is
- *  added by HS-8865 (not yet built); claim-next is otherwise complete. */
+ *  nothing is claimable. "Claimable" = up_next, actionable status, not blocked by
+ *  an unfinished dependency (HS-8865), and either unclaimed or its lease has
+ *  expired. */
 export async function claimNext(
   worker: string,
   label: string | null,
@@ -45,6 +46,7 @@ export async function claimNext(
         WHERE up_next = TRUE
           AND status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
           AND (claimed_by IS NULL OR claim_lease_expires_at < NOW())
+          AND id NOT IN (${BLOCKED_TICKET_IDS_SQL})
         ORDER BY ${PRIORITY_ORD} ASC, id DESC
         FOR UPDATE SKIP LOCKED
         LIMIT 1

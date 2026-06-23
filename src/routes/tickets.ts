@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 
 // HS-8555 — centralized attachment-blob delete helper.
 import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
+import { getBlockedBy, isBlocked, setBlockedBy } from '../db/blockedBy.js';
 import { claimById, claimNext, getClaims, release, renewLease } from '../db/claims.js';
 import { getDb } from '../db/connection.js';
 import { createFeedbackDraft, deleteFeedbackDraft, listFeedbackDrafts, updateFeedbackDraft } from '../db/feedbackDrafts.js';
@@ -40,7 +41,7 @@ import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
 import {
-  BatchActionSchema, ClaimSchema, CreateTicketSchema, DuplicateSchema,
+  BatchActionSchema, BlockedBySchema, ClaimSchema, CreateTicketSchema, DuplicateSchema,
   FeedbackDraftCreateSchema, FeedbackDraftUpdateSchema,
   NotesBulkSchema, NotesEditSchema,   parseBody,
 QueryTicketsSchema, ReleaseSchema,
@@ -214,6 +215,26 @@ ticketRoutes.post('/tickets/:id/release', async (c) => {
   await release(id, parsed.data.worker ?? undefined);
   notifyMutation(c.get('dataDir'));
   return c.json({ ok: true });
+});
+
+// HS-8865 — flat blocked_by dependency gate (docs/90 §90.6).
+ticketRoutes.get('/tickets/:id/blocked-by', async (c) => {
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const [blockedBy, blocked] = await Promise.all([getBlockedBy(id), isBlocked(id)]);
+  return c.json({ blockedBy, blocked });
+});
+
+ticketRoutes.put('/tickets/:id/blocked-by', async (c) => {
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(BlockedBySchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const result = await setBlockedBy(id, parsed.data.blockerIds);
+  if (!result.ok) return c.json({ error: `blocked_by rejected: ${result.reason}`, reason: result.reason }, 400);
+  notifyMutation(c.get('dataDir'));
+  return c.json({ ok: true, blockedBy: result.blockedBy });
 });
 
 ticketRoutes.post('/tickets', async (c) => {

@@ -1,10 +1,11 @@
 # 90. Distributed Ticket Execution (claim / lease + worker pool)
 
-**Status: PARTIAL — design + the claim/lease primitive (HS-8862) SHIPPED
-2026-06-23.** §90.2-90.4 (schema, endpoints, MCP tools, lease sweep) are
-implemented (see §90.10 item 1); the worker loop / pool / dispatch / UI
-(§90.5-90.8) remain design-only. HS-8861 spike resolved here; supersedes the
-"finalize the claim model" half of HS-8861. No code this pass. This doc pins the
+**Status: PARTIAL — design + the claim/lease primitive (HS-8862) AND the flat
+`blocked_by` gate (HS-8865) SHIPPED 2026-06-23.** §90.2-90.4 (schema, endpoints,
+MCP tools, lease sweep) + §90.6 (the dependency gate) are implemented (see §90.10
+items 1-2); the worker loop / pool / dispatch / UI (§90.5, §90.7-90.8) remain
+design-only. HS-8861 spike resolved here; supersedes the "finalize the claim
+model" half of HS-8861. No code this pass. This doc pins the
 concrete schema, endpoints, MCP tools, lease semantics, coordination models, and
 the dynamically-scaled worker pool that [89-git-worktrees.md](89-git-worktrees.md)
 §89.2 Phase D consumes as its isolation layer.
@@ -191,16 +192,23 @@ Both modes coexist: a dispatched (pre-claimed) ticket is simply skipped by other
 workers' `claim-next` (it has a live lease); an undirected worker keeps pulling.
 The owner can dispatch a few related chunks and let the rest self-drain.
 
-## 90.6 Planning / dependency gate (flat `blocked_by`)
+## 90.6 Planning / dependency gate (flat `blocked_by`) — ✅ SHIPPED (HS-8865)
 
 To stop parallel workers grabbing a ticket whose prerequisite isn't done, the
 planning phase emits a **flat** dependency list (HS-8865), not a tree:
 
-- New `ticket_blocked_by (ticket_id, blocks_on_ticket_id)` join table (a ticket is
-  blocked while any `blocks_on` ticket is not `completed`/`verified`).
-- `claim-next` excludes blocked tickets (the `NOT IN (…)` clause in §90.2.3).
+- `ticket_blocked_by (ticket_id, blocks_on_ticket_id)` join table (a ticket is
+  blocked while any `blocks_on` ticket is not `completed`/`verified`). `src/db/blockedBy.ts`:
+  `setBlockedBy` (replace-set, rejects self/unknown/cycle via a `dependsOn` graph
+  walk), `getBlockedBy`, `isBlocked`, `getBlockedByMap`, `BLOCKED_TICKET_IDS_SQL`.
+- `claimNext` excludes blocked tickets via `AND id NOT IN (${BLOCKED_TICKET_IDS_SQL})`.
 - Resolving the last blocker makes a ticket claimable on the next pull — no
   re-planning needed.
+- API: `GET`/`PUT /tickets/:id/blocked-by` (typed `getTicketBlockedBy`/`setTicketBlockedBy`;
+  cycle/self/unknown → 400). MCP: `hotsheet_set_blocked_by` (`CHANNEL_VERSION` → 13,
+  19 tools) for a planning agent to express ordering.
+- Tests: `db/blockedBy.test.ts`, `routes/api.test.ts` (blocked-by block),
+  `channel.tools.test.ts` (+2).
 
 Flat only — **no hierarchical sub-tasks** (reverted 2026-03-23).
 
@@ -260,8 +268,11 @@ not per ticket. Detailed design in
    the 60 s lease-sweep timer (`src/claims/leaseSweepTimer.ts`). Tests:
    `db/claims.test.ts` (9), `routes/api.test.ts` claim block (4),
    `channel.tools.test.ts` (+4), `claims/leaseSweepTimer.test.ts` (4).
-2. **Flat `blocked_by` planning gate (HS-8865)** — the dependency table + the
-   `claim-next` exclusion + a planning pass that populates it.
+2. **Flat `blocked_by` planning gate (HS-8865)** — ✅ **SHIPPED** (2026-06-23):
+   `ticket_blocked_by` table + `src/db/blockedBy.ts` (set/get/isBlocked/cycle-check/
+   `BLOCKED_TICKET_IDS_SQL`) + the `claimNext` exclusion + `GET`/`PUT
+   /tickets/:id/blocked-by` + `hotsheet_set_blocked_by` MCP tool (`CHANNEL_VERSION`
+   → 13). Tests in `db/blockedBy.test.ts` + route + tool suites.
 3. **Distributed worker loop (HS-8863)** — the per-worker `claim → work → release`
    loop driving an agent terminal.
 4. **Claimed-by / in-flight UI (HS-8864)** — the chip + worker-pool panel.

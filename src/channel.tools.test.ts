@@ -53,7 +53,7 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // ---------------------------------------------------------------------------
 
 describe('listTools (HS-8346 + HS-8347)', () => {
-  it('returns the 18 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease)', () => {
+  it('returns the 19 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
@@ -72,6 +72,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
       'hotsheet_renew_lease',
       'hotsheet_request_feedback',
       'hotsheet_restore_ticket',
+      'hotsheet_set_blocked_by',
       'hotsheet_signal_done',
       'hotsheet_toggle_up_next',
       'hotsheet_update_ticket',
@@ -90,7 +91,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(18);
+    expect(_toolsForTesting).toHaveLength(19);
   });
 
   // HS-8771 — the announce tool proxies to the announcer endpoint.
@@ -744,5 +745,26 @@ describe('hotsheet_claim_next / renew_lease / release (HS-8862)', () => {
     const call = fetchSpy.mock.calls[0] as [string, { method: string }];
     expect(call[0]).toBe('http://localhost:4174/api/tickets/7/release');
     expect(call[1].method).toBe('POST');
+  });
+});
+
+describe('hotsheet_set_blocked_by (HS-8865)', () => {
+  it('PUTs /api/tickets/:id/blocked-by with {blockerIds}', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true,"blockedBy":[2,3]}' };
+    });
+    await callTool('hotsheet_set_blocked_by', { ticket_id: 9, blocker_ids: [2, 3] }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/9/blocked-by');
+    expect(call[1].method).toBe('PUT');
+    expect(JSON.parse(call[1].body)).toEqual({ blockerIds: [2, 3] });
+  });
+
+  it('Zod rejection — missing ticket_id', async () => {
+    const result = await callTool('hotsheet_set_blocked_by', { blocker_ids: [1] }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
   });
 });

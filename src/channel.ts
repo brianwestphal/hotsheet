@@ -61,7 +61,8 @@ import { HotsheetSettingsSchema } from './schemas.js';
 // v11 (HS-8772) — `hotsheet_announce` gained an optional `diff` input.
 // v12 (HS-8862) — added claim/lease tools: `hotsheet_claim_next` /
 //   `hotsheet_renew_lease` / `hotsheet_release` (18 tools total).
-export const CHANNEL_VERSION = 12;
+// v13 (HS-8865) — added `hotsheet_set_blocked_by` (flat dependency gate; 19 tools).
+export const CHANNEL_VERSION = 13;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';

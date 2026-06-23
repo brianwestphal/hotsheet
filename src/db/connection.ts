@@ -753,6 +753,21 @@ async function initSchema(db: PGlite): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_tickets_claimed_by ON tickets(claimed_by);
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (claim columns):', e.message); });
 
+  // HS-8865 — flat `blocked_by` dependency gate (docs/90 §90.6). A peer edge: a
+  // ticket is blocked while any ticket it `blocks_on` is not completed/verified.
+  // FLAT only (a scheduling gate), never a parent/child tree (sub-tasks reverted
+  // 2026-03-23). claim-next excludes blocked tickets so parallel workers don't
+  // grab a dependent before its prerequisites are done.
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS ticket_blocked_by (
+      ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      blocks_on_ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+      PRIMARY KEY (ticket_id, blocks_on_ticket_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_blocked_by_ticket ON ticket_blocked_by(ticket_id);
+    CREATE INDEX IF NOT EXISTS idx_blocked_by_blocker ON ticket_blocked_by(blocks_on_ticket_id);
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (ticket_blocked_by):', e.message); });
+
   // HS-8428 — draft-scoped attachments. A nullable `draft_id` lets the
   // server distinguish attachments that belong to an in-flight feedback
   // draft (rendered only inside the feedback dialog, not in the ticket's

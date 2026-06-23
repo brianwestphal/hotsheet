@@ -2067,3 +2067,62 @@ describe('claim/lease endpoints (HS-8862)', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('blocked_by gate endpoints (HS-8865)', () => {
+  async function mkTicket(title: string, upNext = false): Promise<number> {
+    const r = await app.request('/api/tickets', post({ title, defaults: { up_next: upNext } }));
+    return (await r.json() as TicketResponse).id;
+  }
+
+  it('PUT + GET /tickets/:id/blocked-by round-trips and reflects blocked state', async () => {
+    const dep = await mkTicket('dep', true);
+    const blk = await mkTicket('blk');
+    const put = await app.request(`/api/tickets/${dep}/blocked-by`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blockerIds: [blk] }),
+    });
+    expect(put.status).toBe(200);
+    expect((await put.json() as { ok: boolean; blockedBy: number[] }).blockedBy).toEqual([blk]);
+
+    const get = await (await app.request(`/api/tickets/${dep}/blocked-by`)).json() as { blockedBy: number[]; blocked: boolean };
+    expect(get.blockedBy).toEqual([blk]);
+    expect(get.blocked).toBe(true);
+  });
+
+  it('rejects a cycle with 400', async () => {
+    const a = await mkTicket('a');
+    const b = await mkTicket('b');
+    await app.request(`/api/tickets/${a}/blocked-by`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blockerIds: [b] }),
+    });
+    const cycle = await app.request(`/api/tickets/${b}/blocked-by`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blockerIds: [a] }),
+    });
+    expect(cycle.status).toBe(400);
+    expect((await cycle.json() as { reason: string }).reason).toBe('cycle');
+  });
+
+  it('a blocked ticket is not returned by claim-next until its blocker completes', async () => {
+    // This file shares one DB across tests, so earlier tests leave up_next /
+    // claimed tickets in the pool. Reset the claim-relevant state so claim-next's
+    // selection is deterministic: only `dep` + `blk` are claimable here.
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query("UPDATE tickets SET up_next = FALSE, claimed_by = NULL, claim_lease_expires_at = NULL, worker_label = NULL");
+
+    const dep = await mkTicket('dep blocked', true);
+    const blk = await mkTicket('the blocker', true);
+    await app.request(`/api/tickets/${dep}/blocked-by`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blockerIds: [blk] }),
+    });
+    // Claim the blocker (only unblocked up_next ticket), then nothing else is
+    // claimable (dep is blocked).
+    const first = await (await app.request('/api/tickets/claim-next', post({ worker: 'w1' }))).json() as { ticket: { id: number } | null };
+    expect(first.ticket?.id).toBe(blk);
+    const none = await (await app.request('/api/tickets/claim-next', post({ worker: 'w2' }))).json() as { ticket: unknown };
+    expect(none.ticket).toBeNull();
+    // Complete the blocker → dep becomes claimable.
+    await app.request(`/api/tickets/${blk}`, patch({ status: 'completed' }));
+    const got = await (await app.request('/api/tickets/claim-next', post({ worker: 'w2' }))).json() as { ticket: { id: number } | null };
+    expect(got.ticket?.id).toBe(dep);
+  });
+});

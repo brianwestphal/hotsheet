@@ -66,6 +66,12 @@ Tickets progress through these statuses:
 - Toggling up_next on a ticket whose status is `completed`, `verified`, `backlog`, or `archive` automatically resets the status to `not_started` so the ticket lands in the active workflow alongside the up_next flip. Pre-HS-7998 this only fired for completed / verified — backlog / archive items would star themselves but stay invisible from the Up Next column. Canonical predicate lives in `state.tsx::shouldResetStatusOnUpNext`, shared by the row toggle (`ticketRow.tsx`), the detail-panel star (`app.tsx::bindDetailUpNext`), and the multi-select batch toggle (`actions.ts`).
 - Moving a ticket to completed, verified, backlog, or archive automatically clears `up_next`.
 
+### 3.4.1 Blocked-by dependency gate (HS-8865)
+
+- A ticket may declare a **flat** list of other tickets it is `blocked_by` (a peer dependency edge — a scheduling gate, **not** a parent/child tree; hierarchical sub-tasks were tried and reverted 2026-03-23). Stored in the `ticket_blocked_by` join table (`src/db/blockedBy.ts`).
+- A ticket is **blocked** while any ticket it waits on is not `completed`/`verified`. The distributed-execution `claim-next` (see [90-distributed-execution.md](90-distributed-execution.md) §90.6) skips blocked tickets so parallel workers never start a dependent before its prerequisites finish. Completing the last blocker makes it claimable on the next pull — no re-planning.
+- Set via `PUT /api/tickets/:id/blocked-by` (`{blockerIds}`) or the `hotsheet_set_blocked_by` MCP tool (for a planning pass). A self-block, an unknown ticket, or a dependency **cycle** is rejected (400) so the gate can never deadlock.
+
 ### 3.5 Notes
 
 - Each note is a `{ id, text, created_at }` entry stored in a JSON array in the `notes` column.

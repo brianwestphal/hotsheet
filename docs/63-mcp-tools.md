@@ -69,6 +69,7 @@ A worker agent drains the Up Next pool in parallel without double-claiming.
 | `hotsheet_claim_next` | `POST /api/tickets/claim-next` | Atomically claim the top claimable Up Next ticket for `{worker, label?, ttlSeconds?}` (`SELECT … FOR UPDATE SKIP LOCKED`). Returns `{ticket}` or `{ticket:null}` when nothing is claimable |
 | `hotsheet_renew_lease` | `POST /api/tickets/:id/renew-lease` | Heartbeat — extend the lease while working a ticket. `{ok:false}` ⇒ the claim lapsed, re-claim |
 | `hotsheet_release` | `POST /api/tickets/:id/release` | Release a claim (on completion / handback). Idempotent |
+| `hotsheet_set_blocked_by` | `PUT /api/tickets/:id/blocked-by` | Set a ticket's flat dependency gate (`{ticket_id, blocker_ids}`) — claim-next skips it until every blocker is completed/verified. For a planning pass; rejects self/unknown/cycle (400). Flat only, never a tree (HS-8865) |
 
 ### Channel signaling
 
@@ -89,7 +90,7 @@ A worker agent drains the Up Next pool in parallel without double-claiming.
 | `hotsheet_query_tickets` | `POST /api/tickets/query` | Custom-view-style query over `{logic, conditions, sort_by?, sort_dir?, required_tag?, include_archived?}`. For agents that need to dig deeper than the worklist provides |
 | `hotsheet_announce` (HS-8771) | `POST /api/announcer/announce` | Push a curated §80 Announcer highlight (`{title, highlight}`) for a notable moment — pre-empts the derived narration queue with a low-latency entry (no AI summarization). No-op if the project hasn't enabled the Announcer. HS-8772 added an optional `diff` (`{oldStr, newStr, filePath?}`) → a §78.5 tier-2 code-diff visual rendered in the PIP. (15th tool; `CHANNEL_VERSION` → 10, then → 11 for the `diff` field.) |
 
-**Tool count: 18** (`CHANNEL_VERSION`/`EXPECTED_CHANNEL_VERSION` → 12 with the HS-8862 claim/lease trio).
+**Tool count: 19** (`CHANNEL_VERSION`/`EXPECTED_CHANNEL_VERSION` → 12 with the HS-8862 claim/lease trio, → 13 with HS-8865 `hotsheet_set_blocked_by`).
 
 **Deliberately not exposed:** `GET /api/tickets` (list), `GET /api/tags`, `GET /api/stats`, `GET /api/dashboard`, all settings/backups/projects/channel-management/gitignore/glassbox endpoints. The worklist file already gives the agent everything it needs for the standard flow; surfacing `list_tickets` trains agents to bypass the worklist. Agents that genuinely need these endpoints can `curl` them through the documented fallback path.
 

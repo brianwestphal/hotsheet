@@ -230,3 +230,18 @@ export async function getTicketClaims(): Promise<ClaimRow[]> {
   const r = await apiCall(ClaimsRespSchema, '/tickets/claims');
   return r.claims;
 }
+
+// --- HS-8865 — flat blocked_by dependency gate (docs/90 §90.6) ---
+
+const BlockedByRespSchema = z.object({ blockedBy: z.array(z.number()), blocked: z.boolean() });
+const SetBlockedByRespSchema = z.object({ ok: z.literal(true), blockedBy: z.array(z.number()) });
+
+/** GET `/tickets/:id/blocked-by` → the ticket's blockers + whether it's blocked. */
+export async function getTicketBlockedBy(id: number): Promise<z.infer<typeof BlockedByRespSchema>> {
+  return apiCall(BlockedByRespSchema, `/tickets/${id}/blocked-by`);
+}
+
+/** PUT `/tickets/:id/blocked-by` → replace the blocker set (400 on self/cycle/unknown). */
+export async function setTicketBlockedBy(id: number, blockerIds: number[]): Promise<z.infer<typeof SetBlockedByRespSchema>> {
+  return apiCall(SetBlockedByRespSchema, `/tickets/${id}/blocked-by`, { method: 'PUT', body: { blockerIds } });
+}

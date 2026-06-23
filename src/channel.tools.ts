@@ -211,6 +211,12 @@ const ReleaseInputSchema = z.object({
   worker: z.string().nullish().describe('The worker holding the claim; omit to force-release (owner)'),
 });
 
+// HS-8865 — flat blocked_by dependency gate (docs/90 §90.6).
+const SetBlockedByInputSchema = z.object({
+  ticket_id: z.number().int().describe('The dependent ticket whose blocker set to replace'),
+  blocker_ids: z.array(z.number().int()).describe('Ticket ids this one waits on (flat, replaces the existing set; [] clears). Rejected on self/cycle/unknown ticket.'),
+});
+
 const BatchInputSchema = z.object({
   ids: z.array(z.number().int()).min(1).describe('Ticket ids to operate on (one or more)'),
   action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']).describe('Batch action to apply'),
@@ -459,6 +465,15 @@ async function dispatchRelease(args: unknown, settings: ChannelSettings, fetchFn
   return await proxyRequest(settings, `/api/tickets/${String(id)}/release`, { method: 'POST', body: { worker } }, fetchFn);
 }
 
+async function dispatchSetBlockedBy(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = SetBlockedByInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_set_blocked_by — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { ticket_id, blocker_ids } = parsed.data;
+  return await proxyRequest(settings, `/api/tickets/${String(ticket_id)}/blocked-by`, { method: 'PUT', body: { blockerIds: blocker_ids } }, fetchFn);
+}
+
 // ---------------------------------------------------------------------------
 // Public tool catalog + top-level dispatcher.
 // ---------------------------------------------------------------------------
@@ -575,6 +590,12 @@ const TOOLS: ToolEntry[] = [
     description: 'Release a claim on a ticket (on completion or to hand it back). Idempotent. Pass the same `worker` that claimed it; omit `worker` only for an owner force-release.',
     inputSchema: ReleaseInputSchema,
     call: dispatchRelease,
+  },
+  {
+    name: 'hotsheet_set_blocked_by',
+    description: 'Set a ticket\'s flat dependency gate: the list of ticket ids it waits on (replaces the existing set; [] clears). A blocked ticket is skipped by claim-next until every blocker is completed/verified. For a planning pass to express ordering. Rejected (400) on a self-block, an unknown ticket, or a dependency cycle. FLAT only — not a parent/child tree.',
+    inputSchema: SetBlockedByInputSchema,
+    call: dispatchSetBlockedBy,
   },
   // HS-8771 — hybrid Announcer generation (§80).
   {

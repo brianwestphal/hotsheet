@@ -63,6 +63,11 @@ export const ReleaseSchema = z.object({
   worker: z.string().nullish(),
 });
 
+// HS-8865 — flat blocked_by dependency gate. Replace a ticket's blocker set.
+export const BlockedBySchema = z.object({
+  blockerIds: z.array(z.number().int()),
+});
+
 /** HS-7599 — feedback draft create/update payload. The client builds this
  *  from the in-progress feedback dialog state and POSTs to
  *  `/api/tickets/:id/feedback-drafts`. `partitions` mirrors the dialog's
