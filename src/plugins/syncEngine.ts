@@ -279,15 +279,27 @@ export async function getPendingSyncCounts(backend: TicketingBackend): Promise<P
     try {
       const { getDb } = await import('../db/connection.js');
       const db = await getDb();
+      // HS-8955 — only count records a push will actually attempt. `pushToRemote`
+      // skips any record whose sync_status != 'synced' (line ~552), so a ticket in
+      // `conflict` (or any non-synced) state can never be pushed away — counting it
+      // here left the badge stuck at ≥1 forever (the user's "never goes to 0" bug).
+      // Conflicts are surfaced separately by the plugin-settings conflicts section.
       const dirty = await db.query<{ n: number }>(
         `SELECT COUNT(*)::int AS n FROM ticket_sync ts
            JOIN tickets t ON t.id = ts.ticket_id
           WHERE ts.plugin_id = $1 AND t.status != 'deleted'
+            AND ts.sync_status = 'synced'
             AND t.updated_at > ts.local_updated_at`,
         [backend.id],
       );
+      // HS-8955 — `update` outbox entries are NOT pushed via the outbox; pushToRemote
+      // handles field updates through the dirty-ticket loop above (an edited synced
+      // ticket is also dirty). Counting them here double-counted a single edit (+1
+      // dirty, +1 outbox). Only create/delete entries represent additional pending
+      // work the dirty query doesn't already capture.
       const outbox = await getOutboxEntries(backend.id);
-      toPush = (dirty.rows[0]?.n ?? 0) + outbox.length;
+      const pendingOutbox = outbox.filter(e => e.action !== 'update').length;
+      toPush = (dirty.rows[0]?.n ?? 0) + pendingOutbox;
     } catch {
       // DB read failure — show 0 outgoing.
     }
@@ -433,7 +445,7 @@ async function handleNewRemote(
   const localTicket = await createTicketFromRemote(change.fields);
   await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
   // HS-8952 — pull any images embedded in the issue body into the attachments list.
-  await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details);
+  await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details, change.remoteId);
   return 'applied';
 }
 
@@ -444,10 +456,11 @@ async function pullBodyImages(
   ticketId: number,
   ticketNumber: string,
   body: string | undefined,
+  remoteId: string,
 ): Promise<void> {
   if (body == null || body === '') return;
   try {
-    await syncImagesFromBody(backend, ticketId, ticketNumber, getDataDir(), body);
+    await syncImagesFromBody(backend, ticketId, ticketNumber, getDataDir(), body, remoteId);
   } catch (e) {
     console.warn(`[sync] Image pull failed for ticket ${ticketId}: ${getErrorMessage(e)}`);
   }
@@ -488,10 +501,17 @@ async function handleExistingRemote(
     await applyFieldsToTicket(localTicket.id, change.fields);
     await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
     // HS-8952 — pull any newly-added body images into the attachments list.
-    await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details);
+    await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details, change.remoteId);
     return 'applied';
   }
 
+  // HS-8952 — backfill body images for an already-synced, unmodified ticket. A
+  // full pull (user-initiated "Sync") returns every issue, so this lets tickets
+  // that synced BEFORE body-image support gain their attachments retroactively.
+  // Idempotent + marker-gated: no images or already-pulled → cheap no-op, no
+  // network. (Incremental pulls don't return unmodified issues, so this only does
+  // real work on a full pull, once per image.)
+  await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details, change.remoteId);
   return 'skipped';
 }
 
@@ -785,5 +805,15 @@ export async function resolveConflict(
       'synced',
       syncRecord.remote_updated_at != null && syncRecord.remote_updated_at !== '' ? new Date(syncRecord.remote_updated_at) : null,
     );
+  }
+
+  // HS-8952 — the ticket is now synced; pull any images embedded in its body into
+  // the attachments list (a body image never surfaces while a ticket sits in
+  // conflict, since the apply paths are skipped). Idempotent + best-effort.
+  if (backend) {
+    const resolved = await getTicket(ticketId);
+    if (resolved) {
+      await pullBodyImages(backend, ticketId, resolved.ticket_number, resolved.details, syncRecord.remote_id);
+    }
   }
 }

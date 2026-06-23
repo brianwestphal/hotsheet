@@ -545,14 +545,51 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       }
     },
 
-    // HS-8952 — download an image referenced in an issue body (e.g. a pasted
-    // `github.com/user-attachments/assets/…` URL or an uploaded
-    // `raw.githubusercontent.com/…` asset) so the sync engine can store it as a
-    // local Hot Sheet attachment. `ghFetch` already follows redirects and sends
-    // the Bearer token, which private user-attachment URLs require.
-    async downloadAttachment(url) {
+    // HS-8952 — download an image referenced in an issue body so the sync engine
+    // can store it as a local Hot Sheet attachment.
+    //
+    // The tricky case is a pasted `https://github.com/user-attachments/assets/UUID`
+    // URL: GitHub does NOT serve those to a PAT (they require a browser session),
+    // so a direct authenticated fetch returns an HTML page, not the image. The
+    // working path — verified against real issues — is to read the issue's rendered
+    // `body_html` (which embeds a JWT-signed `private-user-images.githubusercontent.com`
+    // URL for each attachment) and fetch THAT signed URL. The signed URL is
+    // self-authorizing via its `?jwt=` query param and MUST be fetched WITHOUT an
+    // Authorization header — sending one yields HTTP 400 ("only one auth mechanism").
+    //
+    // `raw.githubusercontent.com` / other direct image URLs are fetched with the
+    // Bearer token as before.
+    async downloadAttachment(url, downloadContext) {
       try {
-        const res = await ghFetch(url, { headers: { Accept: 'application/octet-stream' } });
+        let fetchUrl = url;
+        let useAuth = true;
+
+        const isUserAttachment = /^https:\/\/github\.com\/user-attachments\//i.test(url);
+        if (isUserAttachment) {
+          const remoteId = downloadContext?.remoteId;
+          if (remoteId == null || remoteId === '') {
+            context.log('warn', `Cannot resolve user-attachment without a remote id: ${url}`);
+            return null;
+          }
+          const resolved = await resolveUserAttachmentSignedUrl(ghFetch, owner ?? '', repo ?? '', remoteId, url);
+          if (resolved == null) {
+            context.log('warn', `Could not resolve signed URL for user-attachment: ${url}`);
+            return null;
+          }
+          fetchUrl = resolved;
+          useAuth = false; // the signed URL's jwt self-authorizes; a Bearer header → 400
+        } else if (/^https:\/\/private-user-images\.githubusercontent\.com\//i.test(url)) {
+          // Already a signed URL — same no-auth rule applies.
+          useAuth = false;
+        }
+
+        const res = useAuth
+          ? await ghFetch(fetchUrl, { headers: { Accept: 'application/octet-stream' } })
+          : await fetch(fetchUrl, { headers: { Accept: 'application/octet-stream' } });
+        if (!res.ok) {
+          context.log('warn', `Failed to download attachment ${url}: HTTP ${res.status}`);
+          return null;
+        }
         const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
         if (!contentType.startsWith('image/')) {
           // A non-image response (e.g. an HTML login/redirect page) means we
@@ -561,7 +598,8 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
           return null;
         }
         const content = Buffer.from(await res.arrayBuffer());
-        const filename = attachmentFilename(url, res.headers.get('content-disposition'), contentType);
+        // Name from the ORIGINAL url (stable), falling back to the fetched URL.
+        const filename = attachmentFilename(url, res.headers.get('content-disposition'), contentType, fetchUrl);
         return { content, filename, mimeType: contentType };
       } catch (e) {
         context.log('warn', `Failed to download attachment ${url}: ${(e as Error).message}`);
@@ -575,9 +613,16 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
 }
 
 /** HS-8952 — best-effort display filename for a downloaded image: prefer the
- *  Content-Disposition filename, else the URL's last path segment if it carries
- *  an extension, else a synthesized `<stem>.<ext-from-mime>`. */
-function attachmentFilename(url: string, contentDisposition: string | null, contentType: string): string {
+ *  Content-Disposition filename, else the URL's (or the resolved URL's) last path
+ *  segment if it carries an extension, else a synthesized `<stem>.<ext-from-mime>`.
+ *  `resolvedUrl` is the actually-fetched URL (e.g. a signed `…/611-UUID.png`) which
+ *  often carries an extension the original `github.com/user-attachments/UUID` lacks. */
+function attachmentFilename(
+  url: string,
+  contentDisposition: string | null,
+  contentType: string,
+  resolvedUrl?: string,
+): string {
   const cd = contentDisposition?.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
   if (cd?.[1]) {
     try { return decodeURIComponent(cd[1].trim()); } catch { return cd[1].trim(); }
@@ -585,8 +630,39 @@ function attachmentFilename(url: string, contentDisposition: string | null, cont
   const lastSeg = url.split(/[?#]/)[0].split('/').pop() ?? '';
   if (lastSeg !== '' && /\.[a-z0-9]{2,5}$/i.test(lastSeg)) return lastSeg;
   const ext = extFromImageMime(contentType);
+  const resolvedSeg = (resolvedUrl ?? '').split(/[?#]/)[0].split('/').pop() ?? '';
+  if (resolvedSeg !== '' && /\.[a-z0-9]{2,5}$/i.test(resolvedSeg)) return resolvedSeg;
   const stem = lastSeg !== '' ? lastSeg : 'image';
   return `${stem}.${ext}`;
+}
+
+/** HS-8952 — resolve a `github.com/user-attachments/assets/UUID` URL to its
+ *  JWT-signed `private-user-images.githubusercontent.com` URL by reading the
+ *  issue's rendered `body_html`. GitHub refuses to serve user-attachment assets
+ *  to a PAT directly, but `body_html` embeds a signed URL per attachment whose
+ *  path carries the original UUID — so we match by that UUID. Returns null when
+ *  the issue can't be fetched or no matching signed URL is found. */
+async function resolveUserAttachmentSignedUrl(
+  ghFetch: (path: string, options?: RequestInit) => Promise<Response>,
+  owner: string,
+  repo: string,
+  remoteId: string,
+  url: string,
+): Promise<string | null> {
+  const uuid = url.split(/[?#]/)[0].split('/').pop() ?? '';
+  if (uuid === '') return null;
+  const res = await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}`, {
+    headers: { Accept: 'application/vnd.github.v3.html+json' },
+  });
+  const issue = await res.json() as { body_html?: string | null };
+  const bodyHtml = issue.body_html ?? '';
+  if (bodyHtml === '') return null;
+  const signed = [...bodyHtml.matchAll(
+    /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/gi,
+  )].map(m => m[1]);
+  // Prefer the signed URL whose path embeds this attachment's UUID; fall back to
+  // the sole signed URL when there's exactly one (single-image body).
+  return signed.find(s => s.includes(uuid)) ?? (signed.length === 1 ? signed[0] : null);
 }
 
 function extFromImageMime(contentType: string): string {

@@ -36,8 +36,13 @@ export interface TicketingBackend {
   pullChanges(since: Date | null): Promise<RemoteChange[]>;
   getRemoteTicket?(remoteId: string): Promise<RemoteTicketFields | null>;
   checkConnection(): Promise<{ connected: boolean; error?: string }>;
-  /** HS-8952 — download a remote image referenced in a synced body. */
-  downloadAttachment?(url: string): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
+  /** HS-8952 — download a remote image referenced in a synced body. `context.remoteId`
+   *  lets the backend resolve hosts (GitHub `user-attachments`) that need the item's
+   *  rendered body to obtain a fetchable signed URL. */
+  downloadAttachment?(
+    url: string,
+    context?: { remoteId?: string },
+  ): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
 }
 
 export interface BackendCapabilities {

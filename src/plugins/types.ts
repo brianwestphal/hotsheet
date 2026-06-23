@@ -216,8 +216,16 @@ export interface TicketingBackend {
   /** HS-8952 — download a remote image referenced in a synced ticket body so the
    *  sync engine can store it as a local Hot Sheet attachment. Returns null when
    *  the URL can't be fetched (auth, 404, non-image). `filename` is a best-effort
-   *  display name (from the URL / content-disposition). */
-  downloadAttachment?(url: string): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
+   *  display name (from the URL / content-disposition).
+   *
+   *  `context.remoteId` is the remote item (e.g. GitHub issue number) the image was
+   *  referenced from. Some hosts (GitHub `user-attachments/assets/UUID`) can't be
+   *  fetched with an API token directly — the backend resolves them via the item's
+   *  rendered body, which it can only locate given the remote id. */
+  downloadAttachment?(
+    url: string,
+    context?: { remoteId?: string },
+  ): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
 
   // --- Comments (notes sync) ---
 

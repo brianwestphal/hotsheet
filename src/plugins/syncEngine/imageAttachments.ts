@@ -38,6 +38,7 @@ export async function syncImagesFromBody(
   ticketNumber: string,
   dataDir: string,
   body: string | null | undefined,
+  remoteId: string,
 ): Promise<void> {
   if (!backend.downloadAttachment) return;
   const urls = extractImageRefs(body);
@@ -53,7 +54,7 @@ export async function syncImagesFromBody(
     const marker = imageMarker(url);
     if (already.has(marker)) continue;
     try {
-      const downloaded = await backend.downloadAttachment(url);
+      const downloaded = await backend.downloadAttachment(url, { remoteId });
       if (downloaded == null) continue;
       mkdirSync(attachDir, { recursive: true });
 

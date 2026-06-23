@@ -887,23 +887,69 @@ describe('github-issues plugin — downloadAttachment', () => {
 
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 
-  it('downloads an image asset, sending the Bearer token, and derives a filename from mime', async () => {
+  const UUID = '907c000d-dc1c-4a3e-9061-c1bcea8493eb';
+  const ASSET_URL = `https://github.com/user-attachments/assets/${UUID}`;
+  const SIGNED_URL = `https://private-user-images.githubusercontent.com/240811/611412874-${UUID}.png?jwt=eyJ0eXAiisJWT`;
+
+  it('resolves a user-attachments URL via issue body_html and downloads the signed URL WITHOUT auth (HS-8952)', async () => {
     const { backend } = await activateWith((url) => {
-      if (url.includes('user-attachments/assets/')) {
+      // The issue fetch (body_html) maps the UUID → a signed private-user-images URL.
+      if (url.includes('/issues/42')) {
+        return makeResponse(200, { body_html: `<p><img src="${SIGNED_URL}" /></p>` }, okHeaders);
+      }
+      // The signed URL serves the bytes.
+      if (url.includes('private-user-images.githubusercontent.com')) {
         return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png', ...okHeaders } });
       }
       return makeResponse(200, {}, okHeaders);
     });
 
-    const assetUrl = 'https://github.com/user-attachments/assets/abc-123';
-    const result = await (backend as any).downloadAttachment(assetUrl);
+    const result = await (backend as any).downloadAttachment(ASSET_URL, { remoteId: '42' });
     expect(result).not.toBeNull();
     expect(result.mimeType).toBe('image/png');
     expect(Buffer.from(result.content).equals(png)).toBe(true);
-    // No extension in the URL → synthesized from the mime type.
-    expect(result.filename).toBe('abc-123.png');
-    // The asset fetch carried the auth header.
-    const call = fetchCalls.find(c => c.url.includes('user-attachments/assets/'));
+    // Filename derived from the signed URL's path (the raw user-attachments URL has no extension).
+    expect(result.filename).toBe(`611412874-${UUID}.png`);
+
+    // The issue body_html was requested with the html media type.
+    const issueCall = fetchCalls.find(c => c.url.includes('/issues/42'));
+    expect((issueCall?.init?.headers as Record<string, string>).Accept).toBe('application/vnd.github.v3.html+json');
+
+    // CRITICAL: the signed URL fetch must NOT carry an Authorization header
+    // (the jwt self-authorizes; a Bearer header yields HTTP 400).
+    const signedCall = fetchCalls.find(c => c.url.includes('private-user-images.githubusercontent.com'));
+    expect((signedCall?.init?.headers as Record<string, string> | undefined)?.Authorization).toBeUndefined();
+  });
+
+  it('returns null for a user-attachments URL when no remote id is provided', async () => {
+    const { backend, logs } = await activateWith(() => makeResponse(200, {}, okHeaders));
+    const result = await (backend as any).downloadAttachment(ASSET_URL);
+    expect(result).toBeNull();
+    expect(logs.some(l => l.message.includes('without a remote id'))).toBe(true);
+  });
+
+  it('returns null when the issue body_html has no matching signed URL', async () => {
+    const { backend } = await activateWith((url) => {
+      if (url.includes('/issues/42')) return makeResponse(200, { body_html: '<p>no images here</p>' }, okHeaders);
+      return makeResponse(200, {}, okHeaders);
+    });
+    const result = await (backend as any).downloadAttachment(ASSET_URL, { remoteId: '42' });
+    expect(result).toBeNull();
+  });
+
+  it('downloads a direct (non-user-attachment) image asset with the Bearer token', async () => {
+    const { backend } = await activateWith((url) => {
+      if (url.includes('/asset')) {
+        return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png', ...okHeaders } });
+      }
+      return makeResponse(200, {}, okHeaders);
+    });
+
+    const result = await (backend as any).downloadAttachment('https://raw.githubusercontent.com/o/r/main/asset');
+    expect(result).not.toBeNull();
+    expect(result.mimeType).toBe('image/png');
+    // A direct fetch DOES carry the auth header.
+    const call = fetchCalls.find(c => c.url.includes('/asset'));
     expect((call?.init?.headers as Record<string, string>).Authorization).toBe('Bearer ghp_test');
   });
 

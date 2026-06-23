@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getAttachments } from '../db/attachments.js';
 import { getDb } from '../db/connection.js';
 import { createTicket, getTicket, updateTicket } from '../db/queries.js';
 import {
@@ -474,6 +475,55 @@ describe('sync engine — conflict resolution', () => {
 
     const syncRec = await getSyncRecord(ticket.id, 'mock-backend');
     expect(syncRec!.sync_status).toBe('synced');
+  });
+
+  // HS-8952 — a body image never pulls while a ticket sits in conflict (apply
+  // paths are skipped). Resolving the conflict must backfill its attachments.
+  it('pulls body images when a conflict is resolved (HS-8952)', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const body = '<img src="https://github.com/user-attachments/assets/zzz-1">';
+    const ticket = await createTicket('Conflict with image', { details: body });
+    const backend = createMockBackend();
+    backend.downloadAttachment = () => Promise.resolve({ content: png, filename: 'shot.png', mimeType: 'image/png' });
+    loaderMock.__registerBackend(backend);
+
+    await upsertSyncRecord(ticket.id, 'mock-backend', 'remote-img', 'synced');
+    const db = await getDb();
+    await db.query(
+      `UPDATE ticket_sync SET sync_status = 'conflict', conflict_data = $1
+       WHERE ticket_id = $2 AND plugin_id = 'mock-backend'`,
+      [JSON.stringify({ local: { details: body }, remote: { details: body } }), ticket.id],
+    );
+    expect(await getAttachments(ticket.id)).toHaveLength(0);
+
+    await resolveConflict(ticket.id, 'mock-backend', 'keep_remote');
+
+    expect(await getAttachments(ticket.id)).toHaveLength(1);
+  });
+});
+
+// HS-8952 — tickets that synced BEFORE body-image support must gain their
+// attachments on the next full pull (the unmodified "skipped" apply path).
+describe('sync engine — body-image backfill on full pull (HS-8952)', () => {
+  it('backfills body images for an already-synced, unmodified ticket on a full pull', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const body = '<img src="https://github.com/user-attachments/assets/backfill-1">';
+    const backend = createMockBackend([
+      { id: 'r-backfill', fields: { title: 'Has image', details: body, category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    // First sync runs WITHOUT image support (capability absent) → ticket synced, no image.
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend');
+    const rec = await getSyncRecordByRemoteId('mock-backend', 'r-backfill');
+    expect(rec).not.toBeNull();
+    expect(await getAttachments(rec!.ticket_id)).toHaveLength(0);
+
+    // Now the backend gains downloadAttachment; a FULL pull revisits the unmodified
+    // issue via the skip path and backfills the attachment.
+    backend.downloadAttachment = () => Promise.resolve({ content: png, filename: 'late.png', mimeType: 'image/png' });
+    await runSync('mock-backend', { fullPull: true });
+
+    expect(await getAttachments(rec!.ticket_id)).toHaveLength(1);
   });
 });
 
@@ -1052,5 +1102,43 @@ describe('sync engine — getPendingSyncCounts (HS-8791)', () => {
     loaderMock.__registerBackend(backend);
     const counts = await getPendingSyncCounts(backend);
     expect(counts.toPull).toBe(0); // best-effort: no throw
+  });
+
+  // HS-8955 — the "count never goes to 0" bug. A locally-modified ticket that is
+  // in `conflict` status is dirty, but pushToRemote skips non-`synced` records, so
+  // it can never be pushed away. It must NOT count toward toPush (conflicts are
+  // surfaced separately) — otherwise the badge sticks at ≥1 forever.
+  it('does NOT count a conflict ticket as toPush (HS-8955)', async () => {
+    const backend = createMockBackend([issue('r1', 'One', new Date())]);
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend');
+    const rec = await getSyncRecordByRemoteId('mock-backend', 'r1');
+    await new Promise(r => setTimeout(r, 10));
+    await updateTicket(rec!.ticket_id, { title: 'Edited locally' }); // now dirty
+    // Without the conflict, this edit would count as toPush.
+    expect((await getPendingSyncCounts(backend)).toPush).toBeGreaterThanOrEqual(1);
+
+    // Flip the record to conflict — push will skip it, so the count must drop it.
+    const db = await getDb();
+    await db.query("UPDATE ticket_sync SET sync_status = 'conflict' WHERE id = $1", [rec!.id]);
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPush).toBe(0);
+    expect(counts.total).toBe(0);
+  });
+
+  // HS-8955 — editing a synced ticket bumps both the dirty query AND queues an
+  // `update` outbox entry. pushToRemote pushes the edit via the dirty-ticket loop
+  // (not the outbox), so counting the outbox `update` double-counted one edit.
+  it('does not double-count an edited ticket via its update outbox entry (HS-8955)', async () => {
+    const backend = createMockBackend([issue('r1', 'One', new Date())]);
+    loaderMock.__registerBackend(backend);
+    await runSync('mock-backend');
+    const rec = await getSyncRecordByRemoteId('mock-backend', 'r1');
+    await new Promise(r => setTimeout(r, 10));
+    await updateTicket(rec!.ticket_id, { title: 'Edited locally' }); // dirty (+1)
+    await addToOutbox(rec!.ticket_id, 'mock-backend', 'update', { title: 'Edited locally' }); // would be +1
+
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPush).toBe(1); // not 2
   });
 });

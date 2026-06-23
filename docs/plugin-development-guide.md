@@ -270,7 +270,13 @@ interface TicketingBackend {
   uploadAttachment?(filename: string, content: Buffer, mimeType: string): Promise<string | null>;
   // HS-8952 — download a remote image referenced in a synced body so it can be
   // stored as a local attachment. Return null on auth failure / 404 / non-image.
-  downloadAttachment?(url: string): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
+  // context.remoteId identifies the item the image came from — needed when a host
+  // (e.g. GitHub user-attachments) can't be fetched directly and must be resolved
+  // via the item's rendered body to a fetchable signed URL.
+  downloadAttachment?(
+    url: string,
+    context?: { remoteId?: string },
+  ): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
 }
 ```
 

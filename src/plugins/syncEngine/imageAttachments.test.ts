@@ -24,7 +24,7 @@ describe('syncImagesFromBody (HS-8952)', () => {
     const download = vi.fn().mockResolvedValue({ content: PNG, filename: 'shot.png', mimeType: 'image/png' });
     const backend = backendWithDownload(download);
 
-    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, `<img src="${url}">`);
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, `<img src="${url}">`, '42');
 
     const atts = await getAttachments(ticket.id);
     expect(atts).toHaveLength(1);
@@ -35,6 +35,17 @@ describe('syncImagesFromBody (HS-8952)', () => {
     expect(download).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards the remote id to downloadAttachment so user-attachment URLs can be resolved', async () => {
+    const ticket = await createTicket('with image');
+    const url = 'https://github.com/user-attachments/assets/abc-123';
+    const download = vi.fn().mockResolvedValue({ content: PNG, filename: 'shot.png', mimeType: 'image/png' });
+    const backend = backendWithDownload(download);
+
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, `<img src="${url}">`, '99');
+
+    expect(download).toHaveBeenCalledWith(url, { remoteId: '99' });
+  });
+
   it('is idempotent across re-syncs (no duplicate attachment, no re-download)', async () => {
     const ticket = await createTicket('with image');
     const url = 'https://x.test/img.png';
@@ -42,8 +53,8 @@ describe('syncImagesFromBody (HS-8952)', () => {
     const backend = backendWithDownload(download);
     const body = `![](${url})`;
 
-    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, body);
-    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, body); // re-sync
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, body, '42');
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, body, '42'); // re-sync
 
     expect(await getAttachments(ticket.id)).toHaveLength(1);
     expect(download).toHaveBeenCalledTimes(1); // marker short-circuits the second pull
@@ -52,7 +63,7 @@ describe('syncImagesFromBody (HS-8952)', () => {
   it('no-ops when the backend cannot download', async () => {
     const ticket = await createTicket('with image');
     const backend = { id: 'gh-test' } as unknown as TicketingBackend; // no downloadAttachment
-    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, '<img src="https://x.test/a.png">');
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, '<img src="https://x.test/a.png">', '42');
     expect(await getAttachments(ticket.id)).toHaveLength(0);
   });
 
@@ -60,10 +71,10 @@ describe('syncImagesFromBody (HS-8952)', () => {
     const ticket = await createTicket('with image');
     const download = vi.fn().mockResolvedValue(null);
     const backend = backendWithDownload(download);
-    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, '<img src="https://x.test/a.png">');
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, '<img src="https://x.test/a.png">', '42');
     expect(await getAttachments(ticket.id)).toHaveLength(0);
     // A second pass tries again (no marker was written for a failed download).
-    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, '<img src="https://x.test/a.png">');
+    await syncImagesFromBody(backend, ticket.id, ticket.ticket_number, dataDir, '<img src="https://x.test/a.png">', '42');
     expect(download).toHaveBeenCalledTimes(2);
   });
 

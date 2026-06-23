@@ -89,7 +89,7 @@ Plugins that integrate with external ticketing systems return a `TicketingBacken
 
 **Attachments:**
 - `uploadAttachment(filename, content, mimeType)` — upload a file, returns a public URL. Returns null if uploads not configured.
-- `downloadAttachment(url)` — (optional, HS-8952) download a remote image referenced in a synced ticket body so it can be stored as a local attachment. Returns `{ content, filename, mimeType }` or null (auth failure / 404 / non-image).
+- `downloadAttachment(url, context?)` — (optional, HS-8952) download a remote image referenced in a synced ticket body so it can be stored as a local attachment. `context.remoteId` lets the backend resolve hosts (GitHub `user-attachments`) that need the item's rendered body to obtain a fetchable signed URL. Returns `{ content, filename, mimeType }` or null (auth failure / 404 / non-image).
 
 **Field validation:**
 - `validateField(key, value)` — (optional, exported from module) validate a config field value. Returns `{ status: 'error'|'warning'|'success', message }` or null.
@@ -225,6 +225,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 **Out-of-sync badge (HS-8791):**
 - The sync toolbar button shows a count badge of **how out of sync the project is in both directions** — `total = toPull + toPush`. Hidden when 0; capped display `99+`.
 - `getPendingSyncCounts(backend)` (`src/plugins/syncEngine.ts`) computes it read-only: **toPull** = remote items a sync would apply (new, or updated since last ingested — counted against the incremental watermark; one remote read), **toPush** = local tickets modified since their last sync (dirty) + queued outbox create/delete ops (only when the backend can write). A remote read failure degrades to `toPull = 0` rather than erroring.
+- **toPush counts only what a push will actually attempt (HS-8955):** the dirty query requires `sync_status = 'synced'` and the outbox count excludes `update` actions. `pushToRemote` skips non-`synced` records, so a `conflict` ticket can never be pushed away — counting it left the badge stuck at ≥1 forever (conflicts are surfaced separately by the Plugins-settings conflicts section). And an edited synced ticket is *both* dirty *and* has an `update` outbox entry, but the edit is pushed via the dirty-ticket loop (not the outbox) — counting the outbox entry double-counted one edit.
 - Server: `GET /api/plugins/:id/pending-count` → `{ toPull, toPush, total, ok }` (typed caller `getPluginPendingCount`); `ok:false` when the plugin is disabled/unconfigured for the project.
 - Client (`src/client/pluginSyncBadge.tsx`): polls **every 5 minutes while the tab is visible** for the active project's sync buttons (tagged `data-plugin-action="sync"`), and also refreshes right after a manual sync and after the toolbar re-renders. Started from `app.tsx`'s `reloadPluginToolbar`.
 
@@ -256,8 +257,10 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 
 **Body-image sync (pull — remote → local, HS-8952):**
 - When a remote change creates or updates a ticket, `syncImagesFromBody` (`src/plugins/syncEngine/imageAttachments.ts`) extracts image refs from the issue body — both raw `<img src="…">` tags (the common GitHub paste form) and markdown `![](…)` — via the pure `extractImageRefs` (`imageRefs.ts`).
-- Each http(s) image is downloaded through the backend's optional `downloadAttachment(url)` (the GitHub plugin fetches with the Bearer token, which private `user-attachments` URLs require) and written into `<dataDir>/attachments/<TICKET>_<name>` + recorded with `addAttachment`, so it shows in the Attachments list.
-- Idempotent across re-syncs via `note_sync` rows with an `img_<sha1(url)>` id; `data:`/relative refs and non-image responses are skipped. Best-effort — a failed download is logged and never derails the surrounding sync.
+- Each http(s) image is downloaded through the backend's optional `downloadAttachment(url, { remoteId })` and written into `<dataDir>/attachments/<TICKET>_<name>` + recorded with `addAttachment`, so it shows in the Attachments list.
+- **GitHub `user-attachments` resolution (the tricky case):** a pasted `github.com/user-attachments/assets/UUID` URL **cannot** be fetched with a PAT — GitHub serves those only to a browser session, so a direct authenticated fetch returns HTML, not the image. The GitHub plugin instead reads the issue's rendered `body_html` (`Accept: application/vnd.github.v3.html+json`), which embeds a JWT-signed `private-user-images.githubusercontent.com` URL per attachment whose path carries the original UUID, matches by that UUID, and fetches the signed URL **with no `Authorization` header** (the jwt self-authorizes; sending a Bearer header yields HTTP 400). `raw.githubusercontent.com`/other direct URLs are still fetched with the Bearer token. This is why `downloadAttachment` needs `remoteId` (to locate the issue).
+- Idempotent across re-syncs via `note_sync` rows with an `img_<sha1(url)>` id keyed on the **stable** raw URL (not the per-fetch signed URL); `data:`/relative refs and non-image responses are skipped. Best-effort — a failed download is logged and never derails the surrounding sync.
+- **Backfill:** the pull also runs on the unmodified "skipped" apply path (so a *full* sync gives tickets that synced before body-image support their attachments retroactively) and after `resolveConflict` (a body image never pulls while a ticket sits in `conflict`, since the apply paths are skipped).
 
 **First-push of a single ticket:**
 - The "Push to remote" context-menu action and the create-outbox flow both call `createRemote()` to push core fields, then immediately push notes and attachments for that ticket via `syncSingleTicketContent()` — otherwise notes and attachments would be silently dropped on the first push and only catch up on the next full sync.
