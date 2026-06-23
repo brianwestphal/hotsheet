@@ -31,7 +31,7 @@ export interface TicketingBackend {
   capabilities: BackendCapabilities;
   fieldMappings: FieldMappings;
   createRemote(ticket: Ticket): Promise<string>;
-  updateRemote(remoteId: string, changes: Partial<RemoteTicketFields>): Promise<void>;
+  updateRemote(remoteId: string, changes: Partial<RemoteTicketFields>): Promise<{ remoteUpdatedAt?: Date } | undefined>;
   deleteRemote(remoteId: string): Promise<void>;
   pullChanges(since: Date | null): Promise<RemoteChange[]>;
   getRemoteTicket?(remoteId: string): Promise<RemoteTicketFields | null>;

@@ -389,12 +389,19 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       }
 
       if (Object.keys(update).length > 0) {
-        await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}`, {
+        const res = await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(update),
         });
         context.log('info', `Updated issue #${remoteId}`);
+        // HS-8954/HS-8955 — return the issue's NEW updated_at so the sync engine
+        // advances its watermark past this push. Otherwise the next pull sees the
+        // bumped remote updated_at as a remote change and re-applies remote fields
+        // (clobbering local status moves like → backlog) while the out-of-sync
+        // count never reaches 0.
+        const issue = await res.json() as GitHubIssue;
+        if (issue.updated_at) return { remoteUpdatedAt: new Date(issue.updated_at) };
       }
     },
 

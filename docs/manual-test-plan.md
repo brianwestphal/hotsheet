@@ -264,6 +264,8 @@ Presence/absence of the badge + the isolation are automated (`src/cli.testMode.e
 - [ ] Verify via `security find-generic-password -s com.hotsheet.plugin.github-issues -a token -w`
 - [ ] If Keychain is locked/unavailable, falls back to file storage silently
 - [ ] On Linux: `secret-tool lookup service com.hotsheet.plugin.github-issues account token` returns the value
+- [ ] **HS-8954 status move survives sync.** Sync a GitHub repo, then move a synced ticket to **Backlog** (or Archive) — a status GitHub doesn't model. Click the **Sync** button (more than once). The ticket must STAY in Backlog; pre-fix the second sync reset it to **not_started**.
+- [ ] **HS-8955 out-of-sync count returns to 0.** After editing + syncing GitHub-synced tickets (incl. the Backlog move above), the sync toolbar badge count must settle to **0** once everything is pushed/pulled — it should not stay stuck at a non-zero number after a successful sync.
 - [ ] **HS-8952 GitHub body-image → attachment.** Create/edit a GitHub issue whose body has a pasted image (renders as `<img src="https://github.com/user-attachments/assets/…">`) or a markdown `![](url)` image. Sync the repo into Hot Sheet. Open the synced ticket's detail panel — the image appears in the **Attachments** list (downloaded into `.hotsheet/attachments/HS-NNNN_…`), and clicking it shows the image. Re-sync — no duplicate attachment is added (idempotent via the `img_` `note_sync` marker).
 
 ### API Keys registry (HS-8751, §79) — needs a real OS keychain

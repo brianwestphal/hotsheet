@@ -69,7 +69,7 @@ Plugins that integrate with external ticketing systems return a `TicketingBacken
 
 **CRUD:**
 - `createRemote(ticket)` — create a ticket remotely, returns the remote ID.
-- `updateRemote(remoteId, changes)` — update fields on a remote ticket.
+- `updateRemote(remoteId, changes)` — update fields on a remote ticket. **HS-8954/HS-8955** — should return `{ remoteUpdatedAt }` (the remote's new modification time) so the engine advances the sync record's watermark past its own push; otherwise the next pull mistakes the push for a remote change.
 - `deleteRemote(remoteId)` — delete or close a remote ticket.
 
 **Sync:**
@@ -208,7 +208,7 @@ The sync engine orchestrates bidirectional synchronization between the local dat
 **Push (local → remote):**
 - Uses direct comparison: for each synced ticket, compares `ticket.updated_at` with `ticket_sync.local_updated_at`.
 - If the local ticket was modified since last sync, pushes ALL current field values via `updateRemote()`.
-- After push, `local_updated_at` is updated to the ticket's current `updated_at`.
+- After push, `local_updated_at` is updated to the ticket's current `updated_at`, **and `remote_updated_at` is advanced to the value `updateRemote()` returns** (HS-8954/HS-8955). A push edits the remote, which bumps the remote's `updated_at`; without recording that, the next pull treats the push's own edit as a remote change — re-applying remote fields (e.g. resetting a local `backlog`/`archive` move back to `not_started`, since GitHub doesn't model those statuses) and keeping the out-of-sync count permanently above 0.
 - Create/delete operations use the `sync_outbox` queue. Outbox create entries are skipped if the ticket already has a sync record (prevents duplicates when push-ticket and auto-create race).
 - Stale outbox entries (5+ failures) are permanently removed.
 

@@ -95,7 +95,9 @@ function createMockBackend(issues: MockIssue[] = []): TicketingBackend & { issue
       if (!issue) throw new Error(`Issue ${remoteId} not found`);
       Object.assign(issue.fields, changes);
       issue.updatedAt = new Date();
-      return Promise.resolve();
+      // HS-8954/HS-8955 — like the real GitHub PATCH, the edit bumps the remote's
+      // updatedAt; return it so the engine can advance its watermark past the push.
+      return Promise.resolve({ remoteUpdatedAt: issue.updatedAt });
     },
     deleteRemote(remoteId) {
       const issue = issues.find(i => i.id === remoteId);
@@ -393,6 +395,40 @@ describe('sync engine — push', () => {
     const result = await runSync('mock-backend');
     expect(result.ok).toBe(true);
     expect(backend.issues[0].deleted).toBe(true);
+  });
+});
+
+describe('sync engine — push watermark advances past our own edit (HS-8954 / HS-8955)', () => {
+  it('a local status move is not clobbered by repeated full syncs, and the pending count settles to 0', async () => {
+    // Unique plugin id so getPendingSyncCounts (which is global per plugin) sees
+    // only this test's record, not leftover dirty/conflict records from the
+    // shared test DB.
+    const backend = createMockBackend([
+      { id: 'remote-wm', fields: { title: 'WM', details: '', category: 'issue', priority: 'default', status: 'not_started', tags: [], up_next: false }, updatedAt: new Date(), deleted: false },
+    ]);
+    backend.id = 'mock-backend-wm';
+    loaderMock.__registerBackend(backend);
+
+    // First sync establishes the local ticket + sync record.
+    await runSync('mock-backend-wm', { fullPull: true });
+    const db = await getDb();
+    const row = await db.query<{ id: number }>("SELECT ts.ticket_id AS id FROM ticket_sync ts WHERE ts.plugin_id = 'mock-backend-wm'");
+    const ticketId = row.rows[0].id;
+
+    // User moves it to a local-only status GitHub doesn't model.
+    await updateTicket(ticketId, { status: 'backlog' });
+
+    // Two full syncs — the manual "Sync" button uses fullPull. The first pushes
+    // (bumping the remote updatedAt); the second is the "click Sync again" that
+    // pre-fix re-applied the remote `not_started` over the local `backlog`.
+    await runSync('mock-backend-wm', { fullPull: true });
+    await runSync('mock-backend-wm', { fullPull: true });
+
+    const after = await getTicket(ticketId);
+    expect(after?.status).toBe('backlog'); // HS-8954 — survived; not reset to not_started
+
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.total).toBe(0); // HS-8955 — out-of-sync count returns to 0
   });
 });
 

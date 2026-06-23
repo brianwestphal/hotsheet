@@ -560,8 +560,13 @@ async function pushToRemote(backend: TicketingBackend): Promise<{ pushed: number
     // Push all current field values
     try {
       const fields = extractTicketFields(ticket);
-      await backend.updateRemote(syncRecord.remote_id, fields);
-      await upsertSyncRecord(ticket.id, backend.id, syncRecord.remote_id, 'synced');
+      // HS-8954/HS-8955 — capture the remote's new updatedAt so the watermark
+      // advances past our own push. Without it the next pull treats the push's
+      // edit as a remote change, re-applies remote fields (e.g. clobbering a
+      // local → backlog move back to not_started), and the out-of-sync count
+      // never returns to 0.
+      const pushResult = await backend.updateRemote(syncRecord.remote_id, fields);
+      await upsertSyncRecord(ticket.id, backend.id, syncRecord.remote_id, 'synced', pushResult?.remoteUpdatedAt ?? null);
       pushed++;
     } catch (e) {
       const msg = getErrorMessage(e);

@@ -321,6 +321,16 @@ describe('github-issues plugin — updateRemote', () => {
     expect(fetchCalls.filter(c => !c.init?.method || c.init?.method === 'GET').length).toBe(0);
   });
 
+  it('HS-8954/HS-8955 — returns the PATCH response updated_at so the engine can advance its watermark', async () => {
+    const newUpdatedAt = '2026-06-23T12:34:56Z';
+    const { backend } = await activateWith((url, init) => {
+      if (init?.method === 'PATCH') return makeResponse(200, { number: 10, updated_at: newUpdatedAt }, okHeaders);
+      return makeResponse(200, {}, okHeaders);
+    });
+    const res = await backend.updateRemote('10', { title: 'New Title', details: 'b' });
+    expect(res?.remoteUpdatedAt?.getTime()).toBe(new Date(newUpdatedAt).getTime());
+  });
+
   it('rebuilds labels when category changes, preserving user labels', async () => {
     const existingIssue = {
       number: 10, title: 'Old', body: '', state: 'open',

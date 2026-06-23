@@ -182,8 +182,12 @@ export interface TicketingBackend {
 
   /** Create a ticket in the remote system. Returns the remote ID. */
   createRemote(ticket: Ticket): Promise<string>;
-  /** Update fields on a remote ticket. */
-  updateRemote(remoteId: string, changes: Partial<RemoteTicketFields>): Promise<void>;
+  /** Update fields on a remote ticket. HS-8954/HS-8955 — return the remote's
+   *  NEW `updatedAt` (the edit bumps it) so the sync record's watermark can
+   *  advance past our own push; otherwise the next pull mistakes our push for a
+   *  remote change, clobbers local edits, and the out-of-sync count never
+   *  clears. Returning nothing is allowed (watermark falls back to unchanged). */
+  updateRemote(remoteId: string, changes: Partial<RemoteTicketFields>): Promise<{ remoteUpdatedAt?: Date } | undefined>;
   /** Delete or close a ticket in the remote system. */
   deleteRemote(remoteId: string): Promise<void>;
 
