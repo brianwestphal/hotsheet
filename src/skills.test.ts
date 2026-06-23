@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -134,6 +134,22 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('worklist.md');
     expect(content).toContain(`hotsheet-skill-version: ${SKILL_VERSION}`);
     expect(content).toContain('allowed-tools: Read, Grep, Glob, Edit, Write, Bash');
+  });
+
+  it('HS-8936 — ensureSkillsForDir dataDir override points the worktree skill at the OWNER worklist', () => {
+    const ownerData = join(tempDir, 'owner', '.hotsheet');
+    mkdirSync(ownerData, { recursive: true });
+    const wtRoot = join(tempDir, 'wt');
+    mkdirSync(join(wtRoot, '.claude'), { recursive: true }); // force the Claude path regardless of PATH
+
+    ensureSkillsForDir(wtRoot, undefined, ownerData);
+
+    const mainSkill = join(wtRoot, '.claude', 'skills', 'hotsheet', 'SKILL.md');
+    expect(existsSync(mainSkill)).toBe(true);
+    const content = readFileSync(mainSkill, 'utf-8');
+    // The worklist reference is relative to the worktree root but resolves to the
+    // OWNER's .hotsheet (the follower has no worklist of its own).
+    expect(content).toContain(relative(wtRoot, join(ownerData, 'worklist.md')));
   });
 
   it('creates per-category ticket skills', () => {

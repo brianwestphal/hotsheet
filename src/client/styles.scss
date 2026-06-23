@@ -9996,7 +9996,7 @@ label.detail-details-label {
 .worktree-row {
   display: grid;
   grid-template-columns: 1fr auto;
-  grid-template-areas: "main remove" "path remove";
+  grid-template-areas: "main actions" "path actions";
   gap: 2px 8px;
   align-items: center;
   padding: 8px 0;
@@ -10016,7 +10016,7 @@ label.detail-details-label {
     grid-area: path; font-size: 11px; color: var(--text-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .worktree-remove-btn { grid-area: remove; }
+  .worktree-row-actions { grid-area: actions; display: flex; align-items: center; gap: 6px; }
 }
 
 .worktrees-create {

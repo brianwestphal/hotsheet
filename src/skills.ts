@@ -120,8 +120,10 @@ export function updateFile(path: string, content: string): boolean {
 
 // --- Shared content ---
 
-function ticketSkillBody(skill: SkillDef, projectRoot: string): string {
-  const dataDir = join(projectRoot, '.hotsheet');
+function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string = join(projectRoot, '.hotsheet')): string {
+  // HS-8936 — `dataDir` defaults to this project's own `.hotsheet`, but a git
+  // worktree (follower) passes the OWNER's `.hotsheet` so the skill's worklist
+  // path + port/secret point at the shared instance (docs/89 §89.2 Phase C).
   const settings = readFileSettings(dataDir);
   // HS-8390 — settings.port wins; fall back to skillsState.port; final
   // fallback to a placeholder if neither is set (production code always
@@ -164,8 +166,11 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string): string {
   return lines.join('\n');
 }
 
-function mainSkillBody(projectRoot: string): string {
-  const dataDir = join(projectRoot, '.hotsheet');
+function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, '.hotsheet')): string {
+  // HS-8936 — `dataDir` defaults to this project's `.hotsheet`; a worktree
+  // follower passes the OWNER's `.hotsheet` so `/hotsheet` reads the shared
+  // worklist (the follower has none of its own). The paths stay relative to the
+  // worktree root, so they read e.g. `../<repo>/.hotsheet/worklist.md`.
   const worklistRel = relative(projectRoot, join(dataDir, 'worklist.md'));
   const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
   // HS-8022 — the HS-7992 `hotsheet_skill_clear_context` toggle was removed.
@@ -314,7 +319,7 @@ function ensureClaudePermissions(cwd: string): boolean {
 
 // --- Claude Code (.claude/skills/*/SKILL.md) ---
 
-function ensureClaudeSkills(cwd: string): boolean {
+function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   let updated = false;
   const skillsDir = join(cwd, '.claude', 'skills');
 
@@ -332,7 +337,7 @@ function ensureClaudeSkills(cwd: string): boolean {
     '---',
     versionHeader(),
     '',
-    mainSkillBody(cwd),
+    mainSkillBody(cwd, dataDir),
     '',
   ].join('\n');
   if (updateFile(join(mainDir, 'SKILL.md'), mainContent)) updated = true;
@@ -349,7 +354,7 @@ function ensureClaudeSkills(cwd: string): boolean {
       '---',
       versionHeader(),
       '',
-      ticketSkillBody(skill, cwd),
+      ticketSkillBody(skill, cwd, dataDir),
       '',
     ].join('\n');
     if (updateFile(join(dir, 'SKILL.md'), content)) updated = true;
@@ -485,7 +490,7 @@ function ensureWindsurfRules(cwd: string): boolean {
  *  project ran without the Hot Sheet skill in scope. Copilot keeps
  *  the folder-only gate because there's no reliable executable
  *  name to probe for (it lives inside VS Code as an extension). */
-export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef[]): string[] {
+export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef[], dataDir: string = join(projectRoot, '.hotsheet')): string[] {
   // HS-8910 — generate against THIS project's categories, not whatever the
   // process-global `skillsState.categories` was last set to. The "ensure skills
   // for ALL projects" loops (dashboard.ts / channel.ts / cli.ts) pass each
@@ -498,7 +503,10 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   const platforms: string[] = [];
 
   if (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude'))) {
-    if (ensureClaudeSkills(projectRoot)) platforms.push('Claude Code');
+    // HS-8936 — `dataDir` defaults to `projectRoot/.hotsheet`; a worktree follower
+    // passes the OWNER's `.hotsheet` so `/hotsheet` + the curl skills target the
+    // shared instance's worklist + port/secret (docs/89 §89.2 Phase C).
+    if (ensureClaudeSkills(projectRoot, dataDir)) platforms.push('Claude Code');
   }
   if (isExecutableOnPath('cursor') || existsSync(join(projectRoot, '.cursor'))) {
     if (ensureCursorRules(projectRoot)) platforms.push('Cursor');

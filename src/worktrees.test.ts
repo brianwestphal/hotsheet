@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { basename, join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -94,6 +94,14 @@ describe('worktrees — real git', () => {
     expect(list[0].authoritativeDataDir).toBeNull();
     const follower = list.find(w => w.branch === 'feature-x');
     expect(follower?.authoritativeDataDir).toBe(resolve(ownerData));
+
+    // HS-8936 — the agent wiring landed: a `.mcp.json` at the worktree root
+    // registering the channel for the OWNER's data dir (so the worktree's
+    // hotsheet_* tools drive the shared instance).
+    const mcp = JSON.parse(readFileSync(join(wt.path, '.mcp.json'), 'utf-8')) as { mcpServers: Record<string, { args: string[] }> };
+    const serverKey = Object.keys(mcp.mcpServers).find(k => k.startsWith('hotsheet-channel-'));
+    expect(serverKey).toBeDefined();
+    expect(mcp.mcpServers[serverKey!].args).toContain(resolve(ownerData));
 
     // Removed (force: the worktree has an untracked .hotsheet/).
     await removeWorktree(repoRoot, wt.path, { force: true });

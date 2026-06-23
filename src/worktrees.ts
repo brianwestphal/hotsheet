@@ -20,8 +20,10 @@ import { mkdirSync, realpathSync } from 'fs';
 import { basename, join, resolve } from 'path';
 import { promisify } from 'util';
 
+import { registerChannelAt } from './channel-config.js';
 import { readFileSettings, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
+import { ensureSkillsForDir } from './skills.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -140,6 +142,13 @@ export async function createWorktree(
   // Defensive: ensure the worktree's `.hotsheet/` is gitignored (no-op when the
   // repo already ignores it repo-wide, which is the normal case).
   ensureGitignore(path);
+
+  // HS-8936 (Phase C wiring) — make the worktree's AI agent talk to the OWNER's
+  // Hot Sheet: write the channel `.mcp.json` (owner-direct) at the worktree root
+  // + the skills whose `/hotsheet` worklist + curl port/secret point at the
+  // owner. Best-effort: a wiring hiccup must never fail worktree creation.
+  try { registerChannelAt(path, owner); } catch { /* best-effort agent wiring */ }
+  try { ensureSkillsForDir(path, undefined, owner); } catch { /* best-effort agent wiring */ }
 
   const list = await listWorktrees(repoRoot, git);
   return list.find(w => canonical(w.path) === canonical(path))

@@ -715,6 +715,7 @@ The follower-redirect, server git-ops, and panel render/wiring are automated; th
 - [ ] Create a worktree (branch name + "New branch") — it appears in the list with a **follower** badge, and a sibling `../<repo>-worktrees/<branch>` directory is created with a `.hotsheet/settings.json` pointing at the main project's `.hotsheet`.
 - [ ] Launching Hot Sheet (or a Claude terminal) from the worktree shares the **same** tickets as the main project (no separate DB); the real `<worktree>/.hotsheet/db` is not created.
 - [ ] Remove a worktree from the panel (confirm dialog) — it disappears from the list and the directory is gone; the branch is kept.
+- [ ] **HS-8936** — click "Open terminal" on a worktree row: a drawer terminal opens with cwd = the worktree, running `claude`. Inside it, `/hotsheet` reads the **owner's** worklist and `hotsheet_*` MCP tools act on the **same** tickets as the main project (the worktree's `.mcp.json` + skills point at the owner). The worktree's `.mcp.json` registers the owner's `--data-dir`.
 
 ---
 

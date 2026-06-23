@@ -26,8 +26,13 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 /** Build one worktree row. `onRemove` is omitted for the main worktree (which
- *  can't be removed). Exported for unit tests. */
-export function renderWorktreeRow(wt: WorktreeInfo, onRemove?: (wt: WorktreeInfo) => void): HTMLElement {
+ *  can't be removed); `onOpenTerminal` opens an AI terminal in that worktree.
+ *  Exported for unit tests. */
+export function renderWorktreeRow(
+  wt: WorktreeInfo,
+  onRemove?: (wt: WorktreeInfo) => void,
+  onOpenTerminal?: (wt: WorktreeInfo) => void,
+): HTMLElement {
   const branchLabel = wt.branch ?? '(detached)';
   const row = toElement(
     <div className="worktree-row" data-path={wt.path}>
@@ -37,15 +42,35 @@ export function renderWorktreeRow(wt: WorktreeInfo, onRemove?: (wt: WorktreeInfo
         {!wt.isMain && wt.authoritativeDataDir !== null ? <span className="worktree-badge worktree-badge-follower">follower</span> : null}
       </div>
       <div className="worktree-path" title={wt.path}>{wt.path}</div>
-      {!wt.isMain && onRemove !== undefined
-        ? <button type="button" className="btn btn-sm btn-danger worktree-remove-btn">Remove</button>
-        : null}
+      <div className="worktree-row-actions">
+        {onOpenTerminal !== undefined
+          ? <button type="button" className="btn btn-sm worktree-terminal-btn">Open terminal</button>
+          : null}
+        {!wt.isMain && onRemove !== undefined
+          ? <button type="button" className="btn btn-sm btn-danger worktree-remove-btn">Remove</button>
+          : null}
+      </div>
     </div>
   );
+  if (onOpenTerminal !== undefined) {
+    row.querySelector('.worktree-terminal-btn')?.addEventListener('click', () => onOpenTerminal(wt));
+  }
   if (!wt.isMain && onRemove !== undefined) {
     row.querySelector('.worktree-remove-btn')?.addEventListener('click', () => onRemove(wt));
   }
   return row;
+}
+
+/** Open a Claude terminal in a worktree's directory. Its `.mcp.json` (written at
+ *  create time) points the agent's `hotsheet_*` tools at the owner Hot Sheet. */
+async function handleOpenTerminal(wt: WorktreeInfo): Promise<void> {
+  closeWorktreesPanel();
+  try {
+    const { openTerminalRunningCommand } = await import('./terminal.js');
+    await openTerminalRunningCommand('claude', `wt: ${wt.branch ?? 'worktree'}`, wt.path);
+  } catch (e) {
+    showToast(`Couldn't open terminal: ${getErrorMessage(e)}`);
+  }
 }
 
 /** Fetch + render the worktree list into `bodyEl`. Exported for tests. */
@@ -62,7 +87,11 @@ export async function refreshWorktreeList(bodyEl: HTMLElement): Promise<void> {
     bodyEl.replaceChildren(toElement(<div className="worktrees-empty">No worktrees.</div>));
     return;
   }
-  const rows = list.map(wt => renderWorktreeRow(wt, wt.isMain ? undefined : (w) => void handleRemove(w, bodyEl)));
+  const rows = list.map(wt => renderWorktreeRow(
+    wt,
+    wt.isMain ? undefined : (w) => void handleRemove(w, bodyEl),
+    (w) => void handleOpenTerminal(w),
+  ));
   bodyEl.replaceChildren(...rows);
 }
 

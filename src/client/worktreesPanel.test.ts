@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createWorktree, listWorktrees, removeWorktree, type WorktreeInfo } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
+import { openTerminalRunningCommand } from './terminal.js';
 import {
   closeWorktreesPanel, openWorktreesPanel, refreshWorktreeList, renderWorktreeRow,
 } from './worktreesPanel.js';
@@ -14,11 +15,13 @@ vi.mock('../api/index.js', () => ({
 }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
+vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn() }));
 
 const mockList = vi.mocked(listWorktrees);
 const mockCreate = vi.mocked(createWorktree);
 const mockRemove = vi.mocked(removeWorktree);
 const mockConfirm = vi.mocked(confirmDialog);
+const mockOpenTerminal = vi.mocked(openTerminalRunningCommand);
 
 const main: WorktreeInfo = { path: '/repo', branch: 'main', head: 'a1', isMain: true, authoritativeDataDir: null };
 const follower: WorktreeInfo = { path: '/repo-worktrees/feat', branch: 'feat', head: 'b2', isMain: false, authoritativeDataDir: '/repo/.hotsheet' };
@@ -121,6 +124,21 @@ describe('openWorktreesPanel (HS-8938)', () => {
     document.querySelector<HTMLButtonElement>('.worktree-remove-btn')!.click();
     await flush();
     expect(mockRemove).not.toHaveBeenCalled();
+  });
+
+  it('HS-8936 — "Open terminal" opens a claude terminal in the worktree cwd', async () => {
+    mockList.mockResolvedValue([main, follower]);
+    mockOpenTerminal.mockResolvedValue(undefined);
+    openWorktreesPanel();
+    await flush();
+    // The follower row's terminal button (rows render terminal buttons for all).
+    const btn = document.querySelectorAll<HTMLButtonElement>('.worktree-terminal-btn');
+    // main + follower both get one; click the follower's (second).
+    btn[btn.length - 1].click();
+    await flush();
+    expect(mockOpenTerminal).toHaveBeenCalledWith('claude', expect.stringContaining('feat'), follower.path);
+    // opening a terminal closes the panel.
+    expect(document.querySelector('.worktrees-overlay')).toBeNull();
   });
 
   it('Escape closes the overlay', async () => {

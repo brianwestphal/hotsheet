@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getChannelPort, getMcpServerKey, isChannelAlive,
-  registerChannel, slugifyDataDir, triggerChannel, unregisterChannel,
+  registerChannel, registerChannelAt, slugifyDataDir, triggerChannel, unregisterChannel,
 } from './channel-config.js';
 
 let tempDir: string;
@@ -37,6 +37,23 @@ describe('registerChannel', () => {
     expect(config.mcpServers[serverKey].args).toContain(dataDir);
     // The legacy single-key entry must NOT be written.
     expect(config.mcpServers['hotsheet-channel']).toBeUndefined();
+  });
+
+  it('HS-8936 — registerChannelAt writes .mcp.json at an arbitrary root for the OWNER data-dir (worktree)', () => {
+    const ownerDataDir = join(tempDir, '.hotsheet');
+    mkdirSync(ownerDataDir, { recursive: true });
+    const worktreeRoot = join(tempDir, 'wt');
+    mkdirSync(worktreeRoot, { recursive: true });
+
+    registerChannelAt(worktreeRoot, ownerDataDir);
+
+    const mcpPath = join(worktreeRoot, '.mcp.json');
+    expect(existsSync(mcpPath)).toBe(true);
+    const config = JSON.parse(readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, { args: string[] }> };
+    const serverKey = getMcpServerKey(ownerDataDir); // owner's key — same project
+    expect(config.mcpServers[serverKey]).toBeDefined();
+    expect(config.mcpServers[serverKey].args).toContain('--data-dir');
+    expect(config.mcpServers[serverKey].args).toContain(ownerDataDir);
   });
 
   it('preserves existing mcpServers entries', () => {

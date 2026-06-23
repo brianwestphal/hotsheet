@@ -3,7 +3,8 @@
 **Status: PARTIAL** (HS-8905 design, 2026-06-22). **Phase A shipped (HS-8934)** —
 the follower pointer + project-data redirect. **Phase B shipped** — server core
 (HS-8935: create/list/remove + API) + UI (HS-8938: management panel from the git
-popover). Phases C–D pending; the parallel/claiming half (Phase D) is gated on the
+popover). **Phase C shipped (HS-8936)** — per-worktree AI terminal + agent wiring
+(owner-direct `.mcp.json` + owner-worklist skills). Phase D pending; the parallel/claiming half (Phase D) is gated on the
 distributed-execution epic (HS-8861–8865) and the §46 service/client decoupling
 epic (HS-7940 / HS-7944 / HS-7945). Scope decision (HS-8905 feedback):
 **standalone doc, follower `.hotsheet/settings.json` pointer model.**
@@ -120,15 +121,30 @@ reachable from the follower) moved to **Phase C** — they're the agent-wiring t
 per-worktree terminal consumes, and the follower-has-no-worklist problem needs
 solving where it's exercised.
 
-### Phase C — Per-worktree AI terminal (+ agent wiring)
-"Open a Claude (or configured AI tool) terminal in this worktree" — reuses the
-existing terminal system (`src/terminals/**`, the §HS-8491 Claude-terminal
-seeding) with the worktree as cwd. **Includes the agent wiring moved from Phase
-B:** write the worktree's `.mcp.json` (channel → owner) + `.claude/skills/**`,
-and make the owner's worklist reachable from the follower (the follower has no
-worklist of its own — decide: skills reference the owner's worklist, or the
-owner's markdown sync mirrors/symlinks it into each follower). Choice of AI tool
-is the existing terminal-target config.
+### Phase C — Per-worktree AI terminal (+ agent wiring) ✅ SHIPPED (HS-8936)
+"Open a Claude terminal in this worktree" — the worktrees panel (HS-8938) gains
+an **Open terminal** button per worktree that calls
+`openTerminalRunningCommand('claude', …, worktree.path)` (`POST /terminal/create`
+with `cwd` + `runCommand` + `spawn`), so a Claude terminal runs in the worktree's
+directory and picks up its `.mcp.json` → the shared owner Hot Sheet.
+
+**Agent wiring (written at worktree-create time, `worktrees.ts::createWorktree`):**
+- **`.mcp.json` → owner-direct** (HS-8905 decision 2): `registerChannelAt(
+  worktreeRoot, ownerDataDir)` (new in `channel-config.ts`, extracted from
+  `registerChannel`) writes the channel entry at the worktree root with the
+  **owner's** `--data-dir` + server key, so the worktree's `hotsheet_*` MCP tools
+  drive the one shared instance — no dependence on channel-side follower
+  resolution.
+- **Skills → owner worklist** (HS-8905 decision 1a): `ensureSkillsForDir(
+  worktreeRoot, undefined, ownerDataDir)` — `skills.ts` now threads an optional
+  `dataDir` override through `ensureClaudeSkills`/`mainSkillBody`/`ticketSkillBody`
+  so the worktree's `/hotsheet` skill + curl forms reference the **owner's**
+  worklist path (relative to the worktree → `../<repo>/.hotsheet/worklist.md`) and
+  port/secret. The follower has no worklist of its own.
+- Both are best-effort (a wiring hiccup never fails worktree creation).
+
+Choice of AI tool is currently `claude`; the existing terminal-target config can
+extend this later.
 
 ### Phase D — Auto-parallelization across worktrees
 The end-state vision: a coordinator spins up N worktrees + agents that each
@@ -171,16 +187,16 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
   not per-worktree projects that federate — HS-8905 feedback (3).
 - **Flat, not hierarchical** — parallel work is gated by the epic's flat
   `blocked_by` (HS-8865), never re-introducing sub-tasks (reverted 2026-03-23).
+- **Pointer key = `authoritativeDataDir` (absolute path)** — HS-8934.
+- **Follower-worklist = decision 1a** (the worktree's skills reference the
+  OWNER's worklist) and **`.mcp.json` = owner-direct (decision 2)** — HS-8905
+  feedback, implemented in HS-8936.
 
-## 89.5 Open questions (resolve when Phase A is picked up)
+## 89.5 Open questions (remaining)
 
-- Exact pointer key name + shape (`authoritativeDataDir` abs path vs. a relative
-  `../..` ref vs. the owner project's secret). Abs path is simplest + robust to
-  moves within one machine.
-- Does a follower run its own (proxying) server process at all, or do its agent's
-  MCP/channel simply target the authoritative running instance's port (read from
-  the authoritative dir's `instance.json` / `channel-port`)? Lean: no second
-  server — point MCP/channel at the authoritative instance.
+- Worktree default location + branch-naming convention; whether removal also
+  deletes the branch (the API supports `deleteBranch`; the UI keeps the branch
+  for now).
 - Worktree default location + branch-naming convention; whether removal also
   deletes the branch.
 - Lifecycle coupling: is a worktree created per *claimed ticket* (auto, Phase D)
@@ -197,8 +213,7 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
 - **HS-8938 — Phase B (UI):** worktree management panel (list/create/remove).
   **✅ Shipped.**
 - **HS-8936 — Phase C:** open an AI terminal per worktree + the agent wiring
-  (`.mcp.json` + skills + owner-worklist reachability, moved from Phase B).
-  Backlog. Depends on HS-8934 + HS-8935.
+  (owner-direct `.mcp.json` + owner-worklist skills). **✅ Shipped.**
 - **HS-8937 — Phase D:** auto-parallelize tickets across worktrees. Backlog;
   gated on the claim/lease epic (HS-8862/8863/8861/8864/8865) + §46
   (HS-7940/7944/7945 for remote workers).

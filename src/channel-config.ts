@@ -78,7 +78,27 @@ function projectRoot(dataDir: string): string {
  *  entry on the same `.mcp.json` is dropped in the same write so the upgrade
  *  doesn't leave a stale duplicate behind. */
 export function registerChannel(dataDir: string): void {
-  const root = projectRoot(dataDir);
+  registerChannelAt(projectRoot(dataDir), dataDir);
+
+  // HS-8376 / HS-8377 — when the project has a `.claude/` directory, also
+  // add the `mcp__hotsheet-channel-<slug>__*` wildcard rule to
+  // `.claude/settings.local.json`'s `permissions.allow` array so Claude
+  // Code accepts every `hotsheet_*` MCP tool call without per-call
+  // permission prompts. Idempotent, failure-open, and gated on the
+  // per-project `claude_auto_allow_rule` opt-out setting — see §64.
+  syncClaudeAllowRule(dataDir);
+}
+
+/**
+ * HS-8936 — write the channel `.mcp.json` at an arbitrary `root`, registering
+ * the server for `dataDir`. For a normal project `root === projectRoot(dataDir)`
+ * (the `registerChannel` path). For a git WORKTREE follower, `root` is the
+ * worktree dir while `dataDir` is the OWNER's `.hotsheet`, so the worktree's
+ * agent's `hotsheet_*` MCP tools drive the one shared instance (docs/89 §89.2
+ * Phase C). Does NOT touch the Claude allow-rule (dataDir-rooted; owned by
+ * `registerChannel`).
+ */
+export function registerChannelAt(root: string, dataDir: string): void {
   const mcpPath = join(root, '.mcp.json');
   const { command, args } = getChannelServerPath();
   const serverKey = getMcpServerKey(dataDir);
@@ -109,14 +129,6 @@ export function registerChannel(dataDir: string): void {
   };
 
   writeFileSync(mcpPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-
-  // HS-8376 / HS-8377 — when the project has a `.claude/` directory, also
-  // add the `mcp__hotsheet-channel-<slug>__*` wildcard rule to
-  // `.claude/settings.local.json`'s `permissions.allow` array so Claude
-  // Code accepts every `hotsheet_*` MCP tool call without per-call
-  // permission prompts. Idempotent, failure-open, and gated on the
-  // per-project `claude_auto_allow_rule` opt-out setting — see §64.
-  syncClaudeAllowRule(dataDir);
 }
 
 /** Register the channel for multiple projects at once */

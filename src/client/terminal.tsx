@@ -495,8 +495,11 @@ async function createDynamicTerminal(): Promise<void> {
  * click when the command has "Launch in New Terminal" enabled. Opens the drawer
  * (if closed) and selects the new terminal's tab.
  */
-export async function openTerminalRunningCommand(command: string, name?: string): Promise<void> {
-  const { config } = await createTerminal({ spawn: true, runCommand: command, name });
+export async function openTerminalRunningCommand(command: string, name?: string, cwd?: string): Promise<void> {
+  // HS-8936 — `cwd` opens the terminal in a specific directory (a git worktree
+  // root) so the injected command (e.g. `claude`) runs there and picks up that
+  // worktree's `.mcp.json` → the shared owner Hot Sheet.
+  const { config } = await createTerminal({ spawn: true, runCommand: command, name, cwd });
   const active = getActiveProject();
   if (active !== null) {
     const { hideNewTerminalInNonDefaultGroupings } = await import('./dashboardHiddenTerminals.js');
