@@ -19,6 +19,21 @@ On app exit, the sidecar process is terminated:
 - Unix: `SIGTERM` to the process directly, then to the process group as fallback, then **poll for it to actually exit and escalate to `SIGKILL` if it doesn't**. The poll loop (`teardown_action` in `src-tauri/src/lib.rs`, a pure/unit-tested escalation policy) waits a generous TERM grace (10s — long enough for a legitimate `gracefulShutdown` CHECKPOINT/snapshot, which can take seconds) detecting a clean exit within one poll, then `SIGKILL`s (pid + group) and waits a short KILL grace. This replaced a fixed 300 ms sleep that left a **wedged** server (event loop blocked, so `SIGTERM` never ran its handler) orphaned — still holding the HTTP port and every project lock — which made the next launch see a live lock and FATAL-exit.
 - Windows: `taskkill /PID /T /F`.
 
+### 10.2.1 GUI-PATH enrichment (HS-8801 / HS-8946)
+
+A Dock/Finder/Spotlight launch gives the sidecar the minimal launchd PATH
+(`/usr/bin:/bin:/usr/sbin:/sbin`), so user-installed CLIs (`claude`, `glassbox`,
+nvm/asdf/volta/`~/.local/bin`) are invisible to discovery probes
+(`isExecutableOnPath`) — the cause of an unresolved `{{claudeCommand}}` /
+bare-shell Claude terminal. At startup `cli.ts` calls `enrichProcessPath()`
+(`src/enrich-path.ts`), which runs the user's login shell once
+(`<shell> -ilc 'printf %s "$PATH"'`, falling back to `-lc`) and merges its PATH
+into `process.env.PATH`. **HS-8946** — the login shell is resolved robustly even
+when a GUI launch provides no `$SHELL`: `$SHELL` → the passwd-DB shell
+(`os.userInfo().shell`) → a platform default (`/bin/zsh` on macOS, else
+`/bin/bash`). Pre-fix, a missing `$SHELL` skipped enrichment entirely, leaving
+anything outside the static `extraSearchDirs` undiscoverable.
+
 ### 10.3 Welcome Screen
 
 - If launched without `--data-dir` (e.g., double-clicking the app icon), the app first checks `~/.hotsheet/projects.json` for previously opened projects and restores the most recent one.

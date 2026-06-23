@@ -17,8 +17,42 @@
  * that ours does not are prepended.
  */
 import { execFileSync } from 'child_process';
+import { userInfo } from 'os';
 
 const SHELL_PATH_TIMEOUT_MS = 2000;
+
+/** Non-login "shells" that must never be used to probe PATH. */
+const NON_SHELLS = new Set(['/usr/bin/false', '/bin/false', '/sbin/nologin', '/usr/sbin/nologin']);
+
+function isUsableShell(s: string | null | undefined): s is string {
+  return typeof s === 'string' && s.trim() !== '' && !NON_SHELLS.has(s.trim());
+}
+
+/** The user's login shell from the passwd database (independent of `$SHELL`).
+ *  Returns null on Windows / when it can't be read. */
+function passwdShell(): string | null {
+  try { return userInfo().shell; } catch { return null; }
+}
+
+/**
+ * HS-8946 — resolve the login shell to probe for PATH, robust to a GUI launch
+ * (Dock / Finder) that didn't inherit `$SHELL`. A Finder-launched macOS app
+ * frequently has NO `$SHELL` in its environment, so the pre-fix code skipped
+ * enrichment entirely and any tool outside the static `extraSearchDirs`
+ * (nvm/asdf/volta/custom npm prefix, a friend's `glassbox`) stayed invisible.
+ *
+ * Resolution order: `$SHELL` → the passwd-DB shell (`os.userInfo().shell`) →
+ * a platform default (`/bin/zsh` on macOS — the modern default — else
+ * `/bin/bash`). Returns null only on Windows. Injectable for tests.
+ */
+export function resolveLoginShell(opts: { env?: NodeJS.ProcessEnv; passwdShell?: string | null } = {}): string | null {
+  if (process.platform === 'win32') return null;
+  const fromEnv = (opts.env ?? process.env).SHELL;
+  if (isUsableShell(fromEnv)) return fromEnv.trim();
+  const fromPasswd = opts.passwdShell !== undefined ? opts.passwdShell : passwdShell();
+  if (isUsableShell(fromPasswd)) return fromPasswd.trim();
+  return process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash';
+}
 
 /** Pure helper: merge `shellPath` into `currentPath`, prepending new entries
  *  in their original shell order. Existing entries keep their position; no
@@ -38,34 +72,39 @@ export function mergePaths(currentPath: string, shellPath: string): string {
   return [...additions, ...existing].join(sep);
 }
 
-/** Spawn `$SHELL -ilc 'printf %s "$PATH"'` and return the resulting PATH.
- *  Returns null when the shell is unknown, the spawn fails, the call times
- *  out, or the output is empty. Sync because this needs to run before any
- *  PATH-consuming code in the sidecar startup path. */
-function readLoginShellPath(execOverride?: typeof execFileSync): string | null {
-  const shell = process.env.SHELL;
-  if (typeof shell !== 'string' || shell === '') return null;
+/** Ask `shell` to print its post-rc PATH. Tries an interactive login shell
+ *  (`-ilc` — where `.zshrc` / `.bashrc` set PATH for most setups), then falls
+ *  back to a non-interactive login shell (`-lc`) for shells whose `-i` errors
+ *  without a tty. Returns null when every attempt fails / times out / is empty.
+ *  Sync because this must run before any PATH-consuming startup code. */
+function readLoginShellPath(shell: string, execOverride?: typeof execFileSync): string | null {
   const exec = execOverride ?? execFileSync;
-  try {
-    const out = exec(shell, ['-ilc', 'printf %s "$PATH"'], {
-      encoding: 'utf8',
-      timeout: SHELL_PATH_TIMEOUT_MS,
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    const trimmed = out.trim();
-    return trimmed === '' ? null : trimmed;
-  } catch {
-    return null;
+  for (const flag of ['-ilc', '-lc']) {
+    try {
+      const out = exec(shell, [flag, 'printf %s "$PATH"'], {
+        encoding: 'utf8',
+        timeout: SHELL_PATH_TIMEOUT_MS,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      });
+      const trimmed = out.trim();
+      if (trimmed !== '') return trimmed;
+    } catch {
+      /* try the next flag */
+    }
   }
+  return null;
 }
 
 /** Run at startup on macOS / Linux. Mutates `process.env.PATH` in place.
- *  No-op on Windows (PATH inheritance there does not have the GUI-strip
- *  problem) and when `$SHELL` is missing. */
-export function enrichProcessPath(opts?: { exec?: typeof execFileSync }): void {
+ *  No-op on Windows (PATH inheritance there has no GUI-strip problem). The
+ *  shell is resolved robustly (HS-8946) so a Dock/Finder launch with no
+ *  `$SHELL` still enriches. `shell` / `passwdShell` are injectable for tests. */
+export function enrichProcessPath(opts?: { exec?: typeof execFileSync; shell?: string | null; passwdShell?: string | null }): void {
   if (process.platform === 'win32') return;
-  const shellPath = readLoginShellPath(opts?.exec);
+  const shell = opts?.shell !== undefined ? opts.shell : resolveLoginShell({ passwdShell: opts?.passwdShell });
+  if (shell === null || shell === '') return;
+  const shellPath = readLoginShellPath(shell, opts?.exec);
   if (shellPath === null) return;
   const current = process.env.PATH ?? '';
   const merged = mergePaths(current, shellPath);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { enrichProcessPath, mergePaths } from './enrich-path.js';
+import { enrichProcessPath, mergePaths, resolveLoginShell } from './enrich-path.js';
 
 describe('mergePaths', () => {
   it('prepends entries the shell PATH has and the current PATH does not', () => {
@@ -79,16 +79,42 @@ describe('enrichProcessPath', () => {
     expect(process.env.PATH).toBe('C:\\Windows');
   });
 
-  it('is a no-op when SHELL is unset', () => {
+  it('HS-8946 — falls back to the passwd-DB shell when $SHELL is unset (GUI launch)', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     delete process.env.SHELL;
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn();
+    const exec = vi.fn().mockReturnValue('/Users/x/.local/bin:/usr/bin\n');
 
-    enrichProcessPath({ exec: exec as never });
+    enrichProcessPath({ exec: exec as never, passwdShell: '/bin/zsh' });
 
-    expect(exec).not.toHaveBeenCalled();
-    expect(process.env.PATH).toBe('/usr/bin');
+    expect(exec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
+    expect(process.env.PATH).toBe('/Users/x/.local/bin:/usr/bin');
+  });
+
+  it('HS-8946 — falls back to the platform default shell when $SHELL + passwd are both absent', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    delete process.env.SHELL;
+    process.env.PATH = '/usr/bin';
+    const exec = vi.fn().mockReturnValue('/opt/homebrew/bin:/usr/bin\n');
+
+    enrichProcessPath({ exec: exec as never, passwdShell: null });
+
+    expect(exec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
+    expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin');
+  });
+
+  it('HS-8946 — falls back to a non-interactive login shell (-lc) when -ilc errors', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    process.env.PATH = '/usr/bin';
+    const exec = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('no tty for -i'); })
+      .mockReturnValueOnce('/a:/usr/bin\n');
+
+    enrichProcessPath({ exec: exec as never, shell: '/bin/zsh' });
+
+    expect(exec).toHaveBeenNthCalledWith(1, '/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.anything());
+    expect(exec).toHaveBeenNthCalledWith(2, '/bin/zsh', ['-lc', 'printf %s "$PATH"'], expect.anything());
+    expect(process.env.PATH).toBe('/a:/usr/bin');
   });
 
   it('leaves PATH unchanged when the shell call throws (timeout, missing shell, etc.)', () => {
@@ -111,5 +137,47 @@ describe('enrichProcessPath', () => {
     enrichProcessPath({ exec: exec as never });
 
     expect(process.env.PATH).toBe('/usr/bin');
+  });
+});
+
+describe('resolveLoginShell (HS-8946)', () => {
+  let originalPlatform: PropertyDescriptor | undefined;
+  beforeEach(() => { originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform'); });
+  afterEach(() => { if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform); });
+
+  it('prefers $SHELL when set', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(resolveLoginShell({ env: { SHELL: '/opt/homebrew/bin/fish' }, passwdShell: '/bin/zsh' })).toBe('/opt/homebrew/bin/fish');
+  });
+
+  it('falls back to the passwd-DB shell when $SHELL is unset', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(resolveLoginShell({ env: {}, passwdShell: '/bin/bash' })).toBe('/bin/bash');
+  });
+
+  it('falls back to /bin/zsh on macOS when $SHELL + passwd are absent', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(resolveLoginShell({ env: {}, passwdShell: null })).toBe('/bin/zsh');
+  });
+
+  it('falls back to /bin/bash on non-macOS when $SHELL + passwd are absent', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    expect(resolveLoginShell({ env: {}, passwdShell: null })).toBe('/bin/bash');
+  });
+
+  it('ignores a nologin/false passwd shell and uses the default', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(resolveLoginShell({ env: {}, passwdShell: '/usr/bin/false' })).toBe('/bin/zsh');
+    expect(resolveLoginShell({ env: {}, passwdShell: '/sbin/nologin' })).toBe('/bin/zsh');
+  });
+
+  it('ignores an empty/whitespace $SHELL', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    expect(resolveLoginShell({ env: { SHELL: '   ' }, passwdShell: '/bin/bash' })).toBe('/bin/bash');
+  });
+
+  it('returns null on win32', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    expect(resolveLoginShell({ env: { SHELL: '/bin/zsh' }, passwdShell: '/bin/zsh' })).toBeNull();
   });
 });
