@@ -39,7 +39,9 @@ async function reconcileExistingMappings(ctx: CommentSyncCtx): Promise<void> {
   const remoteCommentById = new Map(ctx.remoteComments.map(c => [c.id, c]));
 
   for (const mapping of mappings) {
-    if (mapping.note_id.startsWith('att_')) continue;
+    // Skip sync markers that aren't notes/comments: `att_` (pushed attachments,
+    // HS-8679) and `img_` (pulled body images, HS-8952).
+    if (mapping.note_id.startsWith('att_') || mapping.note_id.startsWith('img_')) continue;
 
     const localNote = localNoteById.get(mapping.note_id);
     const remoteComment = remoteCommentById.get(mapping.remote_comment_id);

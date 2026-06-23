@@ -36,6 +36,8 @@ export interface TicketingBackend {
   pullChanges(since: Date | null): Promise<RemoteChange[]>;
   getRemoteTicket?(remoteId: string): Promise<RemoteTicketFields | null>;
   checkConnection(): Promise<{ connected: boolean; error?: string }>;
+  /** HS-8952 — download a remote image referenced in a synced body. */
+  downloadAttachment?(url: string): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
 }
 
 export interface BackendCapabilities {

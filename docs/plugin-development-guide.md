@@ -268,6 +268,9 @@ interface TicketingBackend {
   updateComment?(remoteId: string, commentId: string, text: string): Promise<void>;
   deleteComment?(remoteId: string, commentId: string): Promise<void>;
   uploadAttachment?(filename: string, content: Buffer, mimeType: string): Promise<string | null>;
+  // HS-8952 — download a remote image referenced in a synced body so it can be
+  // stored as a local attachment. Return null on auth failure / 404 / non-image.
+  downloadAttachment?(url: string): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
 }
 ```
 

@@ -869,6 +869,66 @@ describe('github-issues plugin — uploadAttachment', () => {
   });
 });
 
+// ---- downloadAttachment (HS-8952) ----
+
+describe('github-issues plugin — downloadAttachment', () => {
+  beforeEach(() => { fetchCalls = []; });
+  afterEach(() => { restoreFetch(); });
+
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+  it('downloads an image asset, sending the Bearer token, and derives a filename from mime', async () => {
+    const { backend } = await activateWith((url) => {
+      if (url.includes('user-attachments/assets/')) {
+        return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png', ...okHeaders } });
+      }
+      return makeResponse(200, {}, okHeaders);
+    });
+
+    const assetUrl = 'https://github.com/user-attachments/assets/abc-123';
+    const result = await (backend as any).downloadAttachment(assetUrl);
+    expect(result).not.toBeNull();
+    expect(result.mimeType).toBe('image/png');
+    expect(Buffer.from(result.content).equals(png)).toBe(true);
+    // No extension in the URL → synthesized from the mime type.
+    expect(result.filename).toBe('abc-123.png');
+    // The asset fetch carried the auth header.
+    const call = fetchCalls.find(c => c.url.includes('user-attachments/assets/'));
+    expect((call?.init?.headers as Record<string, string>).Authorization).toBe('Bearer ghp_test');
+  });
+
+  it('prefers the Content-Disposition filename when present', async () => {
+    const { backend } = await activateWith((url) => {
+      if (url.includes('/asset')) {
+        return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png', 'Content-Disposition': 'inline; filename="diagram.png"', ...okHeaders } });
+      }
+      return makeResponse(200, {}, okHeaders);
+    });
+    const result = await (backend as any).downloadAttachment('https://x.test/asset');
+    expect(result.filename).toBe('diagram.png');
+  });
+
+  it('returns null (and logs) for a non-image response', async () => {
+    const { backend, logs } = await activateWith((url) => {
+      if (url.includes('/asset')) {
+        return new Response('<html>login</html>', { status: 200, headers: { 'Content-Type': 'text/html', ...okHeaders } });
+      }
+      return makeResponse(200, {}, okHeaders);
+    });
+    const result = await (backend as any).downloadAttachment('https://x.test/asset');
+    expect(result).toBeNull();
+    expect(logs.some(l => l.message.includes('Skipping non-image'))).toBe(true);
+  });
+
+  it('returns null when the fetch fails', async () => {
+    const { backend } = await activateWith((url) => {
+      if (url.includes('/asset')) return makeResponse(404, { message: 'Not Found' }, okHeaders);
+      return makeResponse(200, {}, okHeaders);
+    });
+    expect(await (backend as any).downloadAttachment('https://x.test/asset')).toBeNull();
+  });
+});
+
 // ---- Error handling (ghFetch) ----
 
 describe('github-issues plugin — error handling', () => {

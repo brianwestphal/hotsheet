@@ -89,6 +89,7 @@ Plugins that integrate with external ticketing systems return a `TicketingBacken
 
 **Attachments:**
 - `uploadAttachment(filename, content, mimeType)` — upload a file, returns a public URL. Returns null if uploads not configured.
+- `downloadAttachment(url)` — (optional, HS-8952) download a remote image referenced in a synced ticket body so it can be stored as a local attachment. Returns `{ content, filename, mimeType }` or null (auth failure / 404 / non-image).
 
 **Field validation:**
 - `validateField(key, value)` — (optional, exported from module) validate a config field value. Returns `{ status: 'error'|'warning'|'success', message }` or null.
@@ -243,15 +244,20 @@ The sync engine orchestrates bidirectional synchronization between the local dat
   - Remote comment deleted (mapping exists, comment gone) → removes the local note.
 - New unmapped remote comments → create local notes (text-based dedup prevents duplicates).
 - New unmapped local notes → create remote comments (text-based dedup).
-- Attachment mappings (note IDs with `att_` prefix) are skipped by the comment sync — managed separately by attachment sync.
+- Attachment mappings (note IDs with `att_` prefix) and pulled-image mappings (`img_` prefix, HS-8952) are skipped by the comment sync — managed separately.
 - Notes rendered as Markdown in the UI via `marked` library.
 
-**Attachment sync:**
+**Attachment sync (push — local → remote):**
 - Runs after comment sync for backends with `uploadAttachment`.
 - Reads local attachments, uploads via the backend's `uploadAttachment` method.
 - Posts a markdown comment with the file link (image syntax for images).
 - Attachment URLs should be permanent (not short-lived tokens). The GitHub plugin uses the raw URL format (`raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}`) instead of GitHub's `download_url` which contains expiring `?token=` parameters.
 - Tracked via `note_sync` with `att_` prefixed IDs to avoid re-uploading.
+
+**Body-image sync (pull — remote → local, HS-8952):**
+- When a remote change creates or updates a ticket, `syncImagesFromBody` (`src/plugins/syncEngine/imageAttachments.ts`) extracts image refs from the issue body — both raw `<img src="…">` tags (the common GitHub paste form) and markdown `![](…)` — via the pure `extractImageRefs` (`imageRefs.ts`).
+- Each http(s) image is downloaded through the backend's optional `downloadAttachment(url)` (the GitHub plugin fetches with the Bearer token, which private `user-attachments` URLs require) and written into `<dataDir>/attachments/<TICKET>_<name>` + recorded with `addAttachment`, so it shows in the Attachments list.
+- Idempotent across re-syncs via `note_sync` rows with an `img_<sha1(url)>` id; `data:`/relative refs and non-image responses are skipped. Best-effort — a failed download is logged and never derails the surrounding sync.
 
 **First-push of a single ticket:**
 - The "Push to remote" context-menu action and the create-outbox flow both call `createRemote()` to push core fields, then immediately push notes and attachments for that ticket via `syncSingleTicketContent()` — otherwise notes and attachments would be silently dropped on the first push and only catch up on the next full sync.

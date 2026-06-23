@@ -209,6 +209,12 @@ export interface TicketingBackend {
   /** Upload an attachment file and return its public URL. Returns null if uploads not configured. */
   uploadAttachment?(filename: string, content: Buffer, mimeType: string): Promise<string | null>;
 
+  /** HS-8952 — download a remote image referenced in a synced ticket body so the
+   *  sync engine can store it as a local Hot Sheet attachment. Returns null when
+   *  the URL can't be fetched (auth, 404, non-image). `filename` is a best-effort
+   *  display name (from the URL / content-disposition). */
+  downloadAttachment?(url: string): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
+
   // --- Comments (notes sync) ---
 
   /** Fetch comments for a remote ticket. */

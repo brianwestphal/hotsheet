@@ -14,6 +14,7 @@ import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.
 // HS-8679 — comment + attachment sync extracted into sibling modules.
 import { syncAttachments, syncTicketAttachments } from './syncEngine/attachments.js';
 import { syncComments, syncTicketComments } from './syncEngine/comments.js';
+import { syncImagesFromBody } from './syncEngine/imageAttachments.js';
 import type { RemoteChange, RemoteTicketFields, TicketingBackend,TicketSyncRecord } from './types.js';
 
 // --- Sync scheduling ---
@@ -431,7 +432,25 @@ async function handleNewRemote(
 
   const localTicket = await createTicketFromRemote(change.fields);
   await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
+  // HS-8952 — pull any images embedded in the issue body into the attachments list.
+  await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details);
   return 'applied';
+}
+
+/** HS-8952 — best-effort: download images referenced in a synced body as local
+ *  attachments. Wrapped so a failure here never derails the surrounding apply. */
+async function pullBodyImages(
+  backend: TicketingBackend,
+  ticketId: number,
+  ticketNumber: string,
+  body: string | undefined,
+): Promise<void> {
+  if (body == null || body === '') return;
+  try {
+    await syncImagesFromBody(backend, ticketId, ticketNumber, getDataDir(), body);
+  } catch (e) {
+    console.warn(`[sync] Image pull failed for ticket ${ticketId}: ${getErrorMessage(e)}`);
+  }
 }
 
 /** Handle a remote change for an already-synced ticket — detect conflicts or apply. */
@@ -468,6 +487,8 @@ async function handleExistingRemote(
   if (remoteModified) {
     await applyFieldsToTicket(localTicket.id, change.fields);
     await upsertSyncRecord(localTicket.id, backend.id, change.remoteId, 'synced', change.remoteUpdatedAt);
+    // HS-8952 — pull any newly-added body images into the attachments list.
+    await pullBodyImages(backend, localTicket.id, localTicket.ticket_number, change.fields.details);
     return 'applied';
   }
 

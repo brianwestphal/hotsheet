@@ -537,10 +537,58 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
         return null;
       }
     },
+
+    // HS-8952 — download an image referenced in an issue body (e.g. a pasted
+    // `github.com/user-attachments/assets/…` URL or an uploaded
+    // `raw.githubusercontent.com/…` asset) so the sync engine can store it as a
+    // local Hot Sheet attachment. `ghFetch` already follows redirects and sends
+    // the Bearer token, which private user-attachment URLs require.
+    async downloadAttachment(url) {
+      try {
+        const res = await ghFetch(url, { headers: { Accept: 'application/octet-stream' } });
+        const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+        if (!contentType.startsWith('image/')) {
+          // A non-image response (e.g. an HTML login/redirect page) means we
+          // couldn't actually fetch the asset — skip rather than store garbage.
+          context.log('warn', `Skipping non-image attachment (${contentType || 'unknown'}): ${url}`);
+          return null;
+        }
+        const content = Buffer.from(await res.arrayBuffer());
+        const filename = attachmentFilename(url, res.headers.get('content-disposition'), contentType);
+        return { content, filename, mimeType: contentType };
+      } catch (e) {
+        context.log('warn', `Failed to download attachment ${url}: ${(e as Error).message}`);
+        return null;
+      }
+    },
   };
 
   _backend = backend;
   return backend;
+}
+
+/** HS-8952 — best-effort display filename for a downloaded image: prefer the
+ *  Content-Disposition filename, else the URL's last path segment if it carries
+ *  an extension, else a synthesized `<stem>.<ext-from-mime>`. */
+function attachmentFilename(url: string, contentDisposition: string | null, contentType: string): string {
+  const cd = contentDisposition?.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+  if (cd?.[1]) {
+    try { return decodeURIComponent(cd[1].trim()); } catch { return cd[1].trim(); }
+  }
+  const lastSeg = url.split(/[?#]/)[0].split('/').pop() ?? '';
+  if (lastSeg !== '' && /\.[a-z0-9]{2,5}$/i.test(lastSeg)) return lastSeg;
+  const ext = extFromImageMime(contentType);
+  const stem = lastSeg !== '' ? lastSeg : 'image';
+  return `${stem}.${ext}`;
+}
+
+function extFromImageMime(contentType: string): string {
+  const mime = contentType.split(';')[0].trim().toLowerCase();
+  const map: Record<string, string> = {
+    'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif',
+    'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp', 'image/avif': 'avif',
+  };
+  return map[mime] ?? 'png';
 }
 
 function buildPrefixMap(defaultMap: FieldMapPair, defaultPrefix: string, newPrefix: string): FieldMapPair {
