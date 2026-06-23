@@ -181,8 +181,11 @@ agents) depends on:
 - **HS-8862 — claim/lease primitive** ("ticket checkout": atomic
   `claim-next`/`claim`/`renew`/`release` + `claimed_by`/lease schema + MCP tools).
   This is *the* prerequisite the HS-8905 note calls "ticket claiming support".
-- **HS-8863 — distributed worker loop** (claim → isolated checkout → complete →
-  repeat). Worktrees are its isolation mechanism; co-designed with Phase D.
+- **HS-8863 — distributed worker loop** ✅ **shipped** (claim → isolated checkout →
+  complete → release → repeat): the `hotsheet-worker` Claude skill + the
+  `src/workers/workerLoop.ts` reference loop + the `prepareWorker` launcher
+  (`POST /api/workers/launch`) that opens a worker terminal in a follower worktree.
+  Worktrees are its isolation mechanism; the durable pool over it is HS-8962.
 - **HS-8861 — distributed-execution design spike** (finalizes the claim model /
   lease semantics / selection policy this builds on).
 - **HS-8864 — claimed-by / in-flight-worker UI** (so the maintainer sees which
@@ -239,8 +242,8 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
   [90-distributed-execution.md](90-distributed-execution.md) (§90), Phase D shape
   pinned above. Implementation is the gated chain below.
 - **HS-8861 — distributed-execution design spike:** ✅ resolved → §90.
-- **HS-8862/8863/8864/8865 — claim primitive / worker loop / claimed-by UI /
-  flat `blocked_by` gate:** backlog; implementation tickets, designed in §90.
+- **HS-8862/8863/8865 — claim primitive / worker loop / flat `blocked_by` gate:**
+  ✅ shipped 2026-06-23 (§90.10 items 1-3). **HS-8864 — claimed-by UI:** backlog.
 - **HS-8960 — worker-pool dynamic scaling + AI-suggested N:** backlog (§90.7).
 - **HS-8961 — coordinator-dispatch UX (owner partitions chunks):** backlog
   (§90.5.2).

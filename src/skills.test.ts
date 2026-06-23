@@ -136,6 +136,20 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('allowed-tools: Read, Grep, Glob, Edit, Write, Bash');
   });
 
+  it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {
+    ensureSkills();
+    const workerSkill = join(tempDir, '.claude', 'skills', 'hotsheet-worker', 'SKILL.md');
+    expect(existsSync(workerSkill)).toBe(true);
+    const content = readFileSync(workerSkill, 'utf-8');
+    expect(content).toContain('name: hotsheet-worker');
+    expect(content).toContain(`hotsheet-skill-version: ${SKILL_VERSION}`);
+    // The loop body references the claim/lease MCP tools.
+    expect(content).toContain('hotsheet_claim_next');
+    expect(content).toContain('hotsheet_renew_lease');
+    expect(content).toContain('hotsheet_release');
+    expect(content).toContain('hotsheet_signal_done');
+  });
+
   it('HS-8936 — ensureSkillsForDir dataDir override points the worktree skill at the OWNER worklist', () => {
     const ownerData = join(tempDir, 'owner', '.hotsheet');
     mkdirSync(ownerData, { recursive: true });

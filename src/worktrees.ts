@@ -43,7 +43,9 @@ export interface WorktreeInfo {
 /** Injectable git runner so unit tests don't shell out. */
 export type GitRunner = (repoRoot: string, args: string[]) => Promise<string>;
 
-const defaultGit: GitRunner = async (repoRoot, args) => {
+// HS-8863 — exported so the worker launcher (`src/workers/launchWorker.ts`) runs
+// git through the same default runner (and stays test-injectable).
+export const defaultGit: GitRunner = async (repoRoot, args) => {
   const { stdout } = await execFileAsync('git', args, {
     cwd: repoRoot, timeout: 30_000, maxBuffer: 10 * 1024 * 1024,
   });
@@ -52,10 +54,13 @@ const defaultGit: GitRunner = async (repoRoot, args) => {
 
 /** Canonicalize a path for comparison — resolves symlinks (e.g. macOS
  *  `/var` → `/private/var`) so paths from `git`'s output match ours. Falls back
- *  to `resolve()` when the path doesn't exist (e.g. just removed). */
-function canonical(p: string): string {
+ *  to `resolve()` when the path doesn't exist (e.g. just removed).
+ *  HS-8863 — exported as `canonicalizePath` for the worker launcher's
+ *  worktree-path matching. */
+export function canonicalizePath(p: string): string {
   try { return realpathSync.native(p); } catch { return resolve(p); }
 }
+const canonical = canonicalizePath;
 
 /** Default location for a new worktree: a sibling `../<repo>-worktrees/<branch>`. */
 export function defaultWorktreePath(repoRoot: string, branch: string): string {

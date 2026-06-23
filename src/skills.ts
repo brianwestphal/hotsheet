@@ -13,7 +13,10 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // pattern; the `hotsheet` main-skill body gains the same two-form
 // guidance. SKILL_VERSION bump forces existing seeded skill files to
 // re-author on next boot via the `updateFile` upgrade path.
-export const SKILL_VERSION = 10;
+// HS-8863 — bumped 10 → 11 for the new Claude-only `hotsheet-worker` skill
+// (the distributed worker loop: claim-next → work → complete + release →
+// repeat, docs/90 §90.5/§90.7).
+export const SKILL_VERSION = 11;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -204,6 +207,52 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
 }
 
 /**
+ * HS-8863 — the distributed worker skill (`/hotsheet-worker`, Claude-only). A
+ * worker runs this in its own git worktree terminal and loops: `claim-next` the
+ * top Up Next ticket → work it → mark `completed` + release → claim again, until
+ * the pool is empty. This is the prose mirror of `src/workers/workerLoop.ts` (the
+ * programmatic reference for the same invariants); both build on the HS-8862
+ * claim/lease MCP tools. Claude-only because it depends on the `hotsheet_*` MCP
+ * surface. The durable pool that launches N of these is HS-8962.
+ */
+function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot, '.hotsheet')): string {
+  const settings = readFileSettings(dataDir);
+  const port = settings.port ?? skillsState.port ?? 4174;
+  const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
+  return [
+    'You are a **distributed worker** draining the Hot Sheet **Up Next** pool. Multiple workers run in parallel against ONE shared Hot Sheet, each in its own git worktree, coordinated by the atomic claim/lease primitive (docs/90 §90.5) — so you never need to worry about another worker grabbing the same ticket.',
+    '',
+    '**Your worker identity:** derive a stable `worker` id and `label` from your current working directory — use the worktree folder name (the last path segment of your cwd, e.g. `my-repo-feature-x`) for both. This makes your claims attributable in the maintainer\'s UI.',
+    '',
+    '## The loop',
+    '',
+    'Repeat the following until the pool is empty:',
+    '',
+    '1. **Claim the next ticket.** Call the `hotsheet_claim_next` MCP tool with `{ "worker": "<your-id>", "label": "<your-label>" }`.',
+    '   - If it returns **no ticket** (nothing claimable), the pool is drained — go to **Finishing** below.',
+    '   - If it returns a ticket, you now hold an exclusive, time-limited **lease** on it. Continue.',
+    '2. **Mark it started.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "started" }`.',
+    '3. **Do the work** described in the ticket details — implement it fully, the same way you would under `/hotsheet`, but for THIS one claimed ticket only.',
+    '   - **Heartbeat on long work:** if the work takes a while, periodically call `hotsheet_renew_lease` with `{ "id": <id>, "worker": "<your-id>" }` to keep your lease fresh. If a renew ever returns `{ "ok": false }`, your lease lapsed and the ticket may have been reclaimed by another worker — **stop working it**, do NOT mark it completed, and go back to step 1.',
+    '4. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance).',
+    '   - **File follow-up tickets** for any incomplete work BEFORE completing (per the project\'s incomplete-work checklist).',
+    '5. **Release the claim.** Call `hotsheet_release` with `{ "id": <id>, "worker": "<your-id>" }` so the slot is freed.',
+    '6. **Go back to step 1** and claim the next ticket.',
+    '',
+    '## Finishing',
+    '',
+    'When `hotsheet_claim_next` returns nothing claimable, the pool is drained. Call `hotsheet_signal_done` and stop. (The owner / worker-pool manager re-triggers you when there is new work — you do not need to poll.)',
+    '',
+    '## Notes',
+    '',
+    '- **Crash-safety:** if you die mid-ticket, your lease simply expires and another worker reclaims the ticket automatically — nothing to clean up.',
+    '- **Dependencies:** `claim-next` already skips tickets blocked by an unfinished `blocked_by` dependency (docs/90 §90.6), so anything you claim is ready to work.',
+    '- **Never** work a ticket you have not successfully claimed, and never complete/release a ticket whose lease you have lost.',
+    `- If an MCP call fails, fall back to the REST API at \`http://localhost:${port}/api\` (claim-next: \`POST /api/tickets/claim-next\`; renew: \`POST /api/tickets/:id/renew-lease\`; release: \`POST /api/tickets/:id/release\`). Re-read \`${settingsRel}\` for the current \`port\`/\`secret\` if calls are refused.`,
+  ].join('\n');
+}
+
+/**
  * HS-7992 — force-regenerate the main `/hotsheet` skill file for every
  * platform that has been seeded (Claude / Cursor / Copilot / Windsurf).
  * Bypasses the version-check guard in `updateFile` because the regen here
@@ -341,6 +390,24 @@ function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet'
     '',
   ].join('\n');
   if (updateFile(join(mainDir, 'SKILL.md'), mainContent)) updated = true;
+
+  // HS-8863 — the distributed worker skill (Claude-only; depends on the
+  // `hotsheet_*` MCP claim/lease tools). Not generated for Cursor/Copilot/
+  // Windsurf because it has no curl-only equivalent loop.
+  const workerDir = join(skillsDir, 'hotsheet-worker');
+  mkdirSync(workerDir, { recursive: true });
+  const workerContent = [
+    '---',
+    'name: hotsheet-worker',
+    'description: Run as a distributed worker — continuously claim, work, and release Up Next tickets',
+    'allowed-tools: Read, Grep, Glob, Edit, Write, Bash',
+    '---',
+    versionHeader(),
+    '',
+    workerSkillBody(cwd, dataDir),
+    '',
+  ].join('\n');
+  if (updateFile(join(workerDir, 'SKILL.md'), workerContent)) updated = true;
 
   // Per-type skills
   for (const skill of buildTicketSkills()) {

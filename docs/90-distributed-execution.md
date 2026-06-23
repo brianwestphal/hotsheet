@@ -1,11 +1,14 @@
 # 90. Distributed Ticket Execution (claim / lease + worker pool)
 
-**Status: PARTIAL — design + the claim/lease primitive (HS-8862) AND the flat
-`blocked_by` gate (HS-8865) SHIPPED 2026-06-23.** §90.2-90.4 (schema, endpoints,
-MCP tools, lease sweep) + §90.6 (the dependency gate) are implemented (see §90.10
-items 1-2); the worker loop / pool / dispatch / UI (§90.5, §90.7-90.8) remain
-design-only. HS-8861 spike resolved here; supersedes the "finalize the claim
-model" half of HS-8861. No code this pass. This doc pins the
+**Status: PARTIAL — the claim/lease primitive (HS-8862), the flat `blocked_by`
+gate (HS-8865), AND the single-worker loop + launcher (HS-8863) SHIPPED
+2026-06-23.** §90.2-90.4 (schema, endpoints, MCP tools, lease sweep) + §90.6 (the
+dependency gate) + the §90.5 self-claim loop core (`src/workers/workerLoop.ts`) +
+the §90.7 worker launcher (`src/workers/launchWorker.ts` + `hotsheet-worker`
+skill) are implemented (see §90.10 items 1-3); the durable pool manager + dynamic
+scaling (HS-8962), the claimed-by/in-flight UI (HS-8864), and coordinator-dispatch
+(HS-8961) remain design-only. HS-8861 spike resolved here; supersedes the
+"finalize the claim model" half of HS-8861. This doc pins the
 concrete schema, endpoints, MCP tools, lease semantics, coordination models, and
 the dynamically-scaled worker pool that [89-git-worktrees.md](89-git-worktrees.md)
 §89.2 Phase D consumes as its isolation layer.
@@ -173,12 +176,29 @@ Bump **both** `CHANNEL_VERSION` (`src/channel.ts`, currently 11) and
 The claim primitive supports two complementary modes against the SAME schema;
 they differ only in *who decides which ticket a worker gets*:
 
-### 90.5.1 Self-claim (pull) — the default
+### 90.5.1 Self-claim (pull) — the default — ✅ SHIPPED (HS-8863)
 
 Each idle worker calls `claim-next` and gets the top claimable ticket. The
 "coordinator" is thin: it only spawns/monitors the worker terminals; it does not
 assign work. Best for a homogeneous backlog where any worker can take anything.
 This is the autonomous drain-the-pool loop.
+
+Implemented two ways that share the same claim/lease semantics:
+
+- **Interactive (production):** the `hotsheet-worker` Claude skill (Claude-only,
+  `src/skills.ts`, `SKILL_VERSION` → 11). A worker terminal in a worktree runs it
+  and loops `hotsheet_claim_next` → mark `started` → work → renew-lease heartbeat
+  on long work → `completed` + notes → `hotsheet_release` → repeat, signaling done
+  + stopping when the pool drains. Crash-safety, the `blocked_by` gate, and
+  lease-loss handling are folded into the prose.
+- **Programmatic reference / test seam:** `src/workers/workerLoop.ts`
+  (`startWorker({ worker, label, doWork, … })` → `{ stop, done }`) — the canonical
+  loop encoding the invariants: lease heartbeat, **graceful stop only between
+  tickets** (never mid-work), completed-before-release ordering, skip-completion if
+  the lease was lost mid-work, and **park-on-error** (a throwing `doWork` records
+  an error note and leaves the lease so the same worker can't hot-loop on a poison
+  ticket — the lease expiry is the retry backoff). The multi-worker tests run it
+  for real; HS-8962's pool manager + a future headless worker build on it.
 
 ### 90.5.2 Coordinator-dispatch (push) — owner partitioning
 
@@ -220,6 +240,17 @@ pool**: N long-lived worktrees, each with an AI terminal looping
 ephemeral) to avoid git/worktree churn; cleanup happens when the pool scales down,
 not per ticket. Detailed design in
 [91-worker-pool-scaling.md](91-worker-pool-scaling.md) (HS-8960).
+
+**Launcher — ✅ SHIPPED (HS-8863):** `src/workers/launchWorker.ts`
+(`prepareWorker(repoRoot, ownerDataDir, { branch | worktreePath, label?, worker? })`)
+ensures one isolated worktree slot (creating it via §89 `createWorktree` — which
+already wires the follower pointer + `.mcp.json` + skills at the owner — or reusing
+an existing one, refusing the main worktree) and returns the launch spec
+`{ worker, label, cwd, command }` where `command` is `claude "/hotsheet-worker"`.
+Exposed at `POST /api/workers/launch` (typed `launchWorker` in `src/api/workers.ts`).
+The caller opens the terminal via the Phase C `openTerminalRunningCommand(command,
+label, cwd)`. The pool that launches **N** of these + the scale controls is the
+still-design HS-8962 layer below.
 
 - **Dynamic scale up/down:** the owner can add or drain workers at any time.
   Scaling up = create a worktree + terminal (Phase B/C) and start the loop;
@@ -273,8 +304,16 @@ not per ticket. Detailed design in
    `BLOCKED_TICKET_IDS_SQL`) + the `claimNext` exclusion + `GET`/`PUT
    /tickets/:id/blocked-by` + `hotsheet_set_blocked_by` MCP tool (`CHANNEL_VERSION`
    → 13). Tests in `db/blockedBy.test.ts` + route + tool suites.
-3. **Distributed worker loop (HS-8863)** — the per-worker `claim → work → release`
-   loop driving an agent terminal.
+3. **Distributed worker loop (HS-8863)** — ✅ **SHIPPED** (2026-06-23): the
+   per-worker `claim → work → complete + release → repeat` loop. The interactive
+   `hotsheet-worker` Claude skill (`src/skills.ts`, `SKILL_VERSION` → 11) drives a
+   worktree terminal; `src/workers/workerLoop.ts` (`startWorker`) is the
+   programmatic reference (heartbeat, graceful stop, park-on-error); the launcher
+   `src/workers/launchWorker.ts` + `POST /api/workers/launch` prepares a worktree
+   slot. Tests: `workers/workerLoop.test.ts` (solo drain, two-worker no-double-claim,
+   dead-worker reclaim, lease-loss, graceful stop, park-on-error),
+   `workers/launchWorker.test.ts`, `api/workers.test.ts`, `skills.test.ts` (+1).
+   The durable pool that runs N workers is HS-8962.
 4. **Claimed-by / in-flight UI (HS-8864)** — the chip + worker-pool panel.
 5. **Phase D wiring** — the durable worktree pool composing 1–4 with §89 Phases
    A–C: the per-worker claim→work→complete loop is HS-8863; the worktree+terminal

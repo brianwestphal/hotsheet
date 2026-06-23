@@ -41,6 +41,7 @@ import * as shell from './shell.js';
 import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
 import * as tickets from './tickets.js';
+import * as workers from './workers.js';
 import * as worktrees from './worktrees.js';
 
 export * from './aiInstructions.js';
@@ -62,6 +63,7 @@ export * from './shell.js';
 export * from './telemetry.js';
 export * from './terminal.js';
 export * from './tickets.js';
+export * from './workers.js';
 export * from './worktrees.js';
 
 /** Flat namespace combining every typed caller. Names are globally unique
@@ -87,4 +89,5 @@ export const apis = {
   ...diagnostics,
   ...aiInstructions,
   ...worktrees,
+  ...workers,
 };

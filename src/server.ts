@@ -21,6 +21,7 @@ import { otelRoutes } from './routes/otel.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
 import { telemetryRoutes } from './routes/telemetry.js';
+import { workerRoutes } from './routes/workers.js';
 import { worktreeRoutes } from './routes/worktrees.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
 import type { AppEnv } from './types.js';
@@ -153,6 +154,8 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   app.route('/api', gitRoutes);
   // HS-8935 — git worktree management (docs/89-git-worktrees.md Phase B).
   app.route('/api', worktreeRoutes);
+  // HS-8863 — distributed worker launch (docs/90 §90.5 / §90.7).
+  app.route('/api', workerRoutes);
 
   // §78 Announcer (HS-8745) — `/api/announcer/*`: opt-in toggle, key selection,
   // derived-summary generation, entries, and the listen cursor.

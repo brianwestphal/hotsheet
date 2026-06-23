@@ -727,6 +727,15 @@ The follower-redirect, server git-ops, and panel render/wiring are automated; th
 - [ ] Remove a worktree from the panel (confirm dialog) — it disappears from the list and the directory is gone; the branch is kept.
 - [ ] **HS-8936** — click "Open terminal" on a worktree row: a drawer terminal opens with cwd = the worktree, running `claude`. Inside it, `/hotsheet` reads the **owner's** worklist and `hotsheet_*` MCP tools act on the **same** tickets as the main project (the worktree's `.mcp.json` + skills point at the owner). The worktree's `.mcp.json` registers the owner's `--data-dir`.
 
+### Distributed worker loop (HS-8863, docs/90 §90.5/§90.7)
+
+The loop invariants (claim/complete/release, no-double-claim across two workers, dead-worker reclaim, lease-loss skip, park-on-error, graceful stop) are automated in `workers/workerLoop.test.ts`; the launcher + skill generation are automated. These cover the end-to-end *real-agent* flow that can't be unit-tested:
+
+- [ ] In a worktree terminal (HS-8936), run the **`/hotsheet-worker`** skill with several Up Next tickets queued. The worker claims the top ticket, marks it `started`, does the work, marks it `completed` + notes, releases, and immediately claims the next — repeating until the pool is empty, then calls `hotsheet_signal_done` and stops.
+- [ ] Run **two** worker terminals (two worktrees) against the same Hot Sheet at once. Every ticket is worked exactly once — no two workers grab the same ticket — and you can watch the claimed-by columns flip live in the owner UI.
+- [ ] Kill one worker terminal mid-ticket. After the lease (~120 s) expires, the other worker (or a fresh one) reclaims that ticket and finishes it; the ticket shows a "lease expired — reclaimed" note.
+- [ ] A blocked ticket (`hotsheet_set_blocked_by`, HS-8865) is **not** claimed by any worker until all its blockers are completed/verified.
+
 ---
 
 ## Automated Coverage Summary
