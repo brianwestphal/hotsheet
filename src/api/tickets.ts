@@ -191,7 +191,9 @@ export async function toggleUpNext(id: number): Promise<z.infer<typeof TicketSch
 /** A worker's claim of a ticket: who holds it, optional display label, and TTL. */
 export interface ClaimReq { worker: string; label?: string | null; ttlSeconds?: number }
 
-const ClaimNextRespSchema = z.object({ ticket: TicketSchema.nullable() });
+// HS-8962 — `drain` is set when a pool worker marked draining pulls: the server
+// returns no ticket and tells it to stop (docs/91 §91.4).
+const ClaimNextRespSchema = z.object({ ticket: TicketSchema.nullable(), drain: z.boolean().optional() });
 const ClaimRespSchema = z.discriminatedUnion('ok', [
   z.object({ ok: z.literal(true), ticket: TicketSchema }),
   z.object({ ok: z.literal(false), reason: z.enum(['not_found', 'conflict']), claimedBy: z.string().optional(), workerLabel: z.string().nullable().optional() }),

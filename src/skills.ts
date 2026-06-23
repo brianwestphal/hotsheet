@@ -16,7 +16,9 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // HS-8863 — bumped 10 → 11 for the new Claude-only `hotsheet-worker` skill
 // (the distributed worker loop: claim-next → work → complete + release →
 // repeat, docs/90 §90.5/§90.7).
-export const SKILL_VERSION = 11;
+// HS-8962 — bumped 11 → 12: the `hotsheet-worker` loop now honors the
+// worker-pool drain signal (`claim-next` may return `{drain:true}` → stop).
+export const SKILL_VERSION = 12;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -229,6 +231,7 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     'Repeat the following until the pool is empty:',
     '',
     '1. **Claim the next ticket.** Call the `hotsheet_claim_next` MCP tool with `{ "worker": "<your-id>", "label": "<your-label>" }`.',
+    '   - If the response has **`drain: true`**, the worker-pool manager has asked you to shut down (a scale-down). Go straight to **Finishing** — do not claim anything more.',
     '   - If it returns **no ticket** (nothing claimable), the pool is drained — go to **Finishing** below.',
     '   - If it returns a ticket, you now hold an exclusive, time-limited **lease** on it. Continue.',
     '2. **Mark it started.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "started" }`.',

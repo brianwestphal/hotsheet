@@ -173,6 +173,11 @@ beforeAll(async () => {
     await next();
   });
   app.route('/api', apiRoutes);
+  // HS-8962 — worker routes are mounted directly under /api in server.ts (like
+  // worktreeRoutes), not inside apiRoutes; mirror that here so the pool endpoints
+  // are reachable in this harness.
+  const { workerRoutes } = await import('./workers.js');
+  app.route('/api', workerRoutes);
 });
 
 afterAll(async () => {
@@ -2124,5 +2129,67 @@ describe('blocked_by gate endpoints (HS-8865)', () => {
     await app.request(`/api/tickets/${blk}`, patch({ status: 'completed' }));
     const got = await (await app.request('/api/tickets/claim-next', post({ worker: 'w2' }))).json() as { ticket: { id: number } | null };
     expect(got.ticket?.id).toBe(dep);
+  });
+});
+
+describe('worker-pool endpoints + drain-aware claim-next (HS-8962)', () => {
+  beforeAll(async () => {
+    const { _resetPoolsForTesting } = await import('../workers/poolManager.js');
+    _resetPoolsForTesting();
+  });
+  afterAll(async () => {
+    // Don't leak pool state (esp. a draining worker) into other describes that
+    // share this file's one dataDir.
+    const { _resetPoolsForTesting } = await import('../workers/poolManager.js');
+    _resetPoolsForTesting();
+  });
+
+  it('register → GET pool → drain → drain-aware claim-next → stopped → remove', async () => {
+    // Deterministic claim pool: only this test's ticket is claimable.
+    const { getDb } = await import('../db/connection.js');
+    await (await getDb()).query("UPDATE tickets SET up_next = FALSE, claimed_by = NULL, claim_lease_expires_at = NULL");
+    const r = await app.request('/api/tickets', post({ title: 'pool work', defaults: { up_next: true } }));
+    const ticketId = (await r.json() as TicketResponse).id;
+
+    // Register a pool worker.
+    const reg = await app.request('/api/workers/pool/register', post({ label: 'worker-1', worker: 'pw1', worktreePath: '/wt/pw1', branch: 'hotsheet/worker-1', terminalId: 't-pw1' }));
+    expect(reg.status).toBe(200);
+    expect((await reg.json() as { state: string; label: string }).state).toBe('idle');
+
+    // It appears in the pool.
+    const pool1 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string; state: string }[] };
+    expect(pool1.workers.find(w => w.worker === 'pw1')?.state).toBe('idle');
+
+    // Before drain, the worker claims normally and shows as working.
+    const claim1 = await (await app.request('/api/tickets/claim-next', post({ worker: 'pw1', label: 'worker-1' }))).json() as { ticket: { id: number } | null; drain?: boolean };
+    expect(claim1.ticket?.id).toBe(ticketId);
+    expect(claim1.drain).toBeUndefined();
+    const pool2 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string; state: string; currentTicket: { id: number } | null }[] };
+    const working = pool2.workers.find(w => w.worker === 'pw1')!;
+    expect(working.state).toBe('working');
+    expect(working.currentTicket?.id).toBe(ticketId);
+
+    // Finish the ticket + release so the next pull is the drain check.
+    await app.request(`/api/tickets/${ticketId}`, patch({ status: 'completed' }));
+    await app.request(`/api/tickets/${ticketId}/release`, post({ worker: 'pw1' }));
+
+    // Request drain → the worker's next claim-next is told to stop.
+    const drain = await app.request('/api/workers/pool/drain', post({ worker: 'pw1' }));
+    expect((await drain.json() as { ok: boolean }).ok).toBe(true);
+    const claim2 = await (await app.request('/api/tickets/claim-next', post({ worker: 'pw1', label: 'worker-1' }))).json() as { ticket: unknown; drain?: boolean };
+    expect(claim2.ticket).toBeNull();
+    expect(claim2.drain).toBe(true);
+
+    // The pool now shows it stopped; remove unregisters it.
+    const pool3 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string; state: string }[] };
+    expect(pool3.workers.find(w => w.worker === 'pw1')?.state).toBe('stopped');
+    await app.request('/api/workers/pool/remove', post({ worker: 'pw1' }));
+    const pool4 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string }[] };
+    expect(pool4.workers.find(w => w.worker === 'pw1')).toBeUndefined();
+  });
+
+  it('drain of an unknown worker → 404', async () => {
+    const res = await app.request('/api/workers/pool/drain', post({ worker: 'ghost' }));
+    expect(res.status).toBe(404);
   });
 });

@@ -172,6 +172,14 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
   );
   worktreesBtn.addEventListener('click', () => { openWorktreesPanel(); });
   bodyEl.appendChild(worktreesBtn);
+
+  // HS-8962 — entry point to the worker-pool panel (docs/91): parallel workers
+  // draining Up Next across worktrees.
+  const poolBtn = toElement(
+    <button type="button" className="git-popover-worker-pool-btn">Worker pool…</button>,
+  );
+  poolBtn.addEventListener('click', () => { void import('./workerPoolPanel.js').then(m => m.openWorkerPoolPanel()); });
+  bodyEl.appendChild(poolBtn);
 }
 
 /** Opaque `isConnected` read so TS can't narrow it across an `await`. */

@@ -244,7 +244,9 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
 - **HS-8861 — distributed-execution design spike:** ✅ resolved → §90.
 - **HS-8862/8863/8865 — claim primitive / worker loop / flat `blocked_by` gate:**
   ✅ shipped 2026-06-23 (§90.10 items 1-3). **HS-8864 — claimed-by UI:** backlog.
-- **HS-8960 — worker-pool dynamic scaling + AI-suggested N:** backlog (§90.7).
+- **HS-8962 — worker-pool manager + panel (Phase D wiring):** ✅ shipped 2026-06-23
+  (in-memory pool manager + drain-aware claim-next + worker-pool panel; §90.10 item 6).
+  The numeric target-N stepper (HS-8971) + AI-suggested N (HS-8963/HS-8960, §91.6) remain backlog.
 - **HS-8961 — coordinator-dispatch UX (owner partitions chunks):** backlog
   (§90.5.2).
 - **§46 epic (HS-7940/7944/7945/7946):** off-box remote workers only; not needed

@@ -39,3 +39,76 @@ export type WorkerLaunchSpec = z.infer<typeof WorkerLaunchSpecSchema>;
 export async function launchWorker(req: LaunchWorkerReq): Promise<WorkerLaunchSpec> {
   return apiCall(WorkerLaunchSpecSchema, '/workers/launch', { method: 'POST', body: req });
 }
+
+// --- HS-8962 — worker-pool manager (docs/91 §91.2-91.5) ---
+
+/** Derived worker lifecycle state for the pool panel (docs/91 §91.2). */
+export const WorkerStateSchema = z.enum(['idle', 'working', 'draining', 'stopped']);
+export type WorkerState = z.infer<typeof WorkerStateSchema>;
+
+/** A pool worker as the panel sees it — the registry slot + derived state + (when
+ *  working) the ticket it currently holds. */
+export const WorkerSlotViewSchema = z.object({
+  label: z.string(),
+  worker: z.string(),
+  worktreePath: z.string(),
+  branch: z.string().nullable(),
+  terminalId: z.string().nullable(),
+  state: WorkerStateSchema,
+  currentTicket: z.object({ id: z.number(), ticketNumber: z.string(), title: z.string() }).nullable(),
+});
+export type WorkerSlotView = z.infer<typeof WorkerSlotViewSchema>;
+
+export const PoolStateSchema = z.object({
+  targetN: z.number(),
+  workers: z.array(WorkerSlotViewSchema),
+});
+export type PoolState = z.infer<typeof PoolStateSchema>;
+
+export const RegisterWorkerReqSchema = z.object({
+  label: z.string().min(1),
+  worker: z.string().min(1),
+  worktreePath: z.string().min(1),
+  branch: z.string().nullish(),
+  terminalId: z.string().nullish(),
+});
+export type RegisterWorkerReq = z.infer<typeof RegisterWorkerReqSchema>;
+
+/** Identify one pool worker (by its `claimed_by` identity). */
+export const WorkerRefSchema = z.object({ worker: z.string().min(1) });
+export type WorkerRef = z.infer<typeof WorkerRefSchema>;
+
+export const SetTargetReqSchema = z.object({ targetN: z.number().int().min(0).max(64) });
+export type SetTargetReq = z.infer<typeof SetTargetReqSchema>;
+
+const OkSchema = z.object({ ok: z.literal(true) });
+
+/** GET `/workers/pool` → the pool's workers + derived state. */
+export async function getWorkerPool(): Promise<PoolState> {
+  return apiCall(PoolStateSchema, '/workers/pool');
+}
+
+/** POST `/workers/pool/register` → register a worker the panel just launched. */
+export async function registerPoolWorker(req: RegisterWorkerReq): Promise<WorkerSlotView> {
+  return apiCall(WorkerSlotViewSchema, '/workers/pool/register', { method: 'POST', body: req });
+}
+
+/** POST `/workers/pool/drain` → request graceful drain of one worker. */
+export async function drainPoolWorker(req: WorkerRef): Promise<{ ok: true }> {
+  return apiCall(OkSchema, '/workers/pool/drain', { method: 'POST', body: req });
+}
+
+/** POST `/workers/pool/drain-all` → request graceful drain of every worker. */
+export async function drainAllPoolWorkers(): Promise<{ ok: true }> {
+  return apiCall(OkSchema, '/workers/pool/drain-all', { method: 'POST', body: {} });
+}
+
+/** POST `/workers/pool/remove` → unregister a worker (after teardown). */
+export async function removePoolWorker(req: WorkerRef): Promise<{ ok: true }> {
+  return apiCall(OkSchema, '/workers/pool/remove', { method: 'POST', body: req });
+}
+
+/** POST `/workers/pool/target` → set the desired worker count (UI hint). */
+export async function setPoolTarget(req: SetTargetReq): Promise<{ ok: true }> {
+  return apiCall(OkSchema, '/workers/pool/target', { method: 'POST', body: req });
+}

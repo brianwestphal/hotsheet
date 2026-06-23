@@ -1,10 +1,15 @@
 # 91. Worker-Pool Dynamic Scaling + AI-Suggested N
 
-**Status: DESIGN ONLY** (HS-8960, 2026-06-23). The runtime management layer over
-the durable worktree worker pool from
+**Status: PARTIAL — the pool manager + minimal panel SHIPPED 2026-06-23 (HS-8962).**
+§91.2-91.5 implemented: the in-memory pool manager (`src/workers/poolManager.ts`),
+the `/api/workers/pool*` endpoints, drain-aware `claim-next`, the `hotsheet-worker`
+skill honoring the drain signal, and the worker-pool panel
+(`src/client/workerPoolPanel.tsx`, opened from the git popover). Still design-only:
+AI-suggested N (§91.6 → HS-8963), the §90.8 live event bus (HS-7945; polling for
+now), the dispatch drop targets (§92 → HS-8961), and the richer claimed-by chip
+(HS-8864). The runtime management layer over the durable worktree worker pool from
 [90-distributed-execution.md](90-distributed-execution.md) §90.7 and
-[89-git-worktrees.md](89-git-worktrees.md) §89.2 Phase D. Gated on the claim
-primitive (HS-8862) + the per-worker loop (HS-8863); no code this pass.
+[89-git-worktrees.md](89-git-worktrees.md) §89.2 Phase D.
 
 ## 91.0 Goal
 
@@ -51,7 +56,18 @@ Adding a worker = §89 Phase B/C, automated:
 
 Scale-up is incremental and non-blocking — existing workers keep going.
 
-## 91.4 Scale down (graceful drain)
+## 91.4 Scale down (graceful drain) — ✅ SHIPPED (HS-8962)
+
+**Implemented mechanism (the "drain flag the loop checks before its next
+`claim-next`"):** the pool manager marks a worker `draining`; the **`claim-next`
+route** consults `poolManager.onClaimNext(dataDir, worker)` and, for a draining
+worker, returns `{ticket:null, drain:true}` instead of claiming and flips the slot
+to `stopped`. Because the worker only learns it at its *next* pull, it always
+finishes the ticket it was already on. The `hotsheet-worker` skill honors
+`drain:true` by signaling done + stopping; the panel then closes the terminal +
+`removeWorktree`. A wedged worker that never pulls again is reclaimed via lease
+expiry (§90.2.2). Non-pool workers are never drained (`onClaimNext` returns
+`drain:false` for any worker not in the registry).
 
 **Never kill a worker mid-ticket.** Scaling down marks a worker `draining`; it:
 1. Stops claiming new tickets (the loop checks a drain flag before the next
@@ -66,7 +82,18 @@ returns to `working`/`idle`. A force-stop affordance exists for a wedged worker,
 but it relies on lease expiry (§90.2.2) to reclaim the abandoned ticket rather
 than losing it.
 
-## 91.5 The worker-pool panel (UI)
+## 91.5 The worker-pool panel (UI) — ✅ SHIPPED (minimal, HS-8962)
+
+Shipped as a **sibling panel** `src/client/workerPoolPanel.tsx`, opened from the
+git popover's "Worker pool…" button (next to "Manage worktrees…"). It renders a
+tile per worker (label, state chip, current ticket from the live claims), a
+"+ Add worker" control (launch → open terminal → register), a per-worker "Drain",
+and "Drain all". A worker that has acknowledged its drain (`stopped`) is
+auto-cleaned (close terminal + `removeWorktree` + unregister). Tiles refresh by
+polling every 3 s. Still to layer on (separate tickets): the numeric target-N
+stepper + auto-reconcile, the §92 dispatch drop targets (HS-8961), the richer
+claimed-by/lease-freshness chip (HS-8864), and the §90.8 live event bus
+(HS-7945, replacing the poll). Original design intent below:
 
 Extends the existing worktrees panel (`src/client/worktreesPanel.tsx`, HS-8938)
 into a pool dashboard (or a sibling panel reachable from it):
@@ -136,7 +163,8 @@ A recommendation, never an automatic action — the owner always sets the actual
 
 ## 91.10 Follow-up tickets
 
-Implementation is gated on HS-8862 (primitive) + HS-8863 (loop). When unblocked,
-likely split into: (1) pool manager + scale up/down + drain (server/coordinator),
-(2) the worker-pool panel UI (extends HS-8938 + HS-8864), (3) the AI-suggest-N
-helper. File these when the gating primitives land; tracked here until then.
+(1) pool manager + scale up/down + drain (server) and (2) the worker-pool panel UI
+shipped together in **HS-8962** (2026-06-23). Remaining: (3) the AI-suggest-N
+helper (**HS-8963**), the numeric target-N stepper + auto-reconcile (**HS-8971**),
+the dispatch drop targets (**HS-8961**/§92), the claimed-by/lease-freshness chip
+(**HS-8864**), and swapping the poll for the §90.8 live event bus (**HS-7945**).

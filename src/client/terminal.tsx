@@ -495,7 +495,7 @@ async function createDynamicTerminal(): Promise<void> {
  * click when the command has "Launch in New Terminal" enabled. Opens the drawer
  * (if closed) and selects the new terminal's tab.
  */
-export async function openTerminalRunningCommand(command: string, name?: string, cwd?: string): Promise<void> {
+export async function openTerminalRunningCommand(command: string, name?: string, cwd?: string): Promise<string> {
   // HS-8936 — `cwd` opens the terminal in a specific directory (a git worktree
   // root) so the injected command (e.g. `claude`) runs there and picks up that
   // worktree's `.mcp.json` → the shared owner Hot Sheet.
@@ -508,6 +508,9 @@ export async function openTerminalRunningCommand(command: string, name?: string,
   await loadAndRenderTerminalTabs();
   const mod = await import('./commandLog.js');
   mod.openDrawerTab(`terminal:${config.id}`);
+  // HS-8962 — returns the new terminal id so the worker-pool panel can register +
+  // later close it on drain. Existing void-ignoring callers are unaffected.
+  return config.id;
 }
 
 // Bridge to the drawer tab switcher implemented in commandLog.tsx.

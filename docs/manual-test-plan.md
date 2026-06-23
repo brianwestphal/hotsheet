@@ -736,6 +736,16 @@ The loop invariants (claim/complete/release, no-double-claim across two workers,
 - [ ] Kill one worker terminal mid-ticket. After the lease (~120 s) expires, the other worker (or a fresh one) reclaims that ticket and finishes it; the ticket shows a "lease expired — reclaimed" note.
 - [ ] A blocked ticket (`hotsheet_set_blocked_by`, HS-8865) is **not** claimed by any worker until all its blockers are completed/verified.
 
+### Worker-pool panel (HS-8962, docs/91 §91.5)
+
+The pool manager (drain semantics, state derivation) + panel render/drain wiring are automated; this covers the real launch/drain/teardown flow:
+
+- [ ] Open the git popover → **"Worker pool…"**. With Up Next tickets queued, click **"+ Add worker"**: a new worktree + a `claude` terminal running `/hotsheet-worker` opens, and a tile appears (state flips idle → working with the ticket it claimed).
+- [ ] Add a second worker — both drain the pool in parallel with no double-claim (tiles show distinct current tickets); the owner UI updates live.
+- [ ] Click **Drain** on a *working* tile: the worker finishes its current ticket (NOT interrupted mid-work), then stops; the tile goes draining → stopped and is auto-cleaned (its terminal closes + worktree is removed).
+- [ ] **Drain all** gracefully stops every worker the same way.
+- [ ] A worker started by hand (`/hotsheet-worker` not via the panel) is unaffected by pool drain (it's not in the registry).
+
 ---
 
 ## Automated Coverage Summary

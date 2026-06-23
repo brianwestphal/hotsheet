@@ -10113,6 +10113,104 @@ label.detail-details-label {
   .worktrees-newbranch { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 }
 
+// HS-8962 — worker-pool panel (docs/91). Reuses the worktrees overlay look.
+.git-popover-worker-pool-btn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+
+  &:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+}
+
+.worker-pool-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.worker-pool-dialog {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.worker-pool-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+
+  .worker-pool-title { font-weight: 700; font-size: 14px; }
+  .worker-pool-close {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 20px; line-height: 1; cursor: pointer;
+    &:hover { color: var(--text); }
+  }
+}
+
+.worker-pool-body { padding: 8px 16px; overflow-y: auto; flex: 1; }
+
+.worker-pool-empty, .worker-pool-error {
+  color: var(--text-muted);
+  padding: 16px 0;
+  text-align: center;
+}
+.worker-pool-error { color: var(--danger); }
+
+.worker-tile {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "head actions" "ticket actions";
+  gap: 2px 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+
+  &:last-child { border-bottom: none; }
+
+  .worker-tile-head { grid-area: head; display: flex; align-items: center; gap: 6px; }
+  .worker-tile-label { font-weight: 600; }
+  .worker-tile-state {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 6px;
+    background: var(--bg-hover); color: var(--text-muted);
+  }
+  .worker-tile-state-working { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .worker-tile-state-draining { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+  .worker-tile-state-stopped { opacity: 0.7; }
+  .worker-tile-ticket {
+    grid-area: ticket; font-size: 11px; color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .worker-tile-actions { grid-area: actions; display: flex; align-items: center; gap: 6px; }
+}
+
+.worker-pool-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
 .git-popover-header {
   display: flex;
   align-items: center;

@@ -128,7 +128,7 @@ describe('openWorktreesPanel (HS-8938)', () => {
 
   it('HS-8936 — "Open terminal" opens a claude terminal in the worktree cwd', async () => {
     mockList.mockResolvedValue([main, follower]);
-    mockOpenTerminal.mockResolvedValue(undefined);
+    mockOpenTerminal.mockResolvedValue('term-1');
     openWorktreesPanel();
     await flush();
     // The follower row's terminal button (rows render terminal buttons for all).

@@ -264,13 +264,25 @@ still-design HS-8962 layer below.
   (resolves the §89.5 lifecycle-coupling open question in favor of durable pool).
   Per-ticket ephemeral worktrees are explicitly rejected for the churn cost.
 
+**Pool manager + minimal panel — ✅ SHIPPED (HS-8962).** `src/workers/poolManager.ts`
+is the in-memory, session-only slot registry (per project) + the drain flag;
+graceful scale-down is **drain-aware `claim-next`** (a draining worker is told to
+stop at its next pull, flipped to `stopped`, then the panel tears it down). The
+`src/client/workerPoolPanel.tsx` panel (git popover → "Worker pool…") renders a
+tile per worker with add / drain / drain-all. Endpoints: `GET /api/workers/pool`,
+`POST /api/workers/pool/{register,drain,drain-all,remove,target}`. The numeric
+target-N stepper + AI-suggested N ([§91.6](91-worker-pool-scaling.md), HS-8963/8971)
+layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.md).
+
 ## 90.8 Observability
 
 - **Claimed-by chip (HS-8864):** each in-flight ticket shows which worker/worktree
   holds it (`worker_label`) + a lease freshness indicator, so the maintainer sees
   the parallel work live — the whole point of routing through the normal API.
-- **Worker-pool panel:** list workers, their current ticket, lease health;
-  scale-up/down controls; the AI-suggested-N helper.
+- **Worker-pool panel (✅ shipped, HS-8962):** lists workers, their current ticket
+  (from the live claims), and state; add / drain / drain-all controls. The
+  AI-suggested-N helper (HS-8963) + the richer lease-freshness chip (HS-8864) layer
+  on later.
 - **Events:** emit `ticket-claimed` / `lease-renewed` / `ticket-released` on the
   HS-7945 WebSocket bus **once it ships**; until then the existing poll path
   surfaces the `claimed_by` columns like any other field change.
@@ -314,14 +326,19 @@ still-design HS-8962 layer below.
    dead-worker reclaim, lease-loss, graceful stop, park-on-error),
    `workers/launchWorker.test.ts`, `api/workers.test.ts`, `skills.test.ts` (+1).
    The durable pool that runs N workers is HS-8962.
-4. **Claimed-by / in-flight UI (HS-8864)** — the chip + worker-pool panel.
-5. **Phase D wiring** — the durable worktree pool composing 1–4 with §89 Phases
-   A–C: the per-worker claim→work→complete loop is HS-8863; the worktree+terminal
-   slot is §89 Phase B/C (shipped). (This doc + §89 Phase D is HS-8937's design
-   deliverable; HS-8937 itself is design-complete.)
-6. **Worker-pool dynamic scaling + AI-suggested N (HS-8960 →
-   [§91](91-worker-pool-scaling.md))** — scale up/down + batch sizing; the
-   pool-management layer over HS-8863 workers.
+4. **Claimed-by / in-flight UI (HS-8864)** — the richer lease-freshness chip. (The
+   worker-pool panel's basic per-worker current-ticket view shipped in HS-8962.)
+5. **Phase D wiring** — ✅ the durable worktree pool composing 1–4 with §89 Phases
+   A–C shipped via HS-8962: the per-worker claim→work→complete loop (HS-8863) + the
+   worktree+terminal slot (§89 Phase B/C) + the pool manager that scales/drains
+   them. (This doc + §89 Phase D is HS-8937's design deliverable.)
+6. **Worker-pool manager + panel (HS-8962 →
+   [§91](91-worker-pool-scaling.md))** — ✅ **SHIPPED** (2026-06-23): in-memory
+   `src/workers/poolManager.ts` + drain-aware `claim-next` + `/api/workers/pool*` +
+   `src/client/workerPoolPanel.tsx` (add/drain/drain-all). Tests:
+   `workers/poolManager.test.ts`, `api/workers.test.ts`, `routes/api.test.ts` (pool
+   block), `client/workerPoolPanel.test.ts`. The numeric target-N stepper (HS-8971)
+   + AI-suggested N (HS-8963 → §91.6) remain backlog.
 7. **Coordinator-dispatch UX (HS-8961 →
    [§92](92-coordinator-dispatch.md))** — owner partitions related chunks onto a
    worker (the push half of §90.5).

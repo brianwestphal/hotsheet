@@ -37,6 +37,7 @@ import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
+import { onClaimNext } from '../workers/poolManager.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
@@ -176,6 +177,12 @@ ticketRoutes.post('/tickets/claim-next', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ClaimSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  // HS-8962 — drain-aware: a pool worker marked draining is told to stop (and
+  // flipped to `stopped`) instead of claiming, so it exits its loop *after*
+  // finishing the ticket it was already on (docs/91 §91.4). Non-pool workers are
+  // unaffected (drain is always false for them).
+  const { drain } = onClaimNext(c.get('dataDir'), parsed.data.worker);
+  if (drain) return c.json({ ticket: null, drain: true });
   const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds);
   if (ticket !== null) notifyMutation(c.get('dataDir'));
   return c.json({ ticket });
