@@ -4,9 +4,12 @@
 the follower pointer + project-data redirect. **Phase B shipped** — server core
 (HS-8935: create/list/remove + API) + UI (HS-8938: management panel from the git
 popover). **Phase C shipped (HS-8936)** — per-worktree AI terminal + agent wiring
-(owner-direct `.mcp.json` + owner-worklist skills). Phase D pending; the parallel/claiming half (Phase D) is gated on the
-distributed-execution epic (HS-8861–8865) and the §46 service/client decoupling
-epic (HS-7940 / HS-7944 / HS-7945). Scope decision (HS-8905 feedback):
+(owner-direct `.mcp.json` + owner-worklist skills). **Phase D designed (HS-8937,
+2026-06-23)** — the claim model is resolved in
+[90-distributed-execution.md](90-distributed-execution.md) (§90) and the Phase D
+shape (durable worker pool, dynamic scaling, both coordination modes,
+single-machine first) is pinned in §89.2; implementation is the gated chain
+(HS-8862/8863/8864/8865 + HS-8960/8961). Scope decision (HS-8905 feedback):
 **standalone doc, follower `.hotsheet/settings.json` pointer model.**
 
 ## 89.0 Goal
@@ -147,10 +150,28 @@ Choice of AI tool is currently `claude`; the existing terminal-target config can
 extend this later.
 
 ### Phase D — Auto-parallelization across worktrees
-The end-state vision: a coordinator spins up N worktrees + agents that each
-claim-next → work in their worktree → complete → release, draining the Up Next
-pool in parallel. **This is HS-8863's worker loop with worktrees as the
-isolation;** it is gated on the prerequisites below, not built here.
+The end-state vision: N worktrees + agents that each claim-next → work in their
+worktree → complete → release, draining the Up Next pool in parallel. **This is
+HS-8863's worker loop with worktrees as the isolation;** the claim/lease primitive
++ coordination model it consumes are designed in
+[90-distributed-execution.md](90-distributed-execution.md) (§90 — HS-8861 resolved
+there). Gated on the prerequisites below, not built here.
+
+Phase-D-specific decisions (HS-8937 feedback, 2026-06-23 — details in §90.5/§90.7):
+- **Durable per-worker pool**, not per-claimed-ticket worktrees — N long-lived
+  worktrees, each an agent terminal looping claim→work→complete→release. Resolves
+  the §89.5 lifecycle-coupling question in favor of durable slots (per-ticket
+  ephemeral worktrees are rejected for git/disk churn).
+- **Dynamic scaling up/down:** the owner adds/drains workers at any time; a
+  scaled-down worker stops *after* its current ticket releases, then its worktree
+  is removed. N is not fixed at launch.
+- **AI-assisted sizing:** the owner can ask the AI to recommend a reasonable N for
+  the upcoming Up Next batch (independent-vs-coupled + `blocked_by` analysis); the
+  owner sets the actual N.
+- **Both coordination modes** (§90.5): autonomous self-claim (idle worker pulls
+  `claim-next`) AND owner dispatch (assign related chunks to a specific worktree).
+- **Single-machine first** — N worktrees against the local server; off-box workers
+  are a later extension gated on the §46 remote epic.
 
 ## 89.3 Prerequisites (existing tickets — the "ticket checkout" + remote epics)
 
@@ -197,10 +218,10 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
 - Worktree default location + branch-naming convention; whether removal also
   deletes the branch (the API supports `deleteBranch`; the UI keeps the branch
   for now).
-- Worktree default location + branch-naming convention; whether removal also
-  deletes the branch.
-- Lifecycle coupling: is a worktree created per *claimed ticket* (auto, Phase D)
-  or as a durable user-managed checkout (Phase B), or both?
+- ~~Lifecycle coupling: is a worktree created per *claimed ticket* or as a durable
+  user-managed checkout, or both?~~ **Resolved (HS-8937):** durable per-worker pool
+  slots (§89.2 Phase D / [§90.7](90-distributed-execution.md)), not
+  per-claimed-ticket worktrees.
 - Multi-project: a follower points at one authoritative project; confirm a
   worktree never needs to span projects.
 
@@ -214,6 +235,14 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
   **✅ Shipped.**
 - **HS-8936 — Phase C:** open an AI terminal per worktree + the agent wiring
   (owner-direct `.mcp.json` + owner-worklist skills). **✅ Shipped.**
-- **HS-8937 — Phase D:** auto-parallelize tickets across worktrees. Backlog;
-  gated on the claim/lease epic (HS-8862/8863/8861/8864/8865) + §46
-  (HS-7940/7944/7945 for remote workers).
+- **HS-8937 — Phase D (design):** ✅ design done — claim model resolved in
+  [90-distributed-execution.md](90-distributed-execution.md) (§90), Phase D shape
+  pinned above. Implementation is the gated chain below.
+- **HS-8861 — distributed-execution design spike:** ✅ resolved → §90.
+- **HS-8862/8863/8864/8865 — claim primitive / worker loop / claimed-by UI /
+  flat `blocked_by` gate:** backlog; implementation tickets, designed in §90.
+- **HS-8960 — worker-pool dynamic scaling + AI-suggested N:** backlog (§90.7).
+- **HS-8961 — coordinator-dispatch UX (owner partitions chunks):** backlog
+  (§90.5.2).
+- **§46 epic (HS-7940/7944/7945/7946):** off-box remote workers only; not needed
+  for single-machine Phase D.
