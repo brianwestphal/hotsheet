@@ -6,13 +6,24 @@
 // today. Atomicity is via `SELECT … FOR UPDATE SKIP LOCKED` (correct under real
 // concurrent Postgres; a no-op-but-safe serialization under single-connection
 // PGLite where the single UPDATE … RETURNING already prevents double-claim).
-import type { Ticket } from '../schemas.js';
+import { parseJsonOrNull, TagsArraySchema,type Ticket } from '../schemas.js';
 import { BLOCKED_TICKET_IDS_SQL } from './blockedBy.js';
 import { getDb } from './connection.js';
 import { updateTicket } from './tickets.js';
 
 /** Default lease TTL in seconds (docs/90 §90.2.2). */
 export const DEFAULT_CLAIM_TTL_SECONDS = 120;
+
+/** HS-8970 — poison-ticket dead-letter. A ticket may be claimed at most this many
+ *  times without completing; the (MAX+1)-th claim is refused by `claimNext`, and
+ *  the lease sweep then quarantines it (drops it from Up Next + a `needs-attention`
+ *  tag + a `QUARANTINED:` note) so it stops looping forever and surfaces to the
+ *  owner. Transient crashes (a few reclaims that eventually complete) stay well
+ *  under this; only a persistently-failing ticket hits it. */
+export const MAX_CLAIM_ATTEMPTS = 5;
+
+/** The tag a quarantined ticket is marked with (HS-8970). */
+export const QUARANTINE_TAG = 'needs-attention';
 
 /** Mirrors `PRIORITY_ORD` in `tickets.ts` so claim-next picks the same "top of
  *  Up Next" ticket the worklist shows (highest→lowest = 1→5). */
@@ -32,8 +43,8 @@ export interface ClaimRow {
 
 /** Atomically claim the top claimable Up Next ticket for `worker`, or null when
  *  nothing is claimable. "Claimable" = up_next, actionable status, not blocked by
- *  an unfinished dependency (HS-8865), and either unclaimed or its lease has
- *  expired. */
+ *  an unfinished dependency (HS-8865), under the poison-retry budget (HS-8970), and
+ *  either unclaimed or its lease has expired. */
 export async function claimNext(
   worker: string,
   label: string | null,
@@ -46,6 +57,7 @@ export async function claimNext(
         WHERE up_next = TRUE
           AND status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
           AND (claimed_by IS NULL OR claim_lease_expires_at < NOW())
+          AND claim_count < ${MAX_CLAIM_ATTEMPTS}
           AND id NOT IN (${BLOCKED_TICKET_IDS_SQL})
         ORDER BY ${PRIORITY_ORD} ASC, id DESC
         FOR UPDATE SKIP LOCKED
@@ -170,18 +182,37 @@ export async function getClaims(): Promise<ClaimRow[]> {
  *  and append a note so the maintainer sees it. `status` is left untouched
  *  (docs/90 §90.2.2 — don't clobber real progress). Returns the count reclaimed.
  *  Lazy reclaim in claimNext/claimById already makes these claimable; this just
- *  surfaces + frees them. */
+ *  surfaces + frees them.
+ *
+ *  HS-8970 — poison-ticket dead-letter: when a reclaimed ticket has hit
+ *  `MAX_CLAIM_ATTEMPTS` claims without completing, it is **quarantined** instead
+ *  of merely reclaimed — dropped from Up Next (so `claimNext` stops offering it),
+ *  tagged `needs-attention`, and given a `QUARANTINED:` note. Its `claim_count` is
+ *  reset to 0 so re-starring (up_next → true) gives it a fresh retry budget. */
 export async function sweepExpiredClaims(): Promise<number> {
   const db = await getDb();
-  const expired = await db.query<{ id: number; worker_label: string | null; claimed_by: string }>(
+  const expired = await db.query<{ id: number; worker_label: string | null; claimed_by: string; claim_count: number; tags: string; status: string }>(
     `UPDATE tickets
         SET claimed_by = NULL, claim_lease_expires_at = NULL, worker_label = NULL
       WHERE claimed_by IS NOT NULL AND claim_lease_expires_at < NOW()
-     RETURNING id, worker_label, claimed_by`,
+     RETURNING id, worker_label, claimed_by, claim_count, tags, status`,
   );
   for (const row of expired.rows) {
     const who = row.worker_label != null && row.worker_label !== '' ? row.worker_label : row.claimed_by;
-    await updateTicket(row.id, { notes: `Claim lease expired — reclaimed from \`${who}\`.` });
+    const actionable = row.status !== 'completed' && row.status !== 'verified';
+    if (actionable && row.claim_count >= MAX_CLAIM_ATTEMPTS) {
+      const tags = parseJsonOrNull(TagsArraySchema, row.tags) ?? [];
+      if (!tags.includes(QUARANTINE_TAG)) tags.push(QUARANTINE_TAG);
+      await updateTicket(row.id, {
+        up_next: false,
+        tags: JSON.stringify(tags),
+        notes: `QUARANTINED: claimed ${row.claim_count}× without completing — needs attention (last worker \`${who}\`). Fix it, then re-star to retry.`,
+      });
+      // Fresh budget for the next attempt once the owner re-queues it.
+      await db.query('UPDATE tickets SET claim_count = 0 WHERE id = $1', [row.id]);
+    } else {
+      await updateTicket(row.id, { notes: `Claim lease expired — reclaimed from \`${who}\`.` });
+    }
   }
   return expired.rows.length;
 }

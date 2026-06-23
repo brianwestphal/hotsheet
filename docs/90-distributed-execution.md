@@ -200,6 +200,17 @@ Implemented two ways that share the same claim/lease semantics:
   ticket — the lease expiry is the retry backoff). The multi-worker tests run it
   for real; HS-8962's pool manager + a future headless worker build on it.
 
+**Poison-ticket dead-letter (HS-8970, ✅ shipped).** Park-on-error retries a
+failing ticket every lease expiry — fine for a transient failure, but a ticket
+that *always* fails would loop forever. So a claim budget bounds it
+(`src/db/claims.ts`): `claimNext` only offers a ticket while
+`claim_count < MAX_CLAIM_ATTEMPTS` (default 5), so after N attempts it stops being
+handed out; the lease sweep (`sweepExpiredClaims`) then **quarantines** it —
+`up_next = false` (out of the claimable pool), a `needs-attention` tag, and a
+`QUARANTINED:` note — and resets `claim_count` so re-starring (up_next → true)
+gives it a fresh budget. Transient crashes (a few reclaims that eventually
+complete) stay well under the budget; only a persistently-failing ticket trips it.
+
 ### 90.5.2 Coordinator-dispatch (push) — owner partitioning
 
 The owner (or an AI planning pass) assigns specific tickets to specific workers
@@ -354,3 +365,7 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
 - Whether `worker_label` should be owner-assigned (stable "worktree-2") or
   worker-generated; lean owner-assigned for a readable UI.
 - AI-suggested-N heuristic specifics (left to the HS-8937 implementation).
+- ~~Poison-ticket handling — does park-on-error loop forever?~~ **Resolved (HS-8970):**
+  a `MAX_CLAIM_ATTEMPTS` budget + sweep quarantine (drop from Up Next + tag + note),
+  reusing `up_next`/tags rather than a new column (§90.5.1). Tune the threshold (5)
+  under real runtimes.

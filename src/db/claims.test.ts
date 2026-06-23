@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { claimById, claimNext, getClaims, release, renewLease, sweepExpiredClaims } from './claims.js';
+import { claimById, claimNext, getClaims, MAX_CLAIM_ATTEMPTS, QUARANTINE_TAG, release, renewLease, sweepExpiredClaims } from './claims.js';
 import { getDb } from './connection.js';
 import { parseNotes } from './notes.js';
 import { createTicket, getTicket } from './tickets.js';
@@ -19,6 +20,12 @@ async function upNext(title: string, priority: 'highest' | 'high' | 'default' | 
 async function expireLease(id: number): Promise<void> {
   const db = await getDb();
   await db.query("UPDATE tickets SET claim_lease_expires_at = NOW() - INTERVAL '1 hour' WHERE id = $1", [id]);
+}
+
+/** Force a ticket's claim_count (simulate N prior attempts). */
+async function setClaimCount(id: number, n: number): Promise<void> {
+  const db = await getDb();
+  await db.query('UPDATE tickets SET claim_count = $2 WHERE id = $1', [id, n]);
 }
 
 describe('claim/lease primitive (HS-8862)', () => {
@@ -139,7 +146,52 @@ describe('claim/lease primitive (HS-8862)', () => {
     const after = await getTicket(t.id);
     expect(after!.claimed_by).toBeNull();
     expect(after!.claim_lease_expires_at).toBeNull();
+    expect(after!.up_next).toBe(true); // under budget → stays claimable
     const notes = parseNotes(after!.notes);
     expect(notes.some(n => n.text.includes('lease expired'))).toBe(true);
+  });
+
+  describe('poison-ticket dead-letter (HS-8970)', () => {
+    it('claimNext refuses a ticket that has hit MAX_CLAIM_ATTEMPTS', async () => {
+      const t = await upNext('poison', 'high');
+      await setClaimCount(t.id, MAX_CLAIM_ATTEMPTS - 1);
+      // One attempt left → claimable (claim_count becomes MAX).
+      expect((await claimNext('w1', 'W1'))!.id).toBe(t.id);
+      await release(t.id, 'w1');
+      expect((await getTicket(t.id))!.claim_count).toBe(MAX_CLAIM_ATTEMPTS);
+      // Now at the budget → no longer offered.
+      expect(await claimNext('w2', 'W2')).toBeNull();
+    });
+
+    it('the sweep quarantines a ticket that expired at the budget: drops Up Next, tags + notes, resets the counter', async () => {
+      const t = await upNext('poison', 'high');
+      await claimNext('w1', 'Worker 1');         // claimed_by set, claim_count = 1
+      await setClaimCount(t.id, MAX_CLAIM_ATTEMPTS); // simulate having burned the budget
+      await expireLease(t.id);
+
+      expect(await sweepExpiredClaims()).toBe(1);
+
+      const after = await getTicket(t.id);
+      expect(after!.claimed_by).toBeNull();
+      expect(after!.up_next).toBe(false);        // dropped from the claimable pool
+      expect(after!.claim_count).toBe(0);        // fresh budget for a re-star
+      expect(parseJsonOrNull(TagsArraySchema, after!.tags)).toContain(QUARANTINE_TAG);
+      expect(parseNotes(after!.notes).some(n => n.text.startsWith('QUARANTINED:'))).toBe(true);
+      // And it is no longer claimable.
+      expect(await claimNext('w2', 'W2')).toBeNull();
+    });
+
+    it('re-starring a quarantined ticket (up_next → true) makes it claimable again with a fresh budget', async () => {
+      const t = await upNext('poison', 'high');
+      await claimNext('w1', 'W1');
+      await setClaimCount(t.id, MAX_CLAIM_ATTEMPTS);
+      await expireLease(t.id);
+      await sweepExpiredClaims();
+
+      // Owner re-queues it (claim_count was reset to 0 by the sweep).
+      const db = await getDb();
+      await db.query('UPDATE tickets SET up_next = TRUE WHERE id = $1', [t.id]);
+      expect((await claimNext('w3', 'W3'))!.id).toBe(t.id);
+    });
   });
 });
