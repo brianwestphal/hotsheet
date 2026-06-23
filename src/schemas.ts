@@ -57,6 +57,12 @@ export const TicketSchema = z.object({
   notes: z.string(),
   tags: z.string(),
   last_read_at: z.string().nullable(),
+  // HS-8862 — distributed-execution claim/lease (docs/90 §90.2.1). Nullish so
+  // existing ticket constructions and pre-migration callers are unaffected.
+  claimed_by: z.string().nullish(),
+  claim_lease_expires_at: z.string().nullish(),
+  worker_label: z.string().nullish(),
+  claim_count: z.number().nullish(),
 });
 
 export type Ticket = z.infer<typeof TicketSchema>;

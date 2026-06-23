@@ -59,7 +59,9 @@ import { HotsheetSettingsSchema } from './schemas.js';
 // `EXPECTED_CHANNEL_VERSION` in `src/channel-config.ts` bumped in lockstep.
 // v10 (HS-8771) — added the `hotsheet_announce` MCP tool (15 tools total).
 // v11 (HS-8772) — `hotsheet_announce` gained an optional `diff` input.
-export const CHANNEL_VERSION = 11;
+// v12 (HS-8862) — added claim/lease tools: `hotsheet_claim_next` /
+//   `hotsheet_renew_lease` / `hotsheet_release` (18 tools total).
+export const CHANNEL_VERSION = 12;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';

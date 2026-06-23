@@ -194,6 +194,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await runStep('closeDatabases', closeDatabases);
   await runStep('stopFreezeHeartbeat', stopFreezeHeartbeat);
   await runStep('stopTelemetryRetentionTimer', stopTelemetryRetentionTimerStep);
+  await runStep('stopLeaseSweepTimer', stopLeaseSweepTimerStep);
   await runStep('releaseProjectLocks', releaseProjectLocks);
   await runStep('removeLockfile', removeLockfile);
 
@@ -219,6 +220,15 @@ async function stopTelemetryRetentionTimerStep(): Promise<void> {
   try {
     const { stopTelemetryRetentionTimer } = await import('./telemetryRetentionTimer.js');
     stopTelemetryRetentionTimer();
+  } catch { /* never started — nothing to stop */ }
+}
+
+/** HS-8862 — stop the periodic claim-lease sweep timer on shutdown (unref'd, but
+ *  explicit cleanup keeps it from outliving the data dir in tests). */
+async function stopLeaseSweepTimerStep(): Promise<void> {
+  try {
+    const { stopLeaseSweepTimer } = await import('./claims/leaseSweepTimer.js');
+    stopLeaseSweepTimer();
   } catch { /* never started — nothing to stop */ }
 }
 

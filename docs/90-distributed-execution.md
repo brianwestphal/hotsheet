@@ -1,7 +1,10 @@
 # 90. Distributed Ticket Execution (claim / lease + worker pool)
 
-**Status: DESIGN ONLY** (HS-8861 spike resolved here, 2026-06-23; supersedes the
-"finalize the claim model" half of HS-8861). No code this pass. This doc pins the
+**Status: PARTIAL — design + the claim/lease primitive (HS-8862) SHIPPED
+2026-06-23.** §90.2-90.4 (schema, endpoints, MCP tools, lease sweep) are
+implemented (see §90.10 item 1); the worker loop / pool / dispatch / UI
+(§90.5-90.8) remain design-only. HS-8861 spike resolved here; supersedes the
+"finalize the claim model" half of HS-8861. No code this pass. This doc pins the
 concrete schema, endpoints, MCP tools, lease semantics, coordination models, and
 the dynamically-scaled worker pool that [89-git-worktrees.md](89-git-worktrees.md)
 §89.2 Phase D consumes as its isolation layer.
@@ -181,7 +184,8 @@ This is the autonomous drain-the-pool loop.
 The owner (or an AI planning pass) assigns specific tickets to specific workers
 via `claim` (claim-by-id on the worker's behalf), e.g. grouping *related* tickets
 onto one worker to keep a coherent change set in one worktree, or steering a
-specialized worker. The dispatcher holds the claim, the worker works it.
+specialized worker. The dispatcher holds the claim, the worker works it. Detailed
+UX in [92-coordinator-dispatch.md](92-coordinator-dispatch.md) (HS-8961).
 
 Both modes coexist: a dispatched (pre-claimed) ticket is simply skipped by other
 workers' `claim-next` (it has a live lease); an undirected worker keeps pulling.
@@ -206,7 +210,8 @@ This is what [§89](89-git-worktrees.md) Phase D builds. A **durable per-worker
 pool**: N long-lived worktrees, each with an AI terminal looping
 `claim-next → work → complete + release → repeat`. Durable (not per-ticket
 ephemeral) to avoid git/worktree churn; cleanup happens when the pool scales down,
-not per ticket.
+not per ticket. Detailed design in
+[91-worker-pool-scaling.md](91-worker-pool-scaling.md) (HS-8960).
 
 - **Dynamic scale up/down:** the owner can add or drain workers at any time.
   Scaling up = create a worktree + terminal (Phase B/C) and start the loop;
@@ -247,8 +252,14 @@ not per ticket.
 
 ## 90.10 Phasing / implementation tickets
 
-1. **Claim/lease primitive (HS-8862)** — schema + endpoints + MCP tools + sweep +
-   tests. Self-contained; buildable single-machine now.
+1. **Claim/lease primitive (HS-8862)** — ✅ **SHIPPED** (2026-06-23): the four
+   `tickets` columns + `src/db/claims.ts` (`claimNext`/`claimById`/`renewLease`/
+   `release`/`getClaims`/`sweepExpiredClaims`), the five `POST /tickets/claim-next`
+   `/:id/claim` `/:id/renew-lease` `/:id/release` + `GET /tickets/claims` endpoints
+   (typed in `src/api/tickets.ts`), the 3 MCP tools (`CHANNEL_VERSION` → 12), and
+   the 60 s lease-sweep timer (`src/claims/leaseSweepTimer.ts`). Tests:
+   `db/claims.test.ts` (9), `routes/api.test.ts` claim block (4),
+   `channel.tools.test.ts` (+4), `claims/leaseSweepTimer.test.ts` (4).
 2. **Flat `blocked_by` planning gate (HS-8865)** — the dependency table + the
    `claim-next` exclusion + a planning pass that populates it.
 3. **Distributed worker loop (HS-8863)** — the per-worker `claim → work → release`
@@ -258,9 +269,11 @@ not per ticket.
    A–C: the per-worker claim→work→complete loop is HS-8863; the worktree+terminal
    slot is §89 Phase B/C (shipped). (This doc + §89 Phase D is HS-8937's design
    deliverable; HS-8937 itself is design-complete.)
-6. **Worker-pool dynamic scaling + AI-suggested N (HS-8960)** — scale up/down +
-   batch sizing; the pool-management layer over HS-8863 workers.
-7. **Coordinator-dispatch UX (HS-8961)** — owner partitions related chunks onto a
+6. **Worker-pool dynamic scaling + AI-suggested N (HS-8960 →
+   [§91](91-worker-pool-scaling.md))** — scale up/down + batch sizing; the
+   pool-management layer over HS-8863 workers.
+7. **Coordinator-dispatch UX (HS-8961 →
+   [§92](92-coordinator-dispatch.md))** — owner partitions related chunks onto a
    worker (the push half of §90.5).
 8. **Remote extension (§46 epic, HS-7940/7944/7945/7946)** — off-box workers.
 

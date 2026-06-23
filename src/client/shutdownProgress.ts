@@ -27,6 +27,7 @@ const SHUTDOWN_STEP_PHRASES: Record<string, string> = {
   // Fast trailing bookkeeping steps — collapse to one calm phrase.
   stopFreezeHeartbeat: 'Finishing up…',
   stopTelemetryRetentionTimer: 'Finishing up…',
+  stopLeaseSweepTimer: 'Finishing up…',
   releaseProjectLocks: 'Finishing up…',
   removeLockfile: 'Finishing up…',
 };

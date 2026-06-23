@@ -195,6 +195,22 @@ const DuplicateTicketsInputSchema = z.object({
   ids: z.array(z.number().int()).min(1).describe('Ticket ids to duplicate (one or more)'),
 });
 
+// HS-8862 — distributed-execution claim/lease tools (docs/90 §90.4).
+const ClaimNextInputSchema = z.object({
+  worker: z.string().min(1).describe('This worker\'s identity (stable per worker, e.g. "worker-2")'),
+  label: z.string().nullish().describe('Optional human-friendly worker label shown in the UI'),
+  ttlSeconds: z.number().int().positive().max(3600).optional().describe('Lease TTL in seconds (default 120)'),
+});
+const RenewLeaseInputSchema = z.object({
+  id: z.number().int().describe('Ticket id whose lease to renew (heartbeat)'),
+  worker: z.string().min(1).describe('The worker holding the claim (must match)'),
+  ttlSeconds: z.number().int().positive().max(3600).optional().describe('New lease TTL in seconds (default 120)'),
+});
+const ReleaseInputSchema = z.object({
+  id: z.number().int().describe('Ticket id to release'),
+  worker: z.string().nullish().describe('The worker holding the claim; omit to force-release (owner)'),
+});
+
 const BatchInputSchema = z.object({
   ids: z.array(z.number().int()).min(1).describe('Ticket ids to operate on (one or more)'),
   action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']).describe('Batch action to apply'),
@@ -417,6 +433,32 @@ async function dispatchQueryTickets(args: unknown, settings: ChannelSettings, fe
   return await proxyRequest(settings, '/api/tickets/query', { method: 'POST', body: parsed.data }, fetchFn);
 }
 
+async function dispatchClaimNext(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = ClaimNextInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_claim_next — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/tickets/claim-next', { method: 'POST', body: parsed.data }, fetchFn);
+}
+
+async function dispatchRenewLease(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = RenewLeaseInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_renew_lease — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { id, worker, ttlSeconds } = parsed.data;
+  return await proxyRequest(settings, `/api/tickets/${String(id)}/renew-lease`, { method: 'POST', body: { worker, ttlSeconds } }, fetchFn);
+}
+
+async function dispatchRelease(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = ReleaseInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_release — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { id, worker } = parsed.data;
+  return await proxyRequest(settings, `/api/tickets/${String(id)}/release`, { method: 'POST', body: { worker } }, fetchFn);
+}
+
 // ---------------------------------------------------------------------------
 // Public tool catalog + top-level dispatcher.
 // ---------------------------------------------------------------------------
@@ -513,6 +555,26 @@ const TOOLS: ToolEntry[] = [
     description: 'Run a custom-view-style query: combine field/operator/value conditions via AND (logic="all") or OR (logic="any"), with optional sort_by / sort_dir / required_tag / include_archived. Returns the matching tickets. For agents that need to dig deeper than the worklist provides.',
     inputSchema: QueryTicketsInputSchema,
     call: dispatchQueryTickets,
+  },
+  // HS-8862 — distributed-execution claim/lease (§90.4). A worker agent drains
+  // the Up Next pool: claim_next → work → (renew_lease while working) → release.
+  {
+    name: 'hotsheet_claim_next',
+    description: 'Atomically claim the highest-priority Up Next ticket that is unclaimed (or whose lease expired) for this worker, so parallel workers never grab the same ticket. Returns {ticket} (the claimed ticket) or {ticket:null} when nothing is claimable. Work the returned ticket, then hotsheet_release it (and set status=completed via hotsheet_update_ticket).',
+    inputSchema: ClaimNextInputSchema,
+    call: dispatchClaimNext,
+  },
+  {
+    name: 'hotsheet_renew_lease',
+    description: 'Heartbeat: extend the claim lease on a ticket this worker is still working. Returns {ok:false} if the claim lapsed/was reclaimed (re-claim before continuing). Call periodically (well within the TTL) during long tickets.',
+    inputSchema: RenewLeaseInputSchema,
+    call: dispatchRenewLease,
+  },
+  {
+    name: 'hotsheet_release',
+    description: 'Release a claim on a ticket (on completion or to hand it back). Idempotent. Pass the same `worker` that claimed it; omit `worker` only for an owner force-release.',
+    inputSchema: ReleaseInputSchema,
+    call: dispatchRelease,
   },
   // HS-8771 — hybrid Announcer generation (§80).
   {

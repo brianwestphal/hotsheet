@@ -742,6 +742,17 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ;
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
 
+  // HS-8862 — distributed-execution claim/lease columns (docs/90 §90.2.1).
+  // Orthogonal to status/up_next: NULL claimed_by ⇒ unclaimed ⇒ behavior
+  // identical to today (the single-local-maintainer default never sets these).
+  await db.exec(`
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS claim_lease_expires_at TIMESTAMPTZ;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS worker_label TEXT;
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS claim_count INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS idx_tickets_claimed_by ON tickets(claimed_by);
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (claim columns):', e.message); });
+
   // HS-8428 — draft-scoped attachments. A nullable `draft_id` lets the
   // server distinguish attachments that belong to an in-flight feedback
   // draft (rendered only inside the feedback dialog, not in the ticket's

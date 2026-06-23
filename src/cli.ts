@@ -294,6 +294,14 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     } catch (e: unknown) {
       console.warn(`[startup] Starting telemetry retention timer failed (non-fatal): ${getErrorMessage(e)}`);
     }
+    // HS-8862 — periodic claim-lease expiry sweep (docs/90 §90.2.2). Surfaces +
+    // tidies dead-worker claims; correctness already holds via lazy reclaim.
+    try {
+      const { startLeaseSweepTimer } = await import('./claims/leaseSweepTimer.js');
+      startLeaseSweepTimer(dataDir);
+    } catch (e: unknown) {
+      console.warn(`[startup] Starting claim-lease sweep timer failed (non-fatal): ${getErrorMessage(e)}`);
+    }
     startupMark('post-startup: migrating global config');
     await migrateGlobalConfig();
     startupMark('post-startup: cleaning up stale channels');

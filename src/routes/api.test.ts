@@ -2018,3 +2018,52 @@ describe('POST /api/channel/permission/dismiss', () => {
     mockGetPort.mockReturnValue(null);
   });
 });
+
+describe('claim/lease endpoints (HS-8862)', () => {
+  async function createUpNext(title: string, priority = 'default'): Promise<number> {
+    const r = await app.request('/api/tickets', post({ title, defaults: { up_next: true, priority } }));
+    return (await r.json() as TicketResponse).id;
+  }
+
+  it('POST /tickets/claim-next claims the top ticket then returns null when drained', async () => {
+    const hi = await createUpNext('claim hi', 'highest');
+    const res = await app.request('/api/tickets/claim-next', post({ worker: 'w1', label: 'W1' }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ticket: { id: number; claimed_by: string } | null };
+    expect(body.ticket?.id).toBe(hi);
+    expect(body.ticket?.claimed_by).toBe('w1');
+  });
+
+  it('POST /tickets/:id/claim returns 409 on a live foreign lease', async () => {
+    const id = await createUpNext('dispatch me');
+    const ok = await app.request(`/api/tickets/${id}/claim`, post({ worker: 'w1' }));
+    expect(ok.status).toBe(200);
+    expect((await ok.json() as { ok: boolean }).ok).toBe(true);
+
+    const conflict = await app.request(`/api/tickets/${id}/claim`, post({ worker: 'w2' }));
+    expect(conflict.status).toBe(409);
+    const cb = await conflict.json() as { ok: boolean; reason: string; claimedBy: string };
+    expect(cb).toEqual(expect.objectContaining({ ok: false, reason: 'conflict', claimedBy: 'w1' }));
+  });
+
+  it('renew-lease + release round-trips; GET /tickets/claims lists live claims', async () => {
+    const id = await createUpNext('lease me');
+    await app.request(`/api/tickets/${id}/claim`, post({ worker: 'w1', label: 'W1' }));
+
+    const renew = await app.request(`/api/tickets/${id}/renew-lease`, post({ worker: 'w1' }));
+    expect((await renew.json() as { ok: boolean }).ok).toBe(true);
+
+    const claims = await (await app.request('/api/tickets/claims')).json() as { claims: { ticketId: number; claimedBy: string }[] };
+    expect(claims.claims.some(c => c.ticketId === id && c.claimedBy === 'w1')).toBe(true);
+
+    const rel = await app.request(`/api/tickets/${id}/release`, post({ worker: 'w1' }));
+    expect((await rel.json() as { ok: boolean }).ok).toBe(true);
+    const after = await (await app.request('/api/tickets/claims')).json() as { claims: { ticketId: number }[] };
+    expect(after.claims.some(c => c.ticketId === id)).toBe(false);
+  });
+
+  it('claim-next validation: missing worker → 400', async () => {
+    const res = await app.request('/api/tickets/claim-next', post({}));
+    expect(res.status).toBe(400);
+  });
+});

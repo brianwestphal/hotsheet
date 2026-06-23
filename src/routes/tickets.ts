@@ -5,6 +5,7 @@ import { Hono } from 'hono';
 
 // HS-8555 — centralized attachment-blob delete helper.
 import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
+import { claimById, claimNext, getClaims, release, renewLease } from '../db/claims.js';
 import { getDb } from '../db/connection.js';
 import { createFeedbackDraft, deleteFeedbackDraft, listFeedbackDrafts, updateFeedbackDraft } from '../db/feedbackDrafts.js';
 import {
@@ -39,10 +40,10 @@ import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
 import {
-  BatchActionSchema, CreateTicketSchema, DuplicateSchema,
+  BatchActionSchema, ClaimSchema, CreateTicketSchema, DuplicateSchema,
   FeedbackDraftCreateSchema, FeedbackDraftUpdateSchema,
   NotesBulkSchema, NotesEditSchema,   parseBody,
-QueryTicketsSchema,
+QueryTicketsSchema, ReleaseSchema,
   SortBySchema, SortDirSchema,
   TicketPrioritySchema, TicketStatusSchema, UpdateTicketSchema,
 } from './validation.js';
@@ -161,6 +162,58 @@ ticketRoutes.get('/tickets/prefixes', async (c) => {
   // custom prefix and no historical tickets still has a sane fallback.
   prefixes.add('HS');
   return c.json({ prefixes: [...prefixes].sort() });
+});
+
+// --- HS-8862 — distributed-execution claim/lease (docs/90 §90.3). Registered
+//     BEFORE `/tickets/:id` so `GET /tickets/claims` isn't captured by `:id`. ---
+
+ticketRoutes.get('/tickets/claims', async (c) => {
+  return c.json({ claims: await getClaims() });
+});
+
+ticketRoutes.post('/tickets/claim-next', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(ClaimSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds);
+  if (ticket !== null) notifyMutation(c.get('dataDir'));
+  return c.json({ ticket });
+});
+
+ticketRoutes.post('/tickets/:id/claim', async (c) => {
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(ClaimSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const result = await claimById(id, parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds);
+  if (result.ok) {
+    notifyMutation(c.get('dataDir'));
+    return c.json(result);
+  }
+  // 404 for an unknown/unclaimable ticket; 409 for a live foreign lease.
+  return c.json(result, result.reason === 'conflict' ? 409 : 404);
+});
+
+ticketRoutes.post('/tickets/:id/renew-lease', async (c) => {
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(ClaimSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const result = await renewLease(id, parsed.data.worker, parsed.data.ttlSeconds);
+  return c.json(result);
+});
+
+ticketRoutes.post('/tickets/:id/release', async (c) => {
+  const id = parseIntParam(c, 'id');
+  if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(ReleaseSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  await release(id, parsed.data.worker ?? undefined);
+  notifyMutation(c.get('dataDir'));
+  return c.json({ ok: true });
 });
 
 ticketRoutes.post('/tickets', async (c) => {

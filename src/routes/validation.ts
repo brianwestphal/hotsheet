@@ -53,6 +53,16 @@ export const NotesBulkSchema = z.object({
   notes: z.string(),
 });
 
+// HS-8862 — distributed-execution claim/lease request bodies (docs/90 §90.3).
+export const ClaimSchema = z.object({
+  worker: z.string().min(1),
+  label: z.string().nullish(),
+  ttlSeconds: z.number().int().positive().max(3600).optional(),
+});
+export const ReleaseSchema = z.object({
+  worker: z.string().nullish(),
+});
+
 /** HS-7599 — feedback draft create/update payload. The client builds this
  *  from the in-progress feedback dialog state and POSTs to
  *  `/api/tickets/:id/feedback-drafts`. `partitions` mirrors the dialog's

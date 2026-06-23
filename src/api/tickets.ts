@@ -185,3 +185,48 @@ export async function emptyTrash(): Promise<{ ok: true }> {
 export async function toggleUpNext(id: number): Promise<z.infer<typeof TicketSchema>> {
   return apiCall(TicketSchema, `/tickets/${id}/up-next`, { method: 'POST' });
 }
+
+// --- HS-8862 — distributed-execution claim/lease (docs/90 §90.3) ---
+
+/** A worker's claim of a ticket: who holds it, optional display label, and TTL. */
+export interface ClaimReq { worker: string; label?: string | null; ttlSeconds?: number }
+
+const ClaimNextRespSchema = z.object({ ticket: TicketSchema.nullable() });
+const ClaimRespSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), ticket: TicketSchema }),
+  z.object({ ok: z.literal(false), reason: z.enum(['not_found', 'conflict']), claimedBy: z.string().optional(), workerLabel: z.string().nullable().optional() }),
+]);
+const RenewRespSchema = z.object({ ok: z.boolean(), leaseExpiresAt: z.string().optional() });
+const ClaimRowSchema = z.object({
+  ticketId: z.number(), ticketNumber: z.string(), title: z.string(),
+  claimedBy: z.string(), workerLabel: z.string().nullable(), leaseExpiresAt: z.string(),
+});
+const ClaimsRespSchema = z.object({ claims: z.array(ClaimRowSchema) });
+export type ClaimRow = z.infer<typeof ClaimRowSchema>;
+
+/** POST `/tickets/claim-next` → atomically claim the top claimable Up Next ticket. */
+export async function claimNextTicket(req: ClaimReq): Promise<z.infer<typeof TicketSchema> | null> {
+  const r = await apiCall(ClaimNextRespSchema, '/tickets/claim-next', { method: 'POST', body: req });
+  return r.ticket;
+}
+
+/** POST `/tickets/:id/claim` → claim a specific ticket (dispatch); conflict on a live foreign lease. */
+export async function claimTicket(id: number, req: ClaimReq): Promise<z.infer<typeof ClaimRespSchema>> {
+  return apiCall(ClaimRespSchema, `/tickets/${id}/claim`, { method: 'POST', body: req });
+}
+
+/** POST `/tickets/:id/renew-lease` → worker heartbeat; ok:false ⇒ re-claim needed. */
+export async function renewTicketLease(id: number, req: ClaimReq): Promise<z.infer<typeof RenewRespSchema>> {
+  return apiCall(RenewRespSchema, `/tickets/${id}/renew-lease`, { method: 'POST', body: req });
+}
+
+/** POST `/tickets/:id/release` → drop the claim (idempotent). Omit `worker` to force-release. */
+export async function releaseTicket(id: number, worker?: string): Promise<{ ok: true }> {
+  return apiCall(OkResponseSchema, `/tickets/${id}/release`, { method: 'POST', body: { worker } });
+}
+
+/** GET `/tickets/claims` → currently live-claimed tickets (for the pool / chip UI). */
+export async function getTicketClaims(): Promise<ClaimRow[]> {
+  const r = await apiCall(ClaimsRespSchema, '/tickets/claims');
+  return r.claims;
+}

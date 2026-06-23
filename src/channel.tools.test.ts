@@ -53,13 +53,14 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // ---------------------------------------------------------------------------
 
 describe('listTools (HS-8346 + HS-8347)', () => {
-  it('returns the 15 tools by name (Phase 1 + Phase 2 + HS-8771 announce)', () => {
+  it('returns the 18 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
       'hotsheet_add_attachment',
       'hotsheet_announce',
       'hotsheet_batch',
+      'hotsheet_claim_next',
       'hotsheet_create_ticket',
       'hotsheet_delete_note',
       'hotsheet_delete_ticket',
@@ -67,6 +68,8 @@ describe('listTools (HS-8346 + HS-8347)', () => {
       'hotsheet_edit_note',
       'hotsheet_get_ticket',
       'hotsheet_query_tickets',
+      'hotsheet_release',
+      'hotsheet_renew_lease',
       'hotsheet_request_feedback',
       'hotsheet_restore_ticket',
       'hotsheet_signal_done',
@@ -87,7 +90,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(15);
+    expect(_toolsForTesting).toHaveLength(18);
   });
 
   // HS-8771 — the announce tool proxies to the announcer endpoint.
@@ -696,5 +699,50 @@ describe('hotsheet_query_tickets (HS-8347)', () => {
     const call = fetchSpy.mock.calls[0] as [string, { body: string }];
     const body = JSON.parse(call[1].body) as Record<string, unknown>;
     expect(body.include_archived).toBeUndefined();
+  });
+});
+
+describe('hotsheet_claim_next / renew_lease / release (HS-8862)', () => {
+  it('claim_next — POSTs /api/tickets/claim-next with the worker payload', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ticket":null}' };
+    });
+    await callTool('hotsheet_claim_next', { worker: 'w1', label: 'W1' }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/claim-next');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body)).toEqual({ worker: 'w1', label: 'W1' });
+  });
+
+  it('claim_next — Zod rejection when worker is missing', async () => {
+    const result = await callTool('hotsheet_claim_next', {}, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+
+  it('renew_lease — POSTs /api/tickets/:id/renew-lease', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_renew_lease', { id: 7, worker: 'w1' }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/7/renew-lease');
+    expect(call[1].method).toBe('POST');
+  });
+
+  it('release — POSTs /api/tickets/:id/release', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: '{"ok":true}' };
+    });
+    await callTool('hotsheet_release', { id: 7, worker: 'w1' }, tmpDataDir, fetchFn);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/tickets/7/release');
+    expect(call[1].method).toBe('POST');
   });
 });
