@@ -109,6 +109,11 @@ This document lists features that require manual verification before each releas
 - [ ] For Bash permissions, the preview shows just the command (no `{"command":"…"}` JSON wrapper). Long/truncated commands show the recovered prefix with a trailing `…` (HS-6634)
 - [ ] Command log entry for the response includes the tool name, description, and input_preview — not just `{request_id, behavior}` (HS-6477)
 
+### Multiple connections / cleanup (HS-8460 / HS-8948)
+- [ ] Open two Claude Code instances in the same project → the sidebar shows "2 Claude connections active — triggers route to the oldest one" with a **Clean up** button.
+- [ ] Click **Clean up** → the duplicate channel-server(s) are terminated, a toast confirms "Cleaned up N…", and the warning disappears (only the leader remains). `mcp.log` shows a `multi-connection` roster line + a `multi-connection-cleanup` line.
+- [ ] Reproduce an orphan (e.g. a Claude exits but its MCP child lingers) → the warning shows even with one Claude window; Clean up clears it.
+
 ### Visibility
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80
 - [ ] Channel toggle in Settings → Experimental registers `.mcp.json`

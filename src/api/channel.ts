@@ -79,6 +79,15 @@ export async function triggerChannel(message?: string): Promise<OkResponse> {
   return apiCall(OkResponseSchema, '/channel/trigger', { method: 'POST', body });
 }
 
+/** `POST /channel/cleanup-connections` → number of duplicate channel servers terminated (HS-8948). */
+export const CleanupConnectionsRespSchema = z.object({ ok: z.literal(true), killed: z.number() });
+export type CleanupConnectionsResp = z.infer<typeof CleanupConnectionsRespSchema>;
+
+/** POST `/channel/cleanup-connections` → kill duplicate Claude connections (keep the leader). */
+export async function cleanupChannelConnections(): Promise<CleanupConnectionsResp> {
+  return apiCall(CleanupConnectionsRespSchema, '/channel/cleanup-connections', { method: 'POST' });
+}
+
 /** GET `/channel/permission` → the long-poll for a pending permission request. */
 export async function pollChannelPermission(secret?: string): Promise<PendingPermission> {
   return apiCall(PendingPermissionSchema, '/channel/permission', { secret });

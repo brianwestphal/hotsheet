@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.js';
 import {
-  ChannelStatusSchema, ClaudeVersionCheckSchema, disableChannel, dismissChannelPermission,
+  ChannelStatusSchema, ClaudeVersionCheckSchema, cleanupChannelConnections, disableChannel, dismissChannelPermission,
   enableChannel, getChannelHeartbeatStatus, getChannelStatus, getClaudeVersionCheck,
   HeartbeatStatusSchema, pollChannelPermission, respondChannelPermission, signalChannelDone,
   triggerChannel,
@@ -53,6 +53,12 @@ describe('channel callers route to the right endpoint (HS-8631)', () => {
     stub({ ok: true });
     await triggerChannel('do the thing');
     expect(lastCall).toEqual({ path: '/channel/trigger', opts: { method: 'POST', body: { message: 'do the thing' } } });
+  });
+
+  it('cleanupChannelConnections → POST /channel/cleanup-connections (HS-8948)', async () => {
+    stub({ ok: true, killed: 2 });
+    expect(await cleanupChannelConnections()).toEqual({ ok: true, killed: 2 });
+    expect(lastCall).toEqual({ path: '/channel/cleanup-connections', opts: { method: 'POST' } });
   });
 
   it('pollChannelPermission → GET /channel/permission, forwarding secret', async () => {

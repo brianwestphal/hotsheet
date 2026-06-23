@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
-import { listAliveEntries } from '../channelRegistry.js';
+import { cleanupExtraConnections, listAliveEntries } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
@@ -118,9 +118,43 @@ channelRoutes.get('/channel/status', async (c) => {
   // is disabled.
   let aliveCount = 0;
   if (alive) {
-    aliveCount = listAliveEntries(dataDir).length;
+    const entries = listAliveEntries(dataDir);
+    aliveCount = entries.length;
+    // HS-8948 — when >1 channel-server is alive, log the roster (pid / startedAt
+    // / slug / port) so a recurring "N connections" can be diagnosed from
+    // mcp.log without guessing. Deduped per (dataDir → signature) so the
+    // frequently-polled status route logs only on a real change, not every poll.
+    if (aliveCount > 1) {
+      const signature = entries.map(e => `${String(e.pid)}@${e.startedAt ?? '?'}`).join(',');
+      if (lastMultiConnSignature.get(dataDir) !== signature) {
+        lastMultiConnSignature.set(dataDir, signature);
+        appendMainServerEvent(dataDir, 'multi-connection', `${String(aliveCount)} channel servers — leader pid=${String(entries[0].pid)}; all=[${signature}]`);
+      }
+    } else {
+      lastMultiConnSignature.delete(dataDir);
+    }
   }
   return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount });
+});
+
+/** HS-8948 — per-dataDir dedup of the multi-connection diagnostic log so the
+ *  polled status route only records a roster change, not every tick. */
+const lastMultiConnSignature = new Map<string, string>();
+
+/**
+ * HS-8948 — clean up duplicate Claude channel connections for the active
+ * project. Terminates every alive channel-server EXCEPT the leader (the one
+ * receiving triggers) — clearing orphaned MCP children that keep the "N
+ * connections active" warning up. Returns the count killed.
+ */
+channelRoutes.post('/channel/cleanup-connections', (c) => {
+  const dataDir = c.get('dataDir');
+  const killed = cleanupExtraConnections(dataDir);
+  if (killed.length > 0) {
+    appendMainServerEvent(dataDir, 'multi-connection-cleanup', `terminated ${String(killed.length)} duplicate channel server(s): [${killed.join(',')}]`);
+    lastMultiConnSignature.delete(dataDir); // force a fresh roster log next status poll
+  }
+  return c.json({ ok: true, killed: killed.length });
 });
 
 channelRoutes.post('/channel/trigger', async (c) => {

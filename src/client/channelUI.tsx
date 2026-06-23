@@ -1,6 +1,7 @@
-import { ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
+import { cleanupChannelConnections, ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
 import { isDemoMode } from './demoMode.js';
@@ -11,6 +12,7 @@ import {
 import { defineStore } from './reactive.js';
 import { getActiveProject, state } from './state.js';
 import { requestAttention } from './tauriIntegration.js';
+import { showToast } from './toast.js';
 import { TOAST_AUTOHIDE_MS } from './uiTimings.js';
 
 // --- Claude Channel ---
@@ -427,6 +429,21 @@ function showNoUpNextAlert() {
   if (playSection) playSection.after(alert);
 }
 
+/** HS-8948 — terminate duplicate channel connections, then refresh the warning. */
+async function handleCleanupConnections(btn: HTMLButtonElement): Promise<void> {
+  btn.disabled = true;
+  try {
+    const { killed } = await cleanupChannelConnections();
+    showToast(killed > 0
+      ? `Cleaned up ${String(killed)} duplicate Claude connection${killed === 1 ? '' : 's'}`
+      : 'No duplicate connections to clean up');
+    await initChannel(); // re-fetch status → the warning hides once only the leader remains
+  } catch (e) {
+    showToast(`Cleanup failed: ${getErrorMessage(e)}`);
+    btn.disabled = false;
+  }
+}
+
 export async function initChannel() {
   let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number } | null = null;
   try {
@@ -494,9 +511,20 @@ export async function initChannel() {
   if (multiWarning) {
     const count = typeof status.aliveCount === 'number' ? status.aliveCount : 0;
     if (count > 1) {
-      multiWarning.textContent = `${String(count)} Claude connections active — triggers route to the oldest one`;
+      // HS-8948 — alongside the warning text, offer a "Clean up" button that
+      // terminates the duplicate (often orphaned) channel servers so the user
+      // can clear the recurring warning instead of being stuck with it.
+      const cleanupBtn = toElement(<button type="button" className="channel-multi-cleanup-btn">Clean up</button>);
+      if (cleanupBtn instanceof HTMLButtonElement) {
+        cleanupBtn.addEventListener('click', () => { void handleCleanupConnections(cleanupBtn); });
+      }
+      multiWarning.replaceChildren(
+        toElement(<span>{`${String(count)} Claude connections active — triggers route to the oldest one`}</span>),
+        cleanupBtn,
+      );
       multiWarning.style.display = '';
     } else {
+      multiWarning.replaceChildren();
       multiWarning.style.display = 'none';
     }
   }

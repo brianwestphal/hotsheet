@@ -2179,6 +2179,10 @@ body.cross-project-stats-active {
 // both fire; amber tint matches the project's existing "heads up"
 // vocabulary.
 .channel-multi-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   margin: 4px 10px;
   padding: 6px 10px;
   font-size: 11px;
@@ -2187,6 +2191,20 @@ body.cross-project-stats-active {
   border: 1px solid #f9731640;
   border-radius: var(--radius);
   background: #f9731610;
+
+  // HS-8948 — clean-up-duplicates button.
+  .channel-multi-cleanup-btn {
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    background: #f97316;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    &:hover { background: #ea580c; }
+    &:disabled { opacity: 0.5; cursor: default; }
+  }
 }
 
 .no-upnext-alert {

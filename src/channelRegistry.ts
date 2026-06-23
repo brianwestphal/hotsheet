@@ -138,3 +138,37 @@ export function listAliveEntries(
 export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
   return entries.length === 0 ? null : entries[0];
 }
+
+/**
+ * HS-8948 — terminate every alive channel-server for this dataDir EXCEPT the
+ * leader (oldest), and remove their registry entries. Returns the pids it
+ * signaled.
+ *
+ * The "N Claude connections active" warning fires whenever more than one
+ * channel-server is alive for the project. Most often the extras are ORPHANS: a Claude Code
+ * instance exited but its spawned MCP channel-server child kept running (not
+ * reaped), so its pid stays alive, `listAliveEntries` keeps counting it, and the
+ * warning never clears. Pre-fix there was no way to clean that up. This signals
+ * the duplicate channel-servers (SIGTERM) so only the leader — the one that
+ * actually receives triggers — remains.
+ *
+ * `kill` + `isPidAlive` are injectable for tests. Best-effort: a kill that
+ * fails (process already gone, permission) is swallowed; the entry is still
+ * unlinked so the count drops.
+ */
+export function cleanupExtraConnections(
+  dataDir: string,
+  opts: { kill?: (pid: number) => void; isPidAlive?: (pid: number) => boolean } = {},
+): number[] {
+  const kill = opts.kill ?? ((pid: number) => { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } });
+  const entries = listAliveEntries(dataDir, opts.isPidAlive);
+  const killed: number[] = [];
+  // Skip the leader ([0], oldest by startedAt); terminate the rest.
+  for (const entry of entries.slice(1)) {
+    if (entry.pid === null) continue;
+    try { kill(entry.pid); } catch { /* process already gone / not killable — entry is still removed below */ }
+    try { unlinkSync(entryPath(dataDir, entry.pid)); } catch { /* race with GC / already gone */ }
+    killed.push(entry.pid);
+  }
+  return killed;
+}

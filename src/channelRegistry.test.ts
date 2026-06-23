@@ -4,6 +4,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  cleanupExtraConnections,
   entryPath,
   listAliveEntries,
   pickLeader,
@@ -162,5 +163,43 @@ describe('channelRegistry — failover end-to-end (captures HS-8460 FIFO semanti
     // pid 3 dies too — no leader.
     alive = listAliveEntries(dataDir, () => false);
     expect(pickLeader(alive)).toBeNull();
+  });
+});
+
+describe('cleanupExtraConnections (HS-8948)', () => {
+  it('terminates every alive channel-server except the leader (oldest) + removes their entries', () => {
+    registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' }); // leader (oldest)
+    registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });
+    registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z' });
+
+    const killed: number[] = [];
+    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+
+    expect(result.sort()).toEqual([2, 3]);   // non-leaders signaled
+    expect(killed.sort()).toEqual([2, 3]);
+    // The leader's entry remains; the duplicates' entries are gone.
+    const remaining = listAliveEntries(dataDir, () => true);
+    expect(remaining.map(e => e.pid)).toEqual([1]);
+  });
+
+  it('is a no-op when only the leader is alive', () => {
+    registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });
+    const killed: number[] = [];
+    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    expect(result).toEqual([]);
+    expect(killed).toEqual([]);
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid)).toEqual([1]);
+  });
+
+  it('does not throw when a kill fails (process already gone)', () => {
+    registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });
+    registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });
+    const result = cleanupExtraConnections(dataDir, {
+      kill: () => { throw new Error('ESRCH'); },
+      isPidAlive: () => true,
+    });
+    // The entry is still removed even though the signal threw — count drops.
+    expect(result).toEqual([2]);
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid)).toEqual([1]);
   });
 });

@@ -233,12 +233,36 @@ In Settings → Experimental → Custom Commands:
 Name: `Commit Changes`
 Prompt: `Make a commit message for the recently completed tickets, without wrapping long lines. Add all unstaged changes to the git commit. Git commit with the message you generated but don't push.`
 
+## 12.11.1 Multiple Claude connections (HS-8460 / HS-8948)
+
+Claude Code spawns one MCP channel-server child per Claude instance, so two
+Claudes open in the same project mean two channel-servers. Each registers a
+`<dataDir>/channel-ports.d/<pid>.json` entry (`src/channelRegistry.ts`); the
+**leader** (oldest by `startedAt`) is the one triggers route to. `GET
+/api/channel/status` returns `aliveCount` and the client shows a **"N Claude
+connections active"** warning when it's >1.
+
+**Orphan problem (HS-8948).** A Claude instance can exit while its spawned
+channel-server child keeps running (not reaped), so its pid stays alive,
+`listAliveEntries` keeps counting it, and the warning never clears — with no way
+to fix it. Mitigation:
+- **Diagnostic logging:** when `aliveCount > 1`, the status route logs the roster
+  (`multi-connection` event in `mcp.log` — pids / startedAt / leader), deduped
+  per dataDir so the polled route logs only a real change.
+- **Cleanup affordance:** the warning has a **"Clean up"** button →
+  `POST /api/channel/cleanup-connections` → `cleanupExtraConnections(dataDir)`
+  terminates every alive channel-server EXCEPT the leader (SIGTERM) + removes
+  their registry entries, so only the connection that actually receives triggers
+  remains. (Root cause is orphaned MCP children outside Hot Sheet's direct
+  lifecycle control; the cleanup is the durable mitigation.)
+
 ## 12.12 API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/channel/claude-check` | GET | Check if `claude` CLI is installed and meets minimum version (v2.1.80+) |
-| `/api/channel/status` | GET | Returns `{ enabled, alive, port, done, versionMismatch }` — channel state, completion flag, and version check |
+| `/api/channel/status` | GET | Returns `{ enabled, alive, port, done, versionMismatch, serverName, aliveCount }` — channel state, completion flag, version check, and the count of alive channel-servers (HS-8460) |
+| `/api/channel/cleanup-connections` | POST | HS-8948 — terminate duplicate channel-servers (keep the leader); returns `{ ok, killed }` |
 | `/api/channel/trigger` | POST | Send a worklist event to Claude via the channel server |
 | `/api/channel/done` | POST | Called by Claude to signal it has finished processing |
 | `/api/channel/enable` | POST | Enable the channel and register in `.mcp.json` |
