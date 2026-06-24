@@ -156,8 +156,8 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
  * Start the server and configure secrets, markdown sync, skills.
  * Returns the actual port and secret.
  */
-async function startAndConfigure(port: number, dataDir: string, strictPort: boolean): Promise<{ actualPort: number; secret: string }> {
-  const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort });
+async function startAndConfigure(port: number, dataDir: string, strictPort: boolean, bind?: string): Promise<{ actualPort: number; secret: string }> {
+  const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort, bind });
   const secret = ensureSecret(dataDir, actualPort);
 
   // HS-8308 — best-effort macOS QoS bump so keystroke handling stays
@@ -714,7 +714,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { port, demo, forceUpdateCheck, noOpen, strictPort, replace } = parsed;
+  const { port, demo, forceUpdateCheck, noOpen, strictPort, replace, bind } = parsed;
   let { dataDir } = parsed;
 
   // HS-8934 — git-worktree follower: if this `.hotsheet/` points at an
@@ -756,7 +756,7 @@ async function main() {
     writeFileSettings(dataDir, { appName: 'Hot Sheet Demo' });
   }
   startupMark('starting server');
-  const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort);
+  const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort, bind);
   startupMark(`server started on port ${actualPort}`);
   registerExistingProject(dataDir, secret, db);
   // Eager-spawn non-lazy terminals for the primary project (HS-6310).

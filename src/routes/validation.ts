@@ -249,6 +249,14 @@ export const GlobalConfigSchema = z.object({
   shareAccepted: z.boolean().optional(),
   dashboard: DashboardConfigSchema.optional(),
   diagnosticsEnabled: z.boolean().optional(),
+  // HS-7940 — opt-in non-localhost serving (docs/46 §46.5). `bind` is the
+  // interface the HTTP server listens on (default `127.0.0.1`; `0.0.0.0` or a
+  // specific IP to expose off-box); a `--bind` CLI arg overrides it.
+  // `trustedOrigins` is the allow-list of non-localhost Origins/Referers (host,
+  // IP, full origin URL, IPv4 CIDR, or the keyword `tailscale`) that may reach
+  // the API + do same-origin mutations without the secret on an exposed server.
+  bind: z.string().optional(),
+  trustedOrigins: z.array(z.string()).optional(),
   // HS-8488 — "use software rendering for terminals" opt-out. See
   // `global-config.ts` for the contract.
   terminalWebglOptOut: z.boolean().optional(),

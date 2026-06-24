@@ -72,3 +72,16 @@ describe('parseArgs --test (HS-8921)', () => {
     expect(parsed?.dataDir).toBe(join(homedir(), '.hotsheet-test', 'sandbox-project', '.hotsheet'));
   });
 });
+
+describe('parseArgs --bind (HS-7940)', () => {
+  const argv = (...flags: string[]): string[] => ['node', 'cli.js', ...flags];
+
+  it('defaults bind to undefined when not passed (server falls back to config → 127.0.0.1)', () => {
+    expect(parseArgs(argv())?.bind).toBeUndefined();
+  });
+
+  it('parses --bind <address>', () => {
+    expect(parseArgs(argv('--bind', '0.0.0.0'))?.bind).toBe('0.0.0.0');
+    expect(parseArgs(argv('--bind', '192.168.1.10'))?.bind).toBe('192.168.1.10');
+  });
+});

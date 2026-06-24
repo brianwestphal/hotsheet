@@ -8,11 +8,13 @@ import { fileURLToPath } from 'url';
 
 import { runWithDataDir } from './db/connection.js';
 import { readFileSettings } from './file-settings.js';
+import { readGlobalConfig } from './global-config.js';
 import { gracefulShutdown, registerHttpServerForShutdown } from './lifecycle.js';
 import { getMimeType } from './mime-types.js';
 import { getProjectBySecret } from './projects.js';
 import { announcerRoutes } from './routes/announcer.js';
 import { apiRoutes } from './routes/api.js';
+import { createApiAuthMiddleware } from './routes/apiAuthMiddleware.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
 import { gitRoutes } from './routes/git.js';
@@ -24,11 +26,12 @@ import { telemetryRoutes } from './routes/telemetry.js';
 import { workerRoutes } from './routes/workers.js';
 import { worktreeRoutes } from './routes/worktrees.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
+import { isExposedBind } from './trusted-origin.js';
 import type { AppEnv } from './types.js';
 
-function tryServe(fetch: Hono['fetch'], port: number): Promise<{ port: number; server: HttpServer }> {
+function tryServe(fetch: Hono['fetch'], port: number, hostname: string): Promise<{ port: number; server: HttpServer }> {
   return new Promise((resolve, reject) => {
-    const server = serve({ fetch, port });
+    const server = serve({ fetch, port, hostname });
     server.on('listening', () => { resolve({ port, server: server as HttpServer }); });
     server.on('error', (err: NodeJS.ErrnoException) => {
       reject(err);
@@ -36,8 +39,22 @@ function tryServe(fetch: Hono['fetch'], port: number): Promise<{ port: number; s
   });
 }
 
-export async function startServer(port: number, dataDir: string, options?: { noOpen?: boolean; strictPort?: boolean }): Promise<number> {
+export async function startServer(
+  port: number,
+  dataDir: string,
+  options?: { noOpen?: boolean; strictPort?: boolean; bind?: string },
+): Promise<number> {
   const app = new Hono<AppEnv>();
+
+  // HS-7940 — bind defaults to loopback (`127.0.0.1`) so the single-machine
+  // install is closed by default; `--bind 0.0.0.0` (or a specific interface IP)
+  // opts into off-box reachability. `exposed` drives the GET-secret lockdown;
+  // `trustedOrigins` is the user's allow-list for non-localhost callers. Read
+  // once at startup (a config change needs a restart to take effect).
+  const globalConfig = readGlobalConfig();
+  const bind = options?.bind ?? globalConfig.bind ?? '127.0.0.1';
+  const exposed = isExposedBind(bind);
+  const trustedOrigins = globalConfig.trustedOrigins ?? [];
 
   // Inject context: resolve which project the request is for.
   // For requests with X-Hotsheet-Secret header, look up the project by secret.
@@ -91,59 +108,13 @@ export async function startServer(port: number, dataDir: string, options?: { noO
     return new Response(content, { headers: { 'Content-Type': getMimeType(ext), 'Cache-Control': 'max-age=86400' } });
   });
 
-  // Secret validation middleware for API routes (HS-1684, HS-1982, HS-2083)
-  // Mutation requests (POST/PATCH/PUT/DELETE) MUST include the correct secret unless from
-  // a same-origin browser request. GET requests are allowed without secret (browser polling).
-  // Skip secret validation for /api/projects/* — these are management endpoints used by
-  // the CLI for multi-project registration, accessible only from localhost.
-  app.use('/api/*', async (c, next) => {
-    if (c.req.path.startsWith('/api/projects') || c.req.path === '/api/channel/heartbeat') {
-      await next();
-      return;
-    }
-
-    const currentDataDir = c.get('dataDir');
-    const settings = readFileSettings(currentDataDir);
-    const expectedSecret = settings.secret;
-    if (expectedSecret === undefined || expectedSecret === '') { await next(); return; }
-
-    const headerSecret = c.req.header('X-Hotsheet-Secret');
-    const method = c.req.method;
-    const isMutation = method === 'POST' || method === 'PATCH' || method === 'PUT' || method === 'DELETE';
-
-    if (headerSecret !== undefined && headerSecret !== '') {
-      // Header present: validate it against the resolved project's secret
-      if (headerSecret !== expectedSecret) {
-        // Also check if it matches ANY registered project (multi-project support)
-        const project = getProjectBySecret(headerSecret);
-        if (!project) {
-          return c.json({
-            error: 'Secret mismatch — you may be connecting to the wrong Hot Sheet instance.',
-            recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files (e.g. .claude/skills/hotsheet/SKILL.md) for updated instructions.',
-          }, 403);
-        }
-        // Project found by secret — update context to use that project
-        c.set('dataDir', project.dataDir);
-        c.set('projectSecret', project.secret);
-      }
-    } else if (isMutation) {
-      // No header on a mutation: allow if from same-origin browser request, reject otherwise.
-      // Must validate the Origin/Referer value matches localhost to prevent CSRF from malicious sites.
-      const origin = c.req.header('Origin');
-      const referer = c.req.header('Referer');
-      const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
-      const isSameOrigin = (origin !== undefined && origin !== '' && localhostPattern.test(origin))
-        || (referer !== undefined && referer !== '' && localhostPattern.test(referer));
-      if (!isSameOrigin) {
-        return c.json({
-          error: 'Missing X-Hotsheet-Secret header. Read .hotsheet/settings.json for the correct port and secret.',
-          recovery: 'Re-read .hotsheet/settings.json to get the correct port and secret, and re-read your skill files for updated instructions.',
-        }, 403);
-      }
-    }
-
-    await next();
-  });
+  // Secret validation + origin access-control middleware (HS-1684 / HS-1982 /
+  // HS-2083 / HS-7940). Mutations need the secret OR a trusted same-origin
+  // (CSRF guard); GETs poll openly on a loopback bind but require the secret
+  // from untrusted origins once the server is exposed; `/api/projects/*` +
+  // heartbeat stay open to local/trusted callers. Extracted to a factory so the
+  // access matrix is tested against the real code (`src/routes/apiAuthMiddleware.ts`).
+  app.use('/api/*', createApiAuthMiddleware({ exposed, trustedOrigins }));
 
   // API routes
   app.route('/api', apiRoutes);
@@ -205,7 +176,7 @@ export async function startServer(port: number, dataDir: string, options?: { noO
   let httpServer: HttpServer | null = null;
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      const result = await tryServe(app.fetch, port + attempt);
+      const result = await tryServe(app.fetch, port + attempt, bind);
       actualPort = result.port;
       httpServer = result.server;
       break;
@@ -235,6 +206,15 @@ export async function startServer(port: number, dataDir: string, options?: { noO
 
   if (actualPort !== port) {
     console.log(`  Port ${port} in use, using ${actualPort} instead.`);
+  }
+
+  // HS-7940 — make off-box exposure visible. The default loopback bind prints
+  // nothing (unchanged). When exposed, surface the bind address + whether a
+  // trusted-origin allow-list is configured so the user knows the surface area.
+  if (exposed) {
+    console.log(`  ⚠ Bound to ${bind} — reachable off this machine.`);
+    console.log(`    GET requests from untrusted origins now require X-Hotsheet-Secret.`);
+    console.log(`    Trusted origins: ${trustedOrigins.length > 0 ? trustedOrigins.join(', ') : '(none configured — only localhost is trusted)'}`);
   }
 
   const url = `http://localhost:${actualPort}`;

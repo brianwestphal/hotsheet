@@ -154,7 +154,7 @@ Same JS bundle, different layout. Separate ticket because the responsive-CSS wor
 
 ## 46.11 Phased implementation
 
-1. **HS-7940 (existing)** — server-side: `--bind <address>`, `isTrustedOrigin`, GET-secret enforcement on non-trusted origins. Independent of decoupling work; ships first; unblocks the rest.
+1. **HS-7940 (SHIPPED 2026-06-24)** — server-side: `--bind <address>` (+ `config.json:bind`, default `127.0.0.1`), `isTrustedOrigin` (`src/trusted-origin.ts`), GET-secret enforcement on non-trusted origins when the server is exposed (`src/routes/apiAccess.ts` + `apiAuthMiddleware.ts`). `config.json:trustedOrigins` is the allow-list (host/IP/origin-URL/CIDR/`tailscale`). Default loopback bind is unchanged (open polling); the all-interfaces pre-default that exposed open GETs to the LAN is now closed. Terminal-WS already mandates the secret (audited, no change). Follow-up HS-8983: otel `/v1/*` ingest stays unauthenticated when exposed. Independent of decoupling work; unblocks the rest.
 2. **HS-7944 (new)** — service-only mode (`--service-only` flag) + Tauri shell remote mode (`--service-url <url>` flag, in-app Settings → "Use remote service URL"). The Tauri co-located mode stays the default.
 3. **HS-7945 (new)** — WebSocket push replacing `/api/poll`. Event types per §46.3, heartbeat protocol, exponential-backoff reconnect, sequence-ID-based delta-sync, fallback to polling on connect failure.
 4. **HS-7946 (new)** — multi-client conflict UX: detection of concurrent edits, "X also edited this" toast, optimistic-concurrency `If-Match` headers on risky operations, plugin sync engine audit.

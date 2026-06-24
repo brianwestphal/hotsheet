@@ -188,6 +188,17 @@ This document lists features that require manual verification before each releas
 - [ ] Stale lock files from crashed processes are cleaned up on startup
 - [ ] Port fallback: if 4174 is in use, tries 4175–4193
 
+### Non-localhost bind + auth (`--bind`, HS-7940) — needs a second machine / device
+
+The access-control matrix is unit + in-process tested (`src/trusted-origin.test.ts`, `src/routes/server.auth.test.ts`); these manual items cover the real off-box transport that CI can't exercise.
+
+- [ ] Default `hotsheet` (no `--bind`) is loopback-only: from a SECOND machine on the LAN, `http://<host-ip>:4174` does NOT connect (connection refused).
+- [ ] `hotsheet --bind 0.0.0.0` prints the "Bound to 0.0.0.0 — reachable off this machine" warning + the trusted-origins line at startup.
+- [ ] With `--bind 0.0.0.0` and NO `trustedOrigins`: from the second machine, `GET /api/tickets` (no secret) returns 403; adding `?` won't help — only `X-Hotsheet-Secret: <secret>` returns 200.
+- [ ] Add the second machine's origin (or `tailscale`) to `~/.hotsheet/config.json:trustedOrigins`, restart: the same browser GET now loads the UI without a secret.
+- [ ] Local browser on the host (localhost origin) keeps working unchanged with `--bind 0.0.0.0` (always trusted).
+- [ ] Terminal still attaches over the WebSocket from a trusted remote (secret carried in the connect URL).
+
 ---
 
 ## 8. Demo Mode

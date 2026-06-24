@@ -53,6 +53,11 @@ export interface ParsedArgs {
   /** HS-8921 — `--test`: run a fully-isolated test instance (own
    *  `HOTSHEET_HOME`, sandbox data-dir, alt default port, TEST badge). */
   test: boolean;
+  /** HS-7940 — `--bind <address>`: interface the HTTP server listens on.
+   *  Undefined → fall back to `config.json:bind` → default `127.0.0.1`
+   *  (loopback). Pass `0.0.0.0` or a specific IP to expose the server off-box
+   *  (then the GET-secret enforcement + `trustedOrigins` allow-list apply). */
+  bind: string | undefined;
 }
 
 export function printUsage(): void {
@@ -64,6 +69,10 @@ Usage:
 
 Options:
   --port <number>          Port to run on (default: 4174)
+  --bind <address>         Interface to listen on (default: 127.0.0.1, loopback only).
+                           Use 0.0.0.0 or a specific IP to expose off-box — then GET
+                           requests from untrusted origins require the secret and you
+                           must list remote origins in config.json:trustedOrigins.
   --data-dir <path>        Store data in an alternative location (default: .hotsheet/)
   --no-open                Don't open the browser on startup
   --strict-port            Fail if the requested port is in use (don't auto-select)
@@ -101,6 +110,7 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
   let force = false;
   let list = false;
   let test = false;
+  let bind: string | undefined;
   // HS-8921 — track whether the user passed these explicitly so `--test`'s
   // defaults only apply when the user didn't (order-independent: `--test --port`
   // and `--port --test` behave identically).
@@ -159,6 +169,13 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
       case '--test':
         test = true;
         break;
+      case '--bind':
+        if (i + 1 >= args.length || args[i + 1] === '' || args[i + 1].startsWith('--')) {
+          console.error('--bind requires an address (e.g. 127.0.0.1, 0.0.0.0, or a specific interface IP)');
+          process.exit(1);
+        }
+        bind = args[++i];
+        break;
       default:
         console.error(`Unknown option: ${arg}`);
         printUsage();
@@ -183,5 +200,5 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
     setTestMode(true);
   }
 
-  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list, test };
+  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list, test, bind };
 }

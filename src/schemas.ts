@@ -305,6 +305,51 @@ export const CustomViewSchema = z.object({
 export const CustomViewArraySchema = z.array(CustomViewSchema);
 
 // ---------------------------------------------------------------------------
+// WebSocket push sync events — HS-7945 / HS-8978 (docs/93 §93.2). The typed
+// payloads the server event bus (`src/sync/eventBus.ts`) emits on every
+// mutation and the client reducer (`src/client/wsSync.ts`, HS-8981) consumes.
+// Defined here so the SAME discriminated union validates both ends of the
+// wire. Two shapes: the INPUT a mutation handler hands to `emitEvent` (no
+// `seq`), and the sequenced frame the bus actually stores + broadcasts (the
+// bus stamps a monotonic per-project `seq`). Control frames (`ping`/`pong`/
+// `resync`) are handled at the endpoint/client (HS-8979/HS-8981), not stored
+// in the ring, so they are NOT part of this mutation-event union.
+// ---------------------------------------------------------------------------
+
+// A partial ticket patch (`ticket-updated` changes) / batch changes — a loose
+// record so callers can send just the fields that moved without re-deriving
+// the full row schema here.
+const SyncChangesSchema = z.record(z.string(), z.unknown());
+
+const SYNC_EVENT_INPUT_VARIANTS = [
+  z.object({ type: z.literal('ticket-created'), ticket: TicketSchema }),
+  z.object({ type: z.literal('ticket-updated'), id: z.number(), changes: SyncChangesSchema }),
+  z.object({ type: z.literal('ticket-deleted'), id: z.number() }),
+  z.object({ type: z.literal('note-added'), ticketId: z.number(), note: NoteEntrySchema }),
+  z.object({ type: z.literal('note-deleted'), ticketId: z.number(), noteId: z.string() }),
+  z.object({ type: z.literal('category-changed'), ticketIds: z.array(z.number()), to: z.string() }),
+  z.object({ type: z.literal('priority-changed'), ticketIds: z.array(z.number()), to: z.string() }),
+  z.object({ type: z.literal('status-changed'), ticketIds: z.array(z.number()), to: z.string() }),
+  z.object({ type: z.literal('attachment-added'), ticketId: z.number(), attachment: z.record(z.string(), z.unknown()) }),
+  z.object({ type: z.literal('attachment-deleted'), ticketId: z.number(), attachmentId: z.union([z.string(), z.number()]) }),
+  z.object({ type: z.literal('settings-changed'), key: z.string(), value: z.unknown() }),
+  z.object({ type: z.literal('batch-operation'), op: z.string(), ids: z.array(z.number()), changes: SyncChangesSchema }),
+] as const;
+
+/** The event a mutation handler passes to `emitEvent` (no `seq` yet). */
+export const SyncEventInputSchema = z.discriminatedUnion('type', SYNC_EVENT_INPUT_VARIANTS);
+
+/** The sequenced frame the bus stores in the ring + broadcasts — each input
+ *  variant plus the bus-assigned monotonic per-project `seq`. Expressed as an
+ *  intersection (rather than re-listing every variant) so the discriminated
+ *  payload validation is reused and the inferred type distributes `seq`
+ *  across the union: `SyncEventInput & { seq: number }`. */
+export const SyncEventSchema = z.intersection(SyncEventInputSchema, z.object({ seq: z.number() }));
+
+export type SyncEventInput = z.infer<typeof SyncEventInputSchema>;
+export type SyncEvent = z.infer<typeof SyncEventSchema>;
+
+// ---------------------------------------------------------------------------
 // Helper: parse a JSON string with a zod schema, throwing a clear error.
 // Centralizes the JSON.parse + schema.parse two-step that replaces every
 // `JSON.parse(x) as Foo` callsite.

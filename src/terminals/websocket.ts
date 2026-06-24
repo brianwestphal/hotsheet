@@ -59,6 +59,15 @@ export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
   const url = parseUrl(req.url ?? '', true);
   const queryParam = typeof url.query.project === 'string' ? url.query.project : undefined;
   const secret = (headerSecret ?? queryParam ?? '').trim();
+  // HS-7940 audit (docs/46 §46.5): the terminal WebSocket requires a valid
+  // per-project secret UNCONDITIONALLY — there is no open path. That already
+  // satisfies "reject connections from untrusted origins that don't carry the
+  // secret": the no-secret arm below rejects every origin (trusted or not), and
+  // a connection presenting a valid secret is an authorized client regardless of
+  // origin (a cross-site page can't read the secret, so it can't forge one). So
+  // exposing the server via `--bind` doesn't widen terminal access. No origin
+  // gate is added here — it would only break a legitimate remote client whose
+  // browser sends its own (configured-trusted) Origin.
   if (secret === '') return { ok: false, status: 403, reason: 'Missing X-Hotsheet-Secret header or ?project= query param' };
   const project = getProjectBySecret(secret);
   if (!project) return { ok: false, status: 403, reason: 'Secret does not match any registered project' };
