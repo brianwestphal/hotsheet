@@ -172,6 +172,13 @@ pageRoutes.get('/', (c) => {
           <span className="server-slow-label">Server slow — your request is still in flight</span>
         </div>
 
+        {/* HS-8981 — shown while the /ws/sync push channel is unavailable and the
+            client has fallen back to long-polling (reuses the slow-banner style). */}
+        <div id="live-updates-banner" className="server-slow-banner" style="display:none">
+          <span className="server-slow-dot"></span>
+          <span className="server-slow-label">Live updates unavailable — falling back to polling</span>
+        </div>
+
         <div id="share-banner" className="share-banner" style="display:none">
           <span>Enjoying Hot Sheet? Share it with others!</span>
           <div className="share-banner-actions">

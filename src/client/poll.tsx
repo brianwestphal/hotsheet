@@ -7,6 +7,7 @@ import { refreshGitStatusChip } from './gitStatusChip.js';
 import { refreshProjectChannelStatus, refreshProjectFeedbackState, refreshProjectTabs } from './projectTabs.js';
 import { state } from './state.js';
 import { loadTickets } from './ticketList.js';
+import { isWsActive } from './wsSync.js';
 
 let pollVersion = 0;
 let pollDataVersion = 0;
@@ -27,7 +28,11 @@ export function startLongPoll() {
         const serverDataVersion = result.dataVersion;
         const dataChanged = serverDataVersion > pollDataVersion;
         pollDataVersion = serverDataVersion;
-        if (dataChanged && state.backupPreview?.active !== true) {
+        // HS-8981 — while the `/ws/sync` socket is live it OWNS the ticket-data
+        // refresh (pushed per mutation), so skip the poll's refetch to avoid
+        // doing it twice. The poll still drives the cheaper UI wakes below
+        // (tabs, channel, git chip, heartbeats) which don't ride the WS bus.
+        if (dataChanged && state.backupPreview?.active !== true && !isWsActive()) {
           await loadTickets();
           refreshDetail();
           void checkFeedbackState();

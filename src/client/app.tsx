@@ -32,8 +32,10 @@ import { bindOpenFolder } from './openFolder.js';
 import { bindPasteAttachmentListener } from './pasteAttachments.js';
 import { startLongPoll } from './poll.js';
 import { showPrintDialog } from './print.js';
+import { activeProjectSignal } from './projectsStore.js';
 import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { initQuitConfirm } from './quitConfirm.js';
+import { effect } from './reactive.js';
 import { applyScrollbarPrefClass } from './scrollbarPref.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
@@ -51,6 +53,7 @@ import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
+import { reconnectWsForActiveProject, startWsSync } from './wsSync.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
 setRestoreTicketListCallback(restoreTicketList);
@@ -379,6 +382,12 @@ async function init() {
     bindAllUiHandlers();
 
     startLongPoll();
+    // HS-8981 — open the /ws/sync push channel; reconnect it whenever the
+    // active project changes (a different per-project event stream). The effect
+    // runs once immediately (a no-op while already connected to the same secret)
+    // and again on every project switch.
+    startWsSync();
+    effect(() => { void activeProjectSignal.value; reconnectWsForActiveProject(); });
     void checkForUpdate();
     bindAppLevelDocumentListeners();
 

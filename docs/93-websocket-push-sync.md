@@ -7,9 +7,11 @@ into a buildable, phased spec, grounded in the code as it exists today.
 
 > **Status (2026-06-24):** In progress. **Shipped:** HS-7940 (bind + trusted-origin auth),
 > HS-8978 (server event bus §93.2), HS-8979 (`/ws/sync` endpoint §93.3/§93.7), HS-8980 (mutation
-> emission §93.4 — `src/routes/syncEmit.ts` wired across tickets/attachments/settings). **Pending:**
-> HS-8981 (client reducer + reconnect + fallback §93.5/§93.6), HS-8982 (backpressure §93.8).
-> Decomposition + dependencies in §93.9.
+> emission §93.4 — `src/routes/syncEmit.ts`), HS-8981 (client transport §93.5/§93.6 —
+> `src/client/wsSync.ts`: connect / reconnect / poll-fallback / `?since` catch-up, driving a
+> coalesced full refresh per event). **Pending:** HS-8982 (backpressure §93.8) + HS-8984
+> (the per-event in-memory store reducer — the §93.5 no-refetch bandwidth win, deferred from
+> HS-8981 pending visual verification). Decomposition + dependencies in §93.9.
 
 ## 93.1 Why — and why it is NOT a local win
 

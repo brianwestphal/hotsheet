@@ -199,6 +199,16 @@ The access-control matrix is unit + in-process tested (`src/trusted-origin.test.
 - [ ] Local browser on the host (localhost origin) keeps working unchanged with `--bind 0.0.0.0` (always trusted).
 - [ ] Terminal still attaches over the WebSocket from a trusted remote (secret carried in the connect URL).
 
+### WebSocket live sync (`/ws/sync`, HS-8981) — multi-client
+
+The transport (connect / reconnect / fallback / classification) is unit-tested (`src/client/wsSync.test.ts`); these cover the real browser round-trip.
+
+- [ ] Open the same project in two browser tabs/windows. Create / edit / delete a ticket in tab A → it appears in tab B within a moment **without a manual reload**.
+- [ ] In DevTools (tab B) Network panel, confirm the live update arrives over the `/ws/sync` WebSocket frame (the data-refresh that follows is expected until HS-8984 lands the no-refetch reducer).
+- [ ] Stop the server (or block the WS) while a tab is open: after ~2 quick drops, the amber "Live updates unavailable — falling back to polling" banner appears and ticket changes still sync via the long-poll.
+- [ ] Restart the server / restore the WS: the banner clears and live push resumes.
+- [ ] Switch the active project tab: live updates track the newly-active project (a mutation in the now-active project pushes; the old one no longer drives this tab).
+
 ---
 
 ## 8. Demo Mode
