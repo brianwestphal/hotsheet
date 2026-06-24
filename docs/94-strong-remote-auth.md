@@ -306,6 +306,62 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
 - §46 — service/client decoupling + the original auth/trust model (§46.5).
 - §88 (HS-8878) — cloud service, teams + orgs (the authz/ACL consumer).
 - §20 — keychain (where the CA + private keys live).
+- §97 — the self-hosting mTLS deployment guide (expose / enroll / install / revoke).
 - HS-7940 / HS-8983 — the interim bind/origin/otel gates (defense-in-depth under Tier 1).
 - HS-8986 — request hardening (sibling, auth-independent).
 - HS-8987 — the recurring security-review skill.
+
+## 94.11 Threat-model sign-off (HS-8997, against the SHIPPED implementation)
+
+The §94.3 actors mapped to the concrete mitigation that **shipped** (sub-tickets 1–5) and the
+residual risk. "Tier-1" = exposed bind (mTLS engaged); "Tier-0" = localhost (shared secret).
+
+| Actor | Shipped mitigation (Tier-1) | Residual risk |
+| --- | --- | --- |
+| **On-path network attacker** (LAN / hostile WiFi / compromised router) | In-process **TLS** (`tlsListener.ts`) encrypts + integrity-protects the wire independent of any external tunnel; the TLS 1.3 handshake binds the session. Can't read/modify/replay. | Relies on the client trusting the project CA (cert pinning by CA). A user who clicks through a server-cert mismatch could be MITM'd — mitigated by the client validating against the CA + matching SAN (`collectServerCertHosts`). |
+| **Remote internet attacker** (0.0.0.0 / port-forwarded / cloud) | `requestCert: true` + `rejectUnauthorized: true` reject any connection **without a CA-signed client cert at the TLS layer, before any handler** (`buildMtlsServeConfig`). Then per-request authz (`createMtlsAuthzMiddleware`) requires an **enrolled, non-revoked** device. No open path. | An attacker who **steals a client private key** (`.p12` + its password, or the device key) becomes that device until revoked — see bearer-theft row. Brute-forcing a 2048-bit RSA client key is infeasible. |
+| **Malicious co-tenant on the tailnet** | Same as remote: no client cert ⇒ no connection; unenrolled cert ⇒ 403. The shared secret is no longer sufficient on Tier-1, so a co-tenant who sniffed/guessed it still can't get in. | Same key-theft caveat. |
+| **Bearer-token thief** (reads the shared secret from logs / backup / shoulder-surf / malicious extension) | **The shared secret is no longer the credential on Tier-1** (`apiAccess.ts`/`apiAuthMiddleware.ts` gate on the cert, not the secret). A stolen secret alone grants nothing off-localhost. | The credential is now the **client cert/key**, not a replayable token — strictly better. Theft of the key file is the new equivalent; **per-device revocation** (`deviceRegistry`/`authz`) bounds the blast radius + a cert **expiry** forces rotation. Revocation of an already-open WS is HS-9025 (per-request HTTP is immediate). |
+| **Cross-site attacker** (CSRF / CSWSH from a page the user visits) | The HS-7940 origin/CSRF gate **still runs** as defense-in-depth; a browser won't present the client cert to a cross-origin attacker's `fetch` without the user's configured cert + same-origin, and mutations still require trust. | A page can't obtain the client cert, so it can't forge an authenticated Tier-1 request. Standard browser client-cert UX applies. |
+
+**Assets** (ticket data, the shell/terminal RCE-equivalent surface, plugin OAuth + keychain
+secrets, telemetry, remote-worker dispatch) are reachable on Tier-1 only after **authn (TLS cert) +
+authz (enrolled, non-revoked)**. The CA private key lives in the OS keychain (§20), never on disk in
+the clear.
+
+**Net:** the §94.3 "properties we want" — confidentiality+integrity on the wire, mutual auth,
+replay/MITM resistance, per-device identity+revocation+expiry, authz-before-execution — are all met
+on Tier-1 by the shipped code. Tier-0 (localhost) is deliberately unchanged.
+
+## 94.12 Security re-audit of the mTLS surface (HS-8997)
+
+A focused review of each new surface (the HS-8987 skill's remit), with verdicts. **No
+externally-exploitable findings.** Items worth tracking became follow-up tickets.
+
+- **TLS listener (`tlsListener.ts`)** — `requestCert`+`rejectUnauthorized` against the project CA;
+  unauthenticated TLS rejected pre-handler. Server cert SANs exclude wildcard binds. ✅ Sound.
+- **Cert lifecycle (`ca.ts`)** — RSA-2048, SHA-256, random ≥19-byte serials, `clientAuth`/`serverAuth`
+  EKUs, `cA:true`+`keyCertSign` only on the CA. `node-forge@1.3.1` (clean `npm audit`,
+  `docs/dependency-security.md`). Native keygen. ✅ Sound.
+- **Enrollment (`routes/enrollment.ts`)** — mint + `sign-csr` + `pair/start` are **loopback-only**
+  (`isLoopbackRequest`); `pair/complete` is gated by a **single-use, 5-min** token, not loopback (the
+  remote phone). The server, not the requester, sets the embedded identity (`signClientCsr` ignores
+  the CSR subject). `.p12` is password-protected. ✅ Sound. *Note:* `isLoopbackRequest` trusts the
+  socket peer address; behind a reverse proxy that rewrites the peer to loopback, "loopback-only"
+  would include proxied remotes — documented in §97 (run mTLS in-process, not behind a TLS-terminating
+  proxy, OR ensure the proxy doesn't forward to these routes).
+- **Authz + revocation (`authz.ts`)** — every `/api/*` request on Tier-1 maps cert→enrolled,
+  non-revoked device or 403; the secret is demoted to defense-in-depth. ✅ Sound. **Residual:** an
+  already-open **WebSocket** isn't re-checked on revocation → **HS-9025** (per-request HTTP is
+  immediate; WS needs a periodic sweep).
+- **Tier split** — mechanical off `isExposedBind`; Tier-0 paths completely unchanged (verified by the
+  unchanged `server.auth.test.ts` matrix). An exposed bind with no durable keychain **fails startup**
+  rather than serving plaintext (→ **HS-9019** for a keychain-less durable CA). ✅ Sound.
+- **Coverage gaps that are follow-ups, not flaws:** client cert install UX (**HS-9024**), QR
+  display + mobile client (**HS-9026**), WS revocation sweep (**HS-9025**), keychain-less CA
+  (**HS-9019**). None weaken the shipped enforcement; they extend reach/UX.
+
+**Sign-off:** the mTLS enforcement core (sub-tickets 1–5) is sound for the self-hosted exposure
+threat model. A fresh end-to-end `security-review` skill pass + a real off-box `--bind` deployment
+test (with an installed client cert) should run at the next release per the standing HS-8987 cadence
+— the surface is now in `src/auth/**` + `routes/enrollment.ts` + the `server.ts` exposed branch.

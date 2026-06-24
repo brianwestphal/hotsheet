@@ -84,10 +84,12 @@ Carry forward from the original §46 v1 + extend:
 - Same secret as a query param OR `Sec-WebSocket-Protocol` subprotocol on the WebSocket connect — both accepted; the subprotocol path is preferred (doesn't leak into URL access logs)
 - `--bind` opt-in for non-localhost (HS-7940)
 - `isTrustedOrigin(origin)` helper covering localhost + Tailscale 100.64.0.0/10 + user-configured `trustedOrigins` (HS-7940)
-- HTTPS or WireGuard tunnel for confidentiality on non-localhost transports (deployment-time choice; not in Hot Sheet code)
+- HTTPS or WireGuard tunnel for confidentiality on non-localhost transports (deployment-time choice; on an exposed bind, mTLS now also provides in-process TLS — see below)
 - WebSocket upgrade requests honour the same origin check + secret check as HTTP
 
-**Per-client identity (deferred).** Today's secret is per-project, not per-client. A v2 could issue per-client tokens (revocable individually) but the operational complexity isn't worth it until a user reports they need it. Tracked as an open question.
+**Tier-1 mTLS (SHIPPED — HS-8985 / docs/94).** The "per-client identity (deferred)" note below is now **resolved for the exposed (off-localhost) case** by mutual TLS. When the server is bound off-loopback (`--bind` non-loopback), the listener is HTTPS with `requestCert` + `rejectUnauthorized` against a per-project CA, every device carries its own client cert (a stable per-client identity), and the cert — not the shared secret — is the credential (the secret stays as defense-in-depth). This gives in-process transport confidentiality (no external tunnel required), cryptographic mutual auth, and per-device revocation. **Localhost (Tier-0) is unchanged: plain HTTP + the per-project shared secret.** Full design + threat model: [`94-strong-remote-auth.md`](94-strong-remote-auth.md); self-hosting deployment steps: [`97-self-hosting-mtls.md`](97-self-hosting-mtls.md).
+
+**Per-client identity.** ~~Today's secret is per-project, not per-client.~~ **Resolved on Tier-1 (HS-8985):** the client cert IS the cryptographic per-client identity (revocable per device). On Tier-0 (localhost) the per-project secret remains the trust boundary, which is appropriate for the single-machine case.
 
 ## 46.6 Multi-client UX considerations
 
