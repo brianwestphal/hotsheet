@@ -2193,3 +2193,55 @@ describe('worker-pool endpoints + drain-aware claim-next (HS-8962)', () => {
     expect(res.status).toBe(404);
   });
 });
+
+// HS-9004 — layered (shared/local) file-settings endpoints powering the
+// Settings → Sharing tab. The harness's dataDir is a fresh temp dir, so these
+// drive settings.json / settings.local.json under it.
+describe('layered file-settings (HS-9004)', () => {
+  it('GET /api/file-settings/layered returns shared/local/resolved', async () => {
+    const res = await app.request('/api/file-settings/layered');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { shared: Record<string, unknown>; local: Record<string, unknown>; resolved: Record<string, unknown> };
+    expect(data).toHaveProperty('shared');
+    expect(data).toHaveProperty('local');
+    expect(data).toHaveProperty('resolved');
+  });
+
+  it('PATCH /api/file-settings/layer writes to the chosen layer; local wins on resolve', async () => {
+    // Write a shared value...
+    await app.request('/api/file-settings/layer', patch({ layer: 'shared', settings: { backupDir: '/team/backups' } }));
+    // ...then a local override of the same key.
+    const res = await app.request('/api/file-settings/layer', patch({ layer: 'local', settings: { backupDir: '/me/backups' } }));
+    expect(res.status).toBe(200);
+    const data = await res.json() as { shared: Record<string, unknown>; local: Record<string, unknown>; resolved: Record<string, unknown> };
+    expect(data.shared.backupDir).toBe('/team/backups');
+    expect(data.local.backupDir).toBe('/me/backups');
+    expect(data.resolved.backupDir).toBe('/me/backups'); // local wins
+  });
+
+  it('POST /api/file-settings/clear-local removes the override so shared re-applies', async () => {
+    await app.request('/api/file-settings/layer', patch({ layer: 'shared', settings: { ticketPrefix: 'TEAM' } }));
+    await app.request('/api/file-settings/layer', patch({ layer: 'local', settings: { ticketPrefix: 'MINE' } }));
+    const before = await (await app.request('/api/file-settings/layered')).json() as { resolved: Record<string, unknown> };
+    expect(before.resolved.ticketPrefix).toBe('MINE');
+
+    const res = await app.request('/api/file-settings/clear-local', post({ keys: ['ticketPrefix'] }));
+    expect(res.status).toBe(200);
+    const data = await res.json() as { local: Record<string, unknown>; resolved: Record<string, unknown> };
+    expect(data.local.ticketPrefix).toBeUndefined();
+    expect(data.resolved.ticketPrefix).toBe('TEAM'); // falls back to shared
+  });
+
+  it('never leaks the secret into any layer', async () => {
+    const data = await (await app.request('/api/file-settings/layered')).json() as { shared: Record<string, unknown>; local: Record<string, unknown>; resolved: Record<string, unknown> };
+    for (const layer of [data.shared, data.local, data.resolved]) {
+      expect(layer).not.toHaveProperty('secret');
+      expect(layer).not.toHaveProperty('secretPathHash');
+    }
+  });
+
+  it('PATCH /api/file-settings/layer rejects an invalid layer (400)', async () => {
+    const res = await app.request('/api/file-settings/layer', patch({ layer: 'bogus', settings: { x: 1 } }));
+    expect(res.status).toBe(400);
+  });
+});

@@ -1,0 +1,214 @@
+{
+  "appName": "Hot Sheet",
+  "appIcon": "variant-4",
+  "backupDir": "/Users/westphal/Library/CloudStorage/GoogleDrive-brian.westphal@bleugris.com/My Drive/hotsheet-backups/hotsheet",
+  "port": 4174,
+  "detail_height": "300",
+  "trash_cleanup_days": "3",
+  "completed_cleanup_days": "30",
+  "verified_cleanup_days": "30",
+  "auto_context": [
+    {
+      "type": "category",
+      "key": "feature",
+      "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nAdd a new requirements document.\n\nAsk clarifying questions as needed.\n\nBe sure to create follow up tickets as needed as well."
+    },
+    {
+      "type": "category",
+      "key": "requirement_change",
+      "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nUpdate requirements documents as appropriate.\n\nAsk clarifying questions as needed.\n"
+    },
+    {
+      "type": "category",
+      "key": "bug",
+      "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nEvaluate current tests and add unit tests or test automation to protected against this kind of bug going forward, if applicable.\n"
+    }
+  ],
+  "categories": [
+    {
+      "id": "issue",
+      "label": "Issue",
+      "shortLabel": "ISS",
+      "color": "#6b7280",
+      "shortcutKey": "i",
+      "description": "General issues that need attention"
+    },
+    {
+      "id": "bug",
+      "label": "Bug",
+      "shortLabel": "BUG",
+      "color": "#ef4444",
+      "shortcutKey": "b",
+      "description": "Bugs that should be fixed in the codebase"
+    },
+    {
+      "id": "feature",
+      "label": "Feature",
+      "shortLabel": "FEA",
+      "color": "#22c55e",
+      "shortcutKey": "f",
+      "description": "New features to be implemented"
+    },
+    {
+      "id": "requirement_change",
+      "label": "Req Change",
+      "shortLabel": "REQ",
+      "color": "#f97316",
+      "shortcutKey": "r",
+      "description": "Changes to existing requirements"
+    },
+    {
+      "id": "task",
+      "label": "Task",
+      "shortLabel": "TSK",
+      "color": "#3b82f6",
+      "shortcutKey": "k",
+      "description": "General tasks to complete"
+    },
+    {
+      "id": "investigation",
+      "label": "Investigation",
+      "shortLabel": "INV",
+      "color": "#8b5cf6",
+      "shortcutKey": "g",
+      "description": "Items requiring research or analysis"
+    }
+  ],
+  "custom_views": [],
+  "notify_permission": "once",
+  "channel_enabled": "true",
+  "detail_position": "side",
+  "auto_order": "true",
+  "layout": "columns",
+  "detail_width": "363",
+  "custom_commands": [
+    {
+      "name": "Commit Changes",
+      "prompt": "make a commit message for the recently completed tickets, without wrapping long lines.  Don't include any co-authored by Anthropic type lines in the commit message.  add all unstaged changes to the git commit.  git commit with the message you generated but don't push",
+      "icon": "send",
+      "color": "#3b82f6"
+    },
+    {
+      "name": "Update Requirements",
+      "prompt": "Update the requirements docs as appropriate",
+      "icon": "file-text",
+      "color": "#6b7280"
+    },
+    {
+      "type": "group",
+      "name": "Quality",
+      "children": [
+        {
+          "name": "Reqs ↔︎ Code",
+          "prompt": "/check-requirements-against-code",
+          "icon": "arrow-left-right",
+          "color": "#ec4899"
+        },
+        {
+          "name": "Analyze Code Quality",
+          "prompt": "/analyze-code-quality",
+          "icon": "circle-check-big",
+          "color": "#8b5cf6"
+        },
+        {
+          "name": "Kerf Usage Audit",
+          "prompt": "Audit this codebase for kerf usage.  See ~/.claude/skills/kerf-app/SKILL.md or node_modules/kerfjs/ai/skill.md.  For each finding, make Hot Sheet tickets with: file:line, which rule or pattern, the fix shape. Don't speculate - only flag patterns you can point to in the code. Top \"must fix\" list, then \"consider\" list.",
+          "icon": "slice",
+          "color": "#f97316"
+        },
+        {
+          "name": "Check Code Hygene",
+          "prompt": "/check-code-hygiene",
+          "icon": "soap-dispenser-droplet",
+          "color": "#f97316"
+        },
+        {
+          "name": "Everything",
+          "prompt": "do these sequentially, creating follow up tickets for all concerns encountered:\n/check-requirements-against-code\n/check-code-hygiene\n/analyze-code-quality\n",
+          "icon": "balloon",
+          "color": "#e5e7eb"
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "name": "GIT",
+      "children": [
+        {
+          "name": "git status",
+          "prompt": "git status",
+          "icon": "git-compare",
+          "color": "#e5e7eb",
+          "target": "shell",
+          "autoShowLog": true
+        },
+        {
+          "name": "git push",
+          "prompt": "git push",
+          "icon": "git-compare-arrows",
+          "target": "shell"
+        }
+      ]
+    },
+    {
+      "name": "Prep Major Release",
+      "prompt": "We've made a lot of changes.  Review and update the README.md file as necessary.  Make sure it stays compelling and advertises our most important and interesting features.\n\nReview the demo modes and revise those if you think new / different / fewer screenshots are needed.  Then re-capture all of the demos (always do all of them in case minor details changed).\n",
+      "icon": "wand",
+      "color": "#14b8a6"
+    }
+  ],
+  "sort_by": "modified",
+  "sort_dir": "desc",
+  "detail_visible": "true",
+  "hide_verified_column": "false",
+  "ping_enabled": "false",
+  "terminal_enabled": "true",
+  "drawer_open": "true",
+  "drawer_active_tab": "terminal:default",
+  "terminals": [
+    {
+      "id": "default",
+      "command": "{{claudeCommand}}",
+      "name": "Claude",
+      "lazy": false,
+      "theme": "github-dark",
+      "fontFamily": "system",
+      "fontSize": 17
+    }
+  ],
+  "drawer_expanded": "false",
+  "terminal_default": {
+    "theme": "github-dark",
+    "fontFamily": "system",
+    "fontSize": 17
+  },
+  "confirm_quit_with_running_terminals": "with-non-exempt-processes",
+  "quit_confirm_exempt_processes": "[\"screen\",\"tmux\",\"less\",\"more\",\"view\",\"mandoc\",\"tail\",\"log\",\"top\",\"htop\",\"zsh\"]",
+  "permission_allow_rules": [
+    {
+      "id": "ar_mphm62sb_16s14h",
+      "tool": "Bash",
+      "pattern": "^npx vitest run test/integration/stability-heap-growth\\.test\\.ts 2>&1 \\| grep -E \"stability\\|Tests\\|✓\\|✗\\|FAIL\"$",
+      "added_at": "2026-05-23T00:32:08.603Z",
+      "added_by": "overlay"
+    }
+  ],
+  "hotsheet_skill_clear_context": true,
+  "terminal_prompt_allow_rules": [
+    {
+      "id": "tp_moqyj1w9_5f7963",
+      "parser_id": "claude-numbered",
+      "question_hash": "03018162",
+      "question_preview": "WARNING: Loading development channels",
+      "choice_index": 0,
+      "choice_label": "I am using this for local development",
+      "choice_shape": "i am using this for local development|exit",
+      "created_at": "2026-05-04T08:48:22.617Z"
+    }
+  ],
+  "telemetry_enabled": true,
+  "announcer_enabled": "true",
+  "announcer_ai_key_id": "d68695d5-0eb2-4972-9997-000468afa2a2",
+  "announcer_last_listened_at": "2026-06-22T22:11:57.443Z",
+  "ai_instructions_nudge_dismissed": true
+}

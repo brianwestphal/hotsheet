@@ -17,7 +17,7 @@ import { setDemoMode } from './demo-mode.js';
 import { startEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
-import { ensureSecret, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
+import { ensureSecret, migrateLocalScopedKeys, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { cleanupStaleInstance, isInstanceRunning, readInstanceFile, removeInstanceFile, writeInstanceFile } from './instance.js';
 import { acquireLockWaitingForShutdown } from './lock.js';
@@ -159,6 +159,9 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
 async function startAndConfigure(port: number, dataDir: string, strictPort: boolean, bind?: string): Promise<{ actualPort: number; secret: string }> {
   const actualPort = await startServer(port, dataDir, { noOpen: true, strictPort, bind });
   const secret = ensureSecret(dataDir, actualPort);
+  // HS-9002 — relocate machine-local keys (backupDir, port, allow-rules, …) from
+  // a committed settings.json into the gitignored settings.local.json. Idempotent.
+  migrateLocalScopedKeys(dataDir);
 
   // HS-8308 — best-effort macOS QoS bump so keystroke handling stays
   // responsive while heavy work (e.g. tests inside the embedded terminal)

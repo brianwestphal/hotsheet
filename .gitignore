@@ -1,17 +1,18 @@
 node_modules/
 dist/
 .release-state.json
-.glassbox/
-.hotsheet/
-.cursor/
 *.map
 .DS_Store
 coverage/
 scheduled_tasks.lock
 .mcp.json
-.claude
 test-results/
 .env
+.claude/settings.local.json
+/.hotsheet/*
+!/.hotsheet/settings.json
+/.glassbox/*
+!/.glassbox/settings.json
 
 # HAR captures from `npm run capture-demos` — large + regeneratable, kept
 # alongside the per-scenario PNG + SVG in `docs/` for local debugging only.

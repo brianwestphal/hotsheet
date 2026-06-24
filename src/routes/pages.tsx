@@ -522,6 +522,12 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>
               <span>Backups</span>
             </button>
+            {/* HS-9004 — Sharing tab: Xcode-style Shared | Local overrides |
+                Resolved view of the §2.3.1 shared/local settings split. */}
+            <button className="settings-tab" data-tab="sharing" id="settings-tab-sharing">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
+              <span>Sharing</span>
+            </button>
             <button className="settings-tab" data-tab="context">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>
               <span>Context</span>
@@ -703,6 +709,11 @@ pageRoutes.get('/', (c) => {
                 <button className="btn btn-sm" id="db-repair-pg-resetwal-btn">Run pg_resetwal…</button>
               </div>
               <div id="db-repair-result" className="db-repair-result"></div>
+            </div>
+            {/* HS-9004 — Sharing tab content is rendered client-side by
+                settingsSharingUI.tsx (lazy, on first show). */}
+            <div className="settings-tab-panel" data-panel="sharing" id="settings-sharing-panel">
+              <p className="settings-hint">Loading…</p>
             </div>
             <div className="settings-tab-panel" data-panel="context">
               <div className="settings-section-header">

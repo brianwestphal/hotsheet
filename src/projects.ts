@@ -5,7 +5,7 @@ import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
-import { ensureSecret, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
+import { ensureSecret, migrateLocalScopedKeys, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { acquireLock } from './lock.js';
 import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
@@ -58,8 +58,13 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   const { migrateDbSettingsToFile } = await import('./migrate-settings.js');
   await runWithDataDir(absDataDir, () => migrateDbSettingsToFile(absDataDir));
 
-  // Ensure secret exists and write port to settings.json
+  // Ensure secret exists (sidecar) and write port (now a local-scoped key).
   const secret = ensureSecret(absDataDir, port);
+
+  // HS-9002 — relocate machine-local keys (backupDir, port, allow-rules, …) out
+  // of a committed settings.json into the gitignored settings.local.json, so a
+  // shared settings.json stops carrying user-specific paths. Idempotent.
+  migrateLocalScopedKeys(absDataDir);
 
   // HS-8989 — keep the project's .gitignore current when it's added/opened
   // (`/.hotsheet/* !/.hotsheet/settings.json`). Idempotent + no-op outside a git

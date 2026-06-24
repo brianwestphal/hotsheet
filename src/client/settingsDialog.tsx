@@ -62,6 +62,10 @@ function bindTabSwitching() {
       if (target === 'permissions') {
         void import('./permissionAllowListUI.js').then(m => m.loadAndRenderAllowList());
       }
+      // HS-9004 — lazy-load the Sharing tab's layered settings on first show.
+      if (target === 'sharing') {
+        void import('./settingsSharingUI.js').then(m => m.loadAndRenderSharing());
+      }
     });
   });
 }

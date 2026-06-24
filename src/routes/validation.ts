@@ -129,6 +129,25 @@ export const UpdateSettingsSchema = z.record(z.string(), z.string());
  *  Reserved-key types are still enforced by FileSettingsSchema on read. */
 export const UpdateFileSettingsSchema = z.record(z.string(), z.unknown());
 
+// --- HS-9004 — layered (shared/local) settings writes ---
+
+/** Which settings file a write targets (HS-9002 §2.3.1). */
+export const SettingsLayerSchema = z.enum(['shared', 'local']);
+
+/** PATCH `/file-settings/layer` — write a partial to an EXPLICIT layer
+ *  (`settings.json` or `settings.local.json`), regardless of each key's default
+ *  scope. Drives the Settings → Sharing tab's Shared / Local edit modes. */
+export const UpdateFileSettingsLayerSchema = z.object({
+  layer: SettingsLayerSchema,
+  settings: z.record(z.string(), z.unknown()),
+});
+
+/** POST `/file-settings/clear-local` — remove keys from the local layer
+ *  ("Reset to shared"). */
+export const ClearLocalSettingsSchema = z.object({
+  keys: z.array(z.string()).min(1),
+});
+
 // --- Backups ---
 
 export const BackupTierSchema = z.enum(['5min', 'hourly', 'daily']);

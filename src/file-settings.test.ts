@@ -3,7 +3,19 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ensureSecret, getBackupDir, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
+import {
+  clearLocalOverrides,
+  defaultScope,
+  ensureSecret,
+  getBackupDir,
+  migrateLocalScopedKeys,
+  readFileSettings,
+  readLocalSettings,
+  readSharedSettings,
+  resolveAuthoritativeDataDir,
+  writeFileSettings,
+  writeSettingsLayer,
+} from './file-settings.js';
 import { readSecretFile, writeSecretFile } from './secret-file.js';
 
 let tempDir: string;
@@ -225,6 +237,153 @@ describe('HS-8290 — dashboard keys stripped on read + dropped on next write', 
     expect(onDisk.appName).toBe('updated');
     expect(onDisk.visibility_groupings).toBeUndefined();
     expect(onDisk.hidden_terminals).toBeUndefined();
+  });
+});
+
+/**
+ * HS-9002 — shared (`settings.json`, committed) vs local (`settings.local.json`,
+ * gitignored) settings split. The app reads a merged view with `local` winning;
+ * writes route each key to its default layer; a startup migration relocates
+ * machine-local keys out of a committed settings.json.
+ */
+describe('HS-9002 — shared/local settings split', () => {
+  function freshDir(name: string): string {
+    const dir = join(tempDir, `split-${name}-${Math.random().toString(36).slice(2, 8)}`);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  const sharedPath = (d: string) => join(d, 'settings.json');
+  const localPath = (d: string) => join(d, 'settings.local.json');
+  const readJson = (p: string) => JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
+
+  describe('defaultScope', () => {
+    it('classifies machine-local keys as local', () => {
+      for (const k of ['backupDir', 'port', 'permission_allow_rules', 'terminal_prompt_allow_rules',
+        'announcer_ai_key_id', 'announcer_last_listened_at', 'notify_permission',
+        'detail_width', 'drawer_open']) {
+        expect(defaultScope(k)).toBe('local');
+      }
+    });
+    it('classifies *_nudge_dismissed suffix keys as local', () => {
+      expect(defaultScope('ai_instructions_nudge_dismissed')).toBe('local');
+    });
+    it('classifies shareable project keys as shared', () => {
+      for (const k of ['appName', 'appIcon', 'categories', 'custom_commands', 'terminals',
+        'trash_cleanup_days', 'sort_by', 'channel_enabled']) {
+        expect(defaultScope(k)).toBe('shared');
+      }
+    });
+  });
+
+  it('readFileSettings merges both layers with local winning', () => {
+    const dir = freshDir('merge');
+    writeFileSync(sharedPath(dir), JSON.stringify({ appName: 'Team', backupDir: '/team/default' }));
+    writeFileSync(localPath(dir), JSON.stringify({ backupDir: '/me/local', port: 4180 }));
+    const resolved = readFileSettings(dir);
+    expect(resolved.appName).toBe('Team');     // only shared
+    expect(resolved.backupDir).toBe('/me/local'); // local overrides shared
+    expect(resolved.port).toBe(4180);           // only local
+  });
+
+  it('readSharedSettings / readLocalSettings read only their own file', () => {
+    const dir = freshDir('isolation');
+    writeFileSync(sharedPath(dir), JSON.stringify({ appName: 'Team', backupDir: '/team' }));
+    writeFileSync(localPath(dir), JSON.stringify({ backupDir: '/me' }));
+    expect(readSharedSettings(dir).backupDir).toBe('/team');
+    expect(readSharedSettings(dir).port).toBeUndefined();
+    expect(readLocalSettings(dir).backupDir).toBe('/me');
+    expect(readLocalSettings(dir).appName).toBeUndefined();
+  });
+
+  it('writeFileSettings routes each key to its default layer on disk', () => {
+    const dir = freshDir('route');
+    writeFileSettings(dir, { appName: 'Routed', backupDir: '/my/backups', port: 4199 });
+    const shared = readJson(sharedPath(dir));
+    const local = readJson(localPath(dir));
+    expect(shared.appName).toBe('Routed');
+    expect(shared.backupDir).toBeUndefined();   // local-scoped → NOT in committed file
+    expect(shared.port).toBeUndefined();
+    expect(local.backupDir).toBe('/my/backups');
+    expect(local.port).toBe(4199);
+    expect(local.appName).toBeUndefined();
+  });
+
+  it('getBackupDir resolves a local-layer override', () => {
+    const dir = freshDir('backupdir');
+    writeFileSync(localPath(dir), JSON.stringify({ backupDir: '/local/backups' }));
+    expect(getBackupDir(dir)).toBe('/local/backups');
+  });
+
+  it('writeSettingsLayer writes the chosen layer regardless of key default', () => {
+    const dir = freshDir('explicit-layer');
+    // Force a normally-local key (backupDir) into the SHARED file (a team default).
+    writeSettingsLayer(dir, 'shared', { backupDir: '/team/shared-backups' });
+    expect(readJson(sharedPath(dir)).backupDir).toBe('/team/shared-backups');
+    // Force a normally-shared key (appName) into the LOCAL file (a personal override).
+    writeSettingsLayer(dir, 'local', { appName: 'My Name' });
+    expect(readJson(localPath(dir)).appName).toBe('My Name');
+    expect(readFileSettings(dir).appName).toBe('My Name'); // local wins on resolve
+  });
+
+  it('clearLocalOverrides removes a local key so the shared value re-applies', () => {
+    const dir = freshDir('reset');
+    writeFileSync(sharedPath(dir), JSON.stringify({ backupDir: '/team' }));
+    writeSettingsLayer(dir, 'local', { backupDir: '/me' });
+    expect(readFileSettings(dir).backupDir).toBe('/me');
+    clearLocalOverrides(dir, ['backupDir']);
+    expect(readLocalSettings(dir).backupDir).toBeUndefined();
+    expect(readFileSettings(dir).backupDir).toBe('/team'); // falls back to shared
+  });
+
+  describe('migrateLocalScopedKeys', () => {
+    it('relocates machine-local keys out of a committed settings.json', () => {
+      const dir = freshDir('migrate');
+      writeFileSync(sharedPath(dir), JSON.stringify({
+        appName: 'Team',
+        categories: [{ id: 'bug', label: 'Bug' }],
+        backupDir: '/Users/me/Drive/backups',
+        port: 4174,
+        permission_allow_rules: [{ id: 'x' }],
+      }));
+      migrateLocalScopedKeys(dir);
+      const shared = readJson(sharedPath(dir));
+      const local = readJson(localPath(dir));
+      // Shareable keys stay committed.
+      expect(shared.appName).toBe('Team');
+      expect(shared.categories).toBeDefined();
+      // Machine-local keys are gone from the committed file...
+      expect(shared.backupDir).toBeUndefined();
+      expect(shared.port).toBeUndefined();
+      expect(shared.permission_allow_rules).toBeUndefined();
+      // ...and now live in the gitignored local file.
+      expect(local.backupDir).toBe('/Users/me/Drive/backups');
+      expect(local.port).toBe(4174);
+      expect(local.permission_allow_rules).toBeDefined();
+    });
+
+    it('is idempotent and a no-op on a clean shared file', () => {
+      const dir = freshDir('migrate-idem');
+      writeFileSync(sharedPath(dir), JSON.stringify({ appName: 'Team', backupDir: '/x' }));
+      migrateLocalScopedKeys(dir);
+      const afterFirst = readJson(sharedPath(dir));
+      migrateLocalScopedKeys(dir); // second run
+      expect(readJson(sharedPath(dir))).toEqual(afterFirst);
+      expect(readJson(localPath(dir)).backupDir).toBe('/x');
+    });
+
+    it('does not clobber an existing local override (local wins)', () => {
+      const dir = freshDir('migrate-noclobber');
+      writeFileSync(sharedPath(dir), JSON.stringify({ backupDir: '/stale-shared' }));
+      writeFileSync(localPath(dir), JSON.stringify({ backupDir: '/my-real-local' }));
+      migrateLocalScopedKeys(dir);
+      expect(readJson(localPath(dir)).backupDir).toBe('/my-real-local'); // preserved
+      expect(readJson(sharedPath(dir)).backupDir).toBeUndefined();       // stale copy stripped
+    });
+
+    it('does nothing when settings.json is absent', () => {
+      const dir = freshDir('migrate-absent');
+      expect(() => migrateLocalScopedKeys(dir)).not.toThrow();
+    });
   });
 });
 

@@ -31,15 +31,22 @@
 
 ### 2.3 File-Based Settings
 
-- A `settings.json` file in the data directory stores all project configuration. This makes settings easy to copy between projects, inspect, and back up. Fields:
+- A `settings.json` file in the data directory stores all **shareable** project configuration. This makes settings easy to copy between projects, inspect, and back up, and (per §2.8) it is the one file under `.hotsheet/` that is intentionally **committed to git** so a team can version it. Fields:
   - `appName` — Display name for the project (shown in UI title bar and tabs).
-  - `backupDir` — Custom directory for storing backups (overrides default `.hotsheet/backups/`).
   - `appIcon` — Selected app icon variant (e.g., default, dark, colorful).
   - `ticketPrefix` — Custom prefix for ticket numbers (default: `HS`). The dash separator is added automatically.
-  - `secret` — Server-generated secret token for API authentication.
-  - `secretPathHash` — Hashed path identifier used to scope the secret to a specific project.
-  - `port` — Preferred port number for the server.
-  - All UI and behavior settings are stored as flat keys at the root level alongside the reserved keys above (e.g., `detail_position`, `detail_width`, `detail_height`, `layout`, `sort_by`, `sort_dir`, `categories`, `custom_views`, `custom_commands`, `trash_cleanup_days`, `verified_cleanup_days`, `auto_order`, etc.).
+  - `authoritativeDataDir` — git-worktree follower pointer (HS-8934, §89.1); structural, stays in `settings.json`.
+  - All shareable UI and behavior settings are stored as flat keys at the root level (e.g., `layout`, `sort_by`, `sort_dir`, `categories`, `custom_views`, `custom_commands`, `terminals`, `trash_cleanup_days`, `verified_cleanup_days`, `auto_order`, etc.).
+- `secret` / `secretPathHash` moved to the gitignored `secret.json` sidecar (HS-8999, §20 / `src/secret-file.ts`) — never in `settings.json`.
+
+### 2.3.1 Shared vs Local Settings (HS-9002)
+
+- **Problem.** `settings.json` is committed, but historically also held machine/user-specific values — notably `backupDir` (an absolute path that often embeds the user's home directory + email), `port`, the per-device permission/terminal allow-rules, the Announcer's personal-key reference + last-listened timestamp, browser notification permission, and per-screen layout state. These leaked local paths into commits and caused churn.
+- **The split (mirrors Claude's `settings.json` / `settings.local.json`).** A second, **gitignored** `settings.local.json` holds machine-local values:
+  - **Read = merged, local wins.** The effective settings the app runs on are `{ ...settings.json, ...settings.local.json }` (`readFileSettings` in `src/file-settings.ts`). Layer-specific reads use `readSharedSettings` / `readLocalSettings`.
+  - **Write = routed by a per-key default scope** (`defaultScope(key)`). Local-scoped keys: `backupDir`, `port`, `permission_allow_rules`, `terminal_prompt_allow_rules`, `announcer_ai_key_id`, `announcer_last_listened_at`, `notify_permission`, the `detail_*` / `drawer_*` layout keys, and any `*_nudge_dismissed` key. Everything else defaults to shared. `writeFileSettings` auto-routes; `writeSettingsLayer(dataDir, layer, …)` forces a specific layer; `clearLocalOverrides(dataDir, keys)` removes a local override so the shared value re-applies.
+- **Migration.** On startup, for every registered project, `migrateLocalScopedKeys` relocates local-scoped keys out of a committed `settings.json` into `settings.local.json` and strips them from the shared file (the HS-8999 secret-sidecar pattern). Idempotent; never clobbers an existing local override (local wins). This auto-cleans an already-committed `settings.json` so `backupDir` et al. stop being tracked.
+- **UI (shipped — HS-9004).** Settings → **Sharing** tab: an Xcode-build-settings-style segmented control — **Shared** (edit `settings.json`) | **Local overrides** (edit `settings.local.json`, with per-field *Override* / *Reset to shared*) | **Resolved** (read-only merged view, each row tagged by origin). A curated registry (`src/client/settingsSharing.ts`) gives friendly labels; present-but-uncurated keys still appear as read-only "other" rows so the tab is a complete picture of what's committed. Backed by the layered API (§9): `GET /api/file-settings/layered`, `PATCH /api/file-settings/layer` (`{ layer, settings }`), `POST /api/file-settings/clear-local` (`{ keys }`). Pure row logic in `settingsSharing.ts`; render/wire in `settingsSharingUI.tsx`.
 
 ### 2.4 Settings Migration
 
@@ -81,8 +88,9 @@
   /.hotsheet/*
   !/.hotsheet/settings.json
   ```
-  This ignores everything in `.hotsheet/` (the DB, worklists, backups, and the
-  `secret.json` sidecar where the per-project secret lives per HS-8999) **except**
+  This ignores everything in `.hotsheet/` (the DB, worklists, backups, the
+  `secret.json` sidecar where the per-project secret lives per HS-8999, and the
+  `settings.local.json` machine-local settings per HS-9002 §2.3.1) **except**
   `settings.json` — the shareable project config (categories, custom views,
   commands, terminals) — so a team can version it. Any older / hand-written
   `.hotsheet` ignore line (e.g. `.hotsheet/`, `/.hotsheet/`) is replaced with the

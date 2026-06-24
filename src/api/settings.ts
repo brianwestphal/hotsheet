@@ -25,6 +25,7 @@ import { z } from 'zod';
 
 import {
   CategoryDefSchema, type GlobalConfig, GlobalConfigSchema,
+  type SettingsLayerSchema,
   type UpdateCategoriesSchema, type UpdateFileSettingsSchema, type UpdateSettingsSchema,
 } from '../routes/validation.js';
 import { apiCall, type OkResponse, OkResponseSchema } from './_runner.js';
@@ -77,6 +78,26 @@ export type FileSettings = z.infer<typeof FileSettingsSchema>;
 export type UpdateSettingsReq = z.infer<typeof UpdateSettingsSchema>;
 export type UpdateFileSettingsReq = z.infer<typeof UpdateFileSettingsSchema>;
 
+// --- HS-9004 — layered (shared/local) file-settings ---
+
+/** A settings layer (`settings.json` vs `settings.local.json`). */
+export type SettingsLayer = z.infer<typeof SettingsLayerSchema>;
+
+/**
+ * `GET /file-settings/layered` — the three views the Sharing tab renders:
+ * `shared` (committed `settings.json`), `local` (gitignored
+ * `settings.local.json`), and `resolved` (the merged effective view, local
+ * winning). Each is an open record; `secret`/`secretPathHash` are stripped
+ * server-side. Origin of a resolved value = whether the key is present in
+ * `local`.
+ */
+export const LayeredFileSettingsSchema = z.object({
+  shared: z.record(z.string(), z.unknown()),
+  local: z.record(z.string(), z.unknown()),
+  resolved: z.record(z.string(), z.unknown()),
+});
+export type LayeredFileSettings = z.infer<typeof LayeredFileSettingsSchema>;
+
 // --- tags / categories / category-presets (HS-8638; also in routes/settings.ts) ---
 
 /** `GET /category-presets` row: a named bundle of categories. (`CategoryDef` /
@@ -111,6 +132,23 @@ export async function getFileSettings(secret?: string): Promise<FileSettings> {
  *  updated record. `secret` forwards to a specific project. */
 export async function updateFileSettings(patch: Partial<FileSettings>, secret?: string): Promise<FileSettings> {
   return apiCall(FileSettingsSchema, '/file-settings', { method: 'PATCH', body: patch, secret });
+}
+
+/** GET `/file-settings/layered` → the shared / local / resolved views (HS-9004). */
+export async function getLayeredFileSettings(): Promise<LayeredFileSettings> {
+  return apiCall(LayeredFileSettingsSchema, '/file-settings/layered');
+}
+
+/** PATCH `/file-settings/layer` → write `settings` to an explicit layer
+ *  (`shared` or `local`); returns the refreshed layered views (HS-9004). */
+export async function updateFileSettingsLayer(layer: SettingsLayer, settings: Record<string, unknown>): Promise<LayeredFileSettings> {
+  return apiCall(LayeredFileSettingsSchema, '/file-settings/layer', { method: 'PATCH', body: { layer, settings } });
+}
+
+/** POST `/file-settings/clear-local` → remove keys from the local layer
+ *  ("Reset to shared"); returns the refreshed layered views (HS-9004). */
+export async function clearLocalSettingOverride(keys: string[]): Promise<LayeredFileSettings> {
+  return apiCall(LayeredFileSettingsSchema, '/file-settings/clear-local', { method: 'POST', body: { keys } });
 }
 
 /** GET `/global-config` → `~/.hotsheet/config.json`. */

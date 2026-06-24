@@ -184,6 +184,7 @@ Each built-in view has an icon to the left of the label:
   - **General** (SlidersHorizontal icon) — Project name, auto-clear trash/verified days, "Hide Verified column" checkbox (hides the Verified column in column view; verified tickets appear in the Completed column instead).
   - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
+  - **Sharing** (Share2 icon) — HS-9004 — Xcode-build-settings-style **Shared | Local overrides | Resolved** view of the shared/local settings split (committed `settings.json` vs gitignored `settings.local.json`); per-row Override / Reset-to-shared / origin badge (see [2-data-storage.md](2-data-storage.md) §2.3.1).
   - **Context** (FileText icon) — Auto-context configuration for categories and tags (see §4.18).
   - **Plugins** (Plug icon) — Plugin management, configuration, sync controls, and conflict resolution (see [18-plugins.md](18-plugins.md) §18.10).
   - **Announcer** (AudioLines icon) — Per-project narration of recent work; promoted from a section under Experimental to its own tab (HS-8777). The tab label carries a blue rounded "Beta" chip centered beneath it. See [78-announcer.md](78-announcer.md).

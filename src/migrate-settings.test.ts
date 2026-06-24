@@ -33,16 +33,16 @@ async function countDbSetting(key: string): Promise<number> {
   return parseInt(result.rows[0].count, 10);
 }
 
-/** Clear all rows from the DB settings table and reset settings.json. */
+/** Clear all rows from the DB settings table and reset both settings files. */
 async function resetState(): Promise<void> {
   const db = await getDb();
   await db.query('DELETE FROM settings');
-  // Write an empty settings.json
-  writeFileSettings(tempDir, {});
-  // Re-read to confirm it's clean — writeFileSettings merges, so overwrite directly
-  const path = join(tempDir, 'settings.json');
+  // Overwrite both layers directly — writeFileSettings merges, so it can't clear.
+  // HS-9002 — local-scoped keys (detail_position, port, …) land in
+  // settings.local.json, so it must be wiped too or it leaks across tests.
   const { writeFileSync } = await import('fs');
-  writeFileSync(path, '{}', 'utf-8');
+  writeFileSync(join(tempDir, 'settings.json'), '{}', 'utf-8');
+  writeFileSync(join(tempDir, 'settings.local.json'), '{}', 'utf-8');
 }
 
 beforeEach(async () => {

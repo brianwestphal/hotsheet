@@ -48,7 +48,7 @@ describe('ensureSecret migration (HS-8999)', () => {
     expect(readSecretFile(dir).secret).toBe(secret);   // in the sidecar
     const settings = readFileSettings(dir);
     expect(settings.secret).toBeUndefined();            // NOT in settings.json
-    expect(settings.port).toBe(4174);                   // port stays
+    expect(settings.port).toBe(4174);                   // port resolves (now from settings.local.json)
   });
 
   it('migrates a legacy settings.json secret, PRESERVING the value, and strips it', () => {
@@ -77,7 +77,12 @@ describe('ensureSecret migration (HS-8999)', () => {
 
   it('does not write the secret into settings.json on disk', () => {
     ensureSecret(dir, 4174);
-    const rawSettings = readFileSync(settingsPath(dir), 'utf-8');
-    expect(rawSettings).not.toContain('secret');
+    // HS-9002 — `port` is now a local-scoped key, so ensureSecret writes it to
+    // settings.local.json and may not create settings.json at all. Either way,
+    // the committed settings.json must never carry the secret.
+    if (existsSync(settingsPath(dir))) {
+      expect(readFileSync(settingsPath(dir), 'utf-8')).not.toContain('secret');
+    }
+    expect(readSecretFile(dir).secret).toMatch(/^[0-9a-f]{32}$/); // it's in the sidecar
   });
 });

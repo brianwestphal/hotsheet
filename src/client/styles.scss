@@ -5346,6 +5346,132 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   margin-bottom: 12px;
 }
 
+// --- HS-9004 — Settings → Sharing tab (shared/local/resolved) ---
+
+.sharing-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin: 14px 0 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.sharing-seg-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 7px;
+  cursor: pointer;
+
+  .sharing-seg-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .55; }
+  &:hover { color: var(--text); }
+  &.active {
+    background: var(--bg);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+    .sharing-seg-dot { opacity: 1; }
+  }
+  &.active.sharing-seg-shared { color: #047857; }
+  &.active.sharing-seg-local { color: #b45309; }
+  &.active.sharing-seg-resolved { color: var(--accent-hover); }
+}
+
+.sharing-note {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin: 10px 0 16px;
+
+  code { font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: 11px; }
+}
+.sharing-note-shared { color: #047857; background: rgba(4, 120, 87, .08); border: 1px solid rgba(4, 120, 87, .25); }
+.sharing-note-local { color: #b45309; background: rgba(180, 83, 9, .08); border: 1px solid rgba(180, 83, 9, .25); }
+.sharing-note-resolved { color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); }
+
+.sharing-rows { display: flex; flex-direction: column; }
+.sharing-row {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: none; }
+}
+.sharing-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.sharing-row-label { font-size: 12.5px; font-weight: 600; }
+.sharing-row-head > :not(.sharing-row-label) { margin-left: auto; }
+.sharing-row-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+
+.sharing-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+
+  .sharing-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+}
+.sharing-tag-shared { color: #047857; background: rgba(4, 120, 87, .1); border: 1px solid rgba(4, 120, 87, .3); }
+.sharing-tag-local { color: #b45309; background: rgba(180, 83, 9, .1); border: 1px solid rgba(180, 83, 9, .3); }
+.sharing-tag-default { color: var(--text-muted); background: var(--bg-secondary); border: 1px solid var(--border); }
+
+.sharing-input {
+  width: 100%;
+  padding: 7px 9px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+}
+.sharing-value-ro {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  word-break: break-all;
+}
+.sharing-value-inherited {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+}
+.sharing-inherited-note { font-style: normal; opacity: .8; }
+
+.sharing-link {
+  border: none;
+  background: transparent;
+  color: var(--accent-hover);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+  &:hover { text-decoration: underline; }
+}
+.sharing-ghostbtn {
+  border: 1px dashed var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  &:hover { background: var(--bg-hover); color: var(--text); }
+}
+
 // --- Category Management ---
 
 .category-list {
