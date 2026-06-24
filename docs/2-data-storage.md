@@ -75,9 +75,22 @@
 
 ### 2.8 Gitignore Management
 
-- On startup, detects if the project is a git repository.
-- Automatically adds `.hotsheet/` to `.gitignore` if not already present.
-- Provides API endpoints to check status and trigger gitignore addition from the UI.
+- On startup and whenever a project is opened/registered, detects if the project is a git repository (`src/gitignore.ts`).
+- **HS-8989** — automatically maintains the canonical rules in the project's `.gitignore`:
+  ```
+  /.hotsheet/*
+  !/.hotsheet/settings.json
+  ```
+  This ignores everything in `.hotsheet/` (the DB, worklists, backups, and the
+  `secret.json` sidecar where the per-project secret lives per HS-8999) **except**
+  `settings.json` — the shareable project config (categories, custom views,
+  commands, terminals) — so a team can version it. Any older / hand-written
+  `.hotsheet` ignore line (e.g. `.hotsheet/`, `/.hotsheet/`) is replaced with the
+  canonical block; it's a no-op when the rules are already exactly present.
+- **Opt-out (rarely needed):** if the user leaves a **commented-out** matching rule
+  in `.gitignore` (e.g. `# /.hotsheet/*`), Hot Sheet treats that as "the user manages
+  this themselves" and leaves the file untouched.
+- Provides API endpoints to check status and trigger the update from the UI.
 
 ## Non-Functional Requirements
 

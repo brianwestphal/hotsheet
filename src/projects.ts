@@ -1,11 +1,12 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
 
 import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
 import { ensureSecret, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
+import { ensureGitignore } from './gitignore.js';
 import { acquireLock } from './lock.js';
 import { ensureSkillsForDir, initSkills, setSkillCategories } from './skills.js';
 import { startupLog } from './startup-log.js';
@@ -59,6 +60,12 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
 
   // Ensure secret exists and write port to settings.json
   const secret = ensureSecret(absDataDir, port);
+
+  // HS-8989 — keep the project's .gitignore current when it's added/opened
+  // (`/.hotsheet/* !/.hotsheet/settings.json`). Idempotent + no-op outside a git
+  // repo or when the user has opted out via a commented rule. The repo root is
+  // resolved from the project dir (parent of the `.hotsheet` dataDir).
+  try { ensureGitignore(dirname(absDataDir)); } catch { /* never block registration */ }
 
   // Acquire lock to prevent duplicate instances. HS-8706 — reclaim an orphaned
   // lock from a recycled PID. The single global instance file guarantees at most

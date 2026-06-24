@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { addHotsheetToGitignore, getGitRoot, isGitRepo, isHotsheetGitignored } from './gitignore.js';
+import { computeHotsheetGitignore, ensureGitignore, getGitRoot, HOTSHEET_GITIGNORE_RULES, isGitRepo, isHotsheetGitignored } from './gitignore.js';
 
 // HS-8713 — compare two resolved paths for same-location equality in an
 // OS-portable way. A bare `===` fails on Windows because `realpathSync` /
@@ -106,52 +106,49 @@ describe('isHotsheetGitignored', () => {
   });
 });
 
-describe('addHotsheetToGitignore', () => {
-  let tempDir: string;
+describe('computeHotsheetGitignore (HS-8989)', () => {
+  const BLOCK = HOTSHEET_GITIGNORE_RULES.join('\n') + '\n';
 
-  afterEach(() => {
-    if (tempDir) {
-      try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  it('writes the canonical block when the file does not exist', () => {
+    expect(computeHotsheetGitignore(null)).toBe(BLOCK);
+  });
+
+  it('appends the block to existing content', () => {
+    expect(computeHotsheetGitignore('node_modules/\n')).toBe(`node_modules/\n${BLOCK}`);
+  });
+
+  it('replaces an older `.hotsheet/` (or bare `.hotsheet`) line', () => {
+    expect(computeHotsheetGitignore('node_modules/\n.hotsheet/\n')).toBe(`node_modules/\n${BLOCK}`);
+    expect(computeHotsheetGitignore('.hotsheet\n')).toBe(BLOCK);
+    expect(computeHotsheetGitignore('/.hotsheet/\n')).toBe(BLOCK);
+  });
+
+  it('is a no-op when the canonical rules are already exactly present', () => {
+    expect(computeHotsheetGitignore(BLOCK)).toBeNull();
+    expect(computeHotsheetGitignore(`node_modules/\n${BLOCK}`)).toBeNull();
+  });
+
+  it('respects a commented-out opt-out (user manages it themselves)', () => {
+    expect(computeHotsheetGitignore('# /.hotsheet/*\n# !/.hotsheet/settings.json\n')).toBeNull();
+    expect(computeHotsheetGitignore('node_modules/\n# .hotsheet/\n')).toBeNull();
+  });
+
+  it('does not leave a trailing blank gap before the block', () => {
+    expect(computeHotsheetGitignore('node_modules/\n\n\n')).toBe(`node_modules/\n${BLOCK}`);
+  });
+
+  it('writes the block to disk via ensureGitignore in a real repo (settings.json stays tracked)', () => {
+    const dir = createTempDir();
+    try {
+      execSync('git init -q', { cwd: dir });
+      writeFileSync(join(dir, '.gitignore'), '.hotsheet/\n');
+      ensureGitignore(dir);
+      const content = readFileSync(join(dir, '.gitignore'), 'utf-8');
+      expect(content).toContain('/.hotsheet/*');
+      expect(content).toContain('!/.hotsheet/settings.json');
+      expect(content).not.toMatch(/^\.hotsheet\/$/m); // old line replaced
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  it('creates .gitignore with .hotsheet/ when it does not exist', () => {
-    tempDir = createTempDir();
-    addHotsheetToGitignore(tempDir);
-    const content = readFileSync(join(tempDir, '.gitignore'), 'utf-8');
-    expect(content).toBe('.hotsheet/\n');
-  });
-
-  it('appends .hotsheet/ to existing .gitignore', () => {
-    tempDir = createTempDir();
-    writeFileSync(join(tempDir, '.gitignore'), 'node_modules/\n');
-    addHotsheetToGitignore(tempDir);
-    const content = readFileSync(join(tempDir, '.gitignore'), 'utf-8');
-    expect(content).toBe('node_modules/\n.hotsheet/\n');
-  });
-
-  it('adds newline before .hotsheet/ if file does not end with newline', () => {
-    tempDir = createTempDir();
-    writeFileSync(join(tempDir, '.gitignore'), 'node_modules/');
-    addHotsheetToGitignore(tempDir);
-    const content = readFileSync(join(tempDir, '.gitignore'), 'utf-8');
-    expect(content).toBe('node_modules/\n.hotsheet/\n');
-  });
-
-  it('does not duplicate if .hotsheet is already present', () => {
-    tempDir = createTempDir();
-    writeFileSync(join(tempDir, '.gitignore'), '.hotsheet/\n');
-    addHotsheetToGitignore(tempDir);
-    const content = readFileSync(join(tempDir, '.gitignore'), 'utf-8');
-    expect(content).toBe('.hotsheet/\n');
-  });
-
-  it('detects partial match (.hotsheet without slash) as already present', () => {
-    tempDir = createTempDir();
-    writeFileSync(join(tempDir, '.gitignore'), '.hotsheet\n');
-    addHotsheetToGitignore(tempDir);
-    const content = readFileSync(join(tempDir, '.gitignore'), 'utf-8');
-    // Should not add again since content.includes('.hotsheet') is true
-    expect(content).toBe('.hotsheet\n');
   });
 });
