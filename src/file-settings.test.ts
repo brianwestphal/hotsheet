@@ -299,6 +299,30 @@ describe('HS-9002 — shared/local settings split', () => {
     expect(resolved.port).toBe(4180);           // only local
   });
 
+  // HS-9010a — readFileSettings applies element-level deltas for the delta keys.
+  it('readFileSettings applies a local element-level delta to a shared list key', () => {
+    const dir = freshDir('delta');
+    writeFileSync(sharedPath(dir), JSON.stringify({
+      custom_views: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }],
+    }));
+    writeFileSync(localPath(dir), JSON.stringify({
+      custom_views: { hidden: ['b'], overrides: { a: { name: 'A2' } }, added: [{ id: 'x', name: 'Local X' }] },
+    }));
+    const views = readFileSettings(dir).custom_views;
+    expect(Array.isArray(views)).toBe(true);
+    const arr = views as { id: string; name: string }[];
+    expect(arr.map(v => v.id)).toEqual(['a', 'c', 'x']); // b hidden, x appended
+    expect(arr.find(v => v.id === 'a')?.name).toBe('A2'); // override applied
+  });
+
+  it('readFileSettings is unchanged when the local value is a plain array (legacy whole-replacement)', () => {
+    const dir = freshDir('delta-legacy');
+    writeFileSync(sharedPath(dir), JSON.stringify({ terminals: [{ id: 'shared', name: 'S' }] }));
+    writeFileSync(localPath(dir), JSON.stringify({ terminals: [{ id: 'localwins', name: 'L' }] }));
+    const terms = readFileSettings(dir).terminals as { id: string }[];
+    expect(terms.map(t => t.id)).toEqual(['localwins']); // local wins wholesale, exactly as pre-HS-9010a
+  });
+
   it('readSharedSettings / readLocalSettings read only their own file', () => {
     const dir = freshDir('isolation');
     writeFileSync(sharedPath(dir), JSON.stringify({ appName: 'Team', backupDir: '/team' }));

@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 import { z } from 'zod';
 
 import { readSecretFile, writeSecretFile } from './secret-file.js';
+import { isArrayDelta, resolveDeltaArray } from './settingsDelta.js';
 
 const FileSettingsSchema = z.object({
   appName: z.string().optional(),
@@ -31,6 +32,26 @@ const JSON_VALUE_KEYS = new Set([
   // tool/pattern pairs without showing the popup). See docs/47-richer-permission-overlay.md.
   'permission_allow_rules',
 ]);
+
+/** Safe string-property read for an unknown list item (no `as`). */
+function stringProp(item: unknown, prop: string): string {
+  if (typeof item !== 'object' || item === null) return '';
+  const v: unknown = Reflect.get(item, prop);
+  return typeof v === 'string' ? v : '';
+}
+
+/**
+ * HS-9010a (docs/95 §95.3) — list keys whose LOCAL layer may hold an element-level
+ * delta (`{hidden, added, overrides}`) instead of a whole-array replacement. Each
+ * entry's `idOf` identifies a shared item for hide/override targeting.
+ * `custom_commands` is a nested group tree and gets its own tree-aware resolver
+ * (HS-9010c) — intentionally NOT here.
+ */
+const DELTA_LIST_KEYS: { key: string; idOf: (item: unknown) => string }[] = [
+  { key: 'custom_views', idOf: (i) => stringProp(i, 'id') },
+  { key: 'terminals', idOf: (i) => stringProp(i, 'id') },
+  { key: 'auto_context', idOf: (i) => `${stringProp(i, 'type')}:${stringProp(i, 'key')}` },
+];
 
 /**
  * HS-8290 — keys that USED to be stored per-project but moved to the
@@ -244,7 +265,31 @@ export function readLocalSettings(dataDir: string): FileSettings {
  * `readSharedSettings` / `readLocalSettings` + the layer-specific writers.
  */
 export function readFileSettings(dataDir: string): FileSettings {
-  return { ...readSharedSettings(dataDir), ...readLocalSettings(dataDir) };
+  const shared = readSharedSettings(dataDir);
+  const local = readLocalSettings(dataDir);
+  const merged: FileSettings = { ...shared, ...local };
+  // HS-9010a (docs/95 §95.3) — for the element-level delta keys, resolve the
+  // shared array against the local layer's delta. Gate strictly on the local
+  // value being a DELTA object: when it's a plain array / absent the spread
+  // above is already correct (local wins, or shared as-is), and — crucially —
+  // we must NOT touch the merged value, so a legacy stringified array (HS-6370)
+  // or any other shape is preserved for its consumer to parse. This makes the
+  // change a true no-op until an editor writes a delta.
+  for (const { key, idOf } of DELTA_LIST_KEYS) {
+    if (!isArrayDelta(local[key])) continue;
+    const sv: unknown = shared[key];
+    let sharedArr: unknown[] = [];
+    if (Array.isArray(sv)) {
+      sharedArr = sv;
+    } else if (typeof sv === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(sv);
+        if (Array.isArray(parsed)) sharedArr = parsed;
+      } catch { /* leave empty */ }
+    }
+    merged[key] = resolveDeltaArray(sharedArr, local[key], idOf);
+  }
+  return merged;
 }
 
 /** Read-merge-write a single layer file. */
