@@ -23,6 +23,7 @@ import { keysRoutes } from './routes/keys.js';
 import { otelRoutes } from './routes/otel.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
+import { createRequestGuards } from './routes/requestGuards.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { workerRoutes } from './routes/workers.js';
 import { worktreeRoutes } from './routes/worktrees.js';
@@ -110,6 +111,14 @@ export async function startServer(
     return new Response(content, { headers: { 'Content-Type': getMimeType(ext), 'Cache-Control': 'max-age=86400' } });
   });
 
+  // HS-8986 — front-line request hardening (body-size cap + flood rate limit),
+  // BEFORE auth + handlers, on the API + OTLP ingest surfaces. One shared
+  // limiter instance across both so a flood is bounded per remote IP. No-op for
+  // loopback callers; rate limiting only engages on an exposed server.
+  const requestGuards = createRequestGuards({ exposed });
+  app.use('/api/*', requestGuards);
+  app.use('/v1/*', requestGuards);
+
   // Secret validation + origin access-control middleware (HS-1684 / HS-1982 /
   // HS-2083 / HS-7940). Mutations need the secret OR a trusted same-origin
   // (CSRF guard); GETs poll openly on a loopback bind but require the secret
@@ -153,7 +162,8 @@ export async function startServer(
     // `@hono/node-server` passes the raw `{ incoming }` as the (untyped) env; the
     // socket's remoteAddress is the request peer. Cast is justified: AppEnv has
     // no Bindings type for it and there's a runtime guard (optional chaining).
-    const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } };
+    // `?? {}` because env is absent in the in-process test harness.
+    const env = (c.env ?? {}) as { incoming?: { socket?: { remoteAddress?: string } } };
     const decision = evaluateOtelAccess({
       exposed,
       remoteAddress: env.incoming?.socket?.remoteAddress,
