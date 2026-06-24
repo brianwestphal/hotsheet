@@ -7,9 +7,13 @@ to be a popular attack surface... we ideally need something like HTTPS mutual au
 challenge-based public-private-key authentication... every request authenticated and validated
 before execution."
 
-> **Status:** Design only — **awaiting the user's steer on the key forks (§94.8)** before any
-> implementation. Rolling crypto/auth blind is a serious risk; this doc lays out the threat model,
-> the candidate architecture, and the decisions that need a human call.
+> **Status (2026-06-24):** Design **decided** (the §94.8 forks are answered). Decomposed into
+> phased implementation sub-tickets (§94.10), ready to schedule. **Decisions:** mTLS (no custom
+> challenge layer — the TLS handshake IS the challenge-response); **in-process Node TLS** (Hot Sheet
+> owns the CA + certs end-to-end); **localhost/single-user stays exactly as today (shared secret) —
+> mTLS engages ONLY when the server is not on localhost** (exposed); **self-hosted scope only** (the
+> §88 hosted cloud will add OIDC/SSO separately); enrollment via **`.p12` import first + QR** (for
+> the future mobile-web client). No crypto is implemented in this ticket — the sub-tickets carry it.
 
 ## 94.1 Why now
 
@@ -94,39 +98,47 @@ audited.
 - **Revocation.** A per-project revocation list (revoked client-cert serials) checked on connect;
   revoking a device is immediate. Certs carry an expiry (re-enroll on rotation).
 
-### 94.4.2 Enrollment (how a device gets its client cert)
+### 94.4.2 Enrollment (DECIDED — `.p12` import first, then QR)
 
-The hard UX problem. Options (a §94.8 decision):
-- **Pairing over the existing trusted channel** — the user is already authenticated locally (or
-  over the tunnel). The device generates a key pair, sends a CSR, the server (on an
-  already-trusted/local request) signs it and returns the cert. Bootstrapped by a short-lived
-  pairing code / QR shown in the desktop app (mirrors the §46/HS-7942 "Open on iPhone" QR), scanned
-  over the tunnel.
-- **Out-of-band cert install** — power users import a `.p12` they generated. Simple, no pairing
-  flow, but clunky.
+How a device gets its client cert. **Phase 1: `.p12` import** — the self-hosting admin generates a
+client cert (the desktop app's CA signs one + exports a password-protected `.p12`, or imports an
+externally-generated one) and installs it on the connecting device/browser. No pairing flow; the
+right first cut since the only clients today are desktop/browser, not mobile.
 
-### 94.4.3 Transport: in-process TLS vs reverse-proxy (a §94.8 decision)
+**Phase 2: QR pairing** — the desktop app shows a short-lived pairing QR (mirrors the §46/HS-7942
+"Open on iPhone" QR); a device scans it, generates a key pair, sends a CSR over the trusted/tunnel
+channel, and the server signs + returns the cert. Added for when the §46 client/server split + the
+responsive mobile-web client land, so phones can enroll as clients without a desktop `.p12` dance.
 
-- **(A) In-process TLS** — Node `https`/`tls` server with `requestCert`. Hot Sheet owns the certs +
-  CA + mTLS. Self-contained, no extra deps, works for the Tauri sidecar + headless. More code in
-  our security-critical path; cert lifecycle is ours.
-- **(B) Reverse-proxy contract** — document that mTLS is terminated by Caddy/nginx, which passes
-  the verified client identity in a trusted header (e.g. `X-Client-Cert-CN`) over loopback; Hot
-  Sheet trusts that header ONLY from loopback. Less crypto code in Hot Sheet; offloads TLS to
-  battle-tested infra; but pushes setup burden onto the user + adds a trust-the-header surface.
+### 94.4.3 Transport: in-process TLS (DECIDED — option A)
+
+**Chosen: in-process Node TLS.** Hot Sheet owns the CA + certs + mTLS end-to-end via Node's
+`https`/`tls` server with `requestCert: true` + `rejectUnauthorized: true`. Self-contained (no extra
+deps, no reverse-proxy setup), works for the Tauri sidecar + headless, turnkey for the self-hosting
+user. The cost — more crypto in our security-critical path — is accepted; it's bounded (cert
+lifecycle + the listener config) and the HS-8987 security skill re-audits it each release. The
+`@hono/node-server` `serve()` accepts a `createServer`/TLS options path, so the existing server
+plumbing (HS-7940's `hostname` bind) extends to a TLS listener on the exposed (Tier-1) path.
+
+(A reverse-proxy deployment — Caddy/nginx terminating mTLS + passing the identity over loopback —
+stays a *documented option* for users who already run one, but is not the primary path.)
 
 ## 94.5 Tiers (don't force mTLS on the hobbyist)
 
-A single user on a private tailnet should not need a CA + per-device certs. Propose **two tiers**,
-selected by deployment:
-- **Tier 0 — loopback / tunnel (today).** Loopback bind, or WireGuard/Tailscale tunnel
-  (network-layer encryption + peer auth) + the per-project shared secret. Unchanged; the default.
-- **Tier 1 — exposed / multi-user (new, this epic).** mTLS + per-device certs + ACLs. Required
-  whenever the server is bound to a non-tunnel, non-loopback interface for untrusted reach, and for
-  the §88 cloud/teams model.
+**DECIDED — two tiers, keyed off whether the server is on localhost.** A single user on localhost
+should not need a CA + per-device certs.
 
-This keeps the simple case simple while giving the strong story where it matters. (A §94.8
-decision: is Tier 1 opt-in, or forced whenever `--bind` is non-loopback-non-tunnel?)
+- **Tier 0 — localhost (today, UNCHANGED).** Default loopback bind + the per-project shared secret.
+  The user was explicit: *"for users on localhost — the single user case — you can leave it as is."*
+  No mTLS, no certs, zero new friction for the overwhelmingly-common case.
+- **Tier 1 — not on localhost (mTLS REQUIRED).** *"mTLS is only when localhost isn't used."* The
+  moment the server is reachable off-box (`--bind` non-loopback), mTLS + per-device client certs +
+  ACLs are required — not optional. The HS-7940 GET-lockdown / origin gate / shared-secret path is
+  superseded by mTLS on this tier (kept only as defense-in-depth, not the primary credential).
+
+So the trigger is mechanical: loopback ⇒ Tier 0 (as today); exposed ⇒ Tier 1 (mTLS). A tunnel
+(WireGuard/Tailscale) is a confidentiality layer the user may still add under either tier, but it no
+longer substitutes for mTLS once the server is exposed.
 
 ## 94.6 Relationship to existing tickets
 
@@ -138,10 +150,11 @@ decision: is Tier 1 opt-in, or forced whenever `--bind` is non-loopback-non-tunn
   the auth model and should land regardless (defense-in-depth even under mTLS).
 - **HS-8987** (security-review skill) — the standing mechanism that re-audits this surface each
   release.
-- **HS-8878 / §88** (cloud service, teams + orgs) — the ACL/authz layer this enables; the cloud
-  model likely layers OIDC/SSO for human login on top of (or instead of) per-device mTLS for the
-  hosted product. **A fork:** self-hosted exposure (mTLS) vs the hosted cloud (probably OIDC + a
-  session model) may want different auth — see §94.8.
+- **HS-8878 / §88** (cloud service, teams + orgs) — **out of scope here (DECIDED).** This epic is
+  **self-hosted exposure only**; the user: *"this is for self hosting specifically. once we have a
+  cloud solution we'll likely need some additional options."* The hosted cloud will add its own auth
+  (likely OIDC/SSO + sessions) as a separate effort; the ACL/identity model built here is reusable,
+  but the mTLS primary is the self-hosted answer, not the cloud one.
 
 ## 94.7 Phasing (once the model is chosen)
 
@@ -154,21 +167,44 @@ decision: is Tier 1 opt-in, or forced whenever `--bind` is non-loopback-non-tunn
    listener; revocation list.
 5. **Docs + threat-model sign-off** + the HS-8987 skill re-audit.
 
-## 94.8 Decisions needed from the user (FEEDBACK NEEDED)
+## 94.8 Decisions (answered 2026-06-24)
 
-Before implementing, the key forks (the answers shape everything downstream):
+1. **mTLS confirmed** — yes. The TLS 1.3 handshake's `CertificateVerify` IS the challenge-response;
+   **no hand-rolled application-layer challenge** on top.
+2. **Transport** — **(A) in-process Node TLS.** Hot Sheet owns the CA + certs + mTLS end-to-end.
+3. **Tiers** — **localhost stays as today (shared secret); mTLS engages only when not on localhost
+   (exposed).** Mechanical trigger off the bind.
+4. **Scope** — **self-hosted exposure only.** The hosted cloud (§88) is a later, separate effort
+   with its own auth options.
+5. **Enrollment** — **`.p12` import first** (no mobile clients yet), **plus QR pairing** added for
+   the future client/server split + responsive mobile-web client.
 
-1. **mTLS confirmed as the mechanism?** I recommend YES, with mTLS's own handshake serving as the
-   "challenge-response" (do NOT hand-roll a custom challenge protocol on top — it's the dangerous
-   part). Confirm, or do you specifically want a separate application-layer challenge too?
-2. **Transport: (A) in-process Node TLS** that Hot Sheet owns end-to-end, **or (B) a documented
-   reverse-proxy** (Caddy/nginx) terminating mTLS + passing identity over loopback? (A = turnkey,
-   more of our code in the security path; B = less crypto code, more user setup.)
-3. **Tiers:** keep the Tier-0 loopback/tunnel + shared-secret path as the default for single-user,
-   with mTLS as the Tier-1 exposure story? Or move everything to mTLS?
-4. **Scope target:** is this primarily for **self-hosted exposure** (where mTLS fits), the **§88
-   hosted cloud** (where OIDC/SSO + sessions may fit better), or **both** (two auth modes)?
-5. **Enrollment UX:** the paired-CSR + QR flow, or out-of-band `.p12` import, or both?
+## 94.10 Decomposition (implementation sub-tickets)
+
+Phased so each security-critical piece gets its own ticket + review. Dependencies via `blocked_by`.
+
+1. **CA + cert lifecycle** (`src/auth/ca.ts`) — generate/load a per-project self-signed **CA**
+   (keypair in the keychain, §20) + a **server cert** it signs; helpers to sign a **client cert**
+   from a CSR / public key, export a password-protected **`.p12`**, and read a cert's identity
+   (stable client id + label). Pure crypto + keychain I/O, no wire change. Uses Node `crypto` /
+   `node:tls` (or a vetted lib like `node-forge`/`@peculiar/x509` if Node's primitives are
+   insufficient for CSR + PKCS#12 — evaluate in this ticket; prefer the platform `crypto`). **No
+   dep on the rest.**
+2. **In-process mTLS listener** — on the exposed (Tier-1) path, stand up the Node TLS server with
+   `requestCert` + `rejectUnauthorized` against the project CA; map the verified peer cert →
+   client identity into the request context; loopback/Tier-0 stays plain (today's behavior).
+   Extends the HS-7940 bind plumbing in `server.ts`. **Blocked by #1.**
+3. **`.p12` enrollment** — the desktop flow to mint + export a client `.p12` (CA-signed) for a
+   named device, and import an externally-generated one; a local-only CSR-signing endpoint.
+   **Blocked by #1.**
+4. **Authz + ACLs + revocation** — verified identity → permitted scope (per-project roles, the §88
+   model's seed); a per-device **revocation list** checked on connect; remove the bearer-secret as
+   the credential on the mTLS listener (keep it Tier-0 only). **Blocked by #2.**
+5. **QR pairing enrollment** — desktop shows a short-lived pairing QR; a device generates a keypair
+   + CSR, signed over the trusted channel. **Blocked by #3** (+ coordinates with the §46 mobile
+   client / HS-7941).
+6. **Docs + threat-model sign-off + HS-8987 re-audit** — finalize the threat model, run the
+   security-review skill against the new surface. **Blocked by #2 + #4.**
 
 ## 94.9 Cross-references
 
