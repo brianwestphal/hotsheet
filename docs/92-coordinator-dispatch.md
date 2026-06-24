@@ -1,6 +1,7 @@
 # 92. Coordinator-Dispatch UX (owner assigns ticket chunks to a worker)
 
-**Status: PARTIAL — manual dispatch SHIPPED 2026-06-24 (HS-8964).** The "push"
+**Status: PARTIAL — manual dispatch + reassign/recall SHIPPED 2026-06-24 (HS-8964,
+HS-8974).** The "push"
 half of the dual coordination model from
 [90-distributed-execution.md](90-distributed-execution.md) §90.5.2 — the owner
 manually partitions work onto specific workers, complementing autonomous
@@ -94,9 +95,14 @@ to manual dispatch, not a prerequisite.
   queue and isn't worked until its `blocked_by` (HS-8865) clears; the UI warns.
 - **Dispatch to a draining/stopped worker:** rejected (the tile isn't a valid
   drop target while `draining`/`stopped`).
-- **Reassign / recall:** dragging a dispatched ticket to another worker re-claims
-  it to that worker (if not yet in progress); dropping it back on the unclaimed
-  pool / a "release" affordance clears the claim (back to self-claimable).
+- **Reassign / recall — ✅ SHIPPED (HS-8974):** re-dispatching a ticket that's
+  already claimed by another worker prompts "Reassign to X? (abandons in-progress
+  work)" → on confirm, a **force** claim-by-id (`ClaimSchema.force` → `claimById(…,
+  force)`, atomically overwriting the holder — no release-then-claim race) moves
+  it. **Recall** is the "Recall claim" context-menu item (shown when any selected
+  ticket is claimed) → force-release (`release(id)` with no worker) back to the
+  self-claimable pool. (A "queue-only" worker mode — §92.9 — is not built; a
+  dispatched worker always falls back to self-claim.)
 - **Single-local default untouched:** dispatch only appears when a worker pool
   exists; with no pool there are no drop targets.
 
@@ -136,7 +142,12 @@ Shipped in **HS-8964** (2026-06-24):
    regardless of `up_next` (docs/90 §90.5.2 / claims.ts). So the existing HS-8863
    self-claim loop drains its dispatched queue before the shared pool — no
    worker-side change.
-3. **AI-partition helper (§92.6)** — still design-only (**HS-8965**).
+3. **Reassign / recall (§92.7) — HS-8974** — `ClaimSchema.force` → `claimById(…,
+   force)` overwrites a foreign lease atomically; `dispatchAndReport` prompts to
+   reassign on conflict then force-redispatches the failed ids; a "Recall claim"
+   context-menu item force-releases back to the pool. Tests: `client/dispatch.test.ts`
+   (reassign confirm/decline), `db/claims.test.ts` (force overwrite + recall).
+4. **AI-partition helper (§92.6)** — still design-only (**HS-8965**).
 
 Tests: `client/dispatch.test.ts`, `db/claims.test.ts` (personal-queue ordering +
 non-up_next dispatch), `client/workerPoolPanel.test.ts` (drop-target + draining

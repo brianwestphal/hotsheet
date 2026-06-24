@@ -194,7 +194,7 @@ ticketRoutes.post('/tickets/:id/claim', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ClaimSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const result = await claimById(id, parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds);
+  const result = await claimById(id, parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, parsed.data.force);
   if (result.ok) {
     notifyMutation(c.get('dataDir'));
     return c.json(result);

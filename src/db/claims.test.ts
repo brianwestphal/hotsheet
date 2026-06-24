@@ -174,6 +174,35 @@ describe('claim/lease primitive (HS-8862)', () => {
     });
   });
 
+  describe('reassign / recall (HS-8974)', () => {
+    it('claimById force overwrites a live foreign lease (reassign)', async () => {
+      const t = await upNext('reassign-me', 'high');
+      expect((await claimById(t.id, 'A', 'worker-A')).ok).toBe(true);
+      // Without force, another worker conflicts.
+      const conflict = await claimById(t.id, 'B', 'worker-B');
+      expect(conflict.ok).toBe(false);
+      // With force, B takes it over.
+      const forced = await claimById(t.id, 'B', 'worker-B', undefined, true);
+      expect(forced.ok).toBe(true);
+      expect((await getTicket(t.id))!.claimed_by).toBe('B');
+    });
+
+    it('force claim still refuses a terminal-status ticket', async () => {
+      const t = await upNext('done', 'high');
+      const db = await getDb();
+      await db.query("UPDATE tickets SET status = 'completed' WHERE id = $1", [t.id]);
+      expect((await claimById(t.id, 'A', 'worker-A', undefined, true)).ok).toBe(false);
+    });
+
+    it('force-release (no worker) recalls a claim back to the self-claimable pool', async () => {
+      const t = await upNext('recall-me', 'high');
+      await claimById(t.id, 'A', 'worker-A');
+      await release(t.id); // force-release (owner recall)
+      expect((await getTicket(t.id))!.claimed_by).toBeNull();
+      expect((await claimNext('B', 'worker-B'))!.id).toBe(t.id);
+    });
+  });
+
   describe('poison-ticket dead-letter (HS-8970)', () => {
     it('claimNext refuses a ticket that has hit MAX_CLAIM_ATTEMPTS', async () => {
       const t = await upNext('poison', 'high');

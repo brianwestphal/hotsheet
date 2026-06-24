@@ -90,14 +90,19 @@ export type ClaimByIdResult =
 /** Claim a specific ticket for `worker` (used by coordinator-dispatch, §90.5.2).
  *  Succeeds when the ticket is unclaimed, its lease expired, or it is already
  *  held by `worker` (idempotent re-claim / lease bump). Returns a conflict when a
- *  live lease is held by a different worker. */
+ *  live lease is held by a different worker — UNLESS `force` (HS-8974 reassign),
+ *  which atomically overwrites whoever holds it (no release-then-claim race). */
 export async function claimById(
   id: number,
   worker: string,
   label: string | null,
   ttlSeconds: number = DEFAULT_CLAIM_TTL_SECONDS,
+  force = false,
 ): Promise<ClaimByIdResult> {
   const db = await getDb();
+  // Non-force claims only land on an unclaimed / expired / already-mine ticket;
+  // a force reassign drops that guard and takes it from the current holder.
+  const claimGuard = force ? '' : 'AND (claimed_by IS NULL OR claim_lease_expires_at < NOW() OR claimed_by = $2)';
   const result = await db.query<Ticket>(
     `UPDATE tickets
         SET claimed_by = $2,
@@ -106,7 +111,7 @@ export async function claimById(
             claim_count = claim_count + 1
       WHERE id = $1
         AND status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
-        AND (claimed_by IS NULL OR claim_lease_expires_at < NOW() OR claimed_by = $2)
+        ${claimGuard}
      RETURNING *`,
     [id, worker, label, ttlSeconds],
   );

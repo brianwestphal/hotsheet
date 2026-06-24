@@ -1,6 +1,7 @@
-import { duplicateTickets, getBackends, getWorkerPool, pushTicketToBackend, updateTicket, uploadAttachment } from '../api/index.js';
+import { duplicateTickets, getBackends, getWorkerPool, pushTicketToBackend, releaseTicket, updateTicket, uploadAttachment } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
+import { claimForTicket } from './claimsStore.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
 import { buildFeedbackNav, getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
@@ -14,6 +15,7 @@ import { openExternalUrl } from './tauriIntegration.js';
 import { loadTickets, renderTicketList } from './ticketList.js';
 import { hasPendingFeedback } from './ticketRow.js';
 import { getTicketSignals } from './ticketsStore.js';
+import { showToast } from './toast.js';
 import { toggleReadState, trackedBatch, trackedDelete, trackedPatch } from './undo/actions.js';
 
 const LUCIDE_14 = {
@@ -324,6 +326,20 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
       // rejection (and so tests that exercise the contextmenu without a
       // running server don't trip vitest's unhandled-error guard).
     });
+  }
+
+  // HS-8974 — Recall claim (docs/92 §92.7): force-release any selected ticket
+  // currently held by a worker, sending it back to the self-claimable pool. Shown
+  // only when at least one selected ticket is claimed (per the ≤5 s claims poll).
+  const claimedSelected = Array.from(state.selectedIds).filter(id => claimForTicket(id) !== undefined);
+  if (claimedSelected.length > 0) {
+    const recallLabel = claimedSelected.length === 1 ? 'Recall claim' : `Recall ${String(claimedSelected.length)} claims`;
+    addActionItem(menu, recallLabel, () => {
+      void Promise.all(claimedSelected.map(id => releaseTicket(id))).then(() => {
+        showToast(claimedSelected.length === 1 ? 'Recalled — back in the pool' : `Recalled ${String(claimedSelected.length)} tickets`);
+        void loadTickets();
+      });
+    }, { icon: ICON_X_CIRCLE });
   }
 
   // HS-8964 — "Dispatch to worker…" submenu (docs/92 §92.2, the Tauri-safe

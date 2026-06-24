@@ -58,6 +58,10 @@ export const ClaimSchema = z.object({
   worker: z.string().min(1),
   label: z.string().nullish(),
   ttlSeconds: z.number().int().positive().max(3600).optional(),
+  // HS-8974 — force a reassign: take the ticket from its current holder
+  // (overwrites a live foreign lease instead of returning 409). Only honored by
+  // `/tickets/:id/claim`.
+  force: z.boolean().optional(),
 });
 export const ReleaseSchema = z.object({
   worker: z.string().nullish(),

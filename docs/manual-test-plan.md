@@ -753,6 +753,8 @@ The dispatch helper + personal-queue ordering are unit-tested; this covers the r
 - [ ] Right-click one or more tickets → **"Dispatch to worker ▸"** → pick a worker: same result via the Tauri-safe path. The submenu lists only live (idle/working) workers and doesn't appear when no pool exists.
 - [ ] Dispatch a ticket already claimed by another worker → a toast reports "already claimed by `<worker>`" and it isn't reassigned.
 - [ ] A dispatched worker finishes its dispatched queue, then falls back to self-claiming the shared pool.
+- [ ] **Reassign (HS-8974):** dispatch a ticket already claimed by worker A to worker B → a confirm prompts "Reassign to B? (abandons in-progress work)"; confirming moves the claim to B (chip flips), declining leaves it with A.
+- [ ] **Recall (HS-8974):** right-click a claimed ticket → "Recall claim" → its chip clears and it returns to the self-claimable pool (a worker can claim-next it again).
 
 ### Worker-pool panel (HS-8962, docs/91 §91.5)
 

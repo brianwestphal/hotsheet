@@ -189,7 +189,7 @@ export async function toggleUpNext(id: number): Promise<z.infer<typeof TicketSch
 // --- HS-8862 — distributed-execution claim/lease (docs/90 §90.3) ---
 
 /** A worker's claim of a ticket: who holds it, optional display label, and TTL. */
-export interface ClaimReq { worker: string; label?: string | null; ttlSeconds?: number }
+export interface ClaimReq { worker: string; label?: string | null; ttlSeconds?: number; force?: boolean }
 
 // HS-8962 — `drain` is set when a pool worker marked draining pulls: the server
 // returns no ticket and tells it to stop (docs/91 §91.4).
