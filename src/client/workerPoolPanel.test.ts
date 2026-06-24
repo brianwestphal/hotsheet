@@ -152,6 +152,17 @@ describe('refreshPool (HS-8962)', () => {
     expect(mockRemove).toHaveBeenCalledWith({ worker: 'pw1' });
   });
 
+  it('HS-8972 — auto-reaps a dead (unresponsive) worker, same teardown as stopped', async () => {
+    mockPool.mockResolvedValueOnce({ targetN: 0, workers: [slot({ state: 'dead' })] });
+    mockPool.mockResolvedValue({ targetN: 0, workers: [] });
+    const body = document.createElement('div');
+    await refreshPool(body);
+    await flush();
+    expect(mockCloseTerm).toHaveBeenCalledWith('t-pw1', true);
+    expect(mockRemoveWt).toHaveBeenCalledWith({ path: '/wt/pw1', force: true });
+    expect(mockRemove).toHaveBeenCalledWith({ worker: 'pw1' });
+  });
+
   it('reconcile adds a worker when the live count is below target (HS-8971)', async () => {
     // Target 1 but no live workers → reconcile launches one; then the pool reports it.
     mockPool.mockResolvedValueOnce({ targetN: 1, workers: [] });

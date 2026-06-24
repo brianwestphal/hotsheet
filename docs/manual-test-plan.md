@@ -764,6 +764,7 @@ The pool manager (drain semantics, state derivation) + panel render/drain wiring
 - [ ] Step the target to 2 — a second worker is launched; both drain the pool in parallel with no double-claim (tiles show distinct current tickets); the owner UI updates live. (HS-8971 reconcile: the panel adds/drains to match the target.)
 - [ ] Click **Drain** on a *working* tile: the worker finishes its current ticket (NOT interrupted mid-work), then stops; the tile goes draining → stopped and is auto-cleaned (its terminal closes + worktree is removed).
 - [ ] **Drain all** gracefully stops every worker the same way.
+- [ ] **Zombie reap (HS-8972):** kill a worker's Claude process *without* draining (close the terminal / `kill`). After ~5 min of no claim-next/renew, its tile shows **Unresponsive** then is auto-reaped (terminal closed + worktree removed + a "looked unresponsive — reaped" toast); if a target-N is set, a replacement worker is launched. A worker actively renewing a long ticket is NOT reaped.
 - [ ] A worker started by hand (`/hotsheet-worker` not via the panel) is unaffected by pool drain (it's not in the registry).
 
 ---

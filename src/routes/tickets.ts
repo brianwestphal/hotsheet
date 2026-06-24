@@ -37,7 +37,7 @@ import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
-import { onClaimNext } from '../workers/poolManager.js';
+import { onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
@@ -196,6 +196,7 @@ ticketRoutes.post('/tickets/:id/claim', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const result = await claimById(id, parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, parsed.data.force);
   if (result.ok) {
+    touchPoolWorker(c.get('dataDir'), parsed.data.worker); // HS-8972 liveness
     notifyMutation(c.get('dataDir'));
     return c.json(result);
   }
@@ -214,6 +215,9 @@ ticketRoutes.post('/tickets/:id/renew-lease', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ClaimSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  // HS-8972 — a heartbeat is the primary liveness signal for a worker that's
+  // heads-down on a long ticket (not calling claim-next). Bump its pool slot.
+  touchPoolWorker(c.get('dataDir'), parsed.data.worker);
   const result = await renewLease(id, parsed.data.worker, parsed.data.ttlSeconds);
   return c.json(result);
 });

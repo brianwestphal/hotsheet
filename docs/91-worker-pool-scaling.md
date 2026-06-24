@@ -136,8 +136,16 @@ A recommendation, never an automatic action — the owner always sets the actual
 
 - **Empty pool:** workers idle-and-back-off when `claim-next` returns nothing
   (HS-8863); the panel shows "nothing to claim". No busy-spin.
-- **Crash:** a dead worker's ticket is reclaimed via lease expiry (§90.2.2); the
-  panel flags the slot and offers re-create.
+- **Crash / zombie slot — ✅ SHIPPED (HS-8972):** a dead worker's *ticket* is
+  reclaimed via lease expiry (§90.2.2); its *slot* now self-heals too. Each slot
+  carries a `lastSeenAt`, bumped on every sign of life (`claim-next`, lease renewal,
+  claim-by-id); a slot silent past `STALE_AFTER_MS` (5 min — comfortably above the
+  120 s lease TTL + renew cadence) is derived as **`dead`** in `GET /api/workers/pool`.
+  The panel auto-reaps a `dead` slot (close terminal + `removeWorktree` +
+  unregister, the same teardown as `stopped`) with a toast, and the §91.5 reconcile
+  then recreates a replacement if still below target N. A worker heads-down on a
+  long ticket stays live (it renews); one that's truly silent has already lost its
+  lease, so reaping it is safe.
 - **Single-local default untouched:** the pool is opt-in; with N=0 / no pool,
   behavior is exactly today's single-agent flow.
 - **Single-machine scope:** all workers run on this box against the local server;
@@ -170,7 +178,7 @@ A recommendation, never an automatic action — the owner always sets the actual
 
 (1) pool manager + scale up/down + drain (server) and (2) the worker-pool panel UI
 shipped together in **HS-8962** (2026-06-23); the numeric target-N stepper +
-auto-reconcile shipped in **HS-8971** (2026-06-23). Remaining: (3) the AI-suggest-N
-helper (**HS-8963**), the dispatch drop targets (**HS-8961**/§92), the
-claimed-by/lease-freshness chip (**HS-8864**), and swapping the poll for the §90.8
-live event bus (**HS-7945**).
+auto-reconcile shipped in **HS-8971** (2026-06-23); dispatch drop targets shipped in
+**HS-8964** (§92); the claimed-by/lease chip shipped in **HS-8864** (§90.8); the
+zombie-slot liveness reap shipped in **HS-8972** (§91.7). Remaining: the AI-suggest-N
+helper (**HS-8963**) and swapping the poll for the §90.8 live event bus (**HS-7945**).

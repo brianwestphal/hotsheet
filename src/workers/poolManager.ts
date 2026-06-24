@@ -35,7 +35,17 @@ export interface WorkerSlot {
   stopped: boolean;
   /** Registration order, for stable tile ordering. */
   seq: number;
+  /** HS-8972 — last time this worker showed liveness (ms epoch): registration,
+   *  any `claim-next`, lease renewal, or claim-by-id. A worker silent past
+   *  `STALE_AFTER_MS` is treated as dead (crashed/hung) and reaped by the panel. */
+  lastSeenAt: number;
 }
+
+/** HS-8972 — a pool worker silent (no claim-next / renew / claim) for this long is
+ *  considered dead. Comfortably above the 120 s lease TTL + the worker's renew
+ *  cadence, so a worker heads-down on a long ticket (still renewing) stays live;
+ *  one that's truly silent has already lost its lease anyway. */
+export const STALE_AFTER_MS = 5 * 60_000;
 
 interface Pool {
   /** Desired worker count (a UI hint the panel reconciles toward; §91.9 session-only). */
@@ -80,6 +90,7 @@ export function registerWorker(dataDir: string, input: RegisterWorkerInput): Wor
     drain: false,
     stopped: false,
     seq: existing?.seq ?? pool.nextSeq++,
+    lastSeenAt: Date.now(),
   };
   pool.workers.set(input.worker, slot);
   if (pool.workers.size > pool.targetN) pool.targetN = pool.workers.size;
@@ -119,11 +130,29 @@ export function requestDrainAll(dataDir: string): number {
  *  This is the single hook the claim-next route calls. */
 export function onClaimNext(dataDir: string, worker: string): { drain: boolean } {
   const slot = pools.get(dataDir)?.workers.get(worker);
-  if (slot !== undefined && slot.drain) {
+  if (slot === undefined) return { drain: false };
+  slot.lastSeenAt = Date.now(); // a claim-next is a sign of life (HS-8972)
+  if (slot.drain) {
     slot.stopped = true;
     return { drain: true };
   }
   return { drain: false };
+}
+
+/** HS-8972 — record liveness for a pool worker (called from the renew-lease /
+ *  claim routes, in addition to `onClaimNext`). No-op for a non-pool worker.
+ *  Returns whether a slot was found. */
+export function touch(dataDir: string, worker: string, now: number = Date.now()): boolean {
+  const slot = pools.get(dataDir)?.workers.get(worker);
+  if (slot === undefined) return false;
+  slot.lastSeenAt = now;
+  return true;
+}
+
+/** HS-8972 — is this slot dead? Silent past `STALE_AFTER_MS` and not already on
+ *  its way out (draining/stopped have their own cleanup path). */
+export function isSlotStale(slot: WorkerSlot, now: number = Date.now()): boolean {
+  return !slot.drain && !slot.stopped && now - slot.lastSeenAt > STALE_AFTER_MS;
 }
 
 /** Remove a worker slot from the registry (after its terminal + worktree are

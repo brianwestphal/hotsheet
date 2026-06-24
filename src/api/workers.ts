@@ -42,8 +42,9 @@ export async function launchWorker(req: LaunchWorkerReq): Promise<WorkerLaunchSp
 
 // --- HS-8962 — worker-pool manager (docs/91 §91.2-91.5) ---
 
-/** Derived worker lifecycle state for the pool panel (docs/91 §91.2). */
-export const WorkerStateSchema = z.enum(['idle', 'working', 'draining', 'stopped']);
+/** Derived worker lifecycle state for the pool panel (docs/91 §91.2). `dead` is
+ *  HS-8972 — silent past the liveness window (crashed/hung), pending reap. */
+export const WorkerStateSchema = z.enum(['idle', 'working', 'draining', 'stopped', 'dead']);
 export type WorkerState = z.infer<typeof WorkerStateSchema>;
 
 /** A pool worker as the panel sees it — the registry slot + derived state + (when

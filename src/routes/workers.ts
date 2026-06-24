@@ -17,7 +17,7 @@ import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { prepareWorker } from '../workers/launchWorker.js';
 import {
-  getPoolState, registerWorker, removeWorker, requestDrain,
+  getPoolState, isSlotStale, registerWorker, removeWorker, requestDrain,
   requestDrainAll, setTarget, type WorkerSlot,
 } from '../workers/poolManager.js';
 import { projectRootFromDataDir } from './git.js';
@@ -27,11 +27,12 @@ export const workerRoutes = new Hono<AppEnv>();
 
 /** Combine a registry slot with the live claims into the panel's view: a worker
  *  that holds a live claim is `working` (with that ticket); a drained/stopped slot
- *  shows its lifecycle state; otherwise `idle`. */
+ *  shows its lifecycle state; a silent slot is `dead` (HS-8972); otherwise `idle`. */
 function toView(slot: WorkerSlot, claimByWorker: Map<string, { id: number; ticketNumber: string; title: string }>): WorkerSlotView {
   const claim = claimByWorker.get(slot.worker);
   const state = slot.stopped ? 'stopped'
     : slot.drain ? 'draining'
+    : isSlotStale(slot) ? 'dead'
     : claim !== undefined ? 'working'
     : 'idle';
   return {

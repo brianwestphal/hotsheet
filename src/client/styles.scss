@@ -10279,6 +10279,7 @@ label.detail-details-label {
   }
   .worker-tile-state-working { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
   .worker-tile-state-draining { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+  .worker-tile-state-dead { background: color-mix(in srgb, var(--danger) 24%, transparent); color: var(--danger); font-weight: 700; }
   .worker-tile-state-stopped { opacity: 0.7; }
   .worker-tile-ticket {
     grid-area: ticket; font-size: 11px; color: var(--text-muted);

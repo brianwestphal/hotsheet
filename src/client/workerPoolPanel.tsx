@@ -45,7 +45,7 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 const STATE_LABEL: Record<WorkerSlotView['state'], string> = {
-  idle: 'Idle', working: 'Working', draining: 'Draining…', stopped: 'Stopped',
+  idle: 'Idle', working: 'Working', draining: 'Draining…', stopped: 'Stopped', dead: 'Unresponsive',
 };
 
 /** Workers that count toward the live total (everything not on its way out). */
@@ -70,7 +70,7 @@ export function renderWorkerTile(
       <div className="worker-tile-ticket">
         {w.currentTicket !== null
           ? <span>{w.currentTicket.ticketNumber}: {w.currentTicket.title}</span>
-          : <span className="worker-tile-ticket-none">{w.state === 'stopped' ? 'cleaning up…' : '—'}</span>}
+          : <span className="worker-tile-ticket-none">{w.state === 'stopped' || w.state === 'dead' ? 'cleaning up…' : '—'}</span>}
       </div>
       <div className="worker-tile-actions">
         {canDrain && onDrain !== undefined
@@ -127,9 +127,10 @@ export function renderPoolControls(
   controlsEl.querySelector('.worker-pool-drain-all')?.addEventListener('click', () => onDrainAll());
 }
 
-/** Tear down a worker that has acknowledged its drain (state `stopped`): close its
- *  terminal, remove its worktree, and unregister it from the pool. Idempotent per
- *  worker via `cleaningUp`. */
+/** Tear down a finished worker — `stopped` (drained gracefully) or `dead`
+ *  (HS-8972, silent past the liveness window): close its terminal, remove its
+ *  worktree, and unregister it. Idempotent per worker via `cleaningUp`. After a
+ *  reap, the HS-8971 reconcile recreates a replacement if still below target N. */
 async function cleanupStopped(w: WorkerSlotView): Promise<void> {
   if (cleaningUp.has(w.worker)) return;
   cleaningUp.add(w.worker);
@@ -175,9 +176,14 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
       (delta) => void handleStep(pool, delta, bodyEl),
       () => void handleDrainAll(bodyEl));
   }
-  // Auto-clean drained workers (best-effort, in the background).
+  // Auto-clean finished workers (best-effort, in the background): gracefully
+  // drained (`stopped`) or reaped-as-dead (`dead`, HS-8972). Toast once per reap
+  // (guarded by `cleaningUp` so a mid-cleanup poll doesn't re-toast).
   for (const w of pool.workers) {
-    if (w.state === 'stopped') void cleanupStopped(w).then(() => refreshPool(bodyEl));
+    if ((w.state === 'stopped' || w.state === 'dead') && !cleaningUp.has(w.worker)) {
+      if (w.state === 'dead') showToast(`Worker ${w.label} looked unresponsive — reaped`);
+      void cleanupStopped(w).then(() => refreshPool(bodyEl));
+    }
   }
   // Reconcile the live count toward the target (HS-8971).
   reconcile(pool, bodyEl);

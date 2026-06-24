@@ -3,8 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  _resetPoolsForTesting, cancelDrain, getPoolState, onClaimNext,
+  _resetPoolsForTesting, cancelDrain, getPoolState, isSlotStale, onClaimNext,
   registerWorker, removeWorker, requestDrain, requestDrainAll, setTarget,
+  STALE_AFTER_MS, touch,
 } from './poolManager.js';
 
 const DIR = '/proj/.hotsheet';
@@ -82,5 +83,34 @@ describe('worker-pool manager (HS-8962)', () => {
     expect(getPoolState(DIR).targetN).toBe(4);
     setTarget(DIR, -2);
     expect(getPoolState(DIR).targetN).toBe(0);
+  });
+
+  describe('liveness / zombie detection (HS-8972)', () => {
+    it('a slot goes stale past STALE_AFTER_MS, and touch refreshes it', () => {
+      reg('w1');
+      const t0 = getPoolState(DIR).workers[0].lastSeenAt;
+      const slot = getPoolState(DIR).workers[0];
+      expect(isSlotStale(slot, t0 + 1000)).toBe(false);
+      expect(isSlotStale(slot, t0 + STALE_AFTER_MS + 1)).toBe(true);
+      // A later sign of life clears staleness.
+      touch(DIR, 'w1', t0 + STALE_AFTER_MS + 5000);
+      const fresh = getPoolState(DIR).workers[0];
+      expect(isSlotStale(fresh, t0 + STALE_AFTER_MS + 5000)).toBe(false);
+    });
+
+    it('a draining or stopped slot is never "stale" (it has its own cleanup path)', () => {
+      reg('w1');
+      requestDrain(DIR, 'w1');
+      const draining = getPoolState(DIR).workers[0];
+      expect(isSlotStale(draining, draining.lastSeenAt + STALE_AFTER_MS + 1)).toBe(false);
+    });
+
+    it('onClaimNext records liveness, and touch reports unknown workers', () => {
+      reg('w1');
+      touch(DIR, 'w1', 1); // backdate
+      onClaimNext(DIR, 'w1');
+      expect(getPoolState(DIR).workers[0].lastSeenAt).toBeGreaterThan(1);
+      expect(touch(DIR, 'ghost')).toBe(false);
+    });
   });
 });
