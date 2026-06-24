@@ -31,7 +31,7 @@
  * We still use native `crypto.generateKeyPairSync` for the actual keygen (fast,
  * native) and hand the PEM to forge only for cert assembly/signing/PKCS#12.
  */
-import { createHash,generateKeyPairSync } from 'crypto';
+import { createHash,generateKeyPairSync, X509Certificate } from 'crypto';
 import forge from 'node-forge';
 import { isAbsolute, resolve } from 'path';
 
@@ -313,6 +313,35 @@ export function readP12(p12: Buffer, password: string): { certPem: string; keyPe
 
 function hasCaFlag(ext: object): boolean {
   return 'cA' in ext && ext.cA === true;
+}
+
+/** Cert metadata the enrolled-device registry stores for later revocation +
+ *  expiry display (HS-8994). `serial` + `fingerprint` are the two stable keys a
+ *  revocation check (sub-ticket 4 / HS-8995) can match a connecting cert on. */
+export interface CertMeta {
+  serial: string;
+  fingerprint: string;
+  notAfter: string;
+  identity: ClientIdentity | null;
+}
+
+/**
+ * Read serial / SHA-256 fingerprint / expiry / identity from a cert PEM, via
+ * Node's native `X509Certificate` (parses + exposes these directly). Returns
+ * null on a malformed PEM.
+ */
+export function readCertMeta(certPem: string): CertMeta | null {
+  try {
+    const x = new X509Certificate(certPem);
+    return {
+      serial: x.serialNumber,
+      fingerprint: x.fingerprint256,
+      notAfter: new Date(x.validTo).toISOString(),
+      identity: readIdentity(certPem),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

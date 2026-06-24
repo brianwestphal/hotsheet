@@ -15,9 +15,11 @@ before execution."
 > §88 hosted cloud will add OIDC/SSO separately); enrollment via **`.p12` import first + QR** (for
 > the future mobile-web client).
 >
-> **Implementation progress:** sub-tickets **1/6 (HS-8992)** + **2/6 (HS-8993) SHIPPED** —
-> `src/auth/ca.ts` (CA + cert lifecycle) + `src/auth/tlsListener.ts` (the exposed-only in-process
-> mTLS listener wired into `server.ts`). Sub-tickets 3–6 pending (see §94.10).
+> **Implementation progress:** sub-tickets **1/6 (HS-8992)** + **2/6 (HS-8993)** SHIPPED, **3/6
+> (HS-8994) server core** SHIPPED (client UI/Tauri save → HS-9024) — `src/auth/ca.ts` (CA + cert
+> lifecycle) + `src/auth/tlsListener.ts` (exposed-only mTLS listener) + `src/auth/deviceRegistry.ts`
+> + `src/routes/enrollment.ts` (mint `.p12` / sign CSR / list / revoke, loopback-gated). Sub-tickets
+> 4–6 pending (see §94.10).
 
 ## 94.1 Why now
 
@@ -238,7 +240,24 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
    primary credential on this tier (today it's surfaced; the HS-7940 secret/origin gate still runs).
 3. **`.p12` enrollment** — the desktop flow to mint + export a client `.p12` (CA-signed) for a
    named device, and import an externally-generated one; a local-only CSR-signing endpoint.
-   **Blocked by #1.**
+   **Server core SHIPPED (HS-8994); client UI + Tauri save split to HS-9024.**
+
+   **What shipped (HS-8994):** the server-side enrollment core. `src/auth/deviceRegistry.ts` —
+   per-project enrolled-device registry (`<dataDir>/auth-devices.json`, gitignored): `listDevices` /
+   `addDevice` (re-enroll replaces by `clientId`) / `revokeDevice` / `isRevoked({serial|fingerprint})`
+   (the seed of #4's connect-time check). `src/auth/ca.ts` gained `readCertMeta` (serial /
+   fingerprint / notAfter / identity via native `X509Certificate`). `src/routes/enrollment.ts`
+   (mounted `/api`): `POST /api/auth/devices/mint` `{label,password}` → signs a client cert, registers
+   it, returns the password-protected `.p12` (base64) + filename; `POST /api/auth/devices/sign-csr`
+   `{csrPem,label}` → signs an external CSR with OUR identity; `GET /api/auth/devices`; `POST
+   /api/auth/devices/:clientId/revoke`. **Credential creation (mint + sign-csr) is loopback-only**
+   (`isLoopbackRequest`) — never invokable by an untrusted remote even with the secret; the first
+   device is always enrolled locally (bootstrapping). Typed wire SSOT + callers in
+   `src/api/enrollment.ts`. Tests: `src/auth/deviceRegistry.test.ts` + `src/routes/enrollment.test.ts`
+   (mint round-trips a `.p12` that re-imports + verifies vs the CA; CSR signs + loopback-gates +
+   rejects bad CSRs; list; revoke + 404). **Split to HS-9024:** the Settings "Devices" UI (list / add
+   / revoke) + a **Tauri-safe `save_file`** for the `.p12` download (desktop-only surface — Chromium
+   e2e can't catch the Tauri `<a download>` no-op, so it needs a real desktop pass). **Blocked by #1.**
 4. **Authz + ACLs + revocation** — verified identity → permitted scope (per-project roles, the §88
    model's seed); a per-device **revocation list** checked on connect; remove the bearer-secret as
    the credential on the mTLS listener (keep it Tier-0 only). **Blocked by #2.**

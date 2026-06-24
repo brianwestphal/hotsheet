@@ -18,6 +18,7 @@ import { evaluateOtelAccess } from './routes/apiAccess.js';
 import { createApiAuthMiddleware } from './routes/apiAuthMiddleware.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
+import { enrollmentRoutes } from './routes/enrollment.js';
 import { gitRoutes } from './routes/git.js';
 import { keysRoutes } from './routes/keys.js';
 import { otelRoutes } from './routes/otel.js';
@@ -164,6 +165,11 @@ export async function startServer(
   // HS-8751 — global API-key registry. `/api/keys` CRUD over the machine-wide
   // named-secret list the announcer (and future TTS) selects from.
   app.route('/api', keysRoutes);
+
+  // HS-8994 — mTLS client-cert enrollment (§94.4.2). `/api/auth/devices/*`: mint
+  // a `.p12`, sign a CSR (both loopback-only), list, revoke. Behind the standard
+  // `/api/*` auth; credential creation adds its own loopback guard.
+  app.route('/api', enrollmentRoutes);
 
   // HS-8143 — Claude Code OTLP/HTTP receiver (§67.5). Three routes on
   // `/v1/{metrics,logs,traces}`. NOT under `/api/*` so the

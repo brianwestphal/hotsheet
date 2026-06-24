@@ -31,6 +31,7 @@ import * as commandLog from './commandLog.js';
 import * as dashboard from './dashboard.js';
 import * as db from './db.js';
 import * as diagnostics from './diagnostics.js';
+import * as enrollment from './enrollment.js';
 import * as feedbackDrafts from './feedbackDrafts.js';
 import * as git from './git.js';
 import * as keys from './keys.js';
@@ -53,6 +54,7 @@ export * from './commandLog.js';
 export * from './dashboard.js';
 export * from './db.js';
 export * from './diagnostics.js';
+export * from './enrollment.js';
 export * from './feedbackDrafts.js';
 export * from './git.js';
 export * from './keys.js';
@@ -90,4 +92,5 @@ export const apis = {
   ...aiInstructions,
   ...worktrees,
   ...workers,
+  ...enrollment,
 };
