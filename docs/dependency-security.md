@@ -122,3 +122,22 @@ npm audit --omit=dev --audit-level=high     # production npm tree
 npm audit                                   # everything, incl. dev toolchain
 cargo audit                                 # from src-tauri/ (needs cargo-audit)
 ```
+
+## Attack-surface review at release (HS-8987)
+
+Dependency auditing (above) covers *known-CVE* exposure in third-party code. It
+does **not** cover Hot Sheet's *own* attack surface — the routes, WebSocket
+endpoints, OTLP ingest, MCP tools, plugin/keychain handling, and the
+`--bind`/`trustedOrigins` exposure model (HS-7940 / HS-8983 / the HS-8985
+strong-auth design in `docs/94-strong-remote-auth.md`).
+
+The **`security-review` Claude skill** (`.claude/skills/security-review/SKILL.md`)
+is the standing mechanism for that, run before each release: it re-derives the
+attack surface from the current code (not a static list), checks each surface
+(authn/authz before execution, input/abuse pre-filtering, injection, path
+traversal, SSRF, secret leakage, CSRF/CSWSH, transport), does **proactive
+external research** each run (latest advisories/CVEs for the actual dependency
+versions + current attack patterns — not just training knowledge), and writes a
+dated, severity-ranked report to `docs/security/security-review-YYYY-MM-DD.md`,
+filing a `security`-tagged ticket per actionable finding. Run it on demand or as
+a release-checklist step.
