@@ -73,8 +73,6 @@
   ],
   "custom_views": [],
   "channel_enabled": "true",
-  "auto_order": "true",
-  "layout": "columns",
   "custom_commands": [
     {
       "name": "Commit Changes",
@@ -151,9 +149,6 @@
       "color": "#14b8a6"
     }
   ],
-  "sort_by": "modified",
-  "sort_dir": "desc",
-  "hide_verified_column": "false",
   "ping_enabled": "false",
   "terminal_enabled": "true",
   "terminals": [
@@ -167,14 +162,5 @@
       "fontSize": 17
     }
   ],
-  "terminal_default": {
-    "theme": "github-dark",
-    "fontFamily": "system",
-    "fontSize": 17
-  },
-  "confirm_quit_with_running_terminals": "with-non-exempt-processes",
-  "quit_confirm_exempt_processes": "[\"screen\",\"tmux\",\"less\",\"more\",\"view\",\"mandoc\",\"tail\",\"log\",\"top\",\"htop\",\"zsh\"]",
-  "hotsheet_skill_clear_context": true,
-  "telemetry_enabled": true,
-  "announcer_enabled": "true"
+  "hotsheet_skill_clear_context": true
 }
