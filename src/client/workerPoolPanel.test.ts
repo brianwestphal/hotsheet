@@ -26,6 +26,13 @@ vi.mock('../api/index.js', () => ({
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('./terminalInstanceLifecycle.js', () => ({ closeDynamicTerminal: vi.fn() }));
 vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new') }));
+vi.mock('./dispatch.js', () => ({ dispatchAndReport: vi.fn().mockResolvedValue({ dispatched: 0, failures: [] }) }));
+// HS-8964 — controllable drag set for the drop-target tests.
+const dragHolder = vi.hoisted(() => ({ ids: [] as number[] }));
+vi.mock('./ticketListState.js', () => ({
+  draggedTicketIds: dragHolder.ids,
+  setDraggedTicketIds: vi.fn((ids: number[]) => { dragHolder.ids.length = 0; dragHolder.ids.push(...ids); }),
+}));
 
 const mockPool = vi.mocked(getWorkerPool);
 const mockLaunch = vi.mocked(launchWorker);
@@ -45,6 +52,7 @@ const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  dragHolder.ids.length = 0;
   vi.clearAllMocks();
   mockDrain.mockResolvedValue({ ok: true });
   mockRemove.mockResolvedValue({ ok: true });
@@ -71,6 +79,22 @@ describe('renderWorkerTile (HS-8962)', () => {
     expect(renderWorkerTile(slot({ state: 'draining' }), vi.fn()).querySelector('.worker-drain-btn')).toBeNull();
     expect(renderWorkerTile(slot({ state: 'stopped' }), vi.fn()).querySelector('.worker-drain-btn')).toBeNull();
     expect(renderWorkerTile(slot({ state: 'draining' })).querySelector('.worker-tile-state')?.textContent).toBe('Draining…');
+  });
+
+  it('HS-8964 — dropping a ticket drag on a live tile dispatches it to that worker', () => {
+    const onDispatch = vi.fn();
+    const tile = renderWorkerTile(slot({ state: 'idle' }), vi.fn(), onDispatch);
+    dragHolder.ids.push(1, 2);
+    tile.dispatchEvent(new Event('drop', { bubbles: true }));
+    expect(onDispatch).toHaveBeenCalledWith(expect.objectContaining({ worker: 'pw1' }), [1, 2]);
+  });
+
+  it('HS-8964 — a draining tile is not a drop target', () => {
+    const onDispatch = vi.fn();
+    const tile = renderWorkerTile(slot({ state: 'draining' }), vi.fn(), onDispatch);
+    dragHolder.ids.push(1);
+    tile.dispatchEvent(new Event('drop', { bubbles: true }));
+    expect(onDispatch).not.toHaveBeenCalled();
   });
 });
 

@@ -1,10 +1,14 @@
 # 92. Coordinator-Dispatch UX (owner assigns ticket chunks to a worker)
 
-**Status: DESIGN ONLY** (HS-8961, 2026-06-23). The "push" half of the dual
-coordination model from [90-distributed-execution.md](90-distributed-execution.md)
-§90.5.2 — the owner manually partitions work onto specific workers, complementing
-autonomous self-claim. Gated on the claim primitive's claim-by-id (HS-8862) + the
-worker-pool panel (HS-8960 §91.5) + the claimed-by UI (HS-8864); no code this pass.
+**Status: PARTIAL — manual dispatch SHIPPED 2026-06-24 (HS-8964).** The "push"
+half of the dual coordination model from
+[90-distributed-execution.md](90-distributed-execution.md) §90.5.2 — the owner
+manually partitions work onto specific workers, complementing autonomous
+self-claim. §92.2-92.5 + §92.7 implemented: drag-to-worker-tile + a "Dispatch to
+worker…" context-menu, both resolving to claim-by-id (HS-8862), with the
+dispatched tickets forming the worker's **personal queue** (served first by
+`claimNext`). The AI "partition into N coherent chunks" helper (§92.6) remains
+design-only (HS-8965).
 
 ## 92.0 Goal
 
@@ -117,9 +121,23 @@ to manual dispatch, not a prerequisite.
 - Whether the AI-partition helper ships with v1 or as a later add-on (it's
   additive; manual dispatch is the core).
 
-## 92.10 Follow-up tickets
+## 92.10 Implementation
 
-Implementation gated on HS-8862 (claim-by-id) + HS-8960 (worker-pool panel) +
-HS-8864 (claimed-by chip). When unblocked, likely: (1) worker-tile drop target +
-"Dispatch to…" menu wired to claim-by-id, (2) worker personal-queue semantics in
-the loop (HS-8863), (3) the AI-partition helper. File when gating primitives land.
+Shipped in **HS-8964** (2026-06-24):
+1. **Drop target + "Dispatch to…" menu** — worker tiles in the pool panel
+   (`src/client/workerPoolPanel.tsx`) accept a §76 ticket drag (`.drag-over`,
+   `dropEffect=move`, non-draining tiles only); the ticket context menu gains an
+   async "Dispatch to worker ▸" submenu listing live workers
+   (`src/client/contextMenu.tsx`). Both call the shared `src/client/dispatch.ts`
+   (`dispatchTicketsToWorker` → `claimTicket` per id; 409 surfaces "already claimed
+   by X" via the route's new `error` field).
+2. **Worker personal-queue semantics** — handled in `claimNext` itself rather than
+   the loop/skill: a worker's own-claimed (dispatched) tickets are served first,
+   regardless of `up_next` (docs/90 §90.5.2 / claims.ts). So the existing HS-8863
+   self-claim loop drains its dispatched queue before the shared pool — no
+   worker-side change.
+3. **AI-partition helper (§92.6)** — still design-only (**HS-8965**).
+
+Tests: `client/dispatch.test.ts`, `db/claims.test.ts` (personal-queue ordering +
+non-up_next dispatch), `client/workerPoolPanel.test.ts` (drop-target + draining
+rejection).

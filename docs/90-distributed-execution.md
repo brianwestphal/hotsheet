@@ -3,10 +3,12 @@
 **Status: PARTIAL — most of the epic has shipped.** Shipped: the claim/lease
 primitive (HS-8862), the flat `blocked_by` gate (HS-8865), the single-worker loop +
 launcher (HS-8863), the poison-ticket dead-letter (HS-8970), the worker-pool
-manager + panel + target-N stepper (HS-8962 / HS-8971), and the claimed-by chip +
-in-flight view (HS-8864). §90.2-90.8 are implemented (see §90.10); **coordinator-
-dispatch (HS-8961, §90.5.2) + AI-suggested-N (HS-8963) remain design-only**, and
-the live update path waits on the HS-7945 WebSocket bus (poll-based until then).
+manager + panel + target-N stepper (HS-8962 / HS-8971), the claimed-by chip +
+in-flight view (HS-8864), and coordinator-dispatch (HS-8964). §90.2-90.8 are
+implemented (see §90.10) — the **single-machine epic is complete**. Remaining:
+the AI helpers (AI-suggested-N HS-8963 §91.6, AI-partition HS-8965 §92.6) and the
+§46 remote epic (HS-7940 bind+auth → HS-7945 WebSocket push → HS-7946 clientId),
+all design-only; the live update path is poll-based until HS-7945 lands.
 HS-8861 spike resolved here; supersedes the "finalize the claim model" half of
 HS-8861. This doc pins the
 concrete schema, endpoints, MCP tools, lease semantics, coordination models, and
@@ -216,8 +218,11 @@ complete) stay well under the budget; only a persistently-failing ticket trips i
 The owner (or an AI planning pass) assigns specific tickets to specific workers
 via `claim` (claim-by-id on the worker's behalf), e.g. grouping *related* tickets
 onto one worker to keep a coherent change set in one worktree, or steering a
-specialized worker. The dispatcher holds the claim, the worker works it. Detailed
-UX in [92-coordinator-dispatch.md](92-coordinator-dispatch.md) (HS-8961).
+specialized worker. The dispatcher holds the claim, the worker works it.
+**✅ SHIPPED (HS-8964):** drag a ticket onto a worker tile / "Dispatch to worker…"
+menu → claim-by-id; `claimNext` serves a worker's own-claimed (dispatched) tickets
+first (its personal queue) so the self-claim loop drains them with no worker-side
+change. Detailed UX in [92-coordinator-dispatch.md](92-coordinator-dispatch.md).
 
 Both modes coexist: a dispatched (pre-claimed) ticket is simply skipped by other
 workers' `claim-next` (it has a live lease); an undirected worker keeps pulling.
@@ -364,10 +369,13 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
    `workers/poolManager.test.ts`, `api/workers.test.ts`, `routes/api.test.ts` (pool
    block), `client/workerPoolPanel.test.ts`. The numeric target-N stepper (HS-8971)
    + AI-suggested N (HS-8963 → §91.6) remain backlog.
-7. **Coordinator-dispatch UX (HS-8961 →
-   [§92](92-coordinator-dispatch.md))** — owner partitions related chunks onto a
-   worker (the push half of §90.5).
-8. **Remote extension (§46 epic, HS-7940/7944/7945/7946)** — off-box workers.
+7. **Coordinator-dispatch UX (HS-8964 →
+   [§92](92-coordinator-dispatch.md))** — ✅ **SHIPPED** (2026-06-24): drag-to-tile
+   + "Dispatch to worker…" menu → claim-by-id (`src/client/dispatch.ts`);
+   `claimNext` serves own-claimed (dispatched) tickets first as a personal queue.
+   The AI partition-into-chunks helper (HS-8965 → §92.6) remains backlog.
+8. **Remote extension (§46 epic, HS-7940/7944/7945/7946)** — off-box workers (all
+   design-only). The single-machine epic (items 1-7) is complete.
 
 ## 90.11 Open questions
 

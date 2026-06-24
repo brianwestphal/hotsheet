@@ -41,10 +41,14 @@ export interface ClaimRow {
   leaseExpiresAt: string;
 }
 
-/** Atomically claim the top claimable Up Next ticket for `worker`, or null when
- *  nothing is claimable. "Claimable" = up_next, actionable status, not blocked by
- *  an unfinished dependency (HS-8865), under the poison-retry budget (HS-8970), and
- *  either unclaimed or its lease has expired. */
+/** Atomically claim the top claimable ticket for `worker`, or null when nothing is
+ *  claimable. Two sources, **personal queue first** (docs/92 §92.5):
+ *  1. **Dispatched to me** — any ticket already `claimed_by = worker` (the owner
+ *     pre-assigned it via claim-by-id, HS-8964); worked regardless of `up_next`.
+ *  2. **Shared pool** — an `up_next`, unclaimed-or-expired ticket (self-claim).
+ *  Both require an actionable status, no unfinished `blocked_by` dependency
+ *  (HS-8865), and being under the poison-retry budget (HS-8970). Own-claimed
+ *  tickets sort ahead of the shared pool, then by the worklist priority order. */
 export async function claimNext(
   worker: string,
   label: string | null,
@@ -54,12 +58,14 @@ export async function claimNext(
   const result = await db.query<Ticket>(
     `WITH next AS (
        SELECT id FROM tickets
-        WHERE up_next = TRUE
-          AND status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
-          AND (claimed_by IS NULL OR claim_lease_expires_at < NOW())
+        WHERE status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
           AND claim_count < ${MAX_CLAIM_ATTEMPTS}
           AND id NOT IN (${BLOCKED_TICKET_IDS_SQL})
-        ORDER BY ${PRIORITY_ORD} ASC, id DESC
+          AND (
+            claimed_by = $1
+            OR (up_next = TRUE AND (claimed_by IS NULL OR claim_lease_expires_at < NOW()))
+          )
+        ORDER BY (CASE WHEN claimed_by = $1 THEN 0 ELSE 1 END), ${PRIORITY_ORD} ASC, id DESC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
      )

@@ -14,7 +14,9 @@ import {
   setPoolTarget, type WorkerSlotView,
 } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
+import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
 import { showToast } from './toast.js';
 
 let activeOverlay: HTMLElement | null = null;
@@ -53,7 +55,11 @@ function activeCount(pool: PoolState): number {
 
 /** Build one worker tile. `onDrain` is omitted once the worker is draining/stopped.
  *  Exported for unit tests. */
-export function renderWorkerTile(w: WorkerSlotView, onDrain?: (w: WorkerSlotView) => void): HTMLElement {
+export function renderWorkerTile(
+  w: WorkerSlotView,
+  onDrain?: (w: WorkerSlotView) => void,
+  onDispatch?: (w: WorkerSlotView, ticketIds: number[]) => void,
+): HTMLElement {
   const canDrain = w.state === 'idle' || w.state === 'working';
   const tile = toElement(
     <div className="worker-tile" data-worker={w.worker} data-state={w.state}>
@@ -75,6 +81,26 @@ export function renderWorkerTile(w: WorkerSlotView, onDrain?: (w: WorkerSlotView
   );
   if (canDrain && onDrain !== undefined) {
     tile.querySelector('.worker-drain-btn')?.addEventListener('click', () => onDrain(w));
+  }
+  // HS-8964 — drag-to-worker dispatch (docs/92 §92.2). A ticket drag in flight
+  // (`draggedTicketIds`, §76) can be dropped onto a NON-draining tile to dispatch
+  // those tickets to this worker. Draining/stopped tiles aren't drop targets.
+  if (canDrain && onDispatch !== undefined) {
+    tile.addEventListener('dragover', (e) => {
+      if (draggedTicketIds.length === 0) return;
+      e.preventDefault();
+      if (e.dataTransfer !== null) e.dataTransfer.dropEffect = 'move';
+      tile.classList.add('drag-over');
+    });
+    tile.addEventListener('dragleave', () => tile.classList.remove('drag-over'));
+    tile.addEventListener('drop', (e) => {
+      if (draggedTicketIds.length === 0) return;
+      e.preventDefault();
+      tile.classList.remove('drag-over');
+      const ids = [...draggedTicketIds];
+      setDraggedTicketIds([]);
+      onDispatch(w, ids);
+    });
   }
   return tile;
 }
@@ -135,7 +161,11 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
   if (pool.workers.length === 0) {
     bodyEl.replaceChildren(toElement(<div className="worker-pool-empty">No workers. Use + to start workers draining Up Next in parallel.</div>));
   } else {
-    const tiles = pool.workers.map(w => renderWorkerTile(w, (ww) => void handleDrain(ww, pool, bodyEl)));
+    const tiles = pool.workers.map(w => renderWorkerTile(
+      w,
+      (ww) => void handleDrain(ww, pool, bodyEl),
+      (ww, ids) => void dispatchAndReport(ww.worker, ww.label, ids).then(() => refreshPool(bodyEl)),
+    ));
     bodyEl.replaceChildren(...tiles);
   }
   // Controls live in the singleton overlay (absent in unit tests that pass a bare body).

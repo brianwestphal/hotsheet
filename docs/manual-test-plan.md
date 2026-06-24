@@ -745,6 +745,15 @@ The chip render + lease/stale logic + the in-flight rows are unit-tested; this c
 - [ ] Release the ticket (or it completes) → the chip clears on the next poll.
 - [ ] Open the git popover → **"In-flight work…"**: every currently-claimed ticket is listed with its worker + lease countdown; clicking a row opens that ticket's detail. Empty state shows when nothing is claimed.
 
+### Coordinator-dispatch (HS-8964, docs/92)
+
+The dispatch helper + personal-queue ordering are unit-tested; this covers the real drag/menu flow (the menu path is the Tauri-safe one):
+
+- [ ] With a worker pool running, **drag** an Up Next ticket onto a worker tile — the tile highlights (`.drag-over`), and on drop the ticket's claimed-by chip flips to that worker; the worker picks it up before the shared pool. (Browser; raw HTML5 drag is unreliable in Tauri — use the menu there.)
+- [ ] Right-click one or more tickets → **"Dispatch to worker ▸"** → pick a worker: same result via the Tauri-safe path. The submenu lists only live (idle/working) workers and doesn't appear when no pool exists.
+- [ ] Dispatch a ticket already claimed by another worker → a toast reports "already claimed by `<worker>`" and it isn't reassigned.
+- [ ] A dispatched worker finishes its dispatched queue, then falls back to self-claiming the shared pool.
+
 ### Worker-pool panel (HS-8962, docs/91 §91.5)
 
 The pool manager (drain semantics, state derivation) + panel render/drain wiring are automated; this covers the real launch/drain/teardown flow:

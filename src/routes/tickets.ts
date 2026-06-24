@@ -200,7 +200,12 @@ ticketRoutes.post('/tickets/:id/claim', async (c) => {
     return c.json(result);
   }
   // 404 for an unknown/unclaimable ticket; 409 for a live foreign lease.
-  return c.json(result, result.reason === 'conflict' ? 409 : 404);
+  // HS-8964 — include a human `error` so the dispatch UI can surface
+  // "already claimed by X" (the client transport throws with `body.error`).
+  const error = result.reason === 'conflict'
+    ? `already claimed by ${result.workerLabel ?? result.claimedBy}`
+    : 'ticket not found or not claimable';
+  return c.json({ ...result, error }, result.reason === 'conflict' ? 409 : 404);
 });
 
 ticketRoutes.post('/tickets/:id/renew-lease', async (c) => {

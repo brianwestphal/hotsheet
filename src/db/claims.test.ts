@@ -151,6 +151,29 @@ describe('claim/lease primitive (HS-8862)', () => {
     expect(notes.some(n => n.text.includes('lease expired'))).toBe(true);
   });
 
+  describe('coordinator-dispatch personal queue (HS-8964)', () => {
+    it('claimNext serves a worker its own-claimed (dispatched) ticket before the shared pool', async () => {
+      const dispatched = await upNext('dispatched-low', 'low');
+      await upNext('shared-high', 'high');
+      // Owner dispatches the low-priority ticket to w1 (claim-by-id on its behalf).
+      expect((await claimById(dispatched.id, 'w1', 'worker-1')).ok).toBe(true);
+      // w1's next claim-next returns its OWN ticket first, despite the higher-priority
+      // unclaimed one in the shared pool.
+      const got = await claimNext('w1', 'worker-1');
+      expect(got!.id).toBe(dispatched.id);
+    });
+
+    it('a dispatched ticket is served to its worker even when not up_next (personal queue)', async () => {
+      const t = await createTicket('not-up-next', { up_next: false });
+      await claimById(t.id, 'w1', 'worker-1');
+      expect((await claimNext('w1', 'worker-1'))!.id).toBe(t.id);
+      // ...but another worker never sees it (live foreign lease).
+      const t2 = await createTicket('still-not-up-next', { up_next: false });
+      await claimById(t2.id, 'w1', 'worker-1');
+      expect(await claimNext('w2', 'worker-2')).toBeNull();
+    });
+  });
+
   describe('poison-ticket dead-letter (HS-8970)', () => {
     it('claimNext refuses a ticket that has hit MAX_CLAIM_ATTEMPTS', async () => {
       const t = await upNext('poison', 'high');
