@@ -75,6 +75,24 @@ should be recorded with a short justification rather than chased. When the
 production gate goes red, either upgrade to a fixed version or — if the advisory
 is provably unreachable — document the justification here before merging.
 
+## Security-sensitive production deps
+
+### `node-forge` (HS-8992 — mTLS CA + cert lifecycle)
+
+The strong-remote-auth epic (§94 / HS-8985) needs to **build/sign X.509 certs, generate/sign
+CSRs, and export PKCS#12 (`.p12`)** — none of which Node's built-in `crypto` can do (it generates
+keypairs + *parses* X.509 only). `src/auth/ca.ts` (HS-8992) uses **`node-forge@^1.3.1`** for these.
+
+- **Why this lib:** a single, mature, widely-used pure-JS package covering all three operations in
+  one dependency (the alternative, `@peculiar/x509`, needs `@peculiar/asn1-pkcs12` + manual
+  assembly for the `.p12` half). Pure JS → bundles into the server tsup output with no native-addon
+  or runtime-external handling.
+- **Posture:** `npm audit` reports **no advisories against `node-forge@1.3.1`** (checked
+  2026-06-24). It is on the security-critical path (it mints the certs that authenticate remote
+  clients), so it is a standing item for the HS-8987 release-time security re-audit and should be
+  kept current with any future forge advisories. Native `crypto.generateKeyPairSync` does the
+  actual keygen; forge is used only for cert assembly / signing / PKCS#12 encode/decode.
+
 ## The cargo (src-tauri) baseline (HS-8649)
 
 HS-8649 ran the first `cargo audit` over `src-tauri/Cargo.lock`. It reported **6

@@ -5310,12 +5310,13 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 
 .settings-scope-bar {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
+  text-align: center;
 }
 .scope-seg {
   display: inline-flex;

@@ -91,3 +91,20 @@ export const MAX_CATEGORY_CHARS = 200;
 export const MAX_SEARCH_CHARS = 10_000;
 export const MAX_LABEL_CHARS = 500;
 export const MAX_BATCH_IDS = 50_000;
+
+/**
+ * HS-8998 — per-request **row** cap for OTLP telemetry ingest (the
+ * `/v1/metrics`, `/v1/logs`, `/v1/traces` routes). The `requestGuards` body cap
+ * (`OTLP_BODY_CAP_BYTES`, 16 MiB)
+ * bounds BYTES, not row count: a single 15 MiB batch can carry hundreds of
+ * thousands of tiny spans → `otel_spans` row-cap pressure (§85) + cost/usage
+ * pollution. This bounds the number of leaf rows a single ingest may insert
+ * (data points for metrics, log records for logs, spans for traces); an
+ * over-cap batch is rejected `400` (OTLP treats 4xx as permanent → the exporter
+ * drops it, no retry storm), counted by `countOtlpRows` in `routes/otel.ts`.
+ *
+ * Generous on purpose — the OTel BatchSpanProcessor default flush is 512
+ * records, and Claude Code's exporter sends modest batches; 25k is ~50× a
+ * normal flush, well under the 100k+ a 16 MiB tiny-span flood would carry.
+ */
+export const OTLP_MAX_ROWS_PER_REQUEST = 25_000;

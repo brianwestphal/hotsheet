@@ -13,7 +13,10 @@ before execution."
 > owns the CA + certs end-to-end); **localhost/single-user stays exactly as today (shared secret) —
 > mTLS engages ONLY when the server is not on localhost** (exposed); **self-hosted scope only** (the
 > §88 hosted cloud will add OIDC/SSO separately); enrollment via **`.p12` import first + QR** (for
-> the future mobile-web client). No crypto is implemented in this ticket — the sub-tickets carry it.
+> the future mobile-web client).
+>
+> **Implementation progress:** sub-ticket **1/6 (HS-8992) SHIPPED** — `src/auth/ca.ts` (CA + cert
+> lifecycle, pure crypto + keychain I/O, no wire change). Sub-tickets 2–6 pending (see §94.10).
 
 ## 94.1 Why now
 
@@ -186,10 +189,30 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
 1. **CA + cert lifecycle** (`src/auth/ca.ts`) — generate/load a per-project self-signed **CA**
    (keypair in the keychain, §20) + a **server cert** it signs; helpers to sign a **client cert**
    from a CSR / public key, export a password-protected **`.p12`**, and read a cert's identity
-   (stable client id + label). Pure crypto + keychain I/O, no wire change. Uses Node `crypto` /
-   `node:tls` (or a vetted lib like `node-forge`/`@peculiar/x509` if Node's primitives are
-   insufficient for CSR + PKCS#12 — evaluate in this ticket; prefer the platform `crypto`). **No
-   dep on the rest.**
+   (stable client id + label). Pure crypto + keychain I/O, no wire change. **No dep on the rest.**
+   **SHIPPED (HS-8992).**
+
+   **Library decision (made here):** Node's built-in `crypto` can generate keypairs and *parse*
+   X.509 but **cannot build/sign a certificate, generate/sign a CSR, or export PKCS#12** — the
+   three operations this module needs. So a library is required. Chosen: **`node-forge`
+   (`^1.3.1`)** — a single, mature, pure-JS package covering cert signing + CSR + PKCS#12 in one
+   dependency (vs `@peculiar/x509`, which needs `@peculiar/asn1-pkcs12` + manual assembly for the
+   `.p12` half); pure JS so it bundles into the server tsup output with no native-addon /
+   runtime-external juggling; clean `npm audit`. Native `crypto.generateKeyPairSync` still does the
+   keygen (fast); forge only assembles/signs/exports. Recorded in `docs/dependency-security.md`.
+
+   **What shipped:** `generateCa` / `signServerCert` / `signClientCert` / `signClientCsr` /
+   `exportClientP12` / `readP12` / `readIdentity` / `readIdentityFromPeerCertificate` /
+   `verifyClientCert` (pure crypto) + `loadOrCreateProjectCa` / `loadProjectCa` / `clearProjectCa`
+   (keychain-backed, namespaced per project via `projectCaId(dataDir)` under keychain plugin id
+   `auth`). Identity model: subject **CN = human label**, a SAN URI `hotsheet://client/<id>` carries
+   the **stable client id**. CA stored as two keychain entries (`ca-key:<projectId>` +
+   `ca-cert:<projectId>`); `loadOrCreateProjectCa` throws (and rolls back) if the keychain can't
+   persist — an mTLS deployment requires a *durable* CA. Tests (`src/auth/ca.test.ts`, 19) cover the
+   pure-crypto round-trips (chain validation, identity round-trip, `.p12` re-import + wrong-password
+   rejection, CSR signing + bad-CSR rejection), an **end-to-end Node `tls` mTLS handshake** (trusted
+   client connects + identity reads off the live `getPeerCertificate()`; a foreign-CA client is
+   rejected — de-risks sub-ticket 2), and keychain-backed persistence (mocked keychain).
 2. **In-process mTLS listener** — on the exposed (Tier-1) path, stand up the Node TLS server with
    `requestCert` + `rejectUnauthorized` against the project CA; map the verified peer cert →
    client identity into the request context; loopback/Tier-0 stays plain (today's behavior).

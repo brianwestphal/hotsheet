@@ -79,6 +79,22 @@ export function createRequestGuards(opts: RequestGuardOptions): MiddlewareHandle
       return c.json({ error: 'Request body too large' }, 413);
     }
 
+    // (1b) Chunked-body gap (HS-8998). The Content-Length cap above can't
+    // pre-check a `Transfer-Encoding: chunked` body (no declared length), so a
+    // chunked request would slip past the byte cap. On an EXPOSED server, reject
+    // chunked on the body-bearing routes the guard covers (`/api/*` + `/v1/*`)
+    // with 411 Length Required — legit clients (browser fetch, Claude Code's
+    // OTLP exporter, curl with a buffered body) all send Content-Length, so this
+    // only trips a streaming/abusive caller. Loopback/Tier-0 is unaffected (the
+    // trusted local case); the OTLP receiver additionally re-checks the actual
+    // byte length post-read as defense-in-depth (see `routes/otel.ts`).
+    if (opts.exposed) {
+      const te = c.req.header('transfer-encoding');
+      if (te !== undefined && te.toLowerCase().includes('chunked')) {
+        return c.json({ error: 'Length required' }, 411);
+      }
+    }
+
     // (2) Rate limit — exposed + non-loopback only.
     if (opts.exposed) {
       // `@hono/node-server` provides `{ incoming }` as env in prod; it's absent

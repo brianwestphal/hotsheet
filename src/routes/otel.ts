@@ -1,10 +1,12 @@
 import { Hono } from 'hono';
 
 import { persistLogsPayload, persistMetricsPayload, persistTracesPayload } from '../db/otelWriters.js';
+import { OTLP_MAX_ROWS_PER_REQUEST } from '../limits.js';
 import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
 import { decodeProtobufPayload, type SignalType } from './otelDecoder.js';
+import { OTLP_BODY_CAP_BYTES } from './requestGuards.js';
 
 /**
  * HS-8143 — OTLP/HTTP receiver foundation (Phase 1: hello-world).
@@ -165,6 +167,65 @@ function summarizeJsonPayload(parsed: unknown, byteLength: number, contentType: 
 }
 
 /**
+ * HS-8998 — count the **leaf rows** a decoded payload would insert, matching the
+ * depth each writer in `otelWriters.ts` iterates: metrics → data points
+ * (`resourceMetrics[].scopeMetrics[].metrics[].<kind>.dataPoints[]`), logs → log
+ * records (`resourceLogs[].scopeLogs[].logRecords[]`), traces → spans
+ * (`resourceSpans[].scopeSpans[].spans[]`). Shape-tolerant: anything missing /
+ * mistyped contributes 0. Stops early once the running count exceeds `cap` so a
+ * pathological payload can't make the COUNT itself expensive.
+ */
+export function countOtlpRows(signalType: SignalType, parsed: unknown, cap = Infinity): number {
+  if (typeof parsed !== 'object' || parsed === null) return 0;
+  const root = parsed as Record<string, unknown>;
+  const config = signalType === 'metrics'
+    ? { resourceKey: 'resourceMetrics', scopeKey: 'scopeMetrics', leafKey: 'metrics' }
+    : signalType === 'logs'
+      ? { resourceKey: 'resourceLogs', scopeKey: 'scopeLogs', leafKey: 'logRecords' }
+      : { resourceKey: 'resourceSpans', scopeKey: 'scopeSpans', leafKey: 'spans' };
+
+  const resources = root[config.resourceKey];
+  if (!Array.isArray(resources)) return 0;
+  let count = 0;
+  for (const entry of resources) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const scopes = (entry as Record<string, unknown>)[config.scopeKey];
+    if (!Array.isArray(scopes)) continue;
+    for (const scope of scopes) {
+      if (typeof scope !== 'object' || scope === null) continue;
+      const leaves = (scope as Record<string, unknown>)[config.leafKey];
+      if (!Array.isArray(leaves)) continue;
+      if (signalType === 'metrics') {
+        for (const metric of leaves) {
+          count += countMetricDataPoints(metric);
+          if (count > cap) return count;
+        }
+      } else {
+        count += leaves.length;
+        if (count > cap) return count;
+      }
+    }
+  }
+  return count;
+}
+
+/** Data points nested under a metric (`sum`/`gauge`/`histogram`/… `.dataPoints`),
+ *  mirroring `otelWriters.ts`'s per-data-point insert. A metric with no
+ *  recognizable data-point array still counts as 1 row. */
+function countMetricDataPoints(metric: unknown): number {
+  if (typeof metric !== 'object' || metric === null) return 1;
+  const m = metric as Record<string, unknown>;
+  let points = 0;
+  for (const kind of ['sum', 'gauge', 'histogram', 'exponentialHistogram', 'summary']) {
+    const wrapper = m[kind];
+    if (typeof wrapper !== 'object' || wrapper === null) continue;
+    const dps = (wrapper as Record<string, unknown>).dataPoints;
+    if (Array.isArray(dps)) points += dps.length;
+  }
+  return points > 0 ? points : 1;
+}
+
+/**
  * One-line stdout log per accepted payload. HS-8470 extends the
  * Phase-1 shape with `inserted=N dropped=N` so the persistence
  * outcome is visible in logs without grepping the DB.
@@ -204,8 +265,27 @@ async function handleOtlpRoute(c: { req: { header: (n: string) => string | undef
   } catch {
     return c.body(null, { status: 400 });
   }
+
+  // HS-8998 — defense-in-depth byte cap. The `requestGuards` Content-Length
+  // pre-check can be bypassed by a chunked / absent / understated length; this
+  // re-checks the ACTUAL bytes received before we spend CPU decoding + persisting
+  // (the guard already 411s chunked on an exposed server, so this primarily
+  // covers a spoofed/absent length on the trusted loopback path).
+  if (body.byteLength > OTLP_BODY_CAP_BYTES) {
+    return c.body(null, { status: 413 });
+  }
+
   const summary = summarizeOtlpPayload(signalType, contentType, body);
   if (summary === null) {
+    return c.body(null, { status: 400 });
+  }
+
+  // HS-8998 — per-request row cap. The byte cap bounds size, not row count; a
+  // single batch can still carry hundreds of thousands of tiny spans/data points
+  // (otel_spans pressure §85 + cost pollution). Reject an over-cap batch 400
+  // (OTLP-permanent → the exporter drops it, no retry storm).
+  if (countOtlpRows(signalType, summary.parsed, OTLP_MAX_ROWS_PER_REQUEST) > OTLP_MAX_ROWS_PER_REQUEST) {
+    console.log(`[otel] ${signalType} rejected: over ${OTLP_MAX_ROWS_PER_REQUEST}-row per-request cap`);
     return c.body(null, { status: 400 });
   }
 
@@ -245,4 +325,5 @@ otelRoutes.post('/v1/traces', (c) => handleOtlpRoute(c, 'traces'));
 export const _testing = {
   summarizeOtlpPayload,
   summarizeJsonPayload,
+  countOtlpRows,
 };

@@ -87,3 +87,35 @@ describe('createRequestGuards — rate limit', () => {
     expect((await app.request('/api/x')).status).toBe(429); // 3rd in-window
   });
 });
+
+describe('createRequestGuards — chunked-body gap (HS-8998)', () => {
+  it('rejects a Transfer-Encoding: chunked body on an exposed server with 411', async () => {
+    const app = appWith(createRequestGuards({ exposed: true, rateLimit: { windowMs: 60_000, max: 1000 } }));
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { 'Transfer-Encoding': 'chunked', 'Content-Type': 'application/json' },
+      body: 'x'.repeat(50),
+    });
+    expect(res.status).toBe(411);
+  });
+
+  it('allows a chunked body on a NON-exposed (loopback) server (Tier-0 unaffected)', async () => {
+    const app = appWith(createRequestGuards({ exposed: false }));
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { 'Transfer-Encoding': 'chunked', 'Content-Type': 'application/json' },
+      body: 'x'.repeat(50),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('does not affect a normal Content-Length request on an exposed server', async () => {
+    const app = appWith(createRequestGuards({ exposed: true, rateLimit: { windowMs: 60_000, max: 1000 } }));
+    const res = await app.request('/api/x', {
+      method: 'POST',
+      headers: { 'Content-Length': '50', 'Content-Type': 'application/json' },
+      body: 'x'.repeat(50),
+    });
+    expect(res.status).toBe(200);
+  });
+});

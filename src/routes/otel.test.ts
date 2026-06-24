@@ -264,3 +264,88 @@ describe('OTLP receiver (HS-8143 / §67.5)', () => {
     });
   });
 });
+
+describe('OTLP per-request row cap (HS-8998)', () => {
+  /** A traces payload with `n` spans under one resource/scope. */
+  function tracesWithSpans(n: number): unknown {
+    const spans = Array.from({ length: n }, (_unused, i) => ({
+      name: `s${i}`, traceId: 'aa', spanId: 'bb', startTimeUnixNano: '1', endTimeUnixNano: '2',
+    }));
+    return {
+      resourceSpans: [{
+        resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: 'secret-C' } }] },
+        scopeSpans: [{ spans }],
+      }],
+    };
+  }
+
+  describe('countOtlpRows', () => {
+    it('counts spans / log records / metric data points at the leaf level', () => {
+      expect(_testing.countOtlpRows('traces', SAMPLE_TRACES_JSON)).toBe(1);
+      expect(_testing.countOtlpRows('logs', SAMPLE_LOGS_JSON)).toBe(1);
+      // SAMPLE_METRICS has one metric with one sum data point.
+      expect(_testing.countOtlpRows('metrics', SAMPLE_METRICS_JSON)).toBe(1);
+      expect(_testing.countOtlpRows('traces', tracesWithSpans(2000))).toBe(2000);
+    });
+
+    it('sums data points across metric kinds; a metric with no data points counts as 1', () => {
+      const metrics = {
+        resourceMetrics: [{
+          scopeMetrics: [{
+            metrics: [
+              { name: 'a', sum: { dataPoints: [{}, {}] } },
+              { name: 'b', gauge: { dataPoints: [{}] } },
+              { name: 'c' }, // no data-point array → counts as 1
+            ],
+          }],
+        }],
+      };
+      expect(_testing.countOtlpRows('metrics', metrics)).toBe(4);
+    });
+
+    it('is shape-tolerant (0 for garbage / missing arrays)', () => {
+      expect(_testing.countOtlpRows('traces', null)).toBe(0);
+      expect(_testing.countOtlpRows('traces', 'nope')).toBe(0);
+      expect(_testing.countOtlpRows('traces', {})).toBe(0);
+      expect(_testing.countOtlpRows('logs', { resourceLogs: [{}] })).toBe(0);
+    });
+
+    it('stops early once the running count exceeds the cap (across many scopes)', () => {
+      // 1000 scopes × 1 span each, cap 10 → bails after ~11 scopes rather than
+      // walking all 1000 (the per-leaf-array add is O(1), so the early-out
+      // matters across arrays, not within one).
+      const payload = {
+        resourceSpans: [{
+          scopeSpans: Array.from({ length: 1000 }, () => ({
+            spans: [{ name: 's', traceId: 'aa', spanId: 'bb' }],
+          })),
+        }],
+      };
+      const result = _testing.countOtlpRows('traces', payload, 10);
+      expect(result).toBeGreaterThan(10);
+      expect(result).toBeLessThan(1000);
+    });
+  });
+
+  describe('route enforcement', () => {
+    it('rejects an over-cap batch with 400', async () => {
+      const app = makeApp();
+      const res = await app.request('/v1/traces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tracesWithSpans(25_001)),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('accepts a normal (under-cap) batch with 200', async () => {
+      const app = makeApp();
+      const res = await app.request('/v1/traces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tracesWithSpans(100)),
+      });
+      expect(res.status).toBe(200);
+    });
+  });
+});
