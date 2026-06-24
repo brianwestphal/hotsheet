@@ -21,6 +21,7 @@ import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 
 import { getProjectBySecret } from '../projects.js';
+import { coalesceEvents } from '../sync/coalesce.js';
 import { eventBus, getEventsSince, registerSyncSink } from '../sync/eventBus.js';
 import { isRequestTrusted } from '../trusted-origin.js';
 
@@ -123,7 +124,10 @@ function handleSyncConnection(ws: WebSocket, secret: string, since: number | und
   if (since !== undefined) {
     const { evicted, events } = getEventsSince(secret, since);
     if (evicted) sendJson(ws, { type: 'resync' });
-    else for (const event of events) sendJson(ws, event);
+    // HS-8982 — a far-behind client can be owed up to the full ring; coalesce
+    // same-type runs into batch-operation frames so the catch-up isn't hundreds
+    // of individual frames. The client tracks `seq` either way.
+    else for (const event of coalesceEvents(events)) sendJson(ws, event);
   }
 
   // Heartbeat: ping every 20s, reset on pong, close after 2 unanswered pings.

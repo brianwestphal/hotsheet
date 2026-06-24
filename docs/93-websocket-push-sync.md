@@ -9,9 +9,11 @@ into a buildable, phased spec, grounded in the code as it exists today.
 > HS-8978 (server event bus §93.2), HS-8979 (`/ws/sync` endpoint §93.3/§93.7), HS-8980 (mutation
 > emission §93.4 — `src/routes/syncEmit.ts`), HS-8981 (client transport §93.5/§93.6 —
 > `src/client/wsSync.ts`: connect / reconnect / poll-fallback / `?since` catch-up, driving a
-> coalesced full refresh per event). **Pending:** HS-8982 (backpressure §93.8) + HS-8984
-> (the per-event in-memory store reducer — the §93.5 no-refetch bandwidth win, deferred from
-> HS-8981 pending visual verification). Decomposition + dependencies in §93.9.
+> coalesced full refresh per event), HS-8982 (coalescing §93.8 — `src/sync/coalesce.ts`, applied to
+> the `?since` catch-up replay; live-fanout coalescing stays deferred — no flood, and the client
+> already debounces). **Pending:** HS-8984 (the per-event in-memory store reducer — the §93.5
+> no-refetch bandwidth win, deferred from HS-8981 pending visual verification). The core push
+> channel is complete end-to-end. Decomposition + dependencies in §93.9.
 
 ## 93.1 Why — and why it is NOT a local win
 
