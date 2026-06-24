@@ -59,6 +59,19 @@ describe('openPartitionEditor', () => {
     expect(document.querySelector('.worker-pool-overlay')).toBeNull();
   });
 
+  it('dragging a row onto another column reassigns it (HS-8988)', () => {
+    openPartitionEditor(INPUT, () => {});
+    const rows = [...document.querySelectorAll('.partition-ticket-row')];
+    const row = rows.find(r => r.querySelector('.partition-ticket-num')?.textContent === 'HS-2')!;
+    const w2col = document.querySelectorAll('.partition-worker-col')[1];
+    // Simulate drag HS-2 (w1) → the w2 column.
+    row.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    w2col.dispatchEvent(new Event('dragover', { bubbles: true }));
+    w2col.dispatchEvent(new Event('drop', { bubbles: true }));
+    expect(cols()[0].textContent).not.toContain('HS-2');
+    expect(cols()[1].textContent).toContain('HS-2');
+  });
+
   it('Cancel closes without calling onApply', () => {
     const onApply = vi.fn();
     openPartitionEditor(INPUT, onApply);

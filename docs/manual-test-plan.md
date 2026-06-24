@@ -216,7 +216,7 @@ The model + reassign-via-select are unit-tested (`partitionEdit.test.ts` / `part
 - [ ] Worker Pool → "AI: partition" with ≥2 running workers opens the editable overlay showing a column per worker with its proposed tickets (not the old read-only confirm).
 - [ ] Each ticket has a worker `<select>`; changing it moves the ticket to that worker's column (re-renders). Emptied workers show "— empty —".
 - [ ] "Apply + Dispatch" dispatches the edited chunks (toast reports counts); Cancel / Esc / backdrop-click closes without dispatching.
-- [ ] (When HS-8977's drag enhancement lands) dragging a ticket row between columns reassigns it.
+- [ ] (HS-8988) Dragging a ticket row from one worker column and dropping it on another reassigns it (a `.drag-over` highlight shows on the hovered column); the `<select>` remains as the fallback.
 
 ---
 
