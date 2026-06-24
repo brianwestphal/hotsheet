@@ -300,6 +300,8 @@ pageRoutes.get('/', (c) => {
               </div>
               <div className="detail-header" id="detail-header" style="display:none">
                 <span className="detail-ticket-number" id="detail-ticket-number"></span>
+                {/* HS-8864 \u2014 claimed-by chip for the open ticket (filled reactively). */}
+                <span className="detail-claimed-slot" id="detail-claimed-slot"></span>
                 <button className="detail-close" id="detail-close" title="Close">{'\u00d7'}</button>
               </div>
               <div className="detail-body" id="detail-body" style="display:none">

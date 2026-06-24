@@ -1,5 +1,7 @@
 import { deleteTicket, updateTicket,type UpdateTicketReq } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
+import { renderClaimedByChip } from './claimedByChip.js';
+import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel } from './detail.js';
@@ -191,6 +193,22 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
     row.classList.toggle('cut-pending', cutIds.has(ticket.id));
   }));
 
+  // HS-8864 — claimed-by chip. Reads `claimsByTicketId` (so it re-fires when the
+  // claim set changes) and `nowTick` ONLY when this ticket is claimed (so an
+  // unclaimed row doesn't re-render every second). Separate effect: distributed-
+  // execution state is orthogonal to the per-ticket signal.
+  const claimedSlot = row.querySelector<HTMLElement>('.ticket-claimed-slot');
+  if (claimedSlot !== null) {
+    disposers.push(effect(() => {
+      const claim = claimsByTicketId.value.get(ticket.id);
+      if (claim === undefined) {
+        if (claimedSlot.firstChild !== null) claimedSlot.replaceChildren();
+        return;
+      }
+      claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
+    }));
+  }
+
   return () => {
     for (const d of disposers) {
       try { d(); } catch { /* swallow — kerf cleanup */ }
@@ -331,6 +349,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
           ))}
         </div>
       ) : null}
+      <span className="ticket-claimed-slot"></span>
       <span className="ticket-priority-indicator" style={`color:${getPriorityColor(ticket.priority)}`} title={ticket.priority}>
         {getPriorityIcon(ticket.priority)}
       </span>

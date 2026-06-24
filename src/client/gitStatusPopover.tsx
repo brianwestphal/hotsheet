@@ -180,6 +180,14 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
   );
   poolBtn.addEventListener('click', () => { void import('./workerPoolPanel.js').then(m => m.openWorkerPoolPanel()); });
   bodyEl.appendChild(poolBtn);
+
+  // HS-8864 — entry point to the in-flight work overlay (docs/90 §90.8): every
+  // ticket currently claimed by a worker, with its lease countdown.
+  const inflightBtn = toElement(
+    <button type="button" className="git-popover-inflight-btn">In-flight work…</button>,
+  );
+  inflightBtn.addEventListener('click', () => { void import('./inflightPanel.js').then(m => m.openInflightPanel()); });
+  bodyEl.appendChild(inflightBtn);
 }
 
 /** Opaque `isConnected` read so TS can't narrow it across an `await`. */

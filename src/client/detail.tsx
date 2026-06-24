@@ -5,12 +5,14 @@ import { marked } from 'marked';
 import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { raw } from '../jsx-runtime.js';
+import { renderClaimedByChip } from './claimedByChip.js';
+import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { buildFeedbackNav, getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
-import { morph } from './reactive.js';
+import { effect, morph, signal } from './reactive.js';
 import { syncDetailReaderButton } from './readerOverlay.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
 import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
@@ -24,6 +26,32 @@ export { displayTag, extractBracketTags, hasTag, normalizeTag, parseTags, render
 
 /** Suppress auto-read for the current ticket (set when user explicitly marks as unread). */
 let suppressAutoRead = false;
+
+/** HS-8864 — the ticket whose claimed-by chip the detail header shows. Set by
+ *  `syncDetailPanel`; the effect in `initDetailClaimedChip` renders/clears the
+ *  chip reactively as the claim set + lease countdown change. */
+const detailChipTicketId = signal<number | null>(null);
+let detailChipInited = false;
+
+/** Wire the detail-header claimed-by chip (idempotent; called once at app boot).
+ *  Reads `detailChipTicketId` + `claimsByTicketId`, and `nowTick` only while the
+ *  open ticket is actually claimed (so an unclaimed detail view doesn't re-render
+ *  every second). */
+export function initDetailClaimedChip(): void {
+  if (detailChipInited) return;
+  detailChipInited = true;
+  effect(() => {
+    const slot = byIdOrNull('detail-claimed-slot');
+    if (slot === null) return;
+    const id = detailChipTicketId.value;
+    const claim = id === null ? undefined : claimsByTicketId.value.get(id);
+    if (claim === undefined) {
+      if (slot.firstChild !== null) slot.replaceChildren();
+      return;
+    }
+    slot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
+  });
+}
 export function setSuppressAutoRead(suppress: boolean) { suppressAutoRead = suppress; }
 
 const FOLDER_REVEAL_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>;
@@ -246,6 +274,9 @@ export function syncDetailPanel() {
     header.style.display = '';
     body.style.display = '';
     placeholder.style.display = 'none';
+    // HS-8864 — drive the header claimed-by chip (cleared in preview mode, which
+    // has no live claims).
+    detailChipTicketId.value = isPreview ? null : id;
     if (state.activeTicketId !== id) {
       state.activeTicketId = id;
       if (isPreview) {
@@ -256,6 +287,7 @@ export function syncDetailPanel() {
     }
   } else {
     // Disabled placeholder state
+    detailChipTicketId.value = null;
     state.activeTicketId = null;
     panel.classList.add('detail-disabled');
     header.style.display = 'none';

@@ -78,6 +78,12 @@ async function reloadPluginToolbar() {
   // HS-8959 — start the sync-conflict banner poll (idempotent).
   const { startSyncConflictBannerPolling } = await import('./syncConflictBanner.js');
   startSyncConflictBannerPolling();
+  // HS-8864 — start tracking distributed-execution claims (poll + countdown tick)
+  // and wire the detail-header claimed-by chip (idempotent).
+  const { startClaimsTracking } = await import('./claimsStore.js');
+  startClaimsTracking();
+  const { initDetailClaimedChip } = await import('./detail.js');
+  initDetailClaimedChip();
 }
 
 async function reloadAppState() {

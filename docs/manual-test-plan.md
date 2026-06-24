@@ -736,6 +736,15 @@ The loop invariants (claim/complete/release, no-double-claim across two workers,
 - [ ] Kill one worker terminal mid-ticket. After the lease (~120 s) expires, the other worker (or a fresh one) reclaims that ticket and finishes it; the ticket shows a "lease expired — reclaimed" note.
 - [ ] A blocked ticket (`hotsheet_set_blocked_by`, HS-8865) is **not** claimed by any worker until all its blockers are completed/verified.
 
+### Claimed-by chip + in-flight view (HS-8864, docs/90 §90.8)
+
+The chip render + lease/stale logic + the in-flight rows are unit-tested; this covers the live poll-driven visual flow:
+
+- [ ] Claim a ticket via the API/MCP (`hotsheet_claim_next` or a worker). Within ~5 s, a `⚙ <worker> · m:ss` chip appears on that ticket's **row** and (if open) its **detail header**, without a manual refresh; the countdown ticks down each second.
+- [ ] Let the lease approach expiry (stop renewing): within 30 s of expiry the chip flips to the red **stale** (pulsing) state, then reads `expired` once past.
+- [ ] Release the ticket (or it completes) → the chip clears on the next poll.
+- [ ] Open the git popover → **"In-flight work…"**: every currently-claimed ticket is listed with its worker + lease countdown; clicking a row opens that ticket's detail. Empty state shows when nothing is claimed.
+
 ### Worker-pool panel (HS-8962, docs/91 §91.5)
 
 The pool manager (drain semantics, state derivation) + panel render/drain wiring are automated; this covers the real launch/drain/teardown flow:

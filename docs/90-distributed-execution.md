@@ -1,14 +1,14 @@
 # 90. Distributed Ticket Execution (claim / lease + worker pool)
 
-**Status: PARTIAL — the claim/lease primitive (HS-8862), the flat `blocked_by`
-gate (HS-8865), AND the single-worker loop + launcher (HS-8863) SHIPPED
-2026-06-23.** §90.2-90.4 (schema, endpoints, MCP tools, lease sweep) + §90.6 (the
-dependency gate) + the §90.5 self-claim loop core (`src/workers/workerLoop.ts`) +
-the §90.7 worker launcher (`src/workers/launchWorker.ts` + `hotsheet-worker`
-skill) are implemented (see §90.10 items 1-3); the durable pool manager + dynamic
-scaling (HS-8962), the claimed-by/in-flight UI (HS-8864), and coordinator-dispatch
-(HS-8961) remain design-only. HS-8861 spike resolved here; supersedes the
-"finalize the claim model" half of HS-8861. This doc pins the
+**Status: PARTIAL — most of the epic has shipped.** Shipped: the claim/lease
+primitive (HS-8862), the flat `blocked_by` gate (HS-8865), the single-worker loop +
+launcher (HS-8863), the poison-ticket dead-letter (HS-8970), the worker-pool
+manager + panel + target-N stepper (HS-8962 / HS-8971), and the claimed-by chip +
+in-flight view (HS-8864). §90.2-90.8 are implemented (see §90.10); **coordinator-
+dispatch (HS-8961, §90.5.2) + AI-suggested-N (HS-8963) remain design-only**, and
+the live update path waits on the HS-7945 WebSocket bus (poll-based until then).
+HS-8861 spike resolved here; supersedes the "finalize the claim model" half of
+HS-8861. This doc pins the
 concrete schema, endpoints, MCP tools, lease semantics, coordination models, and
 the dynamically-scaled worker pool that [89-git-worktrees.md](89-git-worktrees.md)
 §89.2 Phase D consumes as its isolation layer.
@@ -287,16 +287,24 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
 
 ## 90.8 Observability
 
-- **Claimed-by chip (HS-8864):** each in-flight ticket shows which worker/worktree
-  holds it (`worker_label`) + a lease freshness indicator, so the maintainer sees
-  the parallel work live — the whole point of routing through the normal API.
+- **Claimed-by chip (✅ shipped, HS-8864):** each in-flight ticket shows a
+  `⚙ <worker> · m:ss` chip — on its **row** and the **detail header** — naming the
+  holding worker (`worker_label`, else `claimed_by`) with a live lease countdown,
+  flipping to a pulsing **stale** state within 30 s of (or past) expiry (about to
+  be reclaimed). Fed by the reactive `claimsStore` (`src/client/claimsStore.ts`)
+  off `GET /api/tickets/claims`; the chip + lease helpers are in
+  `src/client/claimedByChip.tsx`. **Poll-based for now** (5 s claims poll + a 1 s
+  countdown tick) — when the HS-7945 bus ships, `applyClaims` is driven by pushed
+  events instead (the render is unchanged).
+- **In-flight work view (✅ shipped, HS-8864):** `src/client/inflightPanel.tsx` — a
+  fleet-wide overlay (git popover → "In-flight work…") listing every currently-
+  claimed ticket with its worker + lease countdown; click a row to open the ticket.
 - **Worker-pool panel (✅ shipped, HS-8962):** lists workers, their current ticket
-  (from the live claims), and state; add / drain / drain-all controls. The
-  AI-suggested-N helper (HS-8963) + the richer lease-freshness chip (HS-8864) layer
-  on later.
+  (from the live claims), and state; target-N stepper + drain controls. The
+  AI-suggested-N helper (HS-8963) layers on later.
 - **Events:** emit `ticket-claimed` / `lease-renewed` / `ticket-released` on the
-  HS-7945 WebSocket bus **once it ships**; until then the existing poll path
-  surfaces the `claimed_by` columns like any other field change.
+  HS-7945 WebSocket bus **once it ships**; until then the chip/view use the poll
+  path above (the `claimsStore` is the single swap point).
 
 ## 90.9 Relationship to other docs
 
@@ -337,8 +345,14 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
    dead-worker reclaim, lease-loss, graceful stop, park-on-error),
    `workers/launchWorker.test.ts`, `api/workers.test.ts`, `skills.test.ts` (+1).
    The durable pool that runs N workers is HS-8962.
-4. **Claimed-by / in-flight UI (HS-8864)** — the richer lease-freshness chip. (The
-   worker-pool panel's basic per-worker current-ticket view shipped in HS-8962.)
+4. **Claimed-by / in-flight UI (HS-8864)** — ✅ **SHIPPED** (2026-06-24): the
+   `⚙ <worker> · m:ss` claimed-by chip on ticket rows + the detail header (live +
+   pulsing-stale states), the reactive `src/client/claimsStore.ts` (5 s poll + 1 s
+   countdown tick) + `src/client/claimedByChip.tsx`, and the "In-flight work…"
+   overlay (`src/client/inflightPanel.tsx`, git popover). Poll-based until the
+   HS-7945 bus lands. Tests: `claimedByChip.test.ts`, `claimsStore.test.ts`,
+   `inflightPanel.test.ts`. (HS-7946 clientId labels still design-only — the chip
+   uses the existing `worker_label`.)
 5. **Phase D wiring** — ✅ the durable worktree pool composing 1–4 with §89 Phases
    A–C shipped via HS-8962: the per-worker claim→work→complete loop (HS-8863) + the
    worktree+terminal slot (§89 Phase B/C) + the pool manager that scales/drains
