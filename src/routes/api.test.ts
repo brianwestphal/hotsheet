@@ -2195,7 +2195,7 @@ describe('worker-pool endpoints + drain-aware claim-next (HS-8962)', () => {
 });
 
 // HS-9004 — layered (shared/local) file-settings endpoints powering the
-// Settings → Sharing tab. The harness's dataDir is a fresh temp dir, so these
+// dialog-wide settings scope control. The harness's dataDir is a fresh temp dir, so these
 // drive settings.json / settings.local.json under it.
 describe('layered file-settings (HS-9004)', () => {
   it('GET /api/file-settings/layered returns shared/local/resolved', async () => {

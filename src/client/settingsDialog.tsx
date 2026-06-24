@@ -11,6 +11,7 @@ import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
+import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode } from './settingsScope.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
@@ -42,6 +43,16 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindCategorySettings(rebuildCategoryUI);
   bindCliToolSettings();
   bindKeysSettings();
+
+  // HS-9004 — dialog-wide Shared | Local overrides | Resolved scope control.
+  // Wire the toolbar once; on each open reset to Resolved (the default view)
+  // and decorate every file-settings field once the layered settings land.
+  // Registered LAST so its open handler runs after every tab's populate.
+  initSettingsScope();
+  byId('settings-btn').addEventListener('click', () => {
+    resetScopeMode();
+    void loadAndApplyScope();
+  });
 }
 
 // --- Tab switching + dialog open/close ---
@@ -61,10 +72,6 @@ function bindTabSwitching() {
       // every settings-dialog open.
       if (target === 'permissions') {
         void import('./permissionAllowListUI.js').then(m => m.loadAndRenderAllowList());
-      }
-      // HS-9004 — lazy-load the Sharing tab's layered settings on first show.
-      if (target === 'sharing') {
-        void import('./settingsSharingUI.js').then(m => m.loadAndRenderSharing());
       }
     });
   });
@@ -172,7 +179,7 @@ function bindGeneralTab() {
       const val = Math.max(1, parseInt(trashInput.value, 10) || 3);
       trashInput.value = String(val);
       state.settings.trash_cleanup_days = val;
-      void updateSettings({ trash_cleanup_days: String(val) });
+      void persistScopedSetting('trash_cleanup_days', String(val), () => updateSettings({ trash_cleanup_days: String(val) }));
     }, 500);
   });
 
@@ -184,7 +191,7 @@ function bindGeneralTab() {
       const val = Math.max(1, parseInt(verifiedInput.value, 10) || 30);
       verifiedInput.value = String(val);
       state.settings.verified_cleanup_days = val;
-      void updateSettings({ verified_cleanup_days: String(val) });
+      void persistScopedSetting('verified_cleanup_days', String(val), () => updateSettings({ verified_cleanup_days: String(val) }));
     }, 500);
   });
 
@@ -193,13 +200,13 @@ function bindGeneralTab() {
   // Auto-prioritize toggle
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
-    void updateSettings({ auto_order: String(autoOrderCheckbox.checked) });
+    void persistScopedSetting('auto_order', String(autoOrderCheckbox.checked), () => updateSettings({ auto_order: String(autoOrderCheckbox.checked) }));
   });
 
   // Hide verified column toggle
   hideVerifiedCheckbox.addEventListener('change', async () => {
     state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
-    await updateSettings({ hide_verified_column: String(hideVerifiedCheckbox.checked) });
+    await persistScopedSetting('hide_verified_column', String(hideVerifiedCheckbox.checked), () => updateSettings({ hide_verified_column: String(hideVerifiedCheckbox.checked) }));
     // Re-render to apply column change immediately
     const { renderTicketList } = await import('./ticketList.js');
     renderTicketList();
@@ -211,7 +218,7 @@ function bindGeneralTab() {
   // visibility on the currently-active instance without a full rebuild.
   shellIntegrationCheckbox.addEventListener('change', () => {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
-    void updateSettings({ shell_integration_ui: String(shellIntegrationCheckbox.checked) });
+    void persistScopedSetting('shell_integration_ui', String(shellIntegrationCheckbox.checked), () => updateSettings({ shell_integration_ui: String(shellIntegrationCheckbox.checked) }));
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
   });
 
@@ -223,7 +230,7 @@ function bindGeneralTab() {
   // consumers decide whether to act on it.
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
-    void updateSettings({ shell_streaming_enabled: String(shellStreamingCheckbox.checked) });
+    void persistScopedSetting('shell_streaming_enabled', String(shellStreamingCheckbox.checked), () => updateSettings({ shell_streaming_enabled: String(shellStreamingCheckbox.checked) }));
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`
@@ -248,11 +255,11 @@ function bindGeneralTab() {
   // Notification dropdowns
   notifyPermSelect.addEventListener('change', () => {
     state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
-    void updateSettings({ notify_permission: notifyPermSelect.value });
+    void persistScopedSetting('notify_permission', notifyPermSelect.value, () => updateSettings({ notify_permission: notifyPermSelect.value }));
   });
   notifyCompSelect.addEventListener('change', () => {
     state.settings.notify_completed = notifyCompSelect.value as NotifyLevel;
-    void updateSettings({ notify_completed: notifyCompSelect.value });
+    void persistScopedSetting('notify_completed', notifyCompSelect.value, () => updateSettings({ notify_completed: notifyCompSelect.value }));
   });
 
   // App name (file-based setting)
@@ -262,7 +269,7 @@ function bindGeneralTab() {
     if (appNameTimeout) clearTimeout(appNameTimeout);
     appNameTimeout = setTimeout(() => {
       const val = appNameInput.value.trim();
-      void updateFileSettings({ appName: val }).then(() => {
+      void persistScopedSetting('appName', val, () => updateFileSettings({ appName: val })).then(() => {
         // HS-8451 — `setAppTitle` now also pushes the title through to
         // the native Tauri window via `set_window_title`, so the
         // "Restart the desktop app to update the title bar" hint that
@@ -290,7 +297,7 @@ function bindGeneralTab() {
         prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
         return;
       }
-      void updateFileSettings({ ticketPrefix: val }).then(() => {
+      void persistScopedSetting('ticketPrefix', val, () => updateFileSettings({ ticketPrefix: val })).then(() => {
         prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
       });
     }, 800);
@@ -304,7 +311,7 @@ function bindGeneralTab() {
     if (worklistPreambleTimeout) clearTimeout(worklistPreambleTimeout);
     worklistPreambleTimeout = setTimeout(() => {
       const val = worklistPreambleInput.value;
-      void updateFileSettings({ worklist_preamble: val }).then(() => {
+      void persistScopedSetting('worklist_preamble', val, () => updateFileSettings({ worklist_preamble: val })).then(() => {
         worklistPreambleHint.textContent = val.trim()
           ? 'Saved — added near the top of worklist.md.'
           : 'Cleared — no preamble in worklist.md.';
@@ -439,7 +446,7 @@ function bindBackupsTab() {
     if (backupDirTimeout) clearTimeout(backupDirTimeout);
     backupDirTimeout = setTimeout(() => {
       const val = backupDirInput.value.trim();
-      void updateFileSettings({ backupDir: val }).then(() => {
+      void persistScopedSetting('backupDir', val, () => updateFileSettings({ backupDir: val })).then(() => {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
     }, 800);
@@ -473,12 +480,12 @@ function bindTerminalTab() {
     termScrollbackTimeout = setTimeout(() => {
       const raw = termScrollbackInput.value.trim();
       if (raw === '') {
-        void updateFileSettings({ terminal_scrollback_bytes: '' });
+        void persistScopedSetting('terminal_scrollback_bytes', '', () => updateFileSettings({ terminal_scrollback_bytes: '' }));
         return;
       }
       const n = Math.max(65536, Math.min(16777216, parseInt(raw, 10) || 1048576));
       termScrollbackInput.value = String(n);
-      void updateFileSettings({ terminal_scrollback_bytes: String(n) });
+      void persistScopedSetting('terminal_scrollback_bytes', String(n), () => updateFileSettings({ terminal_scrollback_bytes: String(n) }));
     }, 800);
   });
 
@@ -761,7 +768,7 @@ function bindTelemetryTab() {
   // metrics + logs, default-off for traces" — so we always write the
   // explicit boolean rather than rely on absence.
   masterEl.addEventListener('change', () => {
-    void updateFileSettings({ telemetry_enabled: masterEl.checked }).then(() => {
+    void persistScopedSetting('telemetry_enabled', masterEl.checked, () => updateFileSettings({ telemetry_enabled: masterEl.checked })).then(() => {
       // HS-8479 — refresh the conditional Telemetry sidebar entry so
       // it appears / disappears instantly on toggle.
       void import('./crossProjectStatsButton.js').then(({ refreshTelemetrySidebarVisibility }) => {
@@ -770,13 +777,13 @@ function bindTelemetryTab() {
     });
   });
   metricsEl.addEventListener('change', () => {
-    void updateFileSettings({ telemetry_metrics_enabled: metricsEl.checked });
+    void persistScopedSetting('telemetry_metrics_enabled', metricsEl.checked, () => updateFileSettings({ telemetry_metrics_enabled: metricsEl.checked }));
   });
   logsEl.addEventListener('change', () => {
-    void updateFileSettings({ telemetry_logs_enabled: logsEl.checked });
+    void persistScopedSetting('telemetry_logs_enabled', logsEl.checked, () => updateFileSettings({ telemetry_logs_enabled: logsEl.checked }));
   });
   tracesEl.addEventListener('change', () => {
-    void updateFileSettings({ telemetry_traces_enabled: tracesEl.checked });
+    void persistScopedSetting('telemetry_traces_enabled', tracesEl.checked, () => updateFileSettings({ telemetry_traces_enabled: tracesEl.checked }));
   });
 
   // Retention picker — debounced (matches the §52 scrollback pattern
@@ -788,7 +795,7 @@ function bindTelemetryTab() {
       const raw = retentionEl.value.trim();
       const n = raw === '' ? 30 : Math.max(0, parseInt(raw, 10) || 0);
       retentionEl.value = String(n);
-      void updateFileSettings({ telemetry_retention_days: n });
+      void persistScopedSetting('telemetry_retention_days', n, () => updateFileSettings({ telemetry_retention_days: n }));
     }, 600);
   });
 

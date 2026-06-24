@@ -180,11 +180,11 @@ Each built-in view has an icon to the left of the label:
 ### 4.13 Settings Dialog
 
 - Opened via the gear icon in the header.
+- A **dialog-wide scope toolbar** sits under the tab strip (HS-9004): an Xcode-build-settings-style **Shared | Local overrides | Resolved** segmented control over the shared/local settings split (committed `settings.json` vs gitignored `settings.local.json`). It governs every tab — each file-settings field decorates in place with an origin tag / "overridden locally" tag / Reset-to-shared / + Override; the mode persists across tab switches and resets to Resolved (the effective view, default) on each open. Machine-global ("Global Setting") fields and complex list editors are not per-layer editable and read-only outside Resolved. See [2-data-storage.md](2-data-storage.md) §2.3.1.
 - Uses a tabbed layout with Lucide icons and labels for each section:
   - **General** (SlidersHorizontal icon) — Project name, auto-clear trash/verified days, "Hide Verified column" checkbox (hides the Verified column in column view; verified tickets appear in the Completed column instead).
   - **Categories** (Tag icon) — Category management with inline editing and preset selector (see [3-ticket-management.md](3-ticket-management.md) §3.1).
   - **Backups** (HardDrive icon) — Backup location, backup list (see [7-backup-restore.md](7-backup-restore.md)).
-  - **Sharing** (Share2 icon) — HS-9004 — Xcode-build-settings-style **Shared | Local overrides | Resolved** view of the shared/local settings split (committed `settings.json` vs gitignored `settings.local.json`); per-row Override / Reset-to-shared / origin badge (see [2-data-storage.md](2-data-storage.md) §2.3.1).
   - **Context** (FileText icon) — Auto-context configuration for categories and tags (see §4.18).
   - **Plugins** (Plug icon) — Plugin management, configuration, sync controls, and conflict resolution (see [18-plugins.md](18-plugins.md) §18.10).
   - **Announcer** (AudioLines icon) — Per-project narration of recent work; promoted from a section under Experimental to its own tab (HS-8777). The tab label carries a blue rounded "Beta" chip centered beneath it. See [78-announcer.md](78-announcer.md).

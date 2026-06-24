@@ -165,7 +165,7 @@ Copies are created with " - Copy" suffix (incrementing if conflicts exist). The 
 | PATCH | `/api/settings` | Update database settings |
 | GET | `/api/file-settings` | Get the full file-based project settings object — the RESOLVED merge of `settings.json` + `settings.local.json`, local winning (`readFileSettings(dataDir)`; per [2-data-storage.md](2-data-storage.md) §2.3 / §2.3.1) |
 | PATCH | `/api/file-settings` | Update file-based settings (each key auto-routed to its default layer per `defaultScope`) |
-| GET | `/api/file-settings/layered` | HS-9004 — `{ shared, local, resolved }` views for the Settings → Sharing tab (secret stripped from each) |
+| GET | `/api/file-settings/layered` | HS-9004 — `{ shared, local, resolved }` views for the dialog-wide settings scope control (secret stripped from each) |
 | PATCH | `/api/file-settings/layer` | HS-9004 — write a partial to an explicit layer: body `{ layer: "shared"\|"local", settings }`; returns the refreshed layered views |
 | POST | `/api/file-settings/clear-local` | HS-9004 — remove keys from the local layer ("Reset to shared"): body `{ keys: string[] }`; returns the refreshed layered views |
 

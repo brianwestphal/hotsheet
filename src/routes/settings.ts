@@ -149,7 +149,7 @@ settingsRoutes.patch('/file-settings', async (c) => {
   return c.json(updated);
 });
 
-// --- HS-9004 — layered (shared/local) file-settings (Settings → Sharing tab) ---
+// --- HS-9004 — layered (shared/local) file-settings (dialog-wide scope control) ---
 
 /** Strip the secret keys before any layered settings leave the server. */
 function stripSensitive(s: FileSettings): Record<string, unknown> {
@@ -158,7 +158,7 @@ function stripSensitive(s: FileSettings): Record<string, unknown> {
   return rest;
 }
 
-/** The three views the Sharing tab renders. */
+/** The three views the dialog-wide scope control renders. */
 function layeredPayload(dataDir: string): { shared: Record<string, unknown>; local: Record<string, unknown>; resolved: Record<string, unknown> } {
   return {
     shared: stripSensitive(readSharedSettings(dataDir)),

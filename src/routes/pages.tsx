@@ -522,12 +522,6 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>
               <span>Backups</span>
             </button>
-            {/* HS-9004 — Sharing tab: Xcode-style Shared | Local overrides |
-                Resolved view of the §2.3.1 shared/local settings split. */}
-            <button className="settings-tab" data-tab="sharing" id="settings-tab-sharing">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>
-              <span>Sharing</span>
-            </button>
             <button className="settings-tab" data-tab="context">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>
               <span>Context</span>
@@ -571,6 +565,18 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
               <span>Updates</span>
             </button>
+          </div>
+          {/* HS-9004 — dialog-wide Shared | Local overrides | Resolved scope
+              control. A persistent toolbar over every tab (state survives tab
+              switches); decorates each file-settings field in place. Wired by
+              src/client/settingsScope.ts. */}
+          <div className="settings-scope-bar" id="settings-scope-bar" data-scope-mode="resolved">
+            <div className="scope-seg" role="tablist" aria-label="Settings scope">
+              <button type="button" className="scope-seg-btn scope-seg-shared" data-scope-mode="shared"><span className="scope-seg-dot" />Shared</button>
+              <button type="button" className="scope-seg-btn scope-seg-local" data-scope-mode="local"><span className="scope-seg-dot" />Local overrides</button>
+              <button type="button" className="scope-seg-btn scope-seg-resolved active" data-scope-mode="resolved"><span className="scope-seg-dot" />Resolved</button>
+            </div>
+            <span className="scope-bar-note" id="settings-scope-note">Effective values in use. Each field is tagged with where its value comes from.</span>
           </div>
           <div className="settings-body">
             <div className="settings-tab-panel active" data-panel="general">
@@ -666,7 +672,7 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-worklist-preamble-hint">Free-text notes added under a "Project Notes" heading near the top of <code>.hotsheet/worklist.md</code>, before the standard workflow instructions. Leave empty to omit.</span>
               </div>
             </div>
-            <div className="settings-tab-panel" data-panel="categories">
+            <div className="settings-tab-panel" data-panel="categories" data-scope-complex>
               <div className="settings-section-header">
                 <h3>Categories</h3>
                 <div className="category-preset-controls">
@@ -689,6 +695,10 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
               </div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
+              {/* HS-9004 — snapshot toggle (`db_snapshot_protection`) + repair are
+                  complex/action surfaces, not yet per-layer aware: read-only in
+                  the Shared/Local scope views. */}
+              <div data-scope-complex>
               {/* HS-8594 — Snapshot Protection subsection (docs/73-snapshot-protection.md §73.6).
                   Toggle is bound to the `db_snapshot_protection` file-setting (default on);
                   the status line is fed by GET /api/db/snapshot-status. */}
@@ -709,13 +719,9 @@ pageRoutes.get('/', (c) => {
                 <button className="btn btn-sm" id="db-repair-pg-resetwal-btn">Run pg_resetwal…</button>
               </div>
               <div id="db-repair-result" className="db-repair-result"></div>
+              </div>
             </div>
-            {/* HS-9004 — Sharing tab content is rendered client-side by
-                settingsSharingUI.tsx (lazy, on first show). */}
-            <div className="settings-tab-panel" data-panel="sharing" id="settings-sharing-panel">
-              <p className="settings-hint">Loading…</p>
-            </div>
-            <div className="settings-tab-panel" data-panel="context">
+            <div className="settings-tab-panel" data-panel="context" data-scope-complex>
               <div className="settings-section-header">
                 <h3>Auto-Context</h3>
                 <button className="btn btn-sm" id="auto-context-add-btn">+ Add</button>
@@ -723,7 +729,7 @@ pageRoutes.get('/', (c) => {
               <span className="settings-hint" style="margin-bottom:12px;display:block">Automatically prepend instructions to ticket details in the worklist, based on category or tag. Category context appears first, then tag context in alphabetical order.</span>
               <div id="auto-context-list"></div>
             </div>
-            {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel">
+            {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel" data-scope-complex>
               <div className="settings-section-header" style="margin-bottom:12px">
                 <h3>Installed Plugins</h3>
                 <button className="btn btn-sm" id="plugin-install-btn">Find Plugins...</button>
@@ -741,7 +747,7 @@ pageRoutes.get('/', (c) => {
             {/* HS-7953 — Permission allow-list management. Lists configured
                 rules; +Add inline form; per-row delete. Populated by
                 `permissionAllowListUI.tsx::loadAndRenderAllowList`. */}
-            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel">
+            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel" data-scope-complex>
               <div className="settings-section-header">
                 <h3>Auto-Allow Rules</h3>
               </div>
@@ -765,7 +771,7 @@ pageRoutes.get('/', (c) => {
                 `~/.hotsheet/config.json`; values live in the OS keychain and are
                 write-only here. Projects select a key by name (e.g. the
                 Announcer). The list rows are rendered by keysSettings.tsx. */}
-            <div className="settings-tab-panel" data-panel="keys" id="settings-keys-panel">
+            <div className="settings-tab-panel" data-panel="keys" id="settings-keys-panel" data-scope-complex>
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>API Keys <span className="global-setting-badge" title="These keys are shared across every project on this machine.">Global Setting</span></h3>
@@ -848,7 +854,7 @@ pageRoutes.get('/', (c) => {
                 gate the header Listen button (announcer.tsx). HS-8751 — the key
                 is chosen from the global "API Keys" registry via the selector
                 below (or defaults to the first Anthropic key). */}
-            <div className="settings-tab-panel" data-panel="announcer" id="settings-announcer-panel">
+            <div className="settings-tab-panel" data-panel="announcer" id="settings-announcer-panel" data-scope-complex>
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>Announcer</h3>
@@ -946,7 +952,7 @@ pageRoutes.get('/', (c) => {
                     <h3>Custom Commands</h3>
                   </div>
                   <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
-                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
+                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px" data-scope-complex></div>
                   {/* HS-7984 — per-project toggle for the §53 streaming
                       shell-output behavior. When off, the server still
                       buffers (cheap; no point in conditional buffering
@@ -992,7 +998,7 @@ pageRoutes.get('/', (c) => {
                     terminal in this project. Per-terminal overrides (set via
                     the gear popover on the toolbar) win on a field-by-field
                     basis. See docs/35-terminal-themes.md §35.6. */}
-                <div className="settings-terminal-default-appearance" style="margin-top:12px">
+                <div className="settings-terminal-default-appearance" style="margin-top:12px" data-scope-complex>
                   <div className="settings-terminal-default-title">Default appearance</div>
                   <div className="settings-terminal-default-row">
                     <label htmlFor="settings-terminal-default-theme">Theme</label>
@@ -1007,7 +1013,7 @@ pageRoutes.get('/', (c) => {
                     <input type="number" id="settings-terminal-default-size" min="8" max="32" step="1" />
                   </div>
                 </div>
-                <div className="settings-field" style="margin-top:12px">
+                <div className="settings-field" style="margin-top:12px" data-scope-complex>
                   <label>Default terminals</label>
                   <span className="settings-hint" style="margin-bottom:6px;display:block">Each row is a tab in the drawer. Edit to change the name, command, working directory, or launch mode. Drag rows to reorder. Projects start with no terminals — add one to get a tab.</span>
                   <div id="settings-terminals-list" className="settings-terminals-list"></div>
@@ -1018,7 +1024,7 @@ pageRoutes.get('/', (c) => {
                     terminal shows up in the dashboard / drawer-grid again
                     without needing to open the Show / Hide Terminals dialog
                     (§25.10.6). See docs/38-terminal-visibility.md §38.7. */}
-                <div className="settings-field" style="margin-top:12px">
+                <div className="settings-field" style="margin-top:12px" data-scope-complex>
                   <label>Hidden terminals</label>
                   <span className="settings-hint" style="margin-bottom:6px;display:block" id="settings-hidden-terminals-status">No terminals hidden for this project.</span>
                   <button type="button" id="settings-hidden-terminals-reset" className="btn btn-sm" disabled>Reset Visibility</button>
@@ -1034,7 +1040,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 {/* HS-7596 / §37 — Quit confirmation. Three modes + editable
                     exempt list of process basenames. See docs/37-quit-confirm.md. */}
-                <div className="settings-field" style="margin-top:12px">
+                <div className="settings-field" style="margin-top:12px" data-scope-complex>
                   <label>Quit confirmation</label>
                   <span className="settings-hint" style="margin-bottom:6px;display:block">Prompts when you quit Hot Sheet (⌘Q / Alt+F4 / red traffic-light close / `hotsheet --close`) and any terminal in this project is running a process the user would care about.</span>
                   <div className="settings-quit-confirm-modes" id="settings-quit-confirm-modes">

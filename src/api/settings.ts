@@ -84,7 +84,7 @@ export type UpdateFileSettingsReq = z.infer<typeof UpdateFileSettingsSchema>;
 export type SettingsLayer = z.infer<typeof SettingsLayerSchema>;
 
 /**
- * `GET /file-settings/layered` — the three views the Sharing tab renders:
+ * `GET /file-settings/layered` — the three views the dialog-wide scope control renders:
  * `shared` (committed `settings.json`), `local` (gitignored
  * `settings.local.json`), and `resolved` (the merged effective view, local
  * winning). Each is an open record; `secret`/`secretPathHash` are stripped

@@ -136,7 +136,7 @@ export const SettingsLayerSchema = z.enum(['shared', 'local']);
 
 /** PATCH `/file-settings/layer` — write a partial to an EXPLICIT layer
  *  (`settings.json` or `settings.local.json`), regardless of each key's default
- *  scope. Drives the Settings → Sharing tab's Shared / Local edit modes. */
+ *  scope. Drives the dialog-wide settings scope control's Shared / Local edit modes. */
 export const UpdateFileSettingsLayerSchema = z.object({
   layer: SettingsLayerSchema,
   settings: z.record(z.string(), z.unknown()),

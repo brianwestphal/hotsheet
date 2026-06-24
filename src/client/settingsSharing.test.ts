@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildSharingRows,
-  type SettingRegistryEntry,
+  resolveFieldScope,
+  scopedDisplayValue,
   summarizeValue,
 } from './settingsSharing.js';
 
@@ -28,55 +28,65 @@ describe('summarizeValue', () => {
   });
 });
 
-describe('buildSharingRows', () => {
-  const registry: SettingRegistryEntry[] = [
-    { key: 'appName', label: 'App name', defaultLayer: 'shared', kind: 'text' },
-    { key: 'backupDir', label: 'Backup directory', defaultLayer: 'local', kind: 'text' },
-    { key: 'port', label: 'Server port', defaultLayer: 'local', kind: 'number' },
-  ];
+describe('resolveFieldScope', () => {
+  const layered = {
+    shared: { appName: 'Team', backupDir: '/team/default', port: 4190 },
+    local: { backupDir: '/me/local', port: 4180 },
+    resolved: { appName: 'Team', backupDir: '/me/local', port: 4180 },
+  };
 
-  it('computes origin/overridden from layer presence (local wins)', () => {
-    const rows = buildSharingRows({
-      shared: { appName: 'Team', backupDir: '/team/default' },
-      local: { backupDir: '/me/local', port: 4180 },
-      resolved: { appName: 'Team', backupDir: '/me/local', port: 4180 },
-    }, registry);
-
-    const byKey = Object.fromEntries(rows.map(r => [r.key, r]));
-    // appName: only shared.
-    expect(byKey.appName.origin).toBe('shared');
-    expect(byKey.appName.overridden).toBe(false);
-    // backupDir: in both → overridden, origin local.
-    expect(byKey.backupDir.origin).toBe('local');
-    expect(byKey.backupDir.overridden).toBe(true);
-    expect(byKey.backupDir.resolvedDisplay).toBe('/me/local');
-    expect(byKey.backupDir.sharedDisplay).toBe('/team/default');
-    // port: only local.
-    expect(byKey.port.origin).toBe('local');
-    expect(byKey.port.overridden).toBe(true);
+  it('marks a shared-only key as origin shared, not overridden', () => {
+    const s = resolveFieldScope(layered, 'appName');
+    expect(s.origin).toBe('shared');
+    expect(s.inShared).toBe(true);
+    expect(s.overridden).toBe(false);
   });
 
-  it('marks a key absent from both layers as default origin', () => {
-    const rows = buildSharingRows({ shared: {}, local: {}, resolved: {} }, registry);
-    expect(rows.find(r => r.key === 'backupDir')?.origin).toBe('default');
-    expect(rows.find(r => r.key === 'port')?.overridden).toBe(false);
+  it('marks a key present in both layers as overridden, origin local (local wins)', () => {
+    const s = resolveFieldScope(layered, 'backupDir');
+    expect(s.overridden).toBe(true);
+    expect(s.origin).toBe('local');
+    expect(s.sharedValue).toBe('/team/default');
+    expect(s.localValue).toBe('/me/local');
+    expect(s.resolvedValue).toBe('/me/local');
   });
 
-  it('always includes every registry key, even when unset', () => {
-    const rows = buildSharingRows({ shared: {}, local: {}, resolved: {} }, registry);
-    expect(rows.map(r => r.key)).toEqual(['appName', 'backupDir', 'port']);
+  it('marks a key absent from both layers as origin default', () => {
+    const s = resolveFieldScope(layered, 'ticketPrefix');
+    expect(s.origin).toBe('default');
+    expect(s.overridden).toBe(false);
+    expect(s.inShared).toBe(false);
+  });
+});
+
+describe('scopedDisplayValue', () => {
+  const layered = {
+    shared: { port: 4190 },
+    local: { port: 4180 },
+    resolved: { port: 4180 },
+  };
+
+  it('Shared mode shows the literal settings.json value EVEN when locally overridden (bug fix)', () => {
+    // The rework's headline fix: a port overridden in the local layer used to
+    // render blank under the Shared segment. It must show the shared value.
+    const s = resolveFieldScope(layered, 'port');
+    expect(scopedDisplayValue(s, 'shared')).toBe(4190);
   });
 
-  it('surfaces present-but-unregistered keys as read-only "other" rows, sorted', () => {
-    const rows = buildSharingRows({
-      shared: { zeta_key: 'z', alpha_key: 'a' },
-      local: { mystery: 'm' },
-      resolved: { zeta_key: 'z', alpha_key: 'a', mystery: 'm' },
-    }, registry);
-    const others = rows.filter(r => r.isOther);
-    expect(others.map(r => r.key)).toEqual(['alpha_key', 'mystery', 'zeta_key']); // sorted
-    expect(others.every(r => r.kind === 'complex')).toBe(true);
-    // An other key only in local is tagged local origin.
-    expect(others.find(r => r.key === 'mystery')?.origin).toBe('local');
+  it('Local mode shows the override when present', () => {
+    const s = resolveFieldScope(layered, 'port');
+    expect(scopedDisplayValue(s, 'local')).toBe(4180);
+  });
+
+  it('Local mode shows the inherited (resolved) value when not overridden', () => {
+    const inheritedLayered = { shared: { appName: 'Team' }, local: {}, resolved: { appName: 'Team' } };
+    const s = resolveFieldScope(inheritedLayered, 'appName');
+    expect(s.overridden).toBe(false);
+    expect(scopedDisplayValue(s, 'local')).toBe('Team');
+  });
+
+  it('Resolved mode shows the effective value', () => {
+    const s = resolveFieldScope(layered, 'port');
+    expect(scopedDisplayValue(s, 'resolved')).toBe(4180);
   });
 });
