@@ -17,6 +17,7 @@ import { getErrorMessage } from '../utils/errorMessage.js';
 import { confirmDialog } from './confirm.js';
 import { dispatchAndReport, dispatchTicketsToWorker } from './dispatch.js';
 import { toElement } from './dom.js';
+import { openPartitionEditor } from './partitionEditor.js';
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
 import { showToast } from './toast.js';
 
@@ -341,24 +342,22 @@ async function handlePartition(pool: PoolState, bodyEl: HTMLElement): Promise<vo
     showToast('Nothing to partition — no unblocked Up Next tickets.');
     return;
   }
-  const preview = nonEmpty.map(a => `${a.label} ← ${a.ticketNumbers.join(', ')}`).join('\n');
-  const apply = await confirmDialog({
-    title: 'Dispatch this partition?',
-    message: preview,
-    confirmLabel: 'Dispatch',
+  // HS-8977 — open the editable overlay so the owner can move tickets between
+  // workers before dispatching (replaces the old read-only confirm preview).
+  openPartitionEditor(nonEmpty, async (chunks) => {
+    if (chunks.length === 0) return;
+    let dispatched = 0;
+    const failures: string[] = [];
+    for (const a of chunks) {
+      const r = await dispatchTicketsToWorker(a.worker, a.label, a.ticketIds);
+      dispatched += r.dispatched;
+      failures.push(...r.failures);
+    }
+    showToast(failures.length === 0
+      ? `Dispatched ${String(dispatched)} ticket${dispatched === 1 ? '' : 's'} across ${String(chunks.length)} worker${chunks.length === 1 ? '' : 's'}`
+      : `Dispatched ${String(dispatched)}; ${String(failures.length)} failed (${[...new Set(failures)].join('; ')})`);
+    await refreshPool(bodyEl);
   });
-  if (!apply) return;
-  let dispatched = 0;
-  const failures: string[] = [];
-  for (const a of nonEmpty) {
-    const r = await dispatchTicketsToWorker(a.worker, a.label, a.ticketIds);
-    dispatched += r.dispatched;
-    failures.push(...r.failures);
-  }
-  showToast(failures.length === 0
-    ? `Dispatched ${String(dispatched)} ticket${dispatched === 1 ? '' : 's'} across ${String(nonEmpty.length)} worker${nonEmpty.length === 1 ? '' : 's'}`
-    : `Dispatched ${String(dispatched)}; ${String(failures.length)} failed (${[...new Set(failures)].join('; ')})`);
-  await refreshPool(bodyEl);
 }
 
 /** HS-8975 — toggle a worker's queue-only mode (work only dispatched tickets,

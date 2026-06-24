@@ -209,6 +209,15 @@ The transport (connect / reconnect / fallback / classification) is unit-tested (
 - [ ] Restart the server / restore the WS: the banner clears and live push resumes.
 - [ ] Switch the active project tab: live updates track the newly-active project (a mutation in the now-active project pushes; the old one no longer drives this tab).
 
+### Editable AI partition overlay (HS-8977) — visual
+
+The model + reassign-via-select are unit-tested (`partitionEdit.test.ts` / `partitionEditor.test.ts`); these cover the real overlay rendering.
+
+- [ ] Worker Pool → "AI: partition" with ≥2 running workers opens the editable overlay showing a column per worker with its proposed tickets (not the old read-only confirm).
+- [ ] Each ticket has a worker `<select>`; changing it moves the ticket to that worker's column (re-renders). Emptied workers show "— empty —".
+- [ ] "Apply + Dispatch" dispatches the edited chunks (toast reports counts); Cancel / Esc / backdrop-click closes without dispatching.
+- [ ] (When HS-8977's drag enhancement lands) dragging a ticket row between columns reassigns it.
+
 ---
 
 ## 8. Demo Mode
