@@ -18,7 +18,9 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // repeat, docs/90 §90.5/§90.7).
 // HS-8962 — bumped 11 → 12: the `hotsheet-worker` loop now honors the
 // worker-pool drain signal (`claim-next` may return `{drain:true}` → stop).
-export const SKILL_VERSION = 12;
+// HS-8991 — bumped 12 → 13: dropped the absolute "Base directory: <path>" line
+// from the main `hotsheet` skill body (machine-specific path; bad for repos).
+export const SKILL_VERSION = 13;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -186,8 +188,10 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
   // when it fires. Users who want a fresh context per /hotsheet should type
   // `/clear` themselves before invoking the skill.
   return [
-    `Base directory for this skill: ${join(projectRoot, '.claude', 'skills', 'hotsheet')}`,
-    '',
+    // HS-8991 — no "Base directory: <absolute path>" line: it leaked an
+    // absolute, machine-specific path into a file projects may check in, and
+    // it was redundant (the worklist/settings references below are relative +
+    // self-contained).
     `Read \`${worklistRel}\` and work through the tickets in priority order.`,
     '',
     'For each ticket:',
