@@ -144,6 +144,18 @@ describe('attachment events', () => {
   });
 });
 
+describe('claim events (HS-8973)', () => {
+  it('POST /tickets/:id/release → claims-changed', async () => {
+    const t = await createTicket('claim');
+    events = [];
+    await app.request(`/api/tickets/${t.id}/release`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ worker: 'w1' }),
+    });
+    expect(typed('claims-changed')).toHaveLength(1);
+  });
+});
+
 describe('settings events', () => {
   it('PATCH /settings → settings-changed per key', async () => {
     events = [];

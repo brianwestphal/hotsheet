@@ -59,6 +59,7 @@ function harness(initialSecret: string | null = 'sec') {
   let secret = initialSecret;
   const refreshData = vi.fn();
   const refreshDetail = vi.fn();
+  const refreshClaims = vi.fn();
   const showHint = vi.fn();
   const ws = createWsSync({
     createSocket: (url) => { urls.push(url); const s = new FakeSocket(); sockets.push(s); return s; },
@@ -67,12 +68,13 @@ function harness(initialSecret: string | null = 'sec') {
     clearTimer: () => { /* no-op for the test */ },
     refreshData,
     refreshDetail,
+    refreshClaims,
     showHint,
     getSecret: () => secret,
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, showHint,
+    ws, sockets, urls, refreshData, refreshDetail, refreshClaims, showHint,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -122,6 +124,15 @@ describe('createWsSync flow', () => {
     h.last().push({ type: 'attachment-added', ticketId: 1, attachment: {}, seq: 1 });
     expect(h.refreshDetail).toHaveBeenCalledTimes(1);
     expect(h.refreshData).not.toHaveBeenCalled();
+  });
+
+  it('refreshes only the claim set on a claims-changed event (HS-8973)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'claims-changed', seq: 1 });
+    expect(h.refreshClaims).toHaveBeenCalledTimes(1);
+    expect(h.refreshData).not.toHaveBeenCalled();
+    expect(h.refreshDetail).not.toHaveBeenCalled();
   });
 
   it('does a full refresh on resync', () => {

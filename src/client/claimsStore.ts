@@ -1,9 +1,10 @@
 // HS-8864 — client-side claims store (docs/90 §90.8). Holds the set of
 // currently-claimed tickets (from `GET /api/tickets/claims`) as reactive signals
 // so the claimed-by chip (rows + detail) and the in-flight view update without
-// manual refetch plumbing. Poll-based for now (the existing refresh cadence); when
-// the §90.8 / HS-7945 WebSocket bus ships, `applyClaims` can be driven by pushed
-// `ticket-claimed` / `ticket-released` / `lease-renewed` events instead of the poll.
+// manual refetch plumbing. A 5 s poll is the fallback; HS-8973 — when the
+// `/ws/sync` bus is live (HS-7945), `src/client/wsSync.ts` calls `refreshClaims`
+// on every pushed `claims-changed` event (emitted by the claim/release/renew
+// routes), so the chip flips near-instantly instead of waiting up to 5 s.
 import { type ClaimRow, getTicketClaims } from '../api/index.js';
 import { computed, type ReadonlySignal, signal } from './reactive.js';
 

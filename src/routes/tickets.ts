@@ -187,7 +187,7 @@ ticketRoutes.post('/tickets/claim-next', async (c) => {
   if (drain) return c.json({ ticket: null, drain: true });
   // HS-8975 — a queue-only worker is served only its dispatched tickets, then null.
   const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, { ownOnly: isQueueOnly(dataDir, parsed.data.worker) });
-  if (ticket !== null) notifyMutation(c.get('dataDir'));
+  if (ticket !== null) { notifyMutation(c.get('dataDir')); emitSync(c, { type: 'claims-changed' }); }
   return c.json({ ticket });
 });
 
@@ -201,6 +201,7 @@ ticketRoutes.post('/tickets/:id/claim', async (c) => {
   if (result.ok) {
     touchPoolWorker(c.get('dataDir'), parsed.data.worker); // HS-8972 liveness
     notifyMutation(c.get('dataDir'));
+    emitSync(c, { type: 'claims-changed' });
     return c.json(result);
   }
   // 404 for an unknown/unclaimable ticket; 409 for a live foreign lease.
@@ -222,6 +223,9 @@ ticketRoutes.post('/tickets/:id/renew-lease', async (c) => {
   // heads-down on a long ticket (not calling claim-next). Bump its pool slot.
   touchPoolWorker(c.get('dataDir'), parsed.data.worker);
   const result = await renewLease(id, parsed.data.worker, parsed.data.ttlSeconds);
+  // HS-8973 — push the extended lease so the chip's countdown stays accurate
+  // without waiting for the 5 s claims poll.
+  emitSync(c, { type: 'claims-changed' });
   return c.json(result);
 });
 
@@ -233,6 +237,7 @@ ticketRoutes.post('/tickets/:id/release', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   await release(id, parsed.data.worker ?? undefined);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'claims-changed' });
   return c.json({ ok: true });
 });
 

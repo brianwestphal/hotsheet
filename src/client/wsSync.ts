@@ -30,17 +30,19 @@ export function shouldFallback(dropTimestamps: readonly number[], now: number): 
   return recent.length >= FALLBACK_DROP_THRESHOLD;
 }
 
-export type FrameAction = 'data' | 'detail' | 'pong' | 'connected' | 'resync' | 'ignore';
+export type FrameAction = 'data' | 'detail' | 'claims' | 'pong' | 'connected' | 'resync' | 'ignore';
 
 /** Classify an inbound frame `type` into the action the client takes.
  *  Mutation events → a full data refresh; attachment events → a detail-panel
- *  refresh (they don't change a list row); control frames handled by name. */
+ *  refresh (they don't change a list row); claim changes → a claims refresh;
+ *  control frames handled by name. */
 export function frameAction(type: unknown): FrameAction {
   switch (type) {
     case 'ping': return 'pong';
     case 'pong': return 'ignore';
     case 'connected': return 'connected';
     case 'resync': return 'resync';
+    case 'claims-changed': return 'claims';
     case 'attachment-added':
     case 'attachment-deleted': return 'detail';
     case 'ticket-created':
@@ -77,6 +79,8 @@ export interface WsSyncDeps {
   refreshData: () => void;
   /** Refresh the open detail panel (attachment changes). */
   refreshDetail: () => void;
+  /** Refresh the distributed-execution claim set (claimed-by chip). */
+  refreshClaims: () => void;
   /** Show / hide the "live updates unavailable" hint. */
   showHint: (show: boolean) => void;
   /** The active project's secret (the bus key), or null when none. */
@@ -156,6 +160,7 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
       lastSeq = f.seq;
     }
     if (action === 'detail') deps.refreshDetail();
+    else if (action === 'claims') deps.refreshClaims();
     else deps.refreshData();
   }
 
@@ -264,6 +269,10 @@ function runDetailRefresh(): void {
   void import('./detail.js').then(({ refreshDetail }) => refreshDetail());
 }
 
+function runClaimsRefresh(): void {
+  void import('./claimsStore.js').then(({ refreshClaims }) => refreshClaims());
+}
+
 const wsSync = createWsSync({
   createSocket: (url) => new WebSocket(url) as unknown as WsLike,
   now: () => Date.now(),
@@ -271,6 +280,7 @@ const wsSync = createWsSync({
   clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
   refreshData: scheduleCoalescedRefresh,
   refreshDetail: runDetailRefresh,
+  refreshClaims: runClaimsRefresh,
   showHint: toggleHintBanner,
   getSecret: () => getActiveProject()?.secret ?? null,
   buildUrl: buildWsUrl,

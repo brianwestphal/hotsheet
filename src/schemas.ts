@@ -344,6 +344,11 @@ const SYNC_EVENT_INPUT_VARIANTS = [
   z.object({ type: z.literal('attachment-deleted'), ticketId: z.number(), attachmentId: z.union([z.string(), z.number()]) }),
   z.object({ type: z.literal('settings-changed'), key: z.string(), value: z.unknown() }),
   z.object({ type: z.literal('batch-operation'), op: z.string(), ids: z.array(z.number()), changes: SyncChangesSchema }),
+  // HS-8973 — distributed-execution claim/lease changed (claim / release /
+  // renew / dispatch). A bare signal; the client refetches the full claim set
+  // (docs/90 §90.8). Drives the claimed-by chip's live push off the bus instead
+  // of its 5 s poll.
+  z.object({ type: z.literal('claims-changed') }),
 ] as const;
 
 /** The event a mutation handler passes to `emitEvent` (no `seq` yet). */
