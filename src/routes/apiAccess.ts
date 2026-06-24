@@ -5,7 +5,7 @@
 // in `src/server.ts` handles the header-present cases (exact-match / foreign
 // project lookup) and delegates the header-absent cases here.
 
-import { isRequestTrusted } from '../trusted-origin.js';
+import { isLoopbackAddress, isRequestTrusted } from '../trusted-origin.js';
 
 const MUTATION_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
@@ -50,4 +50,32 @@ export function evaluateNoSecretApiAccess(input: NoSecretAccessInput): AccessDec
     return { allow: false, status: 403, reason: 'get-exposed-untrusted-no-secret' };
   }
   return { allow: true };
+}
+
+export interface OtelAccessInput {
+  exposed: boolean;
+  /** Raw socket peer address (from the connection info). */
+  remoteAddress: string | undefined;
+  origin: string | undefined;
+  referer: string | undefined;
+  trustedOrigins: string[];
+  /** True when the request carries a secret that resolves to a project. */
+  hasSecret: boolean;
+}
+
+/**
+ * HS-8983 — access decision for the OTLP receiver (`/v1/*`). These routes sit
+ * OUTSIDE the `/api/*` auth middleware because Claude Code's bundled exporter
+ * can't send `X-Hotsheet-Secret`; their security model was "localhost bind". On
+ * an **exposed** server (`--bind` non-loopback) that assumption is gone, so this
+ * re-applies it: allow a loopback peer (the local exporter), a trusted origin,
+ * or a request that does carry a valid secret; reject other remotes. On a
+ * loopback-only bind it's open as before.
+ */
+export function evaluateOtelAccess(input: OtelAccessInput): AccessDecision {
+  if (!input.exposed) return { allow: true };
+  if (isLoopbackAddress(input.remoteAddress)) return { allow: true };
+  if (isRequestTrusted(input.origin, input.referer, input.trustedOrigins)) return { allow: true };
+  if (input.hasSecret) return { allow: true };
+  return { allow: false, status: 403, reason: 'otel-exposed-untrusted' };
 }

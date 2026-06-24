@@ -14,6 +14,7 @@ import { getMimeType } from './mime-types.js';
 import { getProjectBySecret } from './projects.js';
 import { announcerRoutes } from './routes/announcer.js';
 import { apiRoutes } from './routes/api.js';
+import { evaluateOtelAccess } from './routes/apiAccess.js';
 import { createApiAuthMiddleware } from './routes/apiAuthMiddleware.js';
 import { backupRoutes } from './routes/backups.js';
 import { dbRoutes } from './routes/db.js';
@@ -143,6 +144,27 @@ export async function startServer(
   // exporter (it can't send that header). Security model is the
   // `hotsheet_project` resource-attribute drop + the localhost bind.
   // See src/routes/otel.ts file-level comment for full rationale.
+  // HS-8983 — once the server is exposed (`--bind` non-loopback) the
+  // "localhost bind" assumption is gone, so re-apply it: a loopback peer (the
+  // local exporter), a trusted origin, or a secret-bearing request may ingest;
+  // other remotes get 403. No-op on the default loopback bind.
+  app.use('/v1/*', async (c, next) => {
+    const headerSecret = c.req.header('X-Hotsheet-Secret') ?? c.req.query('project');
+    // `@hono/node-server` passes the raw `{ incoming }` as the (untyped) env; the
+    // socket's remoteAddress is the request peer. Cast is justified: AppEnv has
+    // no Bindings type for it and there's a runtime guard (optional chaining).
+    const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } };
+    const decision = evaluateOtelAccess({
+      exposed,
+      remoteAddress: env.incoming?.socket?.remoteAddress,
+      origin: c.req.header('Origin'),
+      referer: c.req.header('Referer'),
+      trustedOrigins,
+      hasSecret: headerSecret !== undefined && headerSecret !== '' && getProjectBySecret(headerSecret) !== undefined,
+    });
+    if (!decision.allow) return c.json({ error: 'forbidden' }, decision.status);
+    await next();
+  });
   app.route('/', otelRoutes);
 
   // HS-8148 — telemetry rollup API for the footer drawer Telemetry tab

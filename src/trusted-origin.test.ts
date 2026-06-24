@@ -4,6 +4,7 @@ import {
   ipv4InCidr,
   isCgnatIpv4,
   isExposedBind,
+  isLoopbackAddress,
   isLoopbackHost,
   isRequestTrusted,
   isTrustedOrigin,
@@ -104,6 +105,21 @@ describe('isRequestTrusted', () => {
   it('is untrusted when both are absent or untrusted', () => {
     expect(isRequestTrusted(undefined, undefined, [])).toBe(false);
     expect(isRequestTrusted('https://evil.com', 'https://evil.com/x', [])).toBe(false);
+  });
+});
+
+describe('isLoopbackAddress', () => {
+  it('recognizes loopback peer addresses incl. IPv4-mapped IPv6', () => {
+    expect(isLoopbackAddress('127.0.0.1')).toBe(true);
+    expect(isLoopbackAddress('127.5.6.7')).toBe(true); // 127.0.0.0/8
+    expect(isLoopbackAddress('::1')).toBe(true);
+    expect(isLoopbackAddress('::ffff:127.0.0.1')).toBe(true);
+  });
+  it('rejects non-loopback + empty', () => {
+    expect(isLoopbackAddress('192.168.1.5')).toBe(false);
+    expect(isLoopbackAddress('::ffff:10.0.0.1')).toBe(false);
+    expect(isLoopbackAddress(undefined)).toBe(false);
+    expect(isLoopbackAddress('')).toBe(false);
   });
 });
 

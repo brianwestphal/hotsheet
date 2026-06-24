@@ -11,7 +11,7 @@ import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { AppEnv } from '../types.js';
-import { evaluateNoSecretApiAccess } from './apiAccess.js';
+import { evaluateNoSecretApiAccess, evaluateOtelAccess } from './apiAccess.js';
 import { createApiAuthMiddleware } from './apiAuthMiddleware.js';
 
 describe('evaluateNoSecretApiAccess (pure matrix)', () => {
@@ -49,6 +49,29 @@ describe('evaluateNoSecretApiAccess (pure matrix)', () => {
   it('allows a no-secret mutation from a trusted same-origin', () => {
     expect(evaluateNoSecretApiAccess({ method: 'POST', origin: 'http://localhost:4174', referer: undefined, exposed: true, trustedOrigins: [] }).allow).toBe(true);
     expect(evaluateNoSecretApiAccess({ method: 'PUT', origin: 'http://100.96.1.2', referer: undefined, exposed: true, trustedOrigins: trusted }).allow).toBe(true);
+  });
+});
+
+describe('evaluateOtelAccess (HS-8983)', () => {
+  const base = { origin: undefined, referer: undefined, trustedOrigins: [] as string[], hasSecret: false };
+
+  it('is open when the server is not exposed', () => {
+    expect(evaluateOtelAccess({ ...base, exposed: false, remoteAddress: '203.0.113.9' }).allow).toBe(true);
+  });
+
+  it('allows a loopback peer on an exposed server (the local exporter)', () => {
+    expect(evaluateOtelAccess({ ...base, exposed: true, remoteAddress: '127.0.0.1' }).allow).toBe(true);
+    expect(evaluateOtelAccess({ ...base, exposed: true, remoteAddress: '::ffff:127.0.0.1' }).allow).toBe(true);
+  });
+
+  it('rejects an untrusted remote peer on an exposed server', () => {
+    const d = evaluateOtelAccess({ ...base, exposed: true, remoteAddress: '203.0.113.9' });
+    expect(d).toEqual({ allow: false, status: 403, reason: 'otel-exposed-untrusted' });
+  });
+
+  it('allows a trusted origin or a valid secret from a remote peer', () => {
+    expect(evaluateOtelAccess({ ...base, exposed: true, remoteAddress: '100.96.1.2', trustedOrigins: ['tailscale'], origin: 'http://100.96.1.2' }).allow).toBe(true);
+    expect(evaluateOtelAccess({ ...base, exposed: true, remoteAddress: '203.0.113.9', hasSecret: true }).allow).toBe(true);
   });
 });
 

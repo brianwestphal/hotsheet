@@ -75,6 +75,19 @@ export function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(stripBrackets(host).toLowerCase());
 }
 
+/** Is a raw socket peer address loopback? Handles the IPv4-mapped IPv6 form
+ *  (`::ffff:127.0.0.1`) Node hands back on a dual-stack listener, plus the full
+ *  127.0.0.0/8 loopback block. Used to keep local (same-machine) clients — e.g.
+ *  Claude Code's OTLP exporter, which sends no Origin and no secret — working
+ *  even when the server is bound to a non-loopback address. */
+export function isLoopbackAddress(addr: string | undefined): boolean {
+  if (addr === undefined || addr === '') return false;
+  let a = addr.trim().toLowerCase();
+  if (a.startsWith('::ffff:')) a = a.slice('::ffff:'.length); // IPv4-mapped IPv6
+  if (a === '::1' || a === 'localhost') return true;
+  return ipv4InCidr(a, '127.0.0.0/8');
+}
+
 /** Is the given Origin/Referer value trusted, given the configured allow-list?
  *  `value` may be a full origin (`https://host:port`) or a bare host. */
 export function isTrustedOrigin(value: string | undefined, trustedOrigins: string[]): boolean {
