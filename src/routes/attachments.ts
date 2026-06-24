@@ -22,6 +22,7 @@ import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
+import { emitSync } from './syncEmit.js';
 
 export const attachmentRoutes = new Hono<AppEnv>();
 
@@ -53,6 +54,7 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
 
   const attachment = await addAttachment(id, originalName, storedPath);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'attachment-added', ticketId: id, attachment: { ...attachment } });
   return c.json(attachment, 201);
 });
 
@@ -123,6 +125,8 @@ attachmentRoutes.post('/tickets/:id/feedback-drafts/:draftId/promote-attachments
 
   const promoted = await promoteDraftAttachments(draftId);
   notifyMutation(c.get('dataDir'));
+  // Promotion makes the (previously draft-hidden) attachments visible on the ticket.
+  for (const att of promoted) emitSync(c, { type: 'attachment-added', ticketId: id, attachment: { ...att } });
   return c.json({ promoted: promoted.length, attachments: promoted });
 });
 
@@ -180,6 +184,7 @@ attachmentRoutes.post('/tickets/:id/attachments/copy-from', async (c) => {
   }
 
   notifyMutation(targetDataDir);
+  for (const att of copied) emitSync(c, { type: 'attachment-added', ticketId: targetId, attachment: { ...att } });
   return c.json({ copied: copied.length, attachments: copied });
 });
 
@@ -193,6 +198,7 @@ attachmentRoutes.delete('/attachments/:id', async (c) => {
   try { rmSync(attachment.stored_path, { force: true }); } catch { /* ignore */ }
 
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'attachment-deleted', ticketId: attachment.ticket_id, attachmentId: id });
   return c.json({ ok: true });
 });
 

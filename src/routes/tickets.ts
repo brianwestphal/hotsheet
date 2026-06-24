@@ -35,12 +35,13 @@ import { readFileSettings } from '../file-settings.js';
 import { TICKETS_LIST_MAX_LIMIT } from '../limits.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
-import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
+import { parseJsonOrNull, type SyncEventInput, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
 import { isQueueOnly, onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
+import { emitSync, notesToString } from './syncEmit.js';
 import {
   BatchActionSchema, BlockedBySchema, ClaimSchema, CreateTicketSchema, DuplicateSchema,
   FeedbackDraftCreateSchema, FeedbackDraftUpdateSchema,
@@ -293,6 +294,7 @@ ticketRoutes.post('/tickets', async (c) => {
   }
 
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-created', ticket });
   void onTicketCreated(ticket.id).catch(() => {});
   return c.json(ticket, 201);
 });
@@ -364,6 +366,7 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
   if (!isReadTrackingOnly) {
     notifyMutation(c.get('dataDir'));
+    emitSync(c, { type: 'ticket-updated', id, changes: { ...parsed.data } });
     // HS-8556 — `parsed.data` is already a typed `UpdateTicket` shape
     // from zod; the previous `as Record<string, unknown>` cast widened
     // to match `onTicketChanged`'s signature without going through any
@@ -379,6 +382,7 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   await deleteTicket(id);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-deleted', id });
   void onTicketDeleted(id).catch(() => {});
   return c.json({ ok: true });
 });
@@ -398,6 +402,7 @@ ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
   );
   if (result.rows.length === 0) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-updated', id, changes: { notes: parsed.data.notes } });
   return c.json({ ok: true });
 });
 
@@ -411,6 +416,7 @@ ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
   const notes = await editNote(id, noteId, parsed.data.text);
   if (!notes) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-updated', id, changes: { notes: notesToString(notes) } });
   return c.json(notes);
 });
 
@@ -421,6 +427,7 @@ ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
   const notes = await deleteNote(id, noteId);
   if (!notes) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-updated', id, changes: { notes: notesToString(notes) } });
   return c.json(notes);
 });
 
@@ -509,6 +516,7 @@ ticketRoutes.delete('/tickets/:id/hard', async (c) => {
   for (const att of attachments) deleteAttachmentFile(att);
   await hardDeleteTicket(id);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-deleted', id });
   return c.json({ ok: true });
 });
 
@@ -520,14 +528,20 @@ ticketRoutes.post('/tickets/batch', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { ids, action, value } = parsed.data;
   const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
+  // HS-8980 — a uniform field-flip becomes one typed event; everything else a
+  // generic batch-operation. Read-tracking-only batches (mark_read/unread) emit
+  // nothing, mirroring the single-PATCH read-tracking skip.
+  let syncEvent: SyncEventInput | null = null;
 
   switch (action) {
     case 'delete':
       await batchDeleteTickets(ids);
       for (const id of ids) void onTicketDeleted(id).catch(() => {});
+      syncEvent = { type: 'batch-operation', op: 'delete', ids, changes: {} };
       break;
     case 'restore':
       await batchRestoreTickets(ids);
+      syncEvent = { type: 'batch-operation', op: 'restore', ids, changes: {} };
       break;
     case 'category': {
       // HS-8556 — `BatchActionSchema.value` is `z.union([z.string(),
@@ -537,6 +551,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       if (typeof value !== 'string' || value === '') return c.json({ error: 'category requires a non-empty string value' }, 400);
       await batchUpdateTickets(ids, { category: value }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { category: value }).catch(() => {});
+      syncEvent = { type: 'category-changed', ticketIds: ids, to: value };
       break;
     }
     case 'priority': {
@@ -544,6 +559,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       if (!p.success) return c.json({ error: `Invalid priority "${value}"` }, 400);
       await batchUpdateTickets(ids, { priority: p.data }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { priority: p.data }).catch(() => {});
+      syncEvent = { type: 'priority-changed', ticketIds: ids, to: p.data };
       break;
     }
     case 'status': {
@@ -551,6 +567,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       if (!s.success) return c.json({ error: `Invalid status "${value}"` }, 400);
       await batchUpdateTickets(ids, { status: s.data }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { status: s.data }).catch(() => {});
+      syncEvent = { type: 'status-changed', ticketIds: ids, to: s.data };
       break;
     }
     case 'up_next': {
@@ -560,6 +577,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
       if (typeof value !== 'boolean') return c.json({ error: 'up_next requires a boolean value' }, 400);
       await batchUpdateTickets(ids, { up_next: value }, { keepRead });
       for (const id of ids) void onTicketChanged(id, { up_next: value }).catch(() => {});
+      syncEvent = { type: 'batch-operation', op: 'up_next', ids, changes: { up_next: value } };
       break;
     }
     case 'mark_read':
@@ -572,6 +590,7 @@ ticketRoutes.post('/tickets/batch', async (c) => {
   }
 
   notifyMutation(c.get('dataDir'));
+  if (syncEvent !== null) emitSync(c, syncEvent);
   return c.json({ ok: true });
 });
 
@@ -583,6 +602,7 @@ ticketRoutes.post('/tickets/duplicate', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const created = await duplicateTickets(parsed.data.ids);
   notifyMutation(c.get('dataDir'));
+  for (const ticket of created) emitSync(c, { type: 'ticket-created', ticket });
   return c.json(created, 201);
 });
 
@@ -594,6 +614,9 @@ ticketRoutes.post('/tickets/:id/restore', async (c) => {
   const ticket = await restoreTicket(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  // Restore re-adds a previously-removed ticket, so a `ticket-created` re-inserts
+  // it into a client's list (a `ticket-updated` couldn't, the row being absent).
+  emitSync(c, { type: 'ticket-created', ticket });
   return c.json(ticket);
 });
 
@@ -607,6 +630,7 @@ ticketRoutes.post('/trash/empty', async (c) => {
   }
   await emptyTrash();
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'batch-operation', op: 'empty-trash', ids: deleted.map((t) => t.id), changes: {} });
   return c.json({ ok: true });
 });
 
@@ -618,6 +642,7 @@ ticketRoutes.post('/tickets/:id/up-next', async (c) => {
   const ticket = await toggleUpNext(id);
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'ticket-updated', id, changes: { up_next: ticket.up_next } });
   void onTicketChanged(id, { up_next: ticket.up_next }).catch(() => {});
   return c.json(ticket);
 });

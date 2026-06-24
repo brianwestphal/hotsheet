@@ -321,11 +321,21 @@ export const CustomViewArraySchema = z.array(CustomViewSchema);
 // the full row schema here.
 const SyncChangesSchema = z.record(z.string(), z.unknown());
 
+// The `ticket` / `note` payloads carry a server-side DB row whose timestamp
+// columns are `Date` objects (PGLite); they serialize to ISO strings on the
+// wire (JSON.stringify), where the client re-validates with the strict
+// TicketSchema / NoteEntrySchema. So here they're loose — require only the
+// identifying field and pass the rest through unvalidated (validating the
+// strict string-timestamp shape against the live Date-bearing row would wrongly
+// reject every emit).
+const SyncTicketSchema = z.object({ id: z.number() }).loose();
+const SyncNoteSchema = z.object({ id: z.string() }).loose();
+
 const SYNC_EVENT_INPUT_VARIANTS = [
-  z.object({ type: z.literal('ticket-created'), ticket: TicketSchema }),
+  z.object({ type: z.literal('ticket-created'), ticket: SyncTicketSchema }),
   z.object({ type: z.literal('ticket-updated'), id: z.number(), changes: SyncChangesSchema }),
   z.object({ type: z.literal('ticket-deleted'), id: z.number() }),
-  z.object({ type: z.literal('note-added'), ticketId: z.number(), note: NoteEntrySchema }),
+  z.object({ type: z.literal('note-added'), ticketId: z.number(), note: SyncNoteSchema }),
   z.object({ type: z.literal('note-deleted'), ticketId: z.number(), noteId: z.string() }),
   z.object({ type: z.literal('category-changed'), ticketIds: z.array(z.number()), to: z.string() }),
   z.object({ type: z.literal('priority-changed'), ticketIds: z.array(z.number()), to: z.string() }),

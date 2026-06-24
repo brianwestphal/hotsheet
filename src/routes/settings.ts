@@ -14,6 +14,7 @@ import { eagerSpawnTerminals } from '../terminals/eagerSpawn.js';
 import type { AppEnv } from '../types.js';
 import { CATEGORY_PRESETS } from '../types.js';
 import { notifyChange, notifyMutation } from './notify.js';
+import { emitSync } from './syncEmit.js';
 import { parseBody, UpdateCategoriesSchema, UpdateFileSettingsSchema,UpdateSettingsSchema } from './validation.js';
 
 export const settingsRoutes = new Hono<AppEnv>();
@@ -39,6 +40,7 @@ settingsRoutes.put('/categories', async (c) => {
   const categories = parsed.data;
   await saveCategories(categories);
   notifyMutation(c.get('dataDir'));
+  emitSync(c, { type: 'settings-changed', key: 'categories', value: categories });
   return c.json(categories);
 });
 
@@ -59,6 +61,7 @@ settingsRoutes.patch('/settings', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   for (const [key, value] of Object.entries(parsed.data)) {
     await updateSetting(key, value);
+    emitSync(c, { type: 'settings-changed', key, value });
   }
   notifyChange();
   return c.json({ ok: true });
@@ -84,6 +87,9 @@ settingsRoutes.patch('/file-settings', async (c) => {
   const parsed = parseBody(UpdateFileSettingsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const updated = writeFileSettings(dataDir, parsed.data);
+  for (const [key, value] of Object.entries(parsed.data)) {
+    emitSync(c, { type: 'settings-changed', key, value });
+  }
   // HS-7992 added a `hotsheet_skill_clear_context` toggle that triggered a
   // skill-body regen on flip; HS-8022 removed the toggle entirely (the
   // `/clear` prefix was a no-op). The SKILL_VERSION bump on the same commit

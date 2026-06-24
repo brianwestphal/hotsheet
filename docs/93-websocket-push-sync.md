@@ -6,9 +6,10 @@ synchronization sketch in [46-service-client-decoupling.md](46-service-client-de
 into a buildable, phased spec, grounded in the code as it exists today.
 
 > **Status (2026-06-24):** In progress. **Shipped:** HS-7940 (bind + trusted-origin auth),
-> HS-8978 (server event bus §93.2), HS-8979 (`/ws/sync` endpoint §93.3/§93.7). **Pending:**
-> HS-8980 (mutation emission §93.4), HS-8981 (client reducer + reconnect + fallback §93.5/§93.6),
-> HS-8982 (backpressure §93.8). Decomposition + dependencies in §93.9.
+> HS-8978 (server event bus §93.2), HS-8979 (`/ws/sync` endpoint §93.3/§93.7), HS-8980 (mutation
+> emission §93.4 — `src/routes/syncEmit.ts` wired across tickets/attachments/settings). **Pending:**
+> HS-8981 (client reducer + reconnect + fallback §93.5/§93.6), HS-8982 (backpressure §93.8).
+> Decomposition + dependencies in §93.9.
 
 ## 93.1 Why — and why it is NOT a local win
 
