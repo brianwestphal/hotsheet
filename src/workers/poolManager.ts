@@ -39,6 +39,9 @@ export interface WorkerSlot {
    *  any `claim-next`, lease renewal, or claim-by-id. A worker silent past
    *  `STALE_AFTER_MS` is treated as dead (crashed/hung) and reaped by the panel. */
   lastSeenAt: number;
+  /** HS-8975 — queue-only: work ONLY dispatched (own-claimed) tickets, then stop;
+   *  never pull from the shared pool. Default false (fall back to self-claim). */
+  queueOnly: boolean;
 }
 
 /** HS-8972 — a pool worker silent (no claim-next / renew / claim) for this long is
@@ -91,6 +94,7 @@ export function registerWorker(dataDir: string, input: RegisterWorkerInput): Wor
     stopped: false,
     seq: existing?.seq ?? pool.nextSeq++,
     lastSeenAt: Date.now(),
+    queueOnly: existing?.queueOnly ?? false, // preserve the toggle across re-register
   };
   pool.workers.set(input.worker, slot);
   if (pool.workers.size > pool.targetN) pool.targetN = pool.workers.size;
@@ -153,6 +157,20 @@ export function touch(dataDir: string, worker: string, now: number = Date.now())
  *  its way out (draining/stopped have their own cleanup path). */
 export function isSlotStale(slot: WorkerSlot, now: number = Date.now()): boolean {
   return !slot.drain && !slot.stopped && now - slot.lastSeenAt > STALE_AFTER_MS;
+}
+
+/** HS-8975 — set a worker's queue-only mode. Returns false if no such worker. */
+export function setQueueOnly(dataDir: string, worker: string, queueOnly: boolean): boolean {
+  const slot = poolFor(dataDir).workers.get(worker);
+  if (slot === undefined) return false;
+  slot.queueOnly = queueOnly;
+  return true;
+}
+
+/** HS-8975 — is this worker in queue-only mode (claim-next serves only its
+ *  dispatched tickets, then stops)? False for a non-pool worker. */
+export function isQueueOnly(dataDir: string, worker: string): boolean {
+  return pools.get(dataDir)?.workers.get(worker)?.queueOnly ?? false;
 }
 
 /** Remove a worker slot from the registry (after its terminal + worktree are

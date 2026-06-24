@@ -51,7 +51,7 @@ const mockCloseTerm = vi.mocked(closeDynamicTerminal);
 
 const slot = (over: Partial<WorkerSlotView> = {}): WorkerSlotView => ({
   label: 'worker-1', worker: 'pw1', worktreePath: '/wt/pw1', branch: 'hotsheet/worker-1',
-  terminalId: 't-pw1', state: 'idle', currentTicket: null, ...over,
+  terminalId: 't-pw1', state: 'idle', currentTicket: null, queueOnly: false, ...over,
 });
 
 const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));

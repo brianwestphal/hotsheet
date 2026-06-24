@@ -37,7 +37,7 @@ import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
-import { onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
+import { isQueueOnly, onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
@@ -181,9 +181,11 @@ ticketRoutes.post('/tickets/claim-next', async (c) => {
   // flipped to `stopped`) instead of claiming, so it exits its loop *after*
   // finishing the ticket it was already on (docs/91 §91.4). Non-pool workers are
   // unaffected (drain is always false for them).
-  const { drain } = onClaimNext(c.get('dataDir'), parsed.data.worker);
+  const dataDir = c.get('dataDir');
+  const { drain } = onClaimNext(dataDir, parsed.data.worker);
   if (drain) return c.json({ ticket: null, drain: true });
-  const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds);
+  // HS-8975 — a queue-only worker is served only its dispatched tickets, then null.
+  const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, { ownOnly: isQueueOnly(dataDir, parsed.data.worker) });
   if (ticket !== null) notifyMutation(c.get('dataDir'));
   return c.json({ ticket });
 });

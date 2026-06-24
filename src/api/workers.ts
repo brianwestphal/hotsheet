@@ -57,6 +57,8 @@ export const WorkerSlotViewSchema = z.object({
   terminalId: z.string().nullable(),
   state: WorkerStateSchema,
   currentTicket: z.object({ id: z.number(), ticketNumber: z.string(), title: z.string() }).nullable(),
+  /** HS-8975 — queue-only: works only its dispatched tickets, then stops. */
+  queueOnly: z.boolean(),
 });
 export type WorkerSlotView = z.infer<typeof WorkerSlotViewSchema>;
 
@@ -81,6 +83,10 @@ export type WorkerRef = z.infer<typeof WorkerRefSchema>;
 
 export const SetTargetReqSchema = z.object({ targetN: z.number().int().min(0).max(64) });
 export type SetTargetReq = z.infer<typeof SetTargetReqSchema>;
+
+/** HS-8975 — set a worker's queue-only mode. */
+export const SetQueueOnlyReqSchema = z.object({ worker: z.string().min(1), queueOnly: z.boolean() });
+export type SetQueueOnlyReq = z.infer<typeof SetQueueOnlyReqSchema>;
 
 const OkSchema = z.object({ ok: z.literal(true) });
 
@@ -112,6 +118,11 @@ export async function removePoolWorker(req: WorkerRef): Promise<{ ok: true }> {
 /** POST `/workers/pool/target` → set the desired worker count (UI hint). */
 export async function setPoolTarget(req: SetTargetReq): Promise<{ ok: true }> {
   return apiCall(OkSchema, '/workers/pool/target', { method: 'POST', body: req });
+}
+
+/** POST `/workers/pool/queue-only` → set a worker's queue-only mode (HS-8975). */
+export async function setQueueOnlyWorker(req: SetQueueOnlyReq): Promise<{ ok: true }> {
+  return apiCall(OkSchema, '/workers/pool/queue-only', { method: 'POST', body: req });
 }
 
 // --- HS-8963 — AI-suggested worker count (docs/91 §91.6) ---

@@ -10286,6 +10286,7 @@ label.detail-details-label {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .worker-tile-actions { grid-area: actions; display: flex; align-items: center; gap: 6px; }
+  .worker-queue-only { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-muted); white-space: nowrap; cursor: pointer; }
 
   // HS-8964 — drag-to-worker dispatch drop highlight (docs/92 §92.2).
   &.drag-over {

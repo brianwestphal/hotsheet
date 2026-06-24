@@ -48,23 +48,27 @@ export interface ClaimRow {
  *  2. **Shared pool** — an `up_next`, unclaimed-or-expired ticket (self-claim).
  *  Both require an actionable status, no unfinished `blocked_by` dependency
  *  (HS-8865), and being under the poison-retry budget (HS-8970). Own-claimed
- *  tickets sort ahead of the shared pool, then by the worklist priority order. */
+ *  tickets sort ahead of the shared pool, then by the worklist priority order.
+ *  HS-8975 — `ownOnly` (queue-only mode): serve ONLY this worker's own-claimed
+ *  (dispatched) tickets, never the shared pool — returns null once its queue is
+ *  empty so the worker stops instead of self-claiming. */
 export async function claimNext(
   worker: string,
   label: string | null,
   ttlSeconds: number = DEFAULT_CLAIM_TTL_SECONDS,
+  opts: { ownOnly?: boolean } = {},
 ): Promise<Ticket | null> {
   const db = await getDb();
+  const claimable = opts.ownOnly === true
+    ? 'claimed_by = $1'
+    : '(claimed_by = $1 OR (up_next = TRUE AND (claimed_by IS NULL OR claim_lease_expires_at < NOW())))';
   const result = await db.query<Ticket>(
     `WITH next AS (
        SELECT id FROM tickets
         WHERE status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
           AND claim_count < ${MAX_CLAIM_ATTEMPTS}
           AND id NOT IN (${BLOCKED_TICKET_IDS_SQL})
-          AND (
-            claimed_by = $1
-            OR (up_next = TRUE AND (claimed_by IS NULL OR claim_lease_expires_at < NOW()))
-          )
+          AND ${claimable}
         ORDER BY (CASE WHEN claimed_by = $1 THEN 0 ELSE 1 END), ${PRIORITY_ORD} ASC, id DESC
         FOR UPDATE SKIP LOCKED
         LIMIT 1

@@ -3,9 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  _resetPoolsForTesting, cancelDrain, getPoolState, isSlotStale, onClaimNext,
-  registerWorker, removeWorker, requestDrain, requestDrainAll, setTarget,
-  STALE_AFTER_MS, touch,
+  _resetPoolsForTesting, cancelDrain, getPoolState, isQueueOnly, isSlotStale,
+  onClaimNext, registerWorker, removeWorker, requestDrain, requestDrainAll,
+  setQueueOnly, setTarget, STALE_AFTER_MS, touch,
 } from './poolManager.js';
 
 const DIR = '/proj/.hotsheet';
@@ -111,6 +111,25 @@ describe('worker-pool manager (HS-8962)', () => {
       onClaimNext(DIR, 'w1');
       expect(getPoolState(DIR).workers[0].lastSeenAt).toBeGreaterThan(1);
       expect(touch(DIR, 'ghost')).toBe(false);
+    });
+  });
+
+  describe('queue-only mode (HS-8975)', () => {
+    it('defaults off, toggles on/off, and survives re-register', () => {
+      reg('w1');
+      expect(isQueueOnly(DIR, 'w1')).toBe(false);
+      expect(setQueueOnly(DIR, 'w1', true)).toBe(true);
+      expect(isQueueOnly(DIR, 'w1')).toBe(true);
+      reg('w1'); // re-register (fresh worker, same identity) preserves the toggle
+      expect(isQueueOnly(DIR, 'w1')).toBe(true);
+      expect(getPoolState(DIR).workers[0].queueOnly).toBe(true);
+      setQueueOnly(DIR, 'w1', false);
+      expect(isQueueOnly(DIR, 'w1')).toBe(false);
+    });
+
+    it('reports false / returns false for an unknown worker', () => {
+      expect(isQueueOnly(DIR, 'ghost')).toBe(false);
+      expect(setQueueOnly(DIR, 'ghost', true)).toBe(false);
     });
   });
 });

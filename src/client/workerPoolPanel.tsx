@@ -11,7 +11,7 @@
 import {
   drainAllPoolWorkers, drainPoolWorker, getSuggestedWorkerCount, getTicketPartition, getWorkerPool, launchWorker,
   type PoolState, registerPoolWorker, removePoolWorker, removeWorktree,
-  setPoolTarget, type WorkerSlotView,
+  setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { confirmDialog } from './confirm.js';
@@ -60,6 +60,7 @@ export function renderWorkerTile(
   w: WorkerSlotView,
   onDrain?: (w: WorkerSlotView) => void,
   onDispatch?: (w: WorkerSlotView, ticketIds: number[]) => void,
+  onQueueOnly?: (w: WorkerSlotView, queueOnly: boolean) => void,
 ): HTMLElement {
   const canDrain = w.state === 'idle' || w.state === 'working';
   const tile = toElement(
@@ -74,6 +75,11 @@ export function renderWorkerTile(
           : <span className="worker-tile-ticket-none">{w.state === 'stopped' || w.state === 'dead' ? 'cleaning up…' : '—'}</span>}
       </div>
       <div className="worker-tile-actions">
+        {canDrain && onQueueOnly !== undefined
+          ? <label className="worker-queue-only" title="Work only dispatched tickets, then stop (don't self-claim from the shared pool)">
+              <input type="checkbox" className="worker-queue-only-cb" checked={w.queueOnly} /> queue-only
+            </label>
+          : null}
         {canDrain && onDrain !== undefined
           ? <button type="button" className="btn btn-sm worker-drain-btn">Drain</button>
           : null}
@@ -82,6 +88,10 @@ export function renderWorkerTile(
   );
   if (canDrain && onDrain !== undefined) {
     tile.querySelector('.worker-drain-btn')?.addEventListener('click', () => onDrain(w));
+  }
+  if (canDrain && onQueueOnly !== undefined) {
+    const cb = tile.querySelector<HTMLInputElement>('.worker-queue-only-cb');
+    cb?.addEventListener('change', () => onQueueOnly(w, cb.checked));
   }
   // HS-8964 — drag-to-worker dispatch (docs/92 §92.2). A ticket drag in flight
   // (`draggedTicketIds`, §76) can be dropped onto a NON-draining tile to dispatch
@@ -173,6 +183,7 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
       w,
       (ww) => void handleDrain(ww, pool, bodyEl),
       (ww, ids) => void dispatchAndReport(ww.worker, ww.label, ids).then(() => refreshPool(bodyEl)),
+      (ww, q) => void handleQueueOnly(ww, q, bodyEl),
     ));
     bodyEl.replaceChildren(...tiles);
   }
@@ -348,6 +359,18 @@ async function handlePartition(pool: PoolState, bodyEl: HTMLElement): Promise<vo
     ? `Dispatched ${String(dispatched)} ticket${dispatched === 1 ? '' : 's'} across ${String(nonEmpty.length)} worker${nonEmpty.length === 1 ? '' : 's'}`
     : `Dispatched ${String(dispatched)}; ${String(failures.length)} failed (${[...new Set(failures)].join('; ')})`);
   await refreshPool(bodyEl);
+}
+
+/** HS-8975 — toggle a worker's queue-only mode (work only dispatched tickets,
+ *  then stop instead of self-claiming the shared pool). */
+async function handleQueueOnly(w: WorkerSlotView, queueOnly: boolean, bodyEl: HTMLElement): Promise<void> {
+  try {
+    await setQueueOnlyWorker({ worker: w.worker, queueOnly });
+    showToast(queueOnly ? `${w.label}: queue-only (dispatched tickets, then stop)` : `${w.label}: self-claims the shared pool`);
+    await refreshPool(bodyEl);
+  } catch (e) {
+    showToast(`Couldn't update ${w.label}: ${getErrorMessage(e)}`);
+  }
 }
 
 async function handleDrainAll(bodyEl: HTMLElement): Promise<void> {

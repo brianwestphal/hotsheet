@@ -8,7 +8,8 @@
 import { Hono } from 'hono';
 
 import {
-  LaunchWorkerReqSchema, PartitionReqSchema, RegisterWorkerReqSchema, SetTargetReqSchema,
+  LaunchWorkerReqSchema, PartitionReqSchema, RegisterWorkerReqSchema,
+  SetQueueOnlyReqSchema, SetTargetReqSchema,
 WorkerRefSchema,
   type WorkerSlotView, } from '../api/workers.js';
 import { getClaims } from '../db/claims.js';
@@ -19,7 +20,7 @@ import { prepareWorker } from '../workers/launchWorker.js';
 import { partitionTickets } from '../workers/partition.js';
 import {
   getPoolState, isSlotStale, registerWorker, removeWorker, requestDrain,
-  requestDrainAll, setTarget, type WorkerSlot,
+  requestDrainAll, setQueueOnly, setTarget, type WorkerSlot,
 } from '../workers/poolManager.js';
 import { suggestWorkerCount } from '../workers/suggestN.js';
 import { projectRootFromDataDir } from './git.js';
@@ -41,6 +42,7 @@ function toView(slot: WorkerSlot, claimByWorker: Map<string, { id: number; ticke
     label: slot.label, worker: slot.worker, worktreePath: slot.worktreePath,
     branch: slot.branch, terminalId: slot.terminalId, state,
     currentTicket: claim ?? null,
+    queueOnly: slot.queueOnly,
   };
 }
 
@@ -112,6 +114,15 @@ workerRoutes.post('/workers/pool/target', async (c) => {
   const parsed = parseBody(SetTargetReqSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   setTarget(c.get('dataDir'), parsed.data.targetN);
+  return c.json({ ok: true });
+});
+
+/** POST /api/workers/pool/queue-only — HS-8975: toggle a worker's queue-only mode. */
+workerRoutes.post('/workers/pool/queue-only', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(SetQueueOnlyReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  if (!setQueueOnly(c.get('dataDir'), parsed.data.worker, parsed.data.queueOnly)) return c.json({ error: 'No such worker' }, 404);
   return c.json({ ok: true });
 });
 

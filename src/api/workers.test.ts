@@ -41,7 +41,7 @@ describe('worker launch caller (HS-8863)', () => {
   });
 });
 
-const validSlot = { label: 'worker-1', worker: 'worker-1', worktreePath: '/wt/worker-1', branch: 'hotsheet/worker-1', terminalId: 't1', state: 'working', currentTicket: { id: 5, ticketNumber: 'HS-5', title: 'x' } };
+const validSlot = { label: 'worker-1', worker: 'worker-1', worktreePath: '/wt/worker-1', branch: 'hotsheet/worker-1', terminalId: 't1', state: 'working', currentTicket: { id: 5, ticketNumber: 'HS-5', title: 'x' }, queueOnly: false };
 
 describe('worker-pool schemas + callers (HS-8962)', () => {
   it('WorkerSlotViewSchema accepts a valid slot incl. null ticket + each state', () => {

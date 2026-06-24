@@ -753,6 +753,7 @@ The dispatch helper + personal-queue ordering are unit-tested; this covers the r
 - [ ] Right-click one or more tickets → **"Dispatch to worker ▸"** → pick a worker: same result via the Tauri-safe path. The submenu lists only live (idle/working) workers and doesn't appear when no pool exists.
 - [ ] Dispatch a ticket already claimed by another worker → a toast reports "already claimed by `<worker>`" and it isn't reassigned.
 - [ ] A dispatched worker finishes its dispatched queue, then falls back to self-claiming the shared pool.
+- [ ] **Queue-only mode (HS-8975):** check a worker tile's "queue-only" box → it works only tickets you dispatch to it and, once its queue empties, stops claiming (does NOT pull shared Up Next work); unchecking returns it to self-claiming. The toggle survives a worker re-register.
 - [ ] **AI partition (HS-8965):** with 2+ running workers and several Up Next tickets, click **"AI: partition"** → a confirm shows the proposed split (`worker-1 ← HS-1, HS-2` …); accepting dispatches each chunk to its worker (chips flip). With no AI provider it still produces a round-robin split; with no running workers it prompts to add one.
 - [ ] **Reassign (HS-8974):** dispatch a ticket already claimed by worker A to worker B → a confirm prompts "Reassign to B? (abandons in-progress work)"; confirming moves the claim to B (chip flips), declining leaves it with A.
 - [ ] **Recall (HS-8974):** right-click a claimed ticket → "Recall claim" → its chip clears and it returns to the self-claimable pool (a worker can claim-next it again).

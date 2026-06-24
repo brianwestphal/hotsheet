@@ -108,8 +108,10 @@ is a follow-up). Additive to manual dispatch, never a prerequisite.
   force)`, atomically overwriting the holder — no release-then-claim race) moves
   it. **Recall** is the "Recall claim" context-menu item (shown when any selected
   ticket is claimed) → force-release (`release(id)` with no worker) back to the
-  self-claimable pool. (A "queue-only" worker mode — §92.9 — is not built; a
-  dispatched worker always falls back to self-claim.)
+  self-claimable pool. **Queue-only mode (§92.9 → HS-8975) is shipped:** a per-tile
+  "queue-only" toggle marks a worker to work ONLY its dispatched tickets and then
+  stop (claim-next returns null) rather than self-claiming the shared pool; default
+  off (fall back to self-claim).
 - **Single-local default untouched:** dispatch only appears when a worker pool
   exists; with no pool there are no drop targets.
 
@@ -126,9 +128,10 @@ is a follow-up). Additive to manual dispatch, never a prerequisite.
 
 ## 92.9 Open questions
 
-- Does a dispatched worker, after finishing its queue, fall back to self-claim by
-  default, or stop? Lean: fall back (keep draining the pool) unless the owner set
-  it queue-only.
+- ~~Does a dispatched worker, after finishing its queue, fall back to self-claim by
+  default, or stop?~~ **Resolved (HS-8975):** fall back by default; the owner can
+  set a worker **queue-only** (per-tile toggle → `claimNext({ownOnly:true})` serves
+  only own-claimed tickets, then null) to make it stop after its queue instead.
 - Worker-queue ordering when multiple tickets are dispatched at once — priority
   order, or drop order? Lean priority (consistency with `claim-next`).
 - Whether the AI-partition helper ships with v1 or as a later add-on (it's

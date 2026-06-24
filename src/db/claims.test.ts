@@ -172,6 +172,18 @@ describe('claim/lease primitive (HS-8862)', () => {
       await claimById(t2.id, 'w1', 'worker-1');
       expect(await claimNext('w2', 'worker-2')).toBeNull();
     });
+
+    it('ownOnly (queue-only, HS-8975) serves only dispatched tickets, never the shared pool', async () => {
+      const shared = await upNext('shared', 'high');
+      // Empty personal queue → a queue-only worker does NOT pull the shared pool.
+      expect(await claimNext('w1', 'worker-1', undefined, { ownOnly: true })).toBeNull();
+      // A ticket dispatched to it IS served.
+      const dispatched = await upNext('dispatched', 'low');
+      await claimById(dispatched.id, 'w1', 'worker-1');
+      expect((await claimNext('w1', 'worker-1', undefined, { ownOnly: true }))!.id).toBe(dispatched.id);
+      // Sanity: a normal (non-queue-only) worker would have taken the shared one.
+      expect((await claimNext('w2', 'worker-2'))!.id).toBe(shared.id);
+    });
   });
 
   describe('reassign / recall (HS-8974)', () => {
