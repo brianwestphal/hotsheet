@@ -6,6 +6,7 @@ import type { Server as HttpServer } from 'http';
 import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { buildMtlsServeConfig, collectServerCertHosts, type MtlsServeConfig, peerIdentityFromEnv } from './auth/tlsListener.js';
 import { runWithDataDir } from './db/connection.js';
 import { readGlobalConfig } from './global-config.js';
 import { gracefulShutdown, registerHttpServerForShutdown } from './lifecycle.js';
@@ -32,9 +33,17 @@ import { wireTerminalWebSocket } from './terminals/websocket.js';
 import { isExposedBind } from './trusted-origin.js';
 import type { AppEnv } from './types.js';
 
-function tryServe(fetch: Hono['fetch'], port: number, hostname: string): Promise<{ port: number; server: HttpServer }> {
+function tryServe(
+  fetch: Hono['fetch'],
+  port: number,
+  hostname: string,
+  tls?: MtlsServeConfig | null,
+): Promise<{ port: number; server: HttpServer }> {
   return new Promise((resolve, reject) => {
-    const server = serve({ fetch, port, hostname });
+    // HS-8993 — on the exposed (Tier-1) path, `tls` carries the HTTPS
+    // `createServer` + mTLS `serverOptions` (`requestCert`/`rejectUnauthorized`).
+    // On loopback/Tier-0 it's absent → plain HTTP, exactly as before.
+    const server = serve({ fetch, port, hostname, ...(tls ?? {}) });
     server.on('listening', () => { resolve({ port, server: server as HttpServer }); });
     server.on('error', (err: NodeJS.ErrnoException) => {
       reject(err);
@@ -58,6 +67,16 @@ export async function startServer(
   const bind = options?.bind ?? globalConfig.bind ?? '127.0.0.1';
   const exposed = isExposedBind(bind);
   const trustedOrigins = globalConfig.trustedOrigins ?? [];
+
+  // HS-8993 — resolve the verified mTLS client identity (Tier-1) into the
+  // request context. `null` on a plain-HTTP loopback (Tier-0) connection; on the
+  // exposed TLS listener the peer cert is already verified against the CA (the
+  // connection wouldn't exist otherwise), so a non-null value is an authenticated
+  // device. Authz (sub-ticket 4) reads it; until then it's just surfaced.
+  app.use('*', async (c, next) => {
+    c.set('clientIdentity', peerIdentityFromEnv(c.env));
+    await next();
+  });
 
   // Inject context: resolve which project the request is for.
   // For requests with X-Hotsheet-Secret header, look up the project by secret.
@@ -204,11 +223,30 @@ export async function startServer(
   // Page routes
   app.route('/', pageRoutes);
 
+  // HS-8993 — on the exposed (Tier-1) path, stand up mTLS: an HTTPS listener
+  // requiring a CA-signed client cert. Loopback/Tier-0 stays plain HTTP +
+  // shared secret (UNCHANGED). An exposed server REQUIRES mTLS — if the CA can't
+  // be set up (no durable keychain; HS-9019) we fail startup rather than silently
+  // exposing a plaintext, secret-only surface (the whole point of §94).
+  let mtls: MtlsServeConfig | null = null;
+  if (exposed) {
+    try {
+      const hosts = collectServerCertHosts(bind, trustedOrigins, globalConfig.tlsServerHosts ?? []);
+      mtls = await buildMtlsServeConfig(dataDir, hosts);
+    } catch (err) {
+      console.error('\n  Error: cannot start mTLS on the exposed bind — the project CA could not be set up.');
+      console.error('  An off-localhost server requires mutual TLS (docs/94). This usually means the OS');
+      console.error('  keychain is unavailable (e.g. Windows / headless). See HS-9019.');
+      console.error(`  Underlying error: ${err instanceof Error ? err.message : String(err)}\n`);
+      throw err;
+    }
+  }
+
   let actualPort = port;
   let httpServer: HttpServer | null = null;
   for (let attempt = 0; attempt < 20; attempt++) {
     try {
-      const result = await tryServe(app.fetch, port + attempt, bind);
+      const result = await tryServe(app.fetch, port + attempt, bind, mtls);
       actualPort = result.port;
       httpServer = result.server;
       break;
@@ -248,20 +286,29 @@ export async function startServer(
   // trusted-origin allow-list is configured so the user knows the surface area.
   if (exposed) {
     console.log(`  ⚠ Bound to ${bind} — reachable off this machine.`);
-    console.log(`    GET requests from untrusted origins now require X-Hotsheet-Secret.`);
+    // HS-8993 — on an exposed bind the listener is now HTTPS with mutual TLS:
+    // every connection must present a CA-signed client cert (enroll one via the
+    // sub-ticket-3 `.p12` flow). The shared secret / origin gate remain as
+    // defense-in-depth but the client cert is the primary credential.
+    console.log(`    🔒 Mutual TLS REQUIRED — connect over https:// with an enrolled client certificate.`);
+    console.log(`    GET requests from untrusted origins also require X-Hotsheet-Secret (defense-in-depth).`);
     console.log(`    Trusted origins: ${trustedOrigins.length > 0 ? trustedOrigins.join(', ') : '(none configured — only localhost is trusted)'}`);
   }
 
-  const url = `http://localhost:${actualPort}`;
+  // HS-8993 — an exposed bind is HTTPS (mTLS); loopback/Tier-0 stays http.
+  const url = `${exposed ? 'https' : 'http'}://localhost:${actualPort}`;
   // HS-8704 — LOAD-BEARING log line. The Tauri shell (`src-tauri/src/lib.rs`)
   // greps sidecar stdout for the exact substring `running at ` and slices the
   // URL out after it to navigate the WebView off the "Starting Hot Sheet…"
   // splash. Reword this and the installed app hangs on the splash forever.
-  // The coupling is pinned by `src/launchReadinessContract.test.ts`.
+  // The coupling is pinned by `src/launchReadinessContract.test.ts`. (Tauri only
+  // ever launches the default loopback bind, so the scheme there stays http.)
   console.log(`\n  Hot Sheet running at ${url}\n`);
 
-  // Open browser (unless suppressed for Tauri sidecar mode)
-  if (options?.noOpen !== true) {
+  // Open browser (unless suppressed for Tauri sidecar mode). HS-8993 — never
+  // auto-open on an exposed mTLS bind: the local browser has no client cert, so
+  // the connection would just fail; the user connects from an enrolled device.
+  if (options?.noOpen !== true && !exposed) {
     const openCmd = process.platform === 'darwin' ? 'open'
       : process.platform === 'win32' ? 'start'
       : 'xdg-open';

@@ -15,8 +15,9 @@ before execution."
 > §88 hosted cloud will add OIDC/SSO separately); enrollment via **`.p12` import first + QR** (for
 > the future mobile-web client).
 >
-> **Implementation progress:** sub-ticket **1/6 (HS-8992) SHIPPED** — `src/auth/ca.ts` (CA + cert
-> lifecycle, pure crypto + keychain I/O, no wire change). Sub-tickets 2–6 pending (see §94.10).
+> **Implementation progress:** sub-tickets **1/6 (HS-8992)** + **2/6 (HS-8993) SHIPPED** —
+> `src/auth/ca.ts` (CA + cert lifecycle) + `src/auth/tlsListener.ts` (the exposed-only in-process
+> mTLS listener wired into `server.ts`). Sub-tickets 3–6 pending (see §94.10).
 
 ## 94.1 Why now
 
@@ -216,7 +217,25 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
 2. **In-process mTLS listener** — on the exposed (Tier-1) path, stand up the Node TLS server with
    `requestCert` + `rejectUnauthorized` against the project CA; map the verified peer cert →
    client identity into the request context; loopback/Tier-0 stays plain (today's behavior).
-   Extends the HS-7940 bind plumbing in `server.ts`. **Blocked by #1.**
+   Extends the HS-7940 bind plumbing in `server.ts`. **SHIPPED (HS-8993).**
+
+   **What shipped:** `src/auth/tlsListener.ts` — `buildMtlsServeConfig(dataDir, hosts)` loads/creates
+   the project CA (#1), signs a server cert, and returns the `@hono/node-server` `serve()` HTTPS
+   plumbing (`createServer: https.createServer` + `serverOptions` with `requestCert: true` +
+   `rejectUnauthorized: true` + `ca: [caCertPem]`); `collectServerCertHosts(bind, trustedOrigins,
+   tlsServerHosts)` chooses the server-cert SANs (concrete bind + plain host/IP trusted origins +
+   the new `tlsServerHosts` config; loopback always covered; wildcard binds skipped);
+   `peerIdentityFromEnv(env)` reads the verified peer identity off the live TLS socket. `server.ts`
+   calls `buildMtlsServeConfig` **only when `exposed`** (else plain HTTP, UNCHANGED), passes the TLS
+   config into `tryServe`/`serve()`, sets a new `AppEnv` var **`clientIdentity`** (`ClientIdentity |
+   null`) via an early middleware, and on the exposed bind prints "🔒 Mutual TLS REQUIRED",
+   switches the URL scheme to `https`, and skips browser auto-open (no client cert locally). The
+   terminal-WS + `/ws/sync` upgrades attach to the same (now HTTPS) server unchanged. An exposed bind
+   that can't set up the CA (no durable keychain, HS-9019) **fails startup** rather than silently
+   serving plaintext. Tests: `src/auth/tlsListener.test.ts` (host selection, peer-identity reads, and
+   a real HTTPS server that accepts a CA-signed client + rejects no-cert / foreign-CA clients).
+   **Deferred to #4 (HS-8995):** turning `clientIdentity` into authz + removing the secret as the
+   primary credential on this tier (today it's surfaced; the HS-7940 secret/origin gate still runs).
 3. **`.p12` enrollment** — the desktop flow to mint + export a client `.p12` (CA-signed) for a
    named device, and import an externally-generated one; a local-only CSR-signing endpoint.
    **Blocked by #1.**

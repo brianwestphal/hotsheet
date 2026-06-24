@@ -193,11 +193,17 @@ This document lists features that require manual verification before each releas
 The access-control matrix is unit + in-process tested (`src/trusted-origin.test.ts`, `src/routes/server.auth.test.ts`); these manual items cover the real off-box transport that CI can't exercise.
 
 - [ ] Default `hotsheet` (no `--bind`) is loopback-only: from a SECOND machine on the LAN, `http://<host-ip>:4174` does NOT connect (connection refused).
-- [ ] `hotsheet --bind 0.0.0.0` prints the "Bound to 0.0.0.0 — reachable off this machine" warning + the trusted-origins line at startup.
-- [ ] With `--bind 0.0.0.0` and NO `trustedOrigins`: from the second machine, `GET /api/tickets` (no secret) returns 403; adding `?` won't help — only `X-Hotsheet-Secret: <secret>` returns 200.
-- [ ] Add the second machine's origin (or `tailscale`) to `~/.hotsheet/config.json:trustedOrigins`, restart: the same browser GET now loads the UI without a secret.
-- [ ] Local browser on the host (localhost origin) keeps working unchanged with `--bind 0.0.0.0` (always trusted).
-- [ ] Terminal still attaches over the WebSocket from a trusted remote (secret carried in the connect URL).
+- [ ] Local browser on the host keeps working unchanged with the **default loopback** bind (plain HTTP, Tier-0 — UNCHANGED by mTLS).
+
+### Exposed-bind mutual TLS (`--bind` non-loopback, HS-8993 / §94) — needs a second machine / device
+
+The listener behavior (accepts a CA-signed client, rejects no-cert / foreign-CA) is integration-tested against a real Node HTTPS server (`src/auth/tlsListener.test.ts`); the cert *enrollment* UX lands in sub-ticket 3 (HS-8994), so full end-to-end manual testing with an installed `.p12` is gated on that. For now:
+
+- [ ] `hotsheet --bind 0.0.0.0` prints "⚠ Bound to 0.0.0.0…" + "🔒 Mutual TLS REQUIRED — connect over https:// with an enrolled client certificate." + the trusted-origins line, and the "running at" URL is **`https://`**; no browser auto-opens.
+- [ ] From the second machine, plain `http://<host-ip>:4174` does NOT work (the listener is HTTPS now); `https://<host-ip>:4174` with **no client cert** is rejected at the TLS layer (the browser shows a cert-required / connection error), confirming an unauthenticated remote can't reach any handler.
+- [ ] (After HS-8994 enrollment ships) installing the minted client `.p12` on the second device lets `https://<host-ip>:4174` connect and load the UI; revoking it (HS-8995) blocks it again.
+- [ ] On a host with **no OS keychain** (e.g. Windows today, HS-9019): `hotsheet --bind 0.0.0.0` fails to start with the "cannot start mTLS … project CA could not be set up" error rather than silently serving plaintext.
+- [ ] Terminal + `/ws/sync` WebSockets still attach from an enrolled remote (they ride the same HTTPS server → `wss://`).
 
 ### WebSocket live sync (`/ws/sync`, HS-8981) — multi-client
 

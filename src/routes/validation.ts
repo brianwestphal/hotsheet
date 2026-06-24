@@ -281,6 +281,11 @@ export const GlobalConfigSchema = z.object({
   // the API + do same-origin mutations without the secret on an exposed server.
   bind: z.string().optional(),
   trustedOrigins: z.array(z.string()).optional(),
+  // HS-8993 — extra hostnames/IPs to embed as SANs in the mTLS server cert
+  // (§94). Needed when `bind` is a wildcard (`0.0.0.0`) so the cert covers the
+  // actual address clients connect to; loopback + a concrete `bind` + plain
+  // host/IP `trustedOrigins` entries are included automatically.
+  tlsServerHosts: z.array(z.string()).optional(),
   // HS-8488 — "use software rendering for terminals" opt-out. See
   // `global-config.ts` for the contract.
   terminalWebglOptOut: z.boolean().optional(),

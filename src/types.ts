@@ -1,3 +1,5 @@
+import type { ClientIdentity } from './auth/ca.js';
+
 export type TicketCategory = string;
 export type TicketPriority = 'highest' | 'high' | 'default' | 'low' | 'lowest';
 export type TicketStatus = 'not_started' | 'started' | 'completed' | 'verified' | 'backlog' | 'archive' | 'deleted';
@@ -175,5 +177,9 @@ export interface AppEnv {
   Variables: {
     dataDir: string;
     projectSecret: string;
+    // HS-8993 — the verified mTLS client identity on the exposed (Tier-1) path
+    // (§94). `null` on a plain-HTTP loopback (Tier-0) connection or a peer with
+    // no Hot Sheet client cert. Authz (sub-ticket 4) reads "who" from this.
+    clientIdentity: ClientIdentity | null;
   };
 }
