@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { backoffDelay, createWsSync, frameAction, shouldFallback, type WsLike } from './wsSync.js';
+import { backoffDelay, createWsSync, frameAction, reduceMutation, shouldFallback, type WsLike } from './wsSync.js';
 
 describe('backoffDelay', () => {
   it('doubles from 1s and caps at 30s', () => {
@@ -37,6 +37,42 @@ describe('frameAction', () => {
   });
 });
 
+describe('reduceMutation', () => {
+  const allLoaded = () => true;
+  const noneLoaded = () => false;
+
+  it('ticket-deleted → remove (always, regardless of loaded)', () => {
+    expect(reduceMutation({ type: 'ticket-deleted', id: 3 }, noneLoaded)).toEqual({ remove: [3], optimistic: [], refetch: false });
+  });
+
+  it('ticket-updated → optimistic when loaded, refetch when not', () => {
+    expect(reduceMutation({ type: 'ticket-updated', id: 1, changes: { title: 't' } }, allLoaded))
+      .toEqual({ remove: [], optimistic: [{ id: 1, patch: { title: 't' } }], refetch: false });
+    expect(reduceMutation({ type: 'ticket-updated', id: 1, changes: { title: 't' } }, noneLoaded).refetch).toBe(true);
+  });
+
+  it('field-changed events → per-id optimistic patches (loaded)', () => {
+    expect(reduceMutation({ type: 'status-changed', ticketIds: [1, 2], to: 'started' }, allLoaded))
+      .toEqual({ remove: [], optimistic: [{ id: 1, patch: { status: 'started' } }, { id: 2, patch: { status: 'started' } }], refetch: false });
+    expect(reduceMutation({ type: 'category-changed', ticketIds: [1], to: 'bug' }, allLoaded).optimistic[0]).toEqual({ id: 1, patch: { category: 'bug' } });
+    // any unloaded id → refetch
+    expect(reduceMutation({ type: 'priority-changed', ticketIds: [1, 99], to: 'high' }, (id) => id === 1).refetch).toBe(true);
+  });
+
+  it('batch-operation delete/empty-trash → remove; up_next → optimistic; restore → refetch', () => {
+    expect(reduceMutation({ type: 'batch-operation', op: 'delete', ids: [1, 2], changes: {} }, noneLoaded)).toEqual({ remove: [1, 2], optimistic: [], refetch: false });
+    expect(reduceMutation({ type: 'batch-operation', op: 'empty-trash', ids: [4], changes: {} }, noneLoaded).remove).toEqual([4]);
+    expect(reduceMutation({ type: 'batch-operation', op: 'up_next', ids: [1], changes: { up_next: true } }, allLoaded).optimistic[0]).toEqual({ id: 1, patch: { up_next: true } });
+    expect(reduceMutation({ type: 'batch-operation', op: 'restore', ids: [1], changes: {} }, allLoaded).refetch).toBe(true);
+  });
+
+  it('ticket-created / settings-changed / unknown → refetch', () => {
+    expect(reduceMutation({ type: 'ticket-created', ticket: { id: 1 } }, allLoaded).refetch).toBe(true);
+    expect(reduceMutation({ type: 'settings-changed', key: 'k', value: 1 }, allLoaded).refetch).toBe(true);
+    expect(reduceMutation({ type: 'whatever' }, allLoaded).refetch).toBe(true);
+  });
+});
+
 class FakeSocket implements WsLike {
   sent: string[] = [];
   readyState = 1;
@@ -51,7 +87,7 @@ class FakeSocket implements WsLike {
   push(frame: unknown): void { this.onmessage?.({ data: JSON.stringify(frame) }); }
 }
 
-function harness(initialSecret: string | null = 'sec') {
+function harness(initialSecret: string | null = 'sec', loadedIds: number[] = []) {
   const sockets: FakeSocket[] = [];
   const urls: string[] = [];
   const timers: Array<() => void> = [];
@@ -60,7 +96,10 @@ function harness(initialSecret: string | null = 'sec') {
   const refreshData = vi.fn();
   const refreshDetail = vi.fn();
   const refreshClaims = vi.fn();
+  const removeTicket = vi.fn();
+  const optimisticUpdate = vi.fn();
   const showHint = vi.fn();
+  const loaded = new Set<number>(loadedIds);
   const ws = createWsSync({
     createSocket: (url) => { urls.push(url); const s = new FakeSocket(); sockets.push(s); return s; },
     now: () => now,
@@ -69,12 +108,15 @@ function harness(initialSecret: string | null = 'sec') {
     refreshData,
     refreshDetail,
     refreshClaims,
+    hasTicket: (id) => loaded.has(id),
+    removeTicket,
+    optimisticUpdate,
     showHint,
     getSecret: () => secret,
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshClaims, showHint,
+    ws, sockets, urls, refreshData, refreshDetail, refreshClaims, removeTicket, optimisticUpdate, showHint,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -106,16 +148,50 @@ describe('createWsSync flow', () => {
     expect(h.last().sent).toEqual([JSON.stringify({ type: 'pong' })]);
   });
 
-  it('refreshes data on a mutation event and dedups by seq', () => {
+  it('dedups by seq (a seq <= the connected baseline is ignored)', () => {
     const h = harness();
     h.ws.start();
     h.last().push({ type: 'connected', seq: 5 });
     h.last().push({ type: 'ticket-updated', id: 1, changes: {}, seq: 5 }); // <= baseline → ignored
     expect(h.refreshData).not.toHaveBeenCalled();
-    h.last().push({ type: 'ticket-updated', id: 1, changes: {}, seq: 6 });
+    expect(h.optimisticUpdate).not.toHaveBeenCalled();
+    h.last().push({ type: 'ticket-updated', id: 1, changes: { title: 'x' }, seq: 6 }); // id 1 not loaded → refetch
     expect(h.refreshData).toHaveBeenCalledTimes(1);
-    h.last().push({ type: 'ticket-deleted', id: 2, seq: 7 });
-    expect(h.refreshData).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies a loaded ticket in place (optimisticUpdate, no refetch)', () => {
+    const h = harness('sec', [1]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'ticket-updated', id: 1, changes: { title: 'renamed' }, seq: 1 });
+    expect(h.optimisticUpdate).toHaveBeenCalledWith(1, { title: 'renamed' });
+    expect(h.refreshData).not.toHaveBeenCalled();
+  });
+
+  it('refetches when an affected ticket is NOT loaded (it may now be in-view)', () => {
+    const h = harness('sec', []);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'status-changed', ticketIds: [9], to: 'started', seq: 1 });
+    expect(h.refreshData).toHaveBeenCalledTimes(1);
+    expect(h.optimisticUpdate).not.toHaveBeenCalled();
+  });
+
+  it('removes a deleted ticket in place (no refetch)', () => {
+    const h = harness('sec', [2]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'ticket-deleted', id: 2, seq: 1 });
+    expect(h.removeTicket).toHaveBeenCalledWith(2);
+    expect(h.refreshData).not.toHaveBeenCalled();
+  });
+
+  it('refetches placement-sensitive events (ticket-created)', () => {
+    const h = harness('sec', [1]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'ticket-created', ticket: { id: 5 }, seq: 1 });
+    expect(h.refreshData).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes only the detail panel on attachment events', () => {

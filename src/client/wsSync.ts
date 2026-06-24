@@ -1,19 +1,21 @@
 // HS-7945 / HS-8981 — client side of the WebSocket push channel (docs/93
 // §93.5/§93.6). Connects to `/ws/sync`, and while connected it OWNS the
 // ticket-data refresh (the long-poll in `poll.tsx` skips its data branch via
-// `isWsActive()`), so a mutation on any client lands here as a push. On a
-// pushed mutation event it drives the SAME proven refresh the poll uses
-// (`loadTickets` + detail + feedback) — correct + diff-rendered. A true
-// per-event in-memory reducer that mutates the store WITHOUT a refetch (the
-// remote-bandwidth optimization in §93.5) is a follow-up; the long-poll is
-// already instant locally, so this delivers the transport + multi-client push
-// + fallback without the drift risk of hand-applied store mutations.
+// `isWsActive()`), so a mutation on any client lands here as a push.
+//
+// HS-8984 — a pushed mutation is applied to the in-memory `ticketsStore` IN
+// PLACE where possible (`reduceMutation` → `optimisticUpdate` / `removeTicket`),
+// avoiding a full `loadTickets` refetch (the §93.5 bandwidth win). When a change
+// could transition a NOT-loaded ticket into the active view, or is otherwise
+// placement-sensitive, it falls back to a coalesced refetch — correct, not a
+// guess. The store + `filteredTickets` re-render the affected rows.
 //
 // Reconnect: exponential backoff (1s→30s). Fallback: if the socket can't hold
 // (drops twice within 30s, or never connects), surface a "live updates
 // unavailable" hint and let the long-poll carry data until the WS recovers.
 
 import { getActiveProject } from './state.js';
+import { ticketsStore } from './ticketsStore.js';
 
 const FALLBACK_WINDOW_MS = 30_000;
 const FALLBACK_DROP_THRESHOLD = 2;
@@ -59,6 +61,58 @@ export function frameAction(type: unknown): FrameAction {
   }
 }
 
+/** The in-memory store operations a mutation frame reduces to. */
+export interface MutationApply {
+  remove: number[];
+  optimistic: { id: number; patch: Record<string, unknown> }[];
+  refetch: boolean;
+}
+
+function toIdList(v: unknown): number[] {
+  return Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number') : [];
+}
+function toRecord(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+}
+
+/**
+ * HS-8984 — reduce a sequenced mutation frame to in-place store ops, so the
+ * common cases don't trigger a full `loadTickets` refetch (the §93.5 bandwidth
+ * win). Loaded tickets are mutated in place — the store + `filteredTickets`
+ * already re-render the row, move it between columns, and add/drop it from the
+ * active view correctly. **But** if an affected ticket ISN'T loaded, a remote
+ * change might transition it INTO the active view, which an in-place update
+ * can't represent — so we refetch (correct, not a guess). Placement-sensitive
+ * events (`ticket-created` / batch `restore`), `settings-changed`, note events,
+ * and anything unrecognized also refetch.
+ */
+export function reduceMutation(frame: Record<string, unknown>, hasTicket: (id: number) => boolean): MutationApply {
+  const REFETCH: MutationApply = { remove: [], optimistic: [], refetch: true };
+  const inPlace = (patches: { id: number; patch: Record<string, unknown> }[]): MutationApply =>
+    patches.every(p => hasTicket(p.id)) ? { remove: [], optimistic: patches, refetch: false } : REFETCH;
+
+  switch (frame.type) {
+    case 'ticket-deleted':
+      return { remove: [Number(frame.id)], optimistic: [], refetch: false };
+    case 'ticket-updated':
+      return inPlace([{ id: Number(frame.id), patch: toRecord(frame.changes) }]);
+    case 'category-changed':
+      return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { category: frame.to } })));
+    case 'priority-changed':
+      return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { priority: frame.to } })));
+    case 'status-changed':
+      return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { status: frame.to } })));
+    case 'batch-operation': {
+      const ids = toIdList(frame.ids);
+      if (frame.op === 'delete' || frame.op === 'empty-trash') return { remove: ids, optimistic: [], refetch: false };
+      if (frame.op === 'up_next') return inPlace(ids.map(id => ({ id, patch: { up_next: toRecord(frame.changes).up_next } })));
+      return REFETCH; // restore (+ anything else) is placement-sensitive
+    }
+    default:
+      return REFETCH; // ticket-created, settings-changed, note-*, unknown
+  }
+}
+
 /** Minimal WebSocket surface the module uses (real `WebSocket` satisfies it). */
 export interface WsLike {
   send(data: string): void;
@@ -81,6 +135,13 @@ export interface WsSyncDeps {
   refreshDetail: () => void;
   /** Refresh the distributed-execution claim set (claimed-by chip). */
   refreshClaims: () => void;
+  /** HS-8984 — is a ticket currently in the in-memory list? (drives in-place
+   *  apply vs refetch). */
+  hasTicket: (id: number) => boolean;
+  /** Remove a ticket from the in-memory list (no-op if absent). */
+  removeTicket: (id: number) => void;
+  /** Merge a patch into a loaded ticket (no-op if absent). */
+  optimisticUpdate: (id: number, patch: Record<string, unknown>) => void;
   /** Show / hide the "live updates unavailable" hint. */
   showHint: (show: boolean) => void;
   /** The active project's secret (the bus key), or null when none. */
@@ -161,7 +222,16 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     }
     if (action === 'detail') deps.refreshDetail();
     else if (action === 'claims') deps.refreshClaims();
-    else deps.refreshData();
+    else applyMutation(f);
+  }
+
+  // HS-8984 — apply a ticket mutation in place where possible, else refetch.
+  function applyMutation(frame: Record<string, unknown>): void {
+    const plan = reduceMutation(frame, deps.hasTicket);
+    if (plan.refetch) { deps.refreshData(); return; }
+    for (const id of plan.remove) deps.removeTicket(id);
+    for (const p of plan.optimistic) deps.optimisticUpdate(p.id, p.patch);
+    deps.refreshDetail(); // keep the open detail panel current
   }
 
   function sendPong(): void {
@@ -281,6 +351,11 @@ const wsSync = createWsSync({
   refreshData: scheduleCoalescedRefresh,
   refreshDetail: runDetailRefresh,
   refreshClaims: runClaimsRefresh,
+  hasTicket: (id) => ticketsStore.state.value.tickets.some(t => t.id === id),
+  removeTicket: (id) => { ticketsStore.actions.removeTicket(id); },
+  // The patch fields come from the server's validated ticket-update payload —
+  // they ARE Ticket fields; the cast just bridges the loose wire Record.
+  optimisticUpdate: (id, patch) => { ticketsStore.actions.optimisticUpdate(id, patch); },
   showHint: toggleHintBanner,
   getSecret: () => getActiveProject()?.secret ?? null,
   buildUrl: buildWsUrl,
