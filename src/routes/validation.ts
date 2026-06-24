@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 import { APPLE_FOUNDATION_MODEL_ID, LOCAL_MODEL_ID } from '../announcer/models.js';
+// HS-8990 — generous per-field upper bounds (see `src/limits.ts`).
+import {
+  MAX_BATCH_IDS, MAX_CATEGORY_CHARS, MAX_DETAILS_CHARS, MAX_LABEL_CHARS,
+  MAX_NOTES_CHARS, MAX_SEARCH_CHARS, MAX_TAGS_CHARS, MAX_TITLE_CHARS,
+} from '../limits.js';
 
 // --- Enums ---
 
@@ -12,23 +17,23 @@ export const SortDirSchema = z.enum(['asc', 'desc']);
 // --- Ticket routes ---
 
 export const CreateTicketSchema = z.object({
-  title: z.string().optional().default(''),
+  title: z.string().max(MAX_TITLE_CHARS).optional().default(''),
   defaults: z.object({
-    category: z.string().optional(),
+    category: z.string().max(MAX_CATEGORY_CHARS).optional(),
     priority: TicketPrioritySchema.or(z.literal('')).optional(),
     status: TicketStatusSchema.or(z.literal('')).optional(),
     up_next: z.boolean().optional(),
-    details: z.string().optional(),
-    tags: z.string().optional(),
+    details: z.string().max(MAX_DETAILS_CHARS).optional(),
+    tags: z.string().max(MAX_TAGS_CHARS).optional(),
   }).optional(),
 });
 
 export const UpdateTicketSchema = z.object({
-  title: z.string().optional(),
-  details: z.string().optional(),
-  notes: z.string().optional(),
-  tags: z.string().optional(),
-  category: z.string().optional(),
+  title: z.string().max(MAX_TITLE_CHARS).optional(),
+  details: z.string().max(MAX_DETAILS_CHARS).optional(),
+  notes: z.string().max(MAX_NOTES_CHARS).optional(),
+  tags: z.string().max(MAX_TAGS_CHARS).optional(),
+  category: z.string().max(MAX_CATEGORY_CHARS).optional(),
   priority: TicketPrioritySchema.optional(),
   status: TicketStatusSchema.optional(),
   up_next: z.boolean().optional(),
@@ -36,27 +41,27 @@ export const UpdateTicketSchema = z.object({
 });
 
 export const BatchActionSchema = z.object({
-  ids: z.array(z.number().int()),
+  ids: z.array(z.number().int()).max(MAX_BATCH_IDS),
   action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']),
-  value: z.union([z.string(), z.boolean()]).optional(),
+  value: z.union([z.string().max(MAX_CATEGORY_CHARS), z.boolean()]).optional(),
 });
 
 export const DuplicateSchema = z.object({
-  ids: z.array(z.number().int()),
+  ids: z.array(z.number().int()).max(MAX_BATCH_IDS),
 });
 
 export const NotesEditSchema = z.object({
-  text: z.string(),
+  text: z.string().max(MAX_NOTES_CHARS),
 });
 
 export const NotesBulkSchema = z.object({
-  notes: z.string(),
+  notes: z.string().max(MAX_NOTES_CHARS),
 });
 
 // HS-8862 — distributed-execution claim/lease request bodies (docs/90 §90.3).
 export const ClaimSchema = z.object({
-  worker: z.string().min(1),
-  label: z.string().nullish(),
+  worker: z.string().min(1).max(MAX_LABEL_CHARS),
+  label: z.string().max(MAX_LABEL_CHARS).nullish(),
   ttlSeconds: z.number().int().positive().max(3600).optional(),
   // HS-8974 — force a reassign: take the ticket from its current holder
   // (overwrites a live foreign lease instead of returning 409). Only honored by
@@ -69,7 +74,7 @@ export const ReleaseSchema = z.object({
 
 // HS-8865 — flat blocked_by dependency gate. Replace a ticket's blocker set.
 export const BlockedBySchema = z.object({
-  blockerIds: z.array(z.number().int()),
+  blockerIds: z.array(z.number().int()).max(MAX_BATCH_IDS),
 });
 
 /** HS-7599 — feedback draft create/update payload. The client builds this
@@ -108,11 +113,11 @@ export const QueryTicketsSchema = z.object({
   conditions: z.array(z.object({
     field: z.enum(['category', 'priority', 'status', 'title', 'details', 'up_next', 'tags']),
     operator: z.enum(['equals', 'not_equals', 'contains', 'not_contains', 'lt', 'lte', 'gt', 'gte']),
-    value: z.string(),
-  })),
-  sort_by: z.string().optional(),
+    value: z.string().max(MAX_SEARCH_CHARS),
+  })).max(MAX_BATCH_IDS),
+  sort_by: z.string().max(MAX_CATEGORY_CHARS).optional(),
   sort_dir: SortDirSchema.optional(),
-  required_tag: z.string().optional(),
+  required_tag: z.string().max(MAX_TAGS_CHARS).optional(),
   include_archived: z.boolean().optional(),
 });
 

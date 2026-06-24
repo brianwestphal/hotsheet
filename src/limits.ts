@@ -71,3 +71,23 @@ export const OPEN_TICKETS_SYNC_DEBOUNCE_MS = 5000;
  * client typo doesn't silently degrade to "fetch everything".
  */
 export const TICKETS_LIST_MAX_LIMIT = 10_000;
+
+/**
+ * HS-8990 — GENEROUS upper bounds on user-supplied request fields, so an
+ * attacker can't balloon server memory / the DB with a single oversized field
+ * (the §85 / §94.3 "abusive content" surface) while never tripping a real user.
+ * Each is far above any legitimate value: a title is a line; "details"/"notes"
+ * are documents (1 MiB ≈ a very long essay); a batch touches at most a few
+ * thousand tickets. The body-size cap (`requestGuards`) bounds the WHOLE
+ * payload; these bound INDIVIDUAL fields at the schema (`routes/validation.ts`),
+ * returning 400 before the value reaches the DB. Picked deliberately — the
+ * HS-8987 security-review skill flags any field that regrows unbounded.
+ */
+export const MAX_TITLE_CHARS = 2_000;
+export const MAX_DETAILS_CHARS = 1_048_576; // 1 MiB
+export const MAX_NOTES_CHARS = 1_048_576; // 1 MiB
+export const MAX_TAGS_CHARS = 64 * 1024;
+export const MAX_CATEGORY_CHARS = 200;
+export const MAX_SEARCH_CHARS = 10_000;
+export const MAX_LABEL_CHARS = 500;
+export const MAX_BATCH_IDS = 50_000;

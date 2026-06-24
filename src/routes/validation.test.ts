@@ -7,12 +7,31 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { MAX_BATCH_IDS, MAX_DETAILS_CHARS, MAX_TITLE_CHARS } from '../limits.js';
 import {
   BatchActionSchema,
   CreateTicketSchema,
   parseBody,
   UpdateTicketSchema,
 } from './validation.js';
+
+describe('HS-8990 — field bounds', () => {
+  it('rejects an over-cap title / details, accepts at the cap', () => {
+    expect(CreateTicketSchema.safeParse({ title: 'x'.repeat(MAX_TITLE_CHARS) }).success).toBe(true);
+    expect(CreateTicketSchema.safeParse({ title: 'x'.repeat(MAX_TITLE_CHARS + 1) }).success).toBe(false);
+    expect(UpdateTicketSchema.safeParse({ details: 'x'.repeat(MAX_DETAILS_CHARS + 1) }).success).toBe(false);
+  });
+
+  it('rejects an over-cap batch ids array', () => {
+    const ids = Array.from({ length: MAX_BATCH_IDS + 1 }, (_, i) => i);
+    expect(BatchActionSchema.safeParse({ ids, action: 'delete' }).success).toBe(false);
+  });
+
+  it('still accepts a normal payload', () => {
+    expect(CreateTicketSchema.safeParse({ title: 'Hello', defaults: { details: 'a normal body' } }).success).toBe(true);
+    expect(BatchActionSchema.safeParse({ ids: [1, 2, 3], action: 'status', value: 'started' }).success).toBe(true);
+  });
+});
 
 describe('parseBody', () => {
   it('returns the parsed data on a valid body', () => {

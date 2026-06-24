@@ -21,8 +21,23 @@ import { isLoopbackAddress } from '../trusted-origin.js';
 import type { AppEnv } from '../types.js';
 
 /** Default global request-body cap: generous (blocks the egregious, not legit
- *  attachments / telemetry batches). Per-route tightening is a follow-up. */
+ *  attachments / telemetry batches). Used when a single override is given. */
 export const DEFAULT_MAX_BODY_BYTES = 100 * 1024 * 1024; // 100 MiB
+
+// HS-8990 — per-route-class body caps. The default is path-aware so a JSON
+// mutation can't ship 100 MiB (only an attachment upload should), tightening the
+// JSON surface while never regressing legit uploads / telemetry batches.
+export const JSON_BODY_CAP_BYTES = 8 * 1024 * 1024;     // ticket/settings JSON
+export const UPLOAD_BODY_CAP_BYTES = 100 * 1024 * 1024; // attachment multipart
+export const OTLP_BODY_CAP_BYTES = 16 * 1024 * 1024;    // /v1/* telemetry ingest
+
+/** Path → body cap. Attachment uploads get the large cap, OTLP ingest a moderate
+ *  one, everything else the JSON cap. */
+export function defaultBodyCap(path: string): number {
+  if (path.includes('/attachments')) return UPLOAD_BODY_CAP_BYTES;
+  if (path.startsWith('/v1/')) return OTLP_BODY_CAP_BYTES;
+  return JSON_BODY_CAP_BYTES;
+}
 
 /** Default per-IP rate limit on an exposed server: 1200 requests / minute —
  *  far above any legit single-client cadence (the poll is ~1/s), well below a
@@ -32,7 +47,10 @@ export const DEFAULT_RATE_LIMIT = { windowMs: 60_000, max: 1200 };
 export interface RequestGuardOptions {
   /** Server bound to a non-loopback address (rate limiting only applies then). */
   exposed: boolean;
+  /** A single cap for every path (overrides `bodyCapForPath`). */
   maxBodyBytes?: number;
+  /** Per-path body cap (defaults to `defaultBodyCap`). */
+  bodyCapForPath?: (path: string) => number;
   rateLimit?: { windowMs: number; max: number };
   /** Test seam — override the clock. */
   now?: () => number;
@@ -48,14 +66,16 @@ export function parseContentLength(v: string | undefined): number | null {
 }
 
 export function createRequestGuards(opts: RequestGuardOptions): MiddlewareHandler<AppEnv> {
-  const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  const bodyCap: (path: string) => number = opts.maxBodyBytes !== undefined
+    ? () => opts.maxBodyBytes as number
+    : (opts.bodyCapForPath ?? defaultBodyCap);
   const limiter = createRateLimiter(opts.rateLimit ?? DEFAULT_RATE_LIMIT);
   const now = opts.now ?? ((): number => Date.now());
 
   return async (c, next) => {
-    // (1) Body-size cap.
+    // (1) Body-size cap (per route class).
     const len = parseContentLength(c.req.header('content-length'));
-    if (len !== null && len > maxBodyBytes) {
+    if (len !== null && len > bodyCap(c.req.path)) {
       return c.json({ error: 'Request body too large' }, 413);
     }
 

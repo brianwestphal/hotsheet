@@ -2,7 +2,19 @@ import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 
 import type { AppEnv } from '../types.js';
-import { createRequestGuards, parseContentLength } from './requestGuards.js';
+import {
+  createRequestGuards, defaultBodyCap, JSON_BODY_CAP_BYTES,
+  OTLP_BODY_CAP_BYTES, parseContentLength, UPLOAD_BODY_CAP_BYTES,
+} from './requestGuards.js';
+
+describe('defaultBodyCap (per route class)', () => {
+  it('large for attachment uploads, moderate for OTLP, JSON cap otherwise', () => {
+    expect(defaultBodyCap('/api/tickets/5/attachments')).toBe(UPLOAD_BODY_CAP_BYTES);
+    expect(defaultBodyCap('/v1/metrics')).toBe(OTLP_BODY_CAP_BYTES);
+    expect(defaultBodyCap('/api/tickets')).toBe(JSON_BODY_CAP_BYTES);
+    expect(defaultBodyCap('/api/settings')).toBe(JSON_BODY_CAP_BYTES);
+  });
+});
 
 describe('parseContentLength', () => {
   it('parses a valid length, rejects junk/absent', () => {
@@ -20,8 +32,19 @@ function appWith(guards: ReturnType<typeof createRequestGuards>) {
   app.use('/api/*', guards);
   app.post('/api/x', (c) => c.json({ ok: true }));
   app.get('/api/x', (c) => c.json({ ok: true }));
+  app.post('/api/tickets/1/attachments', (c) => c.json({ ok: true }));
   return app;
 }
+
+describe('createRequestGuards — per-route caps (default path-aware)', () => {
+  it('caps a JSON path at the JSON cap but allows the same size on an upload path', async () => {
+    const app = appWith(createRequestGuards({ exposed: false })); // path-aware default
+    const over = String(JSON_BODY_CAP_BYTES + 1);
+    expect((await app.request('/api/x', { method: 'POST', headers: { 'Content-Length': over } })).status).toBe(413);
+    // The same size is under the (larger) attachment cap → allowed.
+    expect((await app.request('/api/tickets/1/attachments', { method: 'POST', headers: { 'Content-Length': over } })).status).toBe(200);
+  });
+});
 
 describe('createRequestGuards — body-size cap', () => {
   it('rejects a body over the cap with 413', async () => {
