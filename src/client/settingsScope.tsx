@@ -48,8 +48,15 @@ interface ScopedField {
  * The scalar file-settings fields whose write listeners live in
  * `settingsDialog.tsx` (so their writes route through `persistScopedSetting`).
  * Complex list editors (categories, terminals, allow-rules, …) live in their
- * own modules and are locked via `data-scope-complex` instead — see HS-9004
- * follow-ups for per-layer editing of those.
+ * own modules and are locked via `data-scope-complex` instead — see HS-9005 for
+ * per-layer (element-level) editing of those.
+ *
+ * STANDING RULE (docs/95 §95.6): the shared-vs-local classification of a setting
+ * is a product decision — personal preference vs team policy vs machine value.
+ * When you add a new setting (especially a complex/list editor) or hit an unclear
+ * case, do NOT guess — ask the maintainer how it should be shared. The current
+ * classification + per-editor rules live in docs/95-settings-sharing-classification.md;
+ * the default layer per key is `defaultScope` in `src/file-settings.ts`.
  */
 const SCOPED_FIELDS: ScopedField[] = [
   // General
@@ -75,6 +82,9 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean' },
   // Experimental
   { controlId: 'settings-shell-streaming-enabled', key: 'shell_streaming_enabled', kind: 'boolean' },
+  // Announcer (per-project file setting; the model/rate/etc. are machine-global
+  // and write to ~/.hotsheet/config.json, so they're layer-safe and stay plain).
+  { controlId: 'settings-announcer-enabled', key: 'announcer_enabled', kind: 'boolean' },
 ];
 
 let mode: ScopeMode = 'resolved';
@@ -145,12 +155,14 @@ export async function loadAndApplyScope(): Promise<void> {
  * default-routed `fallback` runs (preserving today's behavior + side-effects);
  * in `shared`/`local` mode the value is written to that explicit layer.
  * Refreshes the cached layers + badges (without clobbering the focused input).
+ * Returns `true` on success, `false` on failure, so callers that need to revert
+ * an optimistic control (e.g. the Announcer toggle) can react.
  */
 export async function persistScopedSetting(
   key: string,
   layerValue: unknown,
   fallback: () => Promise<unknown>,
-): Promise<void> {
+): Promise<boolean> {
   try {
     if (mode === 'resolved') {
       await fallback();
@@ -159,9 +171,10 @@ export async function persistScopedSetting(
       layered = await updateFileSettingsLayer(mode, { [key]: layerValue });
     }
   } catch {
-    return; // network popup handled by the api layer
+    return false; // network popup handled by the api layer
   }
   applyScope({ skipValues: true });
+  return true;
 }
 
 /** Decorate all registered fields + lock complex panels for the current mode. */

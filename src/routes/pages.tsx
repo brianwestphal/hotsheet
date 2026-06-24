@@ -771,7 +771,7 @@ pageRoutes.get('/', (c) => {
                 `~/.hotsheet/config.json`; values live in the OS keychain and are
                 write-only here. Projects select a key by name (e.g. the
                 Announcer). The list rows are rendered by keysSettings.tsx. */}
-            <div className="settings-tab-panel" data-panel="keys" id="settings-keys-panel" data-scope-complex>
+            <div className="settings-tab-panel" data-panel="keys" id="settings-keys-panel">
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>API Keys <span className="global-setting-badge" title="These keys are shared across every project on this machine.">Global Setting</span></h3>
@@ -854,7 +854,7 @@ pageRoutes.get('/', (c) => {
                 gate the header Listen button (announcer.tsx). HS-8751 — the key
                 is chosen from the global "API Keys" registry via the selector
                 below (or defaults to the first Anthropic key). */}
-            <div className="settings-tab-panel" data-panel="announcer" id="settings-announcer-panel" data-scope-complex>
+            <div className="settings-tab-panel" data-panel="announcer" id="settings-announcer-panel">
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>Announcer</h3>
@@ -886,7 +886,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 {/* HS-8790 — Anthropic key: shown only when an Anthropic model is
                     selected (the on-device Apple model needs no key). */}
-                <div className="settings-field" style="margin-top:12px" id="settings-announcer-key-field">
+                <div className="settings-field" style="margin-top:12px" id="settings-announcer-key-field" data-scope-complex>
                   <label>Anthropic API key</label>
                   <select id="settings-announcer-key-select" style="max-width:340px">
                     <option value="">Default — first Anthropic key</option>
@@ -924,7 +924,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 {/* HS-8769 — "uninteresting" topics: skipping an entry adds its title here,
                     and future narration omits similar material. Editable. */}
-                <div className="settings-field" style="margin-top:12px">
+                <div className="settings-field" style="margin-top:12px" data-scope-complex>
                   <label>Uninteresting topics</label>
                   <textarea id="settings-announcer-dismissed" rows={3} placeholder="One topic per line — the Announcer skips these" autoComplete="off" style="width:100%;box-sizing:border-box;font-size:13px"></textarea>
                   <span className="settings-hint">When you skip an entry, its title is added here, and future narration omits similar topics. Edit freely (one per line); blank lines are ignored.</span>

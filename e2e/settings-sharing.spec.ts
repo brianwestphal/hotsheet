@@ -68,4 +68,16 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await page.locator('.scope-seg-btn.scope-seg-resolved').click();
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
   });
+
+  test('HS-9006: Announcer enable toggle participates; its key/topics sub-fields lock; the panel is not wholesale-locked', async ({ page }) => {
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="announcer"]').click();
+    // The whole Announcer panel is NOT locked (global fields stay editable).
+    await expect(page.locator('.settings-tab-panel[data-panel="announcer"].scope-locked')).toHaveCount(0);
+    // The per-project enable toggle decorates with a scope affordance...
+    const enableField = page.locator('.settings-field:has(#settings-announcer-enabled)');
+    await expect(enableField.locator('[data-scope-action="override"]')).toBeVisible();
+    // ...while the project-level key + topics sub-fields are locked.
+    await expect(page.locator('#settings-announcer-key-field.scope-locked')).toHaveCount(1);
+  });
 });

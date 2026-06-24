@@ -22,6 +22,7 @@ import { readFileSync } from 'fs';
 import { basename, join } from 'path';
 import { z } from 'zod';
 
+import { readFileSettings } from './file-settings.js';
 import {
   TicketPrioritySchema,
   TicketStatusSchema,
@@ -48,26 +49,36 @@ interface ChannelSettings {
   secret: string;
 }
 
-// HS-8567 — strict zod schema for `<dataDir>/settings.json`. Both fields
-// must be present + non-empty for a successful parse; otherwise the caller
-// gets `null` and surfaces a user-readable error.
+// HS-8567 — strict zod schema for the resolved file settings. Only `port` is
+// validated here; the secret is sourced separately from the sidecar (HS-8999).
+// `.loose()` keeps the rest of the (large) settings object intact.
 const ChannelSettingsSchema = z.object({
   port: z.number().int().positive(),
-  secret: z.string().min(1),
 }).loose();
 
-/** Read + parse `<dataDir>/settings.json`. Returns null on any error
- *  (missing file, invalid JSON, missing port). The caller surfaces a
- *  user-readable error message via `errorResult`. Pure (modulo fs read)
- *  for testability — the test passes a tmpdir-rooted path. */
+/**
+ * Resolve the channel's connection settings: the main server's `port` + the
+ * project `secret`. Returns null on any error (missing/invalid files, missing
+ * port, empty secret); the caller surfaces a user-readable error via
+ * `errorResult`. Pure (modulo fs read) for testability — the test passes a
+ * tmpdir-rooted path.
+ *
+ * HS-9007 — read the RESOLVED file settings (`settings.json` overlaid with the
+ * gitignored `settings.local.json`, local winning) rather than `settings.json`
+ * alone. HS-9002's `migrateLocalScopedKeys` relocated `port` (a LOCAL_SCOPE_KEY)
+ * into `settings.local.json`, so the original settings.json-only read started
+ * returning null on every migrated project — the "could not read settings.json"
+ * failure. The secret already moved to the `secret.json` sidecar (HS-8999) and
+ * is read via `getProjectSecret` (which falls back to a legacy inline secret).
+ */
 export function loadChannelSettings(dataDir: string): ChannelSettings | null {
   try {
-    const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf-8'));
-    const result = ChannelSettingsSchema.safeParse(raw);
-    // HS-8999 — the secret moved to the `secret.json` sidecar; read it via
-    // `getProjectSecret` (which falls back to settings.json for an un-migrated
-    // project). The port stays in settings.json.
-    return result.success ? { port: result.data.port, secret: getProjectSecret(dataDir) } : null;
+    const resolved = readFileSettings(dataDir);
+    const result = ChannelSettingsSchema.safeParse(resolved);
+    if (!result.success) return null;
+    const secret = getProjectSecret(dataDir);
+    if (secret === '') return null;
+    return { port: result.data.port, secret };
   } catch {
     return null;
   }
@@ -644,7 +655,7 @@ export async function callTool(
   }
   const settings = loadChannelSettings(dataDir);
   if (settings === null) {
-    return errorResult(`Channel tool — could not read ${join(dataDir, 'settings.json')}. Is the main Hot Sheet server running?`);
+    return errorResult(`Channel tool — could not resolve the project port + secret from ${join(dataDir, 'settings.json')} / settings.local.json / secret.json. Is the main Hot Sheet server running?`);
   }
   return await tool.call(args, settings, fetchFn);
 }

@@ -87,6 +87,39 @@ const LOCAL_SCOPE_KEYS = new Set([
   'drawer_open',
   'drawer_active_tab',
   'drawer_expanded',
+  // HS-9005 (docs/95 §95.4, maintainer-classified) — personal preferences /
+  // machine-specific settings that shouldn't be committed for the team:
+  //   View + sort prefs.
+  'hide_verified_column',
+  'sort_by',
+  'sort_dir',
+  'layout',
+  //   Notification preference (the permission one is already local above).
+  'notify_completed',
+  //   Workflow preference.
+  'auto_order',
+  //   Terminal UX + device appearance/perf.
+  'shell_integration_ui',
+  'shell_streaming_enabled',
+  'terminal_scrollback_bytes',
+  'terminal_default',
+  //   Quit-confirmation behavior (personal).
+  'confirm_quit_with_running_terminals',
+  'quit_confirm_exempt_processes',
+  //   Protects THIS machine's database.
+  'db_snapshot_protection',
+  //   Telemetry runs on THIS machine (master + per-signal + retention).
+  'telemetry_enabled',
+  'telemetry_metrics_enabled',
+  'telemetry_logs_enabled',
+  'telemetry_traces_enabled',
+  'telemetry_retention_days',
+  //   App icon (personal; UI is currently disabled — drop candidate, see HS-9005 follow-up).
+  'appIcon',
+  //   Announcer is local-only, never shared (incl. the enable + dismissed-topics;
+  //   model/rate/speak-permissions live in machine-Global config already).
+  'announcer_enabled',
+  'announcer_dismissed_topics',
 ]);
 
 /** Key suffixes that default to the `local` layer (e.g. `ai_instructions_nudge_dismissed`). */

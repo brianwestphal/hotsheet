@@ -2,8 +2,10 @@
 // (`<dataDir>/secret.json`), separate from `settings.json`, so `settings.json`
 // (shareable project config: categories, commands, terminals, …) can be safely
 // checked into git (the HS-8989 `.gitignore` rule `/.hotsheet/* !/.hotsheet/
-// settings.json`). Only `secret` + `secretPathHash` move here; `port` stays in
-// `settings.json` (not sensitive).
+// settings.json`). Only `secret` + `secretPathHash` move here. (`port` is not
+// sensitive and is NOT in this sidecar; note HS-9002 later relocated `port` from
+// `settings.json` to the gitignored `settings.local.json` as a machine-local key,
+// so resolve it via `readFileSettings`, not a raw `settings.json` read — HS-9007.)
 //
 // The migration (in `file-settings.ts::ensureSecret`) runs once on a version
 // upgrade and writes the secret here + strips it from `settings.json`. Readers

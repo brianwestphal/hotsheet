@@ -14,6 +14,7 @@ import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type 
 import { getAnnouncerSpeakPermissions, setAnnouncerSpeakPermissions } from './announcerPermissionPref.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
+import { persistScopedSetting } from './settingsScope.js';
 import { showToast } from './toast.js';
 
 const ANTHROPIC: KeyType = 'anthropic_api_key';
@@ -244,9 +245,16 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
 
   enabledCb.addEventListener('change', () => {
     void (async () => {
-      try {
-        await setAnnouncerEnabled(enabledCb.checked);
-      } catch {
+      // HS-9006 — route through the dialog-wide scope control so the toggle
+      // honors the Shared / Local overrides / Resolved mode (Resolved keeps the
+      // existing /announcer/enabled path). `announcer_enabled` persists as the
+      // string 'true'/'false' (via updateSetting), so the layer value matches.
+      const ok = await persistScopedSetting(
+        'announcer_enabled',
+        String(enabledCb.checked),
+        () => setAnnouncerEnabled(enabledCb.checked),
+      );
+      if (!ok) {
         enabledCb.checked = !enabledCb.checked; // revert on failure
         showToast('Could not update the announcer setting.', { variant: 'warning' });
         return;

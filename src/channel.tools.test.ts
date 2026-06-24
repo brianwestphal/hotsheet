@@ -163,6 +163,30 @@ describe('loadChannelSettings (HS-8346)', () => {
     writeFileSync(join(tmpDataDir, 'settings.json'), JSON.stringify({ port: 4174, secret: '' }), 'utf-8');
     expect(loadChannelSettings(tmpDataDir)).toBeNull();
   });
+
+  // HS-9007 — the real-world failure: after HS-9002 relocated `port` into the
+  // gitignored settings.local.json and HS-8999 moved the secret into the
+  // secret.json sidecar, settings.json carries NEITHER. Reading settings.json
+  // alone (the old behavior) returned null on every migrated project. The fix
+  // resolves `port` from the merged file settings + `secret` from the sidecar.
+  it('resolves port from settings.local.json + secret from the secret.json sidecar (post-HS-9002/HS-8999 state)', () => {
+    writeFileSync(join(tmpDataDir, 'settings.json'), JSON.stringify({ appName: 'Hot Sheet', auto_order: 'true' }), 'utf-8');
+    writeFileSync(join(tmpDataDir, 'settings.local.json'), JSON.stringify({ port: 4190 }), 'utf-8');
+    writeFileSync(join(tmpDataDir, 'secret.json'), JSON.stringify({ secret: 'sidecar-secret-xyz' }), 'utf-8');
+    expect(loadChannelSettings(tmpDataDir)).toEqual({ port: 4190, secret: 'sidecar-secret-xyz' });
+  });
+
+  it('lets settings.local.json override the settings.json port (local wins)', () => {
+    writeFileSync(join(tmpDataDir, 'settings.json'), JSON.stringify({ port: 4174, secret: 'shared-secret' }), 'utf-8');
+    writeFileSync(join(tmpDataDir, 'settings.local.json'), JSON.stringify({ port: 4200 }), 'utf-8');
+    expect(loadChannelSettings(tmpDataDir)).toEqual({ port: 4200, secret: 'shared-secret' });
+  });
+
+  it('returns null when port lives nowhere (neither settings.json nor settings.local.json)', () => {
+    writeFileSync(join(tmpDataDir, 'settings.json'), JSON.stringify({ appName: 'X' }), 'utf-8');
+    writeFileSync(join(tmpDataDir, 'secret.json'), JSON.stringify({ secret: 'sidecar-secret' }), 'utf-8');
+    expect(loadChannelSettings(tmpDataDir)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -264,12 +264,26 @@ describe('HS-9002 — shared/local settings split', () => {
         expect(defaultScope(k)).toBe('local');
       }
     });
+    // HS-9005 (docs/95 §95.4) — personal/machine settings reclassified shared → local.
+    it('classifies HS-9005 personal/machine preferences as local', () => {
+      for (const k of ['hide_verified_column', 'sort_by', 'sort_dir', 'layout', 'notify_completed',
+        'auto_order', 'shell_integration_ui', 'shell_streaming_enabled', 'terminal_scrollback_bytes',
+        'terminal_default', 'confirm_quit_with_running_terminals', 'quit_confirm_exempt_processes',
+        'db_snapshot_protection', 'telemetry_enabled', 'telemetry_metrics_enabled',
+        'telemetry_logs_enabled', 'telemetry_traces_enabled', 'telemetry_retention_days',
+        'appIcon', 'announcer_enabled', 'announcer_dismissed_topics']) {
+        expect(defaultScope(k)).toBe('local');
+      }
+    });
     it('classifies *_nudge_dismissed suffix keys as local', () => {
       expect(defaultScope('ai_instructions_nudge_dismissed')).toBe('local');
     });
-    it('classifies shareable project keys as shared', () => {
-      for (const k of ['appName', 'appIcon', 'categories', 'custom_commands', 'terminals',
-        'trash_cleanup_days', 'sort_by', 'channel_enabled']) {
+    it('keeps genuinely team/project keys shared', () => {
+      // appName + ticketPrefix are shared-only (no local override — docs/95 §95.4 Q2);
+      // categories is shared-only; the cleanup-days + worklist preamble stay team policy.
+      for (const k of ['appName', 'ticketPrefix', 'worklist_preamble', 'categories', 'custom_commands',
+        'custom_views', 'terminals', 'auto_context', 'trash_cleanup_days', 'completed_cleanup_days',
+        'verified_cleanup_days', 'channel_enabled']) {
         expect(defaultScope(k)).toBe('shared');
       }
     });
