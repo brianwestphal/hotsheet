@@ -16,8 +16,8 @@
 
 import type { MiddlewareHandler } from 'hono';
 
-import { readFileSettings } from '../file-settings.js';
 import { getProjectBySecret } from '../projects.js';
+import { getProjectSecret } from '../secret-file.js';
 import { isRequestTrusted } from '../trusted-origin.js';
 import type { AppEnv } from '../types.js';
 import { evaluateNoSecretApiAccess } from './apiAccess.js';
@@ -53,10 +53,11 @@ export function createApiAuthMiddleware({ exposed, trustedOrigins }: ApiAuthOpti
     }
 
     const currentDataDir = c.get('dataDir');
-    const settings = readFileSettings(currentDataDir);
-    const expectedSecret = settings.secret;
+    // HS-8999 — the secret lives in the `secret.json` sidecar (falls back to the
+    // legacy settings.json value for an un-migrated project).
+    const expectedSecret = getProjectSecret(currentDataDir);
     // (2) No secret configured → nothing to enforce.
-    if (expectedSecret === undefined || expectedSecret === '') { await next(); return; }
+    if (expectedSecret === '') { await next(); return; }
 
     const headerSecret = c.req.header('X-Hotsheet-Secret');
 

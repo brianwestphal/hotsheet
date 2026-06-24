@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
+import { readSecretFile, writeSecretFile } from './secret-file.js';
+
 const FileSettingsSchema = z.object({
   appName: z.string().optional(),
   appIcon: z.string().optional(),
@@ -193,27 +195,56 @@ function hashPath(dataDir: string): string {
 }
 
 /**
- * Ensure a secret exists in settings.json. Regenerate if the data dir path has changed
- * (detected via path hash mismatch). Also writes the current port.
+ * HS-8999 — strip the secret keys from `settings.json` (after migrating them to
+ * the `secret.json` sidecar) so the shareable config file carries no secret.
+ * `port` is NOT sensitive and stays. Direct write (not `writeFileSettings`,
+ * which merges and so can't REMOVE a key).
+ */
+function stripSecretFromSettings(dataDir: string): void {
+  const path = settingsPath(dataDir);
+  if (!existsSync(path)) return;
+  const current = readFileSettings(dataDir);
+  if (current.secret === undefined && current.secretPathHash === undefined) return;
+  const { secret: _s, secretPathHash: _h, ...rest } = current;
+  void _s; void _h;
+  writeFileSync(path, JSON.stringify(rest, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Ensure a per-project secret exists, in the `secret.json` sidecar (HS-8999 —
+ * previously inline in `settings.json`). Regenerates if the data-dir path has
+ * changed (path-hash mismatch). `port` is still written to `settings.json`.
  * Returns the active secret.
+ *
+ * Migration: on a fresh-from-upgrade project the sidecar is absent — we adopt
+ * the existing `settings.json` secret if present (preserving it), else generate
+ * a new one (the user confirmed a regenerated secret is fine since this only
+ * happens on a version upgrade, when skills + `.mcp.json` re-author anyway). The
+ * secret is then written to the sidecar and stripped from `settings.json`.
  */
 export function ensureSecret(dataDir: string, port: number): string {
+  const sidecar = readSecretFile(dataDir);
   const settings = readFileSettings(dataDir);
   const currentPathHash = hashPath(dataDir);
 
-  if (settings.secret !== undefined && settings.secret !== '' && settings.secretPathHash === currentPathHash) {
-    // Secret exists and path hasn't changed — just update port
-    if (settings.port !== port) {
-      writeFileSettings(dataDir, { port });
-    }
-    return settings.secret;
+  if (sidecar.secret !== undefined && sidecar.secret !== '' && sidecar.secretPathHash === currentPathHash) {
+    // Sidecar secret valid + path unchanged — just keep `port` current.
+    if (settings.port !== port) writeFileSettings(dataDir, { port });
+    return sidecar.secret;
   }
 
-  // Generate new secret: hash of absolute path + random value
-  const random = randomBytes(32).toString('hex');
-  const absPath = resolve(settingsPath(dataDir));
-  const secret = createHash('sha256').update(absPath + random).digest('hex').slice(0, 32);
+  // Adopt the legacy settings.json secret (migration, preserves the value) when
+  // it's valid for this path; otherwise mint a fresh one.
+  let secret: string;
+  if (settings.secret !== undefined && settings.secret !== '' && settings.secretPathHash === currentPathHash) {
+    secret = settings.secret;
+  } else {
+    const random = randomBytes(32).toString('hex');
+    secret = createHash('sha256').update(resolve(settingsPath(dataDir)) + random).digest('hex').slice(0, 32);
+  }
 
-  writeFileSettings(dataDir, { secret, secretPathHash: currentPathHash, port });
+  writeSecretFile(dataDir, { secret, secretPathHash: currentPathHash });
+  writeFileSettings(dataDir, { port });
+  stripSecretFromSettings(dataDir);
   return secret;
 }

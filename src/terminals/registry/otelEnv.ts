@@ -1,4 +1,5 @@
 import { readFileSettings } from '../../file-settings.js';
+import { getProjectSecret } from '../../secret-file.js';
 
 /**
  * HS-8145 — pure helper that returns the OTLP env vars Hot Sheet
@@ -84,7 +85,7 @@ export function buildOtelEnv(dataDir: string): Record<string, string> {
   if (settings.telemetry_enabled === false) return {};
 
   const port = typeof settings.port === 'number' ? settings.port : null;
-  const secret = typeof settings.secret === 'string' && settings.secret !== '' ? settings.secret : null;
+  const secret = getProjectSecret(dataDir) || null; // HS-8999 — sidecar secret
   if (port === null || secret === null) return {};
 
   const metricsEnabled = settings.telemetry_metrics_enabled !== false;

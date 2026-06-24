@@ -3,6 +3,7 @@ import { join, relative } from 'path';
 import { z } from 'zod';
 
 import { readFileSettings } from './file-settings.js';
+import { getProjectSecret } from './secret-file.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
@@ -137,7 +138,7 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string =
   // calls initSkills before this runs, so the placeholder only fires in
   // edge-case test paths that skip init).
   const port = settings.port ?? skillsState.port ?? 4174;
-  const secret = settings.secret ?? '';
+  const secret = getProjectSecret(dataDir); // HS-8999 — sidecar secret
   const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
   // HS-8348 — Phase 3 two-form skill body. MCP tool listed first
   // (preferred when the Claude Channel is connected), curl form right

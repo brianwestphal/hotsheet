@@ -9,9 +9,11 @@
  * `dist/cli.js` bundle (tsup only bundles the CLI + client entry points).
  */
 import { type ChildProcess, execFileSync, spawn } from 'child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+
+import { getProjectSecret } from './secret-file.js';
 
 const REPO_ROOT = join(import.meta.dirname, '..');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
@@ -183,16 +185,12 @@ export function waitForExit(proc: ChildProcess, timeoutMs: number): Promise<{ co
   });
 }
 
-/** Read a project's secret from its `settings.json` (written by startup). */
+/** Read a project's secret (written by startup). HS-8999 — the secret lives in
+ *  the `secret.json` sidecar now (`getProjectSecret` falls back to settings.json
+ *  for an un-migrated project). */
 export function readSecret(dataDir: string): string {
-  const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf-8'));
-  if (raw === null || typeof raw !== 'object' || !('secret' in raw)) {
-    throw new Error('settings.json missing secret');
-  }
-  const secret = (raw as Record<string, unknown>).secret;
-  if (typeof secret !== 'string' || secret === '') {
-    throw new Error('settings.json missing secret');
-  }
+  const secret = getProjectSecret(dataDir);
+  if (secret === '') throw new Error('no project secret found (secret.json / settings.json)');
   return secret;
 }
 

@@ -18,6 +18,7 @@ import { getBackupDir, readFileSettings } from './file-settings.js';
 import { readGlobalConfig } from './global-config.js';
 import { ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS } from './limits.js';
 import { readProjectList } from './project-list.js';
+import { getProjectSecret } from './secret-file.js';
 
 // HS-8558 — the orphan-attachment horizon moved to `src/limits.ts` for
 // cross-file consolidation. See the rationale comment block on the
@@ -177,7 +178,7 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
 
     // HS-8607 — can't scope a deletion without the project's secret; bail
     // rather than risk an unscoped DELETE across the project's DB.
-    const secret = typeof settings.secret === 'string' && settings.secret !== '' ? settings.secret : null;
+    const secret = getProjectSecret(dataDir) || null; // HS-8999 — sidecar secret
     if (secret === null) return { deleted: 0 };
 
     const deleted = await runWithTelemetryDb(dataDir, async () => {

@@ -26,6 +26,7 @@ import {
   TicketPrioritySchema,
   TicketStatusSchema,
 } from './routes/validation.js';
+import { getProjectSecret } from './secret-file.js';
 
 /** Shape of the MCP `tools/list` response entry per the MCP spec. */
 export interface ToolListEntry {
@@ -63,7 +64,10 @@ export function loadChannelSettings(dataDir: string): ChannelSettings | null {
   try {
     const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'settings.json'), 'utf-8'));
     const result = ChannelSettingsSchema.safeParse(raw);
-    return result.success ? { port: result.data.port, secret: result.data.secret } : null;
+    // HS-8999 — the secret moved to the `secret.json` sidecar; read it via
+    // `getProjectSecret` (which falls back to settings.json for an un-migrated
+    // project). The port stays in settings.json.
+    return result.success ? { port: result.data.port, secret: getProjectSecret(dataDir) } : null;
   } catch {
     return null;
   }

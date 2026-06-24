@@ -7,7 +7,6 @@ import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { runWithDataDir } from './db/connection.js';
-import { readFileSettings } from './file-settings.js';
 import { readGlobalConfig } from './global-config.js';
 import { gracefulShutdown, registerHttpServerForShutdown } from './lifecycle.js';
 import { getMimeType } from './mime-types.js';
@@ -28,6 +27,7 @@ import { telemetryRoutes } from './routes/telemetry.js';
 import { workerRoutes } from './routes/workers.js';
 import { worktreeRoutes } from './routes/worktrees.js';
 import { wireSyncWebSocket } from './routes/wsSync.js';
+import { getProjectSecret } from './secret-file.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
 import { isExposedBind } from './trusted-origin.js';
 import type { AppEnv } from './types.js';
@@ -83,8 +83,7 @@ export async function startServer(
     }
 
     c.set('dataDir', resolvedDataDir);
-    const settings = readFileSettings(resolvedDataDir);
-    c.set('projectSecret', settings.secret ?? '');
+    c.set('projectSecret', getProjectSecret(resolvedDataDir));
     await runWithDataDir(resolvedDataDir, () => next());
   });
 

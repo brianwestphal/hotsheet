@@ -13,6 +13,7 @@ import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_D
 import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 // HS-8671 — zod-validated DB-JSON parsing (drops the blind `as` casts).
 import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
+import { getProjectSecret } from '../secret-file.js';
 import type { Ticket } from '../types.js';
 
 interface SyncState {
@@ -374,7 +375,7 @@ async function syncWorklist(state: SyncState): Promise<void> {
     sections.push('These are the current priority work items. Complete them in order of priority, where reasonable.');
     sections.push('');
     const settings = readFileSettings(dataDir);
-    const secret = settings.secret ?? '';
+    const secret = getProjectSecret(dataDir); // HS-8999 — sidecar secret
     const secretHeader = secret ? ` -H "X-Hotsheet-Secret: ${secret}"` : '';
 
     // HS-8917 — optional per-project preamble, injected near the top BEFORE the

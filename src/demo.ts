@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { getDb } from './db/connection.js';
+import { getProjectSecret } from './secret-file.js';
 
 // --- Scenario definitions ---
 
@@ -1098,7 +1099,7 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
   const fs = await import('fs');
   const path = await import('path');
   const { registerProject } = await import('./projects.js');
-  const { readFileSettings, writeFileSettings } = await import('./file-settings.js');
+  const { writeFileSettings } = await import('./file-settings.js');
   const { getDb, getDbForDir } = await import('./db/connection.js');
   // HS-8688 — `registerProject` does NOT call `eagerSpawnTerminals` itself;
   // the primary project gets eager-spawned by `cli.ts:542` at startup, and
@@ -1177,8 +1178,8 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
   // shared telemetry DB (per §67.6); each row carries its owning project's
   // `project_secret` so the cross-project page's per-project aggregates work.
   if (scenario === 13) {
-    const primarySecret = readFileSettings(primaryDataDir).secret;
-    if (typeof primarySecret === 'string' && primarySecret !== '') {
+    const primarySecret = getProjectSecret(primaryDataDir); // HS-8999 — sidecar secret
+    if (primarySecret !== '') {
       const sharedDb = await getDb();
       // Primary first (index 0 → highest project-multiplier so the cost-by-
       // project table has a clear winner row).

@@ -35,6 +35,7 @@ import {
 } from './channelRegistry.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 import { HotsheetSettingsSchema } from './schemas.js';
+import { getProjectSecret } from './secret-file.js';
 
 // HS-8346 — bumped from 4 → 5 for the new MCP tool surface (tools/list +
 // tools/call handlers exposing hotsheet_update_ticket / hotsheet_create_ticket /
@@ -412,7 +413,8 @@ function notifyMainServer(abortSignal?: AbortSignal): Promise<void> {
     }
     const url = `http://localhost:${settings.port}/api/channel/notify`;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (settings.secret !== undefined && settings.secret !== '') headers['X-Hotsheet-Secret'] = settings.secret;
+    const secret = getProjectSecret(dataDir); // HS-8999 — sidecar secret (port stays in settings.json)
+    if (secret !== '') headers['X-Hotsheet-Secret'] = secret;
     return fetch(url, { method: 'POST', headers, signal: abortSignal })
       .then(res => {
         if (!res.ok) {

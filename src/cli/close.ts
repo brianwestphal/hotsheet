@@ -64,24 +64,26 @@ export async function handleClose(dataDir: string, force: boolean): Promise<void
   }
 
   // Read the secret for this project's dataDir so we can unregister by secret.
-  const { readFileSettings } = await import('../file-settings.js');
-  const settings = readFileSettings(dataDir);
-  if (settings.secret === undefined || settings.secret === '') {
-    console.error(`No project secret found in ${dataDir}/settings.json. Is this a Hot Sheet project directory?`);
+  // HS-8999 — the secret lives in the `secret.json` sidecar (sidecar → legacy
+  // settings.json fallback).
+  const { getProjectSecret } = await import('../secret-file.js');
+  const secret = getProjectSecret(dataDir);
+  if (secret === '') {
+    console.error(`No project secret found in ${dataDir}. Is this a Hot Sheet project directory?`);
     process.exit(1);
   }
 
   // HS-7596 / §37 — prompt before destroying terminals running non-exempt
   // processes. Skipped on --force.
   if (!force) {
-    const proceed = await confirmCloseAgainstQuitSummary(instance.port, settings.secret);
+    const proceed = await confirmCloseAgainstQuitSummary(instance.port, secret);
     if (!proceed) {
       console.log('  Cancelled.');
       process.exit(0);
     }
   }
 
-  const res = await fetch(`http://localhost:${instance.port}/api/projects/${settings.secret}`, {
+  const res = await fetch(`http://localhost:${instance.port}/api/projects/${secret}`, {
     method: 'DELETE',
   });
 

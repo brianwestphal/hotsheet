@@ -338,9 +338,9 @@ export async function triggerChannel(dataDir: string, serverPort: number, messag
   // Include secret in the done signal so it passes the API middleware
   let secretHeader = '';
   try {
-    const { readFileSettings } = await import('./file-settings.js');
-    const settings = readFileSettings(dataDir);
-    if (settings.secret !== undefined && settings.secret !== '') secretHeader = ` -H "X-Hotsheet-Secret: ${settings.secret}"`;
+    const { getProjectSecret } = await import('./secret-file.js'); // HS-8999 — sidecar
+    const secret = getProjectSecret(dataDir);
+    if (secret !== '') secretHeader = ` -H "X-Hotsheet-Secret: ${secret}"`;
   } catch { /* ignore */ }
   // HS-8348 — Phase 3 two-form layout. Mention the `hotsheet_signal_done`
   // MCP tool first (preferred when the channel is connected), with the

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { ensureSecret, getBackupDir, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
+import { readSecretFile, writeSecretFile } from './secret-file.js';
 
 let tempDir: string;
 
@@ -77,11 +78,13 @@ describe('ensureSecret', () => {
     const secret = ensureSecret(dir, 4174);
     expect(secret).toBeTruthy();
     expect(secret).toHaveLength(32);
-    // Verify it was persisted
+    // HS-8999 — persisted to the secret.json sidecar, NOT settings.json.
+    const sidecar = readSecretFile(dir);
+    expect(sidecar.secret).toBe(secret);
+    expect(sidecar.secretPathHash).toBeTruthy();
     const settings = readFileSettings(dir);
-    expect(settings.secret).toBe(secret);
-    expect(settings.secretPathHash).toBeTruthy();
-    expect(settings.port).toBe(4174);
+    expect(settings.secret).toBeUndefined();
+    expect(settings.port).toBe(4174); // port stays in settings.json
   });
 
   it('returns existing secret when path hash matches', () => {
@@ -107,9 +110,9 @@ describe('ensureSecret', () => {
     const dir = join(tempDir, 'secret-rehash');
     mkdirSync(dir, { recursive: true });
     const secret1 = ensureSecret(dir, 4174);
-    // Tamper with the path hash to simulate a directory move
-    readFileSettings(dir);
-    writeFileSettings(dir, { secretPathHash: 'wrong-hash' });
+    // HS-8999 — the path hash lives in the sidecar now; tamper it to simulate a
+    // directory move so ensureSecret regenerates.
+    writeSecretFile(dir, { secret: secret1, secretPathHash: 'wrong-hash' });
     const secret2 = ensureSecret(dir, 4174);
     expect(secret2).not.toBe(secret1);
     expect(secret2).toHaveLength(32);
