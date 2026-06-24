@@ -25,6 +25,7 @@ import { projectRoutes } from './routes/projects.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { workerRoutes } from './routes/workers.js';
 import { worktreeRoutes } from './routes/worktrees.js';
+import { wireSyncWebSocket } from './routes/wsSync.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
 import { isExposedBind } from './trusted-origin.js';
 import type { AppEnv } from './types.js';
@@ -199,6 +200,9 @@ export async function startServer(
 
   if (httpServer !== null) {
     wireTerminalWebSocket(httpServer);
+    // HS-8979 — `/ws/sync` push channel (docs/93). Same shared-port upgrade
+    // pattern; honors the HS-7940 exposed/trusted-origin gate.
+    wireSyncWebSocket(httpServer, { exposed, trustedOrigins });
     // HS-7931: register the live HTTP server with the lifecycle module so
     // `gracefulShutdown` can close it before issuing CHECKPOINTs.
     registerHttpServerForShutdown(httpServer);

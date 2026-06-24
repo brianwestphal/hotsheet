@@ -5,11 +5,10 @@ HS-7945. Implementation design for the WebSocket-driven push channel that replac
 synchronization sketch in [46-service-client-decoupling.md](46-service-client-decoupling.md) §46.3
 into a buildable, phased spec, grounded in the code as it exists today.
 
-> **Status:** Design only. Decomposed into schedulable sub-tickets (§93.9): server event bus,
-> `/ws/sync` endpoint, mutation event emission, client reducer + reconnect + fallback, and a v2
-> backpressure follow-up. Implementation is **gated on HS-7940** (non-localhost bind +
-> trusted-origin WebSocket auth) for any non-local use; the event-bus foundation (§93.2) has no
-> such gate and can land first.
+> **Status (2026-06-24):** In progress. **Shipped:** HS-7940 (bind + trusted-origin auth),
+> HS-8978 (server event bus §93.2), HS-8979 (`/ws/sync` endpoint §93.3/§93.7). **Pending:**
+> HS-8980 (mutation emission §93.4), HS-8981 (client reducer + reconnect + fallback §93.5/§93.6),
+> HS-8982 (backpressure §93.8). Decomposition + dependencies in §93.9.
 
 ## 93.1 Why — and why it is NOT a local win
 
