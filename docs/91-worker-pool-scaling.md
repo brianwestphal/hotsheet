@@ -118,14 +118,18 @@ A recommendation, never an automatic action — the owner always sets the actual
 **Implemented** in `src/workers/suggestN.ts` + `GET /api/workers/suggest-n` + an
 "AI: suggest" button in the pool panel. It fetches the unblocked Up Next set (+ a
 count of blocked ones for context, via `BLOCKED_TICKET_IDS_SQL`), builds a compact
-digest, and asks Anthropic (the announcer key + Messages-API/json-schema pattern,
-cheap Haiku model) for `{n, rationale}`; `n` is clamped to `[1, POOL_MAX]`
-(`poolMax()` = CPU-cores−2, floored 1, capped 8). The panel shows the rationale in
-a confirm dialog and applies it via `setPoolTarget` only if the owner accepts.
-**Fallback:** with no Anthropic key (or on an AI error) a deterministic cluster
-heuristic (`heuristicSuggestion` — group unblocked tickets by shared
-category/tag) returns a labeled estimate so the button always works. (Local/Apple
-announcer providers aren't wired for this call yet — Anthropic-or-heuristic only.)
+digest, and asks the **configured announcer provider** for `{n, rationale}`; `n` is
+clamped to `[1, POOL_MAX]` (`poolMax()` = CPU-cores−2, floored 1, capped 8). The
+panel shows the rationale in a confirm dialog and applies it via `setPoolTarget`
+only if the owner accepts. **Provider routing (HS-8976):** `runEstimator` resolves
+the model via `resolveAnnouncerModel()` and routes by `providerForModel` —
+Anthropic (Messages-API json-schema), a local OpenAI-compatible endpoint
+(`runLocalSummarize` + the explicit JSON contract), or Apple Foundation Models
+(`runAppleFoundationSummarize` guided generation) — mirroring `summarize.ts`.
+**Fallback:** when no provider can run (e.g. an Anthropic model but no key) or the
+AI errors/returns garbage, a deterministic cluster heuristic (`heuristicSuggestion`
+— group unblocked tickets by shared category/tag) returns a labeled estimate so
+the button always works.
 
 - **Trigger:** an "AI: suggest worker count" button in the pool panel (and/or a
   one-shot before launching a batch).
@@ -193,6 +197,5 @@ shipped together in **HS-8962** (2026-06-23); the numeric target-N stepper +
 auto-reconcile shipped in **HS-8971** (2026-06-23); dispatch drop targets shipped in
 **HS-8964** (§92); the claimed-by/lease chip shipped in **HS-8864** (§90.8); the
 zombie-slot liveness reap shipped in **HS-8972** (§91.7); the AI-suggest-N helper
-shipped in **HS-8963** (§91.6). Remaining: swapping the poll for the §90.8 live
-event bus (**HS-7945**), and (optional) local/Apple-provider parity for the
-AI-suggest call.
+shipped in **HS-8963** (§91.6), with local/Apple-provider parity in **HS-8976**.
+Remaining: swapping the poll for the §90.8 live event bus (**HS-7945**).

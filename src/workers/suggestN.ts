@@ -10,10 +10,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import os from 'os';
 import { z } from 'zod';
 
+import { runAppleFoundationSummarize } from '../announcer/appleFoundation.js';
+import { resolveAnnouncerModel } from '../announcer/generate.js';
 import { resolveAnnouncerKey } from '../announcer/key.js';
-import { DEFAULT_ANNOUNCER_MODEL } from '../announcer/models.js';
+import { DEFAULT_LOCAL_ENDPOINT, runLocalSummarize } from '../announcer/localProvider.js';
+import { providerForModel } from '../announcer/models.js';
 import { BLOCKED_TICKET_IDS_SQL } from '../db/blockedBy.js';
 import { getDb } from '../db/connection.js';
+import { readGlobalConfig } from '../global-config.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 
 /** One pending ticket distilled for the estimator. */
@@ -100,6 +104,20 @@ const SuggestSchema = z.object({ n: z.number(), rationale: z.string() });
 
 const SYSTEM_PROMPT = `You size a pool of parallel AI worker agents for a software project. Given the project's UNBLOCKED "Up Next" tickets (the ones ready to work now), estimate how many can make progress INDEPENDENTLY in parallel — i.e. the number of independent clusters of work, where tickets that touch the same area/feature (shared category, tags, or obviously the same code) are coupled and belong to one cluster (one worker), while unrelated tickets can run concurrently. Recommend a worker count = that independent-cluster count, clamped to the given maximum. Fewer is better when in doubt — a coupled change set should land on one worker/branch. Reply with the number and a terse one-line rationale like "6 unblocked, ~3 independent clusters -> 3".`;
 
+/** JSON Schema for the structured `{n, rationale}` reply — used by the Anthropic
+ *  `output_config` and Apple guided generation; the local path appends the contract
+ *  as text (HS-8976). */
+const OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: { n: { type: 'integer' }, rationale: { type: 'string' } },
+  required: ['n', 'rationale'],
+  additionalProperties: false,
+};
+
+/** A generic local model has no output-schema enforcement, so spell out the
+ *  contract (mirrors `summarize.ts`'s `LOCAL_JSON_INSTRUCTION`). */
+const LOCAL_JSON_INSTRUCTION = '\n\nOUTPUT FORMAT: respond with ONLY a single JSON object and nothing else (no prose, no code fence): {"n": <integer>, "rationale": "<one line>"}.';
+
 /** Validate the model's JSON into a clamped result. Exported for testing. */
 export function parseSuggestion(text: string, max: number, hasWork: boolean): SuggestionResult | null {
   const parsed = parseJsonOrNull(SuggestSchema, text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''));
@@ -126,8 +144,42 @@ async function fetchPending(): Promise<PendingTicketDigest[]> {
   }));
 }
 
-/** Recommend a worker count for the current Up Next set. Uses the Anthropic
- *  estimator when a key is configured, else the deterministic cluster heuristic. */
+/** Run the AI estimator through the announcer's resolved provider (HS-8976):
+ *  Anthropic Messages API, a local OpenAI-compatible endpoint, or Apple Foundation
+ *  Models — whichever the user's `announcerModel` resolves to. Returns the raw JSON
+ *  text, or null when no provider can run (e.g. an Anthropic model but no key), so
+ *  the caller falls back to the heuristic. Throws are caught by the caller. */
+async function runEstimator(material: string): Promise<string | null> {
+  const model = await resolveAnnouncerModel();
+  const provider = providerForModel(model);
+
+  if (provider === 'apple') {
+    return runAppleFoundationSummarize(SYSTEM_PROMPT, material, OUTPUT_SCHEMA);
+  }
+  if (provider === 'local') {
+    const cfg = readGlobalConfig();
+    const endpoint = cfg.announcerLocalEndpoint !== undefined && cfg.announcerLocalEndpoint.trim() !== '' ? cfg.announcerLocalEndpoint : DEFAULT_LOCAL_ENDPOINT;
+    return runLocalSummarize(SYSTEM_PROMPT + LOCAL_JSON_INSTRUCTION, material, { endpoint, model: cfg.announcerLocalModel ?? '' });
+  }
+
+  // Anthropic — needs the key; without it, signal "no provider" → heuristic.
+  const apiKey = await resolveAnnouncerKey();
+  if (apiKey === null) return null;
+  const res = await new Anthropic({ apiKey }).messages.create({
+    model,
+    max_tokens: 512,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: material }],
+    output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
+  });
+  let text = '';
+  for (const block of res.content) if (block.type === 'text') text += block.text;
+  return text;
+}
+
+/** Recommend a worker count for the current Up Next set. Uses the configured AI
+ *  provider (Anthropic / local / Apple, HS-8976); falls back to the deterministic
+ *  cluster heuristic when no provider can run or the AI errors/returns garbage. */
 export async function suggestWorkerCount(): Promise<SuggestionResult> {
   const tickets = await fetchPending();
   const max = poolMax();
@@ -136,28 +188,15 @@ export async function suggestWorkerCount(): Promise<SuggestionResult> {
     return { n: 0, rationale: 'No unblocked Up Next tickets to work.', source: 'heuristic' };
   }
 
-  const apiKey = await resolveAnnouncerKey();
-  if (apiKey === null) return heuristicSuggestion(tickets, max);
-
+  const material = `${buildSuggestDigest(tickets)}\n\nMaximum workers: ${String(max)}.`;
   try {
-    const client = new Anthropic({ apiKey });
-    const res = await client.messages.create({
-      model: DEFAULT_ANNOUNCER_MODEL,
-      max_tokens: 512,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: `${buildSuggestDigest(tickets)}\n\nMaximum workers: ${String(max)}.` }],
-      output_config: { format: { type: 'json_schema', schema: {
-        type: 'object',
-        properties: { n: { type: 'integer' }, rationale: { type: 'string' } },
-        required: ['n', 'rationale'],
-        additionalProperties: false,
-      } } },
-    });
-    let text = '';
-    for (const block of res.content) if (block.type === 'text') text += block.text;
-    return parseSuggestion(text, max, hasWork) ?? heuristicSuggestion(tickets, max);
+    const text = await runEstimator(material);
+    if (text !== null) {
+      const parsed = parseSuggestion(text, max, hasWork);
+      if (parsed !== null) return parsed;
+    }
   } catch {
     // AI unavailable / errored → fall back to the deterministic estimate.
-    return heuristicSuggestion(tickets, max);
   }
+  return heuristicSuggestion(tickets, max);
 }
