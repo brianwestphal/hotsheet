@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 
 import {
-  LaunchWorkerReqSchema, RegisterWorkerReqSchema, SetTargetReqSchema,
+  LaunchWorkerReqSchema, PartitionReqSchema, RegisterWorkerReqSchema, SetTargetReqSchema,
 WorkerRefSchema,
   type WorkerSlotView, } from '../api/workers.js';
 import { getClaims } from '../db/claims.js';
@@ -16,6 +16,7 @@ import { isGitRepo } from '../gitignore.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { prepareWorker } from '../workers/launchWorker.js';
+import { partitionTickets } from '../workers/partition.js';
 import {
   getPoolState, isSlotStale, registerWorker, removeWorker, requestDrain,
   requestDrainAll, setTarget, type WorkerSlot,
@@ -118,4 +119,13 @@ workerRoutes.post('/workers/pool/target', async (c) => {
  *  for the current Up Next set (AI when a key is configured, else a heuristic). */
 workerRoutes.get('/workers/suggest-n', async (c) => {
   return c.json(await suggestWorkerCount());
+});
+
+/** POST /api/workers/partition — HS-8965: AI-propose an assignment of the current
+ *  unblocked Up Next tickets across the given workers (one chunk per worker). */
+workerRoutes.post('/workers/partition', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(PartitionReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  return c.json({ assignments: await partitionTickets(parsed.data.workers) });
 });

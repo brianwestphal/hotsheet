@@ -1,7 +1,7 @@
 # 92. Coordinator-Dispatch UX (owner assigns ticket chunks to a worker)
 
-**Status: PARTIAL — manual dispatch + reassign/recall SHIPPED 2026-06-24 (HS-8964,
-HS-8974).** The "push"
+**Status: SHIPPED 2026-06-24** — manual dispatch (HS-8964), reassign/recall
+(HS-8974), and the AI partition-into-chunks helper (HS-8965). The "push"
 half of the dual coordination model from
 [90-distributed-execution.md](90-distributed-execution.md) §90.5.2 — the owner
 manually partitions work onto specific workers, complementing autonomous
@@ -79,15 +79,22 @@ self-drain the remainder. Mixed mode is the expected default.
   works them before falling back to self-claim (a dispatched worker prefers its
   queue, then pulls from the shared pool unless told to stop after its queue).
 
-## 92.6 AI "partition into N coherent chunks" helper (optional)
+## 92.6 AI "partition into N coherent chunks" helper — ✅ SHIPPED (HS-8965)
 
-A convenience over manual dragging: select a set of Up Next tickets (or the whole
-pool) and ask the AI to group them into N coherent chunks (by relatedness — shared
-area/tags/`blocked_by` lineage), then dispatch each chunk to a worker. Reuses the
-§91.6 AI-suggest-N analysis (same relatedness signals) but emits a *partition*
-(assignments) rather than a *count*. The owner reviews/edits the proposed
-partition before it's applied. Specifics left to implementation; this is additive
-to manual dispatch, not a prerequisite.
+A convenience over manual dragging: ask the AI to group the current unblocked Up
+Next tickets into one chunk per running worker (related tickets — shared
+area/tags/category — onto the same worker), then dispatch each chunk. **Implemented**
+in `src/workers/partition.ts` (`partitionTickets(workers)`) + `POST
+/api/workers/partition` + an **"AI: partition"** button in the pool panel. It reuses
+the HS-8963/8976 announcer-provider plumbing (extracted to
+`src/workers/announcerJson.ts`, shared with suggest-N) but emits a *partition* —
+`{assignments: [{worker, tickets:[…]}]}` — which `parsePartition` validates back to
+ticket ids (dropping unknown workers/tickets + duplicates). Fallback: a
+deterministic **round-robin** across the workers when no AI provider can run or the
+AI errors / places nothing. The owner **reviews** the proposed split in a confirm
+dialog (`worker-1 ← HS-1, HS-2`) and applies it (each chunk → the §92 dispatch
+path); editing is via cancel + manual drag for now (an in-dialog editable partition
+is a follow-up). Additive to manual dispatch, never a prerequisite.
 
 ## 92.7 Edge cases
 
@@ -147,7 +154,12 @@ Shipped in **HS-8964** (2026-06-24):
    reassign on conflict then force-redispatches the failed ids; a "Recall claim"
    context-menu item force-releases back to the pool. Tests: `client/dispatch.test.ts`
    (reassign confirm/decline), `db/claims.test.ts` (force overwrite + recall).
-4. **AI-partition helper (§92.6)** — still design-only (**HS-8965**).
+4. **AI-partition helper (§92.6) — HS-8965** — ✅ **SHIPPED** (2026-06-24):
+   `src/workers/partition.ts` (`partitionTickets` + `parsePartition` +
+   `roundRobinPartition`), `src/workers/announcerJson.ts` (shared provider call),
+   `POST /api/workers/partition`, and the panel's "AI: partition" button
+   (review-in-confirm → dispatch each chunk). Tests: `workers/partition.test.ts`.
+   An in-dialog editable partition is a follow-up (HS-8977).
 
 Tests: `client/dispatch.test.ts`, `db/claims.test.ts` (personal-queue ordering +
 non-up_next dispatch), `client/workerPoolPanel.test.ts` (drop-target + draining

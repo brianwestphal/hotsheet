@@ -23,12 +23,16 @@ vi.mock('../api/index.js', () => ({
   removeWorktree: vi.fn(),
   setPoolTarget: vi.fn(),
   getSuggestedWorkerCount: vi.fn(),
+  getTicketPartition: vi.fn(),
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
 vi.mock('./terminalInstanceLifecycle.js', () => ({ closeDynamicTerminal: vi.fn() }));
 vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new') }));
-vi.mock('./dispatch.js', () => ({ dispatchAndReport: vi.fn().mockResolvedValue({ dispatched: 0, failures: [] }) }));
+vi.mock('./dispatch.js', () => ({
+  dispatchAndReport: vi.fn().mockResolvedValue({ dispatched: 0, failed: [], failures: [] }),
+  dispatchTicketsToWorker: vi.fn().mockResolvedValue({ dispatched: 0, failed: [], failures: [] }),
+}));
 // HS-8964 — controllable drag set for the drop-target tests.
 const dragHolder = vi.hoisted(() => ({ ids: [] as number[] }));
 vi.mock('./ticketListState.js', () => ({
@@ -106,7 +110,7 @@ describe('renderPoolControls — target stepper (HS-8971)', () => {
     const onDrainAll = vi.fn();
     const onSuggest = vi.fn();
     const el = document.createElement('div');
-    renderPoolControls(el, 2, 1, onStep, onDrainAll, onSuggest);
+    renderPoolControls(el, 2, 1, onStep, onDrainAll, onSuggest, vi.fn());
     expect(el.querySelector('.worker-pool-target')?.textContent).toBe('2');
     expect(el.querySelector('.worker-pool-running')?.textContent).toContain('1 running');
     el.querySelector<HTMLButtonElement>('.worker-pool-step-up')!.click();
@@ -121,7 +125,7 @@ describe('renderPoolControls — target stepper (HS-8971)', () => {
 
   it('disables − at target 0 and Drain all when nothing is running', () => {
     const el = document.createElement('div');
-    renderPoolControls(el, 0, 0, vi.fn(), vi.fn(), vi.fn());
+    renderPoolControls(el, 0, 0, vi.fn(), vi.fn(), vi.fn(), vi.fn());
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.disabled).toBe(true);
   });

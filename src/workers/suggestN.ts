@@ -6,19 +6,13 @@
 // (same key resolver + Messages-API/json-schema pattern as `summarize.ts`); when
 // no key is configured it falls back to a deterministic cluster heuristic so the
 // button still returns something useful (clearly labeled).
-import Anthropic from '@anthropic-ai/sdk';
 import os from 'os';
 import { z } from 'zod';
 
-import { runAppleFoundationSummarize } from '../announcer/appleFoundation.js';
-import { resolveAnnouncerModel } from '../announcer/generate.js';
-import { resolveAnnouncerKey } from '../announcer/key.js';
-import { DEFAULT_LOCAL_ENDPOINT, runLocalSummarize } from '../announcer/localProvider.js';
-import { providerForModel } from '../announcer/models.js';
 import { BLOCKED_TICKET_IDS_SQL } from '../db/blockedBy.js';
 import { getDb } from '../db/connection.js';
-import { readGlobalConfig } from '../global-config.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
+import { callAnnouncerJson } from './announcerJson.js';
 
 /** One pending ticket distilled for the estimator. */
 export interface PendingTicketDigest {
@@ -144,42 +138,10 @@ async function fetchPending(): Promise<PendingTicketDigest[]> {
   }));
 }
 
-/** Run the AI estimator through the announcer's resolved provider (HS-8976):
- *  Anthropic Messages API, a local OpenAI-compatible endpoint, or Apple Foundation
- *  Models — whichever the user's `announcerModel` resolves to. Returns the raw JSON
- *  text, or null when no provider can run (e.g. an Anthropic model but no key), so
- *  the caller falls back to the heuristic. Throws are caught by the caller. */
-async function runEstimator(material: string): Promise<string | null> {
-  const model = await resolveAnnouncerModel();
-  const provider = providerForModel(model);
-
-  if (provider === 'apple') {
-    return runAppleFoundationSummarize(SYSTEM_PROMPT, material, OUTPUT_SCHEMA);
-  }
-  if (provider === 'local') {
-    const cfg = readGlobalConfig();
-    const endpoint = cfg.announcerLocalEndpoint !== undefined && cfg.announcerLocalEndpoint.trim() !== '' ? cfg.announcerLocalEndpoint : DEFAULT_LOCAL_ENDPOINT;
-    return runLocalSummarize(SYSTEM_PROMPT + LOCAL_JSON_INSTRUCTION, material, { endpoint, model: cfg.announcerLocalModel ?? '' });
-  }
-
-  // Anthropic — needs the key; without it, signal "no provider" → heuristic.
-  const apiKey = await resolveAnnouncerKey();
-  if (apiKey === null) return null;
-  const res = await new Anthropic({ apiKey }).messages.create({
-    model,
-    max_tokens: 512,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: material }],
-    output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
-  });
-  let text = '';
-  for (const block of res.content) if (block.type === 'text') text += block.text;
-  return text;
-}
-
 /** Recommend a worker count for the current Up Next set. Uses the configured AI
- *  provider (Anthropic / local / Apple, HS-8976); falls back to the deterministic
- *  cluster heuristic when no provider can run or the AI errors/returns garbage. */
+ *  provider (Anthropic / local / Apple, HS-8976, via `callAnnouncerJson`); falls
+ *  back to the deterministic cluster heuristic when no provider can run or the AI
+ *  errors / returns garbage. */
 export async function suggestWorkerCount(): Promise<SuggestionResult> {
   const tickets = await fetchPending();
   const max = poolMax();
@@ -190,7 +152,7 @@ export async function suggestWorkerCount(): Promise<SuggestionResult> {
 
   const material = `${buildSuggestDigest(tickets)}\n\nMaximum workers: ${String(max)}.`;
   try {
-    const text = await runEstimator(material);
+    const text = await callAnnouncerJson(SYSTEM_PROMPT, material, OUTPUT_SCHEMA, LOCAL_JSON_INSTRUCTION, 512);
     if (text !== null) {
       const parsed = parseSuggestion(text, max, hasWork);
       if (parsed !== null) return parsed;

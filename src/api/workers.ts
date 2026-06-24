@@ -128,3 +128,27 @@ export type SuggestionResult = z.infer<typeof SuggestionResultSchema>;
 export async function getSuggestedWorkerCount(): Promise<SuggestionResult> {
   return apiCall(SuggestionResultSchema, '/workers/suggest-n');
 }
+
+// --- HS-8965 — AI partition-into-N-chunks dispatch helper (docs/92 §92.6) ---
+
+export const PartitionReqSchema = z.object({
+  workers: z.array(z.object({ worker: z.string().min(1), label: z.string() })).min(1),
+});
+export type PartitionReq = z.infer<typeof PartitionReqSchema>;
+
+export const PartitionAssignmentSchema = z.object({
+  worker: z.string(),
+  label: z.string(),
+  ticketIds: z.array(z.number()),
+  ticketNumbers: z.array(z.string()),
+});
+export type PartitionAssignment = z.infer<typeof PartitionAssignmentSchema>;
+
+const PartitionRespSchema = z.object({ assignments: z.array(PartitionAssignmentSchema) });
+
+/** POST `/workers/partition` → an AI-proposed assignment of the current unblocked
+ *  Up Next tickets across the given workers (one chunk per worker). */
+export async function getTicketPartition(req: PartitionReq): Promise<PartitionAssignment[]> {
+  const r = await apiCall(PartitionRespSchema, '/workers/partition', { method: 'POST', body: req });
+  return r.assignments;
+}
