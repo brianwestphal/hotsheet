@@ -38,6 +38,11 @@ export function deviceRegistryPath(dataDir: string): string {
   return join(dataDir, 'auth-devices.json');
 }
 
+/** Look up one enrolled device by its stable client id, or null. */
+export function getDevice(dataDir: string, clientId: string): EnrolledDevice | null {
+  return listDevices(dataDir).find(d => d.clientId === clientId) ?? null;
+}
+
 /** Read the registry. Returns `[]` when absent / unreadable / malformed. */
 export function listDevices(dataDir: string): EnrolledDevice[] {
   const path = deviceRegistryPath(dataDir);

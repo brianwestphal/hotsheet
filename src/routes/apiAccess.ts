@@ -16,6 +16,10 @@ export interface NoSecretAccessInput {
   /** Is the server bound to a non-loopback address (reachable off-box)? */
   exposed: boolean;
   trustedOrigins: string[];
+  /** HS-8995 — a verified, enrolled, non-revoked mTLS client cert authenticated
+   *  this request (Tier-1). On the mTLS listener the cert IS the credential, so
+   *  it grants access without the shared secret (which stays defense-in-depth). */
+  clientAuthenticated?: boolean;
 }
 
 export type AccessDecision =
@@ -38,7 +42,9 @@ export type AccessDecision =
  */
 export function evaluateNoSecretApiAccess(input: NoSecretAccessInput): AccessDecision {
   const { method, origin, referer, exposed, trustedOrigins } = input;
-  const trusted = isRequestTrusted(origin, referer, trustedOrigins);
+  // HS-8995 — a verified mTLS client cert is the credential on Tier-1: a
+  // cert-authenticated request is trusted regardless of origin/secret.
+  const trusted = input.clientAuthenticated === true || isRequestTrusted(origin, referer, trustedOrigins);
 
   if (MUTATION_METHODS.has(method)) {
     return trusted

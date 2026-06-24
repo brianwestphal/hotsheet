@@ -43,10 +43,14 @@ export function createApiAuthMiddleware({ exposed, trustedOrigins }: ApiAuthOpti
   return async (c, next) => {
     const origin = c.req.header('Origin');
     const referer = c.req.header('Referer');
+    // HS-8995 — a verified mTLS client cert (Tier-1) is the credential; treat a
+    // cert-authenticated request as trusted everywhere below (the shared secret
+    // becomes defense-in-depth on this tier, not the gate).
+    const certAuthed = c.get('clientAuthenticated');
 
     // (1) Management / heartbeat endpoints — open to local/trusted callers only.
     if (c.req.path.startsWith('/api/projects') || c.req.path === '/api/channel/heartbeat') {
-      if (!exposed || isRequestTrusted(origin, referer, trustedOrigins)) {
+      if (!exposed || certAuthed || isRequestTrusted(origin, referer, trustedOrigins)) {
         await next();
         return;
       }
@@ -73,13 +77,15 @@ export function createApiAuthMiddleware({ exposed, trustedOrigins }: ApiAuthOpti
       return;
     }
 
-    // (4) No secret header → origin-based access matrix.
+    // (4) No secret header → origin-based access matrix (a verified mTLS cert
+    // counts as trusted via `clientAuthenticated`).
     const decision = evaluateNoSecretApiAccess({
       method: c.req.method,
       origin,
       referer,
       exposed,
       trustedOrigins,
+      clientAuthenticated: certAuthed,
     });
     if (!decision.allow) return c.json(MISSING_SECRET_BODY, decision.status);
 

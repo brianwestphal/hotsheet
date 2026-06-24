@@ -181,5 +181,9 @@ export interface AppEnv {
     // (§94). `null` on a plain-HTTP loopback (Tier-0) connection or a peer with
     // no Hot Sheet client cert. Authz (sub-ticket 4) reads "who" from this.
     clientIdentity: ClientIdentity | null;
+    // HS-8995 — set true by the mTLS authz middleware when a verified client
+    // cert maps to an enrolled, non-revoked device. On Tier-1 this is the
+    // credential, so the downstream secret/origin gate treats it as trusted.
+    clientAuthenticated: boolean;
   };
 }

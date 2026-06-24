@@ -41,6 +41,13 @@ describe('evaluateNoSecretApiAccess (pure matrix)', () => {
     expect(evaluateNoSecretApiAccess({ ...tailnet, trustedOrigins: [] }).allow).toBe(false);
   });
 
+  it('HS-8995 — a verified mTLS cert (clientAuthenticated) is trusted without a secret/origin', () => {
+    // An untrusted-origin GET + mutation on an exposed server that would normally
+    // 403 both pass when the request is cert-authenticated (the cert is the credential).
+    expect(evaluateNoSecretApiAccess({ method: 'GET', origin: 'https://evil.com', referer: undefined, exposed: true, trustedOrigins: [], clientAuthenticated: true }).allow).toBe(true);
+    expect(evaluateNoSecretApiAccess({ method: 'POST', origin: undefined, referer: undefined, exposed: true, trustedOrigins: [], clientAuthenticated: true }).allow).toBe(true);
+  });
+
   it('rejects a no-secret mutation from an untrusted (or absent) origin', () => {
     expect(evaluateNoSecretApiAccess({ method: 'POST', origin: 'https://evil.com', referer: undefined, exposed: false, trustedOrigins: [] }).allow).toBe(false);
     expect(evaluateNoSecretApiAccess({ method: 'POST', origin: undefined, referer: undefined, exposed: false, trustedOrigins: [] }).allow).toBe(false);

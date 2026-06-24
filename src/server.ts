@@ -6,6 +6,7 @@ import type { Server as HttpServer } from 'http';
 import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
+import { createMtlsAuthzMiddleware } from './auth/authz.js';
 import { buildMtlsServeConfig, collectServerCertHosts, type MtlsServeConfig, peerIdentityFromEnv } from './auth/tlsListener.js';
 import { runWithDataDir } from './db/connection.js';
 import { readGlobalConfig } from './global-config.js';
@@ -76,6 +77,7 @@ export async function startServer(
   // device. Authz (sub-ticket 4) reads it; until then it's just surfaced.
   app.use('*', async (c, next) => {
     c.set('clientIdentity', peerIdentityFromEnv(c.env));
+    c.set('clientAuthenticated', false); // upgraded by the mTLS authz middleware on Tier-1
     await next();
   });
 
@@ -138,12 +140,20 @@ export async function startServer(
   app.use('/api/*', requestGuards);
   app.use('/v1/*', requestGuards);
 
+  // HS-8995 — mTLS authz (Tier-1 only): map the verified client cert → an
+  // enrolled, non-revoked device before any handler; a revoked / unenrolled cert
+  // gets 403, a valid one is marked `clientAuthenticated` so the secret/origin
+  // gate below treats it as the credential. No-op on Tier-0 (loopback). Runs
+  // BEFORE the secret middleware so the cert is the primary credential.
+  app.use('/api/*', createMtlsAuthzMiddleware({ exposed }));
+
   // Secret validation + origin access-control middleware (HS-1684 / HS-1982 /
   // HS-2083 / HS-7940). Mutations need the secret OR a trusted same-origin
   // (CSRF guard); GETs poll openly on a loopback bind but require the secret
   // from untrusted origins once the server is exposed; `/api/projects/*` +
   // heartbeat stay open to local/trusted callers. Extracted to a factory so the
   // access matrix is tested against the real code (`src/routes/apiAuthMiddleware.ts`).
+  // HS-8995 — a `clientAuthenticated` mTLS request is treated as trusted here.
   app.use('/api/*', createApiAuthMiddleware({ exposed, trustedOrigins }));
 
   // API routes

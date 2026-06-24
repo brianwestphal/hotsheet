@@ -15,11 +15,13 @@ before execution."
 > §88 hosted cloud will add OIDC/SSO separately); enrollment via **`.p12` import first + QR** (for
 > the future mobile-web client).
 >
-> **Implementation progress:** sub-tickets **1/6 (HS-8992)** + **2/6 (HS-8993)** SHIPPED, **3/6
-> (HS-8994) server core** SHIPPED (client UI/Tauri save → HS-9024) — `src/auth/ca.ts` (CA + cert
-> lifecycle) + `src/auth/tlsListener.ts` (exposed-only mTLS listener) + `src/auth/deviceRegistry.ts`
-> + `src/routes/enrollment.ts` (mint `.p12` / sign CSR / list / revoke, loopback-gated). Sub-tickets
-> 4–6 pending (see §94.10).
+> **Implementation progress:** sub-tickets **1/6 (HS-8992)** + **2/6 (HS-8993)** + **4/6 (HS-8995)**
+> SHIPPED, **3/6 (HS-8994) server core** SHIPPED (client UI/Tauri save → HS-9024) — `src/auth/ca.ts`
+> (CA + cert lifecycle) + `src/auth/tlsListener.ts` (exposed-only mTLS listener) +
+> `src/auth/deviceRegistry.ts` + `src/routes/enrollment.ts` (mint `.p12` / sign CSR / list / revoke,
+> loopback-gated) + `src/auth/authz.ts` (Tier-1 cert authz + revocation; secret demoted to
+> defense-in-depth). Sub-tickets **5 (HS-8996 QR)** + **6 (HS-8997 sign-off)** pending; follow-ups
+> HS-9019 (keychain-less CA), HS-9024 (enroll UI), HS-9025 (WS revocation re-check). See §94.10.
 
 ## 94.1 Why now
 
@@ -260,7 +262,25 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
    e2e can't catch the Tauri `<a download>` no-op, so it needs a real desktop pass). **Blocked by #1.**
 4. **Authz + ACLs + revocation** — verified identity → permitted scope (per-project roles, the §88
    model's seed); a per-device **revocation list** checked on connect; remove the bearer-secret as
-   the credential on the mTLS listener (keep it Tier-0 only). **Blocked by #2.**
+   the credential on the mTLS listener (keep it Tier-0 only). **SHIPPED (HS-8995)** (WS long-lived
+   re-check → HS-9025).
+
+   **What shipped:** `src/auth/authz.ts` — `evaluateClientAuthz({exposed, clientIdentity, device})`
+   (pure): Tier-0 → allow (defer to the secret path); Tier-1 → require a verified identity mapping to
+   an **enrolled, non-revoked** device, else 403 (`mtls-no-client-cert` / `mtls-unenrolled` /
+   `mtls-revoked`). v1 authz = "enrolled + not revoked = full project access" (the §88 roles model's
+   seed — the role lookup grows here). `createMtlsAuthzMiddleware({exposed})` is mounted on `/api/*`
+   **before** the secret middleware (no-op on Tier-0); on a pass it sets a new `AppEnv` var
+   `clientAuthenticated`. **Bearer-secret demoted to defense-in-depth on Tier-1:** `apiAccess.ts`
+   /`apiAuthMiddleware.ts` treat a `clientAuthenticated` request as trusted, so a valid client cert
+   grants access **without** the shared secret (the cert is the credential); the secret check still
+   runs but is no longer the gate. **Revocation** uses sub-ticket 3's registry (`isRevoked` /
+   `device.revoked`); per-HTTP-request enforcement means a revoked device gets 403 on every call.
+   Tests: `src/auth/authz.test.ts` (decision matrix + middleware vs a real registry) +
+   `server.auth.test.ts` (cert-authenticated request trusted without secret/origin). **Deferred to
+   HS-9025:** re-checking revocation on already-open long-lived WS connections (per-request covers
+   HTTP; an open terminal/`/ws/sync` socket needs a periodic sweep). The Revoke **button** is in the
+   HS-9024 device UI. **Blocked by #2.**
 5. **QR pairing enrollment** — desktop shows a short-lived pairing QR; a device generates a keypair
    + CSR, signed over the trusted channel. **Blocked by #3** (+ coordinates with the §46 mobile
    client / HS-7941).
