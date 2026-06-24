@@ -73,7 +73,6 @@ anything outside the static `extraSearchDirs` undiscoverable.
 | `get_pending_update` | Poll for a pending update version (stored from async check) |
 | `check_for_update` | Actively check for updates, return version or null |
 | `install_update` | Download and install the pending update |
-| `set_app_icon(variant: string)` | Set the dock/taskbar icon to a named variant |
 | `request_attention()` | Trigger critical dock bounce (macOS) |
 | `request_attention_once()` | Trigger informational dock bounce (macOS) |
 | `open_url(url: string)` | Open a URL in the default browser |

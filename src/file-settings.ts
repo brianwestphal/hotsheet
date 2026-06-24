@@ -7,7 +7,6 @@ import { readSecretFile, writeSecretFile } from './secret-file.js';
 
 const FileSettingsSchema = z.object({
   appName: z.string().optional(),
-  appIcon: z.string().optional(),
   backupDir: z.string().optional(),
   ticketPrefix: z.string().optional(),
   secret: z.string().optional(),
@@ -20,7 +19,7 @@ const FileSettingsSchema = z.object({
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */
-const RESERVED_KEYS = new Set(['appName', 'appIcon', 'backupDir', 'ticketPrefix', 'secret', 'secretPathHash', 'port', 'authoritativeDataDir']);
+const RESERVED_KEYS = new Set(['appName', 'backupDir', 'ticketPrefix', 'secret', 'secretPathHash', 'port', 'authoritativeDataDir']);
 
 /** Setting keys whose values are JSON (arrays/objects) rather than plain strings.
  *  These are stored as native JSON in settings.json and stringified for the API. */
@@ -114,8 +113,6 @@ const LOCAL_SCOPE_KEYS = new Set([
   'telemetry_logs_enabled',
   'telemetry_traces_enabled',
   'telemetry_retention_days',
-  //   App icon (personal; UI is currently disabled — drop candidate, see HS-9005 follow-up).
-  'appIcon',
   //   Announcer is local-only, never shared (incl. the enable + dismissed-topics;
   //   model/rate/speak-permissions live in machine-Global config already).
   'announcer_enabled',
@@ -140,7 +137,6 @@ export function defaultScope(key: string): SettingsLayer {
 
 export interface FileSettings {
   appName?: string;
-  appIcon?: string;
   backupDir?: string;
   ticketPrefix?: string;
   secret?: string;

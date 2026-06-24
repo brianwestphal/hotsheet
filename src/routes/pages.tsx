@@ -582,12 +582,7 @@ pageRoutes.get('/', (c) => {
             <div className="settings-tab-panel active" data-panel="general">
               <div className="settings-field">
                 <label>Project name</label>
-                <div className="settings-app-name-row">
-                  <button className="app-icon-picker-btn" id="app-icon-picker-btn" title="Change app icon" style="display:none">
-                    <img id="app-icon-preview" src="/static/assets/icon-default.png" width="28" height="28" />
-                  </button>
-                  <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
-                </div>
+                <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
                 <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar and project tab. Leave empty for default.</span>
               </div>
               <div className="settings-field">
@@ -672,7 +667,7 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-worklist-preamble-hint">Free-text notes added under a "Project Notes" heading near the top of <code>.hotsheet/worklist.md</code>, before the standard workflow instructions. Leave empty to omit.</span>
               </div>
             </div>
-            <div className="settings-tab-panel" data-panel="categories" data-scope-complex>
+            <div className="settings-tab-panel" data-panel="categories" data-scope-complex="shared-only">
               <div className="settings-section-header">
                 <h3>Categories</h3>
                 <div className="category-preset-controls">
@@ -747,7 +742,7 @@ pageRoutes.get('/', (c) => {
             {/* HS-7953 — Permission allow-list management. Lists configured
                 rules; +Add inline form; per-row delete. Populated by
                 `permissionAllowListUI.tsx::loadAndRenderAllowList`. */}
-            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel" data-scope-complex>
+            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel" data-scope-complex="local-only">
               <div className="settings-section-header">
                 <h3>Auto-Allow Rules</h3>
               </div>
@@ -886,7 +881,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 {/* HS-8790 — Anthropic key: shown only when an Anthropic model is
                     selected (the on-device Apple model needs no key). */}
-                <div className="settings-field" style="margin-top:12px" id="settings-announcer-key-field" data-scope-complex>
+                <div className="settings-field" style="margin-top:12px" id="settings-announcer-key-field" data-scope-complex="local-only">
                   <label>Anthropic API key</label>
                   <select id="settings-announcer-key-select" style="max-width:340px">
                     <option value="">Default — first Anthropic key</option>
@@ -924,7 +919,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 {/* HS-8769 — "uninteresting" topics: skipping an entry adds its title here,
                     and future narration omits similar material. Editable. */}
-                <div className="settings-field" style="margin-top:12px" data-scope-complex>
+                <div className="settings-field" style="margin-top:12px" data-scope-complex="local-only">
                   <label>Uninteresting topics</label>
                   <textarea id="settings-announcer-dismissed" rows={3} placeholder="One topic per line — the Announcer skips these" autoComplete="off" style="width:100%;box-sizing:border-box;font-size:13px"></textarea>
                   <span className="settings-hint">When you skip an entry, its title is added here, and future narration omits similar topics. Edit freely (one per line); blank lines are ignored.</span>

@@ -195,8 +195,6 @@ function bindGeneralTab() {
     }, 500);
   });
 
-  bindAppIconPicker();
-
   // Auto-prioritize toggle
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
@@ -362,68 +360,6 @@ function bindGeneralTab() {
     }
     aiInstrBtn.textContent = 'Update CLAUDE.md';
     aiInstrBtn.disabled = false;
-  });
-}
-
-function bindAppIconPicker() {
-  const iconBtn = byId('app-icon-picker-btn');
-  const iconPreview = byId<HTMLImageElement>('app-icon-preview');
-  let currentIcon = 'default';
-
-  // Load current icon from file-settings
-  void getFileSettings().then((fs) => {
-    if (fs.appIcon !== undefined && fs.appIcon !== '') {
-      currentIcon = fs.appIcon;
-      iconPreview.src = `/static/assets/icon-${currentIcon}.png`;
-    }
-  });
-
-  iconBtn.addEventListener('click', () => {
-    // Remove existing popup
-    document.querySelectorAll('.icon-variant-popup').forEach(el => el.remove());
-
-    const variants = ['default', ...Array.from({ length: 9 }, (_, i) => `variant-${i + 1}`)];
-    const popup = toElement(
-      <div className="icon-variant-popup">
-        {variants.map(v =>
-          <button className={`icon-variant-option${v === currentIcon ? ' active' : ''}`} data-variant={v}>
-            <img src={`/static/assets/icon-${v}.png`} width="40" height="40" />
-          </button>
-        )}
-      </div>
-    );
-
-    popup.querySelectorAll('.icon-variant-option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const variant = (btn as HTMLElement).dataset.variant!;
-        currentIcon = variant;
-        iconPreview.src = `/static/assets/icon-${variant}.png`;
-        popup.remove();
-
-        // Save to file-settings
-        void updateFileSettings({ appIcon: variant });
-
-        // Apply via Tauri if available
-        const invoke = getTauriInvoke();
-        if (invoke) {
-          invoke('set_app_icon', { variant }).catch(() => {});
-        }
-      });
-    });
-
-    const rect = iconBtn.getBoundingClientRect();
-    popup.style.position = 'fixed';
-    popup.style.left = `${rect.left}px`;
-    popup.style.top = `${rect.bottom + 4}px`;
-    document.body.appendChild(popup);
-
-    // Close on outside click
-    setTimeout(() => {
-      const close = (e: MouseEvent) => {
-        if (!popup.contains(e.target as Node)) { popup.remove(); document.removeEventListener('click', close); }
-      };
-      document.addEventListener('click', close);
-    }, 0);
   });
 }
 

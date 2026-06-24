@@ -36,13 +36,6 @@ export function getTauriEventListener(): TauriListen | null {
   return tauri?.event?.listen ?? null;
 }
 
-/** Restore the saved app icon variant on page load. The Dock resets to the bundle
- *  icon during app launch, so we re-apply it from the client once the page is ready.
- *  NOTE: Custom icon support is feature-flagged out — always uses default icon. */
-export async function restoreAppIcon() {
-  // Custom icon switching disabled — always use default icon
-}
-
 /** Request user attention — bounces dock icon in Tauri, flashes tab title in browser.
  *  @param level - 'once' = single bounce, 'persistent' = keep bouncing until focused */
 export function requestAttention(level: 'once' | 'persistent') {

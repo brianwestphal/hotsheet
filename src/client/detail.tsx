@@ -387,6 +387,27 @@ export function refreshDetail() {
   }
 }
 
+/**
+ * HS-9008 — re-fetch ONLY this ticket's feedback drafts and re-render its notes,
+ * without the full `loadDetail` (no ticket re-fetch, no auto-show re-entry).
+ * Called after "Save Draft" so the new draft card appears inline immediately
+ * instead of only after navigating away + back (the draft is separate state
+ * from the ticket's `notes`, so `loadTickets`'s list re-render alone left the
+ * cached drafts map stale). No-op if the panel has moved to another ticket or a
+ * note is being edited (don't clobber an in-progress edit).
+ */
+export function refreshFeedbackDrafts(ticketId: number): void {
+  if (state.activeTicketId !== ticketId) return;
+  void getFeedbackDrafts(ticketId).then((drafts) => {
+    if (state.activeTicketId !== ticketId) return;
+    setTicketDrafts(ticketId, Array.isArray(drafts) ? drafts : []);
+    const editingNow = byIdOrNull('detail-notes')?.querySelector('.note-edit-area') as HTMLElement | null;
+    if (editingNow !== null && document.activeElement === editingNow) return;
+    const ticket = state.tickets.find(t => t.id === ticketId);
+    if (ticket !== undefined) renderNotes(ticketId, parseNotesJson(ticket.notes));
+  }).catch(() => { /* best-effort — drafts reappear on next detail open */ });
+}
+
 async function loadDetail(id: number) {
   // HS-8642 — typed detail payload (ticket + attachments + syncInfo) via the
   // shared `TicketDetailSchema`; the wire shape is validated by `apiCall`.

@@ -13,7 +13,6 @@
     "allow-get-pending-update",
     "allow-check-for-update",
     "allow-install-update",
-    "allow-set-app-icon",
     "allow-request-attention",
     "allow-request-attention-once",
     "allow-pick-folder",

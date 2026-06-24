@@ -44,7 +44,7 @@ import { bindKeyboardShortcuts } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls, syncSearchInputFromState, syncSidebarActiveState } from './sidebar.js';
 import { refreshAllKnownTags, state } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
-import { bindExternalLinkHandler, checkForUpdate, requestNativeNotificationPermission, restoreAppIcon } from './tauriIntegration.js';
+import { bindExternalLinkHandler, checkForUpdate, requestNativeNotificationPermission } from './tauriIntegration.js';
 import { loadTelemetryCostMode } from './telemetryCostMode.js';
 import { initTerminal } from './terminal.js';
 import { initTerminalDashboard } from './terminalDashboard.js';
@@ -391,8 +391,6 @@ async function init() {
     void checkForUpdate();
     bindAppLevelDocumentListeners();
 
-    // Restore saved app icon variant in Tauri (Dock resets on launch).
-    void restoreAppIcon();
     bindExternalLinkHandler();
     void initChannel();
 

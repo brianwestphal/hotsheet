@@ -30,6 +30,22 @@ async function getProjectSecret(page: import('@playwright/test').Page): Promise<
   return projects[0]?.secret ?? '';
 }
 
+/**
+ * Suppress the HS-8913 AI-instructions setup nudge for this project. Its modal
+ * overlay (`.ai-instructions-nudge-overlay`) intercepts pointer events, and
+ * because these tests reload the page repeatedly, DOM-removing it isn't enough —
+ * it re-appears on the next load. Persisting the dismissed file-setting (it's a
+ * `*_nudge_dismissed` local-scope key, HS-9002) stops it from ever showing, so
+ * clicks land on the real targets. Set BEFORE the first navigation.
+ */
+async function suppressAiInstructionsNudge(page: import('@playwright/test').Page): Promise<void> {
+  const secret = await getProjectSecret(page);
+  await page.request.patch('/api/file-settings', {
+    headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret },
+    data: { ai_instructions_nudge_dismissed: true },
+  });
+}
+
 /** Add a FEEDBACK NEEDED note to the active ticket via the API so the
  *  detail panel auto-shows the feedback dialog when re-opened. */
 async function addFeedbackNote(
@@ -64,6 +80,7 @@ async function addFeedbackNote(
 
 test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
   test.beforeEach(async ({ page }) => {
+    await suppressAiInstructionsNudge(page);
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
   });
@@ -219,6 +236,7 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
 
 test.describe('Feedback dialog prev/next context navigation (HS-8836)', () => {
   test.beforeEach(async ({ page }) => {
+    await suppressAiInstructionsNudge(page);
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
   });

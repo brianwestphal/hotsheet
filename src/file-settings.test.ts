@@ -271,7 +271,7 @@ describe('HS-9002 — shared/local settings split', () => {
         'terminal_default', 'confirm_quit_with_running_terminals', 'quit_confirm_exempt_processes',
         'db_snapshot_protection', 'telemetry_enabled', 'telemetry_metrics_enabled',
         'telemetry_logs_enabled', 'telemetry_traces_enabled', 'telemetry_retention_days',
-        'appIcon', 'announcer_enabled', 'announcer_dismissed_topics']) {
+        'announcer_enabled', 'announcer_dismissed_topics']) {
         expect(defaultScope(k)).toBe('local');
       }
     });

@@ -24,7 +24,7 @@ Hot Sheet is a local-first, developer-focused ticket tracker that lives next to 
 
 ## 2. Data & storage (`2-data-storage.md`)
 
-PGLite embedded Postgres with automatic additive migrations, tables for tickets (HS-prefixed auto-increment IDs, never reused), attachments, stats snapshots, command log, settings (plugin-only now — project config moved to `.hotsheet/settings.json`), plus sync tables (`ticket_sync`, `sync_outbox`, `note_sync`). Notes stored as JSON array `{ id, text, created_at }`. The committed `settings.json` carries shareable project config (`appName`, `appIcon`, `ticketPrefix`, categories/views/commands/terminals, UI defaults); the per-project `secret` lives in the gitignored `secret.json` sidecar (HS-8999). **HS-9002 — shared/local settings split:** machine-local keys (`backupDir`, `port`, allow-rules, announcer key/state, notification permission, `detail_*`/`drawer_*` layout, `*_nudge_dismissed`) live in a gitignored `settings.local.json`; the app reads the merged view (local wins) and a startup migration relocates them out of any committed `settings.json`. A `.hotsheet/hotsheet.lock` file (pid/startedAt) enforces single-instance per data dir; `~/.hotsheet/instance.json` + `projects.json` support multi-project.
+PGLite embedded Postgres with automatic additive migrations, tables for tickets (HS-prefixed auto-increment IDs, never reused), attachments, stats snapshots, command log, settings (plugin-only now — project config moved to `.hotsheet/settings.json`), plus sync tables (`ticket_sync`, `sync_outbox`, `note_sync`). Notes stored as JSON array `{ id, text, created_at }`. The committed `settings.json` carries shareable project config (`appName`, `ticketPrefix`, categories/views/commands/terminals, UI defaults); the per-project `secret` lives in the gitignored `secret.json` sidecar (HS-8999). **HS-9002 — shared/local settings split:** machine-local keys (`backupDir`, `port`, allow-rules, announcer key/state, notification permission, `detail_*`/`drawer_*` layout, `*_nudge_dismissed`) live in a gitignored `settings.local.json`; the app reads the merged view (local wins) and a startup migration relocates them out of any committed `settings.json`. A `.hotsheet/hotsheet.lock` file (pid/startedAt) enforces single-instance per data dir; `~/.hotsheet/instance.json` + `projects.json` support multi-project.
 
 **Status:** Shipped — full schema, migrations, stale-lock cleanup, multi-project registry; **HS-9002 (storage + migration) + HS-9004 (dialog-wide Shared/Local/Resolved scope toolbar over the Settings tabs — decorates each file-settings field in place; replaced the rejected dedicated "Sharing" tab — + layered API) both Shipped** (per-layer editing of complex list editors is a follow-up; design in §2.3.1; live + mockup screenshots on the HS-9002/HS-9004 tickets). Cross-refs: §3 (notes), §7 (backupDir), §18 (plugin_enabled prefix), §20 (secret sidecar), §9 (layered endpoints).
 
@@ -121,7 +121,7 @@ Noteworthy behaviors:
 
 ## 10. Desktop app (`10-desktop-app.md`)
 
-Tauri v2 wraps the Node server as a sidecar (see §Tauri below for why). CLI launcher may pre-start the server (`HOTSHEET_SERVER_URL` + `HOTSHEET_SIDECAR_PID` env vars); Tauri alternatively spawns the sidecar itself. Sidecar cleanup: Unix sends SIGTERM then kills the process group; Windows uses `taskkill /T /F`. Welcome screen appears if no prior projects. Window title: custom `appName` or `"Hot Sheet — {folder_name}"`. Software updater checks GitHub releases and prompts user with an Install button (user-initiated, restart required). CLI installer symlinks to `/usr/local/bin/hotsheet` (macOS, osascript admin prompt), `~/.local/bin/hotsheet` (Linux), or `%LOCALAPPDATA%/Programs/hotsheet` + PATH (Windows). IPC surface: `check_cli_installed`, `install_cli`, `get_pending_update`, `check_for_update`, `install_update`, `set_app_icon`, `request_attention[_once]`, `open_url`, `quicklook`, `pick_folder`, `open_project`. Capabilities: `default` (core IPC + shell + updater + process) and `remote-localhost` (IPC to `localhost:*`). Known: WKWebView on macOS may suppress `confirm()` dialogs.
+Tauri v2 wraps the Node server as a sidecar (see §Tauri below for why). CLI launcher may pre-start the server (`HOTSHEET_SERVER_URL` + `HOTSHEET_SIDECAR_PID` env vars); Tauri alternatively spawns the sidecar itself. Sidecar cleanup: Unix sends SIGTERM then kills the process group; Windows uses `taskkill /T /F`. Welcome screen appears if no prior projects. Window title: custom `appName` or `"Hot Sheet — {folder_name}"`. Software updater checks GitHub releases and prompts user with an Install button (user-initiated, restart required). CLI installer symlinks to `/usr/local/bin/hotsheet` (macOS, osascript admin prompt), `~/.local/bin/hotsheet` (Linux), or `%LOCALAPPDATA%/Programs/hotsheet` + PATH (Windows). IPC surface: `check_cli_installed`, `install_cli`, `get_pending_update`, `check_for_update`, `install_update`, `request_attention[_once]`, `open_url`, `quicklook`, `pick_folder`, `open_project`. Capabilities: `default` (core IPC + shell + updater + process) and `remote-localhost` (IPC to `localhost:*`). Known: WKWebView on macOS may suppress `confirm()` dialogs.
 
 **Status:** Shipped except **Windows code signing** (SmartScreen warning accepted; Azure Trusted Signing deferred). Cross-refs: §13 (app-icon), tauri-architecture.md (sidecar details).
 
@@ -142,11 +142,9 @@ The MCP channel gives Claude Code a real-time link to Hot Sheet. Three component
 
 ---
 
-## 13. App icon (`13-app-icon.md`)
+## 13. App icon — REMOVED (`13-app-icon.md`)
 
-9 icon variants (flame motif) plus the default. Settings → General tab shows a dropdown with thumbnail grid. Click updates the dock icon immediately (no relaunch) via Tauri's `set_app_icon`. Stored in `.hotsheet/settings.json` as `appIcon` (values `default` or `variant-1`…`variant-9`). macOS implementation: reads `.icns`, builds an `NSImage` via the `objc2` crate with a 824×824 body in a 1024×1024 continuous-corner rounded-rect canvas + drop shadow, calls `NSApplication.setApplicationIconImage()`. Cross-platform: Windows taskbar + Linux window via `Window::set_icon()`.
-
-**Shipped:** 9 variants, dropdown, runtime change, AND startup icon restoration (HS-8078 audit 2026-05-01 — `apply_saved_icon(app.handle())` in `src-tauri/src/lib.rs::setup()` reads `appIcon` from `.hotsheet/settings.json` on app launch and dispatches `set_app_icon` 500 ms after launch so macOS doesn't reset the dock icon during `applicationDidFinishLaunching`). The client-side `restoreAppIcon()` in `src/client/tauriIntegration.tsx` is now a deliberate no-op — Tauri owns the icon swap end-to-end on the desktop build, and on the browser-mode build no OS icon swap is possible anyway. Cross-refs: §2 (appIcon), §10 (IPC command).
+**Removed (HS-9011, 2026-06-24).** The dynamic app-icon-variants feature (Settings picker + 9 flame-motif variants applied via Tauri `set_app_icon`) had long been dormant — its picker UI was disabled in commit `fbea797` and the startup-apply (`apply_saved_icon`) was feature-flagged off. On the maintainer's call it was dropped end-to-end: the picker + `bindAppIconPicker`, the `appIcon` file-setting, the `set_app_icon` / `apply_saved_icon` / `set_macos_dock_icon` / `apple_squircle_path` Rust code + its capability grants + bundle-resource entries, and the variant assets. The app now always uses its bundled default icon. Doc number kept as a tombstone (avoids renumbering §14–§95).
 
 ---
 
@@ -1190,7 +1188,7 @@ Eight internal testing specification docs: 1-overview (strategy, phases, coverag
 | 9 — API | Shipped | — |
 | 10 — desktop | Partial | Windows code-signing deferred |
 | 12 — Claude channel | Shipped | — |
-| 13 — app icon | Shipped | — |
+| 13 — app icon | Removed (HS-9011) | — |
 | 14 — command log | Shipped | — |
 | 15 — shell commands | Shipped | — |
 | 16 — command groups | Shipped | — |

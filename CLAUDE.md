@@ -159,7 +159,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 9. `9-api.md` — REST API endpoint reference
 10. `10-desktop-app.md` — Tauri wrapper, updater, CLI installer
 12. `12-claude-channel.md` — Claude Channel integration, play button, auto mode
-13. `13-app-icon.md` — dynamic app icon variants, settings UI
+13. `13-app-icon.md` — REMOVED (HS-9011): dynamic app icon variants feature dropped; tombstone kept to avoid renumbering
 14. `14-commands-log.md` — log viewer for channel + shell command history
 15. `15-shell-commands.md` — shell command targets, execution API
 16. `16-command-groups.md` — custom command groups, collapsible sidebar

@@ -464,6 +464,17 @@ function buildSaveDraftHandler(ctx: FeedbackDialogCtx): () => Promise<void> {
       // are now linked to a real draft row.
       ctx.state.attachmentsCommitted = true;
       ctx.close();
+      // HS-9008 — the saved draft renders inline in the notes list ONLY after
+      // the detail panel re-fetches the ticket's drafts (drafts come from a
+      // separate `getFeedbackDrafts` fetch, NOT from the ticket's `notes`).
+      // `loadTickets()` re-renders the LIST + `syncDetailPanel` but reuses the
+      // STALE cached drafts map, so the new draft didn't appear until the user
+      // navigated away and back (which re-ran `loadDetail`'s drafts fetch). Now
+      // we refresh just this ticket's drafts + re-render its notes — surgical,
+      // so it doesn't re-run the full `loadDetail` (no ticket re-fetch, no
+      // auto-show re-entry that would reopen the just-closed dialog). Dynamic
+      // import breaks the detail↔feedbackDialog cycle.
+      void import('./detail.js').then(m => { m.refreshFeedbackDrafts(ctx.ticketId); });
       void loadTickets();
     } catch {
       btn.textContent = 'Save Draft';

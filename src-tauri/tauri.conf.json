@@ -40,9 +40,7 @@
       "server/**/*",
       "resources/hotsheet",
       "resources/hotsheet-linux",
-      "resources/hotsheet.cmd",
-      "icons/variants/*.png",
-      "icons/variants/*.icns"
+      "resources/hotsheet.cmd"
     ],
     "createUpdaterArtifacts": true,
     "macOS": {

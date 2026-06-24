@@ -33,7 +33,6 @@
 
 - A `settings.json` file in the data directory stores all **shareable** project configuration. This makes settings easy to copy between projects, inspect, and back up, and (per §2.8) it is the one file under `.hotsheet/` that is intentionally **committed to git** so a team can version it. Fields:
   - `appName` — Display name for the project (shown in UI title bar and tabs).
-  - `appIcon` — Selected app icon variant (e.g., default, dark, colorful).
   - `ticketPrefix` — Custom prefix for ticket numbers (default: `HS`). The dash separator is added automatically.
   - `authoritativeDataDir` — git-worktree follower pointer (HS-8934, §89.1); structural, stays in `settings.json`.
   - All shareable UI and behavior settings are stored as flat keys at the root level (e.g., `layout`, `sort_by`, `sort_dir`, `categories`, `custom_views`, `custom_commands`, `terminals`, `trash_cleanup_days`, `verified_cleanup_days`, `auto_order`, etc.).

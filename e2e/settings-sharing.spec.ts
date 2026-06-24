@@ -38,16 +38,17 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await expect(page.locator('#settings-scope-note')).toContainText('settings.local.json');
 
-    const field = page.locator('.settings-field:has(#settings-app-name)');
-    // Inherited → read-only behind a "+ Override" affordance.
+    // Worklist preamble is a standard scoped field (shared-default, local override
+    // allowed) — appName is now shared-only (HS-9009), so it has no "+ Override".
+    const field = page.locator('.settings-field:has(#settings-worklist-preamble)');
     const overrideBtn = field.locator('[data-scope-action="override"]');
     await expect(overrideBtn).toBeVisible();
-    await expect(page.locator('#settings-app-name')).toBeDisabled();
+    await expect(page.locator('#settings-worklist-preamble')).toBeDisabled();
     await overrideBtn.click();
 
     // Now an editable local override with a Reset action.
-    await expect(page.locator('#settings-app-name')).toBeEnabled({ timeout: 3000 });
-    await page.locator('#settings-app-name').fill('Local Name');
+    await expect(page.locator('#settings-worklist-preamble')).toBeEnabled({ timeout: 3000 });
+    await page.locator('#settings-worklist-preamble').fill('Local-only preamble');
     await page.waitForTimeout(900); // debounced write
 
     // Reset to shared → in-app confirm overlay (Tauri-safe, NOT window.confirm).
@@ -58,7 +59,27 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
 
     // Back to inherited (the +Override affordance returns, control re-disabled).
     await expect(field.locator('[data-scope-action="override"]')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('#settings-worklist-preamble')).toBeDisabled();
+  });
+
+  test('HS-9009: shared-only fields have no local override; local-only fields are read-only in Shared', async ({ page }) => {
+    // appName is shared-only: editable in Shared, read-only "shared only" in Local (no + Override).
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(page.locator('#settings-app-name')).toBeEnabled();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const appNameField = page.locator('.settings-field:has(#settings-app-name)');
+    await expect(appNameField.locator('[data-scope-action="override"]')).toHaveCount(0);
+    await expect(appNameField.locator('.scope-tag')).toContainText('shared only');
     await expect(page.locator('#settings-app-name')).toBeDisabled();
+    // Categories is a shared-only complex editor: locked in Local, NOT in Shared.
+    await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(1);
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
+
+    // Permissions is a local-only complex editor: locked in Shared, NOT in Local.
+    await expect(page.locator('#settings-permissions-panel.scope-locked')).toHaveCount(1);
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await expect(page.locator('#settings-permissions-panel.scope-locked')).toHaveCount(0);
   });
 
   test('complex / non-overridable surfaces lock in Shared/Local mode', async ({ page }) => {
@@ -69,15 +90,21 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
   });
 
-  test('HS-9006: Announcer enable toggle participates; its key/topics sub-fields lock; the panel is not wholesale-locked', async ({ page }) => {
+  test('HS-9006/9009: Announcer is local-only — enable toggle editable in Local, read-only in Shared; panel not wholesale-locked', async ({ page }) => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await page.locator('.settings-tab[data-tab="announcer"]').click();
     // The whole Announcer panel is NOT locked (global fields stay editable).
     await expect(page.locator('.settings-tab-panel[data-panel="announcer"].scope-locked')).toHaveCount(0);
-    // The per-project enable toggle decorates with a scope affordance...
+    // local-only: the enable toggle is editable in Local (its home, no + Override),
+    // and the local-only key sub-field is NOT locked in Local.
+    await expect(page.locator('#settings-announcer-enabled')).toBeEnabled();
+    await expect(page.locator('#settings-announcer-key-field.scope-locked')).toHaveCount(0);
+
+    // In Shared, local-only surfaces go read-only ("local only").
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(page.locator('#settings-announcer-enabled')).toBeDisabled();
     const enableField = page.locator('.settings-field:has(#settings-announcer-enabled)');
-    await expect(enableField.locator('[data-scope-action="override"]')).toBeVisible();
-    // ...while the project-level key + topics sub-fields are locked.
+    await expect(enableField.locator('.scope-tag')).toContainText('local only');
     await expect(page.locator('#settings-announcer-key-field.scope-locked')).toHaveCount(1);
   });
 });

@@ -42,6 +42,16 @@ interface ScopedField {
   controlId: string;
   key: string;
   kind: Exclude<SettingKind, 'complex'>;
+  /**
+   * HS-9009 (docs/95 §95.4) — sharing constraint:
+   *  - `shared-only`: editable in Shared + Resolved, read-only in Local (no
+   *    "+ Override" — a hard team value, e.g. appName / ticketPrefix).
+   *  - `local-only`: editable in Local + Resolved, read-only in Shared (never
+   *    committed, e.g. the Announcer enable toggle).
+   *  - undefined (default): the standard scoped field — editable everywhere,
+   *    "+ Override" in Local when inherited.
+   */
+  share?: 'shared-only' | 'local-only';
 }
 
 /**
@@ -59,9 +69,9 @@ interface ScopedField {
  * the default layer per key is `defaultScope` in `src/file-settings.ts`.
  */
 const SCOPED_FIELDS: ScopedField[] = [
-  // General
-  { controlId: 'settings-app-name', key: 'appName', kind: 'text' },
-  { controlId: 'settings-ticket-prefix', key: 'ticketPrefix', kind: 'text' },
+  // General — appName + ticketPrefix are shared-only (hard team values, docs/95 §95.4).
+  { controlId: 'settings-app-name', key: 'appName', kind: 'text', share: 'shared-only' },
+  { controlId: 'settings-ticket-prefix', key: 'ticketPrefix', kind: 'text', share: 'shared-only' },
   { controlId: 'settings-worklist-preamble', key: 'worklist_preamble', kind: 'text' },
   { controlId: 'settings-trash-days', key: 'trash_cleanup_days', kind: 'number' },
   { controlId: 'settings-verified-days', key: 'verified_cleanup_days', kind: 'number' },
@@ -84,7 +94,8 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-shell-streaming-enabled', key: 'shell_streaming_enabled', kind: 'boolean' },
   // Announcer (per-project file setting; the model/rate/etc. are machine-global
   // and write to ~/.hotsheet/config.json, so they're layer-safe and stay plain).
-  { controlId: 'settings-announcer-enabled', key: 'announcer_enabled', kind: 'boolean' },
+  // local-only: the Announcer is never shared (docs/95 §95.4).
+  { controlId: 'settings-announcer-enabled', key: 'announcer_enabled', kind: 'boolean', share: 'local-only' },
 ];
 
 let mode: ScopeMode = 'resolved';
@@ -210,9 +221,17 @@ const SCOPE_NOTE: Record<ScopeMode, string> = {
  * (Permissions / Plugins render content on first show).
  */
 function lockComplexPanels(): void {
-  const locked = mode !== 'resolved';
   document.querySelectorAll<HTMLElement>('[data-scope-complex]').forEach(panel => {
+    // HS-9009 — `data-scope-complex` variants: '' (default) locks outside
+    // Resolved; 'shared-only' locks only in Local; 'local-only' locks only in
+    // Shared. The chip text is driven by the matching CSS class.
+    const variant = panel.getAttribute('data-scope-complex') ?? '';
+    const locked = variant === 'shared-only' ? mode === 'local'
+      : variant === 'local-only' ? mode === 'shared'
+        : mode !== 'resolved';
     panel.classList.toggle('scope-locked', locked);
+    panel.classList.toggle('scope-locked-shared-only', locked && variant === 'shared-only');
+    panel.classList.toggle('scope-locked-local-only', locked && variant === 'local-only');
   });
 }
 
@@ -232,12 +251,19 @@ function decorateField(field: ScopedField, skipValues: boolean): void {
 
   const scope = resolveFieldScope(layered, field.key);
 
-  // Editability: inherited local fields are read-only until "+ Override".
-  control.disabled = mode === 'local' && !scope.overridden;
+  // Editability (HS-9009):
+  //  - shared-only: read-only in Local (can't override a hard team value).
+  //  - local-only: read-only in Shared (never committed).
+  //  - default: inherited Local fields are read-only until "+ Override".
+  control.disabled = field.share === 'shared-only' ? mode === 'local'
+    : field.share === 'local-only' ? mode === 'shared'
+      : mode === 'local' && !scope.overridden;
 
   // Value, per mode:
   //  - shared: the literal settings.json value (blank when absent — truthful;
   //    this is the bug-fix path: show the shared value even when overridden).
+  //    A local-only field has no shared value, so show its effective value
+  //    read-only instead of blank.
   //  - local + overridden: the local value.
   //  - local + inherited / resolved: the resolved (effective) value — but when
   //    that key isn't in EITHER file (a pure runtime default like the cleanup
@@ -245,7 +271,7 @@ function decorateField(field: ScopedField, skipValues: boolean): void {
   //    than blanking it.
   if (!skipValues) {
     if (mode === 'shared') {
-      applyValueToControl(control, field.kind, scope.sharedValue);
+      applyValueToControl(control, field.kind, field.share === 'local-only' ? scope.resolvedValue : scope.sharedValue);
     } else if (mode === 'local' && scope.overridden) {
       applyValueToControl(control, field.kind, scope.localValue);
     } else if (scope.resolvedValue !== undefined) {
@@ -267,12 +293,18 @@ function renderAffordance(host: HTMLElement, field: ScopedField, scope: ReturnTy
   if (mode === 'resolved') {
     const label = scope.origin === 'local' ? 'from Local' : scope.origin === 'shared' ? 'from Shared' : 'default';
     content = toElement(<span className={`scope-tag scope-tag-${scope.origin}`}><span className="scope-tag-dot" />{label}</span>);
+  } else if (field.share === 'shared-only') {
+    // Editable in Shared (it IS the shared value); read-only "shared only" in Local.
+    if (mode === 'local') content = toElement(<span className="scope-tag scope-tag-shared"><span className="scope-tag-dot" />shared only</span>);
+  } else if (field.share === 'local-only') {
+    // Editable in Local (its home); read-only "local only" in Shared.
+    if (mode === 'shared') content = toElement(<span className="scope-tag scope-tag-local"><span className="scope-tag-dot" />local only</span>);
   } else if (mode === 'shared') {
     if (scope.overridden) {
       content = toElement(<span className="scope-tag scope-tag-local"><span className="scope-tag-dot" />overridden locally</span>);
     }
   } else {
-    // local mode
+    // local mode, standard scoped field
     content = scope.overridden
       ? toElement(<button type="button" className="scope-link" data-scope-action="reset">Reset to shared</button>)
       : toElement(<button type="button" className="scope-ghostbtn" data-scope-action="override">+ Override</button>);

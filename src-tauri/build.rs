@@ -24,7 +24,6 @@ fn main() {
                 "get_pending_update",
                 "check_for_update",
                 "install_update",
-                "set_app_icon",
                 "request_attention",
                 "request_attention_once",
                 "pick_folder",

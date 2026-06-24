@@ -48,7 +48,6 @@ export const SettingsSchema = z.record(z.string(), z.string());
 export const FileSettingsSchema = z.object({
   // Reserved / infrastructure (the readable subset).
   appName: z.string().optional().catch(undefined),
-  appIcon: z.string().optional().catch(undefined),
   backupDir: z.string().optional().catch(undefined),
   ticketPrefix: z.string().optional().catch(undefined),
   // HS-8917 — per-project free-text preamble injected near the top of worklist.md.

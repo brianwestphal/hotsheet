@@ -6,7 +6,7 @@
  * / `fireNativeNotification` / `isAppBackgrounded` in a globals-stubbed environment.
  * This file picks up the rest of the module (the DOM-touching helpers — banner
  * surfaces, link interceptor, `getTauriInvoke` / `getTauriEventListener`,
- * `requestAttention`, `openExternalUrl`, `restoreAppIcon`) under happy-dom.
+ * `requestAttention`, `openExternalUrl`) under happy-dom.
  *
  * `__TAURI__` is injected on `window` per test and removed in `afterEach` so
  * Tauri-on and Tauri-off code paths are both exercised cleanly.
@@ -20,7 +20,6 @@ import {
   getTauriInvoke,
   openExternalUrl,
   requestAttention,
-  restoreAppIcon,
   showSkillsBanner,
   showUpdateBanner,
 } from './tauriIntegration.js';
@@ -87,12 +86,6 @@ describe('getTauriEventListener', () => {
     >();
     installTauri({ listen });
     expect(getTauriEventListener()).toBe(listen);
-  });
-});
-
-describe('restoreAppIcon', () => {
-  it('resolves cleanly (current implementation is a no-op)', async () => {
-    await expect(restoreAppIcon()).resolves.toBeUndefined();
   });
 });
 
