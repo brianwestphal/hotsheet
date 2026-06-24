@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type ArrayDelta, isArrayDelta, resolveDeltaArray } from './settingsDelta.js';
+import { type ArrayDelta, computeArrayDelta, isArrayDelta, resolveDeltaArray } from './settingsDelta.js';
 
 interface Item { id: string; name: string; n?: number }
 const idOf = (i: Item): string => i.id;
@@ -84,5 +84,37 @@ describe('resolveDeltaArray', () => {
     const delta: ArrayDelta<Ctx> = { hidden: ['tag:urgent'], overrides: { 'category:bug': { text: 'B2' } } };
     const out = resolveDeltaArray(ctxShared, delta, ctxId);
     expect(out).toEqual([{ type: 'category', key: 'bug', text: 'B2' }]);
+  });
+});
+
+describe('computeArrayDelta', () => {
+  it('returns an empty delta when the edited list equals shared', () => {
+    expect(computeArrayDelta(shared, [...shared], idOf)).toEqual({});
+  });
+
+  it('captures a removed shared item as hidden', () => {
+    const edited = shared.filter(i => i.id !== 'b');
+    expect(computeArrayDelta(shared, edited, idOf)).toEqual({ hidden: ['b'] });
+  });
+
+  it('captures a new (non-shared) item as added', () => {
+    const edited = [...shared, { id: 'x', name: 'Local X' }];
+    expect(computeArrayDelta(shared, edited, idOf)).toEqual({ added: [{ id: 'x', name: 'Local X' }] });
+  });
+
+  it('captures a changed shared item as an override (full item)', () => {
+    const edited = shared.map(i => i.id === 'a' ? { ...i, name: 'A!' } : i);
+    expect(computeArrayDelta(shared, edited, idOf)).toEqual({ overrides: { a: { id: 'a', name: 'A!' } } });
+  });
+
+  it('round-trips with resolveDeltaArray (hide + add + override)', () => {
+    const edited: Item[] = [
+      { id: 'a', name: 'A2' },          // override
+      // 'b' removed → hidden
+      { id: 'c', name: 'Gamma' },        // unchanged
+      { id: 'x', name: 'Local X' },      // added
+    ];
+    const delta = computeArrayDelta(shared, edited, idOf);
+    expect(resolveDeltaArray(shared, delta, idOf)).toEqual(edited);
   });
 });

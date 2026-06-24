@@ -1,8 +1,8 @@
-import { destroyTerminal, getCommandSuggestions, getFileSettings, updateFileSettings } from '../api/index.js';
+import { destroyTerminal, getCommandSuggestions, updateFileSettings } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
-import { parseJsonArrayOr } from './json.js';
 import { delegate } from './reactive.js';
+import { loadScopedList, saveScopedList, scopeListHintElement } from './settingsScopeList.js';
 import { getActiveProject } from './state.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
@@ -49,6 +49,11 @@ interface EditableTerminalConfig extends TerminalTabConfig {
 export const COMMAND_INPUT_PLACEHOLDER = 'Pick a command…';
 
 let terminals: EditableTerminalConfig[] = [];
+// HS-9015 — scope-aware editing: the committed shared array + the active mode.
+let terminalsShared: EditableTerminalConfig[] = [];
+let terminalsMode: 'shared' | 'local' | 'resolved' = 'resolved';
+/** Stable identity for a terminal config (matches the file-settings idOf). */
+const termIdOf = (t: EditableTerminalConfig): string => (typeof t.id === 'string' ? t.id : '');
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 let dragFromIndex: number | null = null;
 
@@ -106,29 +111,29 @@ const TRASH_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13
 const PENCIL_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>;
 
 /** Load terminals from file-settings and render. Exported so the dialog can call on open. */
-export async function loadAndRenderTerminalsSettings(): Promise<void> {
-  try {
-    const fs = await getFileSettings();
-    terminals = parseTerminals(fs.terminals);
-  } catch {
-    terminals = [];
-  }
-  renderList();
+let scopeListenerBound = false;
+/** HS-9015 — reload the terminals list for the new layer when the scope mode
+ *  changes. Bound once (idempotent). */
+function ensureScopeListener(): void {
+  if (scopeListenerBound) return;
+  scopeListenerBound = true;
+  document.addEventListener('hotsheet:scope-mode-changed', () => { void loadAndRenderTerminalsSettings(); });
 }
 
-function parseTerminals(raw: string | unknown[] | undefined): EditableTerminalConfig[] {
-  if (raw === undefined || raw === '') return [];
-  // HS-8090 — `parseJsonArrayOr` for the string path. The non-string
-  // path (`raw` is already an array — set when settings are populated
-  // from the live in-memory state) skips parsing and validates
-  // element-by-element below.
-  const parsed = typeof raw === 'string'
-    ? parseJsonArrayOr(raw, []) as unknown[]
-    : raw;
-  if (parsed.length === 0) return [];
-  return parsed
-    .map((item, index) => normalizeEntry(item, index))
-    .filter((c): c is EditableTerminalConfig => c !== null);
+export async function loadAndRenderTerminalsSettings(): Promise<void> {
+  ensureScopeListener();
+  try {
+    // HS-9015 — read the layer for the active scope mode (Shared shows the
+    // committed array; Local/Resolved show the effective list).
+    const data = await loadScopedList<unknown>('terminals');
+    terminalsMode = data.mode;
+    terminalsShared = data.shared.map((item, i) => normalizeEntry(item, i)).filter((t): t is EditableTerminalConfig => t !== null);
+    terminals = data.items.map((item, i) => normalizeEntry(item, i)).filter((t): t is EditableTerminalConfig => t !== null);
+  } catch {
+    terminals = [];
+    terminalsShared = [];
+  }
+  renderList();
 }
 
 function normalizeEntry(item: unknown, index: number): EditableTerminalConfig | null {
@@ -189,12 +194,15 @@ function renderList(): void {
   // index-capturing listeners moved to one delegated set on the container
   // (see `ensureRowDelegationBound`), so rows are now near-pure markup
   // (only the stateless WebKit mousedown swallow stays per-button).
+  // HS-9015 — per-mode scope hint (null in Resolved).
+  const hint = scopeListHintElement(terminalsMode);
+  const lead: HTMLElement[] = hint !== null ? [hint] : [];
   if (terminals.length === 0) {
-    list.replaceChildren(toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
+    list.replaceChildren(...lead, toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
     return;
   }
   const rows = terminals.map((_, i) => renderRow(i));
-  list.replaceChildren(...rows);
+  list.replaceChildren(...lead, ...rows);
 }
 
 /** Read the row index a delegated handler should act on from the row's
@@ -616,7 +624,10 @@ function scheduleSave(): Promise<void> {
   return new Promise((resolve) => {
     saveTimeout = setTimeout(async () => {
       saveTimeout = null;
-      await updateFileSettings({ terminals });
+      // HS-9015 — Shared → write the array; Local → write the delta vs shared;
+      // Resolved → today's default-routed save.
+      await saveScopedList('terminals', termIdOf, terminalsShared, terminals,
+        () => updateFileSettings({ terminals }));
       try {
         const mod = await import('./terminal.js');
         await mod.refreshTerminalsAfterSettingsChange();

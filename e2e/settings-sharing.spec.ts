@@ -90,6 +90,42 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
   });
 
+  test('HS-9016: auto-context is editable per-layer in Local mode and saves a local delta', async ({ page }) => {
+    // Context panel is no longer wholesale-locked (it's now scope-aware).
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await expect(page.locator('.settings-tab-panel[data-panel="context"].scope-locked')).toHaveCount(0);
+    await page.locator('.settings-tab[data-tab="context"]').click();
+    // Local-mode hint banner is shown.
+    await expect(page.locator('#auto-context-list .scope-list-hint-local')).toBeVisible({ timeout: 5000 });
+
+    // Add a local-only auto-context entry (pick the first category option).
+    await page.locator('#auto-context-add-btn').click();
+    await page.locator('.ac-option-item').first().click();
+    const textarea = page.locator('#auto-context-list .auto-context-text').first();
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('Machine-local context note');
+    await page.waitForTimeout(700); // debounced save
+
+    // The entry persisted to the LOCAL layer as an element-level delta (added), not the shared array.
+    const res = await page.request.get('/api/file-settings/layered');
+    const layered = await res.json() as { shared: Record<string, unknown>; local: Record<string, unknown> };
+    const localAc = layered.local.auto_context as { added?: unknown[] } | undefined;
+    expect(localAc).toBeTruthy();
+    expect(Array.isArray(localAc?.added)).toBe(true);
+    expect(localAc?.added?.length).toBeGreaterThan(0);
+    // Shared layer was NOT written.
+    expect(layered.shared.auto_context).toBeUndefined();
+  });
+
+  test('HS-9015: terminals editor is scope-aware (editable + hint in Local, not locked)', async ({ page }) => {
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="terminal"]').click();
+    // The terminals list re-renders for Local mode with the per-mode hint, and
+    // its containing field is no longer wholesale-locked.
+    await expect(page.locator('#settings-terminals-list .scope-list-hint-local')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.settings-field:has(#settings-terminals-list).scope-locked')).toHaveCount(0);
+  });
+
   test('HS-9006/9009: Announcer is local-only — enable toggle editable in Local, read-only in Shared; panel not wholesale-locked', async ({ page }) => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await page.locator('.settings-tab[data-tab="announcer"]').click();

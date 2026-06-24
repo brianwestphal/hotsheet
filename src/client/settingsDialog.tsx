@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
-import { applyAiInstructions, getFileSettings, getSettings, getTags, updateFileSettings, updateSettings } from '../api/index.js';
+import { applyAiInstructions, getFileSettings, getTags, updateFileSettings, updateSettings } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
-import { parseJsonOrNull } from '../schemas.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -12,6 +11,7 @@ import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
 import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode } from './settingsScope.js';
+import { loadScopedList, renderScopeListHint, saveScopedList } from './settingsScopeList.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
@@ -460,6 +460,12 @@ const AutoContextEntryArraySchema = z.array(AutoContextEntrySchema);
 type AutoContextEntry = z.infer<typeof AutoContextEntrySchema>;
 
 let autoContextEntries: AutoContextEntry[] = [];
+// HS-9016 — scope-aware editing: `autoContextShared` is the committed shared array
+// (to derive the local delta on save); `autoContextMode` is the active scope view.
+let autoContextShared: AutoContextEntry[] = [];
+let autoContextMode: 'shared' | 'local' | 'resolved' = 'resolved';
+/** Stable identity for an auto-context entry (per docs/95 §95.3 / file-settings idOf). */
+const acIdOf = (e: AutoContextEntry): string => `${e.type}:${e.key}`;
 
 function bindAutoContextSettings() {
   const list = byId('auto-context-list');
@@ -467,24 +473,28 @@ function bindAutoContextSettings() {
 
   async function loadEntries() {
     try {
-      const settings = await getSettings();
-      if (settings.auto_context !== '') {
-        // HS-8567 — zod-validate the persisted JSON column.
-        const parsed = parseJsonOrNull(AutoContextEntryArraySchema, settings.auto_context);
-        autoContextEntries = parsed ?? [];
-      }
+      // HS-9016 — read the layer appropriate to the active scope mode (Shared
+      // shows the committed array; Local/Resolved show the effective list).
+      const data = await loadScopedList<AutoContextEntry>('auto_context');
+      autoContextMode = data.mode;
+      autoContextShared = AutoContextEntryArraySchema.safeParse(data.shared).data ?? [];
+      autoContextEntries = AutoContextEntryArraySchema.safeParse(data.items).data ?? [];
     } catch { /* ignore */ }
     renderEntries();
   }
 
   async function saveEntries() {
-    await updateSettings({ auto_context: JSON.stringify(autoContextEntries) });
+    // HS-9016 — Shared → write the array to settings.json; Local → write the
+    // delta vs shared to settings.local.json; Resolved → today's default route.
+    await saveScopedList('auto_context', acIdOf, autoContextShared, autoContextEntries,
+      () => updateSettings({ auto_context: JSON.stringify(autoContextEntries) }));
   }
 
   function renderEntries() {
     list.innerHTML = '';
+    renderScopeListHint(list, autoContextMode);
     if (autoContextEntries.length === 0) {
-      list.replaceChildren(toElement(<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>));
+      list.appendChild(toElement(<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>));
       return;
     }
     for (let i = 0; i < autoContextEntries.length; i++) {
@@ -492,10 +502,13 @@ function bindAutoContextSettings() {
       const displayKey = entry.type === 'category'
         ? (state.categories.find(c => c.id === entry.key)?.label ?? entry.key)
         : entry.key.replace(/\b\w/g, c => c.toUpperCase());
+      // HS-9016 — origin tag: is this entry in the committed shared array?
+      const fromShared = autoContextShared.some(s => acIdOf(s) === acIdOf(entry));
       const row = toElement(
         <div className="auto-context-entry">
           <div className="auto-context-header">
             <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKey}</span>
+            {autoContextMode !== 'resolved' ? <span className={`scope-tag ${fromShared ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{fromShared ? 'shared' : 'local'}</span> : ''}
             <button className="category-delete-btn" title="Remove">{'×'}</button>
           </div>
           <textarea className="auto-context-text" rows={3}>{entry.text}</textarea>
@@ -601,6 +614,8 @@ function bindAutoContextSettings() {
   // Load when settings dialog opens
   const settingsBtn = byId('settings-btn');
   settingsBtn.addEventListener('click', () => { void loadEntries(); });
+  // HS-9016 — reload for the new layer when the scope mode changes.
+  document.addEventListener('hotsheet:scope-mode-changed', () => { void loadEntries(); });
 }
 
 // --- CLI tool install (Tauri only) ---

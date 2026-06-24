@@ -102,6 +102,19 @@ let mode: ScopeMode = 'resolved';
 let layered: LayeredFileSettings | null = null;
 let initialized = false;
 
+/** The active scope mode. Read by the in-dialog complex editors (HS-9014–9016)
+ *  so their load/save routes to the right layer. */
+export function getScopeMode(): ScopeMode {
+  return mode;
+}
+
+/** Notify the complex list editors that the scope mode changed so they reload
+ *  for the new layer (the scalar fields are decorated by `applyScope` directly;
+ *  the list editors own their own rendering and listen for this). */
+function emitScopeModeChanged(): void {
+  document.dispatchEvent(new CustomEvent('hotsheet:scope-mode-changed', { detail: { mode } }));
+}
+
 /** A control element that carries a scalar value (input / select / textarea). */
 type ValueControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
@@ -142,6 +155,7 @@ export function initSettingsScope(): void {
       if (next === mode) return;
       mode = next;
       applyScope();
+      emitScopeModeChanged();
     });
   });
 }

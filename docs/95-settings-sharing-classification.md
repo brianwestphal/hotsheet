@@ -32,7 +32,7 @@ Ask, per setting: **whose decision is it?**
 These editors are **element-level**, not whole-array. The local layer stores a *delta*, not a replacement. **Reordering works within each layer independently — the local layer cannot reorder *shared* items**; resolved order = shared items in shared order (minus hidden, each with its override) followed by local-only items in local order:
 
 - **categories** — **Shared only.** No local overrides.
-- **custom_views** — Local may **hide individual shared views** + **add local-only views**. No order override.
+- **custom_views** — **shared-only for now (HS-9013, deferred to HS-9017).** Views are sidebar-managed (not in the Settings dialog), so the scope control doesn't reach them; local customization (hide individual shared views + add local-only views, via inline sidebar affordances) is a follow-up. The delta infra supports it (idOf=`id`) once the UI lands.
 - **custom_commands** — Local may **hide individual shared commands** + **add local-only commands**, including **adding into a shared-defined group**. If a parent group later disappears from shared, a local child still survives (in its own local group). No order override.
 - **terminals** — Local may **hide individual shared terminals** + **add local-only terminals**. No order override.
 - **auto_context** — Local may **disable individual rules**, **override individual rules**, and **add local-only rules**. No order override.
@@ -65,7 +65,14 @@ Reordering works within each layer independently; the local layer **cannot** reo
 ## 95.7 Phasing
 - **Phase 1 (shipped, HS-9005):** `defaultScope` reclassification per §95.4 + tests + this doc. Personal/machine settings now default-route to `local`.
 - **Phase 2 (shipped, HS-9009):** scope-control affordances — a `share` classification on the scalar fields (`shared-only`: appName, ticketPrefix — editable in Shared, read-only "shared only" in Local, no "+ Override"; `local-only`: announcer_enabled — editable in Local, read-only "local only" in Shared) + `data-scope-complex="shared-only"` (categories — locks in Local only) / `data-scope-complex="local-only"` (permissions/allow-rules, Announcer key+topics — lock in Shared only) panel variants, with matching lock-chip text.
-- **Phase 3 (decomposed, HS-9010):** element-level per-layer editing for `custom_views`, `custom_commands` (group-aware), `terminals`, `auto_context` — the delta model in §95.3 + the reorder rule. Split into sub-tickets: **HS-9010a / HS-9012 — SHIPPED** (the delta-merge infrastructure: `src/settingsDelta.ts` + `readFileSettings` wiring for the 3 flat keys, gated as a true no-op until writers exist) → **HS-9010b / HS-9013** (custom_views) / **HS-9010c / HS-9014** (custom_commands, group-aware — adds its own tree resolver) / **HS-9010d / HS-9015** (terminals) / **HS-9010e / HS-9016** (auto_context). Each per-editor ticket unlocks its `data-scope-complex` marker once editable.
+- **Phase 3 (decomposed, HS-9010):** element-level per-layer editing for `custom_views`, `custom_commands` (group-aware), `terminals`, `auto_context` — the delta model in §95.3 + the reorder rule. Split into sub-tickets:
+- **HS-9010a / HS-9012 — SHIPPED.** Delta-merge infrastructure: `src/settingsDelta.ts` (`resolveDeltaArray` + `computeArrayDelta` + `isArrayDelta`) + `readFileSettings` wiring for the 3 flat keys, gated as a true no-op until writers exist.
+- **HS-9010e / HS-9016 — SHIPPED.** auto_context per-layer editing in the Settings dialog (Local mode hides/overrides/adds; saves a delta). Uses the shared `loadScopedList`/`saveScopedList` helper (`settingsScopeList.tsx`).
+- **HS-9010d / HS-9015 — SHIPPED.** terminals per-layer editing (same helper).
+- **HS-9010b / HS-9013 — DEFERRED to HS-9017** (custom_views — sidebar-managed, shared-only for now).
+- **HS-9010c / HS-9014 — custom_commands**, group-aware: needs a tree-aware delta + element-id backfill (the flat helper doesn't cover nested groups / add-into-shared-group / orphan survival). The biggest of the set.
+
+The in-dialog editors share `settingsScopeList.tsx`: Resolved edits route to the default layer (unchanged); Shared edits the committed array; Local computes the delta vs shared (`computeArrayDelta`) and writes `settings.local.json`. They reload on the `hotsheet:scope-mode-changed` event and show a per-mode hint banner. Each per-editor ticket unlocks its `data-scope-complex` marker once editable.
 - **Done (HS-9011):** `appIcon` evaluated + dropped end-to-end (the feature was dormant).
 
 ## 95.6 Standing rule

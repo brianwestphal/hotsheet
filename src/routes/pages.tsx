@@ -716,7 +716,7 @@ pageRoutes.get('/', (c) => {
               <div id="db-repair-result" className="db-repair-result"></div>
               </div>
             </div>
-            <div className="settings-tab-panel" data-panel="context" data-scope-complex>
+            <div className="settings-tab-panel" data-panel="context">
               <div className="settings-section-header">
                 <h3>Auto-Context</h3>
                 <button className="btn btn-sm" id="auto-context-add-btn">+ Add</button>
@@ -1008,7 +1008,7 @@ pageRoutes.get('/', (c) => {
                     <input type="number" id="settings-terminal-default-size" min="8" max="32" step="1" />
                   </div>
                 </div>
-                <div className="settings-field" style="margin-top:12px" data-scope-complex>
+                <div className="settings-field" style="margin-top:12px">
                   <label>Default terminals</label>
                   <span className="settings-hint" style="margin-bottom:6px;display:block">Each row is a tab in the drawer. Edit to change the name, command, working directory, or launch mode. Drag rows to reorder. Projects start with no terminals — add one to get a tab.</span>
                   <div id="settings-terminals-list" className="settings-terminals-list"></div>

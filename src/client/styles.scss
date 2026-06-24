@@ -5432,6 +5432,17 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 [data-scope-complex].scope-locked.scope-locked-shared-only::before { content: 'Shared only — switch to Shared to edit'; }
 [data-scope-complex].scope-locked.scope-locked-local-only::before { content: 'Local only — switch to Local to edit'; }
 
+// HS-9014–9016 — per-mode hint banner for the scope-aware complex list editors.
+.scope-list-hint {
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding: 7px 10px;
+  border-radius: 7px;
+  margin-bottom: 10px;
+}
+.scope-list-hint-shared { color: #047857; background: rgba(4, 120, 87, .08); border: 1px solid rgba(4, 120, 87, .25); }
+.scope-list-hint-local { color: #b45309; background: rgba(180, 83, 9, .08); border: 1px solid rgba(180, 83, 9, .25); }
+
 // --- Category Management ---
 
 .category-list {

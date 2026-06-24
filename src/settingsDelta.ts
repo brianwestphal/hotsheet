@@ -75,3 +75,42 @@ export function resolveDeltaArray<T>(
   const added = Array.isArray(delta.added) ? delta.added : [];
   return [...kept, ...added];
 }
+
+/**
+ * Inverse of {@link resolveDeltaArray}: derive the local delta from an edited
+ * list (what an editor produced in Local mode) against the shared list.
+ *
+ * - A shared item missing from `edited` → `hidden`.
+ * - An edited item whose id isn't in `shared` → `added` (local-only, in edited
+ *   order).
+ * - A shared item present but changed → `overrides[id]` (the full edited item;
+ *   `resolveDeltaArray` shallow-merges it over the shared one).
+ *
+ * Order is NOT captured (the local layer can't reorder shared items — docs/95
+ * §95.3); `resolveDeltaArray(shared, computeArrayDelta(shared, edited)) `
+ * round-trips `edited` modulo shared-item reordering. Empty fields are omitted
+ * so a no-change edit yields `{}` (which resolves back to the shared list).
+ */
+export function computeArrayDelta<T>(
+  shared: readonly T[],
+  edited: readonly T[],
+  idOf: (item: T) => string,
+): ArrayDelta<T> {
+  const sharedById = new Map(shared.map((s) => [idOf(s), s]));
+  const editedIds = new Set(edited.map(idOf));
+
+  const hidden = shared.map(idOf).filter((id) => !editedIds.has(id));
+  const added = edited.filter((e) => !sharedById.has(idOf(e)));
+  const overrides: Record<string, T> = {};
+  for (const e of edited) {
+    const id = idOf(e);
+    const s = sharedById.get(id);
+    if (s !== undefined && JSON.stringify(s) !== JSON.stringify(e)) overrides[id] = e;
+  }
+
+  const delta: ArrayDelta<T> = {};
+  if (hidden.length > 0) delta.hidden = hidden;
+  if (added.length > 0) delta.added = added;
+  if (Object.keys(overrides).length > 0) delta.overrides = overrides;
+  return delta;
+}
