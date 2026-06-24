@@ -130,6 +130,62 @@ describe('POST /auth/devices/sign-csr', () => {
   });
 });
 
+describe('QR pairing (/auth/pair/*)', () => {
+  async function startToken(app: Hono<AppEnv>): Promise<string> {
+    const res = await app.request('/auth/pair/start', { method: 'POST' }, LOOPBACK);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { token: string }).token;
+  }
+
+  it('start is loopback-only (403 from a remote caller)', async () => {
+    const app = makeApp();
+    expect((await app.request('/auth/pair/start', { method: 'POST' }, REMOTE)).status).toBe(403);
+  });
+
+  it('complete signs a CSR with a valid token (from a REMOTE caller — token is the gate) + registers', async () => {
+    const app = makeApp();
+    const token = await startToken(app);
+    const res = await app.request('/auth/pair/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, csrPem: makeCsr('phone'), label: 'Pixel' }),
+    }, REMOTE);
+    expect(res.status).toBe(200);
+    const json = await res.json() as { device: { clientId: string }; certPem: string };
+    const ca = await loadOrCreateProjectCa(dataDir);
+    expect(verifyClientCert(ca.caCertPem, json.certPem)).toBe(true);
+    expect(readIdentity(json.certPem)).toEqual({ clientId: json.device.clientId, label: 'Pixel' });
+    expect(listDevices(dataDir).some(d => d.clientId === json.device.clientId)).toBe(true);
+  });
+
+  it('rejects a reused token (single-use) with 401', async () => {
+    const app = makeApp();
+    const token = await startToken(app);
+    const body = JSON.stringify({ token, csrPem: makeCsr(), label: 'x' });
+    expect((await app.request('/auth/pair/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }, REMOTE)).status).toBe(200);
+    // Second use of the same token is rejected.
+    expect((await app.request('/auth/pair/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, csrPem: makeCsr(), label: 'x' }) }, REMOTE)).status).toBe(401);
+  });
+
+  it('rejects an unknown token with 401', async () => {
+    const app = makeApp();
+    const res = await app.request('/auth/pair/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'bogus', csrPem: makeCsr(), label: 'x' }),
+    }, REMOTE);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a bad CSR (with a valid token) with 400', async () => {
+    const app = makeApp();
+    const token = await startToken(app);
+    const res = await app.request('/auth/pair/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, csrPem: 'not a csr', label: 'x' }),
+    }, REMOTE);
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('GET /auth/devices + revoke', () => {
   it('lists devices and revokes one (404 for unknown)', async () => {
     const app = makeApp();

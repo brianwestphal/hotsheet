@@ -16,12 +16,13 @@ before execution."
 > the future mobile-web client).
 >
 > **Implementation progress:** sub-tickets **1/6 (HS-8992)** + **2/6 (HS-8993)** + **4/6 (HS-8995)**
-> SHIPPED, **3/6 (HS-8994) server core** SHIPPED (client UI/Tauri save → HS-9024) — `src/auth/ca.ts`
-> (CA + cert lifecycle) + `src/auth/tlsListener.ts` (exposed-only mTLS listener) +
-> `src/auth/deviceRegistry.ts` + `src/routes/enrollment.ts` (mint `.p12` / sign CSR / list / revoke,
-> loopback-gated) + `src/auth/authz.ts` (Tier-1 cert authz + revocation; secret demoted to
-> defense-in-depth). Sub-tickets **5 (HS-8996 QR)** + **6 (HS-8997 sign-off)** pending; follow-ups
-> HS-9019 (keychain-less CA), HS-9024 (enroll UI), HS-9025 (WS revocation re-check). See §94.10.
+> SHIPPED; **3/6 (HS-8994)** + **5/6 (HS-8996)** server cores SHIPPED (client UI → HS-9024/HS-9026).
+> Modules: `src/auth/ca.ts` (CA + cert lifecycle), `tlsListener.ts` (exposed-only mTLS listener),
+> `deviceRegistry.ts`, `routes/enrollment.ts` (mint `.p12` / sign CSR / list / revoke / QR-pair,
+> loopback-gated), `authz.ts` (Tier-1 cert authz + revocation; secret demoted to defense-in-depth),
+> `pairingTokens.ts` (single-use QR tokens). Only **6/6 (HS-8997 threat-model sign-off + security
+> re-audit)** remains — now unblocked. Follow-ups: HS-9019 (keychain-less CA), HS-9024 (enroll UI +
+> Tauri save), HS-9025 (WS revocation re-check), HS-9026 (QR display + mobile client). See §94.10.
 
 ## 94.1 Why now
 
@@ -282,8 +283,21 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
    HTTP; an open terminal/`/ws/sync` socket needs a periodic sweep). The Revoke **button** is in the
    HS-9024 device UI. **Blocked by #2.**
 5. **QR pairing enrollment** — desktop shows a short-lived pairing QR; a device generates a keypair
-   + CSR, signed over the trusted channel. **Blocked by #3** (+ coordinates with the §46 mobile
-   client / HS-7941).
+   + CSR, signed over the trusted channel. **Server core SHIPPED (HS-8996); QR display + mobile
+   client → HS-9026.** Coordinates with the §46 mobile client / HS-7941. **Blocked by #3.**
+
+   **What shipped (HS-8996):** `src/auth/pairingTokens.ts` — an in-memory, per-project,
+   **single-use, short-TTL (5 min)** pairing-token store (`PairingTokenStore`, clock-injectable;
+   `issue(dataDir)` / `consume(token)` → bound data dir once, then gone). `src/routes/enrollment.ts`
+   added `POST /api/auth/pair/start` (**loopback-only** — issues a token for the QR) and `POST
+   /api/auth/pair/complete` `{token, csrPem, label}` (**token-gated, NOT loopback** — the scanning
+   phone is remote; a valid single-use token authorizes `signClientCsr` for the token's project +
+   registers the device). Typed callers `startPairing` / `completePairing` (`src/api/enrollment.ts`).
+   Tests: `src/auth/pairingTokens.test.ts` (issue/consume/single-use/expiry/per-project, injected
+   clock) + `routes/enrollment.test.ts` (start loopback-gate; complete signs+registers from a remote
+   caller with a valid token; reused/unknown token → 401; bad CSR → 400). **Split to HS-9026:** the
+   desktop **QR display** (encode `{token, url}`, reuse HS-7942's `qrcode`) + the **mobile-web
+   client** that scans → generates a CSR → installs the signed cert (coordinates with HS-7941 PWA).
 6. **Docs + threat-model sign-off + HS-8987 re-audit** — finalize the threat model, run the
    security-review skill against the new surface. **Blocked by #2 + #4.**
 

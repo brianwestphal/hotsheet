@@ -53,6 +53,28 @@ export const SignCsrResSchema = z.object({
 });
 export type SignCsrRes = z.infer<typeof SignCsrResSchema>;
 
+// HS-8996 — QR pairing (§94.4.2 Phase 2). `start` (loopback-only) issues a
+// short-lived single-use token for the QR; `complete` is called by the scanning
+// device with the token + its CSR (the token is the gate, not loopback).
+export const PairStartResSchema = z.object({
+  token: z.string(),
+  expiresAt: z.number(),
+});
+export type PairStartRes = z.infer<typeof PairStartResSchema>;
+
+export const PairCompleteReqSchema = z.object({
+  token: z.string().min(1),
+  csrPem: z.string().min(1),
+  label: z.string().min(1),
+});
+export type PairCompleteReq = z.infer<typeof PairCompleteReqSchema>;
+
+export const PairCompleteResSchema = z.object({
+  device: EnrolledDeviceSchema,
+  certPem: z.string(),
+});
+export type PairCompleteRes = z.infer<typeof PairCompleteResSchema>;
+
 // --- Typed callers ---
 
 export async function listEnrolledDevices(): Promise<EnrolledDevice[]> {
@@ -69,4 +91,12 @@ export async function signDeviceCsr(req: SignCsrReq): Promise<SignCsrRes> {
 
 export async function revokeEnrolledDevice(clientId: string): Promise<EnrolledDevice> {
   return (await apiCall(DeviceResSchema, `/auth/devices/${encodeURIComponent(clientId)}/revoke`, { method: 'POST' })).device;
+}
+
+export async function startPairing(): Promise<PairStartRes> {
+  return apiCall(PairStartResSchema, '/auth/pair/start', { method: 'POST' });
+}
+
+export async function completePairing(req: PairCompleteReq): Promise<PairCompleteRes> {
+  return apiCall(PairCompleteResSchema, '/auth/pair/complete', { method: 'POST', body: req });
 }
