@@ -9,11 +9,12 @@
 // ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
 // layer onto these tiles later.
 import {
-  drainAllPoolWorkers, drainPoolWorker, getWorkerPool, launchWorker,
+  drainAllPoolWorkers, drainPoolWorker, getSuggestedWorkerCount, getWorkerPool, launchWorker,
   type PoolState, registerPoolWorker, removePoolWorker, removeWorktree,
   setPoolTarget, type WorkerSlotView,
 } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { confirmDialog } from './confirm.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
@@ -109,7 +110,7 @@ export function renderWorkerTile(
  *  tests. `target` is the server's stored target; `running` is the live count. */
 export function renderPoolControls(
   controlsEl: HTMLElement, target: number, running: number,
-  onStep: (delta: number) => void, onDrainAll: () => void,
+  onStep: (delta: number) => void, onDrainAll: () => void, onSuggest: () => void,
 ): void {
   controlsEl.replaceChildren(toElement(
     <div className="worker-pool-controls-inner">
@@ -119,11 +120,15 @@ export function renderPoolControls(
         <button type="button" className="btn btn-sm worker-pool-step-up" disabled={target >= MAX_TARGET} title="Add one worker">+</button>
         <span className="worker-pool-running">{`${String(running)} running`}</span>
       </div>
-      <button type="button" className="btn btn-sm worker-pool-drain-all" disabled={running === 0}>Drain all</button>
+      <div className="worker-pool-controls-right">
+        <button type="button" className="btn btn-sm worker-pool-suggest" title="Let AI suggest a worker count for the current Up Next set">AI: suggest</button>
+        <button type="button" className="btn btn-sm worker-pool-drain-all" disabled={running === 0}>Drain all</button>
+      </div>
     </div>,
   ));
   controlsEl.querySelector('.worker-pool-step-up')?.addEventListener('click', () => onStep(1));
   controlsEl.querySelector('.worker-pool-step-down')?.addEventListener('click', () => onStep(-1));
+  controlsEl.querySelector('.worker-pool-suggest')?.addEventListener('click', () => onSuggest());
   controlsEl.querySelector('.worker-pool-drain-all')?.addEventListener('click', () => onDrainAll());
 }
 
@@ -174,7 +179,8 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
   if (controlsEl) {
     renderPoolControls(controlsEl, pool.targetN, activeCount(pool),
       (delta) => void handleStep(pool, delta, bodyEl),
-      () => void handleDrainAll(bodyEl));
+      () => void handleDrainAll(bodyEl),
+      () => void handleSuggest(bodyEl));
   }
   // Auto-clean finished workers (best-effort, in the background): gracefully
   // drained (`stopped`) or reaped-as-dead (`dead`, HS-8972). Toast once per reap
@@ -266,6 +272,35 @@ async function handleDrain(w: WorkerSlotView, pool: PoolState, bodyEl: HTMLEleme
     await refreshPool(bodyEl);
   } catch (e) {
     showToast(`Drain failed: ${getErrorMessage(e)}`);
+  }
+}
+
+/** HS-8963 — ask the AI (or the heuristic fallback) to suggest a worker count for
+ *  the current Up Next set, then offer to apply it (the owner confirms — they
+ *  always set the actual N). */
+async function handleSuggest(bodyEl: HTMLElement): Promise<void> {
+  let suggestion;
+  try {
+    suggestion = await getSuggestedWorkerCount();
+  } catch (e) {
+    showToast(`Couldn't get a suggestion: ${getErrorMessage(e)}`);
+    return;
+  }
+  if (suggestion.n === 0) {
+    showToast(suggestion.rationale);
+    return;
+  }
+  const apply = await confirmDialog({
+    title: `Suggested: ${String(suggestion.n)} worker${suggestion.n === 1 ? '' : 's'}`,
+    message: `${suggestion.rationale}\n\nSet the target to ${String(suggestion.n)}?`,
+    confirmLabel: `Set target to ${String(suggestion.n)}`,
+  });
+  if (!apply) return;
+  try {
+    await setPoolTarget({ targetN: suggestion.n });
+    await refreshPool(bodyEl);
+  } catch (e) {
+    showToast(`Couldn't set worker count: ${getErrorMessage(e)}`);
   }
 }
 

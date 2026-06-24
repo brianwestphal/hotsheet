@@ -10307,6 +10307,7 @@ label.detail-details-label {
     gap: 8px;
   }
   .worker-pool-stepper { display: flex; align-items: center; gap: 8px; }
+  .worker-pool-controls-right { display: flex; align-items: center; gap: 8px; }
   .worker-pool-step-up, .worker-pool-step-down {
     min-width: 28px; font-weight: 700; line-height: 1;
     &:disabled { opacity: 0.4; cursor: default; }

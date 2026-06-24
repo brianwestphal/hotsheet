@@ -113,3 +113,18 @@ export async function removePoolWorker(req: WorkerRef): Promise<{ ok: true }> {
 export async function setPoolTarget(req: SetTargetReq): Promise<{ ok: true }> {
   return apiCall(OkSchema, '/workers/pool/target', { method: 'POST', body: req });
 }
+
+// --- HS-8963 — AI-suggested worker count (docs/91 §91.6) ---
+
+export const SuggestionResultSchema = z.object({
+  n: z.number(),
+  rationale: z.string(),
+  source: z.enum(['ai', 'heuristic']),
+});
+export type SuggestionResult = z.infer<typeof SuggestionResultSchema>;
+
+/** GET `/workers/suggest-n` → a recommended worker count + rationale for the
+ *  current Up Next set (owner still sets the actual N). */
+export async function getSuggestedWorkerCount(): Promise<SuggestionResult> {
+  return apiCall(SuggestionResultSchema, '/workers/suggest-n');
+}

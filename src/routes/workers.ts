@@ -20,6 +20,7 @@ import {
   getPoolState, isSlotStale, registerWorker, removeWorker, requestDrain,
   requestDrainAll, setTarget, type WorkerSlot,
 } from '../workers/poolManager.js';
+import { suggestWorkerCount } from '../workers/suggestN.js';
 import { projectRootFromDataDir } from './git.js';
 import { parseBody } from './validation.js';
 
@@ -111,4 +112,10 @@ workerRoutes.post('/workers/pool/target', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   setTarget(c.get('dataDir'), parsed.data.targetN);
   return c.json({ ok: true });
+});
+
+/** GET /api/workers/suggest-n — HS-8963: a recommended worker count + rationale
+ *  for the current Up Next set (AI when a key is configured, else a heuristic). */
+workerRoutes.get('/workers/suggest-n', async (c) => {
+  return c.json(await suggestWorkerCount());
 });

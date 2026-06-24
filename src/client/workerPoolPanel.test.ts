@@ -22,8 +22,10 @@ vi.mock('../api/index.js', () => ({
   removePoolWorker: vi.fn(),
   removeWorktree: vi.fn(),
   setPoolTarget: vi.fn(),
+  getSuggestedWorkerCount: vi.fn(),
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
+vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
 vi.mock('./terminalInstanceLifecycle.js', () => ({ closeDynamicTerminal: vi.fn() }));
 vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new') }));
 vi.mock('./dispatch.js', () => ({ dispatchAndReport: vi.fn().mockResolvedValue({ dispatched: 0, failures: [] }) }));
@@ -99,24 +101,27 @@ describe('renderWorkerTile (HS-8962)', () => {
 });
 
 describe('renderPoolControls — target stepper (HS-8971)', () => {
-  it('shows the target + running count and wires the steppers', () => {
+  it('shows the target + running count and wires the steppers + AI-suggest', () => {
     const onStep = vi.fn();
     const onDrainAll = vi.fn();
+    const onSuggest = vi.fn();
     const el = document.createElement('div');
-    renderPoolControls(el, 2, 1, onStep, onDrainAll);
+    renderPoolControls(el, 2, 1, onStep, onDrainAll, onSuggest);
     expect(el.querySelector('.worker-pool-target')?.textContent).toBe('2');
     expect(el.querySelector('.worker-pool-running')?.textContent).toContain('1 running');
     el.querySelector<HTMLButtonElement>('.worker-pool-step-up')!.click();
     expect(onStep).toHaveBeenCalledWith(1);
     el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.click();
     expect(onStep).toHaveBeenCalledWith(-1);
+    el.querySelector<HTMLButtonElement>('.worker-pool-suggest')!.click();
+    expect(onSuggest).toHaveBeenCalled();
     el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.click();
     expect(onDrainAll).toHaveBeenCalled();
   });
 
   it('disables − at target 0 and Drain all when nothing is running', () => {
     const el = document.createElement('div');
-    renderPoolControls(el, 0, 0, vi.fn(), vi.fn());
+    renderPoolControls(el, 0, 0, vi.fn(), vi.fn(), vi.fn());
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.disabled).toBe(true);
   });
