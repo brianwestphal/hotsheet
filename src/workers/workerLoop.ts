@@ -46,7 +46,8 @@ export interface WorkerLoopOptions {
   worker: string;
   /** Human-friendly label for the UI (e.g. `worktree-2`). */
   label?: string | null;
-  /** Lease TTL in seconds (default 120, docs/90 §90.2.2). */
+  /** Lease TTL in seconds (default 1800 = 30 min, docs/90 §90.2.2; HS-9050). The
+   *  loop heartbeats every TTL/3 so it never lapses regardless. */
   ttlSeconds?: number;
   /** Heartbeat cadence in ms while a ticket is held (default ttl/3). 0 disables. */
   heartbeatMs?: number;

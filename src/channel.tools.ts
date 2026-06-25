@@ -218,12 +218,12 @@ const DuplicateTicketsInputSchema = z.object({
 const ClaimNextInputSchema = z.object({
   worker: z.string().min(1).describe('This worker\'s identity (stable per worker, e.g. "worker-2")'),
   label: z.string().nullish().describe('Optional human-friendly worker label shown in the UI'),
-  ttlSeconds: z.number().int().positive().max(3600).optional().describe('Lease TTL in seconds (default 120)'),
+  ttlSeconds: z.number().int().positive().max(3600).optional().describe('Lease TTL in seconds (default 1800 = 30 min; raise toward the 3600 max for a high-effort ticket)'),
 });
 const RenewLeaseInputSchema = z.object({
   id: z.number().int().describe('Ticket id whose lease to renew (heartbeat)'),
   worker: z.string().min(1).describe('The worker holding the claim (must match)'),
-  ttlSeconds: z.number().int().positive().max(3600).optional().describe('New lease TTL in seconds (default 120)'),
+  ttlSeconds: z.number().int().positive().max(3600).optional().describe('New lease TTL in seconds (default 1800 = 30 min; raise toward the 3600 max for a high-effort ticket)'),
 });
 const ReleaseInputSchema = z.object({
   id: z.number().int().describe('Ticket id to release'),

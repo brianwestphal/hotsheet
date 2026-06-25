@@ -80,11 +80,17 @@ started" — it just additionally carries a live lease.
 
 A claim without a lease leaks forever if a worker dies. Each claim carries a TTL:
 
-- **TTL:** reuse the Announcer live-mode lease shape (`src/announcer/liveGenerator.ts`,
-  `LIVE_LEASE_MS = 90_000`). Default **claim lease = 120 s** (a unit of agent work
-  is longer than a "still listening" heartbeat; tune in implementation).
+- **TTL:** Default **claim lease = 30 min** (`DEFAULT_CLAIM_TTL_SECONDS = 1800`,
+  raised from 120 s in **HS-9050**). The original 120 s assumed a timer-driven
+  heartbeat (true for the programmatic `workerLoop.ts`, which renews every TTL/3),
+  but the production worker is the INTERACTIVE `/hotsheet-worker` Claude agent that
+  works in long silent bursts and renews only when it remembers — so 120 s caused
+  leases to expire mid-work. 30 min gives ample headroom; high-effort tickets can
+  claim/renew up to the 3600 s (1 h) max. Trade-off: a crashed worker's ticket now
+  waits up to 30 min for lazy reclaim (HS-9051 follow-up: have the zombie reap
+  force-release a dead worker's leases to keep crash recovery fast).
 - **Renewal (heartbeat):** the worker calls `renew-lease` on a cadence well inside
-  the TTL (e.g. every 30–45 s) while it holds the ticket. Renewal just pushes
+  the TTL while it holds the ticket. Renewal just pushes
   `claim_lease_expires_at = now() + TTL`.
 - **Expiry + reclaim:** two complementary mechanisms, mirroring the Announcer's
   lazy-prune + the §75 scheduler:
@@ -385,8 +391,10 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
 
 ## 90.11 Open questions
 
-- Exact lease TTL + renewal cadence (start 120 s / 40 s; tune under real agent
-  runtimes).
+- ~~Exact lease TTL + renewal cadence (start 120 s / 40 s; tune under real agent
+  runtimes).~~ **Tuned (HS-9050):** default raised to 30 min after observing
+  interactive-agent leases expire mid-work; high-effort tickets scale up to the
+  3600 s max; the programmatic loop still heartbeats at TTL/3.
 - `claim-next` fairness when the owner mixes dispatch + self-claim heavily (is
   starvation possible for low-priority self-claim workers? likely fine given the
   small N).
