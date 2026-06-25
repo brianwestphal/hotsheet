@@ -5,6 +5,8 @@ import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 import { z } from 'zod';
 
+import { peerCertInfoFromRequest } from '../auth/tlsListener.js';
+import { trackAuthenticatedSocket } from '../auth/wsRevocationSweep.js';
 import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { getProjectBySecret } from '../projects.js';
 import { getDynamicTerminalConfig } from '../routes/terminal.js';
@@ -31,8 +33,9 @@ type ControlMessage = z.infer<typeof ControlMessageSchema>;
  * embedded-terminal endpoint. One ws.Server instance in `noServer: true` mode
  * shares the HTTP port.
  */
-export function wireTerminalWebSocket(httpServer: HttpServer): void {
+export function wireTerminalWebSocket(httpServer: HttpServer, options?: { exposed?: boolean }): void {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
+  const exposed = options?.exposed === true;
 
   httpServer.on('upgrade', (req, socket, head) => {
     const url = req.url ?? '';
@@ -47,6 +50,15 @@ export function wireTerminalWebSocket(httpServer: HttpServer): void {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
       handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows, authResult.noSpawn);
+      // HS-9025 — on the exposed (Tier-1) mTLS listener, track the socket so the
+      // revocation sweep closes it if the device is revoked / the cert expires
+      // mid-connection. Tier-0 (loopback) has no client cert → no-op.
+      if (exposed) {
+        const peer = peerCertInfoFromRequest(req);
+        if (peer !== null) {
+          trackAuthenticatedSocket(ws, { dataDir: authResult.dataDir, clientId: peer.clientId, notAfterMs: peer.notAfterMs });
+        }
+      }
     });
   });
 }

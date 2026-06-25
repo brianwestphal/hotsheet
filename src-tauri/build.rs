@@ -27,6 +27,7 @@ fn main() {
                 "request_attention",
                 "request_attention_once",
                 "pick_folder",
+                "save_file",
                 "open_url",
                 "set_window_title",
                 "show_native_notification",

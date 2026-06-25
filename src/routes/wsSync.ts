@@ -20,6 +20,8 @@ import { parse as parseUrl } from 'url';
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 
+import { peerCertInfoFromRequest } from '../auth/tlsListener.js';
+import { trackAuthenticatedSocket } from '../auth/wsRevocationSweep.js';
 import { getProjectBySecret } from '../projects.js';
 import { coalesceEvents } from '../sync/coalesce.js';
 import { eventBus, getEventsSince, registerSyncSink } from '../sync/eventBus.js';
@@ -68,6 +70,16 @@ export function wireSyncWebSocket(httpServer: HttpServer, options: WireSyncOptio
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
       handleSyncConnection(ws, auth.secret, auth.since);
+      // HS-9025 — on the exposed (Tier-1) mTLS listener, track the socket so the
+      // revocation sweep can close it if its device is revoked / its cert expires
+      // mid-connection. Tier-0 (loopback) has no client cert, so this is a no-op.
+      if (options.exposed) {
+        const peer = peerCertInfoFromRequest(req);
+        const project = getProjectBySecret(auth.secret);
+        if (peer !== null && project) {
+          trackAuthenticatedSocket(ws, { dataDir: project.dataDir, clientId: peer.clientId, notAfterMs: peer.notAfterMs });
+        }
+      }
     });
   });
 

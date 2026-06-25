@@ -5223,6 +5223,59 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   color: var(--text-muted);
 }
 
+// HS-9024 — Remote Access (enrolled mTLS device) rows reuse .settings-key-row.
+.settings-device-label {
+  flex: 1 1 auto;
+  min-width: 120px;
+  font-weight: 500;
+}
+
+.settings-device-revoked-chip {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--danger, #d33);
+  border: 1px solid var(--danger, #d33);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.settings-device-revoke {
+  margin-left: auto;
+
+  &:hover {
+    color: var(--danger, #d33);
+    border-color: var(--danger, #d33);
+  }
+}
+
+// HS-9026 — pairing QR + countdown block.
+.settings-devices-pairing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+
+  &:empty { display: none; }
+
+  .settings-pairing-qr {
+    padding: 10px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+
+    img, canvas, svg { display: block; width: 200px; height: 200px; }
+  }
+
+  .settings-pairing-countdown {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+}
+
 // HS-8760/8761 — the add/edit key form dialog (built on the confirm-dialog shell).
 .settings-key-dialog {
   .settings-key-dialog-field {

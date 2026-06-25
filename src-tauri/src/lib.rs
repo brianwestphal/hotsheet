@@ -803,6 +803,41 @@ async fn pick_folder() -> Result<Option<String>, String> {
     Ok(handle.map(|h| h.path().to_string_lossy().to_string()))
 }
 
+/// HS-9024 — write `contents` to a path the user picks via a native Save dialog.
+/// Used to export a minted client `.p12` for mTLS device enrollment: WKWebView
+/// silently no-ops `<a download>`, so the desktop build routes byte downloads
+/// through this command instead (the web/browser build keeps the blob path).
+/// Returns true if saved, false if the user canceled. `default_name` seeds the
+/// dialog's filename (sanitized so a device label can't smuggle a path).
+#[tauri::command]
+async fn save_file(default_name: String, contents: Vec<u8>) -> Result<bool, String> {
+    let name = sanitize_save_filename(&default_name);
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Save File")
+        .set_file_name(&name)
+        .save_file()
+        .await;
+    match handle {
+        Some(h) => {
+            std::fs::write(h.path(), &contents).map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+        None => Ok(false), // user canceled the dialog
+    }
+}
+
+/// Strip path separators / control characters from a proposed download filename
+/// so a (user-supplied) device label can't smuggle a traversal into the save
+/// dialog's default name. Pure (no platform/IO) → unit-testable on any host.
+fn sanitize_save_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| if c == '/' || c == '\\' || c == '\0' || c.is_control() { '_' } else { c })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').trim();
+    if trimmed.is_empty() { "download".to_string() } else { trimmed.to_string() }
+}
+
 #[cfg(not(debug_assertions))]
 /// Spawns the sidecar Node process with the given data_dir, waits for the "running at" URL,
 /// navigates the main window to it, stores the PID for cleanup, and sets the window title.
@@ -1156,6 +1191,7 @@ pub fn run() {
             request_attention,
             request_attention_once,
             pick_folder,
+            save_file,
             open_url,
             set_window_title,
             show_native_notification,
@@ -1907,5 +1943,40 @@ mod acl_grant_sync_tests {
             expected, granted,
             "default.json app-command grants drifted from build.rs / remote-localhost.json"
         );
+    }
+}
+
+// HS-9024 — the `save_file` command's pure filename sanitizer (the native save
+// dialog + fs write can't run headlessly, but the sanitization that protects it
+// from a malicious device label can be tested on any host).
+#[cfg(test)]
+mod save_file_tests {
+    use super::sanitize_save_filename;
+
+    #[test]
+    fn keeps_a_normal_p12_filename() {
+        assert_eq!(sanitize_save_filename("hotsheet-laptop.p12"), "hotsheet-laptop.p12");
+    }
+
+    #[test]
+    fn strips_path_separators_and_traversal() {
+        let out = sanitize_save_filename("../../etc/passwd");
+        assert!(!out.contains('/'), "got {out:?}");
+        assert!(!out.contains('\\'), "got {out:?}");
+        assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn strips_backslashes_and_control_chars() {
+        let out = sanitize_save_filename("a\\b\nc");
+        assert!(!out.contains('\\'));
+        assert!(!out.contains('\n'));
+    }
+
+    #[test]
+    fn empty_or_dotonly_becomes_download() {
+        assert_eq!(sanitize_save_filename("   "), "download");
+        assert_eq!(sanitize_save_filename("..."), "download");
+        assert_eq!(sanitize_save_filename(""), "download");
     }
 }

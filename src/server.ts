@@ -284,7 +284,7 @@ export async function startServer(
   }
 
   if (httpServer !== null) {
-    wireTerminalWebSocket(httpServer);
+    wireTerminalWebSocket(httpServer, { exposed });
     // HS-8979 — `/ws/sync` push channel (docs/93). Same shared-port upgrade
     // pattern; honors the HS-7940 exposed/trusted-origin gate.
     wireSyncWebSocket(httpServer, { exposed, trustedOrigins });

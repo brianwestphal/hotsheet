@@ -5,8 +5,11 @@
  * keychain-backed persistence with an in-memory keychain stub.
  */
 import { generateKeyPairSync } from 'crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'fs';
 import type { AddressInfo } from 'net';
 import forge from 'node-forge';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import * as tls from 'tls';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +18,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const store = new Map<string, string>();
 let available = true;
 vi.mock('../keychain.js', () => ({
+  isKeychainAvailable: vi.fn(() => Promise.resolve(available)),
   keychainSet: vi.fn((plugin: string, account: string, value: string) => {
     if (!available) return Promise.resolve(false);
     store.set(`${plugin}/${account}`, value);
@@ -261,10 +265,83 @@ describe('per-project persistence (keychain-backed)', () => {
     expect(await loadProjectCa('/proj/.hotsheet')).toBeNull();
   });
 
-  it('throws (and rolls back) when the keychain cannot persist the CA', async () => {
+  it('throws when neither a keychain nor a passphrase is available to persist the CA', async () => {
     available = false;
-    await expect(loadOrCreateProjectCa('/proj/.hotsheet')).rejects.toThrow(/keychain unavailable/i);
+    const prev = process.env.HOTSHEET_CA_PASSPHRASE;
+    delete process.env.HOTSHEET_CA_PASSPHRASE;
+    try {
+      await expect(loadOrCreateProjectCa('/proj/.hotsheet')).rejects.toThrow(/HOTSHEET_CA_PASSPHRASE/);
+      available = true;
+      expect(await loadProjectCa('/proj/.hotsheet')).toBeNull(); // no half-CA left behind
+    } finally {
+      if (prev !== undefined) process.env.HOTSHEET_CA_PASSPHRASE = prev;
+    }
+  });
+});
+
+// HS-9019 — encrypted-file fallback on a keychain-less host. Uses a real temp
+// dir (these paths touch the filesystem) with the keychain forced unavailable.
+describe('encrypted-file CA fallback (HS-9019, keychain unavailable)', () => {
+  let dir: string;
+  const PASS = 'correct horse battery staple';
+
+  beforeEach(() => {
+    store.clear();
+    available = false; // force the file fallback
+    dir = mkdtempSync(join(tmpdir(), 'hs-ca-'));
+    process.env.HOTSHEET_CA_PASSPHRASE = PASS;
+  });
+  afterEach(() => {
     available = true;
-    expect(await loadProjectCa('/proj/.hotsheet')).toBeNull(); // no half-CA left behind
+    delete process.env.HOTSHEET_CA_PASSPHRASE;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('persists to an encrypted file and reloads the SAME CA across a "restart"', async () => {
+    const first = await loadOrCreateProjectCa(dir);
+    expect(existsSync(join(dir, 'auth-ca.enc'))).toBe(true);
+    // No keychain entry was written (we used the file path).
+    expect(store.size).toBe(0);
+
+    // A fresh "process" (cache is per-call here) loads the identical CA, so every
+    // already-enrolled client cert still verifies.
+    const reloaded = await loadProjectCa(dir);
+    expect(reloaded).toEqual(first);
+    const again = await loadOrCreateProjectCa(dir);
+    expect(again).toEqual(first); // loaded, not regenerated
+  });
+
+  it('the encrypted file is not world/group-readable (0600)', async () => {
+    await loadOrCreateProjectCa(dir);
+    const mode = statSync(join(dir, 'auth-ca.enc')).mode & 0o777;
+    // No bits for group (0o070) or other (0o007).
+    expect(mode & 0o077).toBe(0);
+  });
+
+  it('the encrypted file does not contain the CA private key in plaintext', async () => {
+    const ca = await loadOrCreateProjectCa(dir);
+    const onDisk = readFileSync(join(dir, 'auth-ca.enc'), 'utf-8');
+    expect(ca.caKeyPem).toContain('PRIVATE KEY');
+    expect(onDisk).not.toContain('PRIVATE KEY');
+    expect(onDisk).not.toContain(ca.caKeyPem.slice(40, 120));
+  });
+
+  it('refuses to load (throws) when the file exists but the passphrase is missing', async () => {
+    await loadOrCreateProjectCa(dir);
+    delete process.env.HOTSHEET_CA_PASSPHRASE;
+    await expect(loadProjectCa(dir)).rejects.toThrow(/HOTSHEET_CA_PASSPHRASE/);
+  });
+
+  it('throws on the wrong passphrase rather than reporting no CA', async () => {
+    await loadOrCreateProjectCa(dir);
+    process.env.HOTSHEET_CA_PASSPHRASE = 'the wrong passphrase';
+    await expect(loadProjectCa(dir)).rejects.toThrow(/wrong|corrupt|decrypt/i);
+  });
+
+  it('clearProjectCa removes the encrypted file', async () => {
+    await loadOrCreateProjectCa(dir);
+    await clearProjectCa(dir);
+    expect(existsSync(join(dir, 'auth-ca.enc'))).toBe(false);
+    expect(await loadProjectCa(dir)).toBeNull();
   });
 });

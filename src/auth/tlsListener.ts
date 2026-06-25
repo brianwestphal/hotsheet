@@ -11,6 +11,7 @@
  * options + reading the verified peer identity off a live request socket. The
  * wiring (when to call it) lives in `server.ts`.
  */
+import type { IncomingMessage } from 'http';
 import { createServer as createHttpsServer, type ServerOptions as HttpsServerOptions } from 'https';
 import type { TLSSocket } from 'tls';
 
@@ -90,6 +91,27 @@ export function peerIdentityFromEnv(env: unknown): ClientIdentity | null {
   try {
     const cert = (socket as TLSSocket).getPeerCertificate();
     return readIdentityFromPeerCertificate(cert);
+  } catch {
+    return null;
+  }
+}
+
+/** The verified peer's stable client id + cert expiry from a WebSocket upgrade
+ *  request's TLS socket — what the HS-9025 revocation sweep needs to re-check a
+ *  long-lived socket. Returns null on a plain-HTTP (Tier-0) upgrade or a verified
+ *  peer with no Hot Sheet client URI. `notAfterMs` is the cert's `valid_to` in
+ *  epoch ms (Infinity if unparseable, so the sweep never expires it spuriously). */
+export function peerCertInfoFromRequest(req: IncomingMessage): { clientId: string; notAfterMs: number } | null {
+  const socket: unknown = req.socket;
+  if (socket == null || typeof socket !== 'object') return null;
+  const getter = (socket as { getPeerCertificate?: unknown }).getPeerCertificate;
+  if (typeof getter !== 'function') return null; // plain TCP socket — not TLS
+  try {
+    const cert = (socket as TLSSocket).getPeerCertificate();
+    const identity = readIdentityFromPeerCertificate(cert);
+    if (identity === null) return null;
+    const parsed = cert.valid_to ? Date.parse(cert.valid_to) : NaN;
+    return { clientId: identity.clientId, notAfterMs: Number.isNaN(parsed) ? Infinity : parsed };
   } catch {
     return null;
   }

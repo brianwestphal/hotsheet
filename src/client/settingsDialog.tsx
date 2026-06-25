@@ -4,6 +4,7 @@ import { applyAiInstructions, getFileSettings, getTags, updateFileSettings, upda
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
+import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings } from './experimentalSettings.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
@@ -43,6 +44,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindCategorySettings(rebuildCategoryUI);
   bindCliToolSettings();
   bindKeysSettings();
+  bindDevicesSettings();
 
   // HS-9004 — dialog-wide Shared | Local overrides | Resolved scope control.
   // Wire the toolbar once; on each open reset to Resolved (the default view)

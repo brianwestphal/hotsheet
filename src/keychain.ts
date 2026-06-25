@@ -80,9 +80,40 @@ async function linuxDelete(service: string, account: string): Promise<boolean> {
 
 let _available: boolean | null = null;
 
+/** Reset the cached availability probe. Tests only — the real process probes once. */
+export function __resetKeychainAvailabilityCacheForTests(): void {
+  _available = null;
+}
+
+/**
+ * Linux: the keychain is usable only if `secret-tool` is installed AND a Secret
+ * Service daemon (GNOME Keyring / KWallet) is running + unlocked. A bare
+ * `which secret-tool` passes on a headless box with no daemon — then the first
+ * write fails. So we verify the service actually works with a store→lookup→clear
+ * round-trip on a throwaway sentinel (HS-9019). Returns false if the binary is
+ * absent or the round-trip doesn't return what we stored.
+ */
+async function linuxKeychainWorks(): Promise<boolean> {
+  const { exitCode } = await exec('which', ['secret-tool']);
+  if (exitCode !== 0) return false;
+  const service = `${SERVICE_PREFIX}.__probe__`;
+  const account = '__availability__';
+  const token = 'ok';
+  try {
+    if (!await linuxSet(service, account, token)) return false;
+    return (await linuxGet(service, account)) === token;
+  } catch {
+    return false;
+  } finally {
+    await linuxDelete(service, account);
+  }
+}
+
 /** Check if OS keychain is available and usable on this platform.
  *  On macOS, verifies the default keychain exists (not just that the security
- *  command works — a temp HOME has no user keychain and pops system dialogs). */
+ *  command works — a temp HOME has no user keychain and pops system dialogs).
+ *  On Linux, verifies the Secret Service actually works, not just that the
+ *  binary is present (HS-9019). Windows has no keychain path here yet. */
 export async function isKeychainAvailable(): Promise<boolean> {
   if (_available !== null) return _available;
   const os = platform();
@@ -92,8 +123,7 @@ export async function isKeychainAvailable(): Promise<boolean> {
     const { exitCode } = await exec('security', ['default-keychain']);
     _available = exitCode === 0;
   } else if (os === 'linux') {
-    const { exitCode } = await exec('which', ['secret-tool']);
-    _available = exitCode === 0;
+    _available = await linuxKeychainWorks();
   } else {
     _available = false;
   }

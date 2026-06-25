@@ -16,6 +16,7 @@ import type { AppEnv } from '../types.js';
 
 const store = new Map<string, string>();
 vi.mock('../keychain.js', () => ({
+  isKeychainAvailable: vi.fn(() => Promise.resolve(true)),
   keychainSet: vi.fn((p: string, a: string, v: string) => { store.set(`${p}/${a}`, v); return Promise.resolve(true); }),
   keychainGet: vi.fn((p: string, a: string) => Promise.resolve(store.get(`${p}/${a}`) ?? null)),
   keychainDelete: vi.fn((p: string, a: string) => { store.delete(`${p}/${a}`); return Promise.resolve(true); }),

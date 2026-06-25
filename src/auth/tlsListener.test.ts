@@ -11,12 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // In-memory keychain so the CA round-trips without touching the OS keychain.
 const store = new Map<string, string>();
 vi.mock('../keychain.js', () => ({
+  isKeychainAvailable: vi.fn(() => Promise.resolve(true)),
   keychainSet: vi.fn((p: string, a: string, v: string) => { store.set(`${p}/${a}`, v); return Promise.resolve(true); }),
   keychainGet: vi.fn((p: string, a: string) => Promise.resolve(store.get(`${p}/${a}`) ?? null)),
   keychainDelete: vi.fn((p: string, a: string) => { store.delete(`${p}/${a}`); return Promise.resolve(true); }),
 }));
 
-const { collectServerCertHosts, buildMtlsServeConfig, peerIdentityFromEnv } = await import('./tlsListener.js');
+const { collectServerCertHosts, buildMtlsServeConfig, peerIdentityFromEnv, peerCertInfoFromRequest } = await import('./tlsListener.js');
 const { loadOrCreateProjectCa, signClientCert } = await import('./ca.js');
 
 describe('collectServerCertHosts', () => {
@@ -48,6 +49,33 @@ describe('peerIdentityFromEnv', () => {
       },
     };
     expect(peerIdentityFromEnv(env)).toEqual({ clientId: 'dev-9', label: 'My Device' });
+  });
+});
+
+describe('peerCertInfoFromRequest (HS-9025)', () => {
+  it('returns null for a non-TLS socket', () => {
+    expect(peerCertInfoFromRequest({ socket: {} } as never)).toBeNull();
+  });
+
+  it('reads clientId + cert expiry off a TLS-socket-shaped request', () => {
+    const req = {
+      socket: {
+        getPeerCertificate: () => ({
+          subject: { CN: 'Phone' },
+          subjectaltname: 'URI:hotsheet://client/dev-42',
+          valid_to: 'Jan  1 00:00:00 2099 GMT',
+        }),
+      },
+    };
+    expect(peerCertInfoFromRequest(req as never)).toEqual({
+      clientId: 'dev-42',
+      notAfterMs: Date.parse('Jan  1 00:00:00 2099 GMT'),
+    });
+  });
+
+  it('uses Infinity when the cert has no parseable expiry', () => {
+    const req = { socket: { getPeerCertificate: () => ({ subjectaltname: 'URI:hotsheet://client/x' }) } };
+    expect(peerCertInfoFromRequest(req as never)?.notAfterMs).toBe(Infinity);
   });
 });
 

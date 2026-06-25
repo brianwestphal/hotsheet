@@ -35,7 +35,10 @@ import { createHash,generateKeyPairSync, X509Certificate } from 'crypto';
 import forge from 'node-forge';
 import { isAbsolute, resolve } from 'path';
 
-import { keychainDelete, keychainGet, keychainSet } from '../keychain.js';
+import { isKeychainAvailable, keychainDelete, keychainGet, keychainSet } from '../keychain.js';
+import {
+  CA_PASSPHRASE_ENV, caEncFileExists, caPassphrase, readEncryptedCa, removeEncryptedCa, writeEncryptedCa,
+} from './caFileStore.js';
 
 // --- Types ---
 
@@ -436,43 +439,76 @@ function caCertAccount(projectId: string): string {
 }
 
 /**
- * Load the project CA from the keychain, or null if not yet generated (or the
- * keychain is unavailable). The private key + cert are stored as two keychain
- * entries namespaced by the project data dir.
+ * Load the project CA, or null if not yet generated. Prefers the OS keychain;
+ * falls back to the HS-9019 encrypted file (`<dataDir>/auth-ca.enc`) on a
+ * keychain-less host. If an encrypted file exists it MUST be decryptable —
+ * `loadProjectCa` THROWS when the file is present but `HOTSHEET_CA_PASSPHRASE` is
+ * missing or wrong, rather than report "no CA" (which would let the caller
+ * regenerate and orphan every enrolled client cert).
  */
 export async function loadProjectCa(dataDir: string): Promise<CaBundle | null> {
-  const projectId = projectCaId(dataDir);
-  const caKeyPem = await keychainGet(AUTH_KEYCHAIN_ID, caKeyAccount(projectId));
-  const caCertPem = await keychainGet(AUTH_KEYCHAIN_ID, caCertAccount(projectId));
-  if (caKeyPem == null || caCertPem == null) return null;
-  return { caKeyPem, caCertPem };
+  // Keychain first (preferred when available).
+  if (await isKeychainAvailable()) {
+    const projectId = projectCaId(dataDir);
+    const caKeyPem = await keychainGet(AUTH_KEYCHAIN_ID, caKeyAccount(projectId));
+    const caCertPem = await keychainGet(AUTH_KEYCHAIN_ID, caCertAccount(projectId));
+    if (caKeyPem != null && caCertPem != null) return { caKeyPem, caCertPem };
+  }
+  // Encrypted-file fallback (HS-9019). A present file must decrypt — never
+  // silently regenerate (see the doc comment above).
+  if (caEncFileExists(dataDir)) {
+    const passphrase = caPassphrase();
+    if (passphrase === undefined) {
+      throw new Error(
+        `Project CA is stored encrypted at <dataDir>/auth-ca.enc but ${CA_PASSPHRASE_ENV} is not set. ` +
+        `Set ${CA_PASSPHRASE_ENV} to load the CA (see docs/97).`,
+      );
+    }
+    return readEncryptedCa(dataDir, passphrase); // throws on wrong passphrase / corruption
+  }
+  return null;
 }
 
 /**
- * Load the project CA, generating + persisting a fresh one on first use. Throws
- * if the keychain is unavailable and so the generated CA can't be persisted —
- * an mTLS deployment requires a durable CA, so silently using an ephemeral one
- * (which would invalidate every enrolled cert on restart) would be worse.
+ * Load the project CA, generating + persisting a fresh one on first use.
+ * Persists to the OS keychain when available, else to the HS-9019 encrypted file
+ * (requires `HOTSHEET_CA_PASSPHRASE`). Throws if the CA can't be persisted
+ * durably (no keychain AND no passphrase) — an mTLS deployment requires a durable
+ * CA; silently using an ephemeral one (which would invalidate every enrolled cert
+ * on restart) or a plaintext one would be worse.
  */
 export async function loadOrCreateProjectCa(dataDir: string): Promise<CaBundle> {
   const existing = await loadProjectCa(dataDir);
   if (existing != null) return existing;
 
   const ca = generateCa();
-  const projectId = projectCaId(dataDir);
-  const wroteKey = await keychainSet(AUTH_KEYCHAIN_ID, caKeyAccount(projectId), ca.caKeyPem);
-  const wroteCert = await keychainSet(AUTH_KEYCHAIN_ID, caCertAccount(projectId), ca.caCertPem);
-  if (!wroteKey || !wroteCert) {
-    // Roll back a partial write so a later load doesn't see a half-CA.
+
+  // Keychain when available.
+  if (await isKeychainAvailable()) {
+    const projectId = projectCaId(dataDir);
+    const wroteKey = await keychainSet(AUTH_KEYCHAIN_ID, caKeyAccount(projectId), ca.caKeyPem);
+    const wroteCert = await keychainSet(AUTH_KEYCHAIN_ID, caCertAccount(projectId), ca.caCertPem);
+    if (wroteKey && wroteCert) return ca;
+    // Roll back a partial keychain write, then fall through to the file fallback.
     await clearProjectCa(dataDir);
-    throw new Error('Cannot persist project CA: OS keychain unavailable. mTLS requires a durable CA.');
   }
+
+  // Encrypted-file fallback (HS-9019). Requires an operator passphrase.
+  const passphrase = caPassphrase();
+  if (passphrase === undefined) {
+    throw new Error(
+      `Cannot persist project CA: no OS keychain is available and ${CA_PASSPHRASE_ENV} is not set. ` +
+      `Set ${CA_PASSPHRASE_ENV} to enable mTLS on this host (see docs/97). mTLS requires a durable, encrypted CA.`,
+    );
+  }
+  writeEncryptedCa(dataDir, ca, passphrase);
   return ca;
 }
 
-/** Remove the project CA from the keychain (reset / teardown). */
+/** Remove the project CA from the keychain AND the encrypted-file fallback. */
 export async function clearProjectCa(dataDir: string): Promise<void> {
   const projectId = projectCaId(dataDir);
   await keychainDelete(AUTH_KEYCHAIN_ID, caKeyAccount(projectId));
   await keychainDelete(AUTH_KEYCHAIN_ID, caCertAccount(projectId));
+  removeEncryptedCa(dataDir);
 }

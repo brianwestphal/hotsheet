@@ -93,6 +93,19 @@ keypairs + *parses* X.509 only). `src/auth/ca.ts` (HS-8992) uses **`node-forge@^
   kept current with any future forge advisories. Native `crypto.generateKeyPairSync` does the
   actual keygen; forge is used only for cert assembly / signing / PKCS#12 encode/decode.
 
+### `qrcode` (HS-9026 — mTLS device-pairing QR)
+
+The QR-pairing UI (§94.4.2 Phase 2 / §97.3) encodes a single-use pairing token + reachable URL into a
+QR the operator's phone scans. `src/client/devicesPairing.tsx` uses **`qrcode@^1.5.4`** (`toDataURL`)
+to render it; `@types/qrcode` is a devDependency.
+
+- **Why this lib:** the standard, mature pure-JS QR encoder; bundles into the client IIFE with no
+  native addon. **Client-only, render-only** — it encodes a string we already produced; it parses no
+  untrusted input and isn't on the cert-signing path.
+- **Posture:** `npm audit` reports **no advisories against `qrcode@1.5.4`** (checked 2026-06-25; its
+  transitive deps `dijkstrajs`/`pngjs`/`yargs` are clean). Not security-critical (the *token* it
+  encodes is what's gated — single-use + short TTL, server-side, HS-8996).
+
 ## The cargo (src-tauri) baseline (HS-8649)
 
 HS-8649 ran the first `cargo audit` over `src-tauri/Cargo.lock`. It reported **6

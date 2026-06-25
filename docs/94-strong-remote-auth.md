@@ -21,8 +21,12 @@ before execution."
 > `deviceRegistry.ts`, `routes/enrollment.ts` (mint `.p12` / sign CSR / list / revoke / QR-pair,
 > loopback-gated), `authz.ts` (Tier-1 cert authz + revocation; secret demoted to defense-in-depth),
 > `pairingTokens.ts` (single-use QR tokens). Only **6/6 (HS-8997 threat-model sign-off + security
-> re-audit)** remains — now unblocked. Follow-ups: HS-9019 (keychain-less CA), HS-9024 (enroll UI +
-> Tauri save), HS-9025 (WS revocation re-check), HS-9026 (QR display + mobile client). See §94.10.
+> re-audit)** remains — now unblocked. Follow-ups now SHIPPED: **HS-9019** (keychain-less CA via
+> `HOTSHEET_CA_PASSPHRASE` → encrypted `auth-ca.enc`, `src/auth/caFileStore.ts`), **HS-9024** (Settings
+> → Remote Access device UI `src/client/devicesSettings.tsx` + Tauri `save_file`), **HS-9025** (WS
+> revocation re-check sweep `src/auth/wsRevocationSweep.ts`), **HS-9026** (QR pairing desktop display
+> `src/client/devicesPairing.tsx`). Only the **mobile client** that scans the QR → generates a CSR →
+> installs the signed cert is platform-specific manual work. See §94.10 + docs/97.
 
 ## 94.1 Why now
 

@@ -37,7 +37,12 @@ export default defineConfig([
       };
     },
     banner: {
-      js: '#!/usr/bin/env node',
+      // Shebang first. Then a real `require` in ESM scope: esbuild's generated
+      // `__require` shim uses it when defined (`typeof require !== "undefined"`),
+      // else throws "Dynamic require of X is not supported". node-forge does a
+      // conditional `require('crypto')` esbuild can't statically convert to an
+      // import, so without this the bundled cli.js crashes on boot (HS-9032).
+      js: "#!/usr/bin/env node\nimport { createRequire as __hsCreateRequire } from 'module';\nconst require = __hsCreateRequire(import.meta.url);",
     },
   },
   // Channel server (MCP server for Claude Code integration)

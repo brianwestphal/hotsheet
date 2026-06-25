@@ -26,6 +26,7 @@
     "allow-request-attention",
     "allow-request-attention-once",
     "allow-pick-folder",
+    "allow-save-file",
     "allow-open-url",
     "allow-set-window-title",
     "allow-show-native-notification",

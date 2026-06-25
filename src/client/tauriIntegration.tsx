@@ -1,4 +1,4 @@
-import { byIdOrNull } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 
 /**
  * HS-8088 — Tauri's runtime injects `window.__TAURI__` with three optional
@@ -210,6 +210,35 @@ export function openExternalUrl(url: string): void {
   } else {
     window.open(url, '_blank');
   }
+}
+
+/**
+ * HS-9024 — save `bytes` to disk under `defaultName`. In Tauri, routes through
+ * the native `save_file` command (WKWebView silently no-ops `<a download>`, the
+ * exact Tauri-unsafe class the web-and-Tauri rule warns about); in a real
+ * browser, falls back to a Blob + `<a download>` (which works there). Returns
+ * true if the file was written, false if the user canceled the native dialog.
+ */
+export async function saveBytes(defaultName: string, bytes: Uint8Array, mimeType = 'application/octet-stream'): Promise<boolean> {
+  const invoke = getTauriInvoke();
+  if (invoke) {
+    // Tauri IPC serializes the byte array to a JSON number[] → Rust `Vec<u8>`.
+    // `.p12` bundles are a few KB, so the overhead is negligible.
+    const saved = await invoke('save_file', { defaultName, contents: Array.from(bytes) });
+    return saved === true;
+  }
+  // Browser: a Blob download. `<a download>` works in real browsers (it only
+  // no-ops inside Tauri's WKWebView, which the branch above handles).
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mimeType }));
+  try {
+    const a = toElement(<a href={url} download={defaultName} style="display:none" />);
+    document.body.appendChild(a);
+    if (a instanceof HTMLAnchorElement) a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return true;
 }
 
 /** Intercept external link clicks and open them via Tauri shell or window.open. */

@@ -47,16 +47,33 @@ to a wildcard (`0.0.0.0`) and connect via a hostname or external IP, add those t
 `config.json:tlsServerHosts` (a string array) so the cert's SANs match what clients dial — otherwise
 clients will see a hostname-mismatch error.
 
-> **Keychain-less hosts (Windows / headless):** durable CA storage without an OS keychain is tracked
-> in **HS-9019**. Until it lands, an exposed bind requires a working keychain (macOS/Linux).
+**Keychain-less hosts (Windows / headless Linux).** A headless server often has no usable OS keychain
+(no `secret-tool` daemon; Windows isn't wired up). There, set an environment variable
+**`HOTSHEET_CA_PASSPHRASE`** before starting an exposed server (HS-9019):
+
+```bash
+export HOTSHEET_CA_PASSPHRASE='a-long-random-passphrase'
+hotsheet --bind 0.0.0.0
+```
+
+The CA private key is then encrypted at rest (AES-256-GCM, key derived from the passphrase via
+scrypt) in `<dataDir>/auth-ca.enc` instead of the keychain. **Keep the passphrase safe and stable** —
+it's required on every restart, and losing it means re-enrolling every device (a new CA is generated).
+If neither a keychain nor `HOTSHEET_CA_PASSPHRASE` is available, an exposed bind **refuses to start**
+(it will never fall back to a plaintext or an ephemeral CA). On macOS/Linux with a working keyring you
+don't need the passphrase — the keychain is used automatically.
 
 ## 97.3 Enroll a device (mint + install a client `.p12`)
 
 Each device that should connect gets its own certificate. **Minting is loopback-only** — you run it
 on the server machine (the first device is always enrolled locally; bootstrapping).
 
-> A Settings → Devices UI (list / "Add device" / download / revoke) + a native save dialog for the
-> `.p12` are tracked in **HS-9024**. Until that ships, use the API from the server host:
+**From the UI (HS-9024).** Open **Settings → Remote Access**. Click **Add Device…**, give it a name
+and an export password, and Hot Sheet downloads a password-protected `.p12` (a native Save dialog in
+the desktop app; a normal browser download otherwise). The device then lists with its enrollment +
+expiry, and a **Revoke** button.
+
+**From the API** (equivalent; handy for headless hosts):
 
 ```bash
 # On the server machine (loopback):
@@ -66,8 +83,8 @@ curl -sk https://localhost:4174/api/auth/devices/mint \
   | jq -r .p12Base64 | base64 -d > brian-iphone.p12
 ```
 
-The response also includes the device record (`clientId`, `label`, `expiresAt`). Transfer
-`brian-iphone.p12` to the device over a trusted channel and **install it** (it's password-protected):
+Either way, transfer the `.p12` to the device over a trusted channel and **install it** (it's
+password-protected):
 
 - **macOS:** double-click → add to Keychain (login). Safari/Chrome will offer it on connect.
 - **iOS:** AirDrop/email the `.p12` → Settings → Profile Downloaded → install; then enable it for the
@@ -75,13 +92,20 @@ The response also includes the device record (`clientId`, `label`, `expiresAt`).
 - **Windows:** double-click → Certificate Import Wizard (Personal store).
 - **Firefox:** Settings → Privacy & Security → Certificates → Your Certificates → Import.
 
-Then browse to `https://<server-host>:4174` and pick the certificate when prompted. (A future mobile
-flow lets a phone scan a pairing **QR** and enroll without the `.p12` dance — server side shipped in
-HS-8996; the QR display + mobile client are **HS-9026**.)
+Then browse to `https://<server-host>:4174` and pick the certificate when prompted.
+
+**QR pairing (HS-9026).** Instead of copying a `.p12`, click **Pair a Device…** in Settings → Remote
+Access. Confirm the address the device will reach the server at, and Hot Sheet shows a single-use,
+expiring **QR code**. The device scans it, generates its own key + CSR in the browser, and enrolls
+over the pairing token — no `.p12` to move. (The desktop QR display is shipped; the mobile client
+that scans → generates the CSR → installs the signed cert is platform-specific and tracked as a
+manual flow — see the manual test plan.)
 
 ## 97.4 Revoke a device
 
-Revoking is immediate for new requests (a revoked device gets 403 on every API call):
+**From the UI:** Settings → Remote Access → the device's **Revoke** button (confirm in the dialog).
+
+**From the API:**
 
 ```bash
 curl -sk https://localhost:4174/api/auth/devices/<clientId>/revoke -X POST   # (with a valid client cert)
@@ -89,9 +113,9 @@ curl -sk https://localhost:4174/api/auth/devices/<clientId>/revoke -X POST   # (
 curl -sk https://localhost:4174/api/auth/devices
 ```
 
-(The Revoke button lands with the HS-9024 device UI.) An already-open terminal/sync WebSocket from a
-just-revoked device is closed on the next periodic sweep — tracked in **HS-9025**; HTTP is immediate.
-Certificates also carry an **expiry** (re-mint to rotate).
+Revoking is immediate for new requests (a revoked device gets 403 on every API call). An already-open
+terminal/sync WebSocket from a just-revoked device is closed on the next periodic re-check sweep
+(~30 s; HS-9025) — HTTP is immediate. Certificates also carry an **expiry** (re-mint to rotate).
 
 ## 97.5 Deployment notes + caveats
 
@@ -114,5 +138,7 @@ Certificates also carry an **expiry** (re-mint to rotate).
   (§94.11) + security re-audit (§94.12).
 - [`46-service-client-decoupling.md`](46-service-client-decoupling.md) §46.5 — the trust model.
 - [`dependency-security.md`](dependency-security.md) — the `node-forge` posture.
-- Follow-ups: HS-9019 (keychain-less CA), HS-9024 (device UI + Tauri save), HS-9025 (WS revocation
-  sweep), HS-9026 (QR display + mobile client).
+- Shipped follow-ups: HS-9019 (keychain-less CA via `HOTSHEET_CA_PASSPHRASE`), HS-9024 (Settings →
+  Remote Access device UI + Tauri `save_file`), HS-9025 (WS revocation re-check sweep), HS-9026 (QR
+  pairing desktop display). Remaining manual/platform work: the mobile client that scans the QR,
+  generates its CSR, and installs the signed cert (see the manual test plan).

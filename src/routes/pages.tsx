@@ -544,6 +544,13 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
               <span>API Keys</span>
             </button>
+            {/* HS-9024 — Remote Access tab. Enrolled mTLS client devices for
+                serving over `--bind` (docs/94 / docs/97). Mint a .p12 locally,
+                install it on the remote machine, revoke when needed. */}
+            <button className="settings-tab" data-tab="devices" id="settings-tab-devices">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+              <span>Remote Access</span>
+            </button>
             {/* HS-8146 — Telemetry tab. Master toggle + per-signal sub-toggles + retention picker for the §67 Claude Code telemetry integration. */}
             <button className="settings-tab" data-tab="telemetry" id="settings-tab-telemetry">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
@@ -779,6 +786,28 @@ pageRoutes.get('/', (c) => {
                   <button type="button" className="btn btn-sm" id="settings-key-add-btn">Add Key…</button>
                 </div>
                 <span className="settings-hint" id="settings-keys-status" role="status" aria-live="polite"></span>
+              </div>
+            </div>
+            {/* HS-9024 / HS-9026 — Remote Access panel. Enrolled mTLS client
+                devices + QR pairing. mTLS only engages on an exposed `--bind`
+                (docs/94 / docs/97); minting is loopback-only so it lives in the
+                local app. Rows + the pairing QR are rendered by
+                devicesSettings.tsx / devicesPairing.tsx. */}
+            <div className="settings-tab-panel" data-panel="devices" id="settings-devices-panel">
+              <div className="settings-section">
+                <div className="settings-section-header">
+                  <h3>Remote Access</h3>
+                </div>
+                <span className="settings-hint">Devices authorized to connect when this server is exposed over <code>--bind</code> (mutual&nbsp;TLS). On localhost the shared secret is used and these are not required. <strong>Create a device</strong> to download a password-protected <code>.p12</code> to install on the remote machine; <strong>revoke</strong> to cut it off.</span>
+                <div id="settings-devices-list" className="settings-keys-list" style="margin-top:12px"></div>
+                <div className="settings-field" style="margin-top:14px; display:flex; gap:8px">
+                  <button type="button" className="btn btn-sm" id="settings-device-add-btn">Add Device…</button>
+                  {/* HS-9026 — QR pairing for a phone/tablet (no manual .p12 copy). */}
+                  <button type="button" className="btn btn-sm" id="settings-device-pair-btn">Pair a Device…</button>
+                </div>
+                {/* HS-9026 — the pairing QR + countdown render here. */}
+                <div id="settings-devices-pairing" className="settings-devices-pairing" style="margin-top:12px"></div>
+                <span className="settings-hint" id="settings-devices-status" role="status" aria-live="polite"></span>
               </div>
             </div>
             <div className="settings-tab-panel" data-panel="telemetry" id="settings-telemetry-panel">
