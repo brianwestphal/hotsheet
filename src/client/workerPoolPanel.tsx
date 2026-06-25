@@ -9,8 +9,8 @@
 // ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
 // layer onto these tiles later.
 import {
-  drainAllPoolWorkers, drainPoolWorker, getWorkerPool, launchWorker,
-  type PoolState, registerPoolWorker, removePoolWorker, removeWorktree,
+  drainAllPoolWorkers, drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker,
+  type PoolState, registerPoolWorker, releaseTicket, removePoolWorker, removeWorktree,
   setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -159,6 +159,11 @@ async function cleanupStopped(w: WorkerSlotView): Promise<void> {
   if (cleaningUp.has(w.worker)) return;
   cleaningUp.add(w.worker);
   try {
+    // HS-9051 — force-release any tickets still leased to this dead/stopped worker
+    // FIRST, so another worker can reclaim them within this ~5 min reap window
+    // rather than waiting out the 30-min lease TTL (HS-9050). Best-effort +
+    // idempotent; never blocks the teardown.
+    await releaseWorkerClaims(w.worker);
     if (w.terminalId !== null) {
       const { closeDynamicTerminal } = await import('./terminalInstanceLifecycle.js');
       await closeDynamicTerminal(w.terminalId, true);
@@ -169,6 +174,22 @@ async function cleanupStopped(w: WorkerSlotView): Promise<void> {
     showToast(`Worker cleanup failed: ${getErrorMessage(e)}`);
   } finally {
     cleaningUp.delete(w.worker);
+  }
+}
+
+/** HS-9051 — force-release every live ticket lease held by `worker` (owner
+ *  force-release, no worker arg). Best-effort: a claims-fetch or release failure
+ *  is swallowed so it can't block the reap teardown. Exported for tests. */
+export async function releaseWorkerClaims(worker: string): Promise<void> {
+  try {
+    const claims = await getTicketClaims();
+    await Promise.all(
+      claims
+        .filter(cl => cl.claimedBy === worker)
+        .map(cl => releaseTicket(cl.ticketId).catch(() => { /* idempotent / best-effort */ })),
+    );
+  } catch {
+    /* a claims-fetch / unexpected error must never block the reap teardown */
   }
 }
 

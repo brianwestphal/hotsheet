@@ -59,6 +59,16 @@ describe('reduceMutation', () => {
     expect(reduceMutation({ type: 'priority-changed', ticketIds: [1, 99], to: 'high' }, (id) => id === 1).refetch).toBe(true);
   });
 
+  it('HS-9043 — status-changed to a done/parked status also clears up_next', () => {
+    expect(reduceMutation({ type: 'status-changed', ticketIds: [1], to: 'completed' }, allLoaded).optimistic[0])
+      .toEqual({ id: 1, patch: { status: 'completed', up_next: false } });
+    expect(reduceMutation({ type: 'status-changed', ticketIds: [2], to: 'archive' }, allLoaded).optimistic[0])
+      .toEqual({ id: 2, patch: { status: 'archive', up_next: false } });
+    // a non-clearing status leaves up_next untouched (the existing 'started' case)
+    expect(reduceMutation({ type: 'status-changed', ticketIds: [3], to: 'not_started' }, allLoaded).optimistic[0])
+      .toEqual({ id: 3, patch: { status: 'not_started' } });
+  });
+
   it('batch-operation delete/empty-trash → remove; up_next → optimistic; restore → refetch', () => {
     expect(reduceMutation({ type: 'batch-operation', op: 'delete', ids: [1, 2], changes: {} }, noneLoaded)).toEqual({ remove: [1, 2], optimistic: [], refetch: false });
     expect(reduceMutation({ type: 'batch-operation', op: 'empty-trash', ids: [4], changes: {} }, noneLoaded).remove).toEqual([4]);

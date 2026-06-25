@@ -14,7 +14,7 @@
 // (drops twice within 30s, or never connects), surface a "live updates
 // unavailable" hint and let the long-poll carry data until the WS recovers.
 
-import { getActiveProject } from './state.js';
+import { getActiveProject, shouldResetStatusOnUpNext } from './state.js';
 import { ticketsStore } from './ticketsStore.js';
 
 const FALLBACK_WINDOW_MS = 30_000;
@@ -100,8 +100,16 @@ export function reduceMutation(frame: Record<string, unknown>, hasTicket: (id: n
       return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { category: frame.to } })));
     case 'priority-changed':
       return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { priority: frame.to } })));
-    case 'status-changed':
-      return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { status: frame.to } })));
+    case 'status-changed': {
+      // HS-9043 — a "done/parked" status (completed / verified / backlog / archive)
+      // also clears up_next server-side; mirror that here so the batch status path's
+      // UI matches the DB (otherwise the up-next star lingers until a full poll).
+      const to = typeof frame.to === 'string' ? frame.to : '';
+      const clearsUpNext = shouldResetStatusOnUpNext(to);
+      return inPlace(toIdList(frame.ticketIds).map(id => ({
+        id, patch: clearsUpNext ? { status: to, up_next: false } : { status: to },
+      })));
+    }
     case 'batch-operation': {
       const ids = toIdList(frame.ids);
       if (frame.op === 'delete' || frame.op === 'empty-trash') return { remove: ids, optimistic: [], refetch: false };

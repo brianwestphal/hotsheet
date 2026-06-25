@@ -64,6 +64,25 @@ describe('ticket mutation events', () => {
     expect(upd[0]).toMatchObject({ id: t.id, changes: { title: 'renamed', priority: 'high' } });
   });
 
+  it('HS-9043 — PATCH status=completed echoes the server-cleared up_next + completed_at', async () => {
+    const t = await createTicket();
+    // First flag it up-next.
+    await app.request(`/api/tickets/${t.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ up_next: true }),
+    });
+    events = [];
+    // Completing it clears up_next + sets completed_at SERVER-SIDE; the event must
+    // carry those derived fields so the UI matches the DB (not just `status`).
+    await app.request(`/api/tickets/${t.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }),
+    });
+    const upd = typed('ticket-updated');
+    expect(upd).toHaveLength(1);
+    const changes = (upd[0] as { changes: Record<string, unknown> }).changes;
+    expect(changes).toMatchObject({ status: 'completed', up_next: false });
+    expect(changes.completed_at).not.toBeNull();
+  });
+
   it('PATCH /tickets/:id with only last_read_at emits nothing (read-tracking)', async () => {
     const t = await createTicket();
     events = [];

@@ -53,7 +53,7 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // ---------------------------------------------------------------------------
 
 describe('listTools (HS-8346 + HS-8347)', () => {
-  it('returns the 19 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by)', () => {
+  it('returns the 23 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by + HS-9031 worker-pool)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
@@ -64,15 +64,19 @@ describe('listTools (HS-8346 + HS-8347)', () => {
       'hotsheet_create_ticket',
       'hotsheet_delete_note',
       'hotsheet_delete_ticket',
+      'hotsheet_dispatch_tickets',
+      'hotsheet_drain_workers',
       'hotsheet_duplicate_tickets',
       'hotsheet_edit_note',
       'hotsheet_get_ticket',
+      'hotsheet_get_worker_pool',
       'hotsheet_query_tickets',
       'hotsheet_release',
       'hotsheet_renew_lease',
       'hotsheet_request_feedback',
       'hotsheet_restore_ticket',
       'hotsheet_set_blocked_by',
+      'hotsheet_set_worker_target',
       'hotsheet_signal_done',
       'hotsheet_toggle_up_next',
       'hotsheet_update_ticket',
@@ -91,7 +95,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(19);
+    expect(_toolsForTesting).toHaveLength(23);
   });
 
   // HS-8771 — the announce tool proxies to the announcer endpoint.
@@ -802,5 +806,58 @@ describe('hotsheet_set_blocked_by (HS-8865)', () => {
     const result = await callTool('hotsheet_set_blocked_by', { blocker_ids: [1] }, tmpDataDir, vi.fn());
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('validation failed');
+  });
+});
+
+describe('worker-pool management tools (HS-9031)', () => {
+  it('hotsheet_get_worker_pool — GETs /api/workers/pool', async () => {
+    const poolJson = JSON.stringify({ targetN: 2, workers: [] });
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: poolJson }; });
+    const result = await callTool('hotsheet_get_worker_pool', {}, tmpDataDir, fetchFn);
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe(poolJson);
+    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/workers/pool');
+    expect(call[1].method).toBe('GET');
+  });
+
+  it('hotsheet_set_worker_target — POSTs /api/workers/pool/target with {targetN}', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true}' }; });
+    const result = await callTool('hotsheet_set_worker_target', { targetN: 3 }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeUndefined();
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/workers/pool/target');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body)).toEqual({ targetN: 3 });
+  });
+
+  it('hotsheet_set_worker_target — rejects an out-of-range target', async () => {
+    const result = await callTool('hotsheet_set_worker_target', { targetN: 999 }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
+  });
+
+  it('hotsheet_dispatch_tickets — claims each id and aggregates dispatched/failed', async () => {
+    // Ticket 2 is already live-claimed elsewhere → 409 → lands in `failed`.
+    const fetchFn = fakeFetch((url) =>
+      url.endsWith('/api/tickets/2/claim')
+        ? { ok: false, status: 409, text: 'already claimed' }
+        : { ok: true, status: 200, text: '{"ok":true}' });
+    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'worker-2', ticket_ids: [1, 2, 3] }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ worker: 'worker-2', dispatched: [1, 3], failed: [{ id: 2 }] });
+  });
+
+  it('hotsheet_drain_workers — drains one, drains all with all:true, errors on neither', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true}' }; });
+    await callTool('hotsheet_drain_workers', { worker: 'worker-1' }, tmpDataDir, fetchFn);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/drain');
+    await callTool('hotsheet_drain_workers', { all: true }, tmpDataDir, fetchFn);
+    expect((fetchSpy.mock.calls[1] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/drain-all');
+    const neither = await callTool('hotsheet_drain_workers', {}, tmpDataDir, vi.fn());
+    expect(neither.isError).toBe(true);
   });
 });

@@ -25,6 +25,12 @@ afterEach(() => {
 });
 
 describe('channelRegistry — registerSelf / unregisterSelf', () => {
+  it('HS-9038 — round-trips a worker connection\'s worktree marker', () => {
+    registerSelf(dataDir, { port: 4174, pid: 999, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', worktree: '/wt/worker-1' });
+    const all = listAliveEntries(dataDir, () => true);
+    expect(all[0].worktree).toBe('/wt/worker-1');
+  });
+
   it('writes an entry file at <dataDir>/channel-ports.d/<pid>.json', () => {
     registerSelf(dataDir, { port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z' });
     const path = entryPath(dataDir, 12345);
@@ -33,7 +39,7 @@ describe('channelRegistry — registerSelf / unregisterSelf', () => {
     // Read it back via listAliveEntries with an always-alive probe.
     const all = listAliveEntries(dataDir, () => true);
     expect(all).toHaveLength(1);
-    expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z' });
+    expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', worktree: null });
     // HS-8713 — build the expected suffix with `join` so the separator is
     // the platform's (`\` on Windows); a hardcoded `/channel-ports.d/...`
     // never matched the backslash path on Windows.
@@ -140,6 +146,23 @@ describe('channelRegistry — pickLeader', () => {
     ];
     expect(pickLeader(entries)?.pid).toBe(1);
   });
+
+  it('HS-9038 — prefers the oldest MAIN even when an older WORKER connection exists', () => {
+    // Sorted oldest-first: an older worker (worktree set), then the main.
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-05-19T07:00:00.000Z', worktree: '/wt/w1' },
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-05-19T07:00:01.000Z', worktree: null },
+    ];
+    expect(pickLeader(entries)?.pid).toBe(2); // the main, not the older worker
+  });
+
+  it('HS-9038 — falls back to the oldest overall when only worker connections exist', () => {
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-05-19T07:00:00.000Z', worktree: '/wt/w1' },
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-05-19T07:00:01.000Z', worktree: '/wt/w2' },
+    ];
+    expect(pickLeader(entries)?.pid).toBe(1);
+  });
 });
 
 describe('channelRegistry — failover end-to-end (captures HS-8460 FIFO semantics)', () => {
@@ -201,5 +224,30 @@ describe('cleanupExtraConnections (HS-8948)', () => {
     // The entry is still removed even though the signal threw — count drops.
     expect(result).toEqual([2]);
     expect(listAliveEntries(dataDir, () => true).map(e => e.pid)).toEqual([1]);
+  });
+
+  it('HS-9038 — spares WORKER connections, killing only duplicate MAIN connections', () => {
+    registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });                       // main leader
+    registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });                       // duplicate main
+    registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z', worktree: '/wt/w1' });   // worker
+    registerSelf(dataDir, { port: 400, pid: 4, slug: 'x', startedAt: '2026-06-23T07:00:15.000Z', worktree: '/wt/w2' });   // worker
+
+    const killed: number[] = [];
+    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+
+    expect(killed).toEqual([2]); // only the duplicate main — workers untouched
+    expect(result).toEqual([2]);
+    // The main leader + both workers remain registered.
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([1, 3, 4]);
+  });
+
+  it('HS-9038 — is a no-op when one main + several workers are alive (the expected steady state)', () => {
+    registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });
+    registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z', worktree: '/wt/w1' });
+    const killed: number[] = [];
+    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    expect(result).toEqual([]);
+    expect(killed).toEqual([]);
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([1, 3]);
   });
 });

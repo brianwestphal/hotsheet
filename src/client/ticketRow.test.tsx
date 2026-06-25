@@ -110,6 +110,7 @@ function buildMinimalColumnCard(t: Ticket): HTMLElement {
       </div>
     ),
     toElement(<div className="column-card-title">{t.title}</div>),
+    toElement(<div className="column-card-claimed-slot"></div>), // HS-9035
   );
   return card;
 }
@@ -542,6 +543,42 @@ describe('setupColumnCardEffects (HS-8335) — column-view reactivity', () => {
     ticketsStore.actions.optimisticUpdate(1, { title: 'Updated title' });
     // The title-host's text node should reflect the new value.
     expect(titleHost.textContent).toContain('Updated title');
+
+    dispose();
+  });
+
+  // HS-9035 — list view showed the claimed-by worker chip but column view didn't.
+  it('shows the claimed-by chip in the column card while claimed, and clears on release', () => {
+    const t = makeTicket(1, { status: 'started' });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    applyClaims([{
+      ticketId: 1, ticketNumber: 'HS-1', title: 'T', claimedBy: 'worker-1',
+      workerLabel: 'worker-1', leaseExpiresAt: '2099-01-01T00:00:00.000Z',
+    }]);
+    expect(card.querySelector('.column-card-claimed-slot .claimed-by-chip')).not.toBeNull();
+
+    applyClaims([]);
+    expect(card.querySelector('.column-card-claimed-slot .claimed-by-chip')).toBeNull();
+
+    dispose();
+  });
+
+  it('shows the merge-pending badge in the column card for a completed, unmerged ticket', () => {
+    const t = makeTicket(1, { status: 'started', pending_integration: false });
+    ticketsStore.actions.setTickets([t]);
+    const card = buildMinimalColumnCard(t);
+    document.body.appendChild(card);
+    const dispose = setupColumnCardEffects(card, t);
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: true }));
+    expect(card.querySelector('.column-card-claimed-slot .ticket-pending-merge')).not.toBeNull();
+
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: false }));
+    expect(card.querySelector('.column-card-claimed-slot .ticket-pending-merge')).toBeNull();
 
     dispose();
   });

@@ -236,6 +236,22 @@ const SetBlockedByInputSchema = z.object({
   blocker_ids: z.array(z.number().int()).describe('Ticket ids this one waits on (flat, replaces the existing set; [] clears). Rejected on self/cycle/unknown ticket.'),
 });
 
+// HS-9031 — worker-pool management tools so an AI tool (Claude) can parallelize
+// work across the distributed worker pool ("parallelize all tickets tagged X").
+const GetWorkerPoolInputSchema = z.object({});
+const SetWorkerTargetInputSchema = z.object({
+  targetN: z.number().int().min(0).max(64).describe('Desired number of running workers. The owner Hot Sheet UI reconciles toward this (launches/drains). NOTE: new workers only actually START while the owner window is open — launch is client-driven (docs/89 Phase C) — so setting the target with no UI open just records the intent.'),
+});
+const DispatchTicketsInputSchema = z.object({
+  worker: z.string().min(1).describe('The worker to assign these tickets to (its stable id, e.g. "worker-2"; see hotsheet_get_worker_pool). That worker claims them first, before the shared pool.'),
+  label: z.string().nullish().describe('Optional human-friendly worker label shown in the UI'),
+  ticket_ids: z.array(z.number().int()).min(1).describe('Ticket ids to dispatch (claim) for this worker — e.g. one partition\'s chunk. Each is claimed on the worker\'s behalf; an already-live-claimed ticket is reported in `failed` and left with its current owner.'),
+});
+const DrainWorkersInputSchema = z.object({
+  worker: z.string().min(1).nullish().describe('The worker to drain gracefully (it finishes its current ticket, then stops). Omit and set `all:true` to drain every worker.'),
+  all: z.boolean().optional().describe('Drain EVERY active worker (a graceful pool stop). Ignores `worker` when true.'),
+});
+
 const BatchInputSchema = z.object({
   ids: z.array(z.number().int()).min(1).describe('Ticket ids to operate on (one or more)'),
   action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']).describe('Batch action to apply'),
@@ -493,6 +509,64 @@ async function dispatchSetBlockedBy(args: unknown, settings: ChannelSettings, fe
   return await proxyRequest(settings, `/api/tickets/${String(ticket_id)}/blocked-by`, { method: 'PUT', body: { blockerIds: blocker_ids } }, fetchFn);
 }
 
+// HS-9031 — worker-pool management.
+async function dispatchGetWorkerPool(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = GetWorkerPoolInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_get_worker_pool — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/workers/pool', { method: 'GET' }, fetchFn);
+}
+
+async function dispatchSetWorkerTarget(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = SetWorkerTargetInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_set_worker_target — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  return await proxyRequest(settings, '/api/workers/pool/target', { method: 'POST', body: parsed.data }, fetchFn);
+}
+
+async function dispatchDrainWorkers(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = DrainWorkersInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_drain_workers — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { worker, all } = parsed.data;
+  if (all === true) {
+    return await proxyRequest(settings, '/api/workers/pool/drain-all', { method: 'POST', body: {} }, fetchFn);
+  }
+  if (worker == null || worker === '') {
+    return errorResult('hotsheet_drain_workers — provide `worker` to drain one, or set `all:true` to drain every worker.');
+  }
+  return await proxyRequest(settings, '/api/workers/pool/drain', { method: 'POST', body: { worker } }, fetchFn);
+}
+
+/** Dispatch (claim-by-id) a chunk of tickets to one worker. Loops the per-ticket
+ *  claim endpoint and aggregates a dispatched/failed summary — partition a set,
+ *  then hand each worker its chunk so it works that first (before the shared pool).
+ *  A ticket already live-claimed by someone else lands in `failed` (409), not an error. */
+async function dispatchDispatchTickets(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = DispatchTicketsInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_dispatch_tickets — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const { worker, label, ticket_ids } = parsed.data;
+  const dispatched: number[] = [];
+  const failed: { id: number; reason: string }[] = [];
+  for (const id of ticket_ids) {
+    const result = await proxyRequest(
+      settings, `/api/tickets/${String(id)}/claim`,
+      { method: 'POST', body: { worker, label: label ?? undefined } }, fetchFn,
+    );
+    if (result.isError === true) {
+      failed.push({ id, reason: result.content[0]?.text ?? 'claim failed' });
+    } else {
+      dispatched.push(id);
+    }
+  }
+  return okResult(JSON.stringify({ worker, dispatched, failed }));
+}
+
 // ---------------------------------------------------------------------------
 // Public tool catalog + top-level dispatcher.
 // ---------------------------------------------------------------------------
@@ -615,6 +689,31 @@ const TOOLS: ToolEntry[] = [
     description: 'Set a ticket\'s flat dependency gate: the list of ticket ids it waits on (replaces the existing set; [] clears). A blocked ticket is skipped by claim-next until every blocker is completed/verified. For a planning pass to express ordering. Rejected (400) on a self-block, an unknown ticket, or a dependency cycle. FLAT only — not a parent/child tree.',
     inputSchema: SetBlockedByInputSchema,
     call: dispatchSetBlockedBy,
+  },
+  // HS-9031 — worker-pool management (parallelize work across the distributed pool).
+  {
+    name: 'hotsheet_get_worker_pool',
+    description: 'List the distributed worker pool: the target worker count + each worker (id, label, state idle/working/draining/stopped, the ticket it\'s on). Use this to see capacity before dispatching/partitioning work, or to monitor progress.',
+    inputSchema: GetWorkerPoolInputSchema,
+    call: dispatchGetWorkerPool,
+  },
+  {
+    name: 'hotsheet_set_worker_target',
+    description: 'Scale the worker pool to a desired number of running workers. The owner Hot Sheet UI reconciles toward this target (launching new worktree workers or gracefully draining extras). IMPORTANT: new workers only actually start while the owner window is OPEN (launch is client-driven) — with no UI open this just records the intent. To parallelize a batch: set the target, then dispatch chunks with hotsheet_dispatch_tickets.',
+    inputSchema: SetWorkerTargetInputSchema,
+    call: dispatchSetWorkerTarget,
+  },
+  {
+    name: 'hotsheet_dispatch_tickets',
+    description: 'Assign (claim) a set of tickets to one specific worker, so it works that chunk first (before the shared Up Next pool). The core "parallelize across workers" primitive: query the tickets (e.g. by tag via hotsheet_query_tickets), split them into chunks, and dispatch one chunk per worker. Returns {worker, dispatched:[ids], failed:[{id,reason}]} — a ticket already live-claimed by another worker lands in `failed` (not reassigned).',
+    inputSchema: DispatchTicketsInputSchema,
+    call: dispatchDispatchTickets,
+  },
+  {
+    name: 'hotsheet_drain_workers',
+    description: 'Gracefully drain one worker (`worker`) or every worker (`all:true`): each finishes its current ticket, then stops — never killed mid-work. For scaling down or wrapping up a parallelized batch.',
+    inputSchema: DrainWorkersInputSchema,
+    call: dispatchDrainWorkers,
   },
   // HS-8771 — hybrid Announcer generation (§80).
   {

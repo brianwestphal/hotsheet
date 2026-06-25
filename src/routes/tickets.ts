@@ -371,7 +371,20 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
   if (!isReadTrackingOnly) {
     notifyMutation(c.get('dataDir'));
-    emitSync(c, { type: 'ticket-updated', id, changes: { ...parsed.data } });
+    // HS-9043 — a status change clears `up_next` and sets the completed_at /
+    // verified_at / deleted_at columns SERVER-SIDE (the status-transition block in
+    // `updateTicket`), but `parsed.data` only carries the request body. Echo those
+    // server-DERIVED fields from the resulting ticket so the WS `ticket-updated`
+    // patch matches the DB — otherwise a ticket completed via API/MCP stays flagged
+    // up-next in the UI until the next full poll (the DB itself is already correct).
+    const changes: Record<string, unknown> = { ...parsed.data };
+    if (parsed.data.status !== undefined) {
+      changes.up_next = ticket.up_next;
+      changes.completed_at = ticket.completed_at;
+      changes.verified_at = ticket.verified_at;
+      changes.deleted_at = ticket.deleted_at;
+    }
+    emitSync(c, { type: 'ticket-updated', id, changes });
     // HS-8556 — `parsed.data` is already a typed `UpdateTicket` shape
     // from zod; the previous `as Record<string, unknown>` cast widened
     // to match `onTicketChanged`'s signature without going through any

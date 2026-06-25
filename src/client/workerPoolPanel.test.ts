@@ -5,12 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  drainPoolWorker, getWorkerPool, launchWorker, registerPoolWorker,
-  removePoolWorker, removeWorktree, setPoolTarget, type WorkerSlotView,
+  drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker, registerPoolWorker,
+  releaseTicket, removePoolWorker, removeWorktree, setPoolTarget, type WorkerSlotView,
 } from '../api/index.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  closeWorkerPoolPanel, refreshPool, renderPoolControls, renderWorkerTile,
+  closeWorkerPoolPanel, refreshPool, releaseWorkerClaims, renderPoolControls, renderWorkerTile,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -24,6 +24,8 @@ vi.mock('../api/index.js', () => ({
   setPoolTarget: vi.fn(),
   getSuggestedWorkerCount: vi.fn(),
   getTicketPartition: vi.fn(),
+  getTicketClaims: vi.fn(),
+  releaseTicket: vi.fn(),
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
@@ -208,5 +210,26 @@ describe('refreshPool (HS-8962)', () => {
     const body = document.createElement('div');
     await refreshPool(body);
     expect(body.querySelector('.worker-pool-error')?.textContent).toContain('boom');
+  });
+});
+
+describe('releaseWorkerClaims (HS-9051)', () => {
+  const claim = (ticketId: number, claimedBy: string) => ({
+    ticketId, ticketNumber: `HS-${String(ticketId)}`, title: 't', claimedBy, workerLabel: null, leaseExpiresAt: '2026-01-01T00:00:00Z',
+  });
+
+  it('force-releases only the given worker\'s claimed tickets', async () => {
+    vi.mocked(getTicketClaims).mockResolvedValue([claim(1, 'worker-1'), claim(2, 'worker-2'), claim(3, 'worker-1')]);
+    vi.mocked(releaseTicket).mockResolvedValue({ ok: true });
+    await releaseWorkerClaims('worker-1');
+    expect(releaseTicket).toHaveBeenCalledWith(1);
+    expect(releaseTicket).toHaveBeenCalledWith(3);
+    expect(releaseTicket).not.toHaveBeenCalledWith(2);
+  });
+
+  it('swallows a claims-fetch failure without releasing anything (best-effort)', async () => {
+    vi.mocked(getTicketClaims).mockRejectedValue(new Error('boom'));
+    await expect(releaseWorkerClaims('worker-1')).resolves.toBeUndefined();
+    expect(releaseTicket).not.toHaveBeenCalled();
   });
 });

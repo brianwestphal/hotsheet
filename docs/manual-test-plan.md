@@ -10,6 +10,13 @@ This document lists features that require manual verification before each releas
 
 ## 1. Drag-and-Drop
 
+### Mark as read / unread (HS-9052)
+- [ ] In the **list** view, select an **unread** ticket (it shows the blue unread dot) → right-click → **Mark as Read**. The dot disappears **immediately** (no manual refresh / view switch). Select a read ticket → **Mark as Unread** → the dot appears immediately.
+- [ ] Repeat in **column/kanban** view — the card's unread dot clears / appears immediately on Mark as Read / Unread. (Pre-fix the dot only updated after a full reload because the toggle mutated `last_read_at` in place without firing the per-row signal.)
+
+### Up-next star clears on complete via API/MCP (HS-9043)
+- [ ] Star a ticket (Up Next), then complete it **via the API or an MCP tool** (e.g. `hotsheet_update_ticket {status:'completed'}`, or a worker completing it) — NOT by clicking in the UI. The ticket's up-next **star clears immediately** in the list + column view (it moves out of the Up Next view), matching the DB. Pre-fix the WS `ticket-updated`/`status-changed` event carried only `status`, not the server-cleared `up_next`, so the star lingered until the next full poll. Try the bulk path too (`hotsheet_batch {action:'status', value:'completed'}` over a starred selection).
+
 ### Column/Kanban View
 - [ ] Drag a ticket card from "Not Started" column to "Started" — status updates
 - [ ] Drag a card to "Completed" — issue closes, strikethrough appears
@@ -114,6 +121,9 @@ This document lists features that require manual verification before each releas
 - [ ] Open two Claude Code instances in the same project → the sidebar shows "2 Claude connections active — triggers route to the oldest one" with a **Clean up** button.
 - [ ] Click **Clean up** → the duplicate channel-server(s) are terminated, a toast confirms "Cleaned up N…", and the warning disappears (only the leader remains). `mcp.log` shows a `multi-connection` roster line + a `multi-connection-cleanup` line.
 - [ ] Reproduce an orphan (e.g. a Claude exits but its MCP child lingers) → the warning shows even with one Claude window; Clean up clears it.
+- [ ] **Workers don't trigger the warning (HS-9038):** with the main Claude open, launch one or more workers (worker pool, or open a Claude terminal in a worktree). Each worker spawns its own channel server, but the "N Claude connections active" warning **does NOT appear** — only main connections are counted. `mcp.log` only logs `multi-connection` when there are 2+ *main* agents (the line notes the worker count separately).
+- [ ] **Play/triggers route to main with workers running (HS-9038):** with workers active, click the play button / fire a command → it routes to the **main** agent (the oldest non-worktree connection), never a worker — even if a worker's channel server started before the main's.
+- [ ] **Clean up spares workers (HS-9038):** force a second *main* connection (two Claude windows in the owner repo root) while workers run → the warning shows; **Clean up** terminates only the duplicate main, leaving the leader main **and every worker** connected.
 
 ### Visibility
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80
@@ -339,6 +349,7 @@ GPU-dependent **visual-quality** checks (crispness, no blur, no raster artifacts
 - [ ] **WebGL default in the drawer** — open a drawer terminal, run something with heavy output (`yes`, a long `claude` session, `top`). Output is smooth; text is crisp. (Settings → General has no "Use software rendering" tick.)
 - [ ] **Software-rendering opt-out** — Settings → General → tick "Use software rendering for terminals". Open a NEW terminal. It renders via the DOM (still correct, just CPU). The row is hidden entirely on a browser without WebGL2.
 - [ ] **HS-8619 dashboard tiles are crisp + resize cleanly** — open the Terminal Dashboard with several live terminals. Tiles are crisp (not blurry) and don't visibly jump / mis-size as the grid lays out or the size slider moves. (Tiles use the DOM renderer because they're CSS-scaled.)
+- [ ] **HS-9000 tile label is left-aligned** — open the Terminal Dashboard. Each terminal's name (and the `{Project} ›` prefix in flow mode) sits flush against the **left** edge below its tile, not centered. (The right-aligned open/up-next counts + busy spinner are a follow-up, HS-9056.)
 - [ ] **HS-8619 magnified tile** — single-click a tile to center/magnify it. It scales up crisply with no resize glitch. Shift+Cmd/Ctrl+Arrow to move the magnified target between tiles — each stays clean.
 - [ ] **HS-8619 dedicated view keeps WebGL** — double-click a tile for the full-pane dedicated view. It real-`fit()`s to the pane (not CSS-scaled) and renders via WebGL — smooth + crisp. Press Back; the grid tile is crisp again.
 - [ ] **HS-8619 drawer ↔ dashboard round-trip** — with a terminal active in the drawer, open the dashboard (that terminal's tile flips to DOM), then close it (drawer pane flips back to WebGL). No stuck-blurry / blank-canvas state in either direction.
@@ -780,6 +791,7 @@ The loop invariants (claim/complete/release, no-double-claim across two workers,
 The chip render + lease/stale logic + the in-flight rows are unit-tested; this covers the live poll-driven visual flow:
 
 - [ ] Claim a ticket via the API/MCP (`hotsheet_claim_next` or a worker). Within ~5 s, a `⚙ <worker>` chip appears on that ticket's **row** and (if open) its **detail header**, without a manual refresh. **HS-9041** — while the lease is healthy (a worker renewing on schedule) the chip shows just the worker name (no countdown); hovering shows the lease time in the tooltip.
+- [ ] **Column/kanban view shows the chip too (HS-9035):** switch to **column view** and claim a ticket — the `⚙ <worker>` chip appears on the ticket's **card** (under the title/tags), just like the list row, and clears on release. The "merge pending" badge (below) likewise shows on the card. (Pre-fix the worker info only showed in list view.)
 - [ ] Let a claim's lease run down (stop renewing): once under ~60 s remaining, the `m:ss` countdown appears in an **amber warning** tint and ticks down each second; within 30 s of expiry it flips to the red **stale** (pulsing) state, then reads `expired` once past.
 - [ ] Release the ticket (or it completes) → the chip clears on the next poll.
 - [ ] Open the git popover → **"In-flight work…"**: every currently-claimed ticket is listed with its worker + lease countdown; clicking a row opens that ticket's detail. Empty state shows when nothing is claimed.
@@ -807,6 +819,7 @@ The pool manager (drain semantics, state derivation) + panel render/drain wiring
 - [ ] Click **Drain** on a *working* tile: the worker finishes its current ticket (NOT interrupted mid-work), then stops; the tile goes draining → stopped and is auto-cleaned (its terminal closes + worktree is removed).
 - [ ] **Drain all** gracefully stops every worker the same way.
 - [ ] **Zombie reap (HS-8972):** kill a worker's Claude process *without* draining (close the terminal / `kill`). After ~5 min of no claim-next/renew, its tile shows **Unresponsive** then is auto-reaped (terminal closed + worktree removed + a "looked unresponsive — reaped" toast); if a target-N is set, a replacement worker is launched. A worker actively renewing a long ticket is NOT reaped.
+- [ ] **Reap releases the lease (HS-9051):** kill a worker *while it holds a ticket* (its claimed-by chip shows a worker + a long lease, now up to 30 min — HS-9050). When the zombie reap fires (~5 min), that ticket's lease is **force-released** — its claimed-by chip clears and another live/idle worker reclaims it within ~5 min, instead of the ticket sitting claimed for the full 30-min TTL.
 - [ ] A worker started by hand (`/hotsheet-worker` not via the panel) is unaffected by pool drain (it's not in the registry).
 - [ ] **Buttons removed (HS-9039):** the worker-pool panel no longer shows **"AI: suggest"** or **"AI: partition"** — only the manual stepper, per-worker Drain, Drain all, and queue-only remain.
 

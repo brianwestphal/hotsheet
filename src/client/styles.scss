@@ -1700,7 +1700,10 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: center;
+  // HS-9000 — left-aligned (was centered) so the project / terminal name reads
+  // from the left edge under each terminal, leaving room for a right-aligned
+  // stats cluster (open / up-next counts + busy spinner) in a follow-up.
+  text-align: left;
 
   // HS-8286 — per-tile stall chip styles removed. Stall now feeds the
   // global server-slow banner.
@@ -10416,6 +10419,11 @@ label.detail-details-label {
 .ticket-claimed-slot:empty, .detail-claimed-slot:empty { display: none; }
 .ticket-claimed-slot { display: inline-flex; align-items: center; margin: 0 2px; }
 .detail-claimed-slot { display: inline-flex; align-items: center; margin-left: 8px; }
+
+// HS-9035 — column/kanban card slot: footer row under the title/tags; collapse
+// when empty so an unclaimed card isn't padded.
+.column-card-claimed-slot:empty { display: none; }
+.column-card-claimed-slot { display: flex; align-items: center; margin-top: 4px; }
 
 // HS-8864 — in-flight work overlay.
 .inflight-overlay {

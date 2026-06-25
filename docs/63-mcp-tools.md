@@ -71,6 +71,17 @@ A worker agent drains the Up Next pool in parallel without double-claiming.
 | `hotsheet_release` | `POST /api/tickets/:id/release` | Release a claim (on completion / handback). Idempotent |
 | `hotsheet_set_blocked_by` | `PUT /api/tickets/:id/blocked-by` | Set a ticket's flat dependency gate (`{ticket_id, blocker_ids}`) — claim-next skips it until every blocker is completed/verified. For a planning pass; rejects self/unknown/cycle (400). Flat only, never a tree (HS-8865) |
 
+### Worker-pool management (HS-9031, docs/90 §90 / docs/91)
+
+So an AI tool (Claude) can parallelize work across the distributed pool — e.g. "parallelize all tickets tagged X": query the tickets (`hotsheet_query_tickets`), scale the pool, split, and dispatch a chunk per worker.
+
+| Tool | REST equivalent | Purpose |
+|------|-----------------|---------|
+| `hotsheet_get_worker_pool` | `GET /api/workers/pool` | List the pool: target count + each worker (id, label, state, current ticket). For seeing capacity before dispatching, or monitoring progress |
+| `hotsheet_set_worker_target` | `POST /api/workers/pool/target` | Scale the pool to a target worker count. **Caveat:** new workers only actually START while the owner UI is open — launch is client-driven (docs/89 Phase C), so with no UI open this records the intent only (follow-up: server-driven launch) |
+| `hotsheet_dispatch_tickets` | loops `POST /api/tickets/:id/claim` | Assign (claim-by-id) a chunk of tickets to one worker, so it works them first (before the shared pool). The "parallelize" primitive. Returns `{worker, dispatched:[ids], failed:[{id,reason}]}` — an already-live-claimed ticket lands in `failed` (409), not reassigned |
+| `hotsheet_drain_workers` | `POST /api/workers/pool/drain` or `…/drain-all` | Gracefully drain one worker (`{worker}`) or every worker (`{all:true}`) — finishes the current ticket, then stops; never killed mid-work |
+
 ### Channel signaling
 
 | Tool | REST equivalent | Purpose |
@@ -90,7 +101,7 @@ A worker agent drains the Up Next pool in parallel without double-claiming.
 | `hotsheet_query_tickets` | `POST /api/tickets/query` | Custom-view-style query over `{logic, conditions, sort_by?, sort_dir?, required_tag?, include_archived?}`. For agents that need to dig deeper than the worklist provides |
 | `hotsheet_announce` (HS-8771) | `POST /api/announcer/announce` | Push a curated §80 Announcer highlight (`{title, highlight}`) for a notable moment — pre-empts the derived narration queue with a low-latency entry (no AI summarization). No-op if the project hasn't enabled the Announcer. HS-8772 added an optional `diff` (`{oldStr, newStr, filePath?}`) → a §78.5 tier-2 code-diff visual rendered in the PIP. (15th tool; `CHANNEL_VERSION` → 10, then → 11 for the `diff` field.) |
 
-**Tool count: 19** (`CHANNEL_VERSION`/`EXPECTED_CHANNEL_VERSION` → 12 with the HS-8862 claim/lease trio, → 13 with HS-8865 `hotsheet_set_blocked_by`).
+**Tool count: 23** (`CHANNEL_VERSION`/`EXPECTED_CHANNEL_VERSION` → 12 with the HS-8862 claim/lease trio, → 13 with HS-8865 `hotsheet_set_blocked_by`, → 14 with the HS-9045 `pending_integration` input, → 15 with the HS-9031 worker-pool quartet `hotsheet_get_worker_pool` / `hotsheet_set_worker_target` / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers`).
 
 **Deliberately not exposed:** `GET /api/tickets` (list), `GET /api/tags`, `GET /api/stats`, `GET /api/dashboard`, all settings/backups/projects/channel-management/gitignore/glassbox endpoints. The worklist file already gives the agent everything it needs for the standard flow; surfacing `list_tickets` trains agents to bypass the worklist. Agents that genuinely need these endpoints can `curl` them through the documented fallback path.
 
