@@ -96,6 +96,12 @@ npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tau
 - Server-rendered HTML for initial load; client JS for interactivity. Client CSS/JS built separately, served static.
 - **`CHANNEL_VERSION`** (`src/channel.ts`) AND **`EXPECTED_CHANNEL_VERSION`** (`src/channel-config.ts`) — bump both integers together (they must match) whenever changing the channel server's HTTP API / MCP behavior (new endpoints, protocol changes, new MCP features). The main server warns the user to reconnect via `/mcp` on mismatch.
 
+### Code search (prefer ast-grep for structure)
+
+For **structural / syntax-aware** searches over source (`.ts` / `.tsx` / `.rs`), use **ast-grep** (the `ast-grep` skill, or the CLI: `ast-grep run --lang <ts|tsx|rust> -p '<pattern>' <path>`) rather than text grep — it matches the AST, so it skips comments/strings and catches multi-line/nested shapes. This is the same mindset as the project's AST-based `no-restricted-syntax` eslint rules (§ Type assertions / § Code Organization). Good fits here: `$A as $B` casts, `JSON.parse($X) as $T`, `innerHTML =`, `document.createElement`, inline `api<{…}>()` literals, Tauri-unsafe `window.confirm/open/prompt`, `process.platform` / `#[cfg(target_os)]` branches, specific call/JSX shapes, and codemod-style rewrites. **`--lang` matters: `tsx` ≠ `ts` ≠ `rust`** — pick per file extension.
+
+Keep **text search** (ripgrep / the editor's grep / the Explore agent) for what it's best at: literal strings (e.g. `FEEDBACK NEEDED`), identifier/symbol lookups, **filenames**, and **non-code files** (markdown / JSON / logs) — there AST has nothing to match and text is simpler + faster.
+
 ### Ticket numbers in prose
 
 Tickets are local to the maintainer's machine — `HS-NNNN` only resolves against the local `.hotsheet/` DB, which lives outside the repo. This rule applies to prose stored **outside** the DB (orientation doc, `docs/**`, code comments, commit messages, `docs/ai/**`); it does NOT apply to prose stored inside Hot Sheet (ticket details/notes/completion notes — readers there can click through).
