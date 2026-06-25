@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { ClaimRow } from '../api/index.js';
 import {
-  chipWorkerName, formatLeaseCountdown, leaseRemainingMs, leaseState,
-  renderClaimedByChip, STALE_LEASE_MS,
+  chipWorkerName, formatLeaseCountdown, LEASE_COUNTDOWN_VISIBLE_MS, leaseRemainingMs, leaseState,
+  renderClaimedByChip, shouldShowLeaseCountdown, STALE_LEASE_MS,
 } from './claimedByChip.js';
 
 const NOW = 1_000_000_000_000;
@@ -29,10 +29,18 @@ describe('lease helpers (HS-8864)', () => {
     expect(formatLeaseCountdown(iso(-1), NOW)).toBe('expired');
   });
 
-  it('leaseState is stale within STALE_LEASE_MS of expiry or past it', () => {
-    expect(leaseState(iso(STALE_LEASE_MS + 1_000), NOW)).toBe('live');
+  it('leaseState tiers by time remaining: live > warn > stale (HS-9041)', () => {
+    expect(leaseState(iso(LEASE_COUNTDOWN_VISIBLE_MS + 1_000), NOW)).toBe('live');
+    expect(leaseState(iso(LEASE_COUNTDOWN_VISIBLE_MS), NOW)).toBe('warn');
+    expect(leaseState(iso(STALE_LEASE_MS + 1_000), NOW)).toBe('warn');
     expect(leaseState(iso(STALE_LEASE_MS), NOW)).toBe('stale');
     expect(leaseState(iso(-10_000), NOW)).toBe('stale');
+  });
+
+  it('shouldShowLeaseCountdown only for warn/stale (HS-9041)', () => {
+    expect(shouldShowLeaseCountdown('live')).toBe(false);
+    expect(shouldShowLeaseCountdown('warn')).toBe(true);
+    expect(shouldShowLeaseCountdown('stale')).toBe(true);
   });
 
   it('chipWorkerName prefers the label, falls back to the claimed_by id', () => {
@@ -42,13 +50,22 @@ describe('lease helpers (HS-8864)', () => {
   });
 });
 
-describe('renderClaimedByChip (HS-8864)', () => {
-  it('renders a live chip with the worker name + countdown', () => {
+describe('renderClaimedByChip (HS-8864 / HS-9041)', () => {
+  it('a live chip (plenty of lease) hides the countdown but keeps it in the tooltip', () => {
     const el = renderClaimedByChip(claim({ leaseExpiresAt: iso(90_000) }), NOW);
     expect(el.classList.contains('claimed-by-chip-live')).toBe(true);
     expect(el.querySelector('.claimed-by-chip-worker')?.textContent).toBe('worker-1');
-    expect(el.querySelector('.claimed-by-chip-lease')?.textContent).toBe('1:30');
-    expect(el.getAttribute('title')).toContain('worker-abc'); // the raw identity in the tooltip
+    // HS-9041 — the visible countdown is hidden while the lease is healthy…
+    expect(el.querySelector('.claimed-by-chip-lease')).toBeNull();
+    // …but the lease time is still available on hover, alongside the raw identity.
+    expect(el.getAttribute('title')).toContain('worker-abc');
+    expect(el.getAttribute('title')).toContain('1:30');
+  });
+
+  it('a warn chip (lease running low) reveals the countdown in the warning tier', () => {
+    const el = renderClaimedByChip(claim({ leaseExpiresAt: iso(45_000) }), NOW);
+    expect(el.classList.contains('claimed-by-chip-warn')).toBe(true);
+    expect(el.querySelector('.claimed-by-chip-lease')?.textContent).toBe('0:45');
   });
 
   it('renders a stale chip near/past expiry', () => {

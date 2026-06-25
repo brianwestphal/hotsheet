@@ -778,8 +778,8 @@ The loop invariants (claim/complete/release, no-double-claim across two workers,
 
 The chip render + lease/stale logic + the in-flight rows are unit-tested; this covers the live poll-driven visual flow:
 
-- [ ] Claim a ticket via the API/MCP (`hotsheet_claim_next` or a worker). Within ~5 s, a `⚙ <worker> · m:ss` chip appears on that ticket's **row** and (if open) its **detail header**, without a manual refresh; the countdown ticks down each second.
-- [ ] Let the lease approach expiry (stop renewing): within 30 s of expiry the chip flips to the red **stale** (pulsing) state, then reads `expired` once past.
+- [ ] Claim a ticket via the API/MCP (`hotsheet_claim_next` or a worker). Within ~5 s, a `⚙ <worker>` chip appears on that ticket's **row** and (if open) its **detail header**, without a manual refresh. **HS-9041** — while the lease is healthy (a worker renewing on schedule) the chip shows just the worker name (no countdown); hovering shows the lease time in the tooltip.
+- [ ] Let a claim's lease run down (stop renewing): once under ~60 s remaining, the `m:ss` countdown appears in an **amber warning** tint and ticks down each second; within 30 s of expiry it flips to the red **stale** (pulsing) state, then reads `expired` once past.
 - [ ] Release the ticket (or it completes) → the chip clears on the next poll.
 - [ ] Open the git popover → **"In-flight work…"**: every currently-claimed ticket is listed with its worker + lease countdown; clicking a row opens that ticket's detail. Empty state shows when nothing is claimed.
 
@@ -805,8 +805,19 @@ The pool manager (drain semantics, state derivation) + panel render/drain wiring
 - [ ] Click **Drain** on a *working* tile: the worker finishes its current ticket (NOT interrupted mid-work), then stops; the tile goes draining → stopped and is auto-cleaned (its terminal closes + worktree is removed).
 - [ ] **Drain all** gracefully stops every worker the same way.
 - [ ] **Zombie reap (HS-8972):** kill a worker's Claude process *without* draining (close the terminal / `kill`). After ~5 min of no claim-next/renew, its tile shows **Unresponsive** then is auto-reaped (terminal closed + worktree removed + a "looked unresponsive — reaped" toast); if a target-N is set, a replacement worker is launched. A worker actively renewing a long ticket is NOT reaped.
-- [ ] **AI-suggest N (HS-8963 / HS-8976):** with several Up Next tickets queued + any AI provider configured (Anthropic key, or a local/Apple announcer provider — Settings), click **"AI: suggest"** → a dialog shows a recommended worker count + one-line rationale; accepting sets the target-N (and the pool reconciles to it). With NO provider available, the button still returns a heuristic estimate labeled "(no AI key — estimated)". With nothing unblocked, it reports there's nothing to work.
 - [ ] A worker started by hand (`/hotsheet-worker` not via the panel) is unaffected by pool drain (it's not in the registry).
+- [ ] **Buttons removed (HS-9039):** the worker-pool panel no longer shows **"AI: suggest"** or **"AI: partition"** — only the manual stepper, per-worker Drain, Drain all, and queue-only remain.
+
+### Auto worker pool switch (HS-9039, docs/91 §91.11)
+
+The persistence + cadence + toggle/sync + first-tick sizing are automated (`workerAutoMode.test.ts`); this covers the real worktree/terminal launch the loop drives:
+
+- [ ] With Claude connected, an **"Auto worker pool"** switch appears in the sidebar just above the play button. (It's hidden when the channel is disabled.)
+- [ ] With several Up Next tickets queued, flip **Auto on**: within ~a minute Hot Sheet sizes the pool (worktrees + `/hotsheet-worker` terminals launch automatically — no manual stepper) and the workers self-claim and drain Up Next in parallel; the claimed-by columns flip live in the owner UI.
+- [ ] As Up Next empties, the pool **scales itself down**: workers finish their current ticket, drain gracefully, and the worktrees/terminals are cleaned up (target → 0).
+- [ ] Flip **Auto off**: auto-sizing stops; any still-running worker finishes its current work (it is NOT killed mid-ticket). You can Drain it from the panel.
+- [ ] The switch is **per project**: toggle it on for project A, switch to project B — B's switch reflects B's own saved state (off unless you enabled it there). Reload the app — each project's switch restores its saved on/off.
+- [ ] Cost check: with an Anthropic key configured, Auto on for a while does NOT spam the suggestion endpoint — it re-sizes roughly once a minute (watch the §70/§71 usage dashboards stay modest), not every few seconds.
 
 ---
 

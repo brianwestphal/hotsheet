@@ -292,11 +292,17 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
 
 ## 90.8 Observability
 
-- **Claimed-by chip (✅ shipped, HS-8864):** each in-flight ticket shows a
-  `⚙ <worker> · m:ss` chip — on its **row** and the **detail header** — naming the
-  holding worker (`worker_label`, else `claimed_by`) with a live lease countdown,
-  flipping to a pulsing **stale** state within 30 s of (or past) expiry (about to
-  be reclaimed). Fed by the reactive `claimsStore` (`src/client/claimsStore.ts`)
+- **Claimed-by chip (✅ shipped, HS-8864; countdown trimmed HS-9041):** each
+  in-flight ticket shows a `⚙ <worker>` chip — on its **row** and the **detail
+  header** — naming the holding worker (`worker_label`, else `claimed_by`). The
+  `m:ss` lease countdown is **hidden while the lease is healthy** (it's noise — a
+  renewing worker keeps it topped up) and only appears once the lease is **running
+  low** (≤ `LEASE_COUNTDOWN_VISIBLE_MS` = 60 s, half the 120 s default TTL), in a
+  **warning** (amber) tint; it escalates to the pulsing **stale** red state within
+  30 s of (or past) expiry (about to be reclaimed). The lease time stays in the
+  chip's tooltip at all times. (HS-9041 — a literal "< 2 min" rule was rejected:
+  the default lease TTL *is* 2 min, so it would show the countdown always.) Fed by
+  the reactive `claimsStore` (`src/client/claimsStore.ts`)
   off `GET /api/tickets/claims`; the chip + lease helpers are in
   `src/client/claimedByChip.tsx`. **Poll-based for now** (5 s claims poll + a 1 s
   countdown tick) — when the HS-7945 bus ships, `applyClaims` is driven by pushed

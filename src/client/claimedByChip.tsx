@@ -12,16 +12,42 @@ import { toElement } from './dom.js';
  *  (docs/90 §90.2.2). Comfortably below the 120 s default lease TTL. */
 export const STALE_LEASE_MS = 30_000;
 
-export type LeaseState = 'live' | 'stale';
+/** HS-9041 — only reveal the `m:ss` countdown once the lease drops to/below this.
+ *  Above it the lease has plenty of time and the countdown is just noise, so the
+ *  chip shows the worker name alone.
+ *
+ *  The maintainer asked for "under 2 minutes," but the *default* lease TTL is 120 s
+ *  (`DEFAULT_CLAIM_TTL_SECONDS`), so a literal 2-minute threshold would show the
+ *  countdown for essentially the whole life of a normal worker's lease — exactly
+ *  the noise we're removing. 60 s (half the default TTL) keeps the countdown
+ *  hidden for a healthy worker that renews on schedule and only surfaces it once a
+ *  lease is genuinely running low (slow / stuck / not renewing). Tune here. */
+export const LEASE_COUNTDOWN_VISIBLE_MS = 60_000;
+
+export type LeaseState = 'live' | 'warn' | 'stale';
 
 /** Milliseconds until the lease expires (negative once past). */
 export function leaseRemainingMs(leaseExpiresAt: string, now: number): number {
   return new Date(leaseExpiresAt).getTime() - now;
 }
 
-/** `stale` when the lease is within STALE_LEASE_MS of expiry or already past. */
+/**
+ * Lease state by time remaining:
+ *  - `stale` — ≤ `STALE_LEASE_MS` (or past): worker may be dead, about to reclaim.
+ *  - `warn`  — ≤ `LEASE_COUNTDOWN_VISIBLE_MS`: running low; countdown shown (amber).
+ *  - `live`  — plenty of time left: countdown hidden, worker name only.
+ */
 export function leaseState(leaseExpiresAt: string, now: number): LeaseState {
-  return leaseRemainingMs(leaseExpiresAt, now) <= STALE_LEASE_MS ? 'stale' : 'live';
+  const ms = leaseRemainingMs(leaseExpiresAt, now);
+  if (ms <= STALE_LEASE_MS) return 'stale';
+  if (ms <= LEASE_COUNTDOWN_VISIBLE_MS) return 'warn';
+  return 'live';
+}
+
+/** Whether the visible `m:ss` countdown should render — only once the lease is
+ *  running low (`warn`/`stale`); a healthy, freshly-renewed lease hides it. */
+export function shouldShowLeaseCountdown(state: LeaseState): boolean {
+  return state !== 'live';
 }
 
 /** Human countdown: `m:ss` while live, `expired` once past. */
@@ -40,17 +66,20 @@ export function chipWorkerName(claim: ClaimRow): string {
   return claim.workerLabel != null && claim.workerLabel !== '' ? claim.workerLabel : claim.claimedBy;
 }
 
-/** Build the claimed-by chip element for a claim at clock time `now`. */
+/** Build the claimed-by chip element for a claim at clock time `now`. The visible
+ *  countdown only appears once the lease is running low (HS-9041); the lease time
+ *  always stays in the tooltip so it's available on hover. */
 export function renderClaimedByChip(claim: ClaimRow, now: number): HTMLElement {
   const state = leaseState(claim.leaseExpiresAt, now);
   const name = chipWorkerName(claim);
   const countdown = formatLeaseCountdown(claim.leaseExpiresAt, now);
+  const showCountdown = shouldShowLeaseCountdown(state);
   const title = `Claimed by ${claim.claimedBy}${claim.workerLabel != null && claim.workerLabel !== '' ? ` (${claim.workerLabel})` : ''} — lease ${countdown}${state === 'stale' ? ' (stale — may be reclaimed)' : ''}`;
   return toElement(
     <span className={`claimed-by-chip claimed-by-chip-${state}`} title={title} data-worker={claim.claimedBy}>
       <span className="claimed-by-chip-gear" aria-hidden="true">{'⚙'}</span>
       <span className="claimed-by-chip-worker">{name}</span>
-      <span className="claimed-by-chip-lease">{countdown}</span>
+      {showCountdown ? <span className="claimed-by-chip-lease">{countdown}</span> : null}
     </span>,
   );
 }

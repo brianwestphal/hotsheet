@@ -56,6 +56,7 @@
   --accent: #3b82f6;
   --accent-hover: #2563eb;
   --danger: #ef4444;
+  --warning: #f59e0b;
   --star: #eab308;
   --radius: 6px;
   --shadow: 0 1px 3px rgba(0,0,0,0.08);
@@ -2107,6 +2108,64 @@ body.cross-project-stats-active {
 
 .sidebar-channel-play {
   padding: 8px 10px 4px;
+}
+
+// HS-9039 — "Auto worker pool" switch, just above the play button.
+.sidebar-worker-auto {
+  padding: 6px 10px 0;
+}
+
+.worker-auto-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-muted);
+
+  // Visually-hidden native checkbox (the switch track/thumb is drawn below).
+  .worker-auto-checkbox {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .worker-auto-switch {
+    position: relative;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--border);
+    transition: background 0.15s ease;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.15s ease;
+    }
+  }
+
+  .worker-auto-checkbox:checked + .worker-auto-switch {
+    background: #22c55e;
+
+    &::after { transform: translateX(14px); }
+  }
+
+  .worker-auto-checkbox:focus-visible + .worker-auto-switch {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  &:hover .worker-auto-label { color: var(--text); }
 }
 
 .channel-play-btn {
@@ -10297,6 +10356,14 @@ label.detail-details-label {
 
   .claimed-by-chip-gear { font-size: 9px; line-height: 1; }
   .claimed-by-chip-lease { opacity: 0.8; font-variant-numeric: tabular-nums; }
+
+  // HS-9041 — lease running low (≤ LEASE_COUNTDOWN_VISIBLE_MS): the countdown
+  // appears in a warning (amber) tint. Distinct from the calm accent of a healthy
+  // lease and the urgent danger-red of `stale`.
+  &.claimed-by-chip-warn {
+    background: color-mix(in srgb, var(--warning) 18%, transparent);
+    color: var(--warning);
+  }
 
   // Lease near/past expiry — the worker may have died; about to be reclaimed.
   &.claimed-by-chip-stale {
