@@ -38,6 +38,8 @@ export const UpdateTicketSchema = z.object({
   status: TicketStatusSchema.optional(),
   up_next: z.boolean().optional(),
   last_read_at: z.string().nullable().optional(),
+  // HS-9045 — worker-completed-but-not-merged flag (docs/89 §89.7).
+  pending_integration: z.boolean().optional(),
 });
 
 export const BatchActionSchema = z.object({

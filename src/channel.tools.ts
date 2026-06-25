@@ -158,6 +158,10 @@ const UpdateTicketInputSchema = z.object({
   tags: z.string().optional().describe('Tags JSON array as a string, e.g. \'["urgent","docs"]\''),
   title: z.string().optional(),
   details: z.string().optional(),
+  // HS-9045 — set true when a WORKER completes a ticket whose code is committed on
+  // its own branch but not yet merged into the target (drives the "pending merge"
+  // indicator); the OWNER sets it false when it integrates the branch (docs/89 §89.7).
+  pending_integration: z.boolean().optional().describe('Worker-completed but not yet merged into the target branch. A worker sets true on completion; the owner clears it when it integrates the branch.'),
 });
 
 const CreateTicketInputSchema = z.object({

@@ -63,6 +63,11 @@ export const TicketSchema = z.object({
   claim_lease_expires_at: z.string().nullish(),
   worker_label: z.string().nullish(),
   claim_count: z.number().nullish(),
+  // HS-9045 — worker-completed but not yet merged into the target branch (docs/89
+  // §89.7). Optional so pre-migration rows / in-memory constructions read as unset
+  // (= not pending); the DB column is NOT NULL DEFAULT FALSE so a real row is
+  // always a boolean. Drives the "pending merge" indicator on completed tickets.
+  pending_integration: z.boolean().optional(),
 });
 
 export type Ticket = z.infer<typeof TicketSchema>;

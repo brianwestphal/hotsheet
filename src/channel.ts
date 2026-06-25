@@ -63,7 +63,9 @@ import { getProjectSecret } from './secret-file.js';
 // v12 (HS-8862) — added claim/lease tools: `hotsheet_claim_next` /
 //   `hotsheet_renew_lease` / `hotsheet_release` (18 tools total).
 // v13 (HS-8865) — added `hotsheet_set_blocked_by` (flat dependency gate; 19 tools).
-export const CHANNEL_VERSION = 13;
+// v14 (HS-9045) — `hotsheet_update_ticket` gained an optional `pending_integration`
+//   input (worker-completed-but-not-merged flag; docs/89 §89.7).
+export const CHANNEL_VERSION = 14;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';

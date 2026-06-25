@@ -281,6 +281,19 @@ skills (`src/skills.ts`, `SKILL_VERSION` → 14):
 - **Staying up to date** applies to everyone: both skills rebase/pull onto the
   latest target before working so changes on the target propagate to every worktree.
 
+**"Merge pending" indicator (HS-9045).** A `pending_integration` boolean column on
+`tickets` (migration in `connection.ts`; in `TicketSchema`; settable via
+`PATCH /api/tickets/:id` + the `hotsheet_update_ticket` MCP tool, `CHANNEL_VERSION`
+→ 14) tracks the gap between "a worker completed a ticket on its branch" and "the
+owner integrated it." The worker sets `pending_integration: true` when it completes
+a ticket whose code it committed; the owner clears it (`false`) when it merges the
+branch. A completed ticket carrying the flag renders a **"merge pending"** badge
+(amber, in the claimed slot) + a `.pending-merge` row accent (`ticketRow.tsx` +
+`styles.scss`), so the maintainer can see at a glance which completed work is done
+but not yet on the target. Default false ⇒ existing + owner-direct-completed tickets
+are never flagged. (Until the HS-9048 tooling lands, the agents set/clear the flag
+by following the skill prose.)
+
 Open follow-ups (not yet built): programmatic tooling/automation around the
 hand-off (e.g. a "branch ready" signal or an owner-side integrate helper) is left
 to the agents following the skill prose for now; a dedicated integrate command

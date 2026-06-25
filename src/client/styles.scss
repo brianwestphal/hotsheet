@@ -10374,6 +10374,41 @@ label.detail-details-label {
 }
 @keyframes claimed-by-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
+// HS-9045 — "merge pending" badge: a completed ticket whose work a worker did on
+// its own branch hasn't been integrated into the target branch yet (docs/89 §89.7).
+// Shares the claimed-slot; styled in the warning (amber) tier so it stands out
+// from a plain completed row without reading as an error.
+.ticket-pending-merge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  color: var(--warning);
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    margin-right: 4px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+}
+
+// A subtle amber left accent so a pending-merge row is distinguishable in the list
+// even at a glance (and even though `.completed` mutes it).
+.ticket-row.pending-merge {
+  box-shadow: inset 2px 0 0 0 var(--warning);
+
+  // Keep the completed-row fade from washing the badge out.
+  .ticket-pending-merge { opacity: 1; }
+}
+
 // Row slot sits between the tags and the priority indicator; collapse when empty.
 .ticket-claimed-slot:empty, .detail-claimed-slot:empty { display: none; }
 .ticket-claimed-slot { display: inline-flex; align-items: center; margin: 0 2px; }

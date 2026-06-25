@@ -750,6 +750,12 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS claim_lease_expires_at TIMESTAMPTZ;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS worker_label TEXT;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS claim_count INTEGER NOT NULL DEFAULT 0;
+    -- HS-9045 — true once a worker completes a ticket on its own branch but the
+    -- work has NOT yet been integrated into the target branch; the owner clears it
+    -- when it merges the branch (docs/89 §89.7). Drives the "pending merge" row
+    -- styling. Defaults false so existing + owner-direct-completed tickets aren't
+    -- flagged.
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pending_integration BOOLEAN NOT NULL DEFAULT FALSE;
     CREATE INDEX IF NOT EXISTS idx_tickets_claimed_by ON tickets(claimed_by);
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (claim columns):', e.message); });
 

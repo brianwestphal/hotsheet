@@ -26,7 +26,10 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // the single integrator); the main `hotsheet` skill keeps the target current and
 // merges ready worker branches in. Sensible auto-conflict-resolution, ask on hard
 // ones (docs/89 §89.5).
-export const SKILL_VERSION = 14;
+// HS-9045 — bumped 14 → 15: workers set `pending_integration: true` when completing
+// a ticket whose work they committed (drives the "merge pending" indicator); the
+// owner clears it (`pending_integration: false`) when it integrates the branch.
+export const SKILL_VERSION = 15;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -221,7 +224,7 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
     'You run on the **target branch** (usually `main`) in the main worktree, so you are the **single integrator** for parallel worktree workers (docs/89). Distributed workers (`/hotsheet-worker`) commit their work on their own branches and rebase onto the target to stay current, but they never write the target — that\'s your job:',
     '',
     '- **Stay current** — before integrating, bring the target up to date: `git fetch` then `git pull --rebase` (or rebase onto the upstream) when the repo has a remote, so you build on the latest. Commit or stash your own in-progress changes first so a merge doesn\'t tangle with them.',
-    '- **Integrate ready worker branches** — periodically (e.g. when a batch of workers has finished, or the pool drains) merge each worker branch (`hotsheet/*`) that is **ahead of the target** into the target, in ticket-priority order. After each merge run the project\'s gates (type-check, lint, the relevant tests) before moving on.',
+    '- **Integrate ready worker branches** — periodically (e.g. when a batch of workers has finished, or the pool drains) merge each worker branch (`hotsheet/*`) that is **ahead of the target** into the target, in ticket-priority order. After each merge run the project\'s gates (type-check, lint, the relevant tests) before moving on. For each ticket whose work you just integrated, clear its "merge pending" marker: `hotsheet_update_ticket` with `{ "id": <id>, "pending_integration": false }` (the tickets marked `pending_integration` are the ones awaiting integration).',
     '- **Sensible conflict resolution, ask on the hard ones** — auto-resolve trivial/mechanical conflicts; if a conflict is non-trivial or ambiguous, or the gates fail in a way you can\'t quickly and safely fix, **stop and ask the maintainer** rather than force it (leave the branch unmerged). Integrate only from committed branch state — never disturb a worker mid-ticket.',
     '- **NEVER `git push`** without the maintainer\'s explicit permission — local integration only.',
   ].join('\n');
@@ -257,7 +260,7 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     '3. **Do the work** described in the ticket details — implement it fully, the same way you would under `/hotsheet`, but for THIS one claimed ticket only.',
     '   - **Heartbeat on long work:** if the work takes a while, periodically call `hotsheet_renew_lease` with `{ "id": <id>, "worker": "<your-id>" }` to keep your lease fresh. If a renew ever returns `{ "ok": false }`, your lease lapsed and the ticket may have been reclaimed by another worker — **stop working it**, do NOT mark it completed, and go back to step 1.',
     '4. **Commit your work** on your worktree\'s branch with a clear, scoped message referencing the ticket (follow the project\'s git conventions). Commit only what this ticket touched — don\'t sweep in unrelated pending changes. **NEVER `git push`** without the maintainer\'s explicit permission. (You do NOT merge into the target branch yourself — see **Staying in sync** below.)',
-    '5. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance).',
+    '5. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance). **If you committed code for this ticket (step 4), also pass `"pending_integration": true`** — it marks the ticket "merge pending" in the owner\'s UI so they know your branch still needs integrating (the owner clears it when they merge). Omit it for tickets with no committed code.',
     '   - **File follow-up tickets** for any incomplete work BEFORE completing (per the project\'s incomplete-work checklist).',
     '6. **Release the claim.** Call `hotsheet_release` with `{ "id": <id>, "worker": "<your-id>" }` so the slot is freed.',
     '7. **Go back to step 1** and claim the next ticket.',

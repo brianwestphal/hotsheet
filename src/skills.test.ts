@@ -138,6 +138,8 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('single integrator');
     expect(content).toContain('git fetch');
     expect(content).toMatch(/NEVER `git push`/);
+    // HS-9045 — the owner clears the merge-pending flag when it integrates.
+    expect(content).toContain('pending_integration');
   });
 
   it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {
@@ -158,6 +160,8 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('git rebase');
     expect(content).toMatch(/NEVER `git push`/);
     expect(content).toContain('single integrator');
+    // HS-9045 — the worker sets the merge-pending flag on completion.
+    expect(content).toContain('pending_integration');
   });
 
   it('HS-8936 — ensureSkillsForDir dataDir override points the worktree skill at the OWNER worklist', () => {

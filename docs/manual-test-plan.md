@@ -782,6 +782,7 @@ The chip render + lease/stale logic + the in-flight rows are unit-tested; this c
 - [ ] Let a claim's lease run down (stop renewing): once under ~60 s remaining, the `m:ss` countdown appears in an **amber warning** tint and ticks down each second; within 30 s of expiry it flips to the red **stale** (pulsing) state, then reads `expired` once past.
 - [ ] Release the ticket (or it completes) → the chip clears on the next poll.
 - [ ] Open the git popover → **"In-flight work…"**: every currently-claimed ticket is listed with its worker + lease countdown; clicking a row opens that ticket's detail. Empty state shows when nothing is claimed.
+- [ ] **Merge-pending indicator (HS-9045, docs/89 §89.7):** mark a ticket completed with the flag set — `PATCH /api/tickets/:id` (or `hotsheet_update_ticket`) with `{ "status": "completed", "pending_integration": true }`. The ticket's row shows an amber **"merge pending"** badge + a subtle amber left accent (it's completed but not yet merged into the target). Clear it (`{ "pending_integration": false }`) — the badge + accent disappear. A normally-completed ticket (no flag) shows neither. (Set by workers on completion + cleared by the owner on integration per the §89.7 workflow.)
 
 ### Coordinator-dispatch (HS-8964, docs/92)
 

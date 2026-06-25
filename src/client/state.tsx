@@ -148,6 +148,9 @@ export interface Ticket {
   tags: string;
   last_read_at: string | null;
   attachments?: Attachment[];
+  // HS-9045 — worker-completed but not yet merged into the target branch
+  // (docs/89 §89.7). Drives the "pending merge" row indicator when completed.
+  pending_integration?: boolean;
 }
 
 export interface SyncInfo {

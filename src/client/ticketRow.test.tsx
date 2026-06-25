@@ -128,6 +128,29 @@ describe('setupTicketRowEffects (HS-8335) — list-view reactivity', () => {
     dispose();
   });
 
+  // HS-9045 — a completed-but-unmerged ticket gets the .pending-merge class + a
+  // "merge pending" badge in the claimed slot; both clear once the owner integrates.
+  it('shows the pending-merge class + badge for a completed, unmerged ticket', () => {
+    const t = makeTicket(1, { status: 'started', pending_integration: false });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    row.appendChild(toElement(<span className="ticket-claimed-slot"></span>));
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    // Worker completes the ticket on its own branch (not yet merged).
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: true }));
+    expect(row.classList.contains('pending-merge')).toBe(true);
+    expect(row.querySelector('.ticket-pending-merge')).not.toBeNull();
+
+    // Owner integrates the branch → flag cleared → indicator gone.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: false }));
+    expect(row.classList.contains('pending-merge')).toBe(false);
+    expect(row.querySelector('.ticket-pending-merge')).toBeNull();
+
+    dispose();
+  });
+
   it('toggles .up-next class and star symbol on up_next flip', () => {
     const t = makeTicket(1, { up_next: false });
     ticketsStore.actions.setTickets([t]);

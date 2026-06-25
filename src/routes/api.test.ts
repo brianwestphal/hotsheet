@@ -301,6 +301,17 @@ describe('ticket CRUD', () => {
     expect(data.error).toMatch(/Invalid JSON body/);
   });
 
+  // HS-9045 — the worker-completed-but-not-merged flag round-trips through PATCH.
+  it('PATCH /api/tickets/:id persists + clears pending_integration', async () => {
+    const created = await app.request('/api/tickets', post({ title: 'pending-merge test' }));
+    const { id } = await created.json() as TicketResponse;
+    const setRes = await app.request(`/api/tickets/${id}`, patch({ status: 'completed', pending_integration: true }));
+    expect(setRes.status).toBe(200);
+    expect((await setRes.json() as { pending_integration?: boolean }).pending_integration).toBe(true);
+    const clearRes = await app.request(`/api/tickets/${id}`, patch({ pending_integration: false }));
+    expect((await clearRes.json() as { pending_integration?: boolean }).pending_integration).toBe(false);
+  });
+
   it('POST /api/tickets returns 400 for malformed JSON', async () => {
     const res = await app.request('/api/tickets', {
       method: 'POST',

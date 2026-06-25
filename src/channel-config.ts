@@ -243,7 +243,7 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
  *  respawns at v9 and populates the registry.
  *  Users who have the channel registered will see a "reconnect via `/mcp`"
  *  prompt when the main server boots with the newer version. */
-const EXPECTED_CHANNEL_VERSION = 13;
+const EXPECTED_CHANNEL_VERSION = 14;
 
 /** HS-8454 — shape of the `/health` response body the channel server
  *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7
