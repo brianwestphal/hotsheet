@@ -812,6 +812,7 @@ The pool manager (drain semantics, state derivation) + panel render/drain wiring
 - [ ] Click **Drain** on a *working* tile: the worker finishes its current ticket (NOT interrupted mid-work), then stops; the tile goes draining → stopped and is auto-cleaned (its terminal closes + worktree is removed).
 - [ ] **Drain all** gracefully stops every worker the same way.
 - [ ] **Zombie reap (HS-8972):** kill a worker's Claude process *without* draining (close the terminal / `kill`). After ~5 min of no claim-next/renew, its tile shows **Unresponsive** then is auto-reaped (terminal closed + worktree removed + a "looked unresponsive — reaped" toast); if a target-N is set, a replacement worker is launched. A worker actively renewing a long ticket is NOT reaped.
+- [ ] **Reap releases the lease (HS-9051):** kill a worker *while it holds a ticket* (its claimed-by chip shows a worker + a long lease, now up to 30 min — HS-9050). When the zombie reap fires (~5 min), that ticket's lease is **force-released** — its claimed-by chip clears and another live/idle worker reclaims it within ~5 min, instead of the ticket sitting claimed for the full 30-min TTL.
 - [ ] A worker started by hand (`/hotsheet-worker` not via the panel) is unaffected by pool drain (it's not in the registry).
 - [ ] **Buttons removed (HS-9039):** the worker-pool panel no longer shows **"AI: suggest"** or **"AI: partition"** — only the manual stepper, per-worker Drain, Drain all, and queue-only remain.
 
