@@ -10,6 +10,10 @@ This document lists features that require manual verification before each releas
 
 ## 1. Drag-and-Drop
 
+### Mark as read / unread (HS-9052)
+- [ ] In the **list** view, select an **unread** ticket (it shows the blue unread dot) → right-click → **Mark as Read**. The dot disappears **immediately** (no manual refresh / view switch). Select a read ticket → **Mark as Unread** → the dot appears immediately.
+- [ ] Repeat in **column/kanban** view — the card's unread dot clears / appears immediately on Mark as Read / Unread. (Pre-fix the dot only updated after a full reload because the toggle mutated `last_read_at` in place without firing the per-row signal.)
+
 ### Column/Kanban View
 - [ ] Drag a ticket card from "Not Started" column to "Started" — status updates
 - [ ] Drag a card to "Completed" — issue closes, strikethrough appears

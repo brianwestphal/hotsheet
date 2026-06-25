@@ -6,6 +6,7 @@ import { refreshDetail, setSuppressAutoRead } from '../detail.js';
 import type { Ticket } from '../state.js';
 import { shouldResetStatusOnUpNext, state } from '../state.js';
 import { loadTickets, renderTicketList } from '../ticketList.js';
+import { ticketsStore } from '../ticketsStore.js';
 import { undoStack } from './stack.js';
 import type { TicketSnapshot, UndoEntry } from './types.js';
 
@@ -243,15 +244,23 @@ export async function toggleReadState(ticketIds: number[]): Promise<void> {
     return t != null && t.last_read_at != null && t.updated_at > t.last_read_at;
   });
   const affected = state.tickets.filter(t => ticketIds.includes(t.id));
+  // HS-9052 — apply the read-state change THROUGH the store (`optimisticUpdate`)
+  // so each ticket's per-row signal fires and the bindList-preserved list/column
+  // rows re-run their `syncUnreadDot` effect immediately. Mutating
+  // `t.last_read_at` in place (the old code) updated the store object but never
+  // fired the signal, so the blue dot didn't change until the next full reload —
+  // the same class of bug fixed for the detail panel in HS-8419. It also kept the
+  // old objects intact for `trackedBatch`'s undo `before` snapshot below (the
+  // in-place mutation had corrupted that to the post-change value).
   if (hasUnread) {
     setSuppressAutoRead(false);
     const readAt = new Date().toISOString();
-    for (const t of affected) t.last_read_at = readAt;
+    for (const t of affected) ticketsStore.actions.optimisticUpdate(t.id, { last_read_at: readAt });
     await trackedBatch(affected, { ids: ticketIds, action: 'mark_read' }, 'Mark as Read');
   } else {
     setSuppressAutoRead(true);
     const epoch = '1970-01-01T00:00:00Z';
-    for (const t of affected) t.last_read_at = epoch;
+    for (const t of affected) ticketsStore.actions.optimisticUpdate(t.id, { last_read_at: epoch });
     await trackedBatch(affected, { ids: ticketIds, action: 'mark_unread' }, 'Mark as Unread');
   }
   renderTicketList();
