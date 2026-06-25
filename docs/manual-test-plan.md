@@ -14,6 +14,9 @@ This document lists features that require manual verification before each releas
 - [ ] In the **list** view, select an **unread** ticket (it shows the blue unread dot) → right-click → **Mark as Read**. The dot disappears **immediately** (no manual refresh / view switch). Select a read ticket → **Mark as Unread** → the dot appears immediately.
 - [ ] Repeat in **column/kanban** view — the card's unread dot clears / appears immediately on Mark as Read / Unread. (Pre-fix the dot only updated after a full reload because the toggle mutated `last_read_at` in place without firing the per-row signal.)
 
+### Up-next star clears on complete via API/MCP (HS-9043)
+- [ ] Star a ticket (Up Next), then complete it **via the API or an MCP tool** (e.g. `hotsheet_update_ticket {status:'completed'}`, or a worker completing it) — NOT by clicking in the UI. The ticket's up-next **star clears immediately** in the list + column view (it moves out of the Up Next view), matching the DB. Pre-fix the WS `ticket-updated`/`status-changed` event carried only `status`, not the server-cleared `up_next`, so the star lingered until the next full poll. Try the bulk path too (`hotsheet_batch {action:'status', value:'completed'}` over a starred selection).
+
 ### Column/Kanban View
 - [ ] Drag a ticket card from "Not Started" column to "Started" — status updates
 - [ ] Drag a card to "Completed" — issue closes, strikethrough appears

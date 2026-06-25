@@ -78,6 +78,15 @@ matches §46).
 field-flip on a multi-selection is one event, not N. `batch-operation` collapses a heterogeneous
 bulk mutation into one frame to keep the wire small.
 
+**HS-9043 — server-DERIVED fields must ride along.** A `status` change clears `up_next` and sets the
+`completed_at` / `verified_at` / `deleted_at` columns *server-side* (the status-transition block in
+`db/tickets.ts::updateTicket`), not in the request body. So the `PATCH /tickets/:id` handler echoes
+those derived fields into the `ticket-updated` `changes` (from the resulting row) when `status` is in
+the patch, and the client reducer (`wsSync.ts`) clears `up_next` on a `status-changed` to a "done/
+parked" status (`shouldResetStatusOnUpNext` — completed/verified/backlog/archive). Without this, a
+ticket completed via API/MCP stayed flagged up-next in the UI until the next full poll (the DB itself
+was already correct).
+
 **Tests:** `src/sync/eventBus.test.ts` — seq monotonicity, ring eviction at capacity,
 `getEventsSince(seq)` returns the tail (and signals "evicted" when `seq` < ring tail), per-project
 isolation (a project-A emit reaches only project-A sinks), sink register/unregister.
