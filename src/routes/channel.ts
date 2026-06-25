@@ -184,10 +184,47 @@ channelRoutes.post('/channel/trigger', async (c) => {
 
 type PermissionResult = { pending: { request_id?: string; tool_name?: string; description?: string; input_preview?: string; tool_input?: unknown } | null };
 
-/** Fetch permission from the channel server and log new requests. */
+/** HS-9036 — request_id → the channel-server port it came from, so respond /
+ *  dismiss route back to the SAME server. Every Claude instance (the main agent
+ *  AND each worktree worker) spawns its own channel server, so a permission can
+ *  originate from any of them, not just the leader. */
+const requestSourcePort = new Map<string, number>();
+
+/** All alive channel-server ports for this project — the main agent's AND each
+ *  worktree worker's (they register under the owner's data dir via the owner-
+ *  direct `.mcp.json`, HS-8936). Falls back to the single leader port for a
+ *  legacy/registry-less setup. */
+function alivePorts(dataDir: string): number[] {
+  const ports = listAliveEntries(dataDir)
+    .map(e => e.port)
+    .filter((p): p is number => typeof p === 'number');
+  if (ports.length > 0) return [...new Set(ports)];
+  const leader = getChannelPort(dataDir);
+  return leader === null ? [] : [leader];
+}
+
+/** HS-9036 — fetch the first pending permission across ALL alive channel servers
+ *  for the project, so a permission raised inside a worktree worker (its own
+ *  channel server, not the leader) surfaces in Hot Sheet too. Records the source
+ *  port so respond/dismiss reach the right server. */
 async function fetchPermission(dataDir: string): Promise<PermissionResult> {
-  const port = getChannelPort(dataDir);
-  if (port === null) return { pending: null };
+  const ports = alivePorts(dataDir);
+  const results = await Promise.all(
+    ports.map(async (port) => ({ port, result: await fetchPermissionFromPort(dataDir, port) })),
+  );
+  for (const { port, result } of results) {
+    if (result.pending !== null) {
+      const reqId = result.pending.request_id ?? '';
+      if (reqId !== '') requestSourcePort.set(reqId, port);
+      return result;
+    }
+  }
+  return { pending: null };
+}
+
+/** Fetch + process the pending permission from ONE channel server (the auto-allow
+ *  gate + new-request logging). */
+async function fetchPermissionFromPort(dataDir: string, port: number): Promise<PermissionResult> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/permission`);
     // HS-8567 — validate at the wire boundary.
@@ -277,11 +314,13 @@ channelRoutes.get('/channel/permission', async (c) => {
 
 channelRoutes.post('/channel/permission/respond', async (c) => {
   const dataDir = c.get('dataDir');
-  const port = getChannelPort(dataDir);
-  if (port === null) return c.json({ error: 'Channel not available' }, 503);
   const raw: unknown = await c.req.json();
   const parsed = parseBody(PermissionRespondSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  // HS-9036 — route the response to the SAME channel server that raised it (a
+  // worktree worker's, not necessarily the leader); fall back to the leader.
+  const port = requestSourcePort.get(parsed.data.request_id) ?? getChannelPort(dataDir);
+  if (port === null) return c.json({ error: 'Channel not available' }, 503);
   const action = parsed.data.behavior === 'allow' ? 'Allowed' : 'Denied';
   const toolName = parsed.data.tool_name ?? 'tool';
   // Update the existing permission_request entry with the response instead of creating a new one
@@ -311,6 +350,7 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(parsed.data),
     });
+    requestSourcePort.delete(parsed.data.request_id); // answered — drop the routing entry
     return c.json(await res.json());
   } catch {
     return c.json({ error: 'Failed to reach channel server' }, 503);
@@ -319,11 +359,13 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
 
 channelRoutes.post('/channel/permission/dismiss', async (c) => {
   const dataDir = c.get('dataDir');
-  const port = getChannelPort(dataDir);
-  if (port === null) return c.json({ ok: true });
-  try {
-    await fetch(`http://127.0.0.1:${port}/permission/dismiss`, { method: 'POST' });
-  } catch { /* ignore */ }
+  // HS-9036 — the pending permission may live on any worker's channel server, and
+  // dismiss carries no request_id, so clear it on every alive server (a no-op on
+  // the ones with nothing pending).
+  await Promise.all(
+    alivePorts(dataDir).map((port) =>
+      fetch(`http://127.0.0.1:${port}/permission/dismiss`, { method: 'POST' }).catch(() => { /* ignore */ })),
+  );
   return c.json({ ok: true });
 });
 

@@ -97,6 +97,7 @@ This document lists features that require manual verification before each releas
 
 ### Permission Popup
 - [ ] Popup appears anchored to the owning project's tab when Claude requests tool permission (HS-6536 — same popup for active and background tabs; the old full-screen overlay is gone)
+- [ ] **HS-9036 — worker permission prompts surface.** Launch a git-worktree worker (`/hotsheet-worker` in a worktree terminal, via the worker pool / Auto switch). When the worker's Claude hits a tool-permission prompt, it appears in the **main Hot Sheet** permission popup (the worker runs its own channel server, not the leader). **Allow/Deny** from the popup actually answers the worker's prompt (the response routes back to the worker's channel server, not the main agent's), and the worker proceeds. Confirm with the main agent ALSO running so two channel servers are alive.
 - [ ] "Allow" grants the permission; "Deny" rejects it
 - [ ] Clicking outside the popup **minimizes** it (not dismisses) — the popup disappears and the owning tab's blue dot starts pulsating (HS-6637)
 - [ ] Clicking the owning project tab while the popup is open also minimizes it (the tab's click does not bounce the popup back open)
