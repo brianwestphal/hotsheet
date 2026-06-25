@@ -210,12 +210,16 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
   const claimedSlot = row.querySelector<HTMLElement>('.ticket-claimed-slot');
   if (claimedSlot !== null) {
     disposers.push(effect(() => {
+      // Read BOTH signals unconditionally so the effect always subscribes to the
+      // ticket signal too — otherwise, on a run that early-returns for a live
+      // claim, it would drop its ticket-signal subscription and miss a later
+      // `pending_integration` flip (HS-9045).
       const claim = claimsByTicketId.value.get(ticket.id);
+      const t = sigs.ticket.value;
       if (claim !== undefined) {
         claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
         return;
       }
-      const t = sigs.ticket.value;
       if (t.status === 'completed' && t.pending_integration === true) {
         claimedSlot.replaceChildren(toElement(
           <span className="ticket-pending-merge" title="Completed by a worker — not yet merged into the target branch (docs/89 §89.7)">merge pending</span>,

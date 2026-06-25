@@ -17,6 +17,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { applyClaims } from './claimsStore.js';
 import { copyTickets } from './clipboard.js';
 import { setupColumnCardEffects } from './columnView.js';
 import { toElement } from './dom.js';
@@ -54,6 +55,10 @@ function makeTicket(id: number, overrides: Partial<Ticket> = {}): Ticket {
 beforeEach(() => {
   _ticketsStoreForTesting.reset();
   _clearPerTicketSignalsForTesting();
+  // Clear any distributed-execution claims leaked from a prior test file — the
+  // claimed-by/merge-pending row effect reads `claimsByTicketId`, so a stray claim
+  // for a reused ticket id would render the claim chip instead of the badge.
+  applyClaims([]);
   // Ensure the active project secret check in `cutTicketIdsSignal`
   // resolves to undefined so the cut tests don't accidentally pull
   // project state from a prior test. Clearing the clipboard is a

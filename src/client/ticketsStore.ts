@@ -109,7 +109,11 @@ function ticketEqualForRender(a: Ticket, b: Ticket): boolean {
     && a.tags === b.tags
     && a.last_read_at === b.last_read_at
     && a.updated_at === b.updated_at
-    && a.notes === b.notes;
+    && a.notes === b.notes
+    // HS-9045 — the "merge pending" row indicator reads this, so a change to it
+    // (worker sets it / owner clears it on integration) must fire the per-row
+    // signal even when nothing else changed.
+    && a.pending_integration === b.pending_integration;
 }
 
 /** Reconcile the per-ticket signal Map against a new ticket list.
