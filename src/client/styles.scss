@@ -5005,7 +5005,7 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 .auto-context-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 6px;
 }
 
@@ -5013,6 +5013,10 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
+  // HS-9023 — absorb the free space so the shared/local indicator + the remove
+  // button stay right-aligned (consistent across items whose titles differ in
+  // length), instead of the indicator floating to a title-dependent position.
+  margin-right: auto;
 }
 
 .auto-context-text {
