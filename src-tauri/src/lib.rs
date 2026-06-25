@@ -534,13 +534,17 @@ fn confirm_quit(app: tauri::AppHandle) -> Result<(), String> {
                     .args(["/PID", &pid.to_string(), "/T", "/F"])
                     .status();
             }
-            // Safety net: never let the overlay hang. gracefulShutdown is bounded to
-            // ~8 s (HS-8828 OVERALL_TIMEOUT_MS); force-exit a few seconds past that
-            // in case the sidecar somehow never exits (the exit hook is the normal
-            // path; a second `app.exit` after the app is already gone is harmless).
+            // Safety net: never let the overlay hang. The normal path is the
+            // sidecar's own exit (detected on its stdout → app.exit). This timer
+            // only bites if the sidecar somehow never exits. HS-9028 raised the
+            // sidecar's heavy-step budget (HTTP drain + DB snapshot/close) to 90s
+            // each, so the timer must sit PAST a legitimate slow drain — otherwise
+            // it would force-exit mid-snapshot and lose the very work the longer
+            // budget exists to protect. 95s = one 90s heavy step + buffer (a second
+            // `app.exit` after the app is already gone is harmless).
             let app2 = app.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(12_000));
+                std::thread::sleep(std::time::Duration::from_millis(95_000));
                 shutdown_log("confirm_quit: safety timer fired — app.exit(0)");
                 app2.exit(0);
             });
@@ -961,7 +965,8 @@ async fn spawn_sidecar_and_navigate(
             }
         }
         // HS-8911 — the event channel closed = the sidecar process exited. If the
-        // user initiated a quit, the graceful drain is done (it was bounded ≤ 8 s)
+        // user initiated a quit, the graceful drain is done (bounded by the
+        // sidecar's per-step budgets — heavy HTTP/DB steps up to 90s each, HS-9028)
         // so finish the app exit now — the overlay has been showing progress the
         // whole time, so there's no beachball.
         if window.app_handle().state::<ShuttingDown>().0.load(Ordering::SeqCst) {
@@ -1495,10 +1500,13 @@ pub fn run() {
                             // HTTP port and every project lock — which made the
                             // NEXT launch see a live lock and FATAL-exit. The TERM
                             // grace is generous so a legitimate gracefulShutdown
-                            // (CHECKPOINT/snapshot can take seconds) completes
-                            // cleanly; a clean exit is detected within one poll so
-                            // a normal quit isn't slowed.
-                            let term_grace = std::time::Duration::from_secs(10);
+                            // (CHECKPOINT/snapshot/HTTP drain) completes cleanly; a
+                            // clean exit is detected within one poll so a normal
+                            // quit isn't slowed. HS-9028 raised the sidecar's heavy
+                            // steps to a 90s budget each, so the TERM grace must
+                            // exceed that or a slow-but-legit drain gets SIGKILLed
+                            // mid-write — 95s = one 90s heavy step + buffer.
+                            let term_grace = std::time::Duration::from_secs(95);
                             let kill_grace = std::time::Duration::from_secs(3);
                             let poll = std::time::Duration::from_millis(100);
                             let start = std::time::Instant::now();

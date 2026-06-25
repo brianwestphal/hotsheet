@@ -16,6 +16,7 @@ import {
   _shutdownStarted,
   gracefulShutdown,
   registerHttpServerForShutdown,
+  stepTimeoutFor,
 } from './lifecycle.js';
 
 // Mocks — instance file + DB cache + PTY registry. The registry is lazy-
@@ -235,5 +236,29 @@ describe('registerHttpServerForShutdown', () => {
     await gracefulShutdown('test');
     // No assertion on close — the contract is just that it doesn't throw.
     expect(closeAllDatabasesMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// HS-9028 — the heavy steps (HTTP drain + DB snapshot/close) get a 90s budget so
+// a real shutdown isn't cut off at 3s; the light steps keep the short default.
+describe('stepTimeoutFor (HS-9028 per-step budgets)', () => {
+  afterEach(() => { _resetLifecycleForTests(); });
+
+  it('grants the HTTP + DB steps the 90s heavy budget', () => {
+    expect(stepTimeoutFor('closeHttpServer')).toBe(90_000);
+    expect(stepTimeoutFor('snapshotDatabases')).toBe(90_000);
+    expect(stepTimeoutFor('closeDatabases')).toBe(90_000);
+  });
+
+  it('keeps light steps on the short default (3s)', () => {
+    expect(stepTimeoutFor('killShellCommands')).toBe(3000);
+    expect(stepTimeoutFor('disposeGitWatchers')).toBe(3000);
+    expect(stepTimeoutFor('removeLockfile')).toBe(3000);
+  });
+
+  it('lets a test override win for every step (keeps the contract testable in ms)', () => {
+    _setShutdownTimeoutsForTests(25, 1000);
+    expect(stepTimeoutFor('closeHttpServer')).toBe(25);
+    expect(stepTimeoutFor('killShellCommands')).toBe(25);
   });
 });

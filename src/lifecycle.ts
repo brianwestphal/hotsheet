@@ -87,9 +87,32 @@ export function gracefulShutdown(reason: ShutdownReason): Promise<void> {
  * `process.exit(0)` tears down whatever work is still pending, and the
  * synchronous `process.on('exit')` handler in `cli.ts` is the lockfile-removal
  * safety net for steps the deadline skipped.
+ *
+ * HS-9028 — the original 3s/step ceiling was too tight for the genuinely heavy
+ * steps: closing the HTTP server (draining keep-alive sockets) and the DB work
+ * (the snapshot CHECKPOINT + close + fsync), which under real load — and
+ * especially with several projects' DBs handled in one step — legitimately need
+ * more than 3s and were being cut off ("step closeHttpServer/snapshotDatabases
+ * failed after 3000ms"). Now that shutdown has clear per-step feedback (the
+ * `[lifecycle:progress]` markers → the Tauri "Shutting Down" overlay), we can
+ * afford to wait: the named heavy steps get up to `HEAVY_STEP_TIMEOUT_MS` (90s)
+ * each, while the light steps keep the short default. The overall ceiling is
+ * raised to comfortably exceed the sum of the heavy budgets so the overall
+ * deadline can't pre-empt a heavy step that's legitimately still working (each
+ * step still self-limits, so a truly wedged step is abandoned at its own budget
+ * and the pipeline advances). The Tauri-side SIGKILL escalation remains the
+ * ultimate backstop for a wedge that outlasts even this.
  */
 const STEP_TIMEOUT_MS = 3000;
-const OVERALL_TIMEOUT_MS = 8000;
+/** Heavy steps (HTTP drain + DB snapshot/close) get a much longer budget — the
+ *  two operations the user can actually see take a while on quit (HS-9028). */
+const HEAVY_STEP_TIMEOUT_MS = 90_000;
+/** Steps granted the heavy budget. Everything else uses `STEP_TIMEOUT_MS`. */
+const HEAVY_STEPS = new Set(['closeHttpServer', 'snapshotDatabases', 'closeDatabases']);
+/** Comfortably above the sum of the heavy budgets (3 × 90s) + the light steps,
+ *  so the overall deadline only ever fires for a genuinely pathological cascade,
+ *  never to cut short a heavy step still within its own budget (HS-9028). */
+const OVERALL_TIMEOUT_MS = 300_000;
 
 /** Test-only overrides so the timeout contract is unit-testable without
  *  waiting multiple real seconds. Production never sets these. */
@@ -98,6 +121,15 @@ let overallTimeoutOverrideMs: number | null = null;
 export function _setShutdownTimeoutsForTests(step: number | null, overall: number | null): void {
   stepTimeoutOverrideMs = step;
   overallTimeoutOverrideMs = overall;
+}
+
+/** The timeout budget for a named step (pure — unit-testable). A test override
+ *  (`_setShutdownTimeoutsForTests`) wins for every step so the timeout contract
+ *  stays testable in milliseconds; otherwise heavy steps get the 90s budget and
+ *  the rest the short default. */
+export function stepTimeoutFor(label: string): number {
+  if (stepTimeoutOverrideMs !== null) return stepTimeoutOverrideMs;
+  return HEAVY_STEPS.has(label) ? HEAVY_STEP_TIMEOUT_MS : STEP_TIMEOUT_MS;
 }
 
 /** Run a single cleanup step under a timeout. A step that rejects OR hangs is
@@ -109,7 +141,7 @@ export function _setShutdownTimeoutsForTests(step: number | null, overall: numbe
  *  or a step that takes suspiciously long) rather than just showing the pipeline
  *  going quiet between "starting" and "done". */
 async function runStep(label: string, fn: () => Promise<void> | void): Promise<void> {
-  const ms = stepTimeoutOverrideMs ?? STEP_TIMEOUT_MS;
+  const ms = stepTimeoutFor(label);
   const startedAt = Date.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   // HS-8911 — a stable, machine-parseable progress marker (separate from the
