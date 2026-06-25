@@ -19,6 +19,15 @@ async function openExperimentalSettings(page: import('@playwright/test').Page) {
   await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
   await page.locator('.settings-tab[data-tab="experimental"]').click();
   await expect(page.locator('.settings-tab-panel[data-panel="experimental"]')).toHaveClass(/active/);
+  // HS-9065 / HS-9021 — the Custom Commands list is a `data-scope-complex`
+  // (default-variant) surface: read-only in the default Resolved scope view,
+  // editable only in Shared (docs/95 §95.3). Switch to Shared so the editor is
+  // interactive (otherwise the panel carries `pointer-events:none` and clicks on
+  // the Add buttons land on the enclosing `.settings-section`). The commands
+  // editor isn't scope-coupled, so this only unlocks it — the data source is
+  // unchanged.
+  await page.locator('#settings-scope-bar .scope-seg-btn[data-scope-mode="shared"]').click();
+  await expect(page.locator('#settings-commands-list')).not.toHaveClass(/scope-locked/);
   await expect(page.locator('.cmd-outline-add-btn')).toBeVisible({ timeout: 5000 });
 }
 

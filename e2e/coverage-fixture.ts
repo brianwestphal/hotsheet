@@ -36,6 +36,23 @@ const FORCE_DOM_TERMINAL_SCRIPT = `
   try { window.__HOTSHEET_DISABLE_WEBGL__ = true; } catch { /* noop */ }
 `;
 
+// HS-9066 — suppress the HS-8086 AI-instructions setup nudge (docs/86) in every
+// e2e spec, the same way the upgrade nudge above is suppressed. On a fresh
+// Playwright project the nudge's `decideNudgeAction` returns 'prompt' (the repo
+// is a Claude project so `state.detected` is true, the temp project's CLAUDE.md
+// has no managed sections, and it isn't dismissed), so `.ai-instructions-nudge-
+// overlay` — a modal — mounts ASYNCHRONOUSLY after a status fetch and intercepts
+// clicks on the underlying chrome. Because the timing varies it fails specs
+// non-deterministically (it blocked `#settings-btn` / drawer deletes / the
+// worklist-preamble fill in HS-9066's CI run). The dismissal is a server file-
+// setting, not localStorage, so the upgrade-nudge trick doesn't transfer — gate
+// it on a window flag read by `aiNudgeDisabledForTesting()`. Set via
+// addInitScript so it lands before the app bundle runs. A nudge-specific spec
+// can clear `window.__HOTSHEET_DISABLE_AI_NUDGE__` in its own beforeEach.
+const SUPPRESS_AI_NUDGE_SCRIPT = `
+  try { window.__HOTSHEET_DISABLE_AI_NUDGE__ = true; } catch { /* noop */ }
+`;
+
 // HS-8367 follow-up — server-persisted settings leak across specs because
 // the Playwright `webServer` runs ONE Hot Sheet instance for the whole
 // 375-test suite. If `columns.spec.ts` or `column-arrow-nav.spec.ts`
@@ -224,6 +241,8 @@ export const test = base.extend<{
     // HS-8488 — keep terminals on the DOM renderer so `.xterm-rows`-scraping
     // specs keep working under headless Chromium's SwiftShader WebGL2.
     await page.addInitScript(FORCE_DOM_TERMINAL_SCRIPT);
+    // HS-9066 — keep the AI-instructions setup nudge from mounting mid-spec.
+    await page.addInitScript(SUPPRESS_AI_NUDGE_SCRIPT);
     await use();
   }, { auto: true }],
   errorCapture: [async ({ page }, use, testInfo) => {

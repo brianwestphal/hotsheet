@@ -51,10 +51,20 @@ function readDismissed(value: unknown): boolean {
   return value === true || value === 'true';
 }
 
+/** E2E force-disable seam — mirrors `terminalWebgl.ts`'s
+ *  `__HOTSHEET_DISABLE_WEBGL__`. `coverage-fixture.ts` sets
+ *  `window.__HOTSHEET_DISABLE_AI_NUDGE__ = true` via `addInitScript` (before the
+ *  app bundle runs) so the nudge modal never mounts and intercepts clicks during
+ *  unrelated specs. A nudge-specific spec can clear the flag to exercise the UI. */
+export function aiNudgeDisabledForTesting(): boolean {
+  return (window as unknown as { __HOTSHEET_DISABLE_AI_NUDGE__?: boolean }).__HOTSHEET_DISABLE_AI_NUDGE__ === true;
+}
+
 /** Public entry point — called on app boot and after each project switch.
  *  Fire-and-forget, best-effort. Skips a project already checked this session
  *  so toggling between projects doesn't re-fire the status/apply calls. */
 export function maybeShowAiInstructionsNudge(): void {
+  if (aiNudgeDisabledForTesting()) return;
   const secret = getActiveProject()?.secret;
   // A known secret is recorded up-front so a rapid second switch back can't
   // start a concurrent in-flight check. An unknown secret (boot before the

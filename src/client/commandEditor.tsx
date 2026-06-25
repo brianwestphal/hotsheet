@@ -438,7 +438,15 @@ export function renderCustomCommandSettings() {
   const channelCheckbox = byIdOrNull<HTMLInputElement>('settings-channel-enabled');
   btnRow.querySelector('.cmd-outline-add-btn')!.addEventListener('click', () => {
     const defaultTarget = channelCheckbox?.checked === true ? undefined : 'shell' as const;
-    commandItems.push({ name: '', prompt: '', target: defaultTarget });
+    // HS-9065 — push onto the LIVE module array (`getCommandItems()`), not the
+    // `commandItems` captured when this row was rendered. A `reloadCustomCommands`
+    // (e.g. the one fired on settings-open) REASSIGNS the module array, so a click
+    // landing on a row built against the pre-reload array would push to a now-
+    // detached array while `showCommandEditorModal`/`resolveCommand` read the live
+    // one — `commandItems[index]` is then `undefined` and the modal crashes on
+    // `cmd.icon`. Reading it fresh keeps the push + the ItemRef index consistent.
+    const items = getCommandItems();
+    items.push({ name: '', prompt: '', target: defaultTarget });
     // HS-8440 — the Add Command path mutates `commandItems` synchronously
     // but defers the `saveCommandItems` PATCH until the user clicks Save
     // inside the modal. Without an explicit epoch bump here a still-in-
@@ -446,12 +454,13 @@ export function renderCustomCommandSettings() {
     // the modal-save, blow away the just-pushed command, and leave the
     // user's typed-out form pointing at a stale `ItemRef`.
     noteCommandItemsMutation();
-    showCommandEditorModal({ type: 'top', index: commandItems.length - 1 });
+    showCommandEditorModal({ type: 'top', index: items.length - 1 });
     renderCustomCommandSettings();
   });
 
   btnRow.querySelector('.cmd-outline-add-group-btn')!.addEventListener('click', () => {
-    commandItems.push({ type: 'group', name: 'New Group', children: [] });
+    // HS-9065 — same live-array reasoning as the Add Command handler above.
+    getCommandItems().push({ type: 'group', name: 'New Group', children: [] });
     renderCustomCommandSettings();
     void saveCommandItems();
   });

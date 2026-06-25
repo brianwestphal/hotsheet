@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setApiTransport } from '../api/_runner.js';
 import type { AiInstructionsStateResp } from '../api/aiInstructions.js';
-import { _resetCheckedSecretsForTesting, decideNudgeAction, maybeShowAiInstructionsNudge, type NudgeAction, showAiInstructionsNudgeDialog } from './aiInstructionsNudge.js';
+import { _resetCheckedSecretsForTesting, aiNudgeDisabledForTesting, decideNudgeAction, maybeShowAiInstructionsNudge, type NudgeAction, showAiInstructionsNudgeDialog } from './aiInstructionsNudge.js';
 import { setActiveProject } from './state.js';
 
 function makeState(partial: Partial<AiInstructionsStateResp> & { present?: boolean }): AiInstructionsStateResp {
@@ -145,5 +145,44 @@ describe('maybeShowAiInstructionsNudge per-project guard (HS-8913)', () => {
     maybeShowAiInstructionsNudge();
     await Promise.resolve();
     expect(statusCalls).toBe(2);
+  });
+});
+
+describe('maybeShowAiInstructionsNudge e2e disable gate (HS-9066)', () => {
+  let statusCalls: number;
+  const win = window as unknown as { __HOTSHEET_DISABLE_AI_NUDGE__?: boolean };
+
+  beforeEach(() => {
+    statusCalls = 0;
+    _resetCheckedSecretsForTesting();
+    setApiTransport((path) => {
+      if (path === '/ai-instructions/status') { statusCalls += 1; return Promise.resolve(makeState({ present: false, detected: true })); }
+      if (path === '/file-settings') return Promise.resolve({});
+      return Promise.resolve({});
+    });
+    setActiveProject({ name: 'p', dataDir: '/tmp/p', secret: 'p' });
+  });
+
+  afterEach(() => {
+    delete win.__HOTSHEET_DISABLE_AI_NUDGE__;
+    document.querySelectorAll('.ai-instructions-nudge-overlay').forEach(el => el.remove());
+  });
+
+  it('returns early without fetching status or mounting the overlay when the flag is set', async () => {
+    win.__HOTSHEET_DISABLE_AI_NUDGE__ = true;
+    expect(aiNudgeDisabledForTesting()).toBe(true);
+    maybeShowAiInstructionsNudge();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusCalls).toBe(0);
+    expect(document.querySelector('.ai-instructions-nudge-overlay')).toBeNull();
+  });
+
+  it('runs the status check normally when the flag is absent', async () => {
+    expect(aiNudgeDisabledForTesting()).toBe(false);
+    maybeShowAiInstructionsNudge();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusCalls).toBe(1);
   });
 });

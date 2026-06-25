@@ -16,10 +16,18 @@ test.describe('Worklist preamble (HS-8917 / §6)', () => {
     // asynchronously from GET /file-settings on open and assigns the value
     // programmatically (no input event) — so a value typed before that lands is
     // silently clobbered. Wait for the round-trip + a settle before filling.
+    // HS-9065 — opening Settings fires `loadAndApplyScope()` (settingsDialog.tsx):
+    // it async-fetches GET /file-settings/layered, then `decorateField` re-applies
+    // each scoped scalar field's effective value to its control. `worklist_preamble`
+    // is a scoped field, so a decorate landing AFTER a fill/clear silently clobbers
+    // it. Wait for that fetch (not just the legacy populate) + a settle so the
+    // re-apply has already run before we touch the textarea.
+    const firstScopeLoad = page.waitForResponse((r) => r.url().includes('/file-settings/layered'));
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible();
     await page.waitForResponse((r) => r.url().includes('/api/file-settings') && r.request().method() === 'GET');
-    await page.waitForTimeout(500); // let the populate's .then() assign the field first
+    await firstScopeLoad;
+    await page.waitForTimeout(300); // let decorate's synchronous re-apply run
     const textarea = page.locator('#settings-worklist-preamble');
     await expect(textarea).toBeVisible();
     await textarea.fill(PREAMBLE);
@@ -34,7 +42,14 @@ test.describe('Worklist preamble (HS-8917 / §6)', () => {
     // Restores into the textarea after a full reload.
     await page.reload();
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    // Same as above — let the scope load + decorate re-apply the restored value
+    // BEFORE we clear it, otherwise a late decorate refills the field and the
+    // debounced save reads the repopulated (non-empty) value → "Saved" not
+    // "Cleared".
+    const secondScopeLoad = page.waitForResponse((r) => r.url().includes('/file-settings/layered'));
     await page.locator('#settings-btn').click();
+    await secondScopeLoad;
+    await page.waitForTimeout(300);
     await expect(page.locator('#settings-worklist-preamble')).toHaveValue(PREAMBLE);
 
     // Clean up so the shared server's project doesn't carry the preamble into

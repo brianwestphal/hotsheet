@@ -84,7 +84,7 @@ npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tau
 
 ## Git
 
-- **Committing is allowed as needed** — commit your own work when it reaches a sensible checkpoint (a completed ticket, a green build) with a clear message. Prefer logically-scoped commits over one giant catch-all. Don't sweep unrelated pending changes into a commit; commit only what your task touched.
+- **Commit as needed — no need to ask first.** Commit your own work whenever it reaches a sensible checkpoint (a completed ticket, a green build) with a clear message; you don't need to ask permission to commit. Prefer logically-scoped commits over one giant catch-all. Don't sweep unrelated pending changes into a commit; commit only what your task touched.
 - **NEVER `git push` without the user's explicit permission.** Local commits are fine; publishing them is not — wait for an explicit "push" instruction. Strict, non-negotiable.
 - **Drafting commit messages / release notes — use [gitgist](https://github.com/brianwestphal/gitgist)** (a devDependency; invoke via `npx gitgist`). For a commit message from staged work: `npx gitgist --staged --commit-message`. For release notes over a range: `npx gitgist <last_tag>..HEAD`. `release.sh` (`step_release_notes`) already uses it for the changelog/tag body. Note: gitgist's default `--provider auto` shells out to the signed-in `claude` CLI — a nested `claude` call — so when *you* are running inside a Claude session, prefer drafting the message/notes yourself (gitgist is the canonical tool for the user's own runs and for CI with `$ANTHROPIC_API_KEY`).
 

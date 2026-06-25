@@ -38,6 +38,14 @@ test.describe('Snapshot Protection toggle (HS-8594)', () => {
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
     await page.locator('.settings-tab[data-tab="backups"]').click();
     await expect(page.locator('.settings-tab-panel[data-panel="backups"]')).toHaveClass(/active/);
+    // HS-9065 / HS-9021 — the Snapshot Protection subsection is wrapped in a
+    // `data-scope-complex` panel: read-only (`pointer-events:none`) in the
+    // default Resolved scope view, editable only in Shared (docs/95 §95.3).
+    // Settings reopens in Resolved each time, so switch to Shared on every open
+    // so the checkbox receives pointer events. The toggle isn't a scoped scalar
+    // field, so this only unlocks it — its `db_snapshot_protection` value is
+    // unaffected.
+    await page.locator('#settings-scope-bar .scope-seg-btn[data-scope-mode="shared"]').click();
     await loaded;
     await expect(page.locator('#settings-snapshot-status')).not.toBeEmpty({ timeout: 5000 });
   }

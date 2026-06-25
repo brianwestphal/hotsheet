@@ -240,17 +240,35 @@ test.describe('Embedded terminal drawer', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
+    // HS-9065 — opening Settings fires `loadAndApplyScope()` (settingsDialog.tsx),
+    // which async-fetches GET /file-settings/layered and then re-decorates +
+    // lock-toggles the scoped panels. That re-decorate reflows the dialog AFTER
+    // the rows first render. This spec measures the delete button's absolute
+    // box and drives raw mouse events at it, so a reflow landing between
+    // `boundingBox()` and `mouse.down()` makes the press hit the (now-shifted)
+    // settings backdrop instead — closing the dialog, so the confirm never
+    // opens. Wait for the scope load to drain so the layout is stable first.
+    const scopeLoaded = page.waitForResponse((r) => r.url().includes('/file-settings/layered'));
     await page.locator('#settings-btn').click();
+    await scopeLoaded;
     await page.locator('.settings-tab[data-tab="terminal"]').click();
     const list = page.locator('#settings-terminals-list');
     await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
 
     const btn = list.locator('.settings-terminal-row').nth(1).locator('.cmd-outline-delete-btn');
+    // HS-9065 — `hover()` auto-waits for the button to be visible AND stable (the
+    // settings dialog loads several panels async, so its layout keeps reflowing
+    // after the rows first appear) and moves the mouse onto it at its CURRENT
+    // position. Pre-measuring an absolute box and firing raw mouse events at it
+    // (the original approach) raced the reflow: the press landed on the shifted
+    // settings backdrop, closing the dialog so the delete never fired. Measure
+    // the box only AFTER the hover has settled, then do the drift.
+    await btn.scrollIntoViewIfNeeded();
+    await btn.hover();
     const box = await btn.boundingBox();
     if (box === null) throw new Error('could not measure delete button');
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
-    await page.mouse.move(cx, cy);
     await page.mouse.down();
     // Drift a pixel so the browser is tempted to start a drag.
     await page.mouse.move(cx + 1, cy + 1);

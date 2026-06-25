@@ -15,6 +15,20 @@ import { generateCa, signClientCert } from '../src/auth/ca.js';
 import { pairingPayload } from '../src/client/pairingPayload.js';
 import { expect, test } from './coverage-fixture.js';
 
+// HS-9067 — the manual-entry `<details id="pair-paste-details">` auto-opens when
+// the browser has no `BarcodeDetector` (the headless-Chromium case — see
+// `pair.tsx::renderStart`), and stays closed when a camera scanner IS available
+// (real device). A blind `.pair-paste summary` click therefore TOGGLES it: it
+// opens on a real device but *closes* the already-open section under headless,
+// hiding `#pair-paste-input` so the subsequent `.fill()` times out. Open it
+// idempotently instead so the spec works in both environments.
+async function openManualEntry(page: import('@playwright/test').Page): Promise<void> {
+  const details = page.locator('#pair-paste-details');
+  const alreadyOpen = await details.evaluate((d) => (d as HTMLDetailsElement).open);
+  if (!alreadyOpen) await page.locator('.pair-paste summary').click();
+  await expect(page.locator('#pair-paste-input')).toBeEditable();
+}
+
 test('/pair: paste code → in-browser CSR → enroll → .p12 downloads (HS-9033)', async ({ page }) => {
   // A real CA + client cert so the page's forge `.p12` assembly gets parseable
   // PEMs back — no keychain, no real signing endpoint.
@@ -47,7 +61,7 @@ test('/pair: paste code → in-browser CSR → enroll → .p12 downloads (HS-903
 
   // Open the manual-entry section (the camera path needs a real device) and
   // paste a valid pairing payload.
-  await page.locator('.pair-paste summary').click();
+  await openManualEntry(page);
   await page.locator('#pair-paste-input').fill(pairingPayload('e2e-token-123', 'https://192.168.1.50:4174'));
   await page.locator('#pair-paste-btn').click();
 
@@ -75,7 +89,7 @@ test('/pair: paste code → in-browser CSR → enroll → .p12 downloads (HS-903
 test('/pair: an invalid pasted code is rejected with a friendly message (HS-9033)', async ({ page }) => {
   await page.goto('/pair');
   await expect(page.locator('#pair-root')).toBeVisible();
-  await page.locator('.pair-paste summary').click();
+  await openManualEntry(page);
   await page.locator('#pair-paste-input').fill('not a pairing code');
   await page.locator('#pair-paste-btn').click();
   await expect(page.locator('.pair-error')).toContainText("doesn't look like a Hot Sheet pairing code");
