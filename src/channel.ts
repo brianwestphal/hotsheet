@@ -66,7 +66,10 @@ import { getProjectSecret } from './secret-file.js';
 // v13 (HS-8865) — added `hotsheet_set_blocked_by` (flat dependency gate; 19 tools).
 // v14 (HS-9045) — `hotsheet_update_ticket` gained an optional `pending_integration`
 //   input (worker-completed-but-not-merged flag; docs/89 §89.7).
-export const CHANNEL_VERSION = 14;
+// v15 (HS-9031) — worker-pool management tools so an AI tool can parallelize work
+//   across the distributed pool: `hotsheet_get_worker_pool` / `hotsheet_set_worker_target`
+//   / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers` (23 tools total).
+export const CHANNEL_VERSION = 15;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
