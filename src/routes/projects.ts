@@ -44,15 +44,30 @@ projectRoutes.get('/', async (c) => {
   const live = stale.length > 0 ? getAllProjects() : projects;
   const result = await Promise.all(live.map(async (p) => {
     let ticketCount = 0;
+    let openCount = 0;
+    let upNextCount = 0;
     try {
-      const res = await p.db.query<{ count: string }>(`SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted'`);
-      ticketCount = parseInt(res.rows[0]?.count ?? '0', 10);
+      // HS-9056 — one pass for all three counts the projects list surfaces.
+      // `open` / `up_next` use the canonical defs from `src/db/tickets.ts`
+      // (open = not_started|started; up_next = flagged and not deleted/backlog/archive).
+      const res = await p.db.query<{ ticket_count: string; open_count: string; up_next_count: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE status != 'deleted') AS ticket_count,
+           COUNT(*) FILTER (WHERE status IN ('not_started', 'started')) AS open_count,
+           COUNT(*) FILTER (WHERE up_next = true AND status NOT IN ('deleted', 'backlog', 'archive')) AS up_next_count
+         FROM tickets`,
+      );
+      ticketCount = parseInt(res.rows[0]?.ticket_count ?? '0', 10);
+      openCount = parseInt(res.rows[0]?.open_count ?? '0', 10);
+      upNextCount = parseInt(res.rows[0]?.up_next_count ?? '0', 10);
     } catch { /* schema might not exist yet */ }
     return {
       name: p.name,
       dataDir: p.dataDir,
       secret: p.secret,
       ticketCount,
+      openCount,
+      upNextCount,
     };
   }));
   return c.json(result);

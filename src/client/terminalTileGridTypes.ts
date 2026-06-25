@@ -85,6 +85,12 @@ export interface InternalTile {
    *  by `softDisposeTile` on virtualization-unmount, while the bell
    *  effect should live for the tile's full lifetime. */
   bellEffectDispose: (() => void) | null;
+  /** HS-9056 — disposer for the effect that mirrors the project's open /
+   *  up-next counts (`projectsByIdSignal`) + busy state (`channelStore`) into
+   *  the dashboard tile's stats cluster. Null when `showProjectStats` is off
+   *  (drawer grid) or no cluster was rendered. Lives for the tile's full
+   *  lifetime, like `bellEffectDispose`. */
+  statsEffectDispose: (() => void) | null;
 }
 
 export interface DedicatedView {

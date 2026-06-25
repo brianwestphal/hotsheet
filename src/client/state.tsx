@@ -7,6 +7,12 @@ export interface ProjectInfo {
   name: string;
   dataDir: string;
   secret: string;
+  // HS-9056 — populated by `listProjects()` (GET /api/projects); absent on
+  // `ProjectInfo`s built elsewhere (e.g. `setActiveProject` in tests). The
+  // terminal dashboard tile reads these via `projectsByIdSignal[secret]`.
+  ticketCount?: number;
+  openCount?: number;
+  upNextCount?: number;
 }
 
 // Active project context — use getActiveProject() in modules that need the current value

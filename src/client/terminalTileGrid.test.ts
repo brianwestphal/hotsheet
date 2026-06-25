@@ -17,6 +17,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { _channelStoreForTesting, channelStore } from './channelStore.js';
+import { _projectsStoreForTesting, projectsStore } from './projectsStore.js';
 import {
   _getEntryForTesting,
   _inspectStackForTesting,
@@ -828,5 +830,72 @@ describe('terminalTileGrid — tiles fill the container content area (HS-8442)',
     expect(slack).toBeLessThan(3);
 
     grid.dispose();
+  });
+});
+
+describe('terminalTileGrid — dashboard project stats cluster (HS-9056)', () => {
+  function mountWithStats(entries: TileEntry[], showProjectStats: boolean): TileGridHandle {
+    const handle = mountTileGrid({
+      container: makeContainer(),
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+      showProjectStats,
+    });
+    handle.rebuild(entries);
+    return handle;
+  }
+
+  const proj = (openCount: number, upNextCount: number) => ({
+    name: 'P', dataDir: '/p/.hotsheet', secret: 's', openCount, upNextCount,
+  });
+
+  afterEach(() => {
+    _projectsStoreForTesting.reset();
+    _channelStoreForTesting.reset();
+  });
+
+  it('renders the open + up-next counts for the tile project when showProjectStats is on', () => {
+    projectsStore.actions.setProjects([proj(7, 3)]);
+    mountWithStats([makeEntry('s', 't1')], true);
+    expect(document.querySelector('.terminal-dashboard-tile-stats')).not.toBeNull();
+    expect(document.querySelector('.terminal-dashboard-tile-stat-open')?.textContent).toBe('7 open');
+    expect(document.querySelector('.terminal-dashboard-tile-stat-upnext')?.textContent).toBe('3 up next');
+    expect(document.querySelector('.terminal-dashboard-tile-stats')?.classList.contains('is-busy')).toBe(false);
+  });
+
+  it('defaults counts to 0 when the project has not been loaded', () => {
+    mountWithStats([makeEntry('s', 't1')], true);
+    expect(document.querySelector('.terminal-dashboard-tile-stat-open')?.textContent).toBe('0 open');
+    expect(document.querySelector('.terminal-dashboard-tile-stat-upnext')?.textContent).toBe('0 up next');
+  });
+
+  it('toggles the busy class reactively as the project becomes busy / idle', () => {
+    projectsStore.actions.setProjects([proj(1, 0)]);
+    mountWithStats([makeEntry('s', 't1')], true);
+    const stats = document.querySelector('.terminal-dashboard-tile-stats')!;
+    expect(stats.classList.contains('is-busy')).toBe(false);
+    channelStore.actions.markBusySecret('s');
+    expect(stats.classList.contains('is-busy')).toBe(true);
+    channelStore.actions.clearBusySecret('s');
+    expect(stats.classList.contains('is-busy')).toBe(false);
+  });
+
+  it('updates the counts reactively when the project list refreshes', () => {
+    projectsStore.actions.setProjects([proj(1, 0)]);
+    mountWithStats([makeEntry('s', 't1')], true);
+    expect(document.querySelector('.terminal-dashboard-tile-stat-open')?.textContent).toBe('1 open');
+    projectsStore.actions.setProjects([proj(9, 4)]);
+    expect(document.querySelector('.terminal-dashboard-tile-stat-open')?.textContent).toBe('9 open');
+    expect(document.querySelector('.terminal-dashboard-tile-stat-upnext')?.textContent).toBe('4 up next');
+  });
+
+  it('renders NO stats cluster when showProjectStats is off (the drawer grid)', () => {
+    projectsStore.actions.setProjects([proj(7, 3)]);
+    mountWithStats([makeEntry('s', 't1')], false);
+    expect(document.querySelector('.terminal-dashboard-tile-stats')).toBeNull();
+    // The label main wrapper still exists (it always wraps the name).
+    expect(document.querySelector('.terminal-dashboard-tile-label-main')).not.toBeNull();
   });
 });

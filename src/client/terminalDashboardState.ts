@@ -106,6 +106,11 @@ export interface DashboardState {
   /** HS-7661 — unsubscribe from hidden-state changes. Set on
    *  `enterDashboard`, cleared on `exitDashboard`. */
   hiddenChangeUnsubscribe: (() => void) | null;
+  /** HS-9056 — periodic `refreshProjectTabs()` timer that keeps the per-tile
+   *  open / up-next counts current while the dashboard is open (the project
+   *  list isn't otherwise polled here). Set on `enterDashboard`, cleared on
+   *  `exitDashboard`. */
+  statsRefreshTimer: ReturnType<typeof setInterval> | null;
 }
 
 export function freshDashboardState(): DashboardState {
@@ -119,6 +124,7 @@ export function freshDashboardState(): DashboardState {
     resizeRaf: null,
     bellUnsubscribe: null,
     appearanceUnsubscribe: null,
+    statsRefreshTimer: null,
     sizerContainer: null,
     sizeSlider: null,
     currentSnapPoints: [],

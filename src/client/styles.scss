@@ -1697,16 +1697,66 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
   font-size: 12px;
   color: var(--text-muted);
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   // HS-9000 — left-aligned (was centered) so the project / terminal name reads
   // from the left edge under each terminal, leaving room for a right-aligned
-  // stats cluster (open / up-next counts + busy spinner) in a follow-up.
+  // stats cluster (open / up-next counts + busy spinner).
   text-align: left;
+  // HS-9056 — flex row: the name (truncating) on the left, the per-project
+  // stats cluster pinned right. `container-type: inline-size` makes the tile
+  // label a query container so the cluster can drop its counts text on narrow
+  // tiles (keeping just the spinner).
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  container-type: inline-size;
 
   // HS-8286 — per-tile stall chip styles removed. Stall now feeds the
   // global server-slow banner.
+}
+
+// HS-9056 — the badge + terminal name; takes the available row width and
+// truncates (the ellipsis/overflow moved here off the now-flex label row).
+.terminal-dashboard-tile-label-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// HS-9056 — right-aligned per-project stats cluster, dashboard tiles only.
+.terminal-dashboard-tile-stats {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.terminal-dashboard-tile-stats-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.terminal-dashboard-tile-stat {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.terminal-dashboard-tile-stat-upnext { color: var(--accent); }
+// Spinner: present in the DOM always, shown only while the project is busy.
+.terminal-dashboard-tile-stats-spinner { display: none; }
+.terminal-dashboard-tile-stats.is-busy .terminal-dashboard-tile-stats-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+// HS-9056 — on narrow tiles drop the counts text but keep the (tiny) spinner.
+@container (max-width: 150px) {
+  .terminal-dashboard-tile-stats-counts { display: none; }
 }
 
 // HS-7278 — tile CWD badge rendered below the terminal label when the server

@@ -473,6 +473,12 @@ export function disposeTile(ctx: TileGridContext, tile: InternalTile): void {
     try { tile.bellEffectDispose(); } catch { /* already disposed */ }
     tile.bellEffectDispose = null;
   }
+  // HS-9056 — dispose the dashboard stats-cluster effect (same full-lifetime
+  // slot as the bell effect; null on drawer-grid tiles that never got one).
+  if (tile.statsEffectDispose !== null) {
+    try { tile.statsEffectDispose(); } catch { /* already disposed */ }
+    tile.statsEffectDispose = null;
+  }
   if (tile.checkout !== null) {
     try { tile.checkout.release(); } catch { /* already released */ }
     tile.checkout = null;

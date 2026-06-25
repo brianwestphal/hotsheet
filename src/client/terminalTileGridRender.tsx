@@ -1,6 +1,9 @@
 import type { SafeHtml } from '../jsx-runtime.js';
+import { channelStore } from './channelStore.js';
 import { toElement } from './dom.js';
+import { projectsByIdSignal } from './projectsStore.js';
 import { effect, signal } from './reactive.js';
+import type { ProjectInfo } from './state.js';
 import {
   applyAppearanceToTerm,
   getProjectDefault,
@@ -106,22 +109,28 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
       <div className={c.previewClass}>
       </div>
       <div className={c.labelClass} title={fullLabelTitle}>
-        {badge?.name !== undefined && badge.name !== ''
-          // HS-7943 follow-up — only the project name itself should
-          // carry the link affordance (pointer cursor + accent underline
-          // on hover); the trailing ` › ` chevron stays as muted plain
-          // text. Pre-fix the whole `{name} › ` span was the click +
-          // hover target, so the chevron was underlined alongside the
-          // name. The click listener stays on the outer span so a click
-          // on the chevron still routes (matches the pre-fix click
-          // hitbox); SCSS scopes the hover affordance to the inner name
-          // span only.
-          ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
-          : null}
-        <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
-        {/* HS-8286 — per-tile "Server slow" chip removed. Stall
-            detection feeds the global server-slow banner via the per-
-            entry watcher in `terminalCheckout.tsx::createEntry`. */}
+        {/* HS-9056 — badge + name live in an inner `-tile-label-main` span so
+            the label row can be a flex container with a right-aligned stats
+            cluster (added below for the dashboard). `rerenderTileLabel` rebuilds
+            only this inner span, leaving the stats cluster intact. */}
+        <span className={`${cssPrefix}-tile-label-main`}>
+          {badge?.name !== undefined && badge.name !== ''
+            // HS-7943 follow-up — only the project name itself should
+            // carry the link affordance (pointer cursor + accent underline
+            // on hover); the trailing ` › ` chevron stays as muted plain
+            // text. Pre-fix the whole `{name} › ` span was the click +
+            // hover target, so the chevron was underlined alongside the
+            // name. The click listener stays on the outer span so a click
+            // on the chevron still routes (matches the pre-fix click
+            // hitbox); SCSS scopes the hover affordance to the inner name
+            // span only.
+            ? <span className={`${cssPrefix}-tile-project${opts.onProjectBadgeClick !== undefined ? ' is-clickable' : ''}`} title={`Switch to ${badge.name}`}><span className={`${cssPrefix}-tile-project-name`}>{badge.name}</span>{' › '}</span>
+            : null}
+          <span className={`${cssPrefix}-tile-name`}>{entry.label}</span>
+          {/* HS-8286 — per-tile "Server slow" chip removed. Stall
+              detection feeds the global server-slow banner via the per-
+              entry watcher in `terminalCheckout.tsx::createEntry`. */}
+        </span>
       </div>
       {cwdLabel === ''
         ? null
@@ -160,6 +169,13 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
     root.classList.toggle('has-bell', bellPending.value);
   });
 
+  // HS-9056 — dashboard-only stats cluster (open / up-next counts + busy
+  // spinner), right-aligned in the label row. Reactive to the project list
+  // and the cross-project busy set; the disposer lives for the tile lifetime.
+  const statsEffectDispose = opts.showProjectStats === true
+    ? installTileStatsCluster(cssPrefix, entry.secret, labelEl)
+    : null;
+
   const tile: InternalTile = {
     entry,
     state: entry.state,
@@ -180,6 +196,7 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
     termHandlerDisposers: [],
     bellPending,
     bellEffectDispose,
+    statsEffectDispose,
   };
   const key = tileKeyFor(entry);
   ctx.tiles.set(key, tile);
@@ -208,6 +225,46 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
   }
 
   return root;
+}
+
+/** HS-9056 — build the dashboard tile's right-aligned stats cluster and wire a
+ *  reactive effect that mirrors the project's open / up-next counts
+ *  (`projectsByIdSignal[secret]`) and busy state (`channelStore.busySecrets`)
+ *  into it. The cluster is appended into the label row (sibling of
+ *  `-tile-label-main`); `rerenderTileLabel` only rebuilds the main span, so the
+ *  cluster survives label updates. Returns the effect disposer. */
+function installTileStatsCluster(cssPrefix: string, secret: string, labelEl: HTMLElement): () => void {
+  const cluster = toElement(
+    <span className={`${cssPrefix}-tile-stats`}>
+      <span className={`${cssPrefix}-tile-stats-counts`}>
+        <span className={`${cssPrefix}-tile-stat ${cssPrefix}-tile-stat-open`}></span>
+        <span className={`${cssPrefix}-tile-stat ${cssPrefix}-tile-stat-upnext`}></span>
+      </span>
+      <span className={`${cssPrefix}-tile-stats-spinner`} role="status" title="Claude is working"></span>
+    </span>,
+  );
+  labelEl.appendChild(cluster);
+  const openEl = cluster.querySelector<HTMLElement>(`.${cssPrefix}-tile-stat-open`);
+  const upNextEl = cluster.querySelector<HTMLElement>(`.${cssPrefix}-tile-stat-upnext`);
+  return effect(() => {
+    // Index access on a Record isn't undefined-checked by the compiler
+    // (noUncheckedIndexedAccess is off), but a secret with no loaded project is
+    // a real runtime case — narrow to optional, matching the codebase pattern
+    // in permissionOverlay / crossProjectStatsPage.
+    const proj = projectsByIdSignal.value[secret] as ProjectInfo | undefined;
+    const open = proj?.openCount ?? 0;
+    const upNext = proj?.upNextCount ?? 0;
+    const busy = channelStore.state.value.busySecrets.has(secret);
+    if (openEl !== null) {
+      openEl.textContent = `${open} open`;
+      openEl.title = `${open} open ticket${open === 1 ? '' : 's'} (not started / started)`;
+    }
+    if (upNextEl !== null) {
+      upNextEl.textContent = `${upNext} up next`;
+      upNextEl.title = `${upNext} ticket${upNext === 1 ? '' : 's'} marked Up Next`;
+    }
+    cluster.classList.toggle('is-busy', busy);
+  });
 }
 
 // --- Tile sizing ---
@@ -428,7 +485,10 @@ function rerenderTileLabel(ctx: TileGridContext, tile: InternalTile): void {
     newChildren.push(projectSpan);
   }
   newChildren.push(toElement(<span className={`${cssPrefix}-tile-name`}>{entry.label}</span>));
-  tile.labelEl.replaceChildren(...newChildren);
+  // HS-9056 — rebuild only the inner main span so the right-aligned stats
+  // cluster (a sibling, added once in `renderTile`) survives label updates.
+  const main = tile.labelEl.querySelector<HTMLElement>(`.${cssPrefix}-tile-label-main`);
+  (main ?? tile.labelEl).replaceChildren(...newChildren);
 }
 
 /** HS-8313 — add / remove / update the optional CWD chip on a surviving

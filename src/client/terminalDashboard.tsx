@@ -261,6 +261,11 @@ export function exitDashboard(): void {
     dashboardState.bellUnsubscribe();
     dashboardState.bellUnsubscribe = null;
   }
+  // HS-9056 — stop the per-tile stats-count refresh timer.
+  if (dashboardState.statsRefreshTimer !== null) {
+    clearInterval(dashboardState.statsRefreshTimer);
+    dashboardState.statsRefreshTimer = null;
+  }
   if (dashboardState.appearanceUnsubscribe !== null) {
     dashboardState.appearanceUnsubscribe();
     dashboardState.appearanceUnsubscribe = null;
@@ -326,6 +331,17 @@ function enterDashboard(): void {
   }).catch(() => { /* module not present */ });
   closeDetail();
   dashboardState.active = true;
+  // HS-9056 — keep the per-tile open / up-next counts fresh while the dashboard
+  // is open. `refreshProjectTabs()` does `listProjects()` → `setProjects()`,
+  // feeding `projectsByIdSignal` that the tile stats clusters react to. The
+  // project list isn't otherwise polled here. Dynamic import avoids a static
+  // import cycle with `projectTabs`. Refresh once now, then on a modest timer.
+  const refreshProjectStats = (): void => {
+    void import('./projectTabs.js').then(({ refreshProjectTabs }) => refreshProjectTabs()).catch(() => { /* offline / module absent */ });
+  };
+  refreshProjectStats();
+  if (dashboardState.statsRefreshTimer !== null) clearInterval(dashboardState.statsRefreshTimer);
+  dashboardState.statsRefreshTimer = setInterval(refreshProjectStats, 20000);
   // HS-8451 — the terminal dashboard is a cross-project view; while it's
   // active the project-name title is misleading. "Terminals" matches the
   // label on the toggle button + the sidebar widget label.

@@ -22,6 +22,10 @@ export const ProjectListItemSchema = z.object({
   dataDir: z.string(),
   secret: z.string(),
   ticketCount: z.number(),
+  // HS-9056 — open (not_started|started) + up-next counts for the terminal
+  // dashboard tile stats cluster. Default to 0 for older servers / rows.
+  openCount: z.number().catch(0),
+  upNextCount: z.number().catch(0),
 });
 export type ProjectListItem = z.infer<typeof ProjectListItemSchema>;
 

@@ -325,6 +325,8 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
   const handle = mountTileGrid({
     container: flowGrid,
     cssPrefix: 'terminal-dashboard',
+    // HS-9056 — dashboard-only per-project stats cluster on each tile.
+    showProjectStats: true,
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
     centerReferenceEl: dashboardState.rootElement ?? undefined,
@@ -427,6 +429,8 @@ function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: 
   const handle = mountTileGrid({
     container: grid,
     cssPrefix: 'terminal-dashboard',
+    // HS-9056 — dashboard-only per-project stats cluster on each tile.
+    showProjectStats: true,
     centerSizeFrac: 0.7,
     centerScope: 'viewport',
     centerReferenceEl: dashboardState.rootElement ?? undefined,

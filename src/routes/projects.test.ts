@@ -5,6 +5,8 @@
 import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getDb } from '../db/connection.js';
+import { createTicket } from '../db/tickets.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 
@@ -15,7 +17,8 @@ const mockProject = {
   name: 'Test Project',
   secret: 'test-secret-123',
   db: {
-    query: vi.fn(() => Promise.resolve({ rows: [{ count: '5' }] })),
+    // HS-9056 — the list query now returns ticket / open / up-next counts.
+    query: vi.fn(() => Promise.resolve({ rows: [{ ticket_count: '5', open_count: '4', up_next_count: '2' }] })),
   },
   markdownSyncState: { worklistTimeout: null, openTicketsTimeout: null },
   backupTimers: { fiveMin: null, hourly: null, daily: null },
@@ -26,7 +29,7 @@ const mockProject2 = {
   name: 'Second Project',
   secret: 'test-secret-456',
   db: {
-    query: vi.fn(() => Promise.resolve({ rows: [{ count: '3' }] })),
+    query: vi.fn(() => Promise.resolve({ rows: [{ ticket_count: '3', open_count: '1', up_next_count: '0' }] })),
   },
   markdownSyncState: { worklistTimeout: null, openTicketsTimeout: null },
   backupTimers: { fiveMin: null, hourly: null, daily: null },
@@ -186,13 +189,48 @@ describe('GET /projects', () => {
   it('returns all registered projects with ticket counts', async () => {
     const res = await app.request('/api/projects');
     expect(res.status).toBe(200);
-    const data = await res.json() as { name: string; secret: string; ticketCount: number }[];
+    const data = await res.json() as { name: string; secret: string; ticketCount: number; openCount: number; upNextCount: number }[];
     expect(data.length).toBe(2);
     expect(data[0].name).toBe('Test Project');
     expect(data[0].secret).toBe('test-secret-123');
     expect(data[0].ticketCount).toBe(5);
     expect(data[1].name).toBe('Second Project');
     expect(data[1].ticketCount).toBe(3);
+  });
+
+  // HS-9056 — the list maps the open + up-next counts from the per-project query.
+  it('returns open + up-next counts per project', async () => {
+    const res = await app.request('/api/projects');
+    const data = await res.json() as { openCount: number; upNextCount: number }[];
+    expect(data[0].openCount).toBe(4);
+    expect(data[0].upNextCount).toBe(2);
+    expect(data[1].openCount).toBe(1);
+    expect(data[1].upNextCount).toBe(0);
+  });
+
+  // HS-9056 — verify the actual FILTER SQL (the canonical open / up-next defs)
+  // against a real DB, since the per-project list query is otherwise mocked.
+  it('FILTER counts match the canonical open / up-next definitions', async () => {
+    const db = await getDb();
+    await db.query('DELETE FROM tickets');
+    await createTicket('open + up-next', { status: 'not_started', up_next: true }); // open ✓, up-next ✓
+    await createTicket('open only', { status: 'started', up_next: false });          // open ✓
+    await createTicket('completed', { status: 'completed', up_next: false });        // neither
+    await createTicket('backlog up-next', { status: 'backlog', up_next: true });     // neither (backlog excluded)
+    await createTicket('deleted', { status: 'deleted', up_next: true });             // not even counted
+
+    const res = await db.query<{ ticket_count: string; open_count: string; up_next_count: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status != 'deleted') AS ticket_count,
+         COUNT(*) FILTER (WHERE status IN ('not_started', 'started')) AS open_count,
+         COUNT(*) FILTER (WHERE up_next = true AND status NOT IN ('deleted', 'backlog', 'archive')) AS up_next_count
+       FROM tickets`,
+    );
+    const row = res.rows[0];
+    expect(parseInt(row.ticket_count, 10)).toBe(4);  // all but the deleted one
+    expect(parseInt(row.open_count, 10)).toBe(2);    // not_started + started
+    expect(parseInt(row.up_next_count, 10)).toBe(1); // only the not_started up-next one
+    await db.query('DELETE FROM tickets');
   });
 
   it('prunes stale projects whose data dirs do not exist', async () => {

@@ -163,6 +163,12 @@ export interface TileGridOptions {
    *  they wire their click handler directly — this hook only covers the
    *  flow-mode case. */
   onProjectBadgeClick?: (entry: TileEntry) => void;
+  /** HS-9056 — when true (the Terminal Dashboard only, not the drawer grid),
+   *  each tile's label row gets a right-aligned stats cluster: the project's
+   *  open + up-next ticket counts (from `projectsByIdSignal`) and a spinner
+   *  while Claude is busy in that project (`channelStore.busySecrets`). A
+   *  container query hides the counts text on narrow tiles (spinner stays). */
+  showProjectStats?: boolean;
 }
 
 export interface TileGridHandle {
