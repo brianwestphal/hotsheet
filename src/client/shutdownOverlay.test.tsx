@@ -4,10 +4,16 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { showErrorPopup } from './api.js';
 import { _resetShutdownOverlayForTesting, showShutdownOverlay } from './shutdownOverlay.js';
 import { SHUTDOWN_DEFAULT_PHRASE } from './shutdownProgress.js';
+import { _resetShutdownStateForTesting, isShuttingDown } from './shutdownState.js';
 
-afterEach(() => { _resetShutdownOverlayForTesting(); });
+afterEach(() => {
+  _resetShutdownOverlayForTesting();
+  _resetShutdownStateForTesting();
+  document.getElementById('network-error-popup')?.remove();
+});
 
 describe('showShutdownOverlay (HS-8911)', () => {
   it('appends a full-screen overlay with the title + default step phrase', () => {
@@ -29,5 +35,21 @@ describe('showShutdownOverlay (HS-8911)', () => {
     expect(document.querySelectorAll('.shutdown-overlay').length).toBe(1);
     setStep('Closing databases…');
     expect(document.querySelector('.shutdown-overlay-step')?.textContent).toBe('Closing databases…');
+  });
+
+  // HS-9029 — opening the overlay flips the shutting-down flag (so subsequent
+  // network failures don't pop the "Connection Error" dialog) and clears any
+  // popup that slipped in just before quit.
+  it('marks the app as shutting down', () => {
+    expect(isShuttingDown()).toBe(false);
+    showShutdownOverlay();
+    expect(isShuttingDown()).toBe(true);
+  });
+
+  it('removes a "Connection Error" popup that was already on screen at quit time', () => {
+    showErrorPopup('Unable to reach the server.');
+    expect(document.getElementById('network-error-popup')).not.toBeNull();
+    showShutdownOverlay();
+    expect(document.getElementById('network-error-popup')).toBeNull();
   });
 });

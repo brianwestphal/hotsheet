@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import { ErrorBodySchema } from '../schemas.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { trackServerRequest } from './serverBusyChip.js';
+import { isShuttingDown } from './shutdownState.js';
 import { getActiveProject } from './state.js';
 
 //
@@ -55,6 +56,10 @@ async function parseResponseBody<T>(res: Response, schema: z.ZodType<T> | undefi
 }
 
 export function showErrorPopup(message: string) {
+  // HS-9029 — once the app is shutting down the server is intentionally closing,
+  // so the in-flight requests that fail are expected. Suppress the "Connection
+  // Error" popup that would otherwise flash behind the "Shutting Down" overlay.
+  if (isShuttingDown()) return;
   byIdOrNull('network-error-popup')?.remove();
   const popup = toElement(
     <div id="network-error-popup" className="error-popup">

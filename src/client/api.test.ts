@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { api, apiUpload, apiWithSecret } from './api.js';
+import { api, apiUpload, apiWithSecret, showErrorPopup } from './api.js';
+import { _resetShutdownStateForTesting, markShuttingDown } from './shutdownState.js';
 
 /**
  * HS-8141 — defensive guard tests. Pre-fix a swapped-args call to
@@ -113,5 +114,44 @@ describe('api() — skipProjectScope option (HS-8563)', () => {
     const calledUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     // The default path appends `&project=` because the URL already has a `?`.
     expect(calledUrl).toContain('project=deadbeefcafebabedeadbeefcafebabe');
+  });
+});
+
+/**
+ * HS-9029 — the "Connection Error" popup must NOT fire once the app is shutting
+ * down. During quit the server intentionally closes, so every in-flight request
+ * fails; pre-fix the popup flashed (blurred) behind the "Shutting Down" overlay
+ * on every quit.
+ */
+describe('showErrorPopup — shutdown suppression (HS-9029)', () => {
+  afterEach(() => {
+    _resetShutdownStateForTesting();
+    document.getElementById('network-error-popup')?.remove();
+  });
+
+  it('shows the popup normally when not shutting down', () => {
+    showErrorPopup('Unable to reach the server.');
+    expect(document.getElementById('network-error-popup')).not.toBeNull();
+  });
+
+  it('suppresses the popup once shutdown has begun', () => {
+    markShuttingDown();
+    showErrorPopup('Unable to reach the server.');
+    expect(document.getElementById('network-error-popup')).toBeNull();
+  });
+
+  it('api() failing with a TypeError pops the dialog — but not while shutting down', async () => {
+    // A bare network failure surfaces as a TypeError from fetch.
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))));
+
+    await expect(api('/tickets')).rejects.toThrow();
+    expect(document.getElementById('network-error-popup')).not.toBeNull();
+    document.getElementById('network-error-popup')!.remove();
+
+    markShuttingDown();
+    await expect(api('/tickets')).rejects.toThrow();
+    expect(document.getElementById('network-error-popup')).toBeNull();
+
+    vi.unstubAllGlobals();
   });
 });

@@ -7,8 +7,9 @@
  * is never torn down here; it simply vanishes with the window. This replaces the
  * beachball the OS used to show on the exiting-but-waiting app (see §37.11).
  */
-import { toElement } from './dom.js';
+import { byIdOrNull, toElement } from './dom.js';
 import { SHUTDOWN_DEFAULT_PHRASE } from './shutdownProgress.js';
+import { markShuttingDown } from './shutdownState.js';
 
 let overlayEl: HTMLElement | null = null;
 let stepEl: Element | null = null;
@@ -20,6 +21,11 @@ let stepEl: Element | null = null;
  * first `shutdown-progress` event lands.
  */
 export function showShutdownOverlay(): (displayText: string) => void {
+  // HS-9029 — suppress the "Connection Error" popup from this point on (the
+  // server is closing on purpose) and clear any popup that already slipped in
+  // just before quit, so it doesn't sit blurred behind this overlay.
+  markShuttingDown();
+  byIdOrNull('network-error-popup')?.remove();
   if (overlayEl === null) {
     overlayEl = toElement(
       <div className="shutdown-overlay" role="alertdialog" aria-busy="true" aria-label="Shutting down">
