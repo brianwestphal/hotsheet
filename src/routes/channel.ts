@@ -119,16 +119,21 @@ channelRoutes.get('/channel/status', async (c) => {
   let aliveCount = 0;
   if (alive) {
     const entries = listAliveEntries(dataDir);
-    aliveCount = entries.length;
-    // HS-8948 — when >1 channel-server is alive, log the roster (pid / startedAt
-    // / slug / port) so a recurring "N connections" can be diagnosed from
-    // mcp.log without guessing. Deduped per (dataDir → signature) so the
-    // frequently-polled status route logs only on a real change, not every poll.
+    // HS-9038 — count only MAIN (non-worktree) connections. A distributed worker
+    // spawns its own channel server (registered under the owner data dir), so with
+    // workers running there are legitimately many alive servers — that's expected,
+    // not a duplicate-connection problem. The warning should fire only on multiple
+    // MAIN agents (the actual orphan/duplicate case it was built for).
+    const mains = entries.filter(e => e.worktree == null);
+    aliveCount = mains.length;
+    // HS-8948 — when >1 MAIN channel-server is alive, log the roster so a recurring
+    // "N connections" can be diagnosed from mcp.log. Deduped per (dataDir →
+    // signature) so the frequently-polled status route logs only on a real change.
     if (aliveCount > 1) {
-      const signature = entries.map(e => `${String(e.pid)}@${e.startedAt ?? '?'}`).join(',');
+      const signature = mains.map(e => `${String(e.pid)}@${e.startedAt ?? '?'}`).join(',');
       if (lastMultiConnSignature.get(dataDir) !== signature) {
         lastMultiConnSignature.set(dataDir, signature);
-        appendMainServerEvent(dataDir, 'multi-connection', `${String(aliveCount)} channel servers — leader pid=${String(entries[0].pid)}; all=[${signature}]`);
+        appendMainServerEvent(dataDir, 'multi-connection', `${String(aliveCount)} main channel servers (${String(entries.length - aliveCount)} worker) — leader pid=${String(mains[0].pid)}; mains=[${signature}]`);
       }
     } else {
       lastMultiConnSignature.delete(dataDir);

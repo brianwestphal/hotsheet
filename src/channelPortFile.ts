@@ -20,6 +20,11 @@ export interface ChannelInfo {
   /** ISO timestamp the channel server bound its port. `null` for
    *  legacy files. Diagnostic only — used in `mcp.log` entries. */
   startedAt: string | null;
+  /** HS-9038 — the follower-worktree root this channel server runs in, when it's
+   *  a distributed WORKER's connection (not the main agent). `null`/absent for the
+   *  main connection. Lets the multi-connection warning + leader selection treat
+   *  worker connections as expected rather than as duplicate main connections. */
+  worktree?: string | null;
 }
 
 /** HS-8454 — parse the port file. Accepts BOTH the new JSON shape AND

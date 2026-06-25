@@ -149,6 +149,21 @@ directory and picks up its `.mcp.json` → the shared owner Hot Sheet.
 Choice of AI tool is currently `claude`; the existing terminal-target config can
 extend this later.
 
+**Worker channel connections are tagged (HS-9038).** Each worker spawns its own
+channel server (registered under the owner data dir), so with N workers running
+there are legitimately N+1 alive channel servers — which used to trip the "N Claude
+connections active" multi-connection warning (HS-8460) as if they were duplicate
+main agents. Fix: the channel server records a `worktree` marker in its registry
+entry (`channelRegistry` `ChannelInfo.worktree`) when its cwd carries the
+`authoritativeDataDir` follower pointer (detected via a light `readFileSettings`
+check in `channel.ts::isFollowerCwd`, not the heavier `worktrees.ts` import). Then:
+(1) the status route counts only **main** (non-worktree) connections for the
+warning, so workers don't trigger it; (2) `pickLeader` prefers the oldest **main**
+connection, so the play button / triggers always route to the main agent, never a
+worker; (3) `cleanupExtraConnections` ("Clean up" button) kills only duplicate
+mains and never a worker. This is the per-worker analog of the single-instance
+multi-connection handling referenced in §89's Phase A constraints.
+
 ### Phase D — Auto-parallelization across worktrees
 The end-state vision: N worktrees + agents that each claim-next → work in their
 worktree → complete → release, draining the Up Next pool in parallel. **This is

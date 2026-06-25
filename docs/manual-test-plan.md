@@ -121,6 +121,9 @@ This document lists features that require manual verification before each releas
 - [ ] Open two Claude Code instances in the same project → the sidebar shows "2 Claude connections active — triggers route to the oldest one" with a **Clean up** button.
 - [ ] Click **Clean up** → the duplicate channel-server(s) are terminated, a toast confirms "Cleaned up N…", and the warning disappears (only the leader remains). `mcp.log` shows a `multi-connection` roster line + a `multi-connection-cleanup` line.
 - [ ] Reproduce an orphan (e.g. a Claude exits but its MCP child lingers) → the warning shows even with one Claude window; Clean up clears it.
+- [ ] **Workers don't trigger the warning (HS-9038):** with the main Claude open, launch one or more workers (worker pool, or open a Claude terminal in a worktree). Each worker spawns its own channel server, but the "N Claude connections active" warning **does NOT appear** — only main connections are counted. `mcp.log` only logs `multi-connection` when there are 2+ *main* agents (the line notes the worker count separately).
+- [ ] **Play/triggers route to main with workers running (HS-9038):** with workers active, click the play button / fire a command → it routes to the **main** agent (the oldest non-worktree connection), never a worker — even if a worker's channel server started before the main's.
+- [ ] **Clean up spares workers (HS-9038):** force a second *main* connection (two Claude windows in the owner repo root) while workers run → the warning shows; **Clean up** terminates only the duplicate main, leaving the leader main **and every worker** connected.
 
 ### Visibility
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80

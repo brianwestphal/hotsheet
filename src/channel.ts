@@ -34,6 +34,7 @@ import {
   unregisterSelf,
 } from './channelRegistry.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
+import { readFileSettings } from './file-settings.js';
 import { HotsheetSettingsSchema } from './schemas.js';
 import { getProjectSecret } from './secret-file.js';
 
@@ -88,6 +89,19 @@ const serverName = `hotsheet-channel-${serverSlug}`;
 // `writeChannelInfo` call below report the same value. Used by the main
 // server's `isChannelAlive` identity check + by `mcp.log` diagnostics.
 const processStartedAt = new Date().toISOString();
+
+/** HS-9038 — true when this channel server runs inside a follower worktree (a
+ *  distributed worker), detected by the `authoritativeDataDir` pointer in the
+ *  cwd's `.hotsheet/settings.json` (HS-8934). Best-effort: any read error → not a
+ *  follower (treated as a main connection). */
+function isFollowerCwd(): boolean {
+  try {
+    const ptr = readFileSettings(join(process.cwd(), '.hotsheet')).authoritativeDataDir;
+    return typeof ptr === 'string' && ptr !== '';
+  } catch {
+    return false;
+  }
+}
 
 // HS-8447 follow-up — append-only diagnostic log at `<dataDir>/mcp.log`
 // so unexpected disconnects can be post-mortem'd with `tail` instead of
@@ -477,6 +491,14 @@ httpServer.listen(0, '127.0.0.1', () => {
       pid: process.pid,
       slug: serverSlug,
       startedAt: processStartedAt,
+      // HS-9038 — tag this connection as a distributed WORKER's when the channel
+      // server runs inside a follower worktree (its cwd's `.hotsheet/settings.json`
+      // carries the `authoritativeDataDir` follower pointer, HS-8934). The main
+      // agent runs in the authoritative repo root, so this is null for it. Lets the
+      // multi-connection warning + leader pick treat worker connections as expected,
+      // not as duplicate main connections. (Light readFileSettings check, not the
+      // heavier `worktrees.ts::isFollowerWorktree`, to keep the channel bundle lean.)
+      worktree: isFollowerCwd() ? process.cwd() : null,
     };
     // HS-8460 — register our per-pid entry in `<dataDir>/channel-ports.d/`
     // FIRST so the leader-selection below sees us. Then determine the

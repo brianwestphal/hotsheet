@@ -62,6 +62,7 @@ export function registerSelf(dataDir: string, info: ChannelInfo): void {
     pid: info.pid,
     slug: info.slug,
     startedAt: info.startedAt,
+    worktree: info.worktree ?? null, // HS-9038 — worker (follower-worktree) connection marker
   });
   writeFileSync(path, body, 'utf-8');
 }
@@ -91,6 +92,7 @@ export function readEntry(path: string): ChannelInfo | null {
       pid: obj.pid,
       slug: typeof obj.slug === 'string' && obj.slug !== '' ? obj.slug : null,
       startedAt: typeof obj.startedAt === 'string' && obj.startedAt !== '' ? obj.startedAt : null,
+      worktree: typeof obj.worktree === 'string' && obj.worktree !== '' ? obj.worktree : null, // HS-9038
     };
   } catch { return null; }
 }
@@ -136,7 +138,12 @@ export function listAliveEntries(
 /** Pick the leader (oldest alive entry). Returns null when no entries
  *  exist. Pure — callers pass in the list from `listAliveEntries`. */
 export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
-  return entries.length === 0 ? null : entries[0];
+  if (entries.length === 0) return null;
+  // HS-9038 — prefer the oldest MAIN (non-worktree) connection so triggers / the
+  // play button route to the main agent, never a distributed worker. `entries` is
+  // sorted oldest-first; fall back to the oldest overall if (somehow) only worker
+  // connections exist.
+  return entries.find(e => e.worktree == null) ?? entries[0];
 }
 
 /**
@@ -163,8 +170,12 @@ export function cleanupExtraConnections(
   const kill = opts.kill ?? ((pid: number) => { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } });
   const entries = listAliveEntries(dataDir, opts.isPidAlive);
   const killed: number[] = [];
-  // Skip the leader ([0], oldest by startedAt); terminate the rest.
-  for (const entry of entries.slice(1)) {
+  // HS-9038 — terminate only duplicate MAIN connections. Distributed-worker
+  // connections (`worktree` set) are expected (one per worktree) — never kill
+  // them. So: keep every worker, keep the main leader (the oldest non-worktree),
+  // and SIGTERM the remaining main connections (the orphans this is for).
+  const mains = entries.filter(e => e.worktree == null);
+  for (const entry of mains.slice(1)) {
     if (entry.pid === null) continue;
     try { kill(entry.pid); } catch { /* process already gone / not killable — entry is still removed below */ }
     try { unlinkSync(entryPath(dataDir, entry.pid)); } catch { /* race with GC / already gone */ }
