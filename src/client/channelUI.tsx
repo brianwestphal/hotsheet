@@ -483,14 +483,19 @@ export async function initChannel() {
   setChannelEnabledState(status.enabled);
   await reloadCustomCommands();
 
+  // HS-9039 — the "Auto worker pool" switch lives just above the play button and
+  // follows the same visibility (workers need a connected Claude to do anything).
+  const autoRow = byIdOrNull('sidebar-worker-auto');
   if (!status.enabled) {
     section.style.display = 'none';
+    if (autoRow) autoRow.style.display = 'none';
     setChannelAlive(false);
     stopPermissionPolling();
     renderChannelCommands(); // Still render shell commands
     return;
   }
   section.style.display = '';
+  if (autoRow) autoRow.style.display = '';
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling(channelBusyTimeout, (t) => { channelBusyTimeout = t; });

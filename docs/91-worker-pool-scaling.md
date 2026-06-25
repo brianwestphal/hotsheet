@@ -98,7 +98,15 @@ that has acknowledged its drain (`stopped`) is auto-cleaned (close terminal +
 `removeWorktree` + unregister). Tiles refresh by polling every 3 s. Still to layer
 on (separate tickets): the §92 dispatch drop targets (HS-8961), the richer
 claimed-by/lease-freshness chip (HS-8864), and the §90.8 live event bus
-(HS-7945, replacing the poll). Original design intent below:
+(HS-7945, replacing the poll).
+
+**HS-9039 — the panel is now the manual fallback; the AI buttons were removed.**
+The maintainer found the panel "overly complicated," so the **AI: suggest** and
+**AI: partition** buttons were dropped from it. The panel keeps the manual
+controls (target-N stepper, per-worker Drain, Drain all, queue-only) for hands-on
+use; the automatic path is the new **"Auto worker pool" sidebar switch** (§91.11),
+which sizes the pool from the suggestion and lets self-claim distribute the work.
+Original design intent below:
 
 Extends the existing worktrees panel (`src/client/worktreesPanel.tsx`, HS-8938)
 into a pool dashboard (or a sibling panel reachable from it):
@@ -115,8 +123,10 @@ into a pool dashboard (or a sibling panel reachable from it):
 
 A recommendation, never an automatic action — the owner always sets the actual N.
 
-**Implemented** in `src/workers/suggestN.ts` + `GET /api/workers/suggest-n` + an
-"AI: suggest" button in the pool panel. It fetches the unblocked Up Next set (+ a
+**Implemented** in `src/workers/suggestN.ts` + `GET /api/workers/suggest-n`. (The
+panel's "AI: suggest" button was removed in HS-9039; the endpoint now powers the
+**Auto worker pool** switch, §91.11, which re-sizes the pool from it on a slow
+cadence.) It fetches the unblocked Up Next set (+ a
 count of blocked ones for context, via `BLOCKED_TICKET_IDS_SQL`), builds a compact
 digest, and asks the **configured announcer provider** for `{n, rationale}`; `n` is
 clamped to `[1, POOL_MAX]` (`poolMax()` = CPU-cores−2, floored 1, capped 8). The
@@ -198,4 +208,42 @@ auto-reconcile shipped in **HS-8971** (2026-06-23); dispatch drop targets shippe
 **HS-8964** (§92); the claimed-by/lease chip shipped in **HS-8864** (§90.8); the
 zombie-slot liveness reap shipped in **HS-8972** (§91.7); the AI-suggest-N helper
 shipped in **HS-8963** (§91.6), with local/Apple-provider parity in **HS-8976**.
-Remaining: swapping the poll for the §90.8 live event bus (**HS-7945**).
+The **Auto worker pool** switch shipped in **HS-9039** (§91.11). Remaining:
+swapping the poll for the §90.8 live event bus (**HS-7945**).
+
+## 91.11 Auto worker pool (the "Auto" switch) — ✅ SHIPPED (HS-9039)
+
+The maintainer found manual pool management (stepper + AI-suggest + AI-partition)
+"a little confusing / overly complicated." The simplification: **one per-project
+"Auto worker pool" switch** in the sidebar, just above the channel play button.
+When on, Hot Sheet manages the pool automatically; the AI: suggest / AI: partition
+buttons were removed from the panel (§91.5), which stays as the manual fallback.
+
+**How it works** (`src/client/workerAutoMode.ts`):
+
+- A control loop runs while the active project has Auto on **and** the channel play
+  section is visible (workers need a connected Claude). It reuses the existing
+  primitives — no new server work:
+  - **Size:** every ~60 s (a slow cadence to bound AI-suggestion cost — the
+    suggestion may call a model) it calls `GET /api/workers/suggest-n` and sets the
+    pool target (`setPoolTarget`, clamped to `[0, MAX_TARGET]`).
+  - **Allocate:** the existing reconciler (`syncPoolHeadless`, extracted from the
+    panel in HS-9039 so it runs with no DOM) launches/drains worktree workers
+    toward the target every ~4 s and auto-cleans finished ones.
+  - **Distribute:** the workers **self-claim** the Up Next pool (claim-next) — no
+    explicit partition needed; that's the "split tasks" the request asked for,
+    achieved by parallel claiming rather than an AI partition step.
+  - **Wind down:** when Up Next drains, the suggestion returns 0 → target 0 →
+    workers gracefully drain (finishing their current ticket) → the pool empties.
+- **Persistence:** per-project in `localStorage` (`hotsheet:worker-auto-mode`, a
+  `{secret: bool}` map). The switch reflects the active project's flag on load and
+  on project switch (`syncWorkerAutoModeUI`, called after `initChannel`).
+- **Turning Auto off** stops the auto-sizing but leaves any running workers to
+  finish (they're durable; drain them from the panel). It never kills mid-ticket.
+- **Coexistence:** independent of the channel play button's single-agent auto-mode;
+  claim-next's live-lease exclusivity means pool workers never double-claim.
+
+**Tests:** `src/client/workerAutoMode.test.ts` (persistence, the slow-resize
+cadence, the toggle handler + UI sync, and the loop's first tick: sizes from the
+suggestion clamped to MAX_TARGET, and the channel-visibility / Auto-off gates).
+The worktree/terminal launch + real model sizing stay manual (manual test plan §7).

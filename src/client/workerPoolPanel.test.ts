@@ -105,27 +105,34 @@ describe('renderWorkerTile (HS-8962)', () => {
 });
 
 describe('renderPoolControls — target stepper (HS-8971)', () => {
-  it('shows the target + running count and wires the steppers + AI-suggest', () => {
+  it('shows the target + running count and wires the steppers + drain-all', () => {
     const onStep = vi.fn();
     const onDrainAll = vi.fn();
-    const onSuggest = vi.fn();
     const el = document.createElement('div');
-    renderPoolControls(el, 2, 1, onStep, onDrainAll, onSuggest, vi.fn());
+    renderPoolControls(el, 2, 1, onStep, onDrainAll);
     expect(el.querySelector('.worker-pool-target')?.textContent).toBe('2');
     expect(el.querySelector('.worker-pool-running')?.textContent).toContain('1 running');
     el.querySelector<HTMLButtonElement>('.worker-pool-step-up')!.click();
     expect(onStep).toHaveBeenCalledWith(1);
     el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.click();
     expect(onStep).toHaveBeenCalledWith(-1);
-    el.querySelector<HTMLButtonElement>('.worker-pool-suggest')!.click();
-    expect(onSuggest).toHaveBeenCalled();
     el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.click();
     expect(onDrainAll).toHaveBeenCalled();
   });
 
+  // HS-9039 — the AI: suggest / AI: partition buttons were removed (the "Auto
+  // worker pool" sidebar switch replaces them). Only the manual stepper +
+  // drain-all remain.
+  it('no longer renders the AI: suggest / AI: partition buttons', () => {
+    const el = document.createElement('div');
+    renderPoolControls(el, 2, 1, vi.fn(), vi.fn());
+    expect(el.querySelector('.worker-pool-suggest')).toBeNull();
+    expect(el.querySelector('.worker-pool-partition')).toBeNull();
+  });
+
   it('disables − at target 0 and Drain all when nothing is running', () => {
     const el = document.createElement('div');
-    renderPoolControls(el, 0, 0, vi.fn(), vi.fn(), vi.fn(), vi.fn());
+    renderPoolControls(el, 0, 0, vi.fn(), vi.fn());
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.disabled).toBe(true);
   });
