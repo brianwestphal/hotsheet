@@ -5359,7 +5359,8 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 // per-field affordances (origin tag / overridden tag / Reset-to-shared /
 // +Override) injected into each file-settings `.settings-field` in place by
 // src/client/settingsScope.ts. Complex / non-overridable surfaces tagged
-// `data-scope-complex` go read-only via `.scope-locked` in shared/local modes.
+// `data-scope-complex` go read-only via `.scope-locked` in the modes where they
+// aren't editable (default variant: shared-editable, locked in Resolved + Local).
 
 .settings-scope-bar {
   display: flex;
@@ -5459,13 +5460,15 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 .scope-host select:disabled,
 .scope-host textarea:disabled { opacity: .55; cursor: not-allowed; }
 
-// Non-overridable / complex surfaces: read-only in shared & local modes.
+// Complex / non-overridable surfaces lock (read-only) in the modes where they
+// aren't editable. The default variant is a shared setting → editable only in
+// Shared, locked in Resolved + Local (HS-9021).
 [data-scope-complex].scope-locked {
   position: relative;
   opacity: .5;
   pointer-events: none;
   &::before {
-    content: 'Not locally overridable — switch to Resolved to edit';
+    content: 'Read-only here — switch to Shared to edit';
     position: absolute;
     top: 6px;
     right: 0;

@@ -90,6 +90,22 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
   });
 
+  // HS-9021 — a default `data-scope-complex` surface (e.g. the custom-commands
+  // list) is a SHARED setting: editable only in Shared, read-only in Resolved +
+  // Local (Resolved is the read-only effective view; you edit in Shared). The
+  // lock chip points to Shared, not Resolved.
+  test('HS-9021: default complex panels edit in Shared, read-only in Resolved + Local', async ({ page }) => {
+    const commands = page.locator('#settings-commands-list');
+    // Default open mode is Resolved → now read-only (pre-9021 it was editable here).
+    await expect(commands).toHaveClass(/scope-locked/);
+    // Shared → editable.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(commands).not.toHaveClass(/scope-locked/);
+    // Local → read-only again.
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await expect(commands).toHaveClass(/scope-locked/);
+  });
+
   test('HS-9016: auto-context is editable per-layer in Local mode and saves a local delta', async ({ page }) => {
     // Context panel is no longer wholesale-locked (it's now scope-aware).
     await page.locator('.scope-seg-btn.scope-seg-local').click();

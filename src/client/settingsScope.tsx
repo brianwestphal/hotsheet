@@ -18,7 +18,10 @@
  * handled two ways: machine-global settings already carry a "Global Setting"
  * badge and are left alone; project-level surfaces that aren't file-settings
  * (plugin toggles, complex list editors) are containers tagged
- * `data-scope-complex` and become read-only in Shared/Local with a short note.
+ * `data-scope-complex` and lock with a short note in the modes where they're not
+ * editable — the default variant is a shared setting editable only in Shared
+ * (read-only in Resolved + Local; HS-9021), with `shared-only`/`local-only`
+ * variants locking just in Local / just in Shared respectively.
  *
  * Pure layer logic lives in `settingsSharing.ts`; this module does the DOM.
  */
@@ -236,13 +239,15 @@ const SCOPE_NOTE: Record<ScopeMode, string> = {
  */
 function lockComplexPanels(): void {
   document.querySelectorAll<HTMLElement>('[data-scope-complex]').forEach(panel => {
-    // HS-9009 — `data-scope-complex` variants: '' (default) locks outside
-    // Resolved; 'shared-only' locks only in Local; 'local-only' locks only in
-    // Shared. The chip text is driven by the matching CSS class.
+    // HS-9009 — `data-scope-complex` variants: '' (default) is a SHARED setting
+    // editable only in Shared (locked in Resolved + Local; HS-9021 — Resolved is
+    // the read-only effective view, so editing belongs in Shared, not Resolved);
+    // 'shared-only' locks only in Local; 'local-only' locks only in Shared. The
+    // chip text is driven by the matching CSS class.
     const variant = panel.getAttribute('data-scope-complex') ?? '';
     const locked = variant === 'shared-only' ? mode === 'local'
       : variant === 'local-only' ? mode === 'shared'
-        : mode !== 'resolved';
+        : mode !== 'shared';
     panel.classList.toggle('scope-locked', locked);
     panel.classList.toggle('scope-locked-shared-only', locked && variant === 'shared-only');
     panel.classList.toggle('scope-locked-local-only', locked && variant === 'local-only');
