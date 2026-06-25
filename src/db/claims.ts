@@ -11,8 +11,22 @@ import { BLOCKED_TICKET_IDS_SQL } from './blockedBy.js';
 import { getDb } from './connection.js';
 import { updateTicket } from './tickets.js';
 
-/** Default lease TTL in seconds (docs/90 §90.2.2). */
-export const DEFAULT_CLAIM_TTL_SECONDS = 120;
+/**
+ * Default lease TTL in seconds (docs/90 §90.2.2).
+ *
+ * HS-9050 — raised 120 → 1800 (30 min). The original 2-minute window assumed a
+ * worker that heartbeats on a timer (the programmatic `workerLoop.ts` renews every
+ * TTL/3, so it never lapses). But the production worker is the INTERACTIVE
+ * `/hotsheet-worker` Claude agent, which works in long silent bursts (a single big
+ * file read + analysis easily exceeds 2 min) and renews only when it remembers to
+ * — so leases were expiring mid-work and tickets got reclaimed out from under a
+ * still-busy worker. 30 min gives ample headroom for real work; the skill still
+ * tells the agent to renew on long tasks (and to claim/renew up to the 3600 s max
+ * for high-effort tickets). Trade-off: a CRASHED worker's ticket now waits up to
+ * 30 min for lazy reclaim (was 2 min); the worker-pool zombie reap should
+ * force-release a dead worker's leases to keep crash recovery fast (HS-9051).
+ */
+export const DEFAULT_CLAIM_TTL_SECONDS = 1800;
 
 /** HS-8970 — poison-ticket dead-letter. A ticket may be claimed at most this many
  *  times without completing; the (MAX+1)-th claim is refused by `claimNext`, and

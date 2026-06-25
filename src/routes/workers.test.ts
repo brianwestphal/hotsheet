@@ -6,7 +6,7 @@
 // out to real `git worktree add`). The multi-worker no-double-claim flow is proven
 // at the DB layer in `workers/workerLoop.test.ts`, so it isn't repeated here.
 import { execFileSync } from 'child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
@@ -98,5 +98,63 @@ describe('POST /api/workers/launch — real git (HS-8969)', () => {
     const app = appFor(ownerData);
     const res = await app.request('/api/workers/launch', post({}));
     expect(res.status).toBe(400);
+  });
+});
+
+// HS-9048 — owner-side branch integration endpoints against a real temp git repo.
+describe('worker integration endpoints — real git (HS-9048)', () => {
+  let base: string;
+  let repoRoot: string;
+  let ownerData: string;
+
+  function commitFileOn(branch: string, file: string, content: string): void {
+    execFileSync('git', ['checkout', '-q', '-B', branch], { cwd: repoRoot });
+    writeFileSync(join(repoRoot, file), content);
+    execFileSync('git', ['add', file], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-q', '-m', `work ${file}`], { cwd: repoRoot });
+  }
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'hs-worker-integ-'));
+    repoRoot = join(base, 'repo');
+    mkdirSync(repoRoot, { recursive: true });
+    gitInit(repoRoot);
+    ownerData = join(repoRoot, '.hotsheet');
+    mkdirSync(ownerData, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it('GET /api/workers/integratable lists ready hotsheet/* branches + the target', async () => {
+    commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+
+    const res = await appFor(ownerData).request('/api/workers/integratable');
+    expect(res.status).toBe(200);
+    const data = await res.json() as { target: string; branches: { branch: string; ahead: number }[] };
+    expect(data.target).toBe('main');
+    expect(data.branches.map(b => b.branch)).toEqual(['hotsheet/worker-1']);
+  });
+
+  it('POST /api/workers/integrate merges a ready branch into the target', async () => {
+    commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+
+    const res = await appFor(ownerData).request('/api/workers/integrate', post({ branch: 'hotsheet/worker-1' }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, status: 'merged' });
+    expect(execFileSync('git', ['log', '--oneline', 'main'], { cwd: repoRoot, encoding: 'utf-8' })).toContain('work a.txt');
+  });
+
+  it('returns 400 on a non-git project', async () => {
+    const nonGit = mkdtempSync(join(tmpdir(), 'hs-integ-nogit-'));
+    try {
+      const res = await appFor(nonGit).request('/api/workers/integratable');
+      expect(res.status).toBe(400);
+    } finally {
+      rmSync(nonGit, { recursive: true, force: true });
+    }
   });
 });

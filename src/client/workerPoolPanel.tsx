@@ -9,15 +9,13 @@
 // ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
 // layer onto these tiles later.
 import {
-  drainAllPoolWorkers, drainPoolWorker, getSuggestedWorkerCount, getTicketPartition, getWorkerPool, launchWorker,
+  drainAllPoolWorkers, drainPoolWorker, getWorkerPool, launchWorker,
   type PoolState, registerPoolWorker, removePoolWorker, removeWorktree,
   setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
-import { confirmDialog } from './confirm.js';
-import { dispatchAndReport, dispatchTicketsToWorker } from './dispatch.js';
+import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
-import { openPartitionEditor } from './partitionEditor.js';
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
 import { showToast } from './toast.js';
 
@@ -31,10 +29,22 @@ let pendingAdds = 0;
 
 const POLL_MS = 3000;
 /** A small machine-sensible ceiling so the stepper can't accidentally fork-bomb. */
-const MAX_TARGET = 16;
+export const MAX_TARGET = 16;
+
+/** HS-9039 — a single "pool changed" listener the engine notifies after a
+ *  background add/cleanup, so the open panel re-renders without the engine
+ *  holding a DOM reference. Null when no panel is open (e.g. headless auto mode,
+ *  which re-syncs on its own timer). */
+type PoolChangeListener = () => void;
+let onPoolChanged: PoolChangeListener | null = null;
+export function setPoolChangeListener(listener: PoolChangeListener | null): void {
+  onPoolChanged = listener;
+}
+function notifyPoolChanged(): void { onPoolChanged?.(); }
 
 export function closeWorkerPoolPanel(): void {
   if (pollTimer !== null) { clearInterval(pollTimer); pollTimer = null; }
+  setPoolChangeListener(null);
   if (activeOverlay !== null) {
     activeOverlay.remove();
     activeOverlay = null;
@@ -121,7 +131,7 @@ export function renderWorkerTile(
  *  tests. `target` is the server's stored target; `running` is the live count. */
 export function renderPoolControls(
   controlsEl: HTMLElement, target: number, running: number,
-  onStep: (delta: number) => void, onDrainAll: () => void, onSuggest: () => void, onPartition: () => void,
+  onStep: (delta: number) => void, onDrainAll: () => void,
 ): void {
   controlsEl.replaceChildren(toElement(
     <div className="worker-pool-controls-inner">
@@ -132,16 +142,12 @@ export function renderPoolControls(
         <span className="worker-pool-running">{`${String(running)} running`}</span>
       </div>
       <div className="worker-pool-controls-right">
-        <button type="button" className="btn btn-sm worker-pool-suggest" title="Let AI suggest a worker count for the current Up Next set">AI: suggest</button>
-        <button type="button" className="btn btn-sm worker-pool-partition" disabled={running === 0} title="Let AI split Up Next across the running workers, then dispatch">AI: partition</button>
         <button type="button" className="btn btn-sm worker-pool-drain-all" disabled={running === 0}>Drain all</button>
       </div>
     </div>,
   ));
   controlsEl.querySelector('.worker-pool-step-up')?.addEventListener('click', () => onStep(1));
   controlsEl.querySelector('.worker-pool-step-down')?.addEventListener('click', () => onStep(-1));
-  controlsEl.querySelector('.worker-pool-suggest')?.addEventListener('click', () => onSuggest());
-  controlsEl.querySelector('.worker-pool-partition')?.addEventListener('click', () => onPartition());
   controlsEl.querySelector('.worker-pool-drain-all')?.addEventListener('click', () => onDrainAll());
 }
 
@@ -166,13 +172,34 @@ async function cleanupStopped(w: WorkerSlotView): Promise<void> {
   }
 }
 
-/** Fetch + render the pool into `bodyEl`, refresh the controls, auto-clean any
- *  stopped workers, and reconcile the live count toward the target. Exported for
- *  tests. */
+/** HS-9039 — headless pool sync (NO DOM): fetch the pool, auto-clean any finished
+ *  workers, and reconcile the live count toward the target. Shared by the panel
+ *  (which then renders) and headless auto mode (`workerAutoMode.ts`), which
+ *  re-syncs on its own timer. Throws if the pool can't be fetched — callers decide
+ *  how to surface that (the panel renders an error tile; auto mode ignores + retries). */
+export async function syncPoolHeadless(): Promise<PoolState> {
+  const pool = await getWorkerPool();
+  // Auto-clean finished workers (best-effort, in the background): gracefully
+  // drained (`stopped`) or reaped-as-dead (`dead`, HS-8972). Toast once per reap
+  // (guarded by `cleaningUp` so a mid-cleanup poll doesn't re-toast). On
+  // completion, notify the open panel (if any) to re-render.
+  for (const w of pool.workers) {
+    if ((w.state === 'stopped' || w.state === 'dead') && !cleaningUp.has(w.worker)) {
+      if (w.state === 'dead') showToast(`Worker ${w.label} looked unresponsive — reaped`);
+      void cleanupStopped(w).then(notifyPoolChanged);
+    }
+  }
+  // Reconcile the live count toward the target (HS-8971).
+  reconcile(pool);
+  return pool;
+}
+
+/** Fetch + render the pool into `bodyEl` and refresh the controls. The data work
+ *  (cleanup + reconcile) is delegated to `syncPoolHeadless`. Exported for tests. */
 export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
   let pool: PoolState;
   try {
-    pool = await getWorkerPool();
+    pool = await syncPoolHeadless();
   } catch (e) {
     bodyEl.replaceChildren(toElement(<div className="worker-pool-error">Couldn't load the worker pool: {getErrorMessage(e)}</div>));
     return;
@@ -193,31 +220,18 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
   if (controlsEl) {
     renderPoolControls(controlsEl, pool.targetN, activeCount(pool),
       (delta) => void handleStep(pool, delta, bodyEl),
-      () => void handleDrainAll(bodyEl),
-      () => void handleSuggest(bodyEl),
-      () => void handlePartition(pool, bodyEl));
+      () => void handleDrainAll(bodyEl));
   }
-  // Auto-clean finished workers (best-effort, in the background): gracefully
-  // drained (`stopped`) or reaped-as-dead (`dead`, HS-8972). Toast once per reap
-  // (guarded by `cleaningUp` so a mid-cleanup poll doesn't re-toast).
-  for (const w of pool.workers) {
-    if ((w.state === 'stopped' || w.state === 'dead') && !cleaningUp.has(w.worker)) {
-      if (w.state === 'dead') showToast(`Worker ${w.label} looked unresponsive — reaped`);
-      void cleanupStopped(w).then(() => refreshPool(bodyEl));
-    }
-  }
-  // Reconcile the live count toward the target (HS-8971).
-  reconcile(pool, bodyEl);
 }
 
 /** Add/drain to move the live worker count toward `pool.targetN`. Idempotent +
  *  guarded by `pendingAdds` so concurrent polls don't over-add. Scale-down always
  *  uses graceful drain (never kills mid-ticket); idle workers are drained first. */
-function reconcile(pool: PoolState, bodyEl: HTMLElement): void {
+function reconcile(pool: PoolState): void {
   const target = pool.targetN;
   const active = activeCount(pool) + pendingAdds;
   if (active < target) {
-    for (let i = 0; i < target - active; i++) void addOneWorker(bodyEl);
+    for (let i = 0; i < target - active; i++) void addOneWorker();
   } else if (active > target) {
     const candidates = [
       ...pool.workers.filter(w => w.state === 'idle'),
@@ -238,8 +252,9 @@ function nextWorkerName(existing: WorkerSlotView[]): string {
 }
 
 /** Launch + open + register one worker. On failure, lower the target by one so the
- *  reconciler doesn't retry the same failing launch every poll. */
-async function addOneWorker(bodyEl: HTMLElement): Promise<void> {
+ *  reconciler doesn't retry the same failing launch every poll. Notifies the open
+ *  panel (if any) to re-render once the launch settles. */
+async function addOneWorker(): Promise<void> {
   pendingAdds++;
   try {
     const pool = await getWorkerPool();
@@ -260,7 +275,7 @@ async function addOneWorker(bodyEl: HTMLElement): Promise<void> {
     } catch { /* best-effort target backoff */ }
   } finally {
     pendingAdds--;
-    await refreshPool(bodyEl);
+    notifyPoolChanged();
   }
 }
 
@@ -288,76 +303,6 @@ async function handleDrain(w: WorkerSlotView, pool: PoolState, bodyEl: HTMLEleme
   } catch (e) {
     showToast(`Drain failed: ${getErrorMessage(e)}`);
   }
-}
-
-/** HS-8963 — ask the AI (or the heuristic fallback) to suggest a worker count for
- *  the current Up Next set, then offer to apply it (the owner confirms — they
- *  always set the actual N). */
-async function handleSuggest(bodyEl: HTMLElement): Promise<void> {
-  let suggestion;
-  try {
-    suggestion = await getSuggestedWorkerCount();
-  } catch (e) {
-    showToast(`Couldn't get a suggestion: ${getErrorMessage(e)}`);
-    return;
-  }
-  if (suggestion.n === 0) {
-    showToast(suggestion.rationale);
-    return;
-  }
-  const apply = await confirmDialog({
-    title: `Suggested: ${String(suggestion.n)} worker${suggestion.n === 1 ? '' : 's'}`,
-    message: `${suggestion.rationale}\n\nSet the target to ${String(suggestion.n)}?`,
-    confirmLabel: `Set target to ${String(suggestion.n)}`,
-  });
-  if (!apply) return;
-  try {
-    await setPoolTarget({ targetN: suggestion.n });
-    await refreshPool(bodyEl);
-  } catch (e) {
-    showToast(`Couldn't set worker count: ${getErrorMessage(e)}`);
-  }
-}
-
-/** HS-8965 — ask the AI (or round-robin fallback) to partition the unblocked Up
- *  Next set across the running workers, show the proposed split, and on confirm
- *  dispatch each chunk to its worker. */
-async function handlePartition(pool: PoolState, bodyEl: HTMLElement): Promise<void> {
-  const live = pool.workers
-    .filter(w => w.state === 'idle' || w.state === 'working')
-    .map(w => ({ worker: w.worker, label: w.label }));
-  if (live.length === 0) {
-    showToast('Add a worker first, then partition Up Next across the pool.');
-    return;
-  }
-  let assignments;
-  try {
-    assignments = await getTicketPartition({ workers: live });
-  } catch (e) {
-    showToast(`Couldn't partition: ${getErrorMessage(e)}`);
-    return;
-  }
-  const nonEmpty = assignments.filter(a => a.ticketIds.length > 0);
-  if (nonEmpty.length === 0) {
-    showToast('Nothing to partition — no unblocked Up Next tickets.');
-    return;
-  }
-  // HS-8977 — open the editable overlay so the owner can move tickets between
-  // workers before dispatching (replaces the old read-only confirm preview).
-  openPartitionEditor(nonEmpty, async (chunks) => {
-    if (chunks.length === 0) return;
-    let dispatched = 0;
-    const failures: string[] = [];
-    for (const a of chunks) {
-      const r = await dispatchTicketsToWorker(a.worker, a.label, a.ticketIds);
-      dispatched += r.dispatched;
-      failures.push(...r.failures);
-    }
-    showToast(failures.length === 0
-      ? `Dispatched ${String(dispatched)} ticket${dispatched === 1 ? '' : 's'} across ${String(chunks.length)} worker${chunks.length === 1 ? '' : 's'}`
-      : `Dispatched ${String(dispatched)}; ${String(failures.length)} failed (${[...new Set(failures)].join('; ')})`);
-    await refreshPool(bodyEl);
-  });
 }
 
 /** HS-8975 — toggle a worker's queue-only mode (work only dispatched tickets,
@@ -406,6 +351,9 @@ export function openWorkerPoolPanel(): void {
 
   document.body.appendChild(overlay);
   activeOverlay = overlay;
+  // Re-render whenever the engine reports a background change (a launch/cleanup
+  // started by `syncPoolHeadless`, including ones driven by headless auto mode).
+  setPoolChangeListener(() => void refreshPool(bodyEl));
   void refreshPool(bodyEl);
   pollTimer = setInterval(() => void refreshPool(bodyEl), POLL_MS);
 }

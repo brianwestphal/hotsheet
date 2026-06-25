@@ -251,3 +251,71 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
   (§90.5.2).
 - **§46 epic (HS-7940/7944/7945/7946):** off-box remote workers only; not needed
   for single-machine Phase D.
+
+## 89.7 Branch integration workflow (HS-9044) — ✅ encoded in the skills
+
+Until HS-9044, a worker's branch was just **kept** on drain and never merged —
+work accumulated on `hotsheet/*` branches with no path back to the target. HS-9044
+encodes an **owner-as-integrator** workflow into the `/hotsheet` + `/hotsheet-worker`
+skills (`src/skills.ts`, `SKILL_VERSION` → 14):
+
+- **Why the owner integrates (not the workers):** in the worktree model the target
+  branch (usually `main`) is checked out in the **owner's** worktree, so git won't
+  let a worker — in its own worktree on its own branch — write/merge into the
+  target. The decision (2026-06-25, maintainer): the main `/hotsheet` agent is the
+  **single writer/integrator** to the target; workers prepare their branches but
+  never write the target. (Alternatives considered: workers self-integrate via a
+  fast-forward + lock when the owner's worktree is clean; or per-worker clones with
+  a shared remote. The single-writer model is the safe fit for the shared-worktree
+  setup and avoids races on the target.)
+- **Workers** (`/hotsheet-worker`): after doing the work they **commit** it on their
+  branch (scoped, never `git push` without permission), then **rebase onto the
+  latest target** to stay current — resolving trivial conflicts, aborting + leaving
+  a `FEEDBACK NEEDED:` note for non-trivial ones. They **hand off** (leave commits
+  on the branch); they do not merge the target.
+- **Owner** (`/hotsheet`): keeps the target current (`git fetch` + `pull --rebase`),
+  then **integrates ready worker branches** (`hotsheet/*` ahead of the target) in
+  ticket-priority order, running the gates after each merge, auto-resolving trivial
+  conflicts and **asking** on the hard ones. Local integration only — no push
+  without explicit permission.
+- **Staying up to date** applies to everyone: both skills rebase/pull onto the
+  latest target before working so changes on the target propagate to every worktree.
+
+**"Merge pending" indicator (HS-9045).** A `pending_integration` boolean column on
+`tickets` (migration in `connection.ts`; in `TicketSchema`; settable via
+`PATCH /api/tickets/:id` + the `hotsheet_update_ticket` MCP tool, `CHANNEL_VERSION`
+→ 14) tracks the gap between "a worker completed a ticket on its branch" and "the
+owner integrated it." The worker sets `pending_integration: true` when it completes
+a ticket whose code it committed; the owner clears it (`false`) when it merges the
+branch. A completed ticket carrying the flag renders a **"merge pending"** badge
+(amber, in the claimed slot) + a `.pending-merge` row accent (`ticketRow.tsx` +
+`styles.scss`), so the maintainer can see at a glance which completed work is done
+but not yet on the target. Default false ⇒ existing + owner-direct-completed tickets
+are never flagged. (Until the HS-9048 tooling lands, the agents set/clear the flag
+by following the skill prose.)
+
+**Programmatic integration helpers (HS-9048).** The mechanical, deterministic git
+core is now a real module + endpoints (so the owner agent doesn't re-derive it from
+prose), in `src/workers/integrate.ts`:
+
+- `detectTargetBranch(repoRoot)` — robustly resolves the target: the remote default
+  (`origin/HEAD`) → local `main`/`master` → the current branch.
+- `listReadyBranches(repoRoot, target)` — the `hotsheet/*` branches **ahead** of the
+  target (with ahead/behind counts) = the integratable work.
+- `integrateBranch(repoRoot, branch, target)` — one **safe merge**: guards that the
+  owner worktree is **clean** (`dirty-tree`) and **on the target** (`not-on-target`),
+  then `git merge --no-ff`; on conflict it captures the conflicted files + **aborts**
+  cleanly (`conflict`) for the agent to resolve/ask; **never pushes**.
+
+Exposed as `GET /api/workers/integratable` (`{ target, branches }`) +
+`POST /api/workers/integrate` (`{ branch }` → the structured result); typed callers
+`getIntegratableBranches` / `integrateWorkerBranch` in `src/api/workers.ts`. The
+`/hotsheet` skill (`SKILL_VERSION` → 17) uses these instead of hand-rolling git.
+**Judgment stays with the agent** — it runs the gates after a `merged`, and resolves
+or asks on a `conflict`; the helper deliberately does NOT auto-resolve conflicts or
+run gates. Tests: `workers/integrate.test.ts` (real-git) + `routes/workers.test.ts`.
+
+Still open (smaller follow-up): an **explicit "branch ready" signal** (a per-worker
+flag/note when a worker has committed + rebased) so the owner integrates
+deterministically rather than enumerating `listReadyBranches`; and having the
+integrate helper optionally run the gates itself.

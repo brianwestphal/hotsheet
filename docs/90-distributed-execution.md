@@ -80,11 +80,17 @@ started" — it just additionally carries a live lease.
 
 A claim without a lease leaks forever if a worker dies. Each claim carries a TTL:
 
-- **TTL:** reuse the Announcer live-mode lease shape (`src/announcer/liveGenerator.ts`,
-  `LIVE_LEASE_MS = 90_000`). Default **claim lease = 120 s** (a unit of agent work
-  is longer than a "still listening" heartbeat; tune in implementation).
+- **TTL:** Default **claim lease = 30 min** (`DEFAULT_CLAIM_TTL_SECONDS = 1800`,
+  raised from 120 s in **HS-9050**). The original 120 s assumed a timer-driven
+  heartbeat (true for the programmatic `workerLoop.ts`, which renews every TTL/3),
+  but the production worker is the INTERACTIVE `/hotsheet-worker` Claude agent that
+  works in long silent bursts and renews only when it remembers — so 120 s caused
+  leases to expire mid-work. 30 min gives ample headroom; high-effort tickets can
+  claim/renew up to the 3600 s (1 h) max. Trade-off: a crashed worker's ticket now
+  waits up to 30 min for lazy reclaim (HS-9051 follow-up: have the zombie reap
+  force-release a dead worker's leases to keep crash recovery fast).
 - **Renewal (heartbeat):** the worker calls `renew-lease` on a cadence well inside
-  the TTL (e.g. every 30–45 s) while it holds the ticket. Renewal just pushes
+  the TTL while it holds the ticket. Renewal just pushes
   `claim_lease_expires_at = now() + TTL`.
 - **Expiry + reclaim:** two complementary mechanisms, mirroring the Announcer's
   lazy-prune + the §75 scheduler:
@@ -292,11 +298,17 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
 
 ## 90.8 Observability
 
-- **Claimed-by chip (✅ shipped, HS-8864):** each in-flight ticket shows a
-  `⚙ <worker> · m:ss` chip — on its **row** and the **detail header** — naming the
-  holding worker (`worker_label`, else `claimed_by`) with a live lease countdown,
-  flipping to a pulsing **stale** state within 30 s of (or past) expiry (about to
-  be reclaimed). Fed by the reactive `claimsStore` (`src/client/claimsStore.ts`)
+- **Claimed-by chip (✅ shipped, HS-8864; countdown trimmed HS-9041):** each
+  in-flight ticket shows a `⚙ <worker>` chip — on its **row** and the **detail
+  header** — naming the holding worker (`worker_label`, else `claimed_by`). The
+  `m:ss` lease countdown is **hidden while the lease is healthy** (it's noise — a
+  renewing worker keeps it topped up) and only appears once the lease is **running
+  low** (≤ `LEASE_COUNTDOWN_VISIBLE_MS` = 60 s, half the 120 s default TTL), in a
+  **warning** (amber) tint; it escalates to the pulsing **stale** red state within
+  30 s of (or past) expiry (about to be reclaimed). The lease time stays in the
+  chip's tooltip at all times. (HS-9041 — a literal "< 2 min" rule was rejected:
+  the default lease TTL *is* 2 min, so it would show the countdown always.) Fed by
+  the reactive `claimsStore` (`src/client/claimsStore.ts`)
   off `GET /api/tickets/claims`; the chip + lease helpers are in
   `src/client/claimedByChip.tsx`. **Poll-based for now** (5 s claims poll + a 1 s
   countdown tick) — when the HS-7945 bus ships, `applyClaims` is driven by pushed
@@ -379,8 +391,10 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
 
 ## 90.11 Open questions
 
-- Exact lease TTL + renewal cadence (start 120 s / 40 s; tune under real agent
-  runtimes).
+- ~~Exact lease TTL + renewal cadence (start 120 s / 40 s; tune under real agent
+  runtimes).~~ **Tuned (HS-9050):** default raised to 30 min after observing
+  interactive-agent leases expire mid-work; high-effort tickets scale up to the
+  3600 s max; the programmatic loop still heartbeats at TTL/3.
 - `claim-next` fairness when the owner mixes dispatch + self-claim heavily (is
   starvation possible for low-priority self-claim workers? likely fine given the
   small N).

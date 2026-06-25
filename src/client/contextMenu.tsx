@@ -5,7 +5,7 @@ import { claimForTicket } from './claimsStore.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
 import { buildFeedbackNav, getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
-import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_SEND, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import { buildCombinedReaderEntries, openReaderOverlay } from './readerOverlay.js';
@@ -356,7 +356,7 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
         label: w.currentTicket !== null ? `${w.label} (busy)` : w.label,
         action: () => { void dispatchAndReport(w.worker, w.label, dispatchIds).then(() => { void loadTickets(); }); },
       }));
-      const item = buildSubmenuItem('Dispatch to worker', subItems);
+      const item = buildSubmenuItem('Dispatch to worker', subItems, ICON_SEND);
       const insertBefore = menu.querySelector<HTMLElement>('.context-menu-separator-backlog');
       if (insertBefore) menu.insertBefore(item, insertBefore);
       else menu.appendChild(item);
@@ -473,16 +473,22 @@ interface SubItem {
   action: () => void;
 }
 
-function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[]) {
-  menu.appendChild(buildSubmenuItem(label, items));
+function addSubmenuItem(menu: HTMLElement, label: string, items: SubItem[], icon?: string | SafeHtml) {
+  menu.appendChild(buildSubmenuItem(label, items, icon));
 }
 
-/** HS-8964 \u2014 build (but don't append) a submenu item, so async callers can
- *  insert it at a specific anchor (the "Dispatch to worker\u2026" block fetches the
- *  live worker pool after the menu is already positioned). */
-function buildSubmenuItem(label: string, items: SubItem[]): HTMLElement {
+/** HS-8964 - build (but don't append) a submenu item, so async callers can
+ *  insert it at a specific anchor (the "Dispatch to worker" block fetches the
+ *  live worker pool after the menu is already positioned). An optional leading
+ *  `icon` (HS-9037) renders the same `dropdown-icon` glyph the action items use,
+ *  so an icon'd submenu header lines up with its neighbors. */
+function buildSubmenuItem(label: string, items: SubItem[], icon?: string | SafeHtml): HTMLElement {
   const item = toElement(
     <div className="context-menu-item has-submenu">
+      {icon !== undefined && icon !== '' ? <span className="dropdown-icon">{
+        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
+        typeof icon === 'string' ? raw(icon) : icon
+      }</span> : null}
       <span className="context-menu-label">{label}</span>
       <span className="context-menu-arrow">{'\u25B8'}</span>
     </div>

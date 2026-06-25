@@ -17,6 +17,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { applyClaims } from './claimsStore.js';
 import { copyTickets } from './clipboard.js';
 import { setupColumnCardEffects } from './columnView.js';
 import { toElement } from './dom.js';
@@ -54,6 +55,10 @@ function makeTicket(id: number, overrides: Partial<Ticket> = {}): Ticket {
 beforeEach(() => {
   _ticketsStoreForTesting.reset();
   _clearPerTicketSignalsForTesting();
+  // Clear any distributed-execution claims leaked from a prior test file — the
+  // claimed-by/merge-pending row effect reads `claimsByTicketId`, so a stray claim
+  // for a reused ticket id would render the claim chip instead of the badge.
+  applyClaims([]);
   // Ensure the active project secret check in `cutTicketIdsSignal`
   // resolves to undefined so the cut tests don't accidentally pull
   // project state from a prior test. Clearing the clipboard is a
@@ -124,6 +129,29 @@ describe('setupTicketRowEffects (HS-8335) — list-view reactivity', () => {
     expect(row.classList.contains('completed')).toBe(true);
     ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'started' }));
     expect(row.classList.contains('completed')).toBe(false);
+
+    dispose();
+  });
+
+  // HS-9045 — a completed-but-unmerged ticket gets the .pending-merge class + a
+  // "merge pending" badge in the claimed slot; both clear once the owner integrates.
+  it('shows the pending-merge class + badge for a completed, unmerged ticket', () => {
+    const t = makeTicket(1, { status: 'started', pending_integration: false });
+    ticketsStore.actions.setTickets([t]);
+    const row = buildMinimalListRow(t);
+    row.appendChild(toElement(<span className="ticket-claimed-slot"></span>));
+    document.body.appendChild(row);
+    const dispose = setupTicketRowEffects(row, t);
+
+    // Worker completes the ticket on its own branch (not yet merged).
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: true }));
+    expect(row.classList.contains('pending-merge')).toBe(true);
+    expect(row.querySelector('.ticket-pending-merge')).not.toBeNull();
+
+    // Owner integrates the branch → flag cleared → indicator gone.
+    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: false }));
+    expect(row.classList.contains('pending-merge')).toBe(false);
+    expect(row.querySelector('.ticket-pending-merge')).toBeNull();
 
     dispose();
   });

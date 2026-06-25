@@ -214,6 +214,18 @@ pageRoutes.get('/', (c) => {
               <span className="sidebar-git-branch"></span>
               <span className="sidebar-git-counts"></span>
             </div>
+            {/* HS-9039 — "Auto" worker-pool switch. When on, Hot Sheet sizes a
+                pool of parallel worktree workers to the current Up Next set and
+                lets them self-claim the work (no manual stepper/partition). Shown
+                alongside the play section (hidden until the channel is enabled);
+                bound + state-synced by `workerAutoMode.ts`. */}
+            <div className="sidebar-worker-auto" id="sidebar-worker-auto" style="display:none">
+              <label className="worker-auto-toggle" title="Automatically size a pool of parallel worktree workers to the current Up Next set, and let them self-claim the work">
+                <input type="checkbox" id="worker-auto-checkbox" className="worker-auto-checkbox" />
+                <span className="worker-auto-switch" aria-hidden="true"></span>
+                <span className="worker-auto-label">Auto worker pool</span>
+              </label>
+            </div>
             <div className="sidebar-channel-play" id="channel-play-section" style="display:none">
               <button className="channel-play-btn" id="channel-play-btn" title="Run worklist (double-click for auto mode)">
                 <span className="channel-play-icon" id="channel-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>

@@ -113,6 +113,13 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
     const done = t.status === 'completed' || t.status === 'verified';
     row.classList.toggle('completed', done);
 
+    // HS-9045 — .pending-merge: a worker completed this ticket on its own branch
+    // but the work hasn't been integrated into the target branch yet (docs/89
+    // §89.7). Only meaningful while still `completed` (cleared once integrated /
+    // reopened). Drives the distinct row styling + the "merge pending" badge.
+    const pendingMerge = t.status === 'completed' && t.pending_integration === true;
+    row.classList.toggle('pending-merge', pendingMerge);
+
     // .up-next class
     row.classList.toggle('up-next', t.up_next);
 
@@ -197,15 +204,29 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
   // claim set changes) and `nowTick` ONLY when this ticket is claimed (so an
   // unclaimed row doesn't re-render every second). Separate effect: distributed-
   // execution state is orthogonal to the per-ticket signal.
+  // HS-9045 — the same slot shows a "merge pending" badge when a completed ticket
+  // hasn't been integrated yet (and isn't currently claimed). Reads the live
+  // ticket signal so it re-fires when `pending_integration` / `status` change.
   const claimedSlot = row.querySelector<HTMLElement>('.ticket-claimed-slot');
   if (claimedSlot !== null) {
     disposers.push(effect(() => {
+      // Read BOTH signals unconditionally so the effect always subscribes to the
+      // ticket signal too — otherwise, on a run that early-returns for a live
+      // claim, it would drop its ticket-signal subscription and miss a later
+      // `pending_integration` flip (HS-9045).
       const claim = claimsByTicketId.value.get(ticket.id);
-      if (claim === undefined) {
-        if (claimedSlot.firstChild !== null) claimedSlot.replaceChildren();
+      const t = sigs.ticket.value;
+      if (claim !== undefined) {
+        claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
         return;
       }
-      claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
+      if (t.status === 'completed' && t.pending_integration === true) {
+        claimedSlot.replaceChildren(toElement(
+          <span className="ticket-pending-merge" title="Completed by a worker — not yet merged into the target branch (docs/89 §89.7)">merge pending</span>,
+        ));
+      } else if (claimedSlot.firstChild !== null) {
+        claimedSlot.replaceChildren();
+      }
     }));
   }
 

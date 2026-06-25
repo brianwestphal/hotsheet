@@ -158,6 +158,10 @@ const UpdateTicketInputSchema = z.object({
   tags: z.string().optional().describe('Tags JSON array as a string, e.g. \'["urgent","docs"]\''),
   title: z.string().optional(),
   details: z.string().optional(),
+  // HS-9045 — set true when a WORKER completes a ticket whose code is committed on
+  // its own branch but not yet merged into the target (drives the "pending merge"
+  // indicator); the OWNER sets it false when it integrates the branch (docs/89 §89.7).
+  pending_integration: z.boolean().optional().describe('Worker-completed but not yet merged into the target branch. A worker sets true on completion; the owner clears it when it integrates the branch.'),
 });
 
 const CreateTicketInputSchema = z.object({
@@ -214,12 +218,12 @@ const DuplicateTicketsInputSchema = z.object({
 const ClaimNextInputSchema = z.object({
   worker: z.string().min(1).describe('This worker\'s identity (stable per worker, e.g. "worker-2")'),
   label: z.string().nullish().describe('Optional human-friendly worker label shown in the UI'),
-  ttlSeconds: z.number().int().positive().max(3600).optional().describe('Lease TTL in seconds (default 120)'),
+  ttlSeconds: z.number().int().positive().max(3600).optional().describe('Lease TTL in seconds (default 1800 = 30 min; raise toward the 3600 max for a high-effort ticket)'),
 });
 const RenewLeaseInputSchema = z.object({
   id: z.number().int().describe('Ticket id whose lease to renew (heartbeat)'),
   worker: z.string().min(1).describe('The worker holding the claim (must match)'),
-  ttlSeconds: z.number().int().positive().max(3600).optional().describe('New lease TTL in seconds (default 120)'),
+  ttlSeconds: z.number().int().positive().max(3600).optional().describe('New lease TTL in seconds (default 1800 = 30 min; raise toward the 3600 max for a high-effort ticket)'),
 });
 const ReleaseInputSchema = z.object({
   id: z.number().int().describe('Ticket id to release'),

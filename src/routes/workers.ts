@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 
 import {
+  IntegrateReqSchema,
   LaunchWorkerReqSchema, PartitionReqSchema, RegisterWorkerReqSchema,
   SetQueueOnlyReqSchema, SetTargetReqSchema,
 WorkerRefSchema,
@@ -16,6 +17,7 @@ import { getClaims } from '../db/claims.js';
 import { isGitRepo } from '../gitignore.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { detectTargetBranch, integrateBranch, listReadyBranches } from '../workers/integrate.js';
 import { prepareWorker } from '../workers/launchWorker.js';
 import { partitionTickets } from '../workers/partition.js';
 import {
@@ -139,4 +141,34 @@ workerRoutes.post('/workers/partition', async (c) => {
   const parsed = parseBody(PartitionReqSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   return c.json({ assignments: await partitionTickets(parsed.data.workers) });
+});
+
+// HS-9048 — owner-side branch integration (docs/89 §89.7). The owner is the single
+// integrator for worker branches; these expose the deterministic git core.
+
+/** GET /api/workers/integratable — the detected target branch + the ready worker
+ *  branches (`hotsheet/*` ahead of the target). */
+workerRoutes.get('/workers/integratable', async (c) => {
+  const repoRoot = projectRootFromDataDir(c.get('dataDir'));
+  if (!isGitRepo(repoRoot)) return c.json({ error: 'Not a git repository' }, 400);
+  try {
+    const target = await detectTargetBranch(repoRoot);
+    const branches = await listReadyBranches(repoRoot, target);
+    return c.json({ target, branches });
+  } catch (e) {
+    return c.json({ error: getErrorMessage(e) }, 500);
+  }
+});
+
+/** POST /api/workers/integrate — merge one ready worker branch into the target
+ *  (clean-tree guarded, conflict → abort + report, never pushes). Always 200 with
+ *  the structured `IntegrateResult`; the caller branches on `status`. */
+workerRoutes.post('/workers/integrate', async (c) => {
+  const repoRoot = projectRootFromDataDir(c.get('dataDir'));
+  if (!isGitRepo(repoRoot)) return c.json({ error: 'Not a git repository' }, 400);
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(IntegrateReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const target = await detectTargetBranch(repoRoot);
+  return c.json(await integrateBranch(repoRoot, parsed.data.branch, target));
 });

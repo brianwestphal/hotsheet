@@ -53,6 +53,7 @@ import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
+import { bindWorkerAutoToggle, syncWorkerAutoModeUI } from './workerAutoMode.js';
 import { reconnectWsForActiveProject, startWsSync } from './wsSync.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
@@ -141,8 +142,9 @@ async function reloadAppState() {
   void applyPerProjectDrawerState();
   // Refresh sidebar stats widget for the new project
   void refreshDashboardWidget();
-  // Re-init channel for the new project context
-  void initChannel();
+  // Re-init channel for the new project context, then reflect this project's
+  // Auto-worker-pool switch (HS-9039) once the play section's visibility settles.
+  void initChannel().then(() => syncWorkerAutoModeUI());
   // Reload plugin UI for the new project
   void reloadPluginToolbar();
   // HS-8758 / §78 — the announcer is cross-project now: it keeps playing across
@@ -392,7 +394,10 @@ async function init() {
     bindAppLevelDocumentListeners();
 
     bindExternalLinkHandler();
-    void initChannel();
+    // HS-9039 — bind the Auto worker-pool switch once, then sync it to the active
+    // project after the channel section's visibility is resolved.
+    bindWorkerAutoToggle();
+    void initChannel().then(() => syncWorkerAutoModeUI());
 
     bindFileDropListeners();
     bindPasteAttachmentListener();

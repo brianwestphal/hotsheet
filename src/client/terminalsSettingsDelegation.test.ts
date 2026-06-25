@@ -17,14 +17,21 @@ import {
   loadAndRenderTerminalsSettings,
 } from './terminalsSettings.js';
 
+// HS-9015 moved the terminals editor to read its data via `loadScopedList`
+// (`settingsScopeList.tsx`), which calls `getLayeredFileSettings` — NOT the old
+// `getFileSettings`. The three terminals are placed in BOTH layers so the editor
+// renders them regardless of the active scope mode (shared / local / resolved).
+const TERMINALS_JSON = JSON.stringify([
+  { id: 't0', command: 'a', name: 'Zero' },
+  { id: 't1', command: 'b', name: 'One' },
+  { id: 't2', command: 'c', name: 'Two' },
+]);
 vi.mock('../api/index.js', () => ({
-  getFileSettings: vi.fn(() => Promise.resolve({
-    terminals: JSON.stringify([
-      { id: 't0', command: 'a', name: 'Zero' },
-      { id: 't1', command: 'b', name: 'One' },
-      { id: 't2', command: 'c', name: 'Two' },
-    ]),
+  getLayeredFileSettings: vi.fn(() => Promise.resolve({
+    shared: { terminals: TERMINALS_JSON },
+    resolved: { terminals: TERMINALS_JSON },
   })),
+  updateFileSettingsLayer: vi.fn(() => Promise.resolve({ shared: {}, resolved: {} })),
   updateFileSettings: vi.fn(() => Promise.resolve({})),
   getCommandSuggestions: vi.fn(() => Promise.resolve([])),
   destroyTerminal: vi.fn(() => Promise.resolve({})),

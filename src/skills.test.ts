@@ -134,6 +134,14 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('worklist.md');
     expect(content).toContain(`hotsheet-skill-version: ${SKILL_VERSION}`);
     expect(content).toContain('allowed-tools: Read, Grep, Glob, Edit, Write, Bash');
+    // HS-9044 — the main skill is the single integrator for worker branches.
+    expect(content).toContain('single integrator');
+    expect(content).toContain('git fetch');
+    expect(content).toMatch(/NEVER `git push`/);
+    // HS-9045 — the owner clears the merge-pending flag when it integrates.
+    expect(content).toContain('pending_integration');
+    // HS-9048 — the owner integrates via the helper endpoints.
+    expect(content).toContain('/api/workers/integrate');
   });
 
   it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {
@@ -148,6 +156,14 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('hotsheet_renew_lease');
     expect(content).toContain('hotsheet_release');
     expect(content).toContain('hotsheet_signal_done');
+    // HS-9044 — workers commit + rebase onto the target to stay current and hand
+    // off to the owner-integrator; they never write the target, never push.
+    expect(content).toContain('Staying in sync');
+    expect(content).toContain('git rebase');
+    expect(content).toMatch(/NEVER `git push`/);
+    expect(content).toContain('single integrator');
+    // HS-9045 — the worker sets the merge-pending flag on completion.
+    expect(content).toContain('pending_integration');
   });
 
   it('HS-8936 — ensureSkillsForDir dataDir override points the worktree skill at the OWNER worklist', () => {

@@ -163,3 +163,41 @@ export async function getTicketPartition(req: PartitionReq): Promise<PartitionAs
   const r = await apiCall(PartitionRespSchema, '/workers/partition', { method: 'POST', body: req });
   return r.assignments;
 }
+
+// --- HS-9048 — owner-side branch integration (docs/89 §89.7) ---
+
+export const ReadyBranchSchema = z.object({
+  branch: z.string(),
+  ahead: z.number(),
+  behind: z.number(),
+});
+export type ReadyBranch = z.infer<typeof ReadyBranchSchema>;
+
+export const IntegratableResSchema = z.object({
+  target: z.string(),
+  branches: z.array(ReadyBranchSchema),
+});
+export type IntegratableRes = z.infer<typeof IntegratableResSchema>;
+
+export const IntegrateReqSchema = z.object({ branch: z.string().min(1) });
+export type IntegrateReq = z.infer<typeof IntegrateReqSchema>;
+
+export const IntegrateResultSchema = z.object({
+  ok: z.boolean(),
+  status: z.enum(['merged', 'conflict', 'dirty-tree', 'not-on-target', 'nothing-to-integrate', 'error']),
+  conflicts: z.array(z.string()).optional(),
+  detail: z.string().optional(),
+});
+export type IntegrateResultRes = z.infer<typeof IntegrateResultSchema>;
+
+/** GET `/workers/integratable` → the detected target branch + the ready worker
+ *  branches (`hotsheet/*` ahead of the target). */
+export async function getIntegratableBranches(): Promise<IntegratableRes> {
+  return apiCall(IntegratableResSchema, '/workers/integratable');
+}
+
+/** POST `/workers/integrate` → merge one ready worker branch into the target
+ *  (owner-side; clean-tree guarded, conflict → abort + report, never pushes). */
+export async function integrateWorkerBranch(req: IntegrateReq): Promise<IntegrateResultRes> {
+  return apiCall(IntegrateResultSchema, '/workers/integrate', { method: 'POST', body: req });
+}
