@@ -791,6 +791,7 @@ The loop invariants (claim/complete/release, no-double-claim across two workers,
 The chip render + lease/stale logic + the in-flight rows are unit-tested; this covers the live poll-driven visual flow:
 
 - [ ] Claim a ticket via the API/MCP (`hotsheet_claim_next` or a worker). Within ~5 s, a `⚙ <worker>` chip appears on that ticket's **row** and (if open) its **detail header**, without a manual refresh. **HS-9041** — while the lease is healthy (a worker renewing on schedule) the chip shows just the worker name (no countdown); hovering shows the lease time in the tooltip.
+- [ ] **Column/kanban view shows the chip too (HS-9035):** switch to **column view** and claim a ticket — the `⚙ <worker>` chip appears on the ticket's **card** (under the title/tags), just like the list row, and clears on release. The "merge pending" badge (below) likewise shows on the card. (Pre-fix the worker info only showed in list view.)
 - [ ] Let a claim's lease run down (stop renewing): once under ~60 s remaining, the `m:ss` countdown appears in an **amber warning** tint and ticks down each second; within 30 s of expiry it flips to the red **stale** (pulsing) state, then reads `expired` once past.
 - [ ] Release the ticket (or it completes) → the chip clears on the next poll.
 - [ ] Open the git popover → **"In-flight work…"**: every currently-claimed ticket is listed with its worker + lease countdown; clicking a row opens that ticket's detail. Empty state shows when nothing is claimed.

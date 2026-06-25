@@ -10417,6 +10417,11 @@ label.detail-details-label {
 .ticket-claimed-slot { display: inline-flex; align-items: center; margin: 0 2px; }
 .detail-claimed-slot { display: inline-flex; align-items: center; margin-left: 8px; }
 
+// HS-9035 — column/kanban card slot: footer row under the title/tags; collapse
+// when empty so an unclaimed card isn't padded.
+.column-card-claimed-slot:empty { display: none; }
+.column-card-claimed-slot { display: flex; align-items: center; margin-top: 4px; }
+
 // HS-8864 — in-flight work overlay.
 .inflight-overlay {
   position: fixed;

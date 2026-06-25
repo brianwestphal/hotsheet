@@ -1,5 +1,7 @@
 import type { SafeHtml } from '../jsx-runtime.js';
 import { suppressAnimation } from './animate.js';
+import { renderClaimedByChip } from './claimedByChip.js';
+import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
@@ -493,6 +495,9 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
           ))}
         </div>
       ) : null}
+      {/* HS-9035 — claimed-by worker chip / merge-pending badge, populated by
+          setupColumnCardEffects (mirrors the list row's .ticket-claimed-slot). */}
+      <div className="column-card-claimed-slot"></div>
     </div>
   );
 
@@ -682,6 +687,30 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
     const cutIds = cutTicketIdsSignal.value;
     card.classList.toggle('cut-pending', cutIds.has(ticket.id));
   }));
+
+  // HS-9035 — claimed-by chip / merge-pending badge, mirroring the list row
+  // (ticketRow.tsx): list view showed the worker info but column view didn't.
+  // Reads `claimsByTicketId` + the live ticket signal (so it re-fires on claim
+  // and `pending_integration`/`status` changes); `nowTick` is read ONLY while
+  // claimed, so an unclaimed card doesn't re-render every second.
+  const claimedSlot = card.querySelector<HTMLElement>('.column-card-claimed-slot');
+  if (claimedSlot !== null) {
+    disposers.push(effect(() => {
+      const claim = claimsByTicketId.value.get(ticket.id);
+      const t = sigs.ticket.value;
+      if (claim !== undefined) {
+        claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
+        return;
+      }
+      if (t.status === 'completed' && t.pending_integration === true) {
+        claimedSlot.replaceChildren(toElement(
+          <span className="ticket-pending-merge" title="Completed by a worker — not yet merged into the target branch (docs/89 §89.7)">merge pending</span>,
+        ));
+      } else if (claimedSlot.firstChild !== null) {
+        claimedSlot.replaceChildren();
+      }
+    }));
+  }
 
   return () => {
     for (const d of disposers) {
