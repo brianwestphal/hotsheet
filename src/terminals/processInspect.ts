@@ -20,9 +20,15 @@ import { promisify } from 'util';
  * Cross-platform:
  * - macOS / Linux: `ps -o pid,ppid,comm -A` parsed once into a parent → children
  *   adjacency map. Pick the most-recently-started descendant of the PTY's pid.
- * - Windows: `wmic` / PowerShell `Get-Process`. Out of scope for v1
- *   implementation; falls back to the safe-default (assume non-exempt) so the
- *   prompt still fires.
+ * - Windows (HS-9027): PowerShell `Get-CimInstance Win32_Process` emits
+ *   `ProcessId<TAB>ParentProcessId<TAB>Name` rows, parsed by
+ *   `parseWin32ProcessOutput` into the SAME `{pid, ppid, comm}` shape so
+ *   `descendantChain` / `pickForegroundProcess` are reused unchanged. `comm`
+ *   runs through `normalizeComm`, which strips the `.exe` suffix so
+ *   `powershell.exe` / `cmd.exe` match the shell list. (`wmic` is deprecated on
+ *   modern Windows, hence `Get-CimInstance`.) The highest-pid "most recent
+ *   child" heuristic is weaker on Windows — pid allocation isn't strictly
+ *   monotonic — but it's a best-effort improvement over the old always-prompt.
  *
  * Lookup errors (process exited mid-check, OS quirks) → safe-default-prompt:
  * return `{ command: '?', isShell: false, isExempt: false }` so the prompt
@@ -110,6 +116,52 @@ export function parsePsOutput(stdout: string): PsRow[] {
     const rawComm = parts.slice(2).join(' ').trim();
     if (rawComm === '') continue;
     const comm = normalizeComm(rawComm);
+    if (comm === '') continue;
+    rows.push({ pid, ppid, comm });
+  }
+  return rows;
+}
+
+/**
+ * HS-9027 — the Windows process enumeration command. PowerShell
+ * `Get-CimInstance Win32_Process` projected to one tab-delimited line per
+ * process: `ProcessId<TAB>ParentProcessId<TAB>Name`. No header row (the
+ * `ForEach-Object` emits only the formatted strings), so `parseWin32ProcessOutput`
+ * doesn't skip one. `powershell.exe` (Windows PowerShell 5.1) ships on every
+ * Windows 10/11; `-NoProfile -NonInteractive` keeps it fast + side-effect-free.
+ * The script embeds PowerShell's backtick-t tab escape — passed literally here
+ * because `execFile` runs the binary directly (no intermediate shell).
+ */
+export const WIN32_PROCESS_EXE = 'powershell.exe';
+export const WIN32_PROCESS_ARGS: readonly string[] = [
+  '-NoProfile', '-NonInteractive', '-Command',
+  'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)" }',
+];
+
+/**
+ * HS-9027 — parse the tab-delimited `Get-CimInstance Win32_Process` output
+ * (`ProcessId`, `ParentProcessId`, `Name` per line) into the same `PsRow` shape
+ * `parsePsOutput` produces, so the platform-agnostic `descendantChain` /
+ * `pickForegroundProcess` / `collectDescendantPids` work
+ * unchanged. Tolerates CRLF line endings, blank lines, and a process whose
+ * `Name` legitimately contains a tab is impossible (Windows process names can't),
+ * so a plain tab split is safe. `Name` is normalized via `normalizeComm` (drops
+ * the `.exe` suffix). Pure + platform-independent → unit-testable on any host
+ * with captured sample output.
+ */
+export function parseWin32ProcessOutput(stdout: string): PsRow[] {
+  const rows: PsRow[] = [];
+  for (const rawLine of stdout.split('\n')) {
+    const line = rawLine.replace(/\r$/, '').trim();
+    if (line === '') continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const pid = Number.parseInt(parts[0].trim(), 10);
+    const ppid = Number.parseInt(parts[1].trim(), 10);
+    if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+    // Join any trailing parts back (defensive — a Name with a stray tab) and
+    // normalize to a plain basename (strips path + `.exe`).
+    const comm = normalizeComm(parts.slice(2).join('\t').trim());
     if (comm === '') continue;
     rows.push({ pid, ppid, comm });
   }
@@ -214,8 +266,10 @@ export function pickForegroundProcess(
  * `exemptProcesses` lists which basenames count as "exempt" for the
  * quit-confirm decision.
  *
- * Lookup failures (process exited / ps unavailable / Windows unsupported in
- * v1) return the safe-default-prompt info `{command: '?', isShell: false, isExempt: false}`.
+ * Lookup failures (process exited / ps or PowerShell unavailable) return the
+ * safe-default-prompt info `{command: '?', isShell: false, isExempt: false}`.
+ * HS-9027 — Windows now introspects via PowerShell `Get-CimInstance` instead of
+ * returning the safe default unconditionally.
  */
 export async function inspectForegroundProcess(
   rootPid: number,
@@ -225,10 +279,22 @@ export async function inspectForegroundProcess(
     return { command: '?', isShell: false, isExempt: false, error: 'invalid pid' };
   }
   if (process.platform === 'win32') {
-    // Windows path is out of scope for v1 (HS-7596 explicitly notes Windows
-    // uses Get-Process / WMI as a follow-up). Safe-default for now so the
-    // prompt fires conservatively.
-    return { command: '?', isShell: false, isExempt: false, error: 'windows unsupported in v1' };
+    // HS-9027 — Windows adapter via PowerShell `Get-CimInstance Win32_Process`.
+    let stdout = '';
+    try {
+      const result = await execFileAsync(WIN32_PROCESS_EXE, [...WIN32_PROCESS_ARGS], { encoding: 'utf8', windowsHide: true });
+      stdout = result.stdout;
+    } catch (err) {
+      return {
+        command: '?',
+        isShell: false,
+        isExempt: false,
+        error: `Get-CimInstance execution failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    const rows = parseWin32ProcessOutput(stdout);
+    const chain = descendantChain(rows, rootPid);
+    return pickForegroundProcess(chain, exemptProcesses);
   }
   let stdout = '';
   try {
@@ -331,9 +397,10 @@ export interface KillTreeResult {
  *
  * Returns a result object purely for logging / test assertions. Never
  * throws — the worst case is `bailed: true` and the original SIGHUP-only
- * behavior stands. Cross-platform note: Windows currently bails (no
- * `ps`); v1 covers macOS / Linux which is where node-pty's grandchild-
- * survival problem is observed.
+ * behavior stands. Cross-platform note (HS-9027): macOS / Linux enumerate via
+ * `ps`, Windows via PowerShell `Get-CimInstance Win32_Process`; the POSIX path
+ * is where node-pty's grandchild-survival problem is primarily observed, the
+ * Windows path is defense-in-depth alongside its job-object teardown.
  */
 export function killProcessTreeBestEffort(
   rootPid: number,
@@ -347,9 +414,6 @@ export function killProcessTreeBestEffort(
   if (!Number.isFinite(rootPid) || rootPid <= 0) {
     return { ...empty, error: 'invalid pid' };
   }
-  if (process.platform === 'win32') {
-    return { ...empty, error: 'windows unsupported in v1' };
-  }
   let rows: readonly PsRow[];
   if (psRowsProvider !== undefined) {
     try {
@@ -357,6 +421,19 @@ export function killProcessTreeBestEffort(
     } catch (err) {
       return { ...empty, error: `ps row provider failed: ${err instanceof Error ? err.message : String(err)}` };
     }
+  } else if (process.platform === 'win32') {
+    // HS-9027 — Windows: enumerate via PowerShell `Get-CimInstance Win32_Process`.
+    // The downstream `isDescendantOrSelf` ownership guard + `collectDescendantPids`
+    // BFS + `process.kill` work identically on Windows (Node maps the signal to
+    // TerminateProcess). Largely defense-in-depth — node-pty's job object usually
+    // tears the tree down already — but mirrors the POSIX grandchild-reaping path.
+    let stdout = '';
+    try {
+      stdout = execFileSync(WIN32_PROCESS_EXE, [...WIN32_PROCESS_ARGS], { encoding: 'utf8', timeout: 4000, windowsHide: true });
+    } catch (err) {
+      return { ...empty, error: `Get-CimInstance execution failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    rows = parseWin32ProcessOutput(stdout);
   } else {
     let stdout = '';
     try {
