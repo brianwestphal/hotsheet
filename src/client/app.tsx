@@ -53,6 +53,7 @@ import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
+import { initWorkerActionButtons } from './workerActionButtons.js';
 import { bindWorkerAutoToggle, syncWorkerAutoModeUI } from './workerAutoMode.js';
 import { reconnectWsForActiveProject, startWsSync } from './wsSync.js';
 
@@ -212,6 +213,10 @@ function bindAllUiHandlers(): void {
   // HS-7954 — wire the sidebar git status chip. Initial fetch happens
   // immediately; subsequent refetches driven by `/api/poll` + `window.focus`.
   initGitStatusChip();
+  // HS-9068 — wire the sidebar worker-pool + in-flight-work buttons (moved out
+  // of the git-status popover). Visibility follows the play/auto section
+  // (toggled in `channelUI.tsx`).
+  initWorkerActionButtons();
   // HS-8147 — wire the per-project tab cost chip refresh loop.
   // Subscribes to the bell-state long-poll so chip refreshes piggyback
   // on the existing cadence (§67.10.1).

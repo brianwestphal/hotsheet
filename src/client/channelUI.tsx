@@ -485,10 +485,13 @@ export async function initChannel() {
 
   // HS-9039 — the "Auto worker pool" switch lives just above the play button and
   // follows the same visibility (workers need a connected Claude to do anything).
+  // HS-9068 — the worker-pool + in-flight-work buttons share that same gate.
   const autoRow = byIdOrNull('sidebar-worker-auto');
+  const workerActionsRow = byIdOrNull('sidebar-worker-actions');
   if (!status.enabled) {
     section.style.display = 'none';
     if (autoRow) autoRow.style.display = 'none';
+    if (workerActionsRow) workerActionsRow.style.display = 'none';
     setChannelAlive(false);
     stopPermissionPolling();
     renderChannelCommands(); // Still render shell commands
@@ -496,6 +499,7 @@ export async function initChannel() {
   }
   section.style.display = '';
   if (autoRow) autoRow.style.display = '';
+  if (workerActionsRow) workerActionsRow.style.display = '';
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling(channelBusyTimeout, (t) => { channelBusyTimeout = t; });

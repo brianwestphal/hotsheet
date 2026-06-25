@@ -158,20 +158,21 @@ export function toggleDashboardMode(): void {
   enterDashboardMode();
 }
 
-/** HS-8527 — position the dashboard widget directly below the git
- *  status chip (was previously appended after the bottom-of-sidebar
- *  `#stats-bar`). The git chip itself toggles visibility based on
- *  whether the project is a git repo; the widget renders unconditionally
- *  so its position stays stable across non-git projects (it just falls
- *  in next-after the channel-play section instead). */
+/** HS-8527 — position the dashboard (stats) widget next to the git status
+ *  chip. HS-9069 — the order was swapped so the stats widget comes FIRST and
+ *  the git chip second; the widget is now placed directly ABOVE the git chip
+ *  (was below it). The git chip itself toggles visibility based on whether the
+ *  project is a git repo; the widget renders unconditionally so its position
+ *  stays stable across non-git projects (it falls before the bottom-of-sidebar
+ *  `#stats-bar` instead). */
 function placeDashboardWidget(widget: HTMLElement): void {
   const gitChip = byIdOrNull('sidebar-git-chip');
   if (gitChip !== null) {
-    gitChip.after(widget);
+    gitChip.before(widget);
     return;
   }
   const statsBar = byIdOrNull('stats-bar');
-  if (statsBar !== null) statsBar.after(widget);
+  if (statsBar !== null) statsBar.before(widget);
 }
 
 /** Initialize the dashboard sidebar widget and return the click handler. */

@@ -85,7 +85,10 @@ than losing it.
 ## 91.5 The worker-pool panel (UI) — ✅ SHIPPED (minimal, HS-8962)
 
 Shipped as a **sibling panel** `src/client/workerPoolPanel.tsx`, opened from the
-git popover's "Worker pool…" button (next to "Manage worktrees…"). It renders a
+iconic **"Worker pool" sidebar button** (`#sidebar-worker-pool-btn`, lucide
+`users`) — one of the two worker-action buttons sitting just above the "Auto
+worker pool" switch (moved off the git popover in HS-9068; wired in
+`workerActionButtons.ts`). It renders a
 tile per worker (label, state chip, current ticket from the live claims), a
 **target-N stepper** (`−  N  +` + "X running", HS-8971) the panel reconciles
 toward, a per-worker "Drain", and "Drain all". **Reconcile (HS-8971):** on every

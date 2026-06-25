@@ -114,8 +114,10 @@ create/list/remove/deleteBranch) + `api/worktrees.test.ts`.
 **UI ✅ SHIPPED (HS-8938).** `src/client/worktreesPanel.tsx` — an overlay that
 lists worktrees (main + follower badges + path), creates one (branch input +
 "New branch" checkbox → `createWorktree`), and removes one (`confirmDialog`
-danger → `removeWorktree({force})`). Opened from a "Manage worktrees…" button in
-the sidebar git popover (`gitStatusPopover.tsx`). Tests:
+danger → `removeWorktree({force})`). Opened from an iconic "Manage worktrees"
+button (lucide `git-branch`) in the sidebar git popover's **header line**, just
+before the close button (`gitStatusPopover.tsx`; moved there from the popover
+body in HS-9068). Tests:
 `client/worktreesPanel.test.ts` (row render, list/empty/error states, create +
 remove flows, Escape-to-close).
 

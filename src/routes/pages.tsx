@@ -214,6 +214,21 @@ pageRoutes.get('/', (c) => {
               <span className="sidebar-git-branch"></span>
               <span className="sidebar-git-counts"></span>
             </div>
+            {/* HS-9068 — worker-pool + in-flight-work entry points. Moved out
+                of the git-status popover onto the sidebar as two iconic buttons
+                on a single row, sitting just above the "Auto worker pool" switch.
+                Follows the same visibility as the switch (hidden until the
+                channel is enabled); wired in `app.tsx::initWorkerActionButtons`. */}
+            <div className="sidebar-worker-actions" id="sidebar-worker-actions" style="display:none">
+              <button type="button" className="sidebar-worker-action-btn" id="sidebar-worker-pool-btn" title="Worker pool">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <span>Worker pool</span>
+              </button>
+              <button type="button" className="sidebar-worker-action-btn" id="sidebar-inflight-btn" title="In-flight work">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                <span>In-flight</span>
+              </button>
+            </div>
             {/* HS-9039 — "Auto" worker-pool switch. When on, Hot Sheet sizes a
                 pool of parallel worktree workers to the current Up Next set and
                 lets them self-claim the work (no manual stepper/partition). Shown
@@ -576,12 +591,11 @@ pageRoutes.get('/', (c) => {
               <span>Telemetry</span>
             </button>
             {/* HS-8777 — Announcer gets its own tab (was a section under
-                Experimental). The beta status is shown as a blue rounded chip
-                centered beneath the tab label. */}
+                Experimental). HS-9070 — the "Beta" chip was removed now that
+                the feature is no longer considered beta. */}
             <button className="settings-tab" data-tab="announcer" id="settings-tab-announcer">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
               <span>Announcer</span>
-              <span className="settings-tab-beta">Beta</span>
             </button>
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>

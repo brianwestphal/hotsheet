@@ -2164,6 +2164,45 @@ body.cross-project-stats-active {
 }
 
 // HS-9039 — "Auto worker pool" switch, just above the play button.
+// HS-9068 — worker-pool + in-flight-work entry buttons (moved off the git
+// popover). Two equal-width iconic buttons on a single row, sitting just above
+// the "Auto worker pool" switch.
+.sidebar-worker-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px 0;
+}
+
+.sidebar-worker-action-btn {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px 6px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+
+  svg { flex: 0 0 auto; }
+
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+}
+
 .sidebar-worker-auto {
   padding: 6px 10px 0;
 }
@@ -4898,20 +4937,10 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   }
 }
 
-// HS-8777 — blue rounded "Beta" chip centered beneath a settings tab's label
-// (the column-flex `.settings-tab` already centers it). Distinct from the
-// inline `.settings-beta-chip` used next to in-panel headings.
-.settings-tab-beta {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1;
-  padding: 2px 5px;
-  border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
-  text-transform: uppercase;
-}
+// HS-8777 / HS-9070 — the blue rounded "Beta" chip that sat beneath the
+// Announcer settings-tab label was removed (the feature is no longer beta).
+// The inline `.settings-beta-chip` used next to in-panel headings is separate
+// and still in use.
 
 .settings-body {
   padding: 20px;
@@ -10267,20 +10296,34 @@ label.detail-details-label {
   overflow: hidden;
 }
 
-// HS-8938 — "Manage worktrees…" entry in the git popover.
-.git-popover-worktrees-btn {
-  margin-top: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: center;
+// HS-8938 / HS-9068 — "Manage worktrees" moved into the popover header as an
+// iconic button (was a full-width text button in the body). Mirrors the close
+// button's iconic chrome; `.git-popover-header-actions` groups it with close.
+.git-popover-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
 
-  &:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.git-popover-worktrees-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border);
+  }
 }
 
 // HS-8938 — git worktree management overlay.
@@ -10380,21 +10423,9 @@ label.detail-details-label {
 }
 
 // HS-8962 — worker-pool panel (docs/91). Reuses the worktrees overlay look.
-.git-popover-worker-pool-btn,
-.git-popover-inflight-btn {
-  margin-top: 6px;
-  width: 100%;
-  padding: 6px 8px;
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: center;
-
-  &:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-}
+// HS-9068 — the `.git-popover-worker-pool-btn` + `.git-popover-inflight-btn`
+// full-width body buttons were removed; those entry points now live on the
+// sidebar (`.sidebar-worker-action-btn`).
 
 // HS-8864 — claimed-by chip (docs/90 §90.8): which worker holds a ticket + lease.
 .claimed-by-chip {
@@ -10767,12 +10798,17 @@ label.detail-details-label {
 
 .git-popover-commits-review-all {
   margin-top: 2px;
-  align-self: flex-start;
+  // HS-9071 — stretch to the full available width of the commits column
+  // rather than hugging its text on the left.
+  align-self: stretch;
+  width: 100%;
+  text-align: center;
   font-size: 12px;
-  padding: 3px 8px;
+  padding: 5px 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
   color: var(--text-secondary);
+  cursor: pointer;
 
   &:hover {
     border-color: var(--accent);

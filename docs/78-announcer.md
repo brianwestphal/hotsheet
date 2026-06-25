@@ -734,7 +734,7 @@ current entry at the new rate. Linux/Windows OS voices don't map rate yet
 
 **Settings + Listen affordance.** `announcerSettings.tsx` binds the "Announcer"
 tab (HS-8777 — promoted from a section under Settings → Experimental to its own
-tab, whose label carries a blue rounded "Beta" chip): a per-project enable toggle
+tab; the "Beta" chip on the tab label was removed in HS-9070): a per-project enable toggle
 (`setAnnouncerEnabled`), an **Anthropic key selector** (HS-8751 — a dropdown of
 named keys from the global registry, §79, filtered to type
 `anthropic_api_key`, plus a "Default — first Anthropic key" option;

@@ -294,7 +294,7 @@ still-design HS-8962 layer below.
 is the in-memory, session-only slot registry (per project) + the drain flag;
 graceful scale-down is **drain-aware `claim-next`** (a draining worker is told to
 stop at its next pull, flipped to `stopped`, then the panel tears it down). The
-`src/client/workerPoolPanel.tsx` panel (git popover → "Worker pool…") renders a
+`src/client/workerPoolPanel.tsx` panel (sidebar → "Worker pool" button, HS-9068) renders a
 tile per worker with add / drain / drain-all. Endpoints: `GET /api/workers/pool`,
 `POST /api/workers/pool/{register,drain,drain-all,remove,target}`. The numeric
 target-N stepper + AI-suggested N ([§91.6](91-worker-pool-scaling.md), HS-8963/8971)
@@ -318,7 +318,7 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
   countdown tick) — when the HS-7945 bus ships, `applyClaims` is driven by pushed
   events instead (the render is unchanged).
 - **In-flight work view (✅ shipped, HS-8864):** `src/client/inflightPanel.tsx` — a
-  fleet-wide overlay (git popover → "In-flight work…") listing every currently-
+  fleet-wide overlay (sidebar → "In-flight" button, HS-9068) listing every currently-
   claimed ticket with its worker + lease countdown; click a row to open the ticket.
 - **Worker-pool panel (✅ shipped, HS-8962):** lists workers, their current ticket
   (from the live claims), and state; target-N stepper + drain controls. The
@@ -370,7 +370,7 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
    `⚙ <worker> · m:ss` claimed-by chip on ticket rows + the detail header (live +
    pulsing-stale states), the reactive `src/client/claimsStore.ts` (5 s poll + 1 s
    countdown tick) + `src/client/claimedByChip.tsx`, and the "In-flight work…"
-   overlay (`src/client/inflightPanel.tsx`, git popover). Poll-based until the
+   overlay (`src/client/inflightPanel.tsx`, sidebar "In-flight" button; HS-9068). Poll-based until the
    HS-7945 bus lands. Tests: `claimedByChip.test.ts`, `claimsStore.test.ts`,
    `inflightPanel.test.ts`. (HS-7946 clientId labels still design-only — the chip
    uses the existing `worker_label`.)
