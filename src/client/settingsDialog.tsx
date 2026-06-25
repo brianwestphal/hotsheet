@@ -11,7 +11,7 @@ import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
-import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode } from './settingsScope.js';
+import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
 import { loadScopedList, renderScopeListHint, saveScopedList } from './settingsScopeList.js';
 import type { NotifyLevel } from './state.js';
 import { state } from './state.js';
@@ -69,6 +69,8 @@ function bindTabSwitching() {
       panels.forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       document.querySelector(`.settings-tab-panel[data-panel="${target}"]`)?.classList.add('active');
+      // HS-9020 — let the scope bar disable itself on global-only tabs.
+      if (typeof target === 'string') setActiveSettingsTab(target);
       // HS-7953 — lazy-load the Permissions tab's allow-list when it's
       // first shown so the rule list renders without an extra fetch on
       // every settings-dialog open.

@@ -105,6 +105,20 @@ let mode: ScopeMode = 'resolved';
 let layered: LayeredFileSettings | null = null;
 let initialized = false;
 
+/**
+ * HS-9020 — tabs whose settings are ALL machine-global (written to
+ * `~/.hotsheet/config.json` / the OS keychain, never to a project's
+ * `settings.json` / `settings.local.json`). On these tabs the Shared / Local /
+ * Resolved distinction is meaningless, so the scope segmented control is
+ * disabled and the note explains that every setting on the tab is global.
+ *
+ *  - `keys`    — the named API-key registry (docs/79; values live in the OS
+ *                keychain, the names in `~/.hotsheet/config.json`).
+ *  - `updates` — Software Updates (the auto-update channel/check; machine-wide).
+ */
+const GLOBAL_ONLY_TABS = new Set(['keys', 'updates']);
+let activeTab = 'general';
+
 /** The active scope mode. Read by the in-dialog complex editors (HS-9014–9016)
  *  so their load/save routes to the right layer. */
 export function getScopeMode(): ScopeMode {
@@ -153,6 +167,8 @@ export function initSettingsScope(): void {
   if (bar === null) return;
   bar.querySelectorAll<HTMLButtonElement>('.scope-seg-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      // HS-9020 — ignore clicks while the control is disabled on a global-only tab.
+      if (GLOBAL_ONLY_TABS.has(activeTab)) return;
       const next = btn.dataset.scopeMode;
       if (next !== 'shared' && next !== 'local' && next !== 'resolved') return;
       if (next === mode) return;
@@ -166,6 +182,22 @@ export function initSettingsScope(): void {
 /** Reset to the default (resolved) view — called when the dialog opens. */
 export function resetScopeMode(): void {
   mode = 'resolved';
+  activeTab = 'general';
+}
+
+/**
+ * HS-9020 — tell the scope bar which Settings tab is now active so it can
+ * disable itself on global-only tabs (API Keys / Updates). Called from
+ * `settingsDialog.tsx`'s tab-switch handler + on dialog open.
+ */
+export function setActiveSettingsTab(tab: string): void {
+  activeTab = tab;
+  updateToolbar();
+}
+
+/** HS-9020 — whether the active tab's settings are all machine-global. */
+export function isGlobalOnlyTab(tab: string): boolean {
+  return GLOBAL_ONLY_TABS.has(tab);
 }
 
 /** Fetch the layered settings, then decorate every field for the current mode. */
@@ -217,13 +249,20 @@ export function applyScope(opts: { skipValues?: boolean } = {}): void {
 function updateToolbar(): void {
   const bar = byIdOrNull('settings-scope-bar');
   if (bar === null) return;
+  // HS-9020 — on a global-only tab, grey out + disable the segmented control
+  // and swap in the "everything here is global" note.
+  const globalOnly = GLOBAL_ONLY_TABS.has(activeTab);
+  bar.classList.toggle('scope-bar-global', globalOnly);
   bar.dataset.scopeMode = mode;
   bar.querySelectorAll<HTMLButtonElement>('.scope-seg-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.scopeMode === mode);
+    btn.disabled = globalOnly;
   });
   const note = byIdOrNull('settings-scope-note');
-  if (note !== null) note.textContent = SCOPE_NOTE[mode];
+  if (note !== null) note.textContent = globalOnly ? GLOBAL_TAB_NOTE : SCOPE_NOTE[mode];
 }
+
+const GLOBAL_TAB_NOTE = 'Every setting on this tab is global to this machine — the Shared / Local distinction doesn’t apply here.';
 
 const SCOPE_NOTE: Record<ScopeMode, string> = {
   resolved: 'Effective values in use. Each field is tagged with where its value comes from.',

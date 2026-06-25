@@ -18,6 +18,13 @@ Follow-up to HS-9004 (the dialog-wide **Shared | Local overrides | Resolved** sc
 
 The scope control (`settingsScope.tsx`) operates on Shared vs Local. Global settings keep their "Global Setting" badge and are layer-agnostic (editable in any mode). The resolved view the app runs on is `{...shared, ...local}` for file keys.
 
+**Global-only tabs (HS-9020).** Two Settings tabs are *entirely* global — every setting on them writes to machine-global storage, so the Shared / Local / Resolved distinction is meaningless there:
+
+- **API Keys** (`data-panel="keys"`) — named keys in the OS keychain + names in `~/.hotsheet/config.json` (docs/79).
+- **Updates** (`data-panel="updates"`) — Software Updates (auto-update channel/check; machine-wide).
+
+On these tabs the segmented control is **disabled** (greyed, non-clickable) and its note is replaced with "Every setting on this tab is global to this machine — the Shared / Local distinction doesn’t apply here." `settingsScope.tsx` tracks the active tab (`setActiveSettingsTab`, fed by the tab-switch handler in `settingsDialog.tsx`); `GLOBAL_ONLY_TABS = {keys, updates}` drives `updateToolbar`'s disable + note swap. The **Devices** tab (mTLS device pairing) is per-project, so it is *not* global-only.
+
 ## 95.2 Classification principle
 
 Ask, per setting: **whose decision is it?**
