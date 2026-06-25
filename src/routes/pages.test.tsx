@@ -63,6 +63,20 @@ describe('page shell TEST badge (HS-8922)', () => {
   });
 });
 
+describe('GET /pair device-pairing page (HS-9033)', () => {
+  it('serves the pairing shell with the pair.js bundle and a render mount', async () => {
+    const res = await app.request('/pair');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('id="pair-root"');
+    expect(html).toContain('/static/pair.js');
+    // It must NOT pull in the full app bundle — the whole point of a separate
+    // secret-free surface for an unenrolled device.
+    expect(html).not.toContain('/static/app.js');
+    expect(html).toContain('Pair this device');
+  });
+});
+
 describe('detail-panel telemetry block placement (HS-8648)', () => {
   it('renders the per-ticket telemetry container just above the Notes section', async () => {
     const res = await app.request('/');

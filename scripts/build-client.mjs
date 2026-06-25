@@ -35,6 +35,22 @@ await esbuild.build({
   sourcemap: true,
 });
 
+// 2b. HS-9033 — the standalone device-pairing page bundle (`pair.global.js`).
+//     A SEPARATE entry from app.tsx so the heavy node-forge crypto (in-browser
+//     keypair + CSR + .p12) only loads on `/pair`, not on every app page.
+await esbuild.build({
+  entryPoints: [join(root, 'src', 'client', 'pair.tsx')],
+  bundle: true,
+  format: 'iife',
+  outfile: join(clientDist, 'pair.global.js'),
+  target: 'es2020',
+  jsx: 'automatic',
+  jsxImportSource: '#jsx',
+  alias: { '#jsx/jsx-runtime': join(root, 'src', 'jsx-runtime.ts') },
+  define: { __PLUGINS_ENABLED__: pluginsEnabled },
+  sourcemap: true,
+});
+
 // 3. Compile SCSS → compressed CSS (no sourcemap), then 4. append xterm's CSS.
 const compiled = sass.compile(join(root, 'src', 'client', 'styles.scss'), { style: 'compressed' });
 const stylesOut = join(clientDist, 'styles.css');

@@ -2,12 +2,19 @@ import { Hono } from 'hono';
 
 import { ANNOUNCER_MODELS } from '../announcer/models.js';
 import { Layout } from '../components/layout.js';
+import { PairPage } from '../components/pairPage.js';
 import { isDemoMode } from '../demo-mode.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { isTestMode } from '../test-mode.js';
 import type { AppEnv } from '../types.js';
 
 export const pageRoutes = new Hono<AppEnv>();
+
+// HS-9033 — standalone device-pairing surface (the phone end of mTLS QR pairing,
+// docs/94 §94.4.2). Secret-free + loads its own `pair.js`; reached over the
+// trusted tunnel channel. The actual signing is gated by the single-use pairing
+// token at `POST /api/auth/pair/complete`, not by this page being served.
+pageRoutes.get('/pair', (c) => c.html((<PairPage />).toString()));
 
 pageRoutes.get('/', (c) => {
   // HS-8922 — when launched with `--test`, render an unmistakable TEST badge so

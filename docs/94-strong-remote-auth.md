@@ -25,8 +25,18 @@ before execution."
 > `HOTSHEET_CA_PASSPHRASE` → encrypted `auth-ca.enc`, `src/auth/caFileStore.ts`), **HS-9024** (Settings
 > → Remote Access device UI `src/client/devicesSettings.tsx` + Tauri `save_file`), **HS-9025** (WS
 > revocation re-check sweep `src/auth/wsRevocationSweep.ts`), **HS-9026** (QR pairing desktop display
-> `src/client/devicesPairing.tsx`). Only the **mobile client** that scans the QR → generates a CSR →
-> installs the signed cert is platform-specific manual work. See §94.10 + docs/97.
+> `src/client/devicesPairing.tsx`), **HS-9033** (the **device-side pairing page** — standalone
+> secret-free `/pair` surface, `src/components/pairPage.tsx` + `src/client/pair.tsx`: scan
+> (`BarcodeDetector`) / paste the payload → in-browser RSA keypair + CSR via node-forge
+> (`src/client/pairing/devicePairing.ts`, private key never leaves the device) → POST
+> `/api/auth/pair/complete` → assemble + download a chain-complete `.p12` + per-platform install help).
+> HS-9033 also closed two bootstrapping gaps that blocked the device end: `pair/complete` is now
+> **exempt from the shared-secret middleware** (the single-use token is its sole credential — an
+> enrolling phone has neither secret nor cert), and that endpoint now **returns `caCertPem`** so the
+> device can chain its `.p12` and trust the server CA. **Pairing runs over the trusted/tunnel channel**
+> (the exposed mTLS port rejects an unenrolled device at the TLS handshake); an on-port LAN handshake
+> carve-out is a tracked follow-up. The only remaining manual work is the **per-platform cert install**
+> (iOS profile / Android / desktop keychain / Firefox store), a manual-test-plan item. See §94.10 + docs/97.
 
 ## 94.1 Why now
 
@@ -287,8 +297,24 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
    HTTP; an open terminal/`/ws/sync` socket needs a periodic sweep). The Revoke **button** is in the
    HS-9024 device UI. **Blocked by #2.**
 5. **QR pairing enrollment** — desktop shows a short-lived pairing QR; a device generates a keypair
-   + CSR, signed over the trusted channel. **Server core SHIPPED (HS-8996); QR display + mobile
-   client → HS-9026.** Coordinates with the §46 mobile client / HS-7941. **Blocked by #3.**
+   + CSR, signed over the trusted channel. **Server core SHIPPED (HS-8996); QR display SHIPPED
+   (HS-9026); device-side page SHIPPED (HS-9033).** Coordinates with the §46 mobile client / HS-7941.
+   **Blocked by #3.**
+
+   **What shipped (HS-9033 — the device side):** a standalone, secret-free `/pair` page
+   (`src/components/pairPage.tsx` + its own `pair.js` bundle so node-forge stays off the main app).
+   `src/client/pair.tsx` reads the payload (in-page `BarcodeDetector` camera scan, or paste/hash
+   fallback), and `src/client/pairing/devicePairing.ts` does the in-browser RSA-2048 keypair + PKCS#10
+   CSR (private key never leaves the device) and assembles the password-protected `.p12` from the
+   device key + the server-signed cert + the CA — all with the SAME node-forge the server signs with,
+   so the round-trip is byte-compatible (proven in `devicePairing.test.ts` against `signClientCsr` /
+   `readP12`). Two bootstrapping fixes made the end-to-end flow reachable: `pair/complete` is exempt
+   from the shared-secret middleware (token is the gate; `apiAuthMiddleware.ts`) and returns
+   `caCertPem`. Tests: `pages.test.ts` (route/shell), `devicePairing.test.ts` + `pairingPayload.test.ts`
+   (crypto + parse), `e2e/pair.spec.ts` (real paste → in-browser keygen → enroll → `.p12` download).
+   **Pairing transits the trusted/tunnel channel** — the exposed mTLS listener rejects an unenrolled
+   device at the TLS handshake, so the on-port LAN path is a tracked follow-up. Per-platform cert
+   install is manual (docs/manual-test-plan.md §7).
 
    **What shipped (HS-8996):** `src/auth/pairingTokens.ts` — an in-memory, per-project,
    **single-use, short-TTL (5 min)** pairing-token store (`PairingTokenStore`, clock-injectable;

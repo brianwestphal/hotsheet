@@ -94,12 +94,22 @@ password-protected):
 
 Then browse to `https://<server-host>:4174` and pick the certificate when prompted.
 
-**QR pairing (HS-9026).** Instead of copying a `.p12`, click **Pair a Device…** in Settings → Remote
-Access. Confirm the address the device will reach the server at, and Hot Sheet shows a single-use,
-expiring **QR code**. The device scans it, generates its own key + CSR in the browser, and enrolls
-over the pairing token — no `.p12` to move. (The desktop QR display is shipped; the mobile client
-that scans → generates the CSR → installs the signed cert is platform-specific and tracked as a
-manual flow — see the manual test plan.)
+**QR pairing (HS-9026 + HS-9033).** Instead of copying a `.p12`, click **Pair a Device…** in
+Settings → Remote Access. Confirm the address the device will reach the server at, and Hot Sheet
+shows a single-use, expiring **QR code**. On the device, open the **`/pair`** page, scan the QR (or
+paste the code shown under it); the device generates its own key + CSR in the browser, enrolls over
+the pairing token, and hands you a ready-to-install `.p12` with per-platform instructions — no `.p12`
+to move off the server, and the private key never leaves the device.
+
+> **Pairing must go over a trusted/tunnel channel, not the exposed mTLS port.** An unenrolled device
+> has no client certificate, so the exposed `https://` listener rejects it at the TLS handshake before
+> `/pair` ever loads. Do the pairing while the device can reach the server over a trusted path — a
+> WireGuard/Tailscale/SSH tunnel to the server's local port, or before you switch the bind from
+> localhost to an exposed address. (The signing endpoint `POST /api/auth/pair/complete` is gated only
+> by the single-use pairing token — not the shared secret and not a client cert — precisely so a
+> not-yet-enrolled device can complete it over that trusted channel.) Installing the downloaded `.p12`
+> as a usable client certificate is platform-specific (iOS profile, Android, desktop keychain, Firefox
+> store) — see the manual test plan.
 
 ## 97.4 Revoke a device
 

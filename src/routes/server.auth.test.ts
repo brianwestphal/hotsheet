@@ -98,6 +98,7 @@ describe('createApiAuthMiddleware (integrated)', () => {
     app.get('/api/tickets', (c) => c.json({ ok: true }));
     app.post('/api/tickets', (c) => c.json({ ok: true }, 201));
     app.get('/api/projects', (c) => c.json({ projects: [] }));
+    app.post('/api/auth/pair/complete', (c) => c.json({ ok: true }, 200));
     return app;
   }
 
@@ -182,6 +183,30 @@ describe('createApiAuthMiddleware (integrated)', () => {
         headers: { 'Origin': 'http://100.96.1.2:4174' },
       });
       expect(res.status).toBe(200);
+    });
+
+    // HS-9033 — QR-pairing completion is gated by its own single-use token, not
+    // the shared secret: an enrolling phone has neither the secret nor a client
+    // cert yet. It must pass the secret middleware from an untrusted remote with
+    // no credentials at all (the handler then validates the token).
+    it('lets /api/auth/pair/complete through with no secret from an untrusted remote', async () => {
+      const res = await buildApp({ exposed: true, trustedOrigins: [] }).request('/api/auth/pair/complete', {
+        method: 'POST',
+        headers: { 'Origin': 'https://evil.com', 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(200);
+    });
+
+    // The exemption is exact-path — a sibling pairing route does NOT inherit it
+    // (pair/start stays loopback-only; an unexempted POST still 403s here).
+    it('does NOT exempt other /api/auth/* routes from the secret check', async () => {
+      const res = await buildApp({ exposed: true, trustedOrigins: [] }).request('/api/auth/pair/start', {
+        method: 'POST',
+        headers: { 'Origin': 'https://evil.com', 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).toBe(403);
     });
   });
 });

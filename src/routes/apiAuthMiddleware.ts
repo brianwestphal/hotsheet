@@ -48,6 +48,15 @@ export function createApiAuthMiddleware({ exposed, trustedOrigins }: ApiAuthOpti
     // becomes defense-in-depth on this tier, not the gate).
     const certAuthed = c.get('clientAuthenticated');
 
+    // (0) QR-pairing completion is gated by its own single-use pairing token, NOT
+    // the shared secret (HS-9033, §94.4.2 Phase 2): the enrolling device is a
+    // remote phone that has neither the secret nor — by definition — a client
+    // cert yet, so neither the secret check nor mTLS can be its gate. The handler
+    // consumes + validates the short-lived token before signing anything. Body
+    // size + rate limiting still apply (the guards ran ahead of this middleware).
+    // `pair/start` is NOT exempt — it stays loopback-only (enforced in-handler).
+    if (c.req.path === '/api/auth/pair/complete') { await next(); return; }
+
     // (1) Management / heartbeat endpoints — open to local/trusted callers only.
     if (c.req.path.startsWith('/api/projects') || c.req.path === '/api/channel/heartbeat') {
       if (!exposed || certAuthed || isRequestTrusted(origin, referer, trustedOrigins)) {

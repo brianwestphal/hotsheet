@@ -99,7 +99,8 @@ enrollmentRoutes.post('/auth/devices/sign-csr', async (c) => {
   return c.json({ device, certPem });
 });
 
-// POST /api/auth/devices/:clientId/revoke — flip a device to revoked (the data
+// POST /api/auth/devices/:clientId/revoke (sign-csr above stays cert-only — the
+// loopback `.p12`/import path doesn't need the CA returned over the wire). — flip a device to revoked (the data
 // action; connect-time enforcement is sub-ticket 4 / HS-8995).
 enrollmentRoutes.post('/auth/devices/:clientId/revoke', (c) => {
   const device = revokeDevice(c.get('dataDir'), c.req.param('clientId'), new Date().toISOString());
@@ -142,5 +143,7 @@ enrollmentRoutes.post('/auth/pair/complete', async (c) => {
   const device = deviceFromCert(clientId, parsed.data.label, certPem, new Date().toISOString());
   if (device === null) return c.json({ error: 'Failed to read signed certificate' }, 500);
   addDevice(dataDir, device);
-  return c.json({ device, certPem });
+  // Hand back the CA cert too — the device needs it to chain its `.p12` and to
+  // trust the server's CA-signed TLS cert on subsequent mTLS connections (HS-9033).
+  return c.json({ device, certPem, caCertPem: ca.caCertPem });
 });

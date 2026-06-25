@@ -108,6 +108,29 @@ export default defineConfig([
       appendFileSync('dist/client/styles.css', xtermCss);
     },
   },
+  // HS-9033 — standalone device-pairing page bundle (`/pair`). A SEPARATE entry
+  // from app.tsx so the heavy `node-forge` dependency (in-browser keypair + CSR +
+  // .p12) only loads on the pairing surface, not on every app page load. Same
+  // browser/IIFE/minify settings as the app bundle; styles come from the shared
+  // styles.css the app block compiles, so no onSuccess here.
+  {
+    entry: ['src/client/pair.tsx'],
+    format: 'iife',
+    outDir: 'dist/client',
+    target: 'es2020',
+    platform: 'browser',
+    splitting: false,
+    clean: false,
+    sourcemap: false,
+    minify: true,
+    esbuildOptions(options) {
+      options.jsx = 'automatic';
+      options.jsxImportSource = '#jsx';
+      options.alias = {
+        '#jsx/jsx-runtime': './src/jsx-runtime.ts',
+      };
+    },
+  },
   // Bundled plugins
   {
     entry: ['plugins/github-issues/src/index.ts'],

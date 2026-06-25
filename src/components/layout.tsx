@@ -1,6 +1,6 @@
 import { raw } from '../jsx-runtime.js';
 
-export function Layout({ title, children, demoMode }: { title: string; children?: unknown; demoMode?: boolean }) {
+export function Layout({ title, children, demoMode, scriptSrc }: { title: string; children?: unknown; demoMode?: boolean; scriptSrc?: string }) {
   return (
     <html lang="en">
       <head>
@@ -16,7 +16,10 @@ export function Layout({ title, children, demoMode }: { title: string; children?
       </head>
       <body>
         {children}
-        <script src="/static/app.js"></script>
+        {/* HS-9033 — a page can swap in its own entry bundle (e.g. the
+            standalone `/pair` device-pairing surface loads `pair.js`, not the
+            full app). Defaults to the main app bundle. */}
+        <script src={scriptSrc ?? '/static/app.js'}></script>
       </body>
     </html>
   );

@@ -123,6 +123,13 @@ export async function startServer(
     const js = readFileSync(join(distDir, 'app.global.js'), 'utf-8');
     return c.text(js, 200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' });
   });
+  // HS-9033 — the standalone `/pair` device-pairing page loads its own bundle
+  // (heavy node-forge crypto, kept out of the main app bundle). Same IIFE naming
+  // convention as app.js (esbuild/tsup emit `*.global.js`).
+  app.get('/static/pair.js', (c) => {
+    const js = readFileSync(join(distDir, 'pair.global.js'), 'utf-8');
+    return c.text(js, 200, { 'Content-Type': 'application/javascript', 'Cache-Control': 'no-cache' });
+  });
   app.get('/static/assets/:filename', (c) => {
     const filename = basename(c.req.param('filename'));
     const filePath = join(distDir, 'assets', filename);

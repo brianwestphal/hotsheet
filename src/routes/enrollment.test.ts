@@ -151,11 +151,14 @@ describe('QR pairing (/auth/pair/*)', () => {
       body: JSON.stringify({ token, csrPem: makeCsr('phone'), label: 'Pixel' }),
     }, REMOTE);
     expect(res.status).toBe(200);
-    const json = await res.json() as { device: { clientId: string }; certPem: string };
+    const json = await res.json() as { device: { clientId: string }; certPem: string; caCertPem: string };
     const ca = await loadOrCreateProjectCa(dataDir);
     expect(verifyClientCert(ca.caCertPem, json.certPem)).toBe(true);
     expect(readIdentity(json.certPem)).toEqual({ clientId: json.device.clientId, label: 'Pixel' });
     expect(listDevices(dataDir).some(d => d.clientId === json.device.clientId)).toBe(true);
+    // HS-9033 — the CA cert is returned so the device can chain its `.p12` and
+    // trust the server's TLS cert. It must be the project CA's actual cert.
+    expect(json.caCertPem).toBe(ca.caCertPem);
   });
 
   it('rejects a reused token (single-use) with 401', async () => {

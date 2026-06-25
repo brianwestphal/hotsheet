@@ -72,6 +72,10 @@ export type PairCompleteReq = z.infer<typeof PairCompleteReqSchema>;
 export const PairCompleteResSchema = z.object({
   device: EnrolledDeviceSchema,
   certPem: z.string(),
+  /** The project CA cert (PEM). The device needs it to (a) assemble a
+   *  chain-complete client `.p12` and (b) trust the server's CA-signed TLS cert
+   *  on subsequent mTLS connections (HS-9033). */
+  caCertPem: z.string(),
 });
 export type PairCompleteRes = z.infer<typeof PairCompleteResSchema>;
 
