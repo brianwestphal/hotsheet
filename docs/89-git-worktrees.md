@@ -251,3 +251,37 @@ remote stack; §46 is the prerequisite for *remote* parallel workers.
   (§90.5.2).
 - **§46 epic (HS-7940/7944/7945/7946):** off-box remote workers only; not needed
   for single-machine Phase D.
+
+## 89.7 Branch integration workflow (HS-9044) — ✅ encoded in the skills
+
+Until HS-9044, a worker's branch was just **kept** on drain and never merged —
+work accumulated on `hotsheet/*` branches with no path back to the target. HS-9044
+encodes an **owner-as-integrator** workflow into the `/hotsheet` + `/hotsheet-worker`
+skills (`src/skills.ts`, `SKILL_VERSION` → 14):
+
+- **Why the owner integrates (not the workers):** in the worktree model the target
+  branch (usually `main`) is checked out in the **owner's** worktree, so git won't
+  let a worker — in its own worktree on its own branch — write/merge into the
+  target. The decision (2026-06-25, maintainer): the main `/hotsheet` agent is the
+  **single writer/integrator** to the target; workers prepare their branches but
+  never write the target. (Alternatives considered: workers self-integrate via a
+  fast-forward + lock when the owner's worktree is clean; or per-worker clones with
+  a shared remote. The single-writer model is the safe fit for the shared-worktree
+  setup and avoids races on the target.)
+- **Workers** (`/hotsheet-worker`): after doing the work they **commit** it on their
+  branch (scoped, never `git push` without permission), then **rebase onto the
+  latest target** to stay current — resolving trivial conflicts, aborting + leaving
+  a `FEEDBACK NEEDED:` note for non-trivial ones. They **hand off** (leave commits
+  on the branch); they do not merge the target.
+- **Owner** (`/hotsheet`): keeps the target current (`git fetch` + `pull --rebase`),
+  then **integrates ready worker branches** (`hotsheet/*` ahead of the target) in
+  ticket-priority order, running the gates after each merge, auto-resolving trivial
+  conflicts and **asking** on the hard ones. Local integration only — no push
+  without explicit permission.
+- **Staying up to date** applies to everyone: both skills rebase/pull onto the
+  latest target before working so changes on the target propagate to every worktree.
+
+Open follow-ups (not yet built): programmatic tooling/automation around the
+hand-off (e.g. a "branch ready" signal or an owner-side integrate helper) is left
+to the agents following the skill prose for now; a dedicated integrate command
+could harden it later.
