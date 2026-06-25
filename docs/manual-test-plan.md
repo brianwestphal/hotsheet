@@ -820,6 +820,15 @@ The persistence + cadence + toggle/sync + first-tick sizing are automated (`work
 - [ ] The switch is **per project**: toggle it on for project A, switch to project B — B's switch reflects B's own saved state (off unless you enabled it there). Reload the app — each project's switch restores its saved on/off.
 - [ ] Cost check: with an Anthropic key configured, Auto on for a while does NOT spam the suggestion endpoint — it re-sizes roughly once a minute (watch the §70/§71 usage dashboards stay modest), not every few seconds.
 
+### Owner-side branch integration (HS-9048, docs/89 §89.7)
+
+The git core (detect target / list ready / safe merge incl. conflict-abort) is automated against a real temp repo (`workers/integrate.test.ts`, `routes/workers.test.ts`); this covers the real owner flow:
+
+- [ ] With a worker branch (`hotsheet/worker-1`) that has committed work ahead of `main`, `curl http://localhost:4174/api/workers/integratable` returns `{ target: "main", branches: [{ branch: "hotsheet/worker-1", ahead, behind }] }`.
+- [ ] On a clean `main` worktree, `POST /api/workers/integrate {"branch":"hotsheet/worker-1"}` returns `{ ok: true, status: "merged" }` and the branch's commits are now on `main` (it does NOT push).
+- [ ] With an uncommitted change in the owner worktree, the same call returns `status: "dirty-tree"` and does nothing. From a non-`main` branch → `status: "not-on-target"`.
+- [ ] For a branch that conflicts with `main`, the call returns `status: "conflict"` with the conflicted file paths, and the owner worktree is left **clean** (the merge was aborted — no half-applied merge to clean up).
+
 ---
 
 ## Automated Coverage Summary

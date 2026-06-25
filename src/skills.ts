@@ -31,7 +31,10 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // owner clears it (`pending_integration: false`) when it integrates the branch.
 // HS-9050 — bumped 15 → 16: clearer lease-renewal guidance (default lease is now
 // 30 min; renew before long steps; claim/renew up to 1 h for high-effort tickets).
-export const SKILL_VERSION = 16;
+// HS-9048 — bumped 16 → 17: the owner integrates worker branches via the new
+// `/api/workers/integratable` + `/api/workers/integrate` helpers (deterministic
+// git core) instead of hand-rolling the merge.
+export const SKILL_VERSION = 17;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -226,7 +229,8 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
     'You run on the **target branch** (usually `main`) in the main worktree, so you are the **single integrator** for parallel worktree workers (docs/89). Distributed workers (`/hotsheet-worker`) commit their work on their own branches and rebase onto the target to stay current, but they never write the target — that\'s your job:',
     '',
     '- **Stay current** — before integrating, bring the target up to date: `git fetch` then `git pull --rebase` (or rebase onto the upstream) when the repo has a remote, so you build on the latest. Commit or stash your own in-progress changes first so a merge doesn\'t tangle with them.',
-    '- **Integrate ready worker branches** — periodically (e.g. when a batch of workers has finished, or the pool drains) merge each worker branch (`hotsheet/*`) that is **ahead of the target** into the target, in ticket-priority order. After each merge run the project\'s gates (type-check, lint, the relevant tests) before moving on. For each ticket whose work you just integrated, clear its "merge pending" marker: `hotsheet_update_ticket` with `{ "id": <id>, "pending_integration": false }` (the tickets marked `pending_integration` are the ones awaiting integration).',
+    '- **Integrate ready worker branches** — periodically (e.g. when a batch of workers has finished, or the pool drains). Use the **integration helpers** (HS-9048) rather than hand-rolling the git: `GET /api/workers/integratable` returns the detected **target** branch + the **ready** worker branches (`hotsheet/*` ahead of the target, with ahead/behind counts); then for each, in ticket-priority order, `POST /api/workers/integrate` with `{ "branch": "<name>" }` does a guarded merge into the target. It returns a `status`: `merged` (success), `conflict` (it captured the conflicted files + **aborted** cleanly — resolve them by hand or, if non-trivial, ask the maintainer), `dirty-tree` (commit/stash your own changes first), `not-on-target` / `nothing-to-integrate`. After a `merged`, run the project\'s gates (type-check, lint, the relevant tests). The helper **never pushes** — pushing still needs explicit permission.',
+    '- For each ticket whose work you just integrated, clear its "merge pending" marker: `hotsheet_update_ticket` with `{ "id": <id>, "pending_integration": false }` (the tickets marked `pending_integration` are the ones awaiting integration).',
     '- **Sensible conflict resolution, ask on the hard ones** — auto-resolve trivial/mechanical conflicts; if a conflict is non-trivial or ambiguous, or the gates fail in a way you can\'t quickly and safely fix, **stop and ask the maintainer** rather than force it (leave the branch unmerged). Integrate only from committed branch state — never disturb a worker mid-ticket.',
     '- **NEVER `git push`** without the maintainer\'s explicit permission — local integration only.',
   ].join('\n');

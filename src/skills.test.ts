@@ -140,6 +140,8 @@ describe('ensureClaudeSkills', () => {
     expect(content).toMatch(/NEVER `git push`/);
     // HS-9045 — the owner clears the merge-pending flag when it integrates.
     expect(content).toContain('pending_integration');
+    // HS-9048 — the owner integrates via the helper endpoints.
+    expect(content).toContain('/api/workers/integrate');
   });
 
   it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {

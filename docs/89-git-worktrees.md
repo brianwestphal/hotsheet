@@ -294,7 +294,28 @@ but not yet on the target. Default false ⇒ existing + owner-direct-completed t
 are never flagged. (Until the HS-9048 tooling lands, the agents set/clear the flag
 by following the skill prose.)
 
-Open follow-ups (not yet built): programmatic tooling/automation around the
-hand-off (e.g. a "branch ready" signal or an owner-side integrate helper) is left
-to the agents following the skill prose for now; a dedicated integrate command
-could harden it later.
+**Programmatic integration helpers (HS-9048).** The mechanical, deterministic git
+core is now a real module + endpoints (so the owner agent doesn't re-derive it from
+prose), in `src/workers/integrate.ts`:
+
+- `detectTargetBranch(repoRoot)` — robustly resolves the target: the remote default
+  (`origin/HEAD`) → local `main`/`master` → the current branch.
+- `listReadyBranches(repoRoot, target)` — the `hotsheet/*` branches **ahead** of the
+  target (with ahead/behind counts) = the integratable work.
+- `integrateBranch(repoRoot, branch, target)` — one **safe merge**: guards that the
+  owner worktree is **clean** (`dirty-tree`) and **on the target** (`not-on-target`),
+  then `git merge --no-ff`; on conflict it captures the conflicted files + **aborts**
+  cleanly (`conflict`) for the agent to resolve/ask; **never pushes**.
+
+Exposed as `GET /api/workers/integratable` (`{ target, branches }`) +
+`POST /api/workers/integrate` (`{ branch }` → the structured result); typed callers
+`getIntegratableBranches` / `integrateWorkerBranch` in `src/api/workers.ts`. The
+`/hotsheet` skill (`SKILL_VERSION` → 17) uses these instead of hand-rolling git.
+**Judgment stays with the agent** — it runs the gates after a `merged`, and resolves
+or asks on a `conflict`; the helper deliberately does NOT auto-resolve conflicts or
+run gates. Tests: `workers/integrate.test.ts` (real-git) + `routes/workers.test.ts`.
+
+Still open (smaller follow-up): an **explicit "branch ready" signal** (a per-worker
+flag/note when a worker has committed + rebased) so the owner integrates
+deterministically rather than enumerating `listReadyBranches`; and having the
+integrate helper optionally run the gates itself.
