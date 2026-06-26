@@ -121,6 +121,25 @@ let initialized = false;
  *  - `updates` — Software Updates (the auto-update channel/check; machine-wide).
  */
 const GLOBAL_ONLY_TABS = new Set(['keys', 'updates']);
+
+/**
+ * HS-9096 — tabs that manage the shared/local layer **per row**, so the
+ * dialog-wide Shared / Local / Resolved bar is irrelevant there (it isn't a
+ * scoped scalar field nor a `data-scope-complex` panel, so it would otherwise sit
+ * active-but-inert). On these tabs the segmented control is disabled and the note
+ * points the user at the per-row controls — distinct from the global-only case
+ * (`views` is NOT machine-global).
+ *
+ *  - `views` — the Views tab (docs/107 §107.6) adds local-by-default views +
+ *              per-row Add Local|Shared / Move / Hide.
+ */
+const PER_ROW_LAYER_TABS = new Set(['views']);
+
+/** Tabs where the dialog-wide scope bar is inert (global-only or per-row-layer). */
+function isLayerBarDisabledTab(tab: string): boolean {
+  return GLOBAL_ONLY_TABS.has(tab) || PER_ROW_LAYER_TABS.has(tab);
+}
+
 let activeTab = 'general';
 
 /** The active scope mode. Read by the in-dialog complex editors (HS-9014–9016)
@@ -171,8 +190,9 @@ export function initSettingsScope(): void {
   if (bar === null) return;
   bar.querySelectorAll<HTMLButtonElement>('.scope-seg-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      // HS-9020 — ignore clicks while the control is disabled on a global-only tab.
-      if (GLOBAL_ONLY_TABS.has(activeTab)) return;
+      // HS-9020 / HS-9096 — ignore clicks while the control is disabled (global-
+      // only or per-row-layer tab).
+      if (isLayerBarDisabledTab(activeTab)) return;
       const next = btn.dataset.scopeMode;
       if (next !== 'shared' && next !== 'local' && next !== 'resolved') return;
       if (next === mode) return;
@@ -256,17 +276,21 @@ function updateToolbar(): void {
   // HS-9020 — on a global-only tab, grey out + disable the segmented control
   // and swap in the "everything here is global" note.
   const globalOnly = GLOBAL_ONLY_TABS.has(activeTab);
+  const perRowLayer = PER_ROW_LAYER_TABS.has(activeTab);
   bar.classList.toggle('scope-bar-global', globalOnly);
+  bar.classList.toggle('scope-bar-per-row', perRowLayer);
   bar.dataset.scopeMode = mode;
   bar.querySelectorAll<HTMLButtonElement>('.scope-seg-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.scopeMode === mode);
-    btn.disabled = globalOnly;
+    btn.disabled = globalOnly || perRowLayer;
   });
   const note = byIdOrNull('settings-scope-note');
-  if (note !== null) note.textContent = globalOnly ? GLOBAL_TAB_NOTE : SCOPE_NOTE[mode];
+  if (note !== null) note.textContent = globalOnly ? GLOBAL_TAB_NOTE : perRowLayer ? PER_ROW_LAYER_NOTE : SCOPE_NOTE[mode];
 }
 
 const GLOBAL_TAB_NOTE = 'Every setting on this tab is global to this machine — the Shared / Local distinction doesn’t apply here.';
+// HS-9096 — the Views tab manages layers per row, not dialog-wide.
+const PER_ROW_LAYER_NOTE = 'Layers are managed per-view on this tab — use each view’s own Local / Shared controls.';
 
 const SCOPE_NOTE: Record<ScopeMode, string> = {
   resolved: 'Effective values in use. Each field is tagged with where its value comes from.',

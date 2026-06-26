@@ -143,4 +143,7 @@ suffices — no tree-aware resolver needed (that's the custom_commands superset)
   tab; the origin badge makes the target layer clear.
 - **Views tab vs sidebar menu** — they coexist (tab = power surface, sidebar =
   quick). The Views tab is **not** wired to the §95 scope control (it manages
-  layers per-row); a minor follow-up could hide the scope bar on that tab.
+  layers per-row); **HS-9096 (SHIPPED)** disables the dialog-wide scope bar on the
+  Views tab (a `PER_ROW_LAYER_TABS` set in `settingsScope.tsx`, mirroring the
+  global-only-tab handling but with a "layers are managed per-view" note — Views
+  is NOT machine-global).
