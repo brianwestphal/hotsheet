@@ -28,7 +28,7 @@
  */
 import { z } from 'zod';
 
-import type { ChannelTriggerSchema, PermissionRespondSchema } from '../routes/validation.js';
+import type { ChannelTriggerSchema, ChannelTriggerTarget, PermissionRespondSchema } from '../routes/validation.js';
 import { PendingPermissionSchema, PermissionResultBodySchema } from '../schemas.js';
 import { apiCall, type OkResponse, OkResponseSchema } from './_runner.js';
 
@@ -59,6 +59,9 @@ export const HeartbeatStatusSchema = z.object({
 export type HeartbeatStatus = z.infer<typeof HeartbeatStatusSchema>;
 
 export type ChannelTriggerReq = z.infer<typeof ChannelTriggerSchema>;
+/** HS-9084 — a channel-trigger routing target (main / a worker / all workers).
+ *  Re-exported from the wire schema so client callers + the picker share it. */
+export type { ChannelTriggerTarget };
 export type PermissionRespondReq = z.infer<typeof PermissionRespondSchema>;
 export type PendingPermission = z.infer<typeof PendingPermissionSchema>;
 export type PermissionResultBody = z.infer<typeof PermissionResultBodySchema>;
@@ -73,9 +76,11 @@ export async function getChannelStatus(): Promise<ChannelStatus> {
   return apiCall(ChannelStatusSchema, '/channel/status');
 }
 
-/** POST `/channel/trigger` → fire (or wake) the channel server for the active project. */
-export async function triggerChannel(message?: string): Promise<OkResponse> {
-  const body: ChannelTriggerReq = { message };
+/** POST `/channel/trigger` → fire (or wake) the channel server for the active
+ *  project. HS-9084 — pass `target` to route to a specific worker / all workers;
+ *  omit it for the FIFO-leader default (the play-button / worklist path). */
+export async function triggerChannel(message?: string, target?: ChannelTriggerTarget): Promise<OkResponse> {
+  const body: ChannelTriggerReq = { message, target };
   return apiCall(OkResponseSchema, '/channel/trigger', { method: 'POST', body });
 }
 

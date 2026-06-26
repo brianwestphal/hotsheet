@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getChannelPort, getMcpServerKey, isChannelAlive,
-  registerChannel, registerChannelAt, slugifyDataDir, triggerChannel, unregisterChannel,
+  registerChannel, registerChannelAt, resolveTriggerTargetPorts, slugifyDataDir,
+  triggerChannel, unregisterChannel,
 } from './channel-config.js';
 
 let tempDir: string;
@@ -558,6 +559,152 @@ describe('triggerChannel', () => {
     expect(result).toBe(false);
 
     server.close();
+  });
+});
+
+// HS-9084 (docs/103 §103.3) — trigger target routing: main leader / a specific
+// worker's channel server / broadcast to all live worker servers.
+describe('resolveTriggerTargetPorts (HS-9084)', () => {
+  const ALIVE = (): boolean => true;
+
+  /** Write a per-pid channel registry entry (HS-8460) under channel-ports.d/. */
+  function writeEntry(dataDir: string, e: { pid: number; port: number; worktree?: string | null; startedAt?: string }): void {
+    const dir = join(dataDir, 'channel-ports.d');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${String(e.pid)}.json`), JSON.stringify({
+      port: e.port, pid: e.pid, slug: 'proj',
+      startedAt: e.startedAt ?? '2026-01-01T00:00:00.000Z',
+      worktree: e.worktree ?? null,
+    }));
+  }
+
+  it('main (undefined target) → the FIFO leader port from channel-port', () => {
+    const dataDir = join(tempDir, 'rt-main');
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, 'channel-port'), '4321');
+    expect(resolveTriggerTargetPorts(dataDir)).toEqual([4321]);
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'main' })).toEqual([4321]);
+  });
+
+  it('main → [] when no leader port file exists', () => {
+    const dataDir = join(tempDir, 'rt-main-empty');
+    mkdirSync(dataDir, { recursive: true });
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'main' })).toEqual([]);
+  });
+
+  it('worker → only the matching worker server port (never the main/leader)', () => {
+    const dataDir = join(tempDir, 'rt-worker');
+    mkdirSync(dataDir, { recursive: true });
+    writeEntry(dataDir, { pid: 111, port: 5001, worktree: null });          // main
+    writeEntry(dataDir, { pid: 222, port: 5002, worktree: '/wt/feat-a' });   // worker A
+    writeEntry(dataDir, { pid: 333, port: 5003, worktree: '/wt/feat-b' });   // worker B
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'worker', worktree: '/wt/feat-a' }, { isPidAlive: ALIVE }))
+      .toEqual([5002]);
+  });
+
+  it('worker → [] when no live server matches the worktree', () => {
+    const dataDir = join(tempDir, 'rt-worker-miss');
+    mkdirSync(dataDir, { recursive: true });
+    writeEntry(dataDir, { pid: 222, port: 5002, worktree: '/wt/feat-a' });
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'worker', worktree: '/wt/gone' }, { isPidAlive: ALIVE }))
+      .toEqual([]);
+  });
+
+  it('all-workers → every live worker port, excluding the main, deduped', () => {
+    const dataDir = join(tempDir, 'rt-all');
+    mkdirSync(dataDir, { recursive: true });
+    writeEntry(dataDir, { pid: 111, port: 5001, worktree: null });          // main — excluded
+    writeEntry(dataDir, { pid: 222, port: 5002, worktree: '/wt/feat-a' });
+    writeEntry(dataDir, { pid: 333, port: 5003, worktree: '/wt/feat-b' });
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'all-workers' }, { isPidAlive: ALIVE }).sort())
+      .toEqual([5002, 5003]);
+  });
+
+  it('all-workers → [] when only a main connection is alive', () => {
+    const dataDir = join(tempDir, 'rt-all-none');
+    mkdirSync(dataDir, { recursive: true });
+    writeEntry(dataDir, { pid: 111, port: 5001, worktree: null });
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'all-workers' }, { isPidAlive: ALIVE })).toEqual([]);
+  });
+
+  it('skips entries whose pid is dead (registry GC)', () => {
+    const dataDir = join(tempDir, 'rt-dead');
+    mkdirSync(dataDir, { recursive: true });
+    writeEntry(dataDir, { pid: 222, port: 5002, worktree: '/wt/feat-a' });
+    // No live pids → no worker servers resolvable.
+    expect(resolveTriggerTargetPorts(dataDir, { kind: 'all-workers' }, { isPidAlive: () => false })).toEqual([]);
+  });
+});
+
+describe('triggerChannel target routing (HS-9084)', () => {
+  /** A throwaway /trigger server that records the last body it received. */
+  async function startTriggerServer(): Promise<{ port: number; body: () => string; close: () => void }> {
+    let received = '';
+    const { createServer } = await import('http');
+    const server = createServer(async (req, res) => {
+      if (req.method === 'POST' && req.url === '/trigger') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        received = Buffer.concat(chunks).toString('utf-8');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } else { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    return { port, body: () => received, close: () => server.close() };
+  }
+
+  function writeEntry(dataDir: string, pid: number, port: number, worktree: string | null): void {
+    const dir = join(dataDir, 'channel-ports.d');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${String(pid)}.json`), JSON.stringify({
+      port, pid, slug: 'proj', startedAt: '2026-01-01T00:00:00.000Z', worktree,
+    }));
+  }
+
+  it('routes a worker target to that worker’s server (not the leader)', async () => {
+    const dataDir = join(tempDir, 'tc-worker');
+    mkdirSync(dataDir, { recursive: true });
+    const worker = await startTriggerServer();
+    writeEntry(dataDir, 222, worker.port, '/wt/feat-a');
+
+    const ok = await triggerChannel(dataDir, 4174, 'maintenance: refresh', { kind: 'worker', worktree: '/wt/feat-a' }, { isPidAlive: () => true });
+    expect(ok).toBe(true);
+    expect(worker.body()).toContain('maintenance: refresh');
+    worker.close();
+  });
+
+  it('broadcasts an all-workers target to every live worker server', async () => {
+    const dataDir = join(tempDir, 'tc-all');
+    mkdirSync(dataDir, { recursive: true });
+    const a = await startTriggerServer();
+    const b = await startTriggerServer();
+    writeEntry(dataDir, 111, 65000, null);        // main — must NOT be triggered (dead port; would error if hit)
+    writeEntry(dataDir, 222, a.port, '/wt/feat-a');
+    writeEntry(dataDir, 333, b.port, '/wt/feat-b');
+
+    const ok = await triggerChannel(dataDir, 4174, 'fan out', { kind: 'all-workers' }, { isPidAlive: () => true });
+    expect(ok).toBe(true);
+    expect(a.body()).toContain('fan out');
+    expect(b.body()).toContain('fan out');
+    a.close(); b.close();
+  });
+
+  it('returns false for all-workers when no workers are live', async () => {
+    const dataDir = join(tempDir, 'tc-all-none');
+    mkdirSync(dataDir, { recursive: true });
+    writeEntry(dataDir, 111, 65000, null); // only a main connection
+    const ok = await triggerChannel(dataDir, 4174, 'x', { kind: 'all-workers' }, { isPidAlive: () => true });
+    expect(ok).toBe(false);
+  });
+
+  it('returns false for a worker target with no matching live server', async () => {
+    const dataDir = join(tempDir, 'tc-worker-miss');
+    mkdirSync(dataDir, { recursive: true });
+    const ok = await triggerChannel(dataDir, 4174, 'x', { kind: 'worker', worktree: '/wt/gone' }, { isPidAlive: () => true });
+    expect(ok).toBe(false);
   });
 });
 

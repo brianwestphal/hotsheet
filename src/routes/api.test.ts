@@ -1845,6 +1845,22 @@ describe('POST /api/channel/trigger', () => {
       expect.any(String),    // dataDir
       expect.any(Number),    // serverPort
       'Do the work',
+      undefined,             // HS-9084 — target omitted ⇒ main/leader default
+    );
+  });
+
+  it('forwards the HS-9084 routing target to triggerChannel', async () => {
+    const channelConfig = await import('../channel-config.js');
+    const mockTrigger = vi.mocked(channelConfig.triggerChannel);
+    mockTrigger.mockResolvedValue(true);
+
+    const res = await app.request('/api/channel/trigger', post({ message: 'fan out', target: { kind: 'all-workers' } }));
+    expect(res.status).toBe(200);
+    expect(mockTrigger).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Number),
+      'fan out',
+      { kind: 'all-workers' },
     );
   });
 

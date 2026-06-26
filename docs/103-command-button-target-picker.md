@@ -1,13 +1,25 @@
 # 103. Custom Command Buttons: Opt-In Target Picker (Main / Worker / All)
 
-**Status: DESIGN ONLY** (HS-9059, 2026-06-26). From the HS-9040 design
-investigation. A custom Claude command button today always triggers the **main**
-Claude (the FIFO-leader channel server). With workers running — each its own
-channel server in a worktree — that's the right **default**, but the owner
+**Status: PARTIAL** — routing + warn-gate logic **SHIPPED** (HS-9084, 2026-06-26);
+the picker UI (HS-9083) is the remaining piece. Design HS-9059. From the HS-9040
+design investigation. A custom Claude command button today always triggers the
+**main** Claude (the FIFO-leader channel server). With workers running — each its
+own channel server in a worktree — that's the right **default**, but the owner
 sometimes wants to **fan a command out** or **target a specific worker**. This
 adds an opt-in target picker without changing the default click. Relates to
 [92-coordinator-dispatch.md](92-coordinator-dispatch.md), §83 (long-press
 secondary action), and HS-9036 (per-server addressing).
+
+**What shipped (HS-9084):** `triggerChannel(dataDir, serverPort, message?, target?)`
+now routes by an optional `target` — `main` (FIFO leader, the unchanged default),
+`worker` (one worker's server, addressed by worktree root via `listAliveEntries`'s
+HS-9036/HS-9038 registry), or `all-workers` (broadcast fan-out, fire-and-forget).
+`resolveTriggerTargetPorts` resolves the port set; the `ChannelTriggerTargetSchema`
+wire type flows through `POST /api/channel/trigger` + the typed `triggerChannel`
+caller. The pure busy-worker warn gate is `workerTargetWarning` in
+`src/workers/triggerTarget.ts` (with the optional `workerSafe` suppression). HS-9036
+turned out to be **already shipped**, so the full three-way routing landed (no
+specific-worker gating needed).
 
 ## 103.0 Today
 
@@ -90,8 +102,12 @@ Claude session that's mid-claim, which can corrupt the loop or the ticket. So:
 ## 103.6 Follow-up tickets
 
 - **Target picker UI** (long-press/chevron menu: Main / worker-N / All) on the
-  command button (§103.3).
+  command button (§103.3) — **HS-9083** (pending; consumes the HS-9084 routing +
+  `workerTargetWarning` gate).
 - **`triggerChannel` target routing** (main / specific worker server / broadcast)
-  — depends on HS-9036 per-server addressing.
-- **Busy-worker warn gate** + optional "worker-safe" command flag (§103.2).
+  — ✅ SHIPPED (HS-9084). HS-9036 per-server addressing was already in place.
+- **Busy-worker warn gate** (`workerTargetWarning`) — ✅ SHIPPED (HS-9084). The
+  optional **"worker-safe" command flag** (persisted on the command model + edited
+  in the command editor) is a remaining follow-up — the gate already accepts the
+  `workerSafe` opt; it just isn't persisted/edited yet.
 - Relates: HS-9040 (investigation), §83 long-press, §92 dispatch, HS-9036.

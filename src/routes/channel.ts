@@ -180,7 +180,9 @@ channelRoutes.post('/channel/trigger', async (c) => {
   const ok = await instrumentAsync(dataDir, 'channel.trigger', async () => {
     // Flush pending markdown syncs so worklist/open-tickets are up to date before Claude reads them
     await flushPendingSyncs(dataDir);
-    return triggerChannel(dataDir, serverPort, parsed.data.message);
+    // HS-9084 — optional `target` routes to a specific worker / all workers;
+    // omitted ⇒ the FIFO leader (the play-button / worklist default).
+    return triggerChannel(dataDir, serverPort, parsed.data.message, parsed.data.target);
   });
   const summary = parsed.data.message !== undefined && parsed.data.message !== '' ? parsed.data.message.slice(0, 200) : 'Worklist trigger';
   addLogEntry('trigger', 'outgoing', summary, parsed.data.message ?? '').catch(() => {});

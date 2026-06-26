@@ -1,11 +1,14 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 import { appendMainServerEvent } from './channelLog.js';
+import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
+import { listAliveEntries } from './channelRegistry.js';
 import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
+import type { ChannelTriggerTarget } from './routes/validation.js';
 import { ChannelOkBodySchema } from './schemas.js';
 
 const McpConfigSchema = z.object({
@@ -331,10 +334,50 @@ export async function isChannelAlive(dataDir: string): Promise<boolean> {
   }
 }
 
-/** Send a trigger to the channel server */
-export async function triggerChannel(dataDir: string, serverPort: number, message?: string): Promise<boolean> {
-  const port = getChannelPort(dataDir);
-  if (port === null) return false;
+/** HS-9084 — canonicalize a path for worktree-marker matching (resolves macOS
+ *  `/var` → `/private/var` symlinks so the registry's `worktree` matches a
+ *  pool slot's `worktreePath`). Falls back to `resolve` when the path is gone. */
+function canonicalizeForMatch(p: string): string {
+  try { return realpathSync.native(p); } catch { return resolve(p); }
+}
+
+/**
+ * HS-9084 (docs/103 §103.3) — resolve the channel-server port(s) a trigger
+ * `target` addresses:
+ * - `main` / undefined → the FIFO leader (`getChannelPort`, the play-button /
+ *   worklist path; unchanged).
+ * - `worker` → the live worker server whose registry `worktree` matches the
+ *   target's worktree root (HS-9036 per-server addressing + HS-9038 worker
+ *   marker). Empty when no live server matches (e.g. the worker already exited).
+ * - `all-workers` → every live worker server (registry entries that carry a
+ *   `worktree`), deduped — the broadcast fan-out.
+ *
+ * `opts.isPidAlive` is injectable for tests (the registry GCs dead pids).
+ */
+export function resolveTriggerTargetPorts(
+  dataDir: string,
+  target?: ChannelTriggerTarget,
+  opts: { isPidAlive?: (pid: number) => boolean } = {},
+): number[] {
+  if (target === undefined || target.kind === 'main') {
+    const leader = getChannelPort(dataDir);
+    return leader === null ? [] : [leader];
+  }
+  const workers = listAliveEntries(dataDir, opts.isPidAlive)
+    .filter((e): e is ChannelInfo & { worktree: string } => e.worktree != null);
+  if (target.kind === 'all-workers') {
+    return [...new Set(workers.map(e => e.port))];
+  }
+  // kind === 'worker' — match the requested worktree root.
+  const want = canonicalizeForMatch(target.worktree);
+  return [...new Set(
+    workers.filter(e => canonicalizeForMatch(e.worktree) === want).map(e => e.port),
+  )];
+}
+
+/** Build the trigger body: the message (or the default worklist instruction)
+ *  plus the appended done-signal telling the agent how to report completion. */
+async function buildTriggerContent(dataDir: string, serverPort: number, message?: string): Promise<string> {
   // Include secret in the done signal so it passes the API middleware
   let secretHeader = '';
   try {
@@ -347,16 +390,39 @@ export async function triggerChannel(dataDir: string, serverPort: number, messag
   // curl fallback right below for non-Claude AI agents and any caller
   // whose tool surface doesn't include the channel-server tools.
   const doneSignal = `\n\nWhen you are completely finished (or if there was nothing to do), signal completion by calling the \`hotsheet_signal_done\` MCP tool (or, as a fallback, running:\ncurl -s -X POST http://localhost:${serverPort}/api/channel/done${secretHeader}\n)`;
-  const content = message !== undefined && message !== ''
+  return message !== undefined && message !== ''
     ? message + doneSignal
     : 'Process the Hot Sheet worklist. Run /hotsheet to work through the current Up Next items.' + doneSignal;
+}
+
+/** POST the trigger body to ONE channel server's `/trigger` endpoint. */
+async function postTriggerToPort(port: number, content: string): Promise<boolean> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/trigger`, {
-      method: 'POST',
-      body: content,
-    });
+    const res = await fetch(`http://127.0.0.1:${port}/trigger`, { method: 'POST', body: content });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Send a trigger to the channel server(s) selected by `target` (HS-9084).
+ * Default (no `target`) routes to the FIFO leader — the play-button / worklist
+ * path, unchanged. `worker` routes to one worker's server; `all-workers`
+ * broadcasts to every live worker (fire-and-forget). Returns true when every
+ * addressed server accepted AND at least one was addressed (so a no-worker
+ * broadcast / a vanished worker returns false — nothing was triggered).
+ */
+export async function triggerChannel(
+  dataDir: string,
+  serverPort: number,
+  message?: string,
+  target?: ChannelTriggerTarget,
+  opts: { isPidAlive?: (pid: number) => boolean } = {},
+): Promise<boolean> {
+  const ports = resolveTriggerTargetPorts(dataDir, target, opts);
+  if (ports.length === 0) return false;
+  const content = await buildTriggerContent(dataDir, serverPort, message);
+  const results = await Promise.all(ports.map(p => postTriggerToPort(p, content)));
+  return results.every(Boolean);
 }
