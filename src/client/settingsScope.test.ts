@@ -79,3 +79,39 @@ describe('settings scope bar — global-only tabs (HS-9020)', () => {
     expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('shared');
   });
 });
+
+// HS-9096 — the Views tab manages the shared/local layer per ROW, so the
+// dialog-wide bar is disabled there (with a per-view note, NOT the global one).
+describe('settings scope bar — per-row-layer tabs (HS-9096)', () => {
+  beforeEach(() => {
+    resetScopeMode();
+    setActiveSettingsTab('general');
+  });
+
+  it('disables the segment buttons on the Views tab with a per-view note (not the global one)', () => {
+    setActiveSettingsTab('views');
+    const bar = document.getElementById('settings-scope-bar')!;
+    expect(segButtons().every(b => b.disabled)).toBe(true);
+    expect(bar.classList.contains('scope-bar-per-row')).toBe(true);
+    // It is NOT styled/labeled as a global-only tab (Views is project-scoped).
+    expect(bar.classList.contains('scope-bar-global')).toBe(false);
+    expect(isGlobalOnlyTab('views')).toBe(false);
+    const note = document.getElementById('settings-scope-note')!.textContent;
+    expect(note).toContain('per-view');
+    expect(note).not.toContain('global to this machine');
+  });
+
+  it('ignores a segment click on the Views tab', () => {
+    setActiveSettingsTab('views');
+    document.querySelector<HTMLButtonElement>('.scope-seg-shared')!.click();
+    expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('resolved');
+  });
+
+  it('re-enables + clears the per-row class when switching back to a scoped tab', () => {
+    setActiveSettingsTab('views');
+    setActiveSettingsTab('general');
+    const bar = document.getElementById('settings-scope-bar')!;
+    expect(bar.classList.contains('scope-bar-per-row')).toBe(false);
+    expect(segButtons().some(b => b.disabled)).toBe(false);
+  });
+});
