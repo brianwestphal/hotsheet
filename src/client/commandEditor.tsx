@@ -7,9 +7,9 @@ import {
   contrastColor,
   type CustomCommand,
   deleteAtRef,
-  getCommandItems,
   getCommandMode,
   getCommandShared,
+  getEditTree,
   isChannelEnabled,
   isGroup,
   type ItemRef,
@@ -245,7 +245,7 @@ function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
 }
 
 function renderGroupOutlineRow(topIndex: number, ctx: ScopeCtx): HTMLElement {
-  const commandItems = getCommandItems();
+  const commandItems = getEditTree();
   const group = commandItems[topIndex] as CommandGroup;
   const ref: ItemRef = { type: 'top', index: topIndex };
   const shared = isSharedItem(group, ctx);
@@ -255,7 +255,7 @@ function renderGroupOutlineRow(topIndex: number, ctx: ScopeCtx): HTMLElement {
   // empty-group delete click, and the drag handlers are all delegated once at
   // `#settings-commands-list` (`ensureCommandRowDelegationBound`). `commandItems`
   // is only read here for the markup; the handlers re-fetch it via
-  // `getCommandItems()` so they always see the live array.
+  // `getEditTree()` so they always see the live array.
   return toElement(
     <div className="cmd-outline-row cmd-outline-group-row" draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
@@ -320,7 +320,7 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     e.stopPropagation();
     const ref = readRef(btn);
     if (ref === null || ref.type !== 'top') return;
-    const item = getCommandItems()[ref.index];
+    const item = getEditTree()[ref.index];
     const id = item.id;
     if (typeof id !== 'string' || id === '') return;
     const direction = btn.dataset.move === 'to-shared' ? 'to-shared' : 'to-local';
@@ -332,7 +332,7 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
   d.push(delegate<HTMLElement>(list, 'blur', '.cmd-outline-group-name', (_e, nameEl) => {
     const ref = readRef(nameEl);
     if (ref === null || ref.type !== 'top') return;
-    const group = getCommandItems()[ref.index];
+    const group = getEditTree()[ref.index];
     if (!isGroup(group)) return;
     const newName = nameEl.textContent.trim();
     if (newName === '') { nameEl.textContent = group.name; return; }
@@ -344,7 +344,7 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     if (ke.key === 'Escape') {
       const ref = readRef(nameEl);
       if (ref !== null && ref.type === 'top') {
-        const group = getCommandItems()[ref.index];
+        const group = getEditTree()[ref.index];
         if (isGroup(group)) nameEl.textContent = group.name;
       }
       nameEl.blur();
@@ -353,7 +353,7 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
 
   // Drag-to-reorder. Module-level `draggedRef` / `dropTargetRef` / `dropPosition`
   // carry the gesture state across the delegated handlers; each reads the
-  // hovered row's ref from `data-ref`. `getCommandItems()` is re-fetched inside
+  // hovered row's ref from `data-ref`. `getEditTree()` is re-fetched inside
   // the handlers so a mid-session reload's fresh array is always honored.
   d.push(delegate<HTMLElement>(list, 'dragstart', '.cmd-outline-row', (e, row) => {
     const ref = readRef(row);
@@ -377,7 +377,7 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     const ref = readRef(row);
     if (draggedRef === null || ref === null || refEqual(draggedRef, ref)) return;
     e.preventDefault();
-    const commandItems = getCommandItems();
+    const commandItems = getEditTree();
     const dt = (e as DragEvent).dataTransfer;
     if (dt !== null) dt.dropEffect = 'move';
 
@@ -419,7 +419,7 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     if (draggedRef === null || dropTargetRef === null || dropPosition === null) return;
     if (refEqual(draggedRef, dropTargetRef)) { draggedRef = null; return; }
 
-    const commandItems = getCommandItems();
+    const commandItems = getEditTree();
     const draggedItem = draggedRef.type === 'top' ? commandItems[draggedRef.index] : resolveCommand(draggedRef);
     const draggedIsGroup = isGroup(draggedItem);
 
@@ -475,7 +475,7 @@ function removeCommandAtRef(ref: ItemRef, commandItems: CommandItem[]): CustomCo
 }
 
 export function renderCustomCommandSettings() {
-  const commandItems = getCommandItems();
+  const commandItems = getEditTree();
   const list = byIdOrNull('settings-commands-list');
   if (!list) return;
   ensureCommandRowDelegationBound(list);
@@ -510,14 +510,14 @@ export function renderCustomCommandSettings() {
   const channelCheckbox = byIdOrNull<HTMLInputElement>('settings-channel-enabled');
   btnRow.querySelector('.cmd-outline-add-btn')!.addEventListener('click', () => {
     const defaultTarget = channelCheckbox?.checked === true ? undefined : 'shell' as const;
-    // HS-9065 — push onto the LIVE module array (`getCommandItems()`), not the
+    // HS-9065 — push onto the LIVE module array (`getEditTree()`), not the
     // `commandItems` captured when this row was rendered. A `reloadCustomCommands`
     // (e.g. the one fired on settings-open) REASSIGNS the module array, so a click
     // landing on a row built against the pre-reload array would push to a now-
     // detached array while `showCommandEditorModal`/`resolveCommand` read the live
     // one — `commandItems[index]` is then `undefined` and the modal crashes on
     // `cmd.icon`. Reading it fresh keeps the push + the ItemRef index consistent.
-    const items = getCommandItems();
+    const items = getEditTree();
     items.push({ name: '', prompt: '', target: defaultTarget });
     // HS-8440 — the Add Command path mutates `commandItems` synchronously
     // but defers the `saveCommandItems` PATCH until the user clicks Save
@@ -532,7 +532,7 @@ export function renderCustomCommandSettings() {
 
   btnRow.querySelector('.cmd-outline-add-group-btn')!.addEventListener('click', () => {
     // HS-9065 — same live-array reasoning as the Add Command handler above.
-    getCommandItems().push({ type: 'group', name: 'New Group', children: [] });
+    getEditTree().push({ type: 'group', name: 'New Group', children: [] });
     renderCustomCommandSettings();
     void saveCommandItems();
   });

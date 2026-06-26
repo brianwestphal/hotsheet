@@ -15,20 +15,26 @@ import { expect, test } from './coverage-fixture.js';
 // persistent long-poll open for ticket updates, so the network is never
 // idle.
 async function openExperimentalSettings(page: import('@playwright/test').Page) {
+  // Opening Settings kicks off the Backups tab's snapshot-status fetch
+  // (`bindBackupsTab` → `refreshSnapshotProtectionStatus`). Tests that
+  // `page.reload()` soon after must let that fetch settle first, else the reload
+  // aborts it and the HS-8435 console-error gate trips with a "Failed to fetch".
+  // Arm the response wait BEFORE the click. (Pre-HS-9014 the helper switched to
+  // Shared mode here, which incidentally gave the fetch time to land; that switch
+  // is gone now that the commands editor is editable in every scope mode.)
+  const snapSettled = page.waitForResponse(r => /\/api\/db\/snapshot-status/.test(r.url()), { timeout: 5000 }).catch(() => null);
   await page.locator('#settings-btn').click();
   await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
   await page.locator('.settings-tab[data-tab="experimental"]').click();
   await expect(page.locator('.settings-tab-panel[data-panel="experimental"]')).toHaveClass(/active/);
-  // HS-9065 / HS-9021 — the Custom Commands list is a `data-scope-complex`
-  // (default-variant) surface: read-only in the default Resolved scope view,
-  // editable only in Shared (docs/95 §95.3). Switch to Shared so the editor is
-  // interactive (otherwise the panel carries `pointer-events:none` and clicks on
-  // the Add buttons land on the enclosing `.settings-section`). The commands
-  // editor isn't scope-coupled, so this only unlocks it — the data source is
-  // unchanged.
-  await page.locator('#settings-scope-bar .scope-seg-btn[data-scope-mode="shared"]').click();
+  // HS-9014 — the Custom Commands editor is now element-level scope-aware (docs/95
+  // §95.3), so it's editable in EVERY scope mode (no longer locked via
+  // `data-scope-complex`). These tests run in the default Resolved view, where an
+  // edit writes to the shared (default) layer — exactly the pre-scope-control
+  // behavior. The list is never `scope-locked` now.
   await expect(page.locator('#settings-commands-list')).not.toHaveClass(/scope-locked/);
   await expect(page.locator('.cmd-outline-add-btn')).toBeVisible({ timeout: 5000 });
+  await snapSettled;
 }
 
 // Helper: set custom commands via API then reload to pick them up

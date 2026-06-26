@@ -90,20 +90,62 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
   });
 
-  // HS-9021 — a default `data-scope-complex` surface (e.g. the custom-commands
-  // list) is a SHARED setting: editable only in Shared, read-only in Resolved +
-  // Local (Resolved is the read-only effective view; you edit in Shared). The
-  // lock chip points to Shared, not Resolved.
+  // HS-9021 — a default `data-scope-complex` surface (e.g. the terminal default-
+  // appearance block) is a SHARED setting: editable only in Shared, read-only in
+  // Resolved + Local (Resolved is the read-only effective view; you edit in
+  // Shared). The lock chip points to Shared, not Resolved. (The custom-commands
+  // list is NO LONGER such a surface — HS-9014 made it element-level scope-aware;
+  // see the dedicated test below.)
   test('HS-9021: default complex panels edit in Shared, read-only in Resolved + Local', async ({ page }) => {
-    const commands = page.locator('#settings-commands-list');
-    // Default open mode is Resolved → now read-only (pre-9021 it was editable here).
-    await expect(commands).toHaveClass(/scope-locked/);
+    const panel = page.locator('.settings-terminal-default-appearance');
+    // Default open mode is Resolved → read-only.
+    await expect(panel).toHaveClass(/scope-locked/);
     // Shared → editable.
     await page.locator('.scope-seg-btn.scope-seg-shared').click();
-    await expect(commands).not.toHaveClass(/scope-locked/);
+    await expect(panel).not.toHaveClass(/scope-locked/);
     // Local → read-only again.
     await page.locator('.scope-seg-btn.scope-seg-local').click();
-    await expect(commands).toHaveClass(/scope-locked/);
+    await expect(panel).toHaveClass(/scope-locked/);
+  });
+
+  // HS-9014 — the custom-commands editor is now element-level scope-aware (the
+  // group TREE variant of docs/95 §95.3): Local mode hides a shared command + adds
+  // a local-only one, persisted as a tree delta in `settings.local.json` while
+  // `settings.json` stays untouched.
+  test('HS-9014: custom_commands is scope-aware — Local hides a shared command + adds a local one, saved as a tree delta', async ({ page }) => {
+    // Seed two SHARED commands via the shared layer, then reopen the dialog.
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { custom_commands: [
+        { id: 'shared-a', name: 'Shared A', prompt: 'pa', target: 'shell' },
+        { id: 'shared-b', name: 'Shared B', prompt: 'pb', target: 'shell' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    // Reopen settings so the editor reloads the seeded shared tree.
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+
+    // Switch to Local mode → the commands list is NOT wholesale-locked and shows
+    // the local hint + origin tags.
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const list = page.locator('#settings-commands-list');
+    await expect(list).not.toHaveClass(/scope-locked/);
+    await expect(list.locator('.scope-list-hint-local')).toBeVisible({ timeout: 5000 });
+    await expect(list.locator('.cmd-outline-row .cmd-scope-tag.scope-tag-shared').first()).toBeVisible();
+
+    // Hide the first shared command (its delete button = "Hide" in Local mode).
+    await list.locator('.cmd-outline-row').filter({ hasText: 'Shared A' }).locator('.cmd-outline-delete-btn').click();
+    await page.waitForTimeout(400);
+
+    // The local layer now holds a tree delta hiding shared-a; shared is untouched.
+    const layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: Record<string, unknown>; local: Record<string, unknown>;
+    };
+    const localCmd = layered.local.custom_commands as { hidden?: string[] } | undefined;
+    expect(localCmd?.hidden).toContain('shared-a');
+    const sharedCmd = layered.shared.custom_commands as { id: string }[];
+    expect(sharedCmd.map(c => c.id)).toEqual(['shared-a', 'shared-b']); // shared unchanged
   });
 
   test('HS-9016: auto-context is editable per-layer in Local mode and saves a local delta', async ({ page }) => {

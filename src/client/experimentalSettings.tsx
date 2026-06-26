@@ -53,6 +53,21 @@ let commandItems: CommandItem[] = [];
 let commandMode: ScopeMode = 'resolved';
 let commandShared: CommandItem[] = [];
 
+// HS-9014 — `commandItems` is the SIDEBAR's tree (always the resolved/effective
+// commands, set by `reloadCustomCommands`). `editTree` is what the Settings
+// EDITOR shows + mutates: in Resolved mode it's the SAME array object as
+// `commandItems` (so an edit updates the sidebar directly, exactly as before);
+// in Shared/Local mode it's a separate, mode-specific tree, and the sidebar is
+// refreshed from the server's resolved view after each save. The ItemRef
+// helpers + the editor's render/DnD operate on `editTree`; the sidebar's
+// `renderChannelCommands` reads `commandItems`.
+let editTree: CommandItem[] = [];
+
+/** The editor's working tree (mode-specific). */
+export function getEditTree(): CommandItem[] {
+  return editTree;
+}
+
 /** The scope mode the command editor last loaded for. */
 export function getCommandMode(): ScopeMode {
   return commandMode;
@@ -92,10 +107,10 @@ export type ItemRef =
   | { type: 'top'; index: number }
   | { type: 'child'; groupIndex: number; childIndex: number };
 
-/** Resolve an ItemRef to the actual CustomCommand. */
+/** Resolve an ItemRef to the actual CustomCommand (against the editor tree). */
 export function resolveCommand(ref: ItemRef): CustomCommand {
-  if (ref.type === 'top') return commandItems[ref.index] as CustomCommand;
-  return (commandItems[ref.groupIndex] as CommandGroup).children[ref.childIndex];
+  if (ref.type === 'top') return editTree[ref.index] as CustomCommand;
+  return (editTree[ref.groupIndex] as CommandGroup).children[ref.childIndex];
 }
 
 /** Update a CustomCommand in-place at the given ref. */
@@ -103,12 +118,12 @@ export function updateCommand(ref: ItemRef, updater: (cmd: CustomCommand) => voi
   updater(resolveCommand(ref));
 }
 
-/** Delete a command or group at the given ref. */
+/** Delete a command or group at the given ref (in the editor tree). */
 export function deleteAtRef(ref: ItemRef) {
   if (ref.type === 'top') {
-    commandItems.splice(ref.index, 1);
+    editTree.splice(ref.index, 1);
   } else {
-    const group = commandItems[ref.groupIndex] as CommandGroup;
+    const group = editTree[ref.groupIndex] as CommandGroup;
     group.children.splice(ref.childIndex, 1);
   }
 }
@@ -206,8 +221,10 @@ export async function reloadCustomCommands(): Promise<void> {
   // HS-9014 — `getSettings()` returns the RESOLVED (effective) tree, which is
   // exactly what the sidebar renders, so reloading drops us back into Resolved
   // mode. The scope-aware editor loader (`loadScopedCommands`) re-derives the
-  // mode-specific tree on the next settings-dialog open / scope switch.
+  // mode-specific tree on the next settings-dialog open / scope switch. In
+  // Resolved mode the editor edits the SAME array as the sidebar, so alias them.
   commandMode = 'resolved';
+  editTree = commandItems;
 }
 
 /** Coerce a layered `custom_commands` value (native array or legacy stringified
@@ -262,12 +279,31 @@ export async function loadScopedCommands(): Promise<void> {
       display = commandShared; // no local override → effective == shared
     }
     // Backfill any local-only items lacking ids (so delete/override can target them).
-    commandItems = backfillCommandIds(display).items;
+    editTree = backfillCommandIds(display).items;
+    // In Resolved mode the editor + sidebar share one tree; alias so an edit
+    // updates the sidebar directly (and `getCommandItems()` reflects it).
+    if (commandMode === 'resolved') commandItems = editTree;
   } catch {
     if (commandItemsMutationEpoch !== epochBeforeFetch) return;
-    commandItems = [];
+    editTree = [];
     commandShared = [];
   }
+}
+
+/**
+ * HS-9014 — after a Shared/Local-mode save, the sidebar must reflect the new
+ * EFFECTIVE (resolved) command tree without disturbing the editor's
+ * mode-specific `editTree`. Re-fetches the resolved tree into `commandItems`
+ * (the sidebar source) and re-renders the sidebar.
+ */
+async function refreshSidebarFromResolved(): Promise<void> {
+  try {
+    const settings = await getSettings();
+    commandItems = settings.custom_commands !== '' ? asCommandArray(settings.custom_commands) : [];
+  } catch {
+    return;
+  }
+  renderChannelCommands();
 }
 
 /**
@@ -330,19 +366,18 @@ export async function saveCommandItems() {
   //  - Resolved → today's default-routed save (writes to the shared layer),
   //    exactly preserving pre-HS-9014 behavior.
   if (commandMode === 'shared') {
-    await updateFileSettingsLayer('shared', { custom_commands: commandItems });
-    commandShared = backfillCommandIds(commandItems).items.map(cloneItem);
+    await updateFileSettingsLayer('shared', { custom_commands: editTree });
+    commandShared = backfillCommandIds(editTree).items.map(cloneItem);
+    await refreshSidebarFromResolved();
   } else if (commandMode === 'local') {
-    await persistLocalCommandDelta(computeCommandTreeDelta(commandShared, commandItems));
+    await persistLocalCommandDelta(computeCommandTreeDelta(commandShared, editTree));
+    await refreshSidebarFromResolved();
   } else {
-    await updateSettings({ custom_commands: JSON.stringify(commandItems) });
+    // Resolved mode: `editTree` IS `commandItems`, so the write + sidebar render
+    // reflect the edit immediately (pre-HS-9014 behavior preserved).
+    await updateSettings({ custom_commands: JSON.stringify(editTree) });
+    renderChannelCommands();
   }
-  // The sidebar renders from `commandItems`. In Resolved mode that IS the
-  // effective tree, so render now. In Shared/Local mode the sidebar is hidden
-  // behind the settings overlay and `commandItems` is the mode-specific tree;
-  // it's refreshed to the effective tree on dialog close
-  // (`refreshCommandsAfterDialogClose`), so don't render the mode tree here.
-  if (commandMode === 'resolved') renderChannelCommands();
 }
 
 /** Deep-ish clone of a command item (a fresh object + fresh children array) so
@@ -384,6 +419,7 @@ export async function moveCommandLayer(id: string, direction: 'to-local' | 'to-s
   await persistLocalCommandDelta(next.delta);
   await loadScopedCommands();
   renderCustomCommandSettings();
+  await refreshSidebarFromResolved();
 }
 
 export function bindExperimentalSettings() {
