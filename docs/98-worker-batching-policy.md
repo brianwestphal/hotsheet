@@ -1,8 +1,10 @@
 # 98. Worker Batching Policy
 
-**Status: PARTIAL** — the **skill prose** (§98.4 items 1+2) **SHIPPED**
-(HS-9072, 2026-06-26, `SKILL_VERSION` → 19); the **partitioner grouping
-heuristic** (§98.4 item 3) is HS-9073 (pending). Design HS-9064. The "how
+**Status: SHIPPED (core)** — the **skill prose** (§98.4 items 1+2) **SHIPPED**
+(HS-9072, `SKILL_VERSION` → 19) and the **partitioner grouping heuristic** (§98.4
+item 3) **SHIPPED** (HS-9073), both 2026-06-26. Only §98.4 item 4 (optional batch
+hints) remains, deferred unless the existing signals prove insufficient. Design
+HS-9064. The "how
 aggressive should rebasing be" knob for the distributed-worker epic. Mostly
 **skill prose + a dispatch/partition heuristic**, not heavy tooling.
 
@@ -174,6 +176,11 @@ The three form one cadence story:
   describing the batch-then-pulse cadence — depends on HS-9063's refresh routine
   existing so the prose can point at it. ✅ SHIPPED (HS-9072).
 - **Partitioner grouping heuristic** — make `partition.ts` / the AI-partition
-  path cluster by the §98.2 signals (depends on HS-9061). — **HS-9073** (pending).
+  path cluster by the §98.2 signals (depends on HS-9061). ✅ SHIPPED (HS-9073):
+  new deterministic `clusterPartition` (union-find by shared tag → coherent
+  chunks; isolate large/risky titles onto their own chunk; greedy least-loaded
+  balance) replaces round-robin as the fallback, and the AI `SYSTEM_PROMPT` now
+  asks for small-related grouping + large/risky isolation + no co-batching a
+  dependency.
 - **(Optional) batch-hint surfacing** for the partitioner, only if §98.2 proves
   insufficient.
