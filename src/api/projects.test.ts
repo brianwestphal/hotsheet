@@ -18,7 +18,9 @@ import {
   registerProject, reorderProjects, revealProject,
 } from './projects.js';
 
-const projectRow = { name: 'hotsheet', dataDir: '/Users/x/hotsheet', secret: 'sek', ticketCount: 7 };
+// HS-9056 — a real `GET /projects` row carries openCount/upNextCount; keep the
+// fixture in lockstep with ProjectListItemSchema so listProjects() round-trips it.
+const projectRow = { name: 'hotsheet', dataDir: '/Users/x/hotsheet', secret: 'sek', ticketCount: 7, openCount: 3, upNextCount: 2 };
 const permissions = {
   permissions: { sek: { request_id: 'r1', tool_name: 'Bash', description: 'ls', input_preview: 'ls -la' }, other: null },
   v: 3,
