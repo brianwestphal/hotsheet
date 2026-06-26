@@ -711,6 +711,14 @@ pageRoutes.get('/', (c) => {
                 <textarea id="settings-worklist-preamble" className="settings-textarea" rows={4} placeholder="Optional project-specific notes for the AI, added near the top of worklist.md."></textarea>
                 <span className="settings-hint" id="settings-worklist-preamble-hint">Free-text notes added under a "Project Notes" heading near the top of <code>.hotsheet/worklist.md</code>, before the standard workflow instructions. Leave empty to omit.</span>
               </div>
+              {/* HS-9099 — opt-in worker-branch integration gate (docs/106 §106.2).
+                  The owner-side integrate helper runs this after each merge and
+                  rolls the merge back on failure/timeout. */}
+              <div className="settings-field">
+                <label>Worker integration gate</label>
+                <input type="text" id="settings-integration-gate" className="settings-input" placeholder="npm run -s typecheck && npm run -s lint && npm test" autoComplete="off" />
+                <span className="settings-hint" id="settings-integration-gate-hint">Optional shell command run after each worker branch is merged into the target. If it fails or times out (15&nbsp;min), the merge is <strong>rolled back</strong> automatically. Leave empty to keep the default — the integrating agent runs the project's gates itself. Shared across the project (a build contract).</span>
+              </div>
             </div>
             <div className="settings-tab-panel" data-panel="categories" data-scope-complex="shared-only">
               <div className="settings-section-header">
