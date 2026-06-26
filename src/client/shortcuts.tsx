@@ -453,6 +453,11 @@ export function bindKeyboardShortcuts() {
         const dlg = byIdOrNull(id);
         if (dlg && dlg.style.display !== 'none') {
           dlg.style.display = 'none';
+          // HS-9014 — closing Settings after Shared/Local command edits must
+          // restore the sidebar to the effective (resolved) command tree.
+          if (id === 'settings-overlay') {
+            void import('./experimentalSettings.js').then(m => m.refreshCommandsAfterDialogClose());
+          }
           return;
         }
       }

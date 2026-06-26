@@ -2631,7 +2631,8 @@ body.cross-project-stats-active {
   }
 
   .cmd-outline-edit-btn,
-  .cmd-outline-delete-btn {
+  .cmd-outline-delete-btn,
+  .cmd-outline-move-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2648,6 +2649,17 @@ body.cross-project-stats-active {
   }
 
   .cmd-outline-delete-btn:hover { color: var(--danger, #ef4444); }
+
+  // HS-9014 — scope origin tag + shared↔local move button on each row in
+  // Shared / Local mode. The tag is a compact variant of the `.scope-tag` chip.
+  // The `.cmd-outline-name` (flex:1) already pushes the tag + buttons to the
+  // right edge, so the tag just needs to stay compact and not shrink.
+  .cmd-scope-tag {
+    flex-shrink: 0;
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .cmd-outline-move-btn { font-size: 14px; font-weight: 600; }
 
   // Group header row styling
   &.cmd-outline-group-row {

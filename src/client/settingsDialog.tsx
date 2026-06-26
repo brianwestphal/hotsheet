@@ -6,7 +6,7 @@ import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { bindExperimentalSettings } from './experimentalSettings.js';
+import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
@@ -111,11 +111,13 @@ function bindDialogOpenClose() {
 
   closeBtn.addEventListener('click', () => {
     overlay.style.display = 'none';
+    void refreshCommandsAfterDialogClose();
   });
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
       overlay.style.display = 'none';
+      void refreshCommandsAfterDialogClose();
     }
   });
 }

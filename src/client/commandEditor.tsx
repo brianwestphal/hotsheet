@@ -8,9 +8,12 @@ import {
   type CustomCommand,
   deleteAtRef,
   getCommandItems,
+  getCommandMode,
+  getCommandShared,
   isChannelEnabled,
   isGroup,
   type ItemRef,
+  moveCommandLayer,
   noteCommandItemsMutation,
   resolveCommand,
   saveCommandItems,
@@ -19,6 +22,7 @@ import {
 import { showColorDropdown, showIconPicker } from './iconPicker.js';
 import { renderIconSvg } from './icons.js';
 import { delegate } from './reactive.js';
+import { scopeListHintElement } from './settingsScopeList.js';
 
 /** HS-8614 — recover the `ItemRef` a delegated handler should act on from the
  *  row's `data-ref` attribute (`renderCommandOutlineRow` / `renderGroupOutlineRow`
@@ -174,31 +178,78 @@ function refEqual(a: ItemRef | null, b: ItemRef | null): boolean {
   return false;
 }
 
-function renderCommandOutlineRow(ref: ItemRef): HTMLElement {
+/** HS-9014 - per-render scope context for the rows: the active mode + the set
+ *  of ids that live in the SHARED tree (top-level + children), so each row can
+ *  show its origin tag + the right move/hide affordance. */
+interface ScopeCtx {
+  mode: 'shared' | 'local' | 'resolved';
+  sharedIds: Set<string>;
+}
+
+function buildScopeCtx(): ScopeCtx {
+  const sharedIds = new Set<string>();
+  for (const item of getCommandShared()) {
+    if (typeof item.id === 'string' && item.id !== '') sharedIds.add(item.id);
+    if (isGroup(item)) {
+      for (const ch of item.children) {
+        if (typeof ch.id === 'string' && ch.id !== '') sharedIds.add(ch.id);
+      }
+    }
+  }
+  return { mode: getCommandMode(), sharedIds };
+}
+
+/** Is the item at `ref` a SHARED item (vs a local-only addition)? */
+function isSharedItem(item: CommandItem, ctx: ScopeCtx): boolean {
+  return typeof item.id === 'string' && ctx.sharedIds.has(item.id);
+}
+
+/** HS-9014 - the origin tag + (top-level) shared/local move button shown in
+ *  Shared/Local mode. Returns an empty fragment in Resolved mode. */
+function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
+  if (ctx.mode === 'resolved') return <></>;
+  const shared = isSharedItem(item, ctx);
+  const tag = <span className={`cmd-scope-tag scope-tag ${shared ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{shared ? 'shared' : 'local'}</span>;
+  // Move is top-level only for now (child-level move is a follow-up).
+  if (ref.type !== 'top') return tag;
+  const direction = shared ? 'to-local' : 'to-shared';
+  const title = shared ? 'Move to Local (make this machine-only)' : 'Move to Shared (commit for the team)';
+  const moveBtn = <button className="cmd-outline-move-btn" data-move={direction} title={title}>{shared ? '\u2193' : '\u2191'}</button>;
+  return <>{tag}{moveBtn}</>;
+}
+
+function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
   const cmd = resolveCommand(ref);
   const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
   const currentColor = cmd.color ?? CMD_COLORS[0].value;
   const textColor = contrastColor(currentColor);
   const isChild = ref.type === 'child';
+  // HS-9014 \u2014 in Local mode, removing a SHARED command hides it on this machine
+  // (the delta records it as `hidden`); a local-only addition is truly deleted.
+  const shared = isSharedItem(cmd, ctx);
+  const deleteTitle = ctx.mode === 'local' && shared ? 'Hide on this machine' : 'Delete';
 
   // HS-8614 \u2014 pure markup. The edit / delete clicks + the drag handlers are
   // delegated once at `#settings-commands-list` (`ensureCommandRowDelegationBound`),
-  // reading the `ItemRef` back from `data-ref`.
+  // reading the `ItemRef` back from `data-ref`. HS-9014 adds the scope tag + move btn.
   return toElement(
     <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{renderIconSvg(currentIcon.svg, 12, textColor)}</span>
       <span className="cmd-outline-name">{cmd.name !== '' ? cmd.name : '(untitled)'}</span>
+      {renderScopeAffordances(cmd, ref, ctx)}
       <button className="cmd-outline-edit-btn" title="Edit">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13)}</button>
-      <button className="cmd-outline-delete-btn" title="Delete">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
+      <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
     </div>
   );
 }
 
-function renderGroupOutlineRow(topIndex: number): HTMLElement {
+function renderGroupOutlineRow(topIndex: number, ctx: ScopeCtx): HTMLElement {
   const commandItems = getCommandItems();
   const group = commandItems[topIndex] as CommandGroup;
   const ref: ItemRef = { type: 'top', index: topIndex };
+  const shared = isSharedItem(group, ctx);
+  const deleteTitle = ctx.mode === 'local' && shared ? 'Hide on this machine' : 'Delete empty group';
 
   // HS-8614 \u2014 pure markup. The contentEditable name's `blur`/`keydown`, the
   // empty-group delete click, and the drag handlers are all delegated once at
@@ -209,8 +260,9 @@ function renderGroupOutlineRow(topIndex: number): HTMLElement {
     <div className="cmd-outline-row cmd-outline-group-row" draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-group-name" contentEditable="true">{group.name}</span>
+      {renderScopeAffordances(group, ref, ctx)}
       {group.children.length === 0
-        ? <button className="cmd-outline-delete-btn" title="Delete empty group">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
+        ? <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
         : ''
       }
     </div>
@@ -249,7 +301,9 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
 
   // Delete button — covers both command rows and empty-group rows.
   // `deleteAtRef({type:'top'})` splices `commandItems[index]`, identical to the
-  // pre-fix empty-group delete branch, so one handler serves both.
+  // pre-fix empty-group delete branch, so one handler serves both. HS-9014 — in
+  // Local mode, deleting a SHARED item resolves (via `computeCommandTreeDelta`)
+  // to a `hidden` entry rather than a true removal.
   d.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-delete-btn', (e, btn) => {
     e.stopPropagation();
     const ref = readRef(btn);
@@ -257,6 +311,20 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     deleteAtRef(ref);
     renderCustomCommandSettings();
     void saveCommandItems();
+  }));
+
+  // HS-9014 — shared↔local move button (top-level rows, Shared/Local mode).
+  // `data-move` carries the direction; `moveCommandLayer` edits both layer files
+  // then reloads + re-renders the editor for the active mode.
+  d.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-move-btn', (e, btn) => {
+    e.stopPropagation();
+    const ref = readRef(btn);
+    if (ref === null || ref.type !== 'top') return;
+    const item = getCommandItems()[ref.index];
+    const id = item.id;
+    if (typeof id !== 'string' || id === '') return;
+    const direction = btn.dataset.move === 'to-shared' ? 'to-shared' : 'to-local';
+    void moveCommandLayer(id, direction);
   }));
 
   // Group name (contentEditable) — commit on blur, Enter blurs, Escape reverts.
@@ -415,16 +483,20 @@ export function renderCustomCommandSettings() {
   // HS-8614 — accumulate every child then commit via one `replaceChildren`
   // (was `innerHTML = '' + append-each`). Rows are pure markup; the per-row
   // listeners are delegated once at `list` above.
+  // HS-9014 — origin tags + the scope hint banner reflect the active mode.
+  const ctx = buildScopeCtx();
   const children: Element[] = [];
+  const hint = scopeListHintElement(ctx.mode);
+  if (hint !== null) children.push(hint);
   for (let i = 0; i < commandItems.length; i++) {
     const item = commandItems[i];
     if (isGroup(item)) {
-      children.push(renderGroupOutlineRow(i));
+      children.push(renderGroupOutlineRow(i, ctx));
       for (let j = 0; j < item.children.length; j++) {
-        children.push(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }));
+        children.push(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }, ctx));
       }
     } else {
-      children.push(renderCommandOutlineRow({ type: 'top', index: i }));
+      children.push(renderCommandOutlineRow({ type: 'top', index: i }, ctx));
     }
   }
 

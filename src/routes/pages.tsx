@@ -1009,7 +1009,12 @@ pageRoutes.get('/', (c) => {
                     <h3>Custom Commands</h3>
                   </div>
                   <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
-                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px" data-scope-complex></div>
+                  {/* HS-9014 — the command editor is now scope-aware (Shared
+                      edits the committed tree; Local stores an element-level
+                      tree delta — hide/add/override/childAdded), so it's NO
+                      LONGER locked via `data-scope-complex`. It renders its own
+                      per-mode origin tags + scope hint. */}
+                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
                   {/* HS-7984 — per-project toggle for the §53 streaming
                       shell-output behavior. When off, the server still
                       buffers (cheap; no point in conditional buffering

@@ -6,6 +6,8 @@ import {
   type CommandTreeDelta,
   computeCommandTreeDelta,
   isCommandTreeDelta,
+  moveTopLevelToLocal,
+  moveTopLevelToShared,
   resolveCommandTreeDelta,
 } from './settingsCommandDelta.js';
 
@@ -153,6 +155,60 @@ describe('computeCommandTreeDelta (round-trip with resolve)', () => {
     const edited = shared.filter(i => i.id !== 'cmd-b'); // user removed B in Local mode
     const delta = computeCommandTreeDelta(shared, edited);
     expect(delta.hidden).toEqual(['cmd-b']);
+  });
+});
+
+describe('moveTopLevelToLocal / moveTopLevelToShared', () => {
+  it('moves a shared top-level command to local: removed from shared, added to delta, resolved unchanged in membership', () => {
+    const shared = sharedTree();
+    const { shared: shared2, delta } = moveTopLevelToLocal({ shared, delta: {} }, 'cmd-a');
+    expect(shared2.map(i => i.id)).toEqual(['cmd-b', 'grp-1']); // dropped from shared
+    expect(delta.added?.map(i => i.id)).toEqual(['cmd-a']); // now a local addition
+    // The resolved effective list still contains cmd-a (now appended after shared).
+    const resolved = resolveCommandTreeDelta(shared2, delta);
+    expect(resolved.map(i => i.id).sort()).toEqual(['cmd-a', 'cmd-b', 'grp-1']);
+  });
+
+  it('moves a shared group to local, folding its shared children + childAdded into one local group', () => {
+    const shared = sharedTree();
+    const delta: CommandTreeDelta = {
+      childAdded: { 'grp-1': { group: { id: 'grp-1', name: 'Group 1' }, children: [{ id: 'cmd-local', name: 'L', prompt: 'pl' }] } },
+    };
+    const moved = moveTopLevelToLocal({ shared, delta }, 'grp-1');
+    expect(moved.shared.map(i => i.id)).toEqual(['cmd-a', 'cmd-b']); // group gone from shared
+    expect(moved.delta.childAdded).toBeUndefined(); // childAdded folded in
+    const localGroup = moved.delta.added?.find(i => i.id === 'grp-1');
+    expect(localGroup && 'children' in localGroup ? localGroup.children.map(c => c.id) : [])
+      .toEqual(['cmd-c', 'cmd-d', 'cmd-local']);
+  });
+
+  it('is a no-op when the id is not a shared top-level item', () => {
+    const shared = sharedTree();
+    const result = moveTopLevelToLocal({ shared, delta: {} }, 'nope');
+    expect(result.shared).toBe(shared);
+  });
+
+  it('moves a local-only addition to shared (promote): appended to shared, dropped from delta.added', () => {
+    const shared = sharedTree();
+    const delta: CommandTreeDelta = { added: [{ id: 'cmd-x', name: 'X', prompt: 'px' }] };
+    const moved = moveTopLevelToShared({ shared, delta }, 'cmd-x');
+    expect(moved.shared.map(i => i.id)).toEqual(['cmd-a', 'cmd-b', 'grp-1', 'cmd-x']);
+    expect(moved.delta.added).toBeUndefined();
+  });
+
+  it('promote is a no-op when the id is not a local addition', () => {
+    const shared = sharedTree();
+    const delta: CommandTreeDelta = { added: [{ id: 'cmd-x', name: 'X', prompt: 'px' }] };
+    const result = moveTopLevelToShared({ shared, delta }, 'cmd-a');
+    expect(result.shared).toBe(shared);
+  });
+
+  it('round-trips: promote-to-local then back-to-shared restores shared membership', () => {
+    const shared = sharedTree();
+    const toLocal = moveTopLevelToLocal({ shared, delta: {} }, 'cmd-b');
+    const back = moveTopLevelToShared(toLocal, 'cmd-b');
+    expect(back.shared.map(i => i.id).sort()).toEqual(['cmd-a', 'cmd-b', 'grp-1']);
+    expect(back.delta.added).toBeUndefined();
   });
 });
 

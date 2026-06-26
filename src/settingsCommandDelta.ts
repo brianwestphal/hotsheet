@@ -294,6 +294,115 @@ export function computeCommandTreeDelta(shared: readonly CommandItem[], edited: 
   return delta;
 }
 
+// --- Shared ↔ Local layer moves (HS-9014, maintainer request 2026-06-25) ---
+
+/** The two layer files a move edits together. */
+export interface CommandLayers {
+  /** The committed shared tree (`settings.json` `custom_commands`). */
+  shared: CommandItem[];
+  /** The local delta (`settings.local.json` `custom_commands`). */
+  delta: CommandTreeDelta;
+}
+
+function cloneCommandItem(item: CommandItem): CommandItem {
+  return isGroup(item) ? { ...item, children: item.children.map(c => ({ ...c })) } : { ...item };
+}
+
+function cloneDelta(delta: CommandTreeDelta): CommandTreeDelta {
+  const out: CommandTreeDelta = {};
+  if (delta.hidden !== undefined) out.hidden = [...delta.hidden];
+  if (delta.added !== undefined) out.added = delta.added.map(cloneCommandItem);
+  if (delta.overrides !== undefined) out.overrides = { ...delta.overrides };
+  if (delta.childAdded !== undefined) {
+    const childAdded: Record<string, ChildAddition> = {};
+    for (const [k, v] of Object.entries(delta.childAdded)) {
+      childAdded[k] = { group: { ...v.group }, children: v.children.map(c => ({ ...c })) };
+    }
+    out.childAdded = childAdded;
+  }
+  return out;
+}
+
+/** Return a copy of `record` without `key` (avoids `delete` on a computed key). */
+function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const { [key]: _dropped, ...rest } = record;
+  void _dropped;
+  return rest;
+}
+
+/**
+ * Move a SHARED top-level command/group into the LOCAL layer ("make this
+ * local-only"): drop it from the shared tree and add it as a local addition, so
+ * the resolved list still contains it (now appended among the local items — the
+ * local layer can't reorder, so it joins the bottom) but it's no longer
+ * committed. A moved group brings its shared children + any `childAdded` local
+ * children together as one local group. No-op if `id` isn't a shared top-level
+ * item. Pure — returns the new layer pair.
+ */
+export function moveTopLevelToLocal(layers: CommandLayers, id: string): CommandLayers {
+  const idx = layers.shared.findIndex(i => idOf(i) === id);
+  if (idx < 0) return layers;
+  const item = layers.shared[idx];
+  const shared = layers.shared.filter((_, i) => i !== idx);
+  const delta = cloneDelta(layers.delta);
+
+  // Drop any delta entries that targeted the now-removed shared item.
+  if (delta.hidden !== undefined) delta.hidden = delta.hidden.filter(h => h !== id);
+  if (delta.overrides !== undefined) delta.overrides = omitKey(delta.overrides, id);
+
+  let localItem: CommandItem;
+  if (isGroup(item)) {
+    // Fold the group's shared children (each with its override applied + minus
+    // hidden) plus any local children added into it, into one local group.
+    const hidden = new Set(delta.hidden ?? []);
+    const overrides = delta.overrides ?? {};
+    const children: CustomCommand[] = [];
+    for (const ch of item.children) {
+      const cid = idOf(ch);
+      if (hidden.has(cid)) continue;
+      children.push(applyOverride(ch, overrides[cid]));
+      if (delta.hidden !== undefined) delta.hidden = delta.hidden.filter(h => h !== cid);
+      if (delta.overrides !== undefined) delta.overrides = omitKey(delta.overrides, cid);
+    }
+    if (delta.childAdded !== undefined && id in delta.childAdded) {
+      for (const c of delta.childAdded[id].children) children.push({ ...c });
+      delta.childAdded = omitKey(delta.childAdded, id);
+    }
+    localItem = { ...item, children };
+  } else {
+    localItem = { ...item };
+  }
+
+  delta.added = [...(delta.added ?? []), localItem];
+  return { shared, delta: pruneDelta(delta) };
+}
+
+/**
+ * Move a LOCAL-only top-level command/group into the SHARED layer ("promote to
+ * shared"): append it to the shared tree and drop it from the local delta's
+ * `added`. No-op if `id` isn't a local top-level addition. Pure.
+ */
+export function moveTopLevelToShared(layers: CommandLayers, id: string): CommandLayers {
+  const added = layers.delta.added ?? [];
+  const idx = added.findIndex(i => idOf(i) === id);
+  if (idx < 0) return layers;
+  const item = added[idx];
+  const delta = cloneDelta(layers.delta);
+  delta.added = added.filter((_, i) => i !== idx);
+  const shared = [...layers.shared, isGroup(item) ? { ...item, children: item.children.map(c => ({ ...c })) } : { ...item }];
+  return { shared, delta: pruneDelta(delta) };
+}
+
+/** Drop empty delta fields so a fully-reconciled delta serializes as `{}`. */
+function pruneDelta(delta: CommandTreeDelta): CommandTreeDelta {
+  const out: CommandTreeDelta = {};
+  if (delta.hidden !== undefined && delta.hidden.length > 0) out.hidden = delta.hidden;
+  if (delta.overrides !== undefined && Object.keys(delta.overrides).length > 0) out.overrides = delta.overrides;
+  if (delta.added !== undefined && delta.added.length > 0) out.added = delta.added;
+  if (delta.childAdded !== undefined && Object.keys(delta.childAdded).length > 0) out.childAdded = delta.childAdded;
+  return out;
+}
+
 /** Generate a stable element id. `crypto.randomUUID` exists in the browser
  *  (incl. Tauri's WKWebView) and Node 20; the fallback keeps non-secure-context
  *  edge cases working. */
