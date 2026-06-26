@@ -138,14 +138,25 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await list.locator('.cmd-outline-row').filter({ hasText: 'Shared A' }).locator('.cmd-outline-delete-btn').click();
     await page.waitForTimeout(400);
 
-    // The local layer now holds a tree delta hiding shared-a; shared is untouched.
+    // Add a LOCAL-only command (top level) and give it a name so the save fires.
+    await list.locator('.cmd-outline-add-btn').click();
+    const modal = page.locator('.cmd-editor-overlay');
+    await expect(modal).toBeVisible({ timeout: 3000 });
+    await modal.locator('.settings-command-row-header input[type="text"]').fill('My Local Cmd');
+    await page.waitForTimeout(300); // input-driven save
+    await modal.locator('.cmd-editor-done-btn').click();
+    await page.waitForTimeout(300);
+
+    // The local layer holds a tree delta: hides shared-a AND adds the local command;
+    // the shared (committed) tree is untouched.
     const layered = await (await page.request.get('/api/file-settings/layered')).json() as {
       shared: Record<string, unknown>; local: Record<string, unknown>;
     };
-    const localCmd = layered.local.custom_commands as { hidden?: string[] } | undefined;
+    const localCmd = layered.local.custom_commands as { hidden?: string[]; added?: { name: string }[] } | undefined;
     expect(localCmd?.hidden).toContain('shared-a');
+    expect(localCmd?.added?.some(c => c.name === 'My Local Cmd')).toBe(true);
     const sharedCmd = layered.shared.custom_commands as { id: string }[];
-    expect(sharedCmd.map(c => c.id)).toEqual(['shared-a', 'shared-b']); // shared unchanged
+    expect(sharedCmd.map(c => c.id)).toEqual(['shared-a', 'shared-b']); // shared unchanged — local-only add
   });
 
   test('HS-9016: auto-context is editable per-layer in Local mode and saves a local delta', async ({ page }) => {
