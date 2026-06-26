@@ -26,9 +26,19 @@ import { getGitStatus,type GitStatus } from './status.js';
  * (macOS most notably) the worst-case is a stale chip until the next
  * focus-refetch fires — acceptable degradation.
  *
- * `.git/index.lock` is filtered out: `git status` itself touches the
- * index-lock briefly while reading, which would otherwise trigger an
- * infinite "git status → mtime change → /poll wake → git status" loop.
+ * HS-9109 — we watch the **`.git` directory**, NOT the individual `index` /
+ * `HEAD` files. git updates the index atomically: it writes `.git/index.lock`
+ * then *renames* it over `.git/index`, which REPLACES the file's inode. An
+ * `fs.watch` bound to the file path keeps watching the now-orphaned old inode,
+ * so it fires (at most) once and then goes silent — the chip stopped updating on
+ * subsequent stages/commits until a `window.focus` / project-switch refetch (the
+ * reported "doesn't update until switching tabs" bug). A directory watch survives
+ * the rename because the directory's inode is stable; we filter the reported
+ * filename down to the two entries we care about.
+ *
+ * `.git/index.lock` is filtered out (we only act on `index` / `HEAD`). Hot
+ * Sheet's own status reads run with `GIT_OPTIONAL_LOCKS=0` (see `src/git/status.ts`)
+ * so they never write the index — they can't self-trigger this watcher.
  */
 
 const CACHE_TTL_MS = 500;
@@ -146,7 +156,6 @@ export function ensureGitWatcher(projectRoot: string): void {
   const gitDir = join(gitRoot, '.git');
   if (!existsSync(gitDir)) return; // worktree / submodule with .git as a file — skip for v1
 
-  const filenames = ['index', 'HEAD'];
   const handles: FSWatcher[] = [];
 
   // HS-7972 — debounced notify. fs.watch on macOS frequently fires multiple
@@ -195,16 +204,21 @@ export function ensureGitWatcher(projectRoot: string): void {
     }, WATCHER_DEBOUNCE_MS);
   };
 
-  for (const file of filenames) {
-    const target = join(gitDir, file);
-    if (!existsSync(target)) continue;
-    try {
-      const handle = fsWatch(target, () => fireDebounced());
-      handles.push(handle);
-    } catch {
-      // fs.watch isn't supported on every filesystem (e.g. some FUSE
-      // mounts). Degraded mode — focus-refetch on the client still works.
-    }
+  // HS-9109 — watch the `.git` directory and filter the reported filename to the
+  // entries that move git state for the chip. `index` covers stage/commit (it's
+  // rewritten on both); `HEAD` covers branch switch + commit. We deliberately do
+  // NOT fire on `index.lock` (transient) or other `.git` churn. A null filename
+  // (rare — some network filesystems don't report it) falls back to firing, since
+  // we can't tell what changed; the 250 ms debounce + 500 ms cache bound the cost.
+  const RELEVANT = new Set(['index', 'HEAD']);
+  try {
+    const handle = fsWatch(gitDir, (_event, filename) => {
+      if (filename === null || RELEVANT.has(filename)) fireDebounced();
+    });
+    handles.push(handle);
+  } catch {
+    // fs.watch isn't supported on every filesystem (e.g. some FUSE
+    // mounts). Degraded mode — focus-refetch on the client still works.
   }
   watchers.set(projectRoot, { watchers: handles, version: 0, debounce: null });
 }

@@ -172,7 +172,7 @@ describe('untracked-files=all (HS-8895)', () => {
   it('getGitStatus passes --untracked-files=all on the dirty-count invocation', async () => {
     const calls: string[][] = [];
     await getGitStatus(process.cwd(), recordingInvoker(calls));
-    const statusCall = calls.find(a => a[0] === 'status' && a.includes('--porcelain=v1'));
+    const statusCall = calls.find(a => a.includes('status') && a.includes('--porcelain=v1'));
     expect(statusCall).toBeDefined();
     expect(statusCall).toContain('--untracked-files=all');
   });
@@ -180,7 +180,7 @@ describe('untracked-files=all (HS-8895)', () => {
   it('getGitStatusFiles passes --untracked-files=all so new directories expand', async () => {
     const calls: string[][] = [];
     await getGitStatusFiles(process.cwd(), recordingInvoker(calls));
-    const statusCall = calls.find(a => a[0] === 'status' && a.includes('--porcelain=v1'));
+    const statusCall = calls.find(a => a.includes('status') && a.includes('--porcelain=v1'));
     expect(statusCall).toBeDefined();
     expect(statusCall).toContain('--untracked-files=all');
   });

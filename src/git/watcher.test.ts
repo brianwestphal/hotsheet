@@ -24,10 +24,11 @@ import {
 } from './watcher.js';
 
 // HS-8713 — the watcher builds paths with `path.join`, so on Windows the
-// targets are `...\.git\index` (backslashes). Assert against `join(...)`
-// rather than hardcoded POSIX strings so these tests are OS-portable.
-const gitIndexPath = join('/tmp/proj', '.git', 'index');
-const gitHeadPath = join('/tmp/proj', '.git', 'HEAD');
+// targets are `...\.git` (backslashes). Assert against `join(...)` rather than
+// hardcoded POSIX strings so these tests are OS-portable.
+// HS-9109 — the watcher now watches the `.git` DIRECTORY (not the index/HEAD
+// files) so it survives git's atomic index-rename.
+const gitDirPath = join('/tmp/proj', '.git');
 
 // --- Mocks ---
 
@@ -170,25 +171,14 @@ describe('ensureGitWatcher — idempotent wire-up', () => {
     expect(mockFsWatch).not.toHaveBeenCalled();
   });
 
-  it('wires up watchers for both .git/index AND .git/HEAD on the happy path', () => {
+  it('HS-9109: wires up a SINGLE watcher on the .git directory (survives index rename)', () => {
     arrangeRepo();
     ensureGitWatcher('/tmp/proj');
-    expect(mockFsWatch).toHaveBeenCalledTimes(2);
-    expect(mockFsWatch.mock.calls[0][0]).toBe(gitIndexPath);
-    expect(mockFsWatch.mock.calls[1][0]).toBe(gitHeadPath);
-  });
-
-  it('skips a missing per-file target (e.g. fresh repo without HEAD yet)', () => {
-    mockIsGitRepo.mockReturnValue(true);
-    mockGetGitRoot.mockReturnValue('/tmp/proj');
-    // .git dir + .git/index exist; .git/HEAD does NOT
-    mockExistsSync.mockImplementation((p: string) => p !== gitHeadPath);
-    ensureGitWatcher('/tmp/proj');
     expect(mockFsWatch).toHaveBeenCalledTimes(1);
-    expect(mockFsWatch.mock.calls[0][0]).toBe(gitIndexPath);
+    expect(mockFsWatch.mock.calls[0][0]).toBe(gitDirPath);
   });
 
-  it('swallows fs.watch errors per-file (degraded mode on FUSE / SMB)', () => {
+  it('swallows fs.watch errors (degraded mode on FUSE / SMB)', () => {
     arrangeRepo();
     mockFsWatch.mockImplementation(() => { throw new Error('ENOSYS'); });
     expect(() => { ensureGitWatcher('/tmp/proj'); }).not.toThrow();
@@ -200,9 +190,60 @@ describe('ensureGitWatcher — idempotent wire-up', () => {
   it('is idempotent — calling twice for the same root reuses the existing watchers', () => {
     arrangeRepo();
     ensureGitWatcher('/tmp/proj');
-    expect(mockFsWatch).toHaveBeenCalledTimes(2);
+    expect(mockFsWatch).toHaveBeenCalledTimes(1);
     ensureGitWatcher('/tmp/proj');
-    expect(mockFsWatch).toHaveBeenCalledTimes(2); // no additional calls
+    expect(mockFsWatch).toHaveBeenCalledTimes(1); // no additional calls
+  });
+});
+
+describe('HS-9109 — directory-watch filename filtering', () => {
+  function arrangeWithCb(): () => ((event: string, filename: string | null) => void) {
+    mockIsGitRepo.mockReturnValue(true);
+    mockGetGitRoot.mockReturnValue('/tmp/proj');
+    mockExistsSync.mockReturnValue(true);
+    let watcherCb: ((event: string, filename: string | null) => void) | null = null;
+    mockFsWatch.mockImplementation((_p, cb) => { watcherCb = cb; return { close: vi.fn() }; });
+    ensureGitWatcher('/tmp/proj');
+    return () => {
+      if (watcherCb === null) throw new Error('watcher callback not captured');
+      return watcherCb;
+    };
+  }
+
+  it('fires for index + HEAD changes', () => {
+    vi.useFakeTimers();
+    const cb = arrangeWithCb();
+    const heard: string[] = [];
+    const unsub = subscribeToGitChanges((root) => { heard.push(root); });
+
+    cb()('change', 'index');
+    vi.advanceTimersByTime(300);
+    expect(getGitChangeVersion('/tmp/proj')).toBe(1);
+
+    cb()('change', 'HEAD');
+    vi.advanceTimersByTime(300);
+    expect(getGitChangeVersion('/tmp/proj')).toBe(2);
+    expect(heard).toEqual(['/tmp/proj', '/tmp/proj']);
+    unsub();
+  });
+
+  it('does NOT fire for index.lock or unrelated .git churn (no self-trigger)', () => {
+    vi.useFakeTimers();
+    const cb = arrangeWithCb();
+
+    cb()('change', 'index.lock');
+    cb()('change', 'COMMIT_EDITMSG');
+    cb()('change', 'config');
+    vi.advanceTimersByTime(300);
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0); // nothing relevant changed
+  });
+
+  it('falls back to firing on a null filename (platform can\'t report it)', () => {
+    vi.useFakeTimers();
+    const cb = arrangeWithCb();
+    cb()('change', null);
+    vi.advanceTimersByTime(300);
+    expect(getGitChangeVersion('/tmp/proj')).toBe(1);
   });
 });
 
@@ -358,7 +399,7 @@ describe('disposeGitWatcher + disposeAllGitWatchers', () => {
     expect(mockGetGitStatus).toHaveBeenCalledTimes(1);
 
     disposeGitWatcher('/tmp/proj');
-    expect(close).toHaveBeenCalledTimes(2); // index + HEAD
+    expect(close).toHaveBeenCalledTimes(1); // HS-9109 — one .git-directory handle
     // Cache dropped — next read re-resolves.
     await getCachedGitStatus('/tmp/proj');
     expect(mockGetGitStatus).toHaveBeenCalledTimes(2);
@@ -410,7 +451,7 @@ describe('disposeGitWatcher + disposeAllGitWatchers', () => {
     mockExistsSync.mockReturnValue(true);
     mockFsWatch.mockImplementation(() => {
       callCount++;
-      return { close: callCount <= 2 ? closeA : closeB };
+      return { close: callCount <= 1 ? closeA : closeB }; // HS-9109 — one handle per project
     });
 
     ensureGitWatcher('/tmp/A');
@@ -419,8 +460,8 @@ describe('disposeGitWatcher + disposeAllGitWatchers', () => {
     subscribeToGitChanges((root) => { heard.push(root); });
 
     disposeAllGitWatchers();
-    expect(closeA).toHaveBeenCalledTimes(2);
-    expect(closeB).toHaveBeenCalledTimes(2);
+    expect(closeA).toHaveBeenCalledTimes(1);
+    expect(closeB).toHaveBeenCalledTimes(1);
     expect(getGitChangeVersion('/tmp/A')).toBe(0); // watcher entry gone
     expect(getGitChangeVersion('/tmp/B')).toBe(0);
     // Subscribers cleared — a re-ensure + fire shouldn't reach the old handler.
