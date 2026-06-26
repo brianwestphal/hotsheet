@@ -10811,11 +10811,13 @@ label.detail-details-label {
   .worker-pool-controls-right { display: flex; align-items: center; gap: 8px; }
 }
 
-/* HS-9079 (docs/101) — natural-language worker-management prompt box. */
+/* HS-9079 (docs/101) — natural-language worker-management prompt box +
+   HS-9080 "Parallelize tag…" quick action. */
 .worker-pool-prompt {
   padding: 10px 16px 14px;
   border-top: 1px solid var(--border);
 
+  .worker-pool-prompt-stack { display: flex; flex-direction: column; gap: 8px; }
   .worker-pool-prompt-inner { display: flex; align-items: center; gap: 8px; }
   .worker-pool-prompt-input {
     flex: 1; min-width: 0;
@@ -10827,6 +10829,8 @@ label.detail-details-label {
     font-size: 12px;
   }
   .worker-pool-prompt-go { white-space: nowrap; }
+  .worker-pool-prompt-quick { display: flex; align-items: center; gap: 8px; }
+  .worker-pool-parallelize-tag { white-space: nowrap; }
 }
 
 .git-popover-header {

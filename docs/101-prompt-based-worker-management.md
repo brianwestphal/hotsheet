@@ -1,12 +1,20 @@
 # 101. Prompt-Based Worker / Work-Splitting Management
 
-**Status: PARTIAL** — the core **prompt box + channel-trigger wrapper** (§101.1-101.2)
-**SHIPPED** (HS-9079, 2026-06-26); the "Parallelize tag…" quick action + the
-plan-preview wiring to the partition editor are HS-9080 (pending, also wants the
-HS-9073 coherent partitioner for good default chunks). Design HS-9061. The second
-half of HS-9031 — the MCP worker tools (`hotsheet_get_worker_pool` /
-`hotsheet_set_worker_target` / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers`)
-already shipped; this is the **prompt-driven** owner-facing manager that drives them.
+**Status: SHIPPED** — the **prompt box + channel-trigger wrapper** (HS-9079) and
+the **"Parallelize tag…" quick action + plan-preview → dispatch** (HS-9080), both
+2026-06-26. Design HS-9061. The second half of HS-9031 — the MCP worker tools
+(`hotsheet_get_worker_pool` / `hotsheet_set_worker_target` /
+`hotsheet_dispatch_tickets` / `hotsheet_drain_workers`) already shipped; this is the
+**prompt-driven** owner-facing manager that drives them.
+
+**Maintainer decision (HS-9080, 2026-06-26):** "Parallelize tag…" landed as a
+**client-side, preview-first** quick action (Option A) — NOT the agent-driven path.
+Picking a tag runs a tag-scoped partition (the HS-9073 clusterer) directly and
+shows the plan in the partition editor for accept/edit/cancel; accept dispatches.
+This avoids needing an agent→client plan-preview handshake (which the literal
+§101.2 "the agent's proposed assignment" reading would require). The free-text
+prompt box (HS-9079) remains the agent-driven path. The agent-in-the-loop preview
+variant is a documented-but-deferred follow-up (HS-9108).
 
 **What shipped (HS-9079):** a prompt text box + "Go" in the worker-pool panel
 (`workerPoolPanel.tsx`). `buildWorkerManagementPrompt(instruction)` wraps the
@@ -109,10 +117,23 @@ orchestration engine:
 - Manual-test-plan: the end-to-end live drive (real agent partitions + dispatches)
   — hard to fully automate, like the rest of the pool dashboard.
 
+**What shipped (HS-9080):** a **"Parallelize tag…"** button in the pool panel
+(under the HS-9079 prompt box). It fetches the project's tags (`getTags`), shows a
+picker, and on pick runs a **tag-scoped partition** — `partitionTickets(workers,
+{tag})` / the `POST /api/workers/partition` `tag` field (new) — over the live
+(non-dead/stopped) workers via the HS-9073 clusterer, then **always** opens the
+HS-8977 partition editor with the proposed assignment (§101.4 — dispatch is hard to
+undo). On accept, each chunk is dispatched via the shipped `dispatchAndReport`
+(claim-by-id, §92); cancel does nothing. All in `workerPoolPanel.tsx`
+(`parallelizeTag` / `openTagParallelize`, exported for tests).
+
 ## 101.6 Follow-up tickets
 
 - **Prompt box + channel-trigger wrapper** in the pool panel (the core). ✅ SHIPPED (HS-9079).
-- **"Parallelize tag…" quick action.** — HS-9080.
+- **"Parallelize tag…" quick action.** ✅ SHIPPED (HS-9080, client-side Option A).
 - **Wire the plan preview** to the HS-8965/8977 partition editor with accept/edit/
-  cancel → `hotsheet_dispatch_tickets`. — HS-9080.
-- Depends on coherent partitioner grouping (HS-9073, §98) for good default chunks.
+  cancel → dispatch. ✅ SHIPPED (HS-9080).
+- **(deferred) Agent-in-the-loop plan preview** — let the free-text prompt's
+  agent-driven dispatch be previewed/confirmed in the editor too (needs an
+  agent→client proposed-plan handshake). **HS-9108** (optional).
+- Depends on coherent partitioner grouping (HS-9073, §98) for good default chunks. ✅ SHIPPED.

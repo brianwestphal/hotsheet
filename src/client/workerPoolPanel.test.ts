@@ -5,15 +5,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker,   type PoolState, registerPoolWorker,
-  releaseTicket, removePoolWorker, removeWorktree, reviewInGlassbox, setPoolTarget,
+  drainPoolWorker, getTags, getTicketClaims, getTicketPartition, getWorkerPool, launchWorker, type PoolState,
+  registerPoolWorker, releaseTicket, removePoolWorker, removeWorktree, reviewInGlassbox, setPoolTarget,
 type WorkerSlotView,
 } from '../api/index.js';
 import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
+import { openPartitionEditor } from './partitionEditor.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  buildWorkerManagementPrompt, closeWorkerPoolPanel, gitChipTitle, refreshPool, releaseWorkerClaims,
+  buildWorkerManagementPrompt, closeWorkerPoolPanel, gitChipTitle, parallelizeTag, refreshPool, releaseWorkerClaims,
   renderPoolControls, renderPoolPrompt, renderWorkerTile, reviewWorkerBranch, submitWorkerPrompt,
 } from './workerPoolPanel.js';
 
@@ -27,13 +28,17 @@ vi.mock('../api/index.js', () => ({
   removeWorktree: vi.fn(),
   setPoolTarget: vi.fn(),
   getSuggestedWorkerCount: vi.fn(),
-  getTicketPartition: vi.fn(),
+  getTicketPartition: vi.fn().mockResolvedValue([]),
   getTicketClaims: vi.fn(),
   releaseTicket: vi.fn(),
   getGlassboxStatus: vi.fn().mockResolvedValue({ available: false }),
   reviewInGlassbox: vi.fn().mockResolvedValue({ ok: true }),
+  getTags: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
+// HS-9080 — the partition editor is opened by parallelizeTag; mock it so tests
+// assert the call without rendering a real overlay.
+vi.mock('./partitionEditor.js', () => ({ openPartitionEditor: vi.fn(), closePartitionEditor: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
 // HS-9079 — the prompt box routes through the channel to the main agent.
 vi.mock('./channelUI.js', () => ({
@@ -392,6 +397,59 @@ describe('renderPoolPrompt (HS-9079)', () => {
     input.value = 'parallelize tag x';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(onSubmit).toHaveBeenCalledWith('parallelize tag x');
+  });
+
+  // HS-9080 — the "Parallelize tag…" quick action button.
+  it('renders a "Parallelize tag…" button wired to onTagParallelize (with the button as anchor)', () => {
+    const onTag = vi.fn();
+    renderPoolPrompt(host, vi.fn(), onTag);
+    const btn = host.querySelector<HTMLButtonElement>('.worker-pool-parallelize-tag');
+    expect(btn).not.toBeNull();
+    btn!.click();
+    expect(onTag).toHaveBeenCalledWith(btn);
+  });
+});
+
+describe('parallelizeTag (HS-9080)', () => {
+  beforeEach(() => {
+    vi.mocked(openPartitionEditor).mockReset();
+    vi.mocked(getTicketPartition).mockReset().mockResolvedValue([]);
+    vi.mocked(getTags).mockReset().mockResolvedValue([]);
+  });
+
+  it('does nothing (no partition, no editor) when there are no live workers', async () => {
+    mockPool.mockResolvedValue(pool({ workers: [] }));
+    await parallelizeTag('refactor');
+    expect(getTicketPartition).not.toHaveBeenCalled();
+    expect(openPartitionEditor).not.toHaveBeenCalled();
+  });
+
+  it('partitions the tag across live workers and opens the editor when there is work', async () => {
+    mockPool.mockResolvedValue(pool({ workers: [slot({ worker: 'pw1', label: 'worker-1', state: 'idle' })] }));
+    vi.mocked(getTicketPartition).mockResolvedValue([
+      { worker: 'pw1', label: 'worker-1', ticketIds: [1, 2], ticketNumbers: ['HS-1', 'HS-2'] },
+    ]);
+    await parallelizeTag('refactor');
+    expect(getTicketPartition).toHaveBeenCalledWith({ workers: [{ worker: 'pw1', label: 'worker-1' }], tag: 'refactor' });
+    expect(openPartitionEditor).toHaveBeenCalledOnce();
+  });
+
+  it('excludes dead/stopped workers from the dispatch set', async () => {
+    mockPool.mockResolvedValue(pool({ workers: [
+      slot({ worker: 'pw1', label: 'worker-1', state: 'idle' }),
+      slot({ worker: 'pw2', label: 'worker-2', state: 'dead' }),
+      slot({ worker: 'pw3', label: 'worker-3', state: 'stopped' }),
+    ] }));
+    vi.mocked(getTicketPartition).mockResolvedValue([{ worker: 'pw1', label: 'worker-1', ticketIds: [1], ticketNumbers: ['HS-1'] }]);
+    await parallelizeTag('refactor');
+    expect(getTicketPartition).toHaveBeenCalledWith({ workers: [{ worker: 'pw1', label: 'worker-1' }], tag: 'refactor' });
+  });
+
+  it('warns + opens no editor when no ticket carries the tag', async () => {
+    mockPool.mockResolvedValue(pool({ workers: [slot({ worker: 'pw1', label: 'worker-1', state: 'idle' })] }));
+    vi.mocked(getTicketPartition).mockResolvedValue([{ worker: 'pw1', label: 'worker-1', ticketIds: [], ticketNumbers: [] }]);
+    await parallelizeTag('nope');
+    expect(openPartitionEditor).not.toHaveBeenCalled();
   });
 });
 

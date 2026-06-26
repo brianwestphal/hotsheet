@@ -209,10 +209,18 @@ async function fetchUnblocked(): Promise<PendingTicketRow[]> {
 }
 
 /** Partition the current unblocked Up Next set across `workers`. AI when a
- *  provider is configured, else a deterministic round-robin. */
-export async function partitionTickets(workers: readonly WorkerRefInput[]): Promise<PartitionAssignment[]> {
+ *  provider is configured, else the deterministic `clusterPartition`. HS-9080 —
+ *  `opts.tag` scopes it to tickets carrying that tag ("Parallelize tag…"). */
+export async function partitionTickets(
+  workers: readonly WorkerRefInput[],
+  opts: { tag?: string } = {},
+): Promise<PartitionAssignment[]> {
   if (workers.length === 0) return [];
-  const rows = await fetchUnblocked();
+  let rows = await fetchUnblocked();
+  if (opts.tag !== undefined && opts.tag !== '') {
+    const tag = opts.tag;
+    rows = rows.filter(r => r.tags.includes(tag));
+  }
   if (rows.length === 0) return emptyAssignments(workers);
 
   const material = `${buildSuggestDigest(rows)}\n\nWorkers (assign tickets across these exact labels): ${workers.map(w => w.label).join(', ')}.`;

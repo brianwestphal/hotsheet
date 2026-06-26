@@ -193,7 +193,7 @@ workerRoutes.post('/workers/partition', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(PartitionReqSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  return c.json({ assignments: await partitionTickets(parsed.data.workers) });
+  return c.json({ assignments: await partitionTickets(parsed.data.workers, { tag: parsed.data.tag }) });
 });
 
 // HS-9048 — owner-side branch integration (docs/89 §89.7). The owner is the single

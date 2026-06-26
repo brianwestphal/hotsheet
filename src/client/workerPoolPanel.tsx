@@ -9,9 +9,9 @@
 // ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
 // layer onto these tiles later.
 import {
-  drainAllPoolWorkers, drainPoolWorker, getGlassboxStatus, getTicketClaims, getWorkerPool, launchWorker,
-  type PoolState, registerPoolWorker, releaseTicket, removePoolWorker, removeWorktree, reviewInGlassbox,
-  setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
+  drainAllPoolWorkers, drainPoolWorker, getGlassboxStatus, getTags, getTicketClaims, getTicketPartition,
+  getWorkerPool, launchWorker, type PartitionAssignment, type PoolState, registerPoolWorker, releaseTicket,
+  removePoolWorker, removeWorktree, reviewInGlassbox, setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -19,6 +19,8 @@ import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './chan
 import { confirmDialog } from './confirm.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
+import { closeAllMenus, createDropdown, type DropdownItem, positionDropdown } from './dropdown.js';
+import { openPartitionEditor } from './partitionEditor.js';
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
 import { showToast } from './toast.js';
 
@@ -257,17 +259,29 @@ export async function submitWorkerPrompt(instruction: string): Promise<void> {
 
 /** HS-9079 — render the prompt text box + "Go" into `promptEl`. `onSubmit` fires
  *  with the trimmed instruction on Go or Enter (no-op on empty); the input clears
- *  after a submit. Exported for tests. */
-export function renderPoolPrompt(promptEl: HTMLElement, onSubmit: (instruction: string) => void): void {
+ *  after a submit. HS-9080 — `onTagParallelize` (optional) wires the
+ *  "Parallelize tag…" quick action (the button is passed as the dropdown anchor).
+ *  Exported for tests. */
+export function renderPoolPrompt(
+  promptEl: HTMLElement,
+  onSubmit: (instruction: string) => void,
+  onTagParallelize?: (anchor: HTMLElement) => void,
+): void {
   promptEl.replaceChildren(toElement(
-    <div className="worker-pool-prompt-inner">
-      <input
-        type="text"
-        className="worker-pool-prompt-input"
-        placeholder="Tell the pool what to parallelize (e.g. “parallelize tickets tagged refactor”)"
-        aria-label="Worker-pool instruction"
-      />
-      <button type="button" className="btn btn-sm worker-pool-prompt-go">Go</button>
+    <div className="worker-pool-prompt-stack">
+      <div className="worker-pool-prompt-inner">
+        <input
+          type="text"
+          className="worker-pool-prompt-input"
+          placeholder="Tell the pool what to parallelize (e.g. “parallelize tickets tagged refactor”)"
+          aria-label="Worker-pool instruction"
+        />
+        <button type="button" className="btn btn-sm worker-pool-prompt-go">Go</button>
+      </div>
+      {/* HS-9080 — quick action: pick a tag → preview the partition → dispatch. */}
+      <div className="worker-pool-prompt-quick">
+        <button type="button" className="btn btn-sm worker-pool-parallelize-tag" title="Pick a tag, preview the worker split, then dispatch">Parallelize tag…</button>
+      </div>
     </div>,
   ));
   const input = promptEl.querySelector<HTMLInputElement>('.worker-pool-prompt-input');
@@ -281,6 +295,65 @@ export function renderPoolPrompt(promptEl: HTMLElement, onSubmit: (instruction: 
   };
   go?.addEventListener('click', submit);
   input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  const tagBtn = promptEl.querySelector<HTMLButtonElement>('.worker-pool-parallelize-tag');
+  if (onTagParallelize !== undefined) tagBtn?.addEventListener('click', () => onTagParallelize(tagBtn));
+}
+
+/** HS-9080 — the live workers a partition can dispatch to (exclude terminal states). */
+function dispatchableWorkers(pool: PoolState): { worker: string; label: string }[] {
+  return pool.workers
+    .filter(w => w.state !== 'dead' && w.state !== 'stopped')
+    .map(w => ({ worker: w.worker, label: w.label }));
+}
+
+/**
+ * HS-9080 (docs/101 §101.2) — "Parallelize tag…": partition the unblocked Up Next
+ * tickets carrying `tag` across the live workers (the HS-9073 clusterer), ALWAYS
+ * preview/edit the plan in the partition editor (§101.4 — dispatch is hard to
+ * undo), then dispatch each chunk on accept. Exported for tests.
+ */
+export async function parallelizeTag(tag: string): Promise<void> {
+  let pool: PoolState;
+  try { pool = await getWorkerPool(); }
+  catch (e) { showToast(`Couldn't read the worker pool: ${getErrorMessage(e)}`, { variant: 'warning' }); return; }
+  const workers = dispatchableWorkers(pool);
+  if (workers.length === 0) {
+    showToast('No workers to parallelize across — use + to start some first.', { variant: 'warning' });
+    return;
+  }
+  let assignments: PartitionAssignment[];
+  try { assignments = await getTicketPartition({ workers, tag }); }
+  catch (e) { showToast(`Couldn't partition: ${getErrorMessage(e)}`, { variant: 'warning' }); return; }
+  if (!assignments.some(a => a.ticketIds.length > 0)) {
+    showToast(`No unblocked Up Next tickets tagged “${tag}”.`, { variant: 'warning' });
+    return;
+  }
+  openPartitionEditor(assignments, async (chunks) => {
+    for (const chunk of chunks) {
+      if (chunk.ticketIds.length === 0) continue;
+      await dispatchAndReport(chunk.worker, chunk.label, chunk.ticketIds);
+    }
+    if (activeOverlay !== null) {
+      const body = activeOverlay.querySelector<HTMLElement>('.worker-pool-body');
+      if (body !== null) void refreshPool(body);
+    }
+  });
+}
+
+/** HS-9080 — open the tag picker for "Parallelize tag…", anchored to its button. */
+async function openTagParallelize(anchor: HTMLElement): Promise<void> {
+  closeAllMenus();
+  let tags: string[] = [];
+  try { tags = await getTags(); } catch { /* no tags / endpoint failed */ }
+  if (tags.length === 0) {
+    showToast('No tags on any tickets yet — tag the tickets you want to parallelize first.', { variant: 'warning' });
+    return;
+  }
+  const items: DropdownItem[] = tags.map(tag => ({ label: tag, key: '', action: () => { void parallelizeTag(tag); } }));
+  const menu = createDropdown(anchor, items);
+  document.body.appendChild(menu);
+  positionDropdown(menu, anchor);
+  menu.style.visibility = '';
 }
 
 /** Tear down a finished worker — `stopped` (drained gracefully) or `dead`
@@ -528,7 +601,13 @@ export function openWorkerPoolPanel(): void {
 
   // HS-9079 — the worker-management prompt box (wraps + triggers the main agent).
   const promptEl = overlay.querySelector<HTMLElement>('.worker-pool-prompt');
-  if (promptEl) renderPoolPrompt(promptEl, (instruction) => void submitWorkerPrompt(instruction));
+  if (promptEl) {
+    renderPoolPrompt(
+      promptEl,
+      (instruction) => void submitWorkerPrompt(instruction),
+      (anchor) => void openTagParallelize(anchor), // HS-9080 — "Parallelize tag…"
+    );
+  }
 
   document.body.appendChild(overlay);
   activeOverlay = overlay;

@@ -1,11 +1,14 @@
-// HS-8965 — AI partition helper: pure logic (round-robin fallback + parse). The
-// live AI call + DB fetch run in the app; the provider routing mirrors the tested
-// announcerJson/summarize path (docs/92 §92.6).
-import { describe, expect, it } from 'vitest';
+// HS-8965 — AI partition helper: pure logic (clustering fallback + parse) +
+// HS-9080 the tag-scoped DB path (AI provider mocked to null → deterministic).
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import {
-  clusterPartition, parsePartition, type PendingTicketRow, roundRobinPartition, type WorkerRefInput,
+  clusterPartition, parsePartition, partitionTickets, type PendingTicketRow, roundRobinPartition, type WorkerRefInput,
 } from './partition.js';
+
+// Force the deterministic clustering path (no live AI provider in unit tests).
+vi.mock('./announcerJson.js', () => ({ callAnnouncerJson: () => Promise.resolve(null) }));
 
 const row = (id: number): PendingTicketRow => ({
   id, ticketNumber: `HS-${String(id)}`, title: `t${String(id)}`, category: 'feature', tags: [], blocked: false,
@@ -100,5 +103,38 @@ describe('parsePartition (HS-8965)', () => {
     const fenced = '```json\n{"assignments":[{"worker":"worker-1","tickets":["HS-2"]}]}\n```';
     expect(parsePartition(fenced, rows, W)![0].ticketIds).toEqual([2]);
     expect(parsePartition('not json', rows, W)).toBeNull();
+  });
+});
+
+describe('partitionTickets — tag scope (HS-9080)', () => {
+  let dir: string;
+  const w1: WorkerRefInput[] = [{ worker: 'w1', label: 'worker-1' }];
+
+  beforeEach(async () => {
+    dir = await setupTestDb();
+    const { getDb } = await import('../db/connection.js');
+    const db = await getDb();
+    await db.query(`INSERT INTO tickets (ticket_number, title, up_next, tags) VALUES
+      ('HS-1', 'refactor a', TRUE, '["refactor"]'),
+      ('HS-2', 'refactor b', TRUE, '["refactor"]'),
+      ('HS-3', 'ui thing',   TRUE, '["ui"]')`);
+  });
+  afterEach(async () => { await cleanupTestDb(dir); });
+
+  it('partitions ONLY the unblocked Up Next tickets carrying the tag', async () => {
+    const out = await partitionTickets(w1, { tag: 'refactor' });
+    const nums = out.flatMap(a => a.ticketNumbers).sort();
+    expect(nums).toEqual(['HS-1', 'HS-2']);
+    expect(nums).not.toContain('HS-3');
+  });
+
+  it('with no tag, partitions the whole unblocked Up Next set', async () => {
+    const out = await partitionTickets(w1);
+    expect(out.flatMap(a => a.ticketNumbers).sort()).toEqual(['HS-1', 'HS-2', 'HS-3']);
+  });
+
+  it('returns empty assignments when no ticket carries the tag', async () => {
+    const out = await partitionTickets(w1, { tag: 'nonexistent' });
+    expect(out.every(a => a.ticketIds.length === 0)).toBe(true);
   });
 });

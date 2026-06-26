@@ -170,6 +170,9 @@ export async function getSuggestedWorkerCount(): Promise<SuggestionResult> {
 
 export const PartitionReqSchema = z.object({
   workers: z.array(z.object({ worker: z.string().min(1), label: z.string() })).min(1),
+  /** HS-9080 — scope the partition to the unblocked Up Next tickets carrying this
+   *  tag ("Parallelize tag…"). Omitted ⇒ the whole unblocked Up Next set. */
+  tag: z.string().optional(),
 });
 export type PartitionReq = z.infer<typeof PartitionReqSchema>;
 
