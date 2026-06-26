@@ -1,6 +1,8 @@
 # 105. Provisioning `node_modules` into Worker Worktrees
 
-**Status: DESIGN ONLY** (HS-9057, 2026-06-26). Implementation follow-up to the
+**Status: PARTIAL** — the core **`provisionNodeModules` helper SHIPPED (HS-9087,
+2026-06-26)**; wiring it into `createWorktree` (HS-9088) + the per-project
+worktree-setup hook (HS-9089) remain. Implementation follow-up to the
 HS-9047 investigation. Today `createWorktree` (`src/worktrees.ts`) does
 `git worktree add` + the follower pointer + channel/skills wiring but **no
 dependency setup** — so every fresh worker worktree starts with an empty
@@ -48,7 +50,25 @@ add`), with a degradation ladder:
   **`npm ci`**. Detect capability by **trying** the CoW command and falling back
   on error (don't sniff the FS), so the ladder is uniform across platforms.
 
-## 105.2 Shared provisioning helper (the key factoring)
+## 105.2 Shared provisioning helper (the key factoring) — **SHIPPED (HS-9087)**
+
+**What shipped:** `src/workers/provisionNodeModules.ts` —
+`provisionNodeModules(worktreeRoot, ownerRoot, opts?)` → `ProvisionResult { ok,
+strategy: 'cow'|'symlink'|'npm-ci'|'already-present'|'skipped', reconciled, detail? }`.
+The ladder: CoW (`cp -cR` on darwin / `cp --reflink=auto -R` on linux, via the
+injectable `CmdRunner`; Windows/unknown skip straight to the next rung) → symlink
+(`fs.symlinkSync`, `'junction'` on Windows else `'dir'`) → `npm ci` (owner has no
+deps / symlink failed). Then the **lock-diff reconcile**: when the worktree's
+`package-lock.json` differs from the owner's, run `npm ci` (skipped after a fresh
+`npm ci`; a symlink is `rmSync`'d first so the install lands in the worktree, not
+the owner). CoW is detected by **trying the command** and verifying `node_modules`
+exists, falling back on any error — no FS sniffing. The heavy `cp`/`npm` commands go
+through `CmdRunner` (default `defaultCmdRunner` shells via `execFile`); the symlink +
+lock reads use real `fs`. Consumed by **`createWorktree` (HS-9088)** + the **§99
+`refreshWorktree` step 3 (HS-9074)** — same reconcile path, no duplication. Tests:
+`src/workers/provisionNodeModules.test.ts` (9, real temp dirs: each rung forced by
+the injected runner + platform, reconcile vs skip, already-present/refresh path,
+failing-`npm ci`). Original design:
 
 Per the HS-9057 note: factor the ladder (CoW clone → symlink → `npm ci`, incl. the
 §105.1.4 lock-diff reconcile) as **one reusable helper**, e.g.
