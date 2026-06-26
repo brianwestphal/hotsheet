@@ -1,0 +1,129 @@
+# 100. Server-Driven Worker Launch
+
+**Status: DESIGN ONLY** (HS-9062, 2026-06-26). Closes the gap surfaced by HS-9031:
+the worker-pool target (`hotsheet_set_worker_target` / `setPoolTarget`) only
+actually **launches** workers while the owner Hot Sheet window is open — launch
+is client-driven. So an AI/headless caller that sets the target with no UI open
+records the intent but **nothing starts**. Builds on the durable worker pool
+([91-worker-pool-scaling.md](91-worker-pool-scaling.md)) and the per-worktree
+terminal ([89-git-worktrees.md](89-git-worktrees.md) Phase C).
+
+## 100.0 The gap
+
+Today the reconcile choreography lives in the **client**
+(`src/client/workerPoolPanel.tsx`):
+
+- `syncPoolHeadless()` polls `GET /api/workers/pool`, compares the live count to
+  the server's `targetN`, and `reconcile()` calls `addOneWorker()` /
+  drains the surplus.
+- `addOneWorker()` does the actual launch **client-side**:
+  `openTerminalRunningCommand(spec.command, spec.label, spec.cwd)` (which spawns a
+  PTY via `POST /api/terminal/create` *and* owns the xterm tab in the DOM) →
+  `registerPoolWorker({...terminalId})`.
+
+The server already owns the durable bits — `setPoolTarget`
+(`POST /api/workers/pool/target`) records `targetN` in the in-memory pool manager
+(`src/workers/poolManager.ts`), and `prepareWorker()`
+(`src/workers/launchWorker.ts`) creates the worktree server-side. But the **PTY
+spawn + slot registration + terminal lifecycle** are bound to an open client.
+Result: an MCP tool that raises the target with no window open is a no-op until a
+human opens the UI. That defeats AI/headless scaling (the whole point of the
+distributed-worker epic) and the Auto worker pool (§91.11).
+
+## 100.1 Goal
+
+Move the **launch choreography server-side** so setting the target actually
+scales the pool with **no client open**, while the open-UI client cleanly
+**adopts** server-launched workers instead of double-launching.
+
+## 100.2 Design
+
+### 100.2.1 Server reconcile loop (or reconcile endpoint)
+
+A server-owned reconciler that, given the pool's `targetN`, drives the live count
+toward it — the server analog of the client `reconcile()`:
+
+- **Scale up:** for each missing slot, `prepareWorker()` (already server-side) to
+  create/locate the worktree, then spawn the `claude "/hotsheet-worker"` PTY
+  **server-side** through the terminal subsystem (the same `POST
+  /api/terminal/create` path that already spawns a PTY — `{ runCommand, cwd,
+  spawn:true }`), and `registerPoolWorker({...})` the slot with the
+  server-spawned `terminalId`.
+- **Scale down:** mark surplus workers `draining` (the existing drain-flag path,
+  §91.4) — unchanged; drain is already server-mediated via `onClaimNext`.
+
+Two viable triggers (pick one; lean **(a)** for true headless, with **(b)** as
+the manual nudge):
+- **(a) A lightweight server interval loop** (reuses the §75 background scheduler)
+  that reconciles every ~N s while `targetN > 0` — so a target set headlessly
+  takes effect without any client. Gated to only run when there's a connected
+  Claude worker-capable context, mirroring the client's channel-visibility gate.
+- **(b) A reconcile endpoint** `POST /api/workers/pool/reconcile` the
+  `setPoolTarget` path (and the MCP tool) calls after changing the target, so the
+  change is applied immediately rather than waiting for the next tick.
+
+### 100.2.2 Server-owned terminal lifecycle
+
+The blocker is that the worker's terminal id is **client-only** today
+(`closeDynamicTerminal(w.terminalId)` runs in the browser). For server launch,
+cleanup/drain teardown needs a server-side handle to close:
+
+- Give the server-spawned PTY a **server-tracked `terminalId`** with a lifecycle
+  the server can close (close PTY + `removeWorktree`) on drain/stop/reap —
+  paralleling the client's `closeDynamicTerminal` + the HS-9051 reap path. The
+  pool slot stores this id (it already stores `terminalId`).
+- A wedged/stale slot is still reaped via the §91.7 liveness path (`lastSeenAt` →
+  `dead`); server-side close makes that reap work with no UI.
+
+### 100.2.3 Client adoption (don't double-launch)
+
+When the UI **is** open, it must not re-launch slots the server already started:
+
+- The open client's `syncPoolHeadless`/`reconcile` should **adopt** existing
+  server-registered slots — attach an xterm view to the already-spawned PTY
+  (by `terminalId`) rather than calling `addOneWorker()` for it. Only genuinely
+  missing slots (live count < target AND no server slot) get launched, and that
+  launch should also go through the server path so there's one code path.
+- **Reconcile the two loops so they don't fight:** the server is the source of
+  truth for "which slots exist"; the client renders/attaches and may *request*
+  scale changes (stepper) but does not independently spawn. This removes the
+  current split-brain where both could add.
+
+## 100.3 Open questions
+
+- **Single owner of reconcile.** Should the client reconciler be fully retired in
+  favor of the server loop (client becomes pure view/attach), or kept as a
+  fallback when the server loop is disabled? Lean: server is authoritative; client
+  attaches + can request, never spawns.
+- **Server PTY without a UI.** Confirm the terminal subsystem can hold a spawned
+  PTY with no attached xterm indefinitely (buffering/backpressure) — workers are
+  long-lived and headless. May need the §54 terminal-checkout/orphan-sink model
+  applied server-side.
+- **Gating headless launch.** A server loop that spawns `claude` processes with no
+  human present needs a clear enable signal (Auto worker pool on, or an explicit
+  headless-pool opt-in) so it never spawns unexpectedly. Tie to the §91.11 Auto
+  switch + a connected-worker-context check.
+- **Resource/cap safety.** `poolMax()` (CPU-cores−2, capped 8) still bounds N;
+  confirm the server loop honors it and the §91.7 empty-pool/back-off behavior.
+
+## 100.4 Tests
+
+- Unit: server reconcile raises/lowers the live slot set toward `targetN`
+  (prepare + spawn + register on up; drain on down), honoring `poolMax()`.
+- Integration: set the target via the MCP tool / endpoint with **no client**, and
+  assert worktrees + PTYs are created and slots registered server-side; drain
+  tears them down (PTY closed + `removeWorktree`).
+- Adoption: with a slot already server-registered, the client attaches (no second
+  PTY spawned) — guards the double-launch regression.
+- Lifecycle/reap: a server-spawned slot gone silent past `STALE_AFTER_MS` is
+  reaped server-side with no UI.
+
+## 100.5 Follow-up tickets
+
+- **Server reconcile loop / endpoint** (§100.2.1) — the core.
+- **Server-owned terminal lifecycle** for pool workers (§100.2.2) — server-side
+  close/reap of the worker PTY (couples with the HS-9051 reap path).
+- **Client adoption** of server-launched workers (§100.2.3) — attach-don't-spawn,
+  retire the client's independent launch.
+- Relates: HS-9031 (investigation), §91.11 Auto switch, §75 background scheduler,
+  HS-9051 (reap path).
