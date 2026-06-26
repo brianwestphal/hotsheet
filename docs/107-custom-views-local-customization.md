@@ -1,13 +1,25 @@
 # 107. Local Customization for Custom Views
 
-**Status: DESIGN ONLY** (HS-9017, 2026-06-26). Deferred from HS-9013. Custom views
-are **shared-only** today: they default to the shared layer and are managed from
-the **sidebar** (not the Settings dialog), so the dialog-wide Shared|Local|
-Resolved scope control (§95) doesn't reach them. This adds per-machine local
-customization, refined by the maintainer's HS-9017 note. The delta infra is
-already in place ([95-settings-sharing-classification.md](95-settings-sharing-classification.md)
+**Status: SHIPPED** (HS-9017 design; HS-9092 sidebar + HS-9093 Settings "Views"
+tab, 2026-06-26). Custom views were **shared-only**: they defaulted to the shared
+layer and are managed from the **sidebar** (not the Settings dialog), so the
+dialog-wide Shared|Local|Resolved scope control (§95) doesn't reach them. This
+added per-machine local customization. The delta infra was already in place
+([95-settings-sharing-classification.md](95-settings-sharing-classification.md)
 §95.3: `src/settingsDelta.ts` `resolveDeltaArray` for `custom_views`, `idOf=id`;
-`readFileSettings` is delta-aware) — this ticket is the **UI + delta writes**.
+`readFileSettings` is delta-aware) — these tickets are the **UI + delta writes**.
+
+**Implementation:** the pure layer logic lives in `src/client/customViewsLayers.ts`
+(`addLocalView`/`addSharedView`/`editView` [layer-routed]/`hideSharedView`/
+`unhideSharedView`/`deleteLocalView`/`reorderViews` [per-layer]/`moveViewToLocal`/
+`moveViewToShared`), unit-tested in `customViewsLayers.test.ts`. `customViews.tsx`
+loads the shared array + local delta via `getLayeredFileSettings` and routes each
+action through `persistViews` (writes only the changed layer; clears the local key
+when the delta empties). The sidebar shows Shared/Local origin badges + hide-on-
+this-machine + Undo (HS-9092); the Settings → **Views** tab (HS-9093) is the power
+surface (add Local|Shared, Edit, Hide/Unhide, Move between layers, Delete). e2e in
+`e2e/custom-views-local.spec.ts`. The Views tab manages layers per-row, so it's
+intentionally not driven by the §95 scope control.
 
 ## 107.0 Maintainer-specified behavior (HS-9017 note)
 
@@ -117,9 +129,18 @@ suffices — no tree-aware resolver needed (that's the custom_commands superset)
 
 ## 107.6 Follow-up tickets
 
-- **Sidebar inline affordances** — local-by-default add, layer-implied edit +
-  badge, "hide on this machine" + undo (§107.0 sidebar, §107.3).
-- **Settings "Views" tab** — list + add(Local|Shared) + hide + edit + the
-  shared↔local **move** action (§107.0 settings, §107.2 move).
+- *(SHIPPED — HS-9092)* Sidebar inline affordances — local-by-default add,
+  layer-implied edit + badge, "hide on this machine" + undo (§107.0 sidebar, §107.3).
+- *(SHIPPED — HS-9093)* Settings "Views" tab — list + add(Local|Shared) + hide +
+  edit + the shared↔local **move** action (§107.0 settings, §107.2 move).
 - Relates: HS-9013 (parent, deferred here), HS-9012 (delta infra), HS-9014
   (custom_commands shared↔local move — the analogous two-layer op), §95 §95.3.
+
+### Resolved open questions (§107.4)
+- **Order across layers** — confirmed: resolved order is shared-first then
+  local-added (`reorderViews` reorders within a layer only; no cross-layer drag).
+- **Edit a shared view from the sidebar** — allowed from both the sidebar + Views
+  tab; the origin badge makes the target layer clear.
+- **Views tab vs sidebar menu** — they coexist (tab = power surface, sidebar =
+  quick). The Views tab is **not** wired to the §95 scope control (it manages
+  layers per-row); a minor follow-up could hide the scope bar on that tab.
