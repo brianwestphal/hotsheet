@@ -57,6 +57,8 @@ function liveWorker(): WorkerSlotView {
     state: 'idle',
     currentTicket: null,
     queueOnly: false,
+    ready: false,
+    readyBranch: null,
   };
 }
 
@@ -95,7 +97,7 @@ afterEach(() => {
 
 describe('Dispatch to worker submenu icon (HS-9037)', () => {
   it('renders a leading SVG icon on the submenu header when a live worker exists', async () => {
-    getWorkerPoolMock.mockResolvedValue({ targetN: 1, workers: [liveWorker()] });
+    getWorkerPoolMock.mockResolvedValue({ targetN: 1, workers: [liveWorker()] , readyCount: 0 });
     const t = ticket(42);
     ticketsStore.actions.setTickets([t]);
     state.tickets = [t];
@@ -112,7 +114,7 @@ describe('Dispatch to worker submenu icon (HS-9037)', () => {
   });
 
   it('omits the submenu entirely when no live worker exists', async () => {
-    getWorkerPoolMock.mockResolvedValue({ targetN: 0, workers: [] });
+    getWorkerPoolMock.mockResolvedValue({ targetN: 0, workers: [] , readyCount: 0 });
     const t = ticket(7);
     ticketsStore.actions.setTickets([t]);
     state.tickets = [t];

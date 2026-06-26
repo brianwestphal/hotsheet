@@ -59,12 +59,19 @@ export const WorkerSlotViewSchema = z.object({
   currentTicket: z.object({ id: z.number(), ticketNumber: z.string(), title: z.string() }).nullable(),
   /** HS-8975 — queue-only: works only its dispatched tickets, then stops. */
   queueOnly: z.boolean(),
+  /** HS-9090 — the worker has signaled this branch committed + rebased + ready to
+   *  integrate (once per batch boundary). `readyBranch` is null when not ready. */
+  ready: z.boolean(),
+  readyBranch: z.string().nullable(),
 });
 export type WorkerSlotView = z.infer<typeof WorkerSlotViewSchema>;
 
 export const PoolStateSchema = z.object({
   targetN: z.number(),
   workers: z.array(WorkerSlotViewSchema),
+  /** HS-9090 — how many workers are currently signaling a branch ready (the panel
+   *  surfaces "N branches ready to integrate"). */
+  readyCount: z.number(),
 });
 export type PoolState = z.infer<typeof PoolStateSchema>;
 
@@ -87,6 +94,10 @@ export type SetTargetReq = z.infer<typeof SetTargetReqSchema>;
 /** HS-8975 — set a worker's queue-only mode. */
 export const SetQueueOnlyReqSchema = z.object({ worker: z.string().min(1), queueOnly: z.boolean() });
 export type SetQueueOnlyReq = z.infer<typeof SetQueueOnlyReqSchema>;
+
+/** HS-9090 — a worker signals its branch is committed, rebased, and ready to merge. */
+export const WorkerReadyReqSchema = z.object({ worker: z.string().min(1), branch: z.string().min(1) });
+export type WorkerReadyReq = z.infer<typeof WorkerReadyReqSchema>;
 
 const OkSchema = z.object({ ok: z.literal(true) });
 
@@ -123,6 +134,13 @@ export async function setPoolTarget(req: SetTargetReq): Promise<{ ok: true }> {
 /** POST `/workers/pool/queue-only` → set a worker's queue-only mode (HS-8975). */
 export async function setQueueOnlyWorker(req: SetQueueOnlyReq): Promise<{ ok: true }> {
   return apiCall(OkSchema, '/workers/pool/queue-only', { method: 'POST', body: req });
+}
+
+/** POST `/workers/ready` → a worker signals its branch is ready to integrate
+ *  (HS-9090). The owner's integrate loop keys on this; the signal clears when the
+ *  owner integrates the branch. */
+export async function signalWorkerReady(req: WorkerReadyReq): Promise<{ ok: true }> {
+  return apiCall(OkSchema, '/workers/ready', { method: 'POST', body: req });
 }
 
 // --- HS-8963 — AI-suggested worker count (docs/91 §91.6) ---

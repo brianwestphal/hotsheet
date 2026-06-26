@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WorkerLaunchSpec } from '../api/workers.js';
 import type { AppEnv } from '../types.js';
+import { _resetPoolsForTesting, readyCount } from '../workers/poolManager.js';
 import { listWorktrees } from '../worktrees.js';
 import { workerRoutes } from './workers.js';
 
@@ -125,6 +126,7 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
 
   afterEach(() => {
     rmSync(base, { recursive: true, force: true });
+    _resetPoolsForTesting();
   });
 
   it('GET /api/workers/integratable lists ready hotsheet/* branches + the target', async () => {
@@ -156,5 +158,27 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
     } finally {
       rmSync(nonGit, { recursive: true, force: true });
     }
+  });
+
+  // HS-9090 — the explicit "branch ready" signal + its clear-on-integrate.
+  it('POST /api/workers/ready sets a worker\'s ready signal; integrating the branch clears it', async () => {
+    const app = appFor(ownerData);
+    // Register a pool worker, then signal its branch ready.
+    await app.request('/api/workers/pool/register', post({ label: 'worker-1', worker: 'w1', worktreePath: '/wt/w1' }));
+    const readyRes = await app.request('/api/workers/ready', post({ worker: 'w1', branch: 'hotsheet/worker-1' }));
+    expect(readyRes.status).toBe(200);
+    expect(readyCount(ownerData)).toBe(1);
+
+    // Merge the branch — the integrate route clears the ready signal for it.
+    commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+    const intRes = await app.request('/api/workers/integrate', post({ branch: 'hotsheet/worker-1' }));
+    expect((await intRes.json() as { status: string }).status).toBe('merged');
+    expect(readyCount(ownerData)).toBe(0);
+  });
+
+  it('POST /api/workers/ready returns 404 for an unregistered worker', async () => {
+    const res = await appFor(ownerData).request('/api/workers/ready', post({ worker: 'ghost', branch: 'hotsheet/x' }));
+    expect(res.status).toBe(404);
   });
 });

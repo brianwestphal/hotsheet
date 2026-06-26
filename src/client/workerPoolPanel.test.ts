@@ -5,8 +5,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker, registerPoolWorker,
-  releaseTicket, removePoolWorker, removeWorktree, setPoolTarget, type WorkerSlotView,
+  drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker,   type PoolState, registerPoolWorker,
+  releaseTicket, removePoolWorker, removeWorktree, setPoolTarget,
+type WorkerSlotView,
 } from '../api/index.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
@@ -53,7 +54,13 @@ const mockCloseTerm = vi.mocked(closeDynamicTerminal);
 
 const slot = (over: Partial<WorkerSlotView> = {}): WorkerSlotView => ({
   label: 'worker-1', worker: 'pw1', worktreePath: '/wt/pw1', branch: 'hotsheet/worker-1',
-  terminalId: 't-pw1', state: 'idle', currentTicket: null, queueOnly: false, ...over,
+  terminalId: 't-pw1', state: 'idle', currentTicket: null, queueOnly: false,
+  ready: false, readyBranch: null, ...over,
+});
+
+/** Build a `PoolState` for the mocked `getWorkerPool` (HS-9090 added `readyCount`). */
+const pool = (over: Partial<PoolState> = {}): PoolState => ({
+  targetN: 0, workers: [], readyCount: 0, ...over,
 });
 
 const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
@@ -104,6 +111,14 @@ describe('renderWorkerTile (HS-8962)', () => {
     tile.dispatchEvent(new Event('drop', { bubbles: true }));
     expect(onDispatch).not.toHaveBeenCalled();
   });
+
+  it('HS-9090 — a ready worker shows a "ready" badge naming its branch; an unready one does not', () => {
+    const readyTile = renderWorkerTile(slot({ ready: true, readyBranch: 'hotsheet/worker-1' }));
+    const badge = readyTile.querySelector('.worker-tile-ready');
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute('title')).toContain('hotsheet/worker-1');
+    expect(renderWorkerTile(slot({ ready: false })).querySelector('.worker-tile-ready')).toBeNull();
+  });
 });
 
 describe('renderPoolControls — target stepper (HS-8971)', () => {
@@ -138,11 +153,21 @@ describe('renderPoolControls — target stepper (HS-8971)', () => {
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-step-down')!.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>('.worker-pool-drain-all')!.disabled).toBe(true);
   });
+
+  it('HS-9090 — surfaces the ready-to-integrate count (singular/plural), hidden at zero', () => {
+    const el = document.createElement('div');
+    renderPoolControls(el, 2, 2, vi.fn(), vi.fn(), 0);
+    expect(el.querySelector('.worker-pool-ready')).toBeNull();
+    renderPoolControls(el, 2, 2, vi.fn(), vi.fn(), 1);
+    expect(el.querySelector('.worker-pool-ready')?.textContent).toBe('1 branch ready to integrate');
+    renderPoolControls(el, 2, 2, vi.fn(), vi.fn(), 3);
+    expect(el.querySelector('.worker-pool-ready')?.textContent).toBe('3 branches ready to integrate');
+  });
 });
 
 describe('refreshPool (HS-8962)', () => {
   it('renders a tile per worker and wires Drain → drainPoolWorker + lowers target', async () => {
-    mockPool.mockResolvedValue({ targetN: 1, workers: [slot({ state: 'idle' })] });
+    mockPool.mockResolvedValue(pool({ targetN: 1, workers: [slot({ state: 'idle' })] }));
     const body = document.createElement('div');
     await refreshPool(body);
     expect(body.querySelectorAll('.worker-tile')).toHaveLength(1);
@@ -153,15 +178,15 @@ describe('refreshPool (HS-8962)', () => {
   });
 
   it('shows an empty state when there are no workers', async () => {
-    mockPool.mockResolvedValue({ targetN: 0, workers: [] });
+    mockPool.mockResolvedValue(pool({ targetN: 0, workers: [] }));
     const body = document.createElement('div');
     await refreshPool(body);
     expect(body.querySelector('.worker-pool-empty')).not.toBeNull();
   });
 
   it('auto-cleans a stopped worker: close terminal + remove worktree + unregister', async () => {
-    mockPool.mockResolvedValueOnce({ targetN: 0, workers: [slot({ state: 'stopped' })] });
-    mockPool.mockResolvedValue({ targetN: 0, workers: [] });
+    mockPool.mockResolvedValueOnce(pool({ targetN: 0, workers: [slot({ state: 'stopped' })] }));
+    mockPool.mockResolvedValue(pool({ targetN: 0, workers: [] }));
     const body = document.createElement('div');
     await refreshPool(body);
     await flush();
@@ -171,8 +196,8 @@ describe('refreshPool (HS-8962)', () => {
   });
 
   it('HS-8972 — auto-reaps a dead (unresponsive) worker, same teardown as stopped', async () => {
-    mockPool.mockResolvedValueOnce({ targetN: 0, workers: [slot({ state: 'dead' })] });
-    mockPool.mockResolvedValue({ targetN: 0, workers: [] });
+    mockPool.mockResolvedValueOnce(pool({ targetN: 0, workers: [slot({ state: 'dead' })] }));
+    mockPool.mockResolvedValue(pool({ targetN: 0, workers: [] }));
     const body = document.createElement('div');
     await refreshPool(body);
     await flush();
@@ -183,8 +208,8 @@ describe('refreshPool (HS-8962)', () => {
 
   it('reconcile adds a worker when the live count is below target (HS-8971)', async () => {
     // Target 1 but no live workers → reconcile launches one; then the pool reports it.
-    mockPool.mockResolvedValueOnce({ targetN: 1, workers: [] });
-    mockPool.mockResolvedValue({ targetN: 1, workers: [slot({ worker: 'pw2', label: 'worker-2', state: 'idle' })] });
+    mockPool.mockResolvedValueOnce(pool({ targetN: 1, workers: [] }));
+    mockPool.mockResolvedValue(pool({ targetN: 1, workers: [slot({ worker: 'pw2', label: 'worker-2', state: 'idle' })] }));
     const body = document.createElement('div');
     await refreshPool(body);
     await flush();
@@ -193,10 +218,10 @@ describe('refreshPool (HS-8962)', () => {
   });
 
   it('reconcile drains the surplus (idle first) when the live count exceeds target', async () => {
-    mockPool.mockResolvedValue({
+    mockPool.mockResolvedValue(pool({
       targetN: 1,
       workers: [slot({ worker: 'a', label: 'worker-1', state: 'working' }), slot({ worker: 'b', label: 'worker-2', state: 'idle' })],
-    });
+    }));
     const body = document.createElement('div');
     await refreshPool(body);
     await flush();

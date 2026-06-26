@@ -3,9 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  _resetPoolsForTesting, cancelDrain, getPoolState, isQueueOnly, isSlotStale,
-  onClaimNext, registerWorker, removeWorker, requestDrain, requestDrainAll,
-  setQueueOnly, setTarget, STALE_AFTER_MS, touch,
+  _resetPoolsForTesting, cancelDrain, clearReady, clearReadyByBranch, getPoolState,
+  isQueueOnly, isSlotStale, onClaimNext, readyCount, registerWorker, removeWorker,
+  requestDrain, requestDrainAll, setQueueOnly, setReady, setTarget, STALE_AFTER_MS, touch,
 } from './poolManager.js';
 
 const DIR = '/proj/.hotsheet';
@@ -130,6 +130,51 @@ describe('worker-pool manager (HS-8962)', () => {
     it('reports false / returns false for an unknown worker', () => {
       expect(isQueueOnly(DIR, 'ghost')).toBe(false);
       expect(setQueueOnly(DIR, 'ghost', true)).toBe(false);
+    });
+  });
+
+  describe('branch-ready signal (HS-9090)', () => {
+    it('defaults off, sets ready+branch+liveness, and counts ready slots', () => {
+      reg('w1'); reg('w2');
+      expect(getPoolState(DIR).workers[0].ready).toBe(false);
+      expect(readyCount(DIR)).toBe(0);
+
+      expect(setReady(DIR, 'w1', 'hotsheet/worker-1', 5000)).toBe(true);
+      const w1 = getPoolState(DIR).workers.find(w => w.worker === 'w1')!;
+      expect(w1).toMatchObject({ ready: true, readyBranch: 'hotsheet/worker-1', lastSeenAt: 5000 });
+      expect(readyCount(DIR)).toBe(1);
+    });
+
+    it('clearReady drops one worker; clearReadyByBranch drops every slot on that branch', () => {
+      reg('w1'); reg('w2');
+      setReady(DIR, 'w1', 'hotsheet/worker-1');
+      setReady(DIR, 'w2', 'hotsheet/worker-1'); // both signal the same (e.g. re-pointed) branch
+      expect(readyCount(DIR)).toBe(2);
+
+      expect(clearReady(DIR, 'w1')).toBe(true);
+      expect(readyCount(DIR)).toBe(1);
+
+      setReady(DIR, 'w1', 'hotsheet/worker-1');
+      expect(clearReadyByBranch(DIR, 'hotsheet/worker-1')).toBe(2); // w1 + w2
+      expect(readyCount(DIR)).toBe(0);
+      expect(getPoolState(DIR).workers.every(w => w.readyBranch === null)).toBe(true);
+    });
+
+    it('a re-registered (fresh) worker starts not-ready', () => {
+      reg('w1');
+      setReady(DIR, 'w1', 'hotsheet/worker-1');
+      reg('w1'); // fresh worker on the same identity
+      expect(getPoolState(DIR).workers[0].ready).toBe(false);
+      expect(readyCount(DIR)).toBe(0);
+    });
+
+    it('clearReadyByBranch ignores a non-matching branch; setReady/clearReady false for an unknown worker', () => {
+      reg('w1');
+      setReady(DIR, 'w1', 'hotsheet/worker-1');
+      expect(clearReadyByBranch(DIR, 'hotsheet/worker-9')).toBe(0);
+      expect(readyCount(DIR)).toBe(1);
+      expect(setReady(DIR, 'ghost', 'b')).toBe(false);
+      expect(clearReady(DIR, 'ghost')).toBe(false);
     });
   });
 });
