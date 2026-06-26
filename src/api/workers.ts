@@ -184,9 +184,16 @@ export type IntegrateReq = z.infer<typeof IntegrateReqSchema>;
 
 export const IntegrateResultSchema = z.object({
   ok: z.boolean(),
-  status: z.enum(['merged', 'conflict', 'dirty-tree', 'not-on-target', 'nothing-to-integrate', 'error']),
+  status: z.enum(['merged', 'conflict', 'dirty-tree', 'not-on-target', 'nothing-to-integrate', 'gate-failed', 'gate-timeout', 'error']),
   conflicts: z.array(z.string()).optional(),
   detail: z.string().optional(),
+  // HS-9091 — present only when an `integrationGate` command ran after the merge.
+  gate: z.object({
+    ran: z.boolean(),
+    passed: z.boolean(),
+    output: z.string(),
+    timedOut: z.boolean(),
+  }).optional(),
 });
 export type IntegrateResultRes = z.infer<typeof IntegrateResultSchema>;
 

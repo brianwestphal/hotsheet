@@ -18,6 +18,11 @@ const FileSettingsSchema = z.object({
   // DB/project of its own and redirects all project-data resolution to the named
   // authoritative `.hotsheet` folder (docs/89-git-worktrees.md §89.1).
   authoritativeDataDir: z.string().optional(),
+  // HS-9091 (docs/106 §106.2) — optional shell command the owner-side integrate
+  // helper runs after a `--no-ff` merge ("merge + verify or roll back"). Off by
+  // default. §95-classified SHARED (a project build contract) — so it lives in
+  // committed `settings.json` and falls through `defaultLayerForKey` to `shared`.
+  integrationGate: z.string().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */
@@ -166,6 +171,8 @@ export interface FileSettings {
   port?: number;
   /** HS-8934 — git-worktree follower pointer (abs path to an owner `.hotsheet`). */
   authoritativeDataDir?: string;
+  /** HS-9091 — optional owner-side integrate gate command (docs/106 §106.2). */
+  integrationGate?: string;
   [key: string]: unknown;
 }
 

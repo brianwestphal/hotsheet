@@ -14,6 +14,7 @@ import {
 WorkerRefSchema,
   type WorkerSlotView, } from '../api/workers.js';
 import { getClaims } from '../db/claims.js';
+import { readFileSettings } from '../file-settings.js';
 import { isGitRepo } from '../gitignore.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -164,11 +165,17 @@ workerRoutes.get('/workers/integratable', async (c) => {
  *  (clean-tree guarded, conflict → abort + report, never pushes). Always 200 with
  *  the structured `IntegrateResult`; the caller branches on `status`. */
 workerRoutes.post('/workers/integrate', async (c) => {
-  const repoRoot = projectRootFromDataDir(c.get('dataDir'));
+  const dataDir = c.get('dataDir');
+  const repoRoot = projectRootFromDataDir(dataDir);
   if (!isGitRepo(repoRoot)) return c.json({ error: 'Not a git repository' }, 400);
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(IntegrateReqSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const target = await detectTargetBranch(repoRoot);
-  return c.json(await integrateBranch(repoRoot, parsed.data.branch, target));
+  // HS-9091 — opt-in in-helper gate: when the project configured an
+  // `integrationGate` command (shared setting), run it after the merge and roll
+  // back on failure. Absent/blank → the agent-runs-gates default (no gate).
+  const gateCommand = readFileSettings(dataDir).integrationGate?.trim();
+  const gate = gateCommand !== undefined && gateCommand !== '' ? { command: gateCommand } : undefined;
+  return c.json(await integrateBranch(repoRoot, parsed.data.branch, target, undefined, { gate }));
 });
