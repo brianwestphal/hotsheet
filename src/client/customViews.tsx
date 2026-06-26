@@ -1,14 +1,63 @@
-import { getSettings, updateSettings, updateTicket } from '../api/index.js';
+import { clearLocalSettingOverride, getLayeredFileSettings, updateFileSettingsLayer, updateTicket } from '../api/index.js';
+import { type ArrayDelta, isArrayDelta } from '../settingsDelta.js';
 import { suppressAnimation } from './animate.js';
+import {
+  addLocalView,
+  deleteLocalView,
+  editView,
+  hideSharedView,
+  isSharedView as isSharedViewIn,
+  reorderViews,
+  resolveViews,
+  unhideSharedView,
+  type ViewLayers,
+} from './customViewsLayers.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import { ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
+import { ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
 import type { CustomView, CustomViewCondition } from './state.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
 import { draggedTicketIds } from './ticketList.js';
+import { showToast } from './toast.js';
 import { BLUR_DEBOUNCE_MS } from './uiTimings.js';
+
+// HS-9092 (docs/107) — the shared/local layer pair for `custom_views`. The
+// sidebar surface has no scope-mode toggle; each action targets a specific layer
+// (add → local; edit → the view's own layer; hide-shared → local hidden), via
+// the pure helpers in `customViewsLayers.ts`. `state.customViews` stays the
+// RESOLVED (effective) list that the ticket filters read.
+let viewLayers: ViewLayers = { shared: [], delta: {} };
+
+/** Coerce a layered `custom_views` value into a flat view array. */
+function asViewArray(v: unknown): CustomView[] {
+  if (Array.isArray(v)) return v as CustomView[];
+  if (typeof v === 'string' && v !== '') {
+    try { const p: unknown = JSON.parse(v); if (Array.isArray(p)) return p as CustomView[]; } catch { /* not JSON */ }
+  }
+  return [];
+}
+
+/**
+ * HS-9092 — write the layers that changed back to their files: the shared array
+ * to `settings.json` only when it actually changed (so a local-only action never
+ * touches the committed file), and the local delta to `settings.local.json`
+ * (clearing the key when the delta is empty so an empty `{}` can't blank views).
+ * Updates `state.customViews` (resolved) + re-renders the sidebar.
+ */
+async function persistViews(next: ViewLayers): Promise<void> {
+  const sharedChanged = JSON.stringify(next.shared) !== JSON.stringify(viewLayers.shared);
+  const deltaChanged = JSON.stringify(next.delta) !== JSON.stringify(viewLayers.delta);
+  viewLayers = next;
+  state.customViews = resolveViews(next);
+  renderSidebarViews();
+  if (sharedChanged) await updateFileSettingsLayer('shared', { custom_views: next.shared });
+  if (deltaChanged) {
+    if (Object.keys(next.delta).length === 0) await clearLocalSettingOverride(['custom_views']);
+    else await updateFileSettingsLayer('local', { custom_views: next.delta });
+  }
+}
 
 // HS-8102 — typed `(() => void) | null` (was `() => void` with no `| undefined`).
 // Pre-fix the type lied: the variable was implicitly undefined until
@@ -31,13 +80,21 @@ export function initCustomViews(loadTickets: () => void) {
 
 export async function loadCustomViews() {
   try {
-    const settings = await getSettings();
-    if (settings.custom_views !== '') {
-      const parsed: unknown = JSON.parse(settings.custom_views);
-      if (Array.isArray(parsed)) state.customViews = parsed as typeof state.customViews;
-    }
+    // HS-9092 — load the shared array + local delta separately so the sidebar
+    // can show origin badges + route each action to the right layer.
+    const layered = await getLayeredFileSettings();
+    const shared = asViewArray(layered.shared.custom_views);
+    const localVal = layered.local.custom_views;
+    const delta: ArrayDelta<CustomView> = isArrayDelta(localVal) ? (localVal as ArrayDelta<CustomView>) : {};
+    viewLayers = { shared, delta };
+    state.customViews = resolveViews(viewLayers);
   } catch { /* use empty */ }
   renderSidebarViews();
+}
+
+/** Whether the view with `id` lives in the shared (committed) layer. */
+function isSharedView(id: string): boolean {
+  return isSharedViewIn(viewLayers, id);
 }
 
 export function renderSidebarViews() {
@@ -50,8 +107,14 @@ export function renderSidebarViews() {
   // Add a separator before custom views
   container.appendChild(toElement(<div className="sidebar-divider"></div>));
 
+  // HS-9092 — only badge origin when BOTH layers are in play (a project with no
+  // local customization shouldn't show "Shared" on every row — noise).
+  const hasLocalCustomization = (viewLayers.delta.added?.length ?? 0) > 0
+    || (viewLayers.delta.hidden?.length ?? 0) > 0;
+
   for (let i = 0; i < state.customViews.length; i++) {
     const view = state.customViews[i];
+    const shared = isSharedView(view.id);
     const btn = toElement(
       <button
         className={`sidebar-item sidebar-custom-view${state.view === `custom:${view.id}` ? ' active' : ''}`}
@@ -60,7 +123,10 @@ export function renderSidebarViews() {
         draggable="true"
       >
         {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{ICON_TAG}</span> : null}
-        {view.name}
+        <span className="sidebar-view-name">{view.name}</span>
+        {hasLocalCustomization
+          ? <span className={`cv-layer-badge ${shared ? 'cv-layer-shared' : 'cv-layer-local'}`} title={shared ? 'Shared — edits are committed to the project' : 'Local — this machine only'}>{shared ? 'Shared' : 'Local'}</span>
+          : null}
       </button>
     );
     btn.addEventListener('click', () => {
@@ -109,12 +175,12 @@ export function renderSidebarViews() {
         return;
       }
 
-      // Handle view reordering
+      // Handle view reordering. HS-9092 — reorder is per-layer (the local layer
+      // can't reorder shared views); `reorderViews` no-ops a cross-layer drag.
       if (draggedViewIndex === null || draggedViewIndex === i) return;
-      const [moved] = state.customViews.splice(draggedViewIndex, 1);
-      state.customViews.splice(i, 0, moved);
+      const fromId = state.customViews[draggedViewIndex].id;
       draggedViewIndex = null;
-      void saveViews();
+      void persistViews(reorderViews(viewLayers, fromId, view.id));
     });
 
     container.appendChild(btn);
@@ -127,30 +193,47 @@ export function renderSidebarViews() {
 
 function showViewContextMenu(anchor: HTMLElement, view: CustomView) {
   closeAllMenus();
+  // HS-9092 — a SHARED view can be "hidden on this machine" (local hidden delta,
+  // non-destructive + undo); a LOCAL view is truly deleted (drops the local
+  // addition). Deleting a shared view from the sidebar would edit the committed
+  // file — that promote/demote lives in the Settings "Views" tab (HS-9093).
+  const shared = isSharedView(view.id);
   const menu = createDropdown(anchor, [
     { label: 'Edit', key: 'e', icon: ICON_PENCIL, action: () => showViewEditor(view) },
-    { label: 'Delete', key: 'd', icon: ICON_TRASH_SIMPLE, action: () => { void deleteView(view.id); } },
+    shared
+      ? { label: 'Hide on this machine', key: 'h', icon: ICON_EYE_OFF, action: () => { void hideView(view); } }
+      : { label: 'Delete', key: 'd', icon: ICON_TRASH_SIMPLE, action: () => { void deleteView(view.id); } },
   ]);
   document.body.appendChild(menu);
   positionDropdown(menu, anchor);
   menu.style.visibility = '';
 }
 
-async function saveViews() {
-  await updateSettings({ custom_views: JSON.stringify(state.customViews) });
-  renderSidebarViews();
+/** If the deleted/hidden view is the active one, fall back to the "all" view. */
+function resetViewIfActive(id: string) {
+  if (state.view !== `custom:${id}`) return;
+  state.view = 'all';
+  document.querySelectorAll('.sidebar-item').forEach(i => {
+    i.classList.toggle('active', (i as HTMLElement).dataset.view === 'all');
+  });
+  loadTicketsFn?.();
 }
 
+/** HS-9092 — delete a LOCAL view (drops it from the local `added` delta). */
 async function deleteView(id: string) {
-  state.customViews = state.customViews.filter(v => v.id !== id);
-  if (state.view === `custom:${id}`) {
-    state.view = 'all';
-    document.querySelectorAll('.sidebar-item').forEach(i => {
-      i.classList.toggle('active', (i as HTMLElement).dataset.view === 'all');
-    });
-    loadTicketsFn?.();
-  }
-  await saveViews();
+  resetViewIfActive(id);
+  await persistViews(deleteLocalView(viewLayers, id));
+}
+
+/** HS-9092 — hide a SHARED view on this machine (local `hidden` delta), with an
+ *  undo toast that restores it (`unhideSharedView`). */
+async function hideView(view: CustomView) {
+  resetViewIfActive(view.id);
+  await persistViews(hideSharedView(viewLayers, view.id));
+  showToast(`Hid "${view.name}" on this machine.`, {
+    durationMs: 7000,
+    action: { label: 'Undo', onClick: () => { void persistViews(unhideSharedView(viewLayers, view.id)); } },
+  });
 }
 
 /** Add a tag to one or more tickets (used by drop-to-tag). */
@@ -455,15 +538,11 @@ function showViewEditor(existing?: CustomView) {
       conditions: conditions.filter(c => c.value !== ''),
     };
 
-    if (isEdit) {
-      const idx = state.customViews.findIndex(v => v.id === existing.id);
-      if (idx >= 0) state.customViews[idx] = view;
-      else state.customViews.push(view);
-    } else {
-      state.customViews.push(view);
-    }
-
-    await saveViews();
+    // HS-9092 — route by action: a NEW view adds LOCALLY by default (never
+    // touches the committed file); an EDIT writes the layer the view lives in
+    // (a shared view → the shared array; a local view → its `added` entry).
+    const next = isEdit ? editView(viewLayers, view) : addLocalView(viewLayers, view);
+    await persistViews(next);
     // Select the new/edited view
     document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
     state.view = `custom:${view.id}`;

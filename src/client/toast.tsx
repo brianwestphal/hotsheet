@@ -18,6 +18,9 @@ export interface ShowToastOptions {
   durationMs?: number;
   /** Optional accent variant: `success` | `info` | `warning`. `info` is the default. */
   variant?: 'info' | 'success' | 'warning';
+  /** HS-9092 — optional inline action button (e.g. "Undo"). Clicking it runs
+   *  `onClick` and dismisses the toast. */
+  action?: { label: string; onClick: () => void };
 }
 
 export function showToast(message: string, opts: ShowToastOptions = {}): void {
@@ -25,7 +28,17 @@ export function showToast(message: string, opts: ShowToastOptions = {}): void {
   const variant = opts.variant ?? 'info';
 
   document.querySelector('.hs-toast')?.remove();
-  const toast = toElement(<div className={`hs-toast hs-toast-${variant} plugin-toast`}>{message}</div>);
+  const toast = toElement(<div className={`hs-toast hs-toast-${variant} plugin-toast`}><span className="hs-toast-msg">{message}</span></div>);
+  if (opts.action !== undefined) {
+    const action = opts.action;
+    const btn = toElement(<button className="hs-toast-action">{action.label}</button>);
+    btn.addEventListener('click', () => {
+      action.onClick();
+      toast.classList.remove('visible');
+      window.setTimeout(() => toast.remove(), TOAST_FADE_OUT_MS);
+    });
+    toast.appendChild(btn);
+  }
   document.body.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('visible'));
   window.setTimeout(() => {

@@ -5907,7 +5907,31 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 
 .sidebar-custom-view {
   &.dragging { opacity: 0.4; }
+
+  // HS-9092 — the view name takes the row; the layer badge sits at the right.
+  .sidebar-view-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
+
+// HS-9092 — Shared / Local origin badge on a custom-view row (shown only when a
+// project has local view customization, so it isn't noise on the common case).
+.cv-layer-badge {
+  flex-shrink: 0;
+  margin-left: 6px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  line-height: 1.4;
+}
+.cv-layer-shared { color: #047857; background: rgba(4, 120, 87, .12); }
+.cv-layer-local { color: #b45309; background: rgba(180, 83, 9, .12); }
 
 .sidebar-add-view-btn {
   font-size: 14px;
@@ -6857,6 +6881,26 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &.visible {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+
+  // HS-9092 — a toast with an inline action button (e.g. "Undo") must accept
+  // clicks (the base toast is pointer-events:none so it never blocks the UI).
+  &:has(.hs-toast-action) {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .hs-toast-action {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--bg);
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0;
   }
 }
 
