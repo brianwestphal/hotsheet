@@ -9,7 +9,7 @@ import { Hono } from 'hono';
 
 import {
   IntegrateReqSchema,
-  LaunchWorkerReqSchema, PartitionReqSchema, RegisterWorkerReqSchema,
+  LaunchWorkerReqSchema, PartitionReqSchema, RefreshWorktreeReqSchema, RegisterWorkerReqSchema,
   SetQueueOnlyReqSchema, SetTargetReqSchema,
   WorkerReadyReqSchema, WorkerRefSchema,
   type WorkerSlotView, } from '../api/workers.js';
@@ -27,7 +27,9 @@ import {
   type WorkerSlot,
 } from '../workers/poolManager.js';
 import { reconcilePool } from '../workers/reconcilePool.js';
+import { refreshWorktree } from '../workers/refreshWorktree.js';
 import { suggestWorkerCount } from '../workers/suggestN.js';
+import { canonicalizePath, listWorktrees } from '../worktrees.js';
 import { projectRootFromDataDir } from './git.js';
 import { parseBody } from './validation.js';
 
@@ -251,4 +253,24 @@ workerRoutes.post('/workers/integrate', async (c) => {
   // so the panel's "N ready" count and the owner's loop reflect the drained queue.
   if (result.status === 'merged') clearReadyByBranch(dataDir, parsed.data.branch);
   return c.json(result);
+});
+
+/** POST /api/workers/refresh — HS-9075 (docs/99 §99.3): run the `refreshWorktree`
+ *  routine (clean-tree guard → rebase onto target → conditional reinstall →
+ *  optional artifact clear) on a follower worktree with no UI, so a
+ *  headless/server-driven worker can refresh itself at a batch boundary. The
+ *  `worktree` is validated against the repo's real worktrees (no arbitrary cwd)
+ *  and the main worktree is refused. */
+workerRoutes.post('/workers/refresh', async (c) => {
+  const dataDir = c.get('dataDir');
+  const repoRoot = projectRootFromDataDir(dataDir);
+  if (!isGitRepo(repoRoot)) return c.json({ error: 'Not a git repository' }, 400);
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(RefreshWorktreeReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const target = canonicalizePath(parsed.data.worktree);
+  const wt = (await listWorktrees(repoRoot)).find(w => canonicalizePath(w.path) === target);
+  if (wt === undefined) return c.json({ error: `No such worktree: ${parsed.data.worktree}` }, 400);
+  if (wt.isMain) return c.json({ error: 'Refusing to refresh the main worktree' }, 400);
+  return c.json(await refreshWorktree(wt.path, { clearArtifacts: parsed.data.clearArtifacts }));
 });

@@ -200,6 +200,38 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
     }
   });
 
+  // HS-9075 — the headless worker worktree-refresh endpoint (docs/99 §99.3).
+  it('POST /api/workers/refresh rebases a follower worktree onto the target', async () => {
+    const wtPath = join(base, 'wt-refresh');
+    execFileSync('git', ['worktree', 'add', '-q', '-b', 'hotsheet/refresh-test', wtPath], { cwd: repoRoot });
+    const res = await appFor(ownerData).request('/api/workers/refresh', post({ worktree: wtPath }));
+    expect(res.status).toBe(200);
+    const data = await res.json() as { ok: boolean; status: string; rebased: boolean };
+    expect(data).toMatchObject({ ok: true, status: 'refreshed' });
+  });
+
+  it('POST /api/workers/refresh returns 400 for an unknown worktree path', async () => {
+    const res = await appFor(ownerData).request('/api/workers/refresh', post({ worktree: join(base, 'nope') }));
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toMatch(/no such worktree/i);
+  });
+
+  it('POST /api/workers/refresh refuses the main worktree (400)', async () => {
+    const res = await appFor(ownerData).request('/api/workers/refresh', post({ worktree: repoRoot }));
+    expect(res.status).toBe(400);
+    expect((await res.json() as { error: string }).error).toMatch(/main worktree/i);
+  });
+
+  it('POST /api/workers/refresh returns 400 on a non-git project', async () => {
+    const nonGit = mkdtempSync(join(tmpdir(), 'hs-refresh-nogit-'));
+    try {
+      const res = await appFor(nonGit).request('/api/workers/refresh', post({ worktree: nonGit }));
+      expect(res.status).toBe(400);
+    } finally {
+      rmSync(nonGit, { recursive: true, force: true });
+    }
+  });
+
   // HS-9081 (docs/102 §102.3) — the pool poll folds in the per-worktree git summary.
   it('GET /api/workers/pool includes a per-worker git summary (ahead/behind/dirty)', async () => {
     // The pool route reads live claims, so it needs the DB connection up.

@@ -1,8 +1,9 @@
 # 99. Worker-Side Worktree-Refresh Routine
 
-**Status: PARTIAL** — the **`refreshWorktree` helper** (§99.2, the core)
-**SHIPPED** (HS-9074, 2026-06-26); the optional endpoint is HS-9075 and the
-`/hotsheet-worker` skill prose is HS-9072. Design HS-9063. The **worker-side**
+**Status: SHIPPED** — the **`refreshWorktree` helper** (§99.2, HS-9074), the
+**`POST /api/workers/refresh` endpoint** (§99.3, HS-9075), and the
+`/hotsheet-worker` skill prose (HS-9072) all landed 2026-06-26. Design HS-9063.
+The **worker-side**
 "stay fresh" half of the integration story — the deterministic counterpart to the
 owner-side `src/workers/integrate.ts` (HS-9048,
 [89-git-worktrees.md](89-git-worktrees.md) §89.7). Pulses once per **batch
@@ -101,11 +102,14 @@ conflict resolution, no pushing. Same division of labor as `integrate.ts`.
 ## 99.3 Surface
 
 - **Helper** (`src/workers/refreshWorktree.ts`) — the unit above.
-- **Optional endpoint / MCP tool** so it's callable headless, paralleling
-  `POST /api/workers/integrate`: e.g. `POST /api/workers/refresh`
-  `{ worktree?, clearArtifacts? }` → the `RefreshResult`. A worker terminal can
-  call it directly; a headless/server-driven worker (HS-9062) can call it without
-  a UI. Add a typed caller in `src/api/workers.ts` if exposed.
+- **Endpoint** ✅ SHIPPED (HS-9075) — `POST /api/workers/refresh`
+  `{ worktree, clearArtifacts? }` → the `RefreshResult`, paralleling
+  `POST /api/workers/integrate` (`src/routes/workers.ts`), with the typed caller
+  `refreshWorker` + `RefreshWorktreeReqSchema`/`RefreshResultSchema` in
+  `src/api/workers.ts`. A worker terminal can call it directly; a headless/
+  server-driven worker (HS-9062) can call it without a UI. **`worktree` is
+  required** (a refresh needs a target) and **validated** against the repo's real
+  worktrees (`listWorktrees`, no arbitrary cwd); the **main worktree is refused**.
 - **`/hotsheet-worker` skill** (`src/skills.ts`, `workerSkillBody`,
   `SKILL_VERSION` bump): replace the ad-hoc "rebase before/while working"
   instruction with "call the refresh routine at the loop boundary (clean tree),
@@ -165,5 +169,7 @@ Real temp-repo tests (mirror `worktrees.test.ts` / `integrate.test.ts`):
   it (tracked on HS-9057; this doc consumes it).
 - **`/hotsheet-worker` skill prose** to call the routine at the loop boundary
   (shares the `SKILL_VERSION` bump with HS-9064's batching prose, HS-9072).
-- **(Optional) `POST /api/workers/refresh` endpoint + typed caller** for headless
-  workers (HS-9062).
+- **`POST /api/workers/refresh` endpoint + typed caller** for headless workers
+  (HS-9062). ✅ SHIPPED (HS-9075) — see §99.3. Tests: `routes/workers.test.ts`
+  (real follower worktree → `refreshed`; 400 on unknown worktree / main worktree /
+  non-git).

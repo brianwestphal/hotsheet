@@ -243,6 +243,36 @@ export const IntegrateResultSchema = z.object({
 });
 export type IntegrateResultRes = z.infer<typeof IntegrateResultSchema>;
 
+// --- HS-9075 — headless worker worktree refresh (docs/99 §99.3) ---
+
+export const RefreshWorktreeReqSchema = z.object({
+  /** The follower worktree to refresh (rebase onto the target). Required + must be
+   *  a real non-main worktree of THIS repo (the route validates it). */
+  worktree: z.string().min(1),
+  /** Also drop `dist/` / `*.tsbuildinfo` after the rebase (§99 `clearArtifacts`). */
+  clearArtifacts: z.boolean().optional(),
+});
+export type RefreshWorktreeReq = z.infer<typeof RefreshWorktreeReqSchema>;
+
+export const RefreshResultSchema = z.object({
+  ok: z.boolean(),
+  status: z.enum(['refreshed', 'dirty-tree', 'conflict', 'error']),
+  rebased: z.boolean(),
+  reinstalled: z.boolean(),
+  clearedArtifacts: z.boolean(),
+  conflicts: z.array(z.string()).optional(),
+  detail: z.string().optional(),
+});
+export type RefreshResultRes = z.infer<typeof RefreshResultSchema>;
+
+/** POST `/workers/refresh` → run the §99 `refreshWorktree` routine (clean-tree
+ *  guard → rebase onto target → conditional reinstall → optional artifact clear)
+ *  on a follower worktree, with no UI. Parallels `integrateWorkerBranch`; lets a
+ *  headless/server-driven worker (HS-9062) refresh itself at a batch boundary. */
+export async function refreshWorker(req: RefreshWorktreeReq): Promise<RefreshResultRes> {
+  return apiCall(RefreshResultSchema, '/workers/refresh', { method: 'POST', body: req });
+}
+
 /** GET `/workers/integratable` → the detected target branch + the ready worker
  *  branches (`hotsheet/*` ahead of the target). */
 export async function getIntegratableBranches(): Promise<IntegratableRes> {
