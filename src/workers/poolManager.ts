@@ -42,6 +42,15 @@ export interface WorkerSlot {
   /** HS-8975 — queue-only: work ONLY dispatched (own-claimed) tickets, then stop;
    *  never pull from the shared pool. Default false (fall back to self-claim). */
   queueOnly: boolean;
+  /** HS-9090 (docs/106 §106.1) — explicit "branch ready to integrate" signal. The
+   *  worker sets it when it finishes + commits + rebases at a batch boundary (once
+   *  per batch, not per ticket); the owner clears it once it integrates that
+   *  branch. The owner's integrate loop keys on this instead of scanning on a
+   *  timer (`listReadyBranches` stays the fallback for a worker that died after
+   *  committing but before signaling). */
+  ready: boolean;
+  /** The branch the `ready` signal refers to (null when not ready). */
+  readyBranch: string | null;
 }
 
 /** HS-8972 — a pool worker silent (no claim-next / renew / claim) for this long is
@@ -95,6 +104,8 @@ export function registerWorker(dataDir: string, input: RegisterWorkerInput): Wor
     seq: existing?.seq ?? pool.nextSeq++,
     lastSeenAt: Date.now(),
     queueOnly: existing?.queueOnly ?? false, // preserve the toggle across re-register
+    ready: false, // a freshly (re-)registered worker hasn't signaled a ready branch
+    readyBranch: null,
   };
   pool.workers.set(input.worker, slot);
   if (pool.workers.size > pool.targetN) pool.targetN = pool.workers.size;
@@ -157,6 +168,49 @@ export function touch(dataDir: string, worker: string, now: number = Date.now())
  *  its way out (draining/stopped have their own cleanup path). */
 export function isSlotStale(slot: WorkerSlot, now: number = Date.now()): boolean {
   return !slot.drain && !slot.stopped && now - slot.lastSeenAt > STALE_AFTER_MS;
+}
+
+/** HS-9090 — a worker signals its branch is committed, rebased, and ready to
+ *  integrate (once per batch boundary). Records liveness too (a ready signal is a
+ *  sign of life). Returns false if no such worker. */
+export function setReady(dataDir: string, worker: string, branch: string, now: number = Date.now()): boolean {
+  const slot = poolFor(dataDir).workers.get(worker);
+  if (slot === undefined) return false;
+  slot.ready = true;
+  slot.readyBranch = branch;
+  slot.lastSeenAt = now;
+  return true;
+}
+
+/** HS-9090 — clear a worker's ready signal (e.g. the worker started a new batch).
+ *  Returns false if no such worker. */
+export function clearReady(dataDir: string, worker: string): boolean {
+  const slot = poolFor(dataDir).workers.get(worker);
+  if (slot === undefined) return false;
+  slot.ready = false;
+  slot.readyBranch = null;
+  return true;
+}
+
+/** HS-9090 — clear the ready signal on every slot pointing at `branch` (the owner
+ *  calls this once it has integrated that branch). Returns the count cleared. */
+export function clearReadyByBranch(dataDir: string, branch: string): number {
+  let n = 0;
+  for (const slot of poolFor(dataDir).workers.values()) {
+    if (slot.ready && slot.readyBranch === branch) {
+      slot.ready = false;
+      slot.readyBranch = null;
+      n++;
+    }
+  }
+  return n;
+}
+
+/** HS-9090 — how many slots are currently signaling a branch ready to integrate. */
+export function readyCount(dataDir: string): number {
+  let n = 0;
+  for (const slot of poolFor(dataDir).workers.values()) if (slot.ready) n++;
+  return n;
 }
 
 /** HS-8975 — set a worker's queue-only mode. Returns false if no such worker. */

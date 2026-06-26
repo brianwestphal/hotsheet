@@ -41,7 +41,7 @@ describe('worker launch caller (HS-8863)', () => {
   });
 });
 
-const validSlot = { label: 'worker-1', worker: 'worker-1', worktreePath: '/wt/worker-1', branch: 'hotsheet/worker-1', terminalId: 't1', state: 'working', currentTicket: { id: 5, ticketNumber: 'HS-5', title: 'x' }, queueOnly: false };
+const validSlot = { label: 'worker-1', worker: 'worker-1', worktreePath: '/wt/worker-1', branch: 'hotsheet/worker-1', terminalId: 't1', state: 'working', currentTicket: { id: 5, ticketNumber: 'HS-5', title: 'x' }, queueOnly: false, ready: false, readyBranch: null };
 
 describe('worker-pool schemas + callers (HS-8962)', () => {
   it('WorkerSlotViewSchema accepts a valid slot incl. null ticket + each state', () => {
@@ -51,12 +51,12 @@ describe('worker-pool schemas + callers (HS-8962)', () => {
   });
 
   it('PoolStateSchema validates the pool snapshot', () => {
-    expect(PoolStateSchema.safeParse({ targetN: 2, workers: [validSlot] }).success).toBe(true);
-    expect(PoolStateSchema.safeParse({ targetN: 'two', workers: [] }).success).toBe(false);
+    expect(PoolStateSchema.safeParse({ targetN: 2, workers: [validSlot], readyCount: 1 }).success).toBe(true);
+    expect(PoolStateSchema.safeParse({ targetN: 'two', workers: [], readyCount: 0 }).success).toBe(false);
   });
 
   it('getWorkerPool → GET /workers/pool', async () => {
-    const t = vi.fn<ApiTransport>().mockResolvedValue({ targetN: 0, workers: [] });
+    const t = vi.fn<ApiTransport>().mockResolvedValue({ targetN: 0, workers: [], readyCount: 0 });
     setApiTransport(t);
     await getWorkerPool();
     expect(t).toHaveBeenCalledWith('/workers/pool', {});

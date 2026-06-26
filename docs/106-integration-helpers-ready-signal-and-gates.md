@@ -1,8 +1,8 @@
 # 106. Integration Helpers: Explicit "Branch Ready" Signal + Optional Gate-Running
 
-**Status: PARTIAL** — §106.2 (optional in-helper gate-running) **SHIPPED (HS-9091,
-2026-06-26)**; §106.1 (explicit "branch ready" signal) still design only (HS-9090).
-Smaller follow-up to HS-9048, which shipped the deterministic git integration core
+**Status: SHIPPED** — §106.1 (explicit "branch ready" signal) **SHIPPED (HS-9090,
+2026-06-26)** + §106.2 (optional in-helper gate-running) **SHIPPED (HS-9091,
+2026-06-26)**. Smaller follow-up to HS-9048, which shipped the deterministic git integration core
 (`src/workers/integrate.ts`: `detectTargetBranch` / `listReadyBranches` /
 `integrateBranch` + `GET /api/workers/integratable` + `POST /api/workers/integrate`,
 wired into the owner skill at `SKILL_VERSION` 17 —
@@ -20,7 +20,24 @@ that loop **event-driven and complete**:
 - the **optional in-helper gate-running** (item 2) makes each integrate a
   one-shot merge+verify.
 
-## 106.1 Item 1 — Explicit "branch ready" signal
+## 106.1 Item 1 — Explicit "branch ready" signal — **SHIPPED (HS-9090)**
+
+**What shipped:** the pool slot (`src/workers/poolManager.ts`) gained a `ready` /
+`readyBranch` marker, set via `setReady(dataDir, worker, branch)` (also records
+liveness) and cleared via `clearReady` / `clearReadyByBranch`; `readyCount(dataDir)`
+counts the signaling slots. A fresh (re-)register resets it. `POST
+/api/workers/ready { worker, branch }` is the worker's signal endpoint (typed
+caller `signalWorkerReady`; 404 for an unregistered worker); `GET /api/workers/pool`
+now returns per-slot `ready`/`readyBranch` + a top-level `readyCount`. The
+worker-pool panel surfaces **"N branches ready to integrate"** in the controls bar +
+a per-tile **"● ready"** badge naming the branch. The signal **clears on integrate**:
+`POST /api/workers/integrate` calls `clearReadyByBranch` on a `merged` result. The
+worker actually *calling* `/workers/ready` at a batch boundary is HS-9072 (skill
+prose) riding HS-9063's refresh routine; `listReadyBranches` stays the source-of-
+truth fallback. Tests: `poolManager.test.ts` (set/clear/clearByBranch/count/reset),
+`routes/workers.test.ts` (ready endpoint + clear-on-integrate, real git),
+`workerPoolPanel.test.ts` (badge + count), `api/workers.test.ts` (schema). Original
+design:
 
 Today the owner discovers integratable work by enumerating `hotsheet/*` branches
 ahead of the target. A lighter, **explicit** per-worker signal — set when a worker

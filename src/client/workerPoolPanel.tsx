@@ -78,6 +78,10 @@ export function renderWorkerTile(
     <div className="worker-tile" data-worker={w.worker} data-state={w.state}>
       <div className="worker-tile-head">
         <span className="worker-tile-label">{w.label}</span>
+        {/* HS-9090 — explicit "branch ready to integrate" signal. */}
+        {w.ready && w.readyBranch !== null
+          ? <span className="worker-tile-ready" title={`${w.readyBranch} is committed, rebased, and ready to integrate`}>● ready</span>
+          : null}
         <span className={`worker-tile-state worker-tile-state-${w.state}`}>{STATE_LABEL[w.state]}</span>
       </div>
       <div className="worker-tile-ticket">
@@ -132,6 +136,7 @@ export function renderWorkerTile(
 export function renderPoolControls(
   controlsEl: HTMLElement, target: number, running: number,
   onStep: (delta: number) => void, onDrainAll: () => void,
+  readyCount = 0,
 ): void {
   controlsEl.replaceChildren(toElement(
     <div className="worker-pool-controls-inner">
@@ -142,6 +147,10 @@ export function renderPoolControls(
         <span className="worker-pool-running">{`${String(running)} running`}</span>
       </div>
       <div className="worker-pool-controls-right">
+        {/* HS-9090 — explicit "branch ready" queue, surfaced at a glance. */}
+        {readyCount > 0
+          ? <span className="worker-pool-ready" title="Worker branches signaled committed + rebased + ready to integrate">{`${String(readyCount)} ${readyCount === 1 ? 'branch' : 'branches'} ready to integrate`}</span>
+          : null}
         <button type="button" className="btn btn-sm worker-pool-drain-all" disabled={running === 0}>Drain all</button>
       </div>
     </div>,
@@ -241,7 +250,7 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
   if (controlsEl) {
     renderPoolControls(controlsEl, pool.targetN, activeCount(pool),
       (delta) => void handleStep(pool, delta, bodyEl),
-      () => void handleDrainAll(bodyEl));
+      () => void handleDrainAll(bodyEl), pool.readyCount);
   }
 }
 
