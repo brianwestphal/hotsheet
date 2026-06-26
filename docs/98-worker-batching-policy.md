@@ -1,8 +1,20 @@
 # 98. Worker Batching Policy
 
-**Status: DESIGN ONLY** (HS-9064, 2026-06-26). The "how aggressive should
-rebasing be" knob for the distributed-worker epic. Mostly **skill prose + a
-dispatch/partition heuristic**, not heavy tooling. Sits between
+**Status: PARTIAL** — the **skill prose** (§98.4 items 1+2) **SHIPPED**
+(HS-9072, 2026-06-26, `SKILL_VERSION` → 19); the **partitioner grouping
+heuristic** (§98.4 item 3) is HS-9073 (pending). Design HS-9064. The "how
+aggressive should rebasing be" knob for the distributed-worker epic. Mostly
+**skill prose + a dispatch/partition heuristic**, not heavy tooling.
+
+**What shipped (HS-9072):** the `/hotsheet-worker` skill (`workerSkillBody`) now
+describes the **batch-then-pulse** cadence — keep claiming small/related tickets
+onto one branch, isolate large/risky onto their own, and run the §99
+`refreshWorktree` rebase + the gates **once at the batch boundary** (clean tree,
+between committed units), then signal `POST /api/workers/ready` once per batch.
+The `/hotsheet` owner skill (`mainSkillBody`) notes a ready branch may carry a
+**batch** of several tickets (one `integrateBranch` + one gate run; clear
+`pending_integration` for every ticket it carried). Skill-body presence
+assertions guard the prose. Sits between
 [99-worker-worktree-refresh.md](99-worker-worktree-refresh.md) (HS-9063 — the
 deterministic refresh *pulse* a batch groups around) and the prompt-based /
 coordinator-dispatch partition path
@@ -160,8 +172,8 @@ The three form one cadence story:
 
 - **Skill-prose update** (`/hotsheet-worker` + `/hotsheet`, `SKILL_VERSION` bump)
   describing the batch-then-pulse cadence — depends on HS-9063's refresh routine
-  existing so the prose can point at it.
+  existing so the prose can point at it. ✅ SHIPPED (HS-9072).
 - **Partitioner grouping heuristic** — make `partition.ts` / the AI-partition
-  path cluster by the §98.2 signals (depends on HS-9061).
+  path cluster by the §98.2 signals (depends on HS-9061). — **HS-9073** (pending).
 - **(Optional) batch-hint surfacing** for the partitioner, only if §98.2 proves
   insufficient.

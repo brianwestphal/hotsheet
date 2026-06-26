@@ -146,6 +146,10 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('gate-failed');
     expect(content).toContain('gate-timeout');
     expect(content).toContain('integrationGate');
+    // HS-9072 (docs/98 §98.6) — the owner skill notes a ready branch may carry a
+    // batch of several tickets (the "branch ready" signal fires once per batch).
+    expect(content).toContain('BATCH of several tickets');
+    expect(content).toContain('once per batch');
   });
 
   it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {
@@ -168,6 +172,13 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('single integrator');
     // HS-9045 — the worker sets the merge-pending flag on completion.
     expect(content).toContain('pending_integration');
+    // HS-9072 (docs/98 §98.6) — the batch-then-pulse cadence: batch small/related
+    // tickets onto one branch, refresh + gate ONCE at the batch boundary.
+    expect(content).toContain('Batching');
+    expect(content).toContain('batch boundary');
+    expect(content).toContain('once per batch');
+    expect(content).toContain('isolate large/risky');
+    expect(content).toContain('/api/workers/ready');
   });
 
   it('HS-8936 — ensureSkillsForDir dataDir override points the worktree skill at the OWNER worklist', () => {

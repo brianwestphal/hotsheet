@@ -37,7 +37,12 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // HS-9098 — bumped 17 → 18: the owner skill explains the HS-9091 in-helper gate
 // statuses (`gate-failed` / `gate-timeout` mean the merge was already rolled back;
 // a `merged` with `gate.ran` means the gate already passed — don't re-run it).
-export const SKILL_VERSION = 18;
+// HS-9072 — bumped 18 → 19: the batch-then-pulse cadence (docs/98). The worker
+// skill keeps claiming small RELATED tickets onto one branch and runs the §99
+// `refreshWorktree` rebase + gates ONCE at the batch boundary (not per ticket),
+// isolating large/risky tickets; the owner skill notes a ready branch may carry a
+// batch of several tickets (the "branch ready" signal fires once per batch).
+export const SKILL_VERSION = 19;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -251,6 +256,7 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
     '',
     '- **Stay current** — before integrating, bring the target up to date: `git fetch` then `git pull --rebase` (or rebase onto the upstream) when the repo has a remote, so you build on the latest. Commit or stash your own in-progress changes first so a merge doesn\'t tangle with them.',
     '- **Integrate ready worker branches** — periodically (e.g. when a batch of workers has finished, or the pool drains). Use the **integration helpers** (HS-9048) rather than hand-rolling the git: `GET /api/workers/integratable` returns the detected **target** branch + the **ready** worker branches (`hotsheet/*` ahead of the target, with ahead/behind counts); then for each, in ticket-priority order, `POST /api/workers/integrate` with `{ "branch": "<name>" }` does a guarded merge into the target. It returns a `status`: `merged` (success), `conflict` (it captured the conflicted files + **aborted** cleanly — resolve them by hand or, if non-trivial, ask the maintainer), `dirty-tree` (commit/stash your own changes first), `not-on-target` / `nothing-to-integrate`. The helper **never pushes** — pushing still needs explicit permission.',
+    '- **A ready branch may carry a BATCH of several tickets.** Workers batch small/related tickets onto one branch and refresh + gate once at the batch boundary (docs/98), so the "branch ready" signal fires **once per batch**, not per ticket — one `integrateBranch` call + one gate run covers the whole batch. When you integrate it, clear `pending_integration` for **every** ticket whose work it carried (next bullet), not just one.',
     '- **Gates after a merge (and the optional in-helper gate, HS-9091).** After a `merged` result with **no** `gate` field, run the project\'s gates yourself (type-check, lint, the relevant tests). If the project configured the opt-in **`integrationGate`** shared setting, the helper ran that command *inside* the merge and you\'ll get either: `merged` **with `result.gate.ran: true`** (the gate already passed — you do **not** need to re-run those gates for this branch); **`gate-failed`** (the gate command failed and **the merge was already rolled back to the pre-merge target** — do **NOT** re-merge blindly; read `result.gate.output` to decide whether to quickly fix-and-retry or, if non-trivial, ask the maintainer); or **`gate-timeout`** (same rolled-back state, but the gate exceeded its time limit). On `gate-failed`/`gate-timeout` the branch is **unmerged** — leave its ticket\'s `pending_integration` marker set (don\'t clear it).',
     '- For each ticket whose work you just integrated, clear its "merge pending" marker: `hotsheet_update_ticket` with `{ "id": <id>, "pending_integration": false }` (the tickets marked `pending_integration` are the ones awaiting integration).',
     '- **Sensible conflict resolution, ask on the hard ones** — auto-resolve trivial/mechanical conflicts; if a conflict is non-trivial or ambiguous, or the gates fail in a way you can\'t quickly and safely fix, **stop and ask the maintainer** rather than force it (leave the branch unmerged). Integrate only from committed branch state — never disturb a worker mid-ticket.',
@@ -291,19 +297,31 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     '5. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance). **If you committed code for this ticket (step 4), also pass `"pending_integration": true`** — it marks the ticket "merge pending" in the owner\'s UI so they know your branch still needs integrating (the owner clears it when they merge). Omit it for tickets with no committed code.',
     '   - **File follow-up tickets** for any incomplete work BEFORE completing (per the project\'s incomplete-work checklist).',
     '6. **Release the claim.** Call `hotsheet_release` with `{ "id": <id>, "worker": "<your-id>" }` so the slot is freed.',
-    '7. **Go back to step 1** and claim the next ticket.',
+    '7. **Go back to step 1** and claim the next ticket — **batching small, related tickets** onto the SAME branch (see below) instead of refreshing after every one.',
     '',
-    '## Staying in sync with the target branch',
+    '## Batching: amortize the refresh + gates across small, related tickets',
+    '',
+    'Rebasing, reinstalling deps, and running the full gate suite (type-check / lint / the relevant tests) costs about the same whether a ticket is one line or one hundred. So **don\'t pay it per ticket** — pay it once per **batch**:',
+    '',
+    '- **Keep claiming small, RELATED tickets onto your current branch.** After you commit a ticket (step 4), if the next claimable ticket is **small and related** — shares files/area, the same tag or category, or is a sibling of the same investigation — and your batch is still modest in size/risk, claim it onto the **same** branch and keep working. Do **not** rebase or run the full gates between them.',
+    '- **Isolate large or risky tickets.** A big or open-ended change, a migration, or anything touching a hot/shared module gets its **own** branch (a batch of one), so a failure or a nasty conflict stays contained.',
+    '- **Keep dependency chains separate.** Never put a ticket in the same batch as one of its own `blocked_by` dependencies — the dependency must integrate first. (`claim-next` already skips blocked tickets, so what you claim is ready to work; just don\'t co-batch a chain.)',
+    '- **Default: batch small/related, isolate large/risky.** Bigger batches save overhead but drift further from the target (a larger conflict surface at integration); smaller batches stay fresher but churn more. Lean toward batching the long tail of small tickets.',
+    '',
+    'At the **batch boundary** — the next claimable ticket is large/unrelated, the pool drains, or the batch has grown enough — refresh + gate **once** (next section), then hand the branch off.',
+    '',
+    '## Staying in sync with the target branch — refresh ONCE at the batch boundary',
     '',
     'Your worktree is on its own branch, spun off from the **target branch** (usually `main`). You are **not** the writer of the target — git won\'t even let your worktree update the target while the owner has it checked out. The main Hot Sheet agent (`/hotsheet`) is the **single integrator** that merges ready worker branches into the target. Your job is to keep your branch current and committed so that integration is clean:',
     '',
-    '- **Rebase onto the latest target to stay current** — before starting a ticket, and again whenever the owner has just integrated (so you build on the newest target and minimize conflicts): `git fetch` (if the repo has a remote), then `git rebase <target>` (e.g. `git rebase main`).',
-    '- **Resolve trivial conflicts and continue** — for an obvious/mechanical conflict (e.g. two unrelated additions, a moved import, a doc line), resolve it sensibly and `git rebase --continue`. For anything non-trivial or ambiguous, **`git rebase --abort`**, leave a `FEEDBACK NEEDED:` note on the relevant ticket describing the conflict, signal done, and wait — do **not** force a risky resolution.',
-    '- **Hand off, don\'t merge** — after committing (step 4), just leave your commits on your branch. The owner picks up worker branches that are ahead of the target and integrates them; you never merge into the target yourself.',
+    '- **Refresh once per batch, on a CLEAN tree** — at the batch boundary (your batch is committed and you\'re between tickets), bring your branch current in one deterministic pulse: clean-tree guard → `git fetch` (if the repo has a remote) → `git rebase <target>` (e.g. `git rebase main`) → **reinstall deps ONLY if the rebase changed `package-lock.json`/`package.json`** (otherwise your gates run against stale `node_modules` — silently green-but-wrong). This is the §99 `refreshWorktree` routine; do it **once per batch, never mid-ticket** (a dirty tree means commit first).',
+    '- **Then run the gates once** over the whole batch (type-check / lint / the relevant tests) before handing off — so the overhead is paid once for the batch, not once per ticket.',
+    '- **Resolve trivial rebase conflicts and continue** — for an obvious/mechanical conflict (two unrelated additions, a moved import, a doc line), resolve it sensibly and `git rebase --continue`. For anything non-trivial or ambiguous, **`git rebase --abort`**, leave a `FEEDBACK NEEDED:` note on the relevant ticket describing the conflict, signal done, and wait — do **not** force a risky resolution.',
+    '- **Hand off, don\'t merge** — leave your committed batch on your branch; the owner (`/hotsheet`) is the single integrator and picks up worker branches ahead of the target. You never merge into the target yourself. **Signal the branch ready once per batch** (not per ticket): call `POST /api/workers/ready` with `{ "worker": "<your-id>", "branch": "<your-branch>" }` so the owner integrates it promptly (the owner also scans `hotsheet/*` as a fallback, so this is an optimization, not required).',
     '',
     '## Finishing',
     '',
-    'When `hotsheet_claim_next` returns nothing claimable, the pool is drained. Make sure your work is committed and your branch is rebased onto the latest target (so the owner can integrate it cleanly), then call `hotsheet_signal_done` and stop. (The owner / worker-pool manager re-triggers you when there is new work — you do not need to poll.)',
+    'When `hotsheet_claim_next` returns nothing claimable, the pool is drained — that\'s a batch boundary. Make sure your work is committed, run the refresh pulse + gates once over the batch (above), signal the branch ready, then call `hotsheet_signal_done` and stop. (The owner / worker-pool manager re-triggers you when there is new work — you do not need to poll.)',
     '',
     '## Notes',
     '',
