@@ -936,6 +936,13 @@ export async function seedDemoData(scenario: number): Promise<void> {
     writeProjectSettings(dataDir, { layout: 'columns' });
   }
 
+  // HS-9100 — the drawer defaults to OPEN on a project's first use (HS-8845),
+  // but a demo has no command history and (mostly) no terminals, so it renders
+  // an empty Commands Log that wastes roughly a third of the viewport. Close it
+  // by default for every scenario; the embedded-terminal showcase (scenario 11)
+  // re-opens it below.
+  writeProjectSettings(dataDir, { drawer_open: 'false' });
+
   if (scenario === 3) {
     writeProjectSettings(dataDir, { custom_views: JSON.stringify(SCENARIO_3_VIEWS) });
   }

@@ -125,6 +125,7 @@ Each scenario uses realistic e-commerce project data with a mix of categories, p
 
 #### Scenario-Specific Settings
 - **Scenarios 1, 3, 4, 5, 7, 9, 10, 11, 12, 13, 14** set `layout` to `columns` (HS-8430). Column view is the more visually compelling + representative mode, so it's the default for the marketing-screenshot scenarios. Scenarios 2 and 6 stay in list view because list view IS what they demonstrate (bullet-list quick entry / bottom detail panel respectively). Scenario 8 (Dashboard) overrides the layout entirely with its own view, so the setting is omitted.
+- **All scenarios** set `drawer_open=false` (HS-9100). The bottom drawer defaults to OPEN on a project's first use (HS-8845), but a demo has no command history and (mostly) no terminals, so an open drawer renders an empty Commands Log that wastes roughly a third of the viewport. Closing it keeps the screenshots focused on the feature being shown. The embedded-terminal showcase (scenario 11) re-opens it with content (below).
 - Scenario 6 sets `detail_position` to `bottom` and `detail_height` to `280`.
 - Scenario 10 creates and registers two additional projects ("Mobile App" and "API Platform") with their own ticket data, demonstrating the tabbed multi-project interface.
 - Scenario 11 sets `drawer_open=true`, `drawer_expanded=true`, `drawer_active_tab=terminal:dev-server`, plus three configured terminals (Dev Server, Tests, Claude) with canned PTY output so the embedded-terminal screenshot has visible content.
