@@ -1,8 +1,10 @@
 # 99. Worker-Side Worktree-Refresh Routine
 
-**Status: DESIGN ONLY** (HS-9063, 2026-06-26). The **worker-side** "stay fresh"
-half of the integration story — the deterministic counterpart to the owner-side
-`src/workers/integrate.ts` (HS-9048,
+**Status: PARTIAL** — the **`refreshWorktree` helper** (§99.2, the core)
+**SHIPPED** (HS-9074, 2026-06-26); the optional endpoint is HS-9075 and the
+`/hotsheet-worker` skill prose is HS-9072. Design HS-9063. The **worker-side**
+"stay fresh" half of the integration story — the deterministic counterpart to the
+owner-side `src/workers/integrate.ts` (HS-9048,
 [89-git-worktrees.md](89-git-worktrees.md) §89.7). Pulses once per **batch
 boundary** as defined by [98-worker-batching-policy.md](98-worker-batching-policy.md)
 (HS-9064). Shares the `node_modules` provisioning path with
@@ -149,7 +151,15 @@ Real temp-repo tests (mirror `worktrees.test.ts` / `integrate.test.ts`):
 
 ## 99.7 Follow-up tickets
 
-- **`refreshWorktree` helper + tests** (the core of this doc).
+- **`refreshWorktree` helper + tests** (the core of this doc). ✅ SHIPPED (HS-9074).
+  `src/workers/refreshWorktree.ts`: clean-tree guard → `detectTargetBranch` + fetch
+  (when a remote exists) + `git rebase <target>` (conflict → capture files + `rebase
+  --abort` → `conflict`) → conditional reinstall (only when the rebase changed
+  `package-lock.json`/`package.json`, detected via `git diff preHead postHead`),
+  reusing `provisionNodeModules` with a new `forceReconcile` option (HS-9074) →
+  optional `dist/`/`*.tsbuildinfo` clear. Injectable `GitRunner` + reinstall runner;
+  7 real-temp-repo tests (§99.5). Deterministic git + install only — no gates, no
+  conflict resolution, no push.
 - **Shared provisioning/reconcile helper** — factor HS-9057's CoW→symlink→`npm
   ci` (incl. lock-diff reconcile) so both worktree-create and this refresh call
   it (tracked on HS-9057; this doc consumes it).

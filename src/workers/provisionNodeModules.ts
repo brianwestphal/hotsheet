@@ -71,6 +71,13 @@ export interface ProvisionOptions {
   run?: CmdRunner;
   /** Override the platform (tests force the CoW branch per OS). */
   platform?: NodeJS.Platform;
+  /** HS-9074 — force the reconcile `npm ci` even when the lock doesn't differ from
+   *  the owner's. The §99 `refreshWorktree` step 3 sets this when it has ALREADY
+   *  detected (via git) that a rebase changed `package-lock.json`/`package.json`,
+   *  so deps must be reinstalled against the new lock even though the worktree's
+   *  lock now matches the owner's target. Lets refresh reuse this helper's install
+   *  logic instead of duplicating the `npm ci`. */
+  forceReconcile?: boolean;
 }
 
 /** The CoW copy command for this platform, or null where no portable CoW exists
@@ -145,7 +152,9 @@ export async function provisionNodeModules(
   }
 
   // --- Step B: lock-diff reconcile (skip when we just did a fresh npm ci). ---
-  if (strategy !== 'npm-ci' && lockDiffers(ownerRoot, worktreeRoot)) {
+  // HS-9074 — `forceReconcile` reconciles even when the owner lock matches (the
+  // refresh path, where the rebase moved the lock but it now equals the target's).
+  if (strategy !== 'npm-ci' && (opts.forceReconcile === true || lockDiffers(ownerRoot, worktreeRoot))) {
     // A symlink shares the owner's tree — drop it so `npm ci` writes into the
     // worktree, not the owner's node_modules.
     if (strategy === 'symlink') { try { rmSync(wtNm, { recursive: true, force: true }); } catch { /* best-effort */ } }
