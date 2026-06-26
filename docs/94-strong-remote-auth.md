@@ -27,7 +27,7 @@ before execution."
 > revocation re-check sweep `src/auth/wsRevocationSweep.ts`), **HS-9026** (QR pairing desktop display
 > `src/client/devicesPairing.tsx`), **HS-9033** (the **device-side pairing page** — standalone
 > secret-free `/pair` surface, `src/components/pairPage.tsx` + `src/client/pair.tsx`: scan
-> (`BarcodeDetector`) / paste the payload → in-browser RSA keypair + CSR via node-forge
+> (embedded `@zxing/browser` decoder) / paste the payload → in-browser RSA keypair + CSR via node-forge
 > (`src/client/pairing/devicePairing.ts`, private key never leaves the device) → POST
 > `/api/auth/pair/complete` → assemble + download a chain-complete `.p12` + per-platform install help).
 > HS-9033 also closed two bootstrapping gaps that blocked the device end: `pair/complete` is now
@@ -303,8 +303,8 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
 
    **What shipped (HS-9033 — the device side):** a standalone, secret-free `/pair` page
    (`src/components/pairPage.tsx` + its own `pair.js` bundle so node-forge stays off the main app).
-   `src/client/pair.tsx` reads the payload (in-page `BarcodeDetector` camera scan, or paste/hash
-   fallback), and `src/client/pairing/devicePairing.ts` does the in-browser RSA-2048 keypair + PKCS#10
+   `src/client/pair.tsx` reads the payload (in-page camera scan via the bundled `@zxing/browser`
+   QR decoder, or paste/hash fallback), and `src/client/pairing/devicePairing.ts` does the in-browser RSA-2048 keypair + PKCS#10
    CSR (private key never leaves the device) and assembles the password-protected `.p12` from the
    device key + the server-signed cert + the CA — all with the SAME node-forge the server signs with,
    so the round-trip is byte-compatible (proven in `devicePairing.test.ts` against `signClientCsr` /
@@ -315,6 +315,16 @@ Phased so each security-critical piece gets its own ticket + review. Dependencie
    **Pairing transits the trusted/tunnel channel** — the exposed mTLS listener rejects an unenrolled
    device at the TLS handshake, so the on-port LAN path is a tracked follow-up. Per-platform cert
    install is manual (docs/manual-test-plan.md §7).
+
+   **What shipped (HS-9097 — embedded QR scanner + e2e camera test):** the in-page camera scan was
+   switched from the native `BarcodeDetector` (absent on Firefox / older iOS, and untestable headlessly)
+   to the bundled **`@zxing/browser`** pure-JS decoder, so the scan now works on every browser and the
+   only gate is `getUserMedia` (paste stays the universal fallback). Because ZXing decodes in JS, the
+   camera path is now driven end-to-end in `e2e/pair-camera.spec.ts`: `e2e/qrY4m.ts` renders a pairing
+   payload's QR straight into a Y4M frame (luma plane = the QR module matrix, no PNG encode) and Chromium
+   is launched with `--use-file-for-fake-video-capture`, so the real `getUserMedia` → ZXing decode →
+   enroll transition runs with no physical camera. Only the platform-specific `.p12` cert install stays
+   manual (docs/manual-test-plan.md §7).
 
    **What shipped (HS-8996):** `src/auth/pairingTokens.ts` — an in-memory, per-project,
    **single-use, short-TTL (5 min)** pairing-token store (`PairingTokenStore`, clock-injectable;

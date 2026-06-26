@@ -8,20 +8,22 @@
  * project's own `ca.ts`), so the test never needs the OS keychain. The in-browser
  * keygen + CSR + `.p12` assembly are exercised for real; their byte-compatibility
  * with the server signer is separately proven in
- * `src/client/pairing/devicePairing.test.ts`. The camera/`BarcodeDetector` path
- * and the per-platform cert install are manual (docs/manual-test-plan.md §7).
+ * `src/client/pairing/devicePairing.test.ts`. The in-page camera scan is covered
+ * by `e2e/pair-camera.spec.ts` (HS-9097, fake-camera + ZXing); only the
+ * per-platform cert install stays manual (docs/manual-test-plan.md §7).
  */
 import { generateCa, signClientCert } from '../src/auth/ca.js';
 import { pairingPayload } from '../src/client/pairingPayload.js';
 import { expect, test } from './coverage-fixture.js';
 
-// HS-9067 — the manual-entry `<details id="pair-paste-details">` auto-opens when
-// the browser has no `BarcodeDetector` (the headless-Chromium case — see
-// `pair.tsx::renderStart`), and stays closed when a camera scanner IS available
-// (real device). A blind `.pair-paste summary` click therefore TOGGLES it: it
-// opens on a real device but *closes* the already-open section under headless,
-// hiding `#pair-paste-input` so the subsequent `.fill()` times out. Open it
-// idempotently instead so the spec works in both environments.
+// HS-9067 / HS-9097 — the manual-entry `<details id="pair-paste-details">`
+// auto-opens only when the browser can't open a camera at all (no `getUserMedia`),
+// and stays closed when a camera scanner IS available — which now includes
+// headless Chromium, since the scan gate moved from the native `BarcodeDetector`
+// to `getUserMedia` (see `pair.tsx::canOpenCamera`). A blind `.pair-paste summary`
+// click would therefore TOGGLE it shut when already open, hiding
+// `#pair-paste-input` so the subsequent `.fill()` times out. Open it idempotently
+// instead so the spec works whether or not the section auto-opened.
 async function openManualEntry(page: import('@playwright/test').Page): Promise<void> {
   const details = page.locator('#pair-paste-details');
   const alreadyOpen = await details.evaluate((d) => (d as HTMLDetailsElement).open);
