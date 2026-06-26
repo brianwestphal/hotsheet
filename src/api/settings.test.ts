@@ -39,6 +39,12 @@ describe('settings schemas (HS-8635)', () => {
     expect((parsed.data as Record<string, unknown>).some_future_key).toEqual({ nested: 1 });
   });
 
+  it('FileSettingsSchema reads the HS-9099 integrationGate command as a typed string', () => {
+    expect(FileSettingsSchema.safeParse({ integrationGate: 'npm test' }).data?.integrationGate).toBe('npm test');
+    // A mistyped value degrades to undefined (.catch), not a parse failure.
+    expect(FileSettingsSchema.safeParse({ integrationGate: 123 }).data?.integrationGate).toBeUndefined();
+  });
+
   it('FileSettingsSchema degrades a single mistyped known key to undefined (.catch), keeping the rest', () => {
     // db_snapshot_protection stored as a legacy string instead of boolean.
     const parsed = FileSettingsSchema.safeParse({ appName: 'P', db_snapshot_protection: 'true' });

@@ -86,7 +86,10 @@ timedOut }`; `IntegrateStatus` gained `gate-failed` / `gate-timeout`
 injectable for tests. The command source is the **`integrationGate`** project
 setting (`POST /api/workers/integrate` reads it via `readFileSettings`; absent/blank
 → the agent-runs-gates default). §95-classified **SHARED** (a project build contract
-— falls through `defaultLayerForKey` to the committed `settings.json`). Tests:
+— falls through `defaultLayerForKey` to the committed `settings.json`). **HS-9099**
+adds a Settings → General "Worker integration gate" text input (shared-only scoped
+field; debounced save through `persistScopedSetting`; clearing it reverts to the
+agent-runs-gates default), so it's no longer settings.json-only. Tests:
 `src/workers/integrate.test.ts` (real temp repo: pass→merged, fail→rollback+clean,
 hang→timeout+rollback, injected-runner, no-gate-unchanged). Original design:
 

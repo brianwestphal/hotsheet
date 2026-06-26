@@ -150,6 +150,7 @@ function bindGeneralTab() {
   const appNameInput = byId<HTMLInputElement>('settings-app-name');
   const prefixInput = byId<HTMLInputElement>('settings-ticket-prefix');
   const worklistPreambleInput = byId<HTMLTextAreaElement>('settings-worklist-preamble');
+  const integrationGateInput = byId<HTMLInputElement>('settings-integration-gate');
 
   // Populate values + load file-settings fields when dialog opens.
   settingsBtn.addEventListener('click', () => {
@@ -176,6 +177,7 @@ function bindGeneralTab() {
       appNameInput.value = fs.appName ?? '';
       prefixInput.value = fs.ticketPrefix ?? '';
       worklistPreambleInput.value = fs.worklist_preamble ?? '';
+      integrationGateInput.value = fs.integrationGate ?? '';
     });
   });
 
@@ -321,6 +323,23 @@ function bindGeneralTab() {
         worklistPreambleHint.textContent = val.trim()
           ? 'Saved — added near the top of worklist.md.'
           : 'Cleared — no preamble in worklist.md.';
+      });
+    }, 800);
+  });
+
+  // HS-9099 — the worker integration gate command (docs/106 §106.2). Debounced
+  // save through the scoped-setting path; an empty value clears it (back to the
+  // agent-runs-gates default).
+  const integrationGateHint = byId('settings-integration-gate-hint');
+  let integrationGateTimeout: ReturnType<typeof setTimeout> | null = null;
+  integrationGateInput.addEventListener('input', () => {
+    if (integrationGateTimeout) clearTimeout(integrationGateTimeout);
+    integrationGateTimeout = setTimeout(() => {
+      const val = integrationGateInput.value;
+      void persistScopedSetting('integrationGate', val, () => updateFileSettings({ integrationGate: val })).then(() => {
+        integrationGateHint.textContent = val.trim()
+          ? 'Saved — runs after each worker-branch merge (rolls back on failure).'
+          : 'Cleared — the integrating agent runs the gates itself.';
       });
     }, 800);
   });

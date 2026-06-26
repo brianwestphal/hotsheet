@@ -76,6 +76,10 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-app-name', key: 'appName', kind: 'text', share: 'shared-only' },
   { controlId: 'settings-ticket-prefix', key: 'ticketPrefix', kind: 'text', share: 'shared-only' },
   { controlId: 'settings-worklist-preamble', key: 'worklist_preamble', kind: 'text' },
+  // HS-9099 — the worker-branch integration gate command (docs/106 §106.2). A
+  // project build contract, so shared-only (no per-machine override), like the
+  // other hard team values above.
+  { controlId: 'settings-integration-gate', key: 'integrationGate', kind: 'text', share: 'shared-only' },
   { controlId: 'settings-trash-days', key: 'trash_cleanup_days', kind: 'number' },
   { controlId: 'settings-verified-days', key: 'verified_cleanup_days', kind: 'number' },
   { controlId: 'settings-auto-order', key: 'auto_order', kind: 'boolean' },
