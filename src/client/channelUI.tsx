@@ -1,4 +1,4 @@
-import { cleanupChannelConnections, ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
+import { type ChannelTriggerTarget, cleanupChannelConnections, ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -359,7 +359,7 @@ function tagMessageWithActiveTicket(message: string | undefined): string | undef
   return marker === null ? message : `${marker}\n\n${message}`;
 }
 
-function triggerChannelAndMarkBusy(message?: string) {
+function triggerChannelAndMarkBusy(message?: string, target?: ChannelTriggerTarget) {
   setChannelBusy(true);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void ensureSkills();
@@ -367,7 +367,8 @@ function triggerChannelAndMarkBusy(message?: string) {
   // so the per-ticket cost rollup can attribute downstream OTel events
   // back to the ticket via the marker in `claude_code.user_prompt`.
   const tagged = tagMessageWithActiveTicket(message);
-  void triggerChannel(tagged);
+  // HS-9083 — `target` routes to a worker / all workers (omitted ⇒ main leader).
+  void triggerChannel(tagged, target);
   // Timeout fallback: clear busy after 60s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {

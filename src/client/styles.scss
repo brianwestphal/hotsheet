@@ -2451,6 +2451,40 @@ body.cross-project-stats-active {
     opacity: 0.8;
     transition: transform 0.12s ease, opacity 0.12s ease;
   }
+
+  // HS-9083 (docs/103) — opt-in "Run on…" target-picker chevron on Claude command
+  // buttons. Absolutely positioned at the right edge (like the §57 spinner) so it
+  // never reflows the button; hidden + click-transparent until the button is
+  // hovered/focused, so the no-interaction / no-workers look is unchanged.
+  // `background: inherit` punches the button so it reads as part of it.
+  .cmd-target-chevron {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 16px;
+    padding: 0 2px;
+    font-size: 9px;
+    line-height: 1;
+    border-radius: 3px;
+    background: inherit;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+
+  &:hover .cmd-target-chevron,
+  &:focus-within .cmd-target-chevron {
+    opacity: 0.7;
+    pointer-events: auto;
+  }
+
+  .cmd-target-chevron:hover { opacity: 1; }
 }
 
 // HS-8060 — running-state spinner-with-stop-icon. Anchored to the

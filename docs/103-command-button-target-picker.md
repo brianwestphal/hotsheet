@@ -1,8 +1,9 @@
 # 103. Custom Command Buttons: Opt-In Target Picker (Main / Worker / All)
 
-**Status: PARTIAL** — routing + warn-gate logic **SHIPPED** (HS-9084, 2026-06-26);
-the picker UI (HS-9083) is the remaining piece. Design HS-9059. From the HS-9040
-design investigation. A custom Claude command button today always triggers the
+**Status: SHIPPED** — routing + warn-gate (HS-9084) + picker UI (HS-9083), both
+2026-06-26. Design HS-9059. The only remaining follow-up is the optional
+**worker-safe command flag** (HS-9102 — the gate already accepts the opt). From
+the HS-9040 design investigation. A custom Claude command button today always triggers the
 **main** Claude (the FIFO-leader channel server). With workers running — each its
 own channel server in a worktree — that's the right **default**, but the owner
 sometimes wants to **fan a command out** or **target a specific worker**. This
@@ -99,11 +100,22 @@ Claude session that's mid-claim, which can corrupt the loop or the ticket. So:
 - e2e: "All workers" triggers each live worker's server once.
 - Manual-test-plan: the real fan-out across live worker terminals.
 
+**Picker UI shipped (HS-9083):** an opt-in **chevron** (not long-press — the
+Claude long-press is already the §83 "make a task" gesture) at the right edge of
+each Claude command button, hover/focus-revealed so the no-interaction look is
+unchanged. It opens a `createDropdown` menu — **Main**, each live worker (a
+`• busy` hint on a `working` slot; `dead`/`stopped` filtered out), **All workers**
+— populated from a `getWorkerPool()` fetch on open (no extra poll). The menu can
+be previewed before Claude connects; the not-connected guard + the
+`workerTargetWarning` busy-confirm (`confirmDialog`) are at *selection* time
+(`runClaudeCommandOnTarget`). Single-click on the button body still routes to Main
+(regression-guarded, unit + e2e). All in `src/client/commandSidebar.tsx`
+(`buildTargetMenuItems` / `runClaudeCommandOnTarget` / `appendClaudeTargetChevron`).
+
 ## 103.6 Follow-up tickets
 
-- **Target picker UI** (long-press/chevron menu: Main / worker-N / All) on the
-  command button (§103.3) — **HS-9083** (pending; consumes the HS-9084 routing +
-  `workerTargetWarning` gate).
+- **Target picker UI** (chevron menu: Main / worker-N / All) on the command
+  button (§103.3) — ✅ SHIPPED (HS-9083).
 - **`triggerChannel` target routing** (main / specific worker server / broadcast)
   — ✅ SHIPPED (HS-9084). HS-9036 per-server addressing was already in place.
 - **Busy-worker warn gate** (`workerTargetWarning`) — ✅ SHIPPED (HS-9084). The

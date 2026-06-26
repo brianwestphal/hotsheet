@@ -166,6 +166,19 @@ This document lists features that require manual verification before each releas
 - [ ] **Press feedback + no double-fire** — the button depresses while held; a long-press does NOT also send the prompt to the channel.
 - [ ] **First-use hint toast** — the first normal click of any Claude command button (fresh `localStorage`) shows the one-time long-press hint; it doesn't reappear on later clicks/reloads, and doesn't fire if the first interaction was a long-press.
 
+### "Run on…" target picker (Claude command buttons, HS-9083, docs/103)
+
+> Needs ≥1 distributed worker running (a worktree `/hotsheet-worker` terminal, docs/89). The chevron + menu work with zero workers too (only Main + "No workers running" show); the worker-routing / fan-out rows need live workers.
+
+- [ ] **Chevron appears on hover** — hovering a Claude command button reveals a small `▾` at its right edge; it's invisible (and the button looks unchanged) when not hovered/focused. Shell command buttons have no chevron.
+- [ ] **No layout reflow** — the chevron appearing on hover does NOT shift the button's label or resize the button.
+- [ ] **Menu contents** — clicking the chevron opens a menu: **Main**, then each live worker (labeled, with **• busy** when it holds a claim), then **All workers**. With no workers running it shows **Main** + **No workers running**.
+- [ ] **Single-click body still = Main** — a normal click on the button body sends the prompt to the main agent (unchanged); it does NOT open the picker.
+- [ ] **Route to one worker** — picking a worker sends the prompt to THAT worker's terminal (its channel server), not main. Confirm in the worker's terminal that it received the command.
+- [ ] **Fan out to All workers** — picking **All workers** sends the same prompt to **every** live worker's terminal once each (and not to main). Verify each worker terminal received it.
+- [ ] **Busy-worker confirm** — picking a worker that's mid-task (state **• busy**, or **All workers** while any is busy) shows a confirm ("Trigger a busy worker?") warning it interleaves with claimed work; **Cancel** sends nothing, **Send anyway** sends it. Picking Main, or an idle worker, never prompts.
+- [ ] **Not connected** — picking any target while Claude isn't connected shows the "Claude is not connected" warning toast (the menu still opens for preview).
+
 ---
 
 ## 5. Command Groups (Sidebar)

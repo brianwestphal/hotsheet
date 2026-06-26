@@ -1,5 +1,6 @@
-import { createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, killShellCommand } from '../api/index.js';
+import { type ChannelTriggerTarget, createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, getWorkerPool, killShellCommand, type WorkerSlotView } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
+import { workerTargetWarning } from '../workers/triggerTarget.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { isGroupCollapsed, setGroupCollapsed } from './commandGroupCollapse.js';
 import { refreshLogBadge } from './commandLog.js';
@@ -7,6 +8,7 @@ import { getCommandLastRun, recordCommandRun } from './commandRunTimes.js';
 import { hideCommandTooltip, showCommandTooltip } from './commandTooltip.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { closeAllMenus, createDropdown, type DropdownItem, positionDropdown } from './dropdown.js';
 import { CMD_COLORS, CMD_ICONS, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
 import { getActiveProject, state } from './state.js';
@@ -192,6 +194,9 @@ function renderButton(cmd: CustomCommand) {
     wireShellButtonPress(btn, cmd, lookupKey);
   } else {
     wireClaudeButtonPress(btn, cmd);
+    // HS-9083 (docs/103) — opt-in "Run on…" chevron → the target picker (Main /
+    // a worker / All workers). Single-click on the button body stays Main.
+    appendClaudeTargetChevron(btn, cmd);
   }
   return btn;
 }
@@ -333,6 +338,109 @@ function wireClaudeButtonPress(btn: HTMLElement, cmd: CustomCommand): void {
       triggerChannelAndMarkBusy(cmd.prompt);
     }
   });
+}
+
+/**
+ * HS-9083 (docs/103 §103.3) — build the "Run on…" target-picker menu items for a
+ * Claude command: **Main**, then each live worker (with a `• busy` hint when it
+ * holds a claim), then **All workers**. Workers in a terminal state (`dead` /
+ * `stopped`) can't receive a trigger, so they're filtered out; when none remain,
+ * an informational "No workers running" row is shown. Pure (returns plain
+ * `DropdownItem`s) so the labels + per-item targets are unit-testable. `run` is
+ * invoked with the chosen `ChannelTriggerTarget`.
+ */
+export function buildTargetMenuItems(
+  workers: WorkerSlotView[],
+  run: (target: ChannelTriggerTarget) => void,
+): DropdownItem[] {
+  const items: DropdownItem[] = [
+    { label: 'Main', key: '', action: () => { run({ kind: 'main' }); } },
+  ];
+  const targetable = workers.filter(w => w.state !== 'dead' && w.state !== 'stopped');
+  if (targetable.length === 0) {
+    items.push({ label: '', key: '', separator: true, action: () => { /* separator */ } });
+    items.push({ label: 'No workers running', key: '', action: () => { /* informational row */ } });
+    return items;
+  }
+  items.push({ label: '', key: '', separator: true, action: () => { /* separator */ } });
+  for (const w of targetable) {
+    const label = w.state === 'working' ? `${w.label} • busy` : w.label;
+    items.push({ label, key: '', action: () => { run({ kind: 'worker', worktree: w.worktreePath }); } });
+  }
+  items.push({ label: '', key: '', separator: true, action: () => { /* separator */ } });
+  items.push({ label: 'All workers', key: '', action: () => { run({ kind: 'all-workers' }); } });
+  return items;
+}
+
+/**
+ * HS-9083 — send a Claude command to `target`, warning first when it would
+ * interrupt a busy worker (the §103.2 autonomy caution — `workerTargetWarning`).
+ * `main` never warns (the normal path). Exported for tests.
+ */
+export async function runClaudeCommandOnTarget(
+  cmd: CustomCommand,
+  target: ChannelTriggerTarget,
+  workers: WorkerSlotView[],
+): Promise<void> {
+  if (!isChannelAlive()) {
+    // Same guard as a normal button click — the picker can be opened/previewed
+    // before Claude connects, but firing needs a live channel.
+    showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
+    return;
+  }
+  const warning = workerTargetWarning(target, workers);
+  if (warning.warn) {
+    const ok = await confirmDialog({
+      title: 'Trigger a busy worker?',
+      message: warning.reason,
+      confirmLabel: 'Send anyway',
+      cancelLabel: 'Cancel',
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  recordCommandRun(runningKey(getActiveProject()?.secret ?? '', cmd));
+  triggerChannelAndMarkBusy(cmd.prompt, target);
+}
+
+/**
+ * HS-9083 — open the target picker anchored to a command button's chevron.
+ * Fetches the live worker pool on open (no extra polling loop); falls back to a
+ * Main-only menu if the pool is unreachable. The picker can be previewed before
+ * Claude connects — the not-connected guard is at selection time
+ * (`runClaudeCommandOnTarget`), not here.
+ */
+async function openClaudeTargetPicker(anchor: HTMLElement, cmd: CustomCommand): Promise<void> {
+  closeAllMenus();
+  let workers: WorkerSlotView[] = [];
+  try { workers = (await getWorkerPool()).workers; }
+  catch { /* pool unreachable — still offer Main */ }
+  const items = buildTargetMenuItems(workers, (target) => { void runClaudeCommandOnTarget(cmd, target, workers); });
+  const menu = createDropdown(anchor, items);
+  document.body.appendChild(menu);
+  positionDropdown(menu, anchor);
+  menu.style.visibility = '';
+}
+
+/**
+ * HS-9083 — append the subtle "Run on…" chevron to a Claude command button. It
+ * stops propagation on pointerdown/click so it never starts the §83 long-press
+ * timer or fires the button's main (Main-target) click — single-click on the
+ * button body is unchanged. The chevron is hover/focus-revealed via CSS, so the
+ * no-interaction look (and the no-workers case) is untouched.
+ */
+function appendClaudeTargetChevron(btn: HTMLElement, cmd: CustomCommand): void {
+  const chevron = toElement(<span className="cmd-target-chevron" title="Run on…">▾</span>);
+  chevron.setAttribute('role', 'button');
+  chevron.setAttribute('tabindex', '0');
+  chevron.setAttribute('aria-label', `Choose where to run ${cmd.name}`);
+  const open = (): void => { void openClaudeTargetPicker(chevron, cmd); };
+  chevron.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+  chevron.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); open(); });
+  chevron.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); open(); }
+  });
+  btn.appendChild(chevron);
 }
 
 /**

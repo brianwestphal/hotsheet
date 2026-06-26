@@ -17,20 +17,22 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _resetRunningButtonsForTesting, _runningButtonsForTesting,commandKey, decideShellPartialEvents, maybeFireShellStreamFirstUseToast, renderChannelCommands, runningKey } from './commandSidebar.js';
+import type { ChannelTriggerTarget, WorkerSlotView } from '../api/index.js';
+import { _resetRunningButtonsForTesting, _runningButtonsForTesting,buildTargetMenuItems, commandKey, decideShellPartialEvents, maybeFireShellStreamFirstUseToast, renderChannelCommands, runClaudeCommandOnTarget, runningKey } from './commandSidebar.js';
 import { toElement } from './dom.js';
 import type { CustomCommand } from './experimentalSettings.js';
 import type * as experimentalSettings from './experimentalSettings.js';
 import { setActiveProject, state } from './state.js';
 import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
-const { apiMock, getCommandItemsMock, isChannelAliveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock } = vi.hoisted(() => ({
+const { apiMock, getCommandItemsMock, isChannelAliveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock, triggerBusyMock } = vi.hoisted(() => ({
   apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   getCommandItemsMock: vi.fn<() => unknown[]>(() => []),
   isChannelAliveMock: vi.fn<() => boolean>(() => false),
   setShellBusyMock: vi.fn<(busy: boolean) => void>(),
   refreshLogBadgeMock: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   confirmDialogMock: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
+  triggerBusyMock: vi.fn<(...args: unknown[]) => void>(),
 }));
 
 vi.mock('./api.js', () => ({
@@ -50,7 +52,7 @@ vi.mock('./experimentalSettings.js', async () => {
 vi.mock('./channelUI.js', () => ({
   isChannelAlive: () => isChannelAliveMock(),
   setShellBusy: (busy: boolean) => setShellBusyMock(busy),
-  triggerChannelAndMarkBusy: vi.fn(),
+  triggerChannelAndMarkBusy: (...args: unknown[]) => triggerBusyMock(...args),
 }));
 
 vi.mock('./commandLog.js', () => ({
@@ -202,6 +204,18 @@ function makeShellCommand(name: string, prompt = `echo ${name}`): CustomCommand 
   return { name, prompt, target: 'shell', icon: 'play', color: '#3b82f6' };
 }
 
+// HS-9083 — Claude command + worker-slot fixtures for the target-picker tests.
+function makeClaudeCommand(name = 'Ask', prompt = 'hello'): CustomCommand {
+  return { name, prompt, target: 'claude', icon: 'play', color: '#3b82f6' };
+}
+
+function makeWorker(label: string, st: WorkerSlotView['state'], worktreePath: string): WorkerSlotView {
+  return {
+    label, worker: label, worktreePath, branch: null, terminalId: null,
+    state: st, currentTicket: null, queueOnly: false, ready: false, readyBranch: null,
+  };
+}
+
 function setupSidebarDOM(): HTMLElement {
   // HS-8467 — TSX fixture instead of `innerHTML = '<html-string>'`.
   document.body.replaceChildren(
@@ -341,6 +355,48 @@ describe('renderButton running-state branch (HS-8060)', () => {
     expect(bBtn!.querySelector('.channel-command-btn-spinner')).toBeNull();
   });
 
+  // HS-9083 (docs/103) — opt-in "Run on…" target picker on Claude command buttons.
+  it('a Claude command button gets a target chevron; a shell button does not', () => {
+    isChannelAliveMock.mockReturnValue(true);
+    getCommandItemsMock.mockReturnValue([makeClaudeCommand('Ask')]);
+    document.getElementById('channel-play-section')!.style.display = '';
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn .cmd-target-chevron')).not.toBeNull();
+
+    setupSidebarDOM();
+    getCommandItemsMock.mockReturnValue([makeShellCommand('Build')]);
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn .cmd-target-chevron')).toBeNull();
+  });
+
+  it('clicking the button body still triggers Main (no target) — regression guard', () => {
+    isChannelAliveMock.mockReturnValue(true);
+    triggerBusyMock.mockReset();
+    const cmd = makeClaudeCommand('Ask', 'hello');
+    getCommandItemsMock.mockReturnValue([cmd]);
+    document.getElementById('channel-play-section')!.style.display = '';
+    renderChannelCommands();
+    document.querySelector<HTMLButtonElement>('.channel-command-btn')!.click();
+    expect(triggerBusyMock).toHaveBeenCalledWith('hello');
+  });
+
+  it('clicking the chevron opens the picker menu without triggering Main', async () => {
+    isChannelAliveMock.mockReturnValue(true);
+    triggerBusyMock.mockReset();
+    apiMock.mockResolvedValue({ targetN: 0, workers: [], readyCount: 0 });
+    getCommandItemsMock.mockReturnValue([makeClaudeCommand('Ask')]);
+    document.getElementById('channel-play-section')!.style.display = '';
+    wireRealApiTransport();
+    renderChannelCommands();
+    const chevron = document.querySelector<HTMLElement>('.cmd-target-chevron')!;
+    chevron.click();
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(document.querySelector('.dropdown-menu')).not.toBeNull();
+    expect(triggerBusyMock).not.toHaveBeenCalled();
+    resetApiTransport();
+  });
+
   it('non-shell (claude-target) commands never get the running-state spinner even if their key happens to be in the map', () => {
     // Defensive: the runningButtons map is shell-only by construction
     // (`runShellCommand` is the only writer) but a corrupted state map
@@ -440,5 +496,84 @@ describe('runningButtons per-project scoping (HS-8070)', () => {
     const cmd = makeShellCommand('Build', 'npm run build');
     expect(runningKey('sec-a', cmd)).toBe(`sec-a::${commandKey(cmd)}`);
     expect(runningKey('sec-a', cmd)).not.toBe(runningKey('sec-b', cmd));
+  });
+});
+
+describe('buildTargetMenuItems (HS-9083)', () => {
+  it('lists Main, each non-terminal worker (with a busy hint), then All workers', () => {
+    const picked: ChannelTriggerTarget[] = [];
+    const items = buildTargetMenuItems(
+      [
+        makeWorker('worker-1', 'idle', '/wt/a'),
+        makeWorker('worker-2', 'working', '/wt/b'),
+        makeWorker('worker-3', 'dead', '/wt/c'),   // terminal — excluded
+        makeWorker('worker-4', 'stopped', '/wt/d'), // terminal — excluded
+      ],
+      (t) => picked.push(t),
+    );
+    const labels = items.filter(i => i.separator !== true).map(i => i.label);
+    expect(labels).toEqual(['Main', 'worker-1', 'worker-2 • busy', 'All workers']);
+
+    const byLabel = (l: string): void => { items.find(i => i.label === l)!.action(); };
+    byLabel('Main');
+    byLabel('worker-1');
+    byLabel('worker-2 • busy');
+    byLabel('All workers');
+    expect(picked).toEqual([
+      { kind: 'main' },
+      { kind: 'worker', worktree: '/wt/a' },
+      { kind: 'worker', worktree: '/wt/b' },
+      { kind: 'all-workers' },
+    ]);
+  });
+
+  it('shows Main + an informational row when there are no live workers', () => {
+    const items = buildTargetMenuItems([], () => { /* noop */ });
+    const labels = items.filter(i => i.separator !== true).map(i => i.label);
+    expect(labels).toEqual(['Main', 'No workers running']);
+  });
+});
+
+describe('runClaudeCommandOnTarget (HS-9083)', () => {
+  beforeEach(() => {
+    triggerBusyMock.mockReset();
+    confirmDialogMock.mockReset();
+    confirmDialogMock.mockResolvedValue(true);
+    isChannelAliveMock.mockReturnValue(true);
+  });
+
+  it('does NOT fire (warns) when Claude is not connected', async () => {
+    isChannelAliveMock.mockReturnValue(false);
+    await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'main' }, []);
+    expect(triggerBusyMock).not.toHaveBeenCalled();
+  });
+
+  it('main target fires immediately with no confirm', async () => {
+    await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'main' }, []);
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(triggerBusyMock).toHaveBeenCalledWith('hi', { kind: 'main' });
+  });
+
+  it('an idle worker fires without a confirm', async () => {
+    const workers = [makeWorker('worker-1', 'idle', '/wt/a')];
+    await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'worker', worktree: '/wt/a' }, workers);
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(triggerBusyMock).toHaveBeenCalledWith('hi', { kind: 'worker', worktree: '/wt/a' });
+  });
+
+  it('a busy worker confirms first; Send anyway fires', async () => {
+    confirmDialogMock.mockResolvedValueOnce(true);
+    const workers = [makeWorker('worker-2', 'working', '/wt/b')];
+    await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'worker', worktree: '/wt/b' }, workers);
+    expect(confirmDialogMock).toHaveBeenCalledOnce();
+    expect(triggerBusyMock).toHaveBeenCalledWith('hi', { kind: 'worker', worktree: '/wt/b' });
+  });
+
+  it('a busy worker confirm Cancel does NOT fire the trigger', async () => {
+    confirmDialogMock.mockResolvedValueOnce(false);
+    const workers = [makeWorker('worker-2', 'working', '/wt/b')];
+    await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'worker', worktree: '/wt/b' }, workers);
+    expect(confirmDialogMock).toHaveBeenCalledOnce();
+    expect(triggerBusyMock).not.toHaveBeenCalled();
   });
 });
