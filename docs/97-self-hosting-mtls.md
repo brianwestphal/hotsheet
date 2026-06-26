@@ -101,15 +101,29 @@ paste the code shown under it); the device generates its own key + CSR in the br
 the pairing token, and hands you a ready-to-install `.p12` with per-platform instructions — no `.p12`
 to move off the server, and the private key never leaves the device.
 
-> **Pairing must go over a trusted/tunnel channel, not the exposed mTLS port.** An unenrolled device
-> has no client certificate, so the exposed `https://` listener rejects it at the TLS handshake before
-> `/pair` ever loads. Do the pairing while the device can reach the server over a trusted path — a
-> WireGuard/Tailscale/SSH tunnel to the server's local port, or before you switch the bind from
-> localhost to an exposed address. (The signing endpoint `POST /api/auth/pair/complete` is gated only
-> by the single-use pairing token — not the shared secret and not a client cert — precisely so a
-> not-yet-enrolled device can complete it over that trusted channel.) Installing the downloaded `.p12`
-> as a usable client certificate is platform-specific (iOS profile, Android, desktop keychain, Firefox
-> store) — see the manual test plan.
+> **Pairing must go over a trusted/tunnel channel, not the exposed mTLS port. This is a deliberate,
+> permanent design decision (HS-9054 — decided 2026-06-26), not a missing feature.** An unenrolled
+> device has no client certificate, so the exposed `https://` listener (`tlsListener.ts`,
+> `requestCert: true` + `rejectUnauthorized: true`) rejects it at the TLS handshake before `/pair` ever
+> loads. That rejection is the point: it means the server never serves a single byte to a peer that
+> hasn't already authenticated. **To pair a new device, use one of:**
+>
+> 1. **Pair before exposing** — pair while the server is still bound to localhost / the trusted LAN,
+>    then switch the bind to the exposed address.
+> 2. **Pair over a tunnel** — bring the device onto a trusted path first (a WireGuard / Tailscale / SSH
+>    tunnel to the server's local port) and pair through that.
+>
+> (The signing endpoint `POST /api/auth/pair/complete` is gated only by the single-use pairing token —
+> not the shared secret and not a client cert — precisely so a not-yet-enrolled device can complete it
+> over that trusted channel.) Installing the downloaded `.p12` as a usable client certificate is
+> platform-specific (iOS profile, Android, desktop keychain, Firefox store) — see the manual test plan.
+>
+> **Why not an on-port carve-out?** Accepting the TLS handshake without a client cert
+> (`rejectUnauthorized: false`) to let an unenrolled LAN device reach `/pair` directly was considered
+> and **rejected**: it would shift the entire authentication boundary from the TLS layer (where a
+> missed case fails closed) into the app layer, where a single un-gated route during the pairing window
+> = unauthenticated data access. The tunnel-before-pair requirement keeps the fail-closed handshake as
+> the one authentication boundary. See docs/94 §94.13.
 
 ## 97.4 Revoke a device
 

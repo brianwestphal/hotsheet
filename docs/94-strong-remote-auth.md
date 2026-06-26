@@ -395,3 +395,26 @@ externally-exploitable findings.** Items worth tracking became follow-up tickets
 threat model. A fresh end-to-end `security-review` skill pass + a real off-box `--bind` deployment
 test (with an installed client cert) should run at the next release per the standing HS-8987 cadence
 — the surface is now in `src/auth/**` + `routes/enrollment.ts` + the `server.ts` exposed branch.
+
+## 94.13 Decision: pairing stays tunnel-only — no on-port carve-out (HS-9054, decided 2026-06-26)
+
+**Question.** An unenrolled device (no client cert yet) can't reach `/pair` on the exposed mTLS port:
+`tlsListener.ts` sets `requestCert: true` + `rejectUnauthorized: true`, so the TLS handshake is
+rejected before any route runs. Should we add an **optional on-port enrollment carve-out** —
+`rejectUnauthorized: false` to accept the certless handshake, then app-layer-gate every route except a
+deny-by-default allowlist of the pairing surface (`GET /pair`, `/static/pair.js`, `/static/styles.css`,
+`POST /api/auth/pair/complete`) — so a LAN device could pair directly without a tunnel?
+
+**Decision: NO. Tunnel-only pairing is the permanent model.** The carve-out was rejected as
+not worth the risk. Relaxing `rejectUnauthorized` moves the authentication boundary off the TLS
+handshake (where an un-handled case fails *closed* — the server serves nothing) and into the app
+layer (where one un-gated route during the pairing window = unauthenticated LAN data access, failing
+*open*). The handshake-reject default is the single, fail-closed boundary, and we keep it.
+
+**Consequence / how to pair instead** (documented loudly in docs/97 §97.3):
+1. **Pair before exposing** — pair while bound to localhost / trusted LAN, then switch the bind.
+2. **Pair over a tunnel** — WireGuard / Tailscale / SSH to the server's local port, then pair through it.
+
+This is now a *stated requirement*, not a gap. HS-9054 is closed as **won't-do (decision: A)** — no
+code change; the work was the documentation. (Revisit only if a future need makes certless on-port
+enrollment compelling enough to justify the app-layer-gates-everything burden + a fresh threat model.)
