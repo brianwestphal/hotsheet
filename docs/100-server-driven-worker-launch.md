@@ -1,6 +1,9 @@
 # 100. Server-Driven Worker Launch
 
-**Status: DESIGN ONLY** (HS-9062, 2026-06-26). Closes the gap surfaced by HS-9031:
+**Status: PARTIAL** — the **server-owned terminal lifecycle** (§100.2.2)
+**SHIPPED** (HS-9077, 2026-06-26); the server reconcile loop (§100.2.1, HS-9076)
+and client adoption (§100.2.3, HS-9078) are still pending. Design HS-9062. Closes
+the gap surfaced by HS-9031:
 the worker-pool target (`hotsheet_set_worker_target` / `setPoolTarget`) only
 actually **launches** workers while the owner Hot Sheet window is open — launch
 is client-driven. So an AI/headless caller that sets the target with no UI open
@@ -120,10 +123,18 @@ When the UI **is** open, it must not re-launch slots the server already started:
 
 ## 100.5 Follow-up tickets
 
-- **Server reconcile loop / endpoint** (§100.2.1) — the core.
+- **Server reconcile loop / endpoint** (§100.2.1) — the core. — **HS-9076** (pending;
+  consumes the HS-9077 primitives).
 - **Server-owned terminal lifecycle** for pool workers (§100.2.2) — server-side
-  close/reap of the worker PTY (couples with the HS-9051 reap path).
+  close/reap of the worker PTY (couples with the HS-9051 reap path). ✅ SHIPPED
+  (HS-9077): `src/workers/serverWorkerLifecycle.ts` — `spawnWorkerTerminal(secret,
+  dataDir, spec)` spawns the worker PTY server-side (returns a server-tracked
+  `terminalId`) and `reapWorker(secret, dataDir, repoRoot, slot, git?)` does the
+  no-UI teardown (force-release claims → close PTY → `removeWorktree` → drop slot),
+  reusing the extracted `createDynamicTerminal` / `destroyDynamicTerminal` server
+  services. Confirmed an unattached PTY buffers in the session RingBuffer (§54), so
+  a headless worker terminal is safe.
 - **Client adoption** of server-launched workers (§100.2.3) — attach-don't-spawn,
-  retire the client's independent launch.
+  retire the client's independent launch. — **HS-9078** (pending).
 - Relates: HS-9031 (investigation), §91.11 Auto switch, §75 background scheduler,
   HS-9051 (reap path).

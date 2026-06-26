@@ -317,16 +317,20 @@ export function injectCommandWhenSettled(secret: string, terminalId: string, dat
  * than as a cold `not_spawned` placeholder — the dashboard's mental model is
  * "the + button adds a running terminal", matching the drawer's flow.
  */
-terminalRoutes.post('/create', async (c) => {
-  const dataDir = c.get('dataDir');
-  const secret = c.get('projectSecret');
-  // HS-8630 — validate against the shared `CreateTerminalReqSchema` (all fields
-  // optional + `.loose()`, so an empty body still launches the default shell;
-  // only a wrong-typed field is rejected). An unparseable body falls back to {}.
-  const raw: unknown = await c.req.json().catch(() => ({}));
-  const parsed = parseBody(CreateTerminalReqSchema, raw);
-  if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  const body = parsed.data;
+/**
+ * HS-9077 — the server-side body of `POST /api/terminal/create`, extracted so
+ * server code (the worker-pool reconcile loop, §100) can spawn a PTY WITHOUT an
+ * HTTP round-trip / an open client. Registers the dynamic config and, when
+ * `spawn`/`runCommand` is set, eager-spawns the PTY and injects the command once
+ * the shell settles. Returns the config (with its generated `id`). The PTY's
+ * output buffers in the session RingBuffer with no attached xterm (§54), so a
+ * headless worker terminal is fine.
+ */
+export function createDynamicTerminal(
+  secret: string,
+  dataDir: string,
+  body: { name?: string; command?: string; cwd?: string; spawn?: boolean; runCommand?: string },
+): TerminalConfig {
   const id = `dyn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const command = typeof body.command === 'string' && body.command !== ''
     ? body.command
@@ -358,18 +362,37 @@ terminalRoutes.post('/create', async (c) => {
     } catch (err) {
       // Mirror eagerSpawnTerminals' policy: log but don't fail the request.
       // The config is still registered, so a subsequent WS attach can retry.
-      console.warn(`[terminals] Eager-spawn on /create failed for '${id}': ${getErrorMessage(err)}`);
+      console.warn(`[terminals] Eager-spawn on create failed for '${id}': ${getErrorMessage(err)}`);
     }
   }
-  return c.json({ config });
+  return config;
+}
+
+/** HS-9077 — the server-side body of `POST /api/terminal/destroy`: teardown the
+ *  PTY + drop the dynamic config. Exported so server cleanup/reap can close a
+ *  worker PTY with no client (parallels the client `closeDynamicTerminal`). */
+export function destroyDynamicTerminal(secret: string, terminalId: string): void {
+  destroyTerminal(secret, terminalId);
+  dynamicConfigs.delete(`${secret}::${terminalId}`);
+}
+
+terminalRoutes.post('/create', async (c) => {
+  const dataDir = c.get('dataDir');
+  const secret = c.get('projectSecret');
+  // HS-8630 — validate against the shared `CreateTerminalReqSchema` (all fields
+  // optional + `.loose()`, so an empty body still launches the default shell;
+  // only a wrong-typed field is rejected). An unparseable body falls back to {}.
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(CreateTerminalReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  return c.json({ config: createDynamicTerminal(secret, dataDir, parsed.data) });
 });
 
 /** POST /api/terminal/destroy — fully remove a session, including its dynamic config. */
 terminalRoutes.post('/destroy', async (c) => {
   const secret = c.get('projectSecret');
   const terminalId = await readTerminalId(c);
-  destroyTerminal(secret, terminalId);
-  dynamicConfigs.delete(`${secret}::${terminalId}`);
+  destroyDynamicTerminal(secret, terminalId);
   return c.json({ ok: true });
 });
 
