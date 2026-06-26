@@ -17,6 +17,7 @@ import {
   writeSettingsLayer,
 } from './file-settings.js';
 import { readSecretFile, writeSecretFile } from './secret-file.js';
+import type { CommandItem } from './settingsCommandDelta.js';
 
 let tempDir: string;
 
@@ -313,6 +314,39 @@ describe('HS-9002 — shared/local settings split', () => {
     const arr = views as { id: string; name: string }[];
     expect(arr.map(v => v.id)).toEqual(['a', 'c', 'x']); // b hidden, x appended
     expect(arr.find(v => v.id === 'a')?.name).toBe('A2'); // override applied
+  });
+
+  // HS-9010c/HS-9014 — readFileSettings applies the tree-aware delta for custom_commands.
+  it('readFileSettings resolves a local custom_commands tree delta (hide/override/group-add/orphan)', () => {
+    const dir = freshDir('cmd-delta');
+    writeFileSync(sharedPath(dir), JSON.stringify({
+      custom_commands: [
+        { id: 'cmd-a', name: 'A', prompt: 'pa' },
+        { id: 'cmd-b', name: 'B', prompt: 'pb' },
+        { type: 'group', id: 'grp-1', name: 'G', children: [{ id: 'cmd-c', name: 'C', prompt: 'pc' }] },
+      ],
+    }));
+    writeFileSync(localPath(dir), JSON.stringify({
+      custom_commands: {
+        hidden: ['cmd-a'],
+        overrides: { 'cmd-b': { name: 'B2' } },
+        childAdded: { 'grp-1': { group: { id: 'grp-1', name: 'G' }, children: [{ id: 'cmd-local', name: 'L', prompt: 'pl' }] } },
+        added: [{ id: 'cmd-x', name: 'X', prompt: 'px' }],
+      },
+    }));
+    const cmds = readFileSettings(dir).custom_commands as CommandItem[];
+    expect(cmds.map(c => c.id)).toEqual(['cmd-b', 'grp-1', 'cmd-x']); // a hidden, x appended
+    expect(cmds.find(c => c.id === 'cmd-b')?.name).toBe('B2'); // override applied
+    const grp = cmds.find(c => c.id === 'grp-1');
+    expect(grp && 'children' in grp ? grp.children.map(ch => ch.id) : []).toEqual(['cmd-c', 'cmd-local']);
+  });
+
+  it('readFileSettings leaves custom_commands untouched when local is a plain array', () => {
+    const dir = freshDir('cmd-legacy');
+    writeFileSync(sharedPath(dir), JSON.stringify({ custom_commands: [{ id: 's', name: 'S', prompt: 'ps' }] }));
+    writeFileSync(localPath(dir), JSON.stringify({ custom_commands: [{ id: 'l', name: 'L', prompt: 'pl' }] }));
+    const cmds = readFileSettings(dir).custom_commands as { id: string }[];
+    expect(cmds.map(c => c.id)).toEqual(['l']); // local wins wholesale
   });
 
   it('readFileSettings is unchanged when the local value is a plain array (legacy whole-replacement)', () => {

@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 import { z } from 'zod';
 
 import { readSecretFile, writeSecretFile } from './secret-file.js';
+import { type CommandItem, isCommandTreeDelta, resolveCommandTreeDelta } from './settingsCommandDelta.js';
 import { isArrayDelta, resolveDeltaArray } from './settingsDelta.js';
 
 const FileSettingsSchema = z.object({
@@ -289,7 +290,29 @@ export function readFileSettings(dataDir: string): FileSettings {
     }
     merged[key] = resolveDeltaArray(sharedArr, local[key], idOf);
   }
+  // HS-9010c/HS-9014 (docs/95 §95.3) — `custom_commands` is a nested group TREE,
+  // not a flat list, so it gets its own tree-aware resolver. Same strict gate as
+  // the flat keys above: only resolve when the local value is a tree DELTA object
+  // (a plain array / absent local is left to the `{...shared, ...local}` spread,
+  // preserving legacy whole-replacement + stringified-array shapes — a true
+  // no-op until the editor writes a delta).
+  if (isCommandTreeDelta(local.custom_commands)) {
+    merged.custom_commands = resolveCommandTreeDelta(asCommandTree(shared.custom_commands), local.custom_commands);
+  }
   return merged;
+}
+
+/** Coerce a shared `custom_commands` value (native array or legacy stringified
+ *  array) into a command tree; anything else resolves to an empty tree. */
+function asCommandTree(v: unknown): CommandItem[] {
+  if (Array.isArray(v)) return v as CommandItem[];
+  if (typeof v === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed as CommandItem[];
+    } catch { /* not JSON — fall through */ }
+  }
+  return [];
 }
 
 /** Read-merge-write a single layer file. */

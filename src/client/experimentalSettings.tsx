@@ -1,4 +1,13 @@
 import { disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getSettings, updateSettings } from '../api/index.js';
+// HS-9014 — the canonical command-tree types + `isGroup` live in the server-safe
+// `settingsCommandDelta` module (shared with the file-settings resolver). Re-export
+// them here so the many `from './experimentalSettings.js'` importers keep working.
+import {
+  type CommandGroup,
+  type CommandItem,
+  type CustomCommand,
+  isGroup,
+} from '../settingsCommandDelta.js';
 import { initChannel } from './channelUI.js';
 import { renderCustomCommandSettings } from './commandEditor.js';
 import { renderChannelCommands } from './commandSidebar.js';
@@ -8,39 +17,8 @@ import ALL_LUCIDE_ICONS from './lucide-icons.json';
 
 export const CMD_ICONS: { name: string; svg: string }[] = Object.entries(ALL_LUCIDE_ICONS as Record<string, string>).map(([name, svg]) => ({ name, svg }));
 
-export interface CustomCommand {
-  name: string;
-  prompt: string;
-  icon?: string;
-  color?: string;
-  target?: 'claude' | 'shell';  // default 'claude'
-  autoShowLog?: boolean;  // auto-show log entry on shell completion (always on error)
-  // HS-8539 — shell only. When true, a normal click launches the command in a
-  // NEW drawer terminal (default shell) instead of the inline streaming run.
-  // Long-press always launches in a new terminal regardless of this flag.
-  // Default false (undefined).
-  launchInNewTerminal?: boolean;
-}
-
-export interface CommandGroup {
-  type: 'group';
-  name: string;
-  collapsed?: boolean;  // persisted collapse state
-  children: CustomCommand[];  // commands explicitly in this group
-}
-
-export type CommandItem = CustomCommand | CommandGroup;
-
-export function isGroup(item: CommandItem): item is CommandGroup {
-  // HS-8088 — `CommandItem` is `CustomCommand | CommandGroup`. The
-  // `'type' in item` check fully narrows to `CommandGroup` since
-  // `CustomCommand` has no `type` field — no follow-up `=== 'group'`
-  // comparison is needed (and lint flags it as `'group' === 'group'`
-  // always true). Pre-fix this read `(item as unknown as
-  // Record<string, unknown>).type === 'group'` to dodge the narrowing
-  // mismatch the cast had introduced; the cast is gone now.
-  return 'type' in item;
-}
+export type { CommandGroup, CommandItem, CustomCommand };
+export { isGroup };
 
 // Predefined color palette for command buttons
 export const CMD_COLORS = [
