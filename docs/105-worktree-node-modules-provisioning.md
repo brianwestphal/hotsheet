@@ -1,8 +1,8 @@
 # 105. Provisioning `node_modules` into Worker Worktrees
 
-**Status: PARTIAL** — the core **`provisionNodeModules` helper SHIPPED (HS-9087,
-2026-06-26)**; wiring it into `createWorktree` (HS-9088) + the per-project
-worktree-setup hook (HS-9089) remain. Implementation follow-up to the
+**Status: PARTIAL** — the core **`provisionNodeModules` helper SHIPPED (HS-9087)** +
+**wired into `createWorktree` SHIPPED (HS-9088)**, 2026-06-26; the per-project
+worktree-setup hook (HS-9089) remains. Implementation follow-up to the
 HS-9047 investigation. Today `createWorktree` (`src/worktrees.ts`) does
 `git worktree add` + the follower pointer + channel/skills wiring but **no
 dependency setup** — so every fresh worker worktree starts with an empty
@@ -18,7 +18,20 @@ graceful degradation across filesystems, and the install logic should live in
 **one reusable helper** called at both worktree creation (this doc) and periodic
 refresh ([99-worker-worktree-refresh.md](99-worker-worktree-refresh.md) step 3).
 
-## 105.1 Efficient `node_modules` provisioning
+## 105.1 Efficient `node_modules` provisioning — **wired SHIPPED (HS-9088)**
+
+**What shipped (the wiring):** `createWorktree` (`src/worktrees.ts`) now calls
+`provisionNodeModules(worktreePath, repoRoot)` after the channel/skills wiring,
+**fire-and-forget** so it doesn't delay the create response (a slow `npm ci` path
+can take minutes), **best-effort** (`.catch(() => undefined)` — a hiccup never
+fails create, same contract as the agent wiring). The in-flight jobs are tracked
+in a module set with `pendingProvisionCount()` / `awaitPendingProvisions()` (for
+graceful shutdown + deterministic tests). The provisioner is injectable (a 5th
+`createWorktree` param, default the real helper). A worktree with no `package.json`
+is a no-op (`strategy: 'skipped'`). The `/hotsheet-worker` skill's own lock-diff
+check (HS-9072) reconciles if it races a mid-flight provision. Tests:
+`worktrees.test.ts` (provision kicked off with the right args; a throwing
+provisioner doesn't fail create). Original design:
 
 A **best-effort, non-blocking** step in `createWorktree` (after `git worktree
 add`), with a degradation ladder:

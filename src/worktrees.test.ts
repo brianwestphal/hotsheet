@@ -5,10 +5,21 @@ import { basename, join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { readFileSettings } from './file-settings.js';
+import type { ProvisionResult } from './workers/provisionNodeModules.js';
 import {
-  createWorktree, defaultWorktreePath, isFollowerWorktree,
+  awaitPendingProvisions, createWorktree, defaultWorktreePath, isFollowerWorktree,
   listWorktrees, parseWorktreeList, removeWorktree,
 } from './worktrees.js';
+
+/** A provision stub that records its args (the real npm/cp never runs in tests). */
+function provisionSpy(result?: Partial<ProvisionResult>) {
+  const calls: Array<{ worktreeRoot: string; ownerRoot: string }> = [];
+  const fn = (worktreeRoot: string, ownerRoot: string): Promise<ProvisionResult> => {
+    calls.push({ worktreeRoot, ownerRoot });
+    return Promise.resolve({ ok: true, strategy: 'cow', reconciled: false, ...result });
+  };
+  return { fn, calls };
+}
 
 // HS-8935 — git worktree management (docs/89-git-worktrees.md Phase B).
 
@@ -123,5 +134,24 @@ describe('worktrees — real git', () => {
     await removeWorktree(repoRoot, wt.path, { force: true, deleteBranch: true });
     const branches = execFileSync('git', ['branch', '--list', 'throwaway'], { cwd: repoRoot, encoding: 'utf-8' });
     expect(branches.trim()).toBe('');
+  });
+
+  // HS-9088 — createWorktree provisions node_modules in the background.
+  it('kicks off node_modules provisioning with (worktreePath, repoRoot)', async () => {
+    const spy = provisionSpy();
+    const wt = await createWorktree(repoRoot, ownerData, { branch: 'prov', newBranch: true }, undefined, spy.fn);
+    await awaitPendingProvisions();
+    expect(spy.calls).toHaveLength(1);
+    expect(realpathSync(spy.calls[0].worktreeRoot)).toBe(realpathSync(wt.path));
+    expect(spy.calls[0].ownerRoot).toBe(repoRoot);
+    await removeWorktree(repoRoot, wt.path, { force: true });
+  });
+
+  it('a throwing provisioner never fails worktree creation (best-effort)', async () => {
+    const boom = (): Promise<ProvisionResult> => Promise.reject(new Error('provision boom'));
+    const wt = await createWorktree(repoRoot, ownerData, { branch: 'prov-fail', newBranch: true }, undefined, boom);
+    expect(wt.branch).toBe('prov-fail');
+    await awaitPendingProvisions(); // the rejected job drains without throwing
+    await removeWorktree(repoRoot, wt.path, { force: true });
   });
 });

@@ -24,6 +24,7 @@ import { registerChannelAt } from './channel-config.js';
 import { readFileSettings, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { ensureSkillsForDir } from './skills.js';
+import { provisionNodeModules, type ProvisionResult } from './workers/provisionNodeModules.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -42,6 +43,21 @@ export interface WorktreeInfo {
 
 /** Injectable git runner so unit tests don't shell out. */
 export type GitRunner = (repoRoot: string, args: string[]) => Promise<string>;
+
+/** HS-9088 — the `node_modules` provisioning seam (injectable for tests). Matches
+ *  `provisionNodeModules` (the `opts` arg is omitted at the call site). */
+export type ProvisionRunner = (worktreeRoot: string, ownerRoot: string) => Promise<ProvisionResult>;
+
+// HS-9088 — `createWorktree` provisions `node_modules` in the BACKGROUND (so the
+// create API responds immediately). Track the in-flight promises so a caller or a
+// test can await completion deterministically.
+const pendingProvisions = new Set<Promise<unknown>>();
+/** Number of `node_modules` provisioning jobs still running. */
+export function pendingProvisionCount(): number { return pendingProvisions.size; }
+/** Await every in-flight provisioning job (mainly for tests + graceful shutdown). */
+export async function awaitPendingProvisions(): Promise<void> {
+  await Promise.allSettled([...pendingProvisions]);
+}
 
 // HS-8863 — exported so the worker launcher (`src/workers/launchWorker.ts`) runs
 // git through the same default runner (and stays test-injectable).
@@ -130,6 +146,7 @@ export async function createWorktree(
   ownerDataDir: string,
   opts: CreateWorktreeOpts,
   git: GitRunner = defaultGit,
+  provision: ProvisionRunner = provisionNodeModules,
 ): Promise<WorktreeInfo> {
   const path = resolve(opts.path ?? defaultWorktreePath(repoRoot, opts.branch));
   const owner = resolve(ownerDataDir);
@@ -154,6 +171,15 @@ export async function createWorktree(
   // owner. Best-effort: a wiring hiccup must never fail worktree creation.
   try { registerChannelAt(path, owner); } catch { /* best-effort agent wiring */ }
   try { ensureSkillsForDir(path, undefined, owner); } catch { /* best-effort agent wiring */ }
+
+  // HS-9088 (docs/105 §105.1) — provision the worktree's `node_modules` from the
+  // owner's (CoW clone / symlink / npm ci) so the worker can build immediately.
+  // BACKGROUND + best-effort: it must not delay the create response (a slow
+  // `npm ci` path can take minutes) and a hiccup must never fail create — the
+  // `/hotsheet-worker` skill detects the lock diff + reconciles if it's mid-flight.
+  const provisioning = provision(path, repoRoot).catch(() => undefined);
+  pendingProvisions.add(provisioning);
+  void provisioning.finally(() => pendingProvisions.delete(provisioning));
 
   const list = await listWorktrees(repoRoot, git);
   return list.find(w => canonical(w.path) === canonical(path))

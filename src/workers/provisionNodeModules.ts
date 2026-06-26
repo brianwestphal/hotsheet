@@ -113,6 +113,12 @@ export async function provisionNodeModules(
   const ownerNm = join(ownerRoot, NODE_MODULES);
   const wtNm = join(worktreeRoot, NODE_MODULES);
 
+  // Only meaningful for a Node project — no `package.json` means there's nothing
+  // to provision (and `npm ci` would just fail). Keeps non-Node repos a no-op.
+  if (!existsSync(join(worktreeRoot, 'package.json'))) {
+    return { ok: true, strategy: 'skipped', reconciled: false };
+  }
+
   let strategy: ProvisionStrategy = 'skipped';
 
   // --- Step A: provision node_modules if the worktree doesn't have one yet. ---

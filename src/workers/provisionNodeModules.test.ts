@@ -21,6 +21,8 @@ describe('provisionNodeModules — real temp dirs (HS-9087)', () => {
     worktree = join(base, 'wt');
     mkdirSync(owner, { recursive: true });
     mkdirSync(worktree, { recursive: true });
+    // The worktree is a Node project (provisioning is a no-op otherwise).
+    writeFileSync(join(worktree, 'package.json'), '{"name":"wt"}');
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
 
@@ -133,5 +135,13 @@ describe('provisionNodeModules — real temp dirs (HS-9087)', () => {
     const run = vi.fn<CmdRunner>().mockResolvedValue({ ok: false, output: 'npm exploded' });
     const res = await provisionNodeModules(worktree, owner, { run, platform: 'linux' });
     expect(res).toMatchObject({ ok: false, strategy: 'npm-ci', detail: 'npm exploded' });
+  });
+
+  it('a worktree with no package.json is a no-op (non-Node project)', async () => {
+    rmSync(join(worktree, 'package.json'));
+    const run = vi.fn<CmdRunner>();
+    const res = await provisionNodeModules(worktree, owner, { run, platform: 'linux' });
+    expect(res).toEqual({ ok: true, strategy: 'skipped', reconciled: false });
+    expect(run).not.toHaveBeenCalled();
   });
 });
