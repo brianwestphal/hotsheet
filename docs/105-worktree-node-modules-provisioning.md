@@ -1,8 +1,9 @@
 # 105. Provisioning `node_modules` into Worker Worktrees
 
-**Status: PARTIAL** — the core **`provisionNodeModules` helper SHIPPED (HS-9087)** +
-**wired into `createWorktree` SHIPPED (HS-9088)**, 2026-06-26; the per-project
-worktree-setup hook (HS-9089) remains. Implementation follow-up to the
+**Status: SHIPPED** — the core **`provisionNodeModules` helper (HS-9087)** + its
+**`createWorktree` wiring (HS-9088)** + the **per-project worktree-setup hook
+(HS-9089)** all SHIPPED 2026-06-26. (Also consumed by the §99 `refreshWorktree`
+routine, HS-9074.) Implementation follow-up to the
 HS-9047 investigation. Today `createWorktree` (`src/worktrees.ts`) does
 `git worktree add` + the follower pointer + channel/skills wiring but **no
 dependency setup** — so every fresh worker worktree starts with an empty
@@ -96,7 +97,22 @@ result (which strategy ran, whether a reconcile install happened). Call it from:
 Keep it injectable (a runner seam like `worktrees.ts`'s `GitRunner`) so it's
 testable against a real temp dir without real npm where possible.
 
-## 105.3 General per-project worktree-setup hook
+## 105.3 General per-project worktree-setup hook — **SHIPPED (HS-9089)**
+
+**What shipped:** `src/workers/worktreeSetup.ts` —
+`runWorktreeSetup(worktreeRoot, ownerDataDir, opts?)` → `{ ran: ('setting'|'script')[], ok }`.
+It runs (in the **worktree** cwd, after provisioning): (1) the **`worktreeSetup`**
+setting command (a new `FileSettings` key, §95-classified **shared** — a build
+contract), then (2) the **`<ownerDataDir>/worktree-setup.sh`** convention if present
+(gitignored-local; invoked as `sh <path>`). **Best-effort + logged** — a failure is
+`console.warn`'d (injectable `log`) and folded into `ok:false`, never thrown. The
+shell runner is injectable (`SetupRunner`, default shells via `exec`).
+`createWorktree` chains it **after** the `node_modules` provisioning in the same
+fire-and-forget background task (`provision(...).then(runWorktreeSetup).catch(...)`),
+so it never delays or fails create. Tests: `workers/worktreeSetup.test.ts` (setting
+/ script / both / blank-ignored / failure→logged+ok:false / none=no-op) +
+`worktrees.test.ts` (a real `worktreeSetup` command drops a sentinel in the worktree
+after provisioning). Original design:
 
 Some repos need more than npm install (`.env` files, codegen / `prisma generate`,
 a build step). Add a **configurable per-project setup command** run after the

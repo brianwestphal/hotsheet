@@ -23,6 +23,10 @@ const FileSettingsSchema = z.object({
   // default. §95-classified SHARED (a project build contract) — so it lives in
   // committed `settings.json` and falls through `defaultLayerForKey` to `shared`.
   integrationGate: z.string().optional(),
+  // HS-9089 (docs/105 §105.3) — optional per-project worktree-setup command run
+  // after node_modules provisioning. §95-classified SHARED (a build contract);
+  // the `.hotsheet/worktree-setup.sh` convention is its gitignored-local sibling.
+  worktreeSetup: z.string().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */
@@ -173,6 +177,8 @@ export interface FileSettings {
   authoritativeDataDir?: string;
   /** HS-9091 — optional owner-side integrate gate command (docs/106 §106.2). */
   integrationGate?: string;
+  /** HS-9089 — optional per-project worktree-setup command (docs/105 §105.3). */
+  worktreeSetup?: string;
   [key: string]: unknown;
 }
 
