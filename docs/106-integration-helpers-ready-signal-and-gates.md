@@ -1,12 +1,13 @@
 # 106. Integration Helpers: Explicit "Branch Ready" Signal + Optional Gate-Running
 
-**Status: DESIGN ONLY** (HS-9053, 2026-06-26). Smaller follow-up to HS-9048, which
-shipped the deterministic git integration core (`src/workers/integrate.ts`:
-`detectTargetBranch` / `listReadyBranches` / `integrateBranch` +
-`GET /api/workers/integratable` + `POST /api/workers/integrate`, wired into the
-owner skill at `SKILL_VERSION` 17 —
-[89-git-worktrees.md](89-git-worktrees.md) §89.7). Two deferred enhancements. Both
-are hardening; the core integration flow works without them.
+**Status: PARTIAL** — §106.2 (optional in-helper gate-running) **SHIPPED (HS-9091,
+2026-06-26)**; §106.1 (explicit "branch ready" signal) still design only (HS-9090).
+Smaller follow-up to HS-9048, which shipped the deterministic git integration core
+(`src/workers/integrate.ts`: `detectTargetBranch` / `listReadyBranches` /
+`integrateBranch` + `GET /api/workers/integratable` + `POST /api/workers/integrate`,
+wired into the owner skill at `SKILL_VERSION` 17 —
+[89-git-worktrees.md](89-git-worktrees.md) §89.7). Two enhancements, both hardening;
+the core integration flow works without them.
 
 ## 106.0 Context — the periodic merge+test loop
 
@@ -53,7 +54,24 @@ boundary) — is more deterministic than scanning.
 So prioritize this if the owner's periodic merge cadence should be **reliable
 (event-driven)** rather than **scan-on-a-timer**.
 
-## 106.2 Item 2 — Optional in-helper gate-running
+## 106.2 Item 2 — Optional in-helper gate-running — **SHIPPED (HS-9091)**
+
+**What shipped:** `integrateBranch(repoRoot, branch, target, git?, { gate? })` takes
+an optional `gate: { command, timeoutMs?, run? }`. After a successful `--no-ff`
+merge it runs the command via `defaultGateRunner` (platform shell, combined
+stdout+stderr tail-capped to 256 KB, POSIX process-group kill on timeout so an
+`npm`-spawned `tsc` is reaped too). Pass → `merged` with a `gate` summary; fail →
+**`gate-failed`**; timeout (default `DEFAULT_GATE_TIMEOUT_MS` = 15 min, overridable)
+→ **`gate-timeout`** — both **reset the target back to the captured pre-merge HEAD**
+so it's left clean. `IntegrateResult` gained `gate?: { ran, passed, output,
+timedOut }`; `IntegrateStatus` gained `gate-failed` / `gate-timeout`
+(mirrored in `IntegrateResultSchema`, `src/api/workers.ts`). The runner is
+injectable for tests. The command source is the **`integrationGate`** project
+setting (`POST /api/workers/integrate` reads it via `readFileSettings`; absent/blank
+→ the agent-runs-gates default). §95-classified **SHARED** (a project build contract
+— falls through `defaultLayerForKey` to the committed `settings.json`). Tests:
+`src/workers/integrate.test.ts` (real temp repo: pass→merged, fail→rollback+clean,
+hang→timeout+rollback, injected-runner, no-gate-unchanged). Original design:
 
 `integrateBranch` currently does **git only** and leaves running the project gates
 (tsc / lint / tests) to the agent. An **optional** mode runs a configured gate

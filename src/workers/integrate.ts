@@ -13,7 +13,15 @@
  * to be clean + on the target, aborts cleanly on conflict, and **never pushes**.
  * Git is shelled via the injectable `GitRunner` shared with `worktrees.ts`, so
  * unit tests inject and the integration test drives a real temp repo.
+ *
+ * HS-9091 (docs/106 §106.2) adds an OPTIONAL "merge + verify or roll back" mode:
+ * when the caller passes a gate command, `integrateBranch` runs it after the
+ * merge and, on failure or timeout, resets the target back to its pre-merge HEAD
+ * so the tree stays clean. Off by default — the agent-runs-gates flow is still
+ * the default; this is for the headless/automated path.
  */
+import { spawn } from 'child_process';
+
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { defaultGit, type GitRunner } from '../worktrees.js';
 
@@ -36,6 +44,8 @@ export type IntegrateStatus =
   | 'dirty-tree'
   | 'not-on-target'
   | 'nothing-to-integrate'
+  | 'gate-failed'
+  | 'gate-timeout'
   | 'error';
 
 export interface IntegrateResult {
@@ -45,7 +55,79 @@ export interface IntegrateResult {
   conflicts?: string[];
   /** Human detail — the current branch on `not-on-target`, the error on `error`. */
   detail?: string;
+  /** HS-9091 — present only when a gate command was configured: whether it ran,
+   *  whether it passed, its (capped) combined output, and whether it timed out. */
+  gate?: { ran: boolean; passed: boolean; output: string; timedOut: boolean };
 }
+
+/** Default ceiling for a gate command — generous enough for a tsc+lint+test
+ *  pass, bounded so a hanging/misconfigured gate can't wedge the integrate. */
+export const DEFAULT_GATE_TIMEOUT_MS = 15 * 60_000;
+
+/** Cap on captured gate output, keeping the tail (where failures surface). */
+const MAX_GATE_OUTPUT = 256 * 1024;
+
+/** The outcome of running a gate command. `exitCode` is `null` when the process
+ *  was killed (timeout) or failed to spawn. */
+export interface GateOutcome {
+  exitCode: number | null;
+  output: string;
+  timedOut: boolean;
+}
+
+/** Injectable gate-command runner (tests substitute a deterministic stub). */
+export type GateRunner = (cwd: string, command: string, timeoutMs: number) => Promise<GateOutcome>;
+
+/** Optional gate configuration for `integrateBranch`. */
+export interface GateConfig {
+  /** Shell command to run after the merge (e.g. `npm run -s typecheck && npm test`). */
+  command: string;
+  /** Override the default timeout. */
+  timeoutMs?: number;
+  /** Override the runner (tests inject; production uses `defaultGateRunner`). */
+  run?: GateRunner;
+}
+
+/**
+ * Run a gate command in `cwd` via the platform shell, capturing combined
+ * stdout+stderr (tail-capped) and enforcing `timeoutMs`. On POSIX the child is a
+ * process-group leader (`detached`) so the timeout kill reaches grandchildren
+ * (e.g. an `npm` that spawned `tsc`); on Windows we kill the child directly.
+ * Never rejects — a spawn error resolves as `exitCode: null` with the message in
+ * `output`, which the caller treats as a gate failure (and rolls back).
+ */
+export const defaultGateRunner: GateRunner = (cwd, command, timeoutMs) => {
+  return new Promise<GateOutcome>((resolve) => {
+    const onPosix = process.platform !== 'win32';
+    const child = spawn(command, { cwd, shell: true, detached: onPosix });
+    let output = '';
+    let timedOut = false;
+    let settled = false;
+    const capture = (buf: Buffer): void => {
+      output += buf.toString();
+      if (output.length > MAX_GATE_OUTPUT) output = output.slice(-MAX_GATE_OUTPUT);
+    };
+    child.stdout.on('data', capture);
+    child.stderr.on('data', capture);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (onPosix && child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch { child.kill('SIGKILL'); }
+    }, timeoutMs);
+
+    const finish = (outcome: GateOutcome): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    child.on('error', (e) => { finish({ exitCode: null, output: output + getErrorMessage(e), timedOut }); });
+    child.on('close', (code) => { finish({ exitCode: timedOut ? null : code, output, timedOut }); });
+  });
+};
 
 /**
  * Detect the integration target branch: the remote default (`origin/HEAD`) if a
@@ -108,9 +190,15 @@ export async function listReadyBranches(repoRoot: string, target: string, git: G
  * On a merge conflict it captures the conflicted files, **aborts** (clean
  * rollback), and returns `conflict` for the agent to resolve / ask about. NEVER
  * pushes. The agent runs the project gates after a `merged` result.
+ *
+ * HS-9091 — when `opts.gate` is set, the gate command runs after a successful
+ * merge: pass → `merged` (with a `gate` summary); fail → `gate-failed` and the
+ * merge is **reset back to the pre-merge HEAD** (target left clean); timeout →
+ * `gate-timeout`, also rolled back. Without a gate the behavior is unchanged.
  */
 export async function integrateBranch(
   repoRoot: string, branch: string, target: string, git: GitRunner = defaultGit,
+  opts: { gate?: GateConfig } = {},
 ): Promise<IntegrateResult> {
   let porcelain: string;
   try {
@@ -136,9 +224,16 @@ export async function integrateBranch(
   }
   if (ahead === 0) return { ok: false, status: 'nothing-to-integrate' };
 
+  // Capture the pre-merge HEAD so a failing gate can roll the target back to it.
+  let preHead = '';
+  try {
+    preHead = (await git(repoRoot, ['rev-parse', 'HEAD'])).trim();
+  } catch (e) {
+    return { ok: false, status: 'error', detail: getErrorMessage(e) };
+  }
+
   try {
     await git(repoRoot, ['merge', '--no-ff', '--no-edit', branch]);
-    return { ok: true, status: 'merged' };
   } catch {
     let conflicts: string[] = [];
     try {
@@ -148,4 +243,17 @@ export async function integrateBranch(
     try { await git(repoRoot, ['merge', '--abort']); } catch { /* best-effort rollback */ }
     return { ok: false, status: 'conflict', conflicts };
   }
+
+  // Merge succeeded. If no gate is configured, hand off to the agent (default).
+  if (opts.gate === undefined) return { ok: true, status: 'merged' };
+
+  const { command, timeoutMs = DEFAULT_GATE_TIMEOUT_MS, run = defaultGateRunner } = opts.gate;
+  const outcome = await run(repoRoot, command, timeoutMs);
+  const passed = !outcome.timedOut && outcome.exitCode === 0;
+  const gate = { ran: true, passed, output: outcome.output, timedOut: outcome.timedOut };
+  if (passed) return { ok: true, status: 'merged', gate };
+
+  // Gate failed/timed out — roll the merge back so the target stays clean.
+  try { await git(repoRoot, ['reset', '--hard', preHead]); } catch { /* best-effort rollback */ }
+  return { ok: false, status: outcome.timedOut ? 'gate-timeout' : 'gate-failed', gate };
 }

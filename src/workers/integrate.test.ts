@@ -123,4 +123,76 @@ describe('integrate — real git', () => {
       expect(git(repo, ['status', '--porcelain']).trim()).toBe('');
     });
   });
+
+  // HS-9091 (docs/106 §106.2) — optional in-helper gate-running. The git is real;
+  // the gate command is a portable `node -e` so it runs on any CI host. Each test
+  // captures the pre-merge HEAD to assert that a failing/timed-out gate rolls the
+  // target all the way back (target left clean).
+  describe('integrateBranch — gate-running', () => {
+    /** Set up `hotsheet/worker-1` one commit ahead, checked back out on main.
+     *  Returns the pre-merge HEAD on main. */
+    function readyWorker(): string {
+      git(repo, ['checkout', '-q', '-b', 'hotsheet/worker-1']);
+      commitFile(repo, 'a.txt', 'a\n', 'work 1');
+      git(repo, ['checkout', '-q', 'main']);
+      return git(repo, ['rev-parse', 'HEAD']).trim();
+    }
+    const PASS = 'node -e "process.exit(0)"';
+    const FAIL = 'node -e "process.stderr.write(\'gate boom\'); process.exit(1)"';
+    const HANG = 'node -e "setTimeout(()=>{}, 10000)"';
+
+    it('a passing gate keeps the merge → merged + gate summary', async () => {
+      readyWorker();
+      const res = await integrateBranch(repo, 'hotsheet/worker-1', 'main', undefined, { gate: { command: PASS } });
+      expect(res.status).toBe('merged');
+      expect(res.ok).toBe(true);
+      expect(res.gate).toMatchObject({ ran: true, passed: true, timedOut: false });
+      // The merge commit is on main.
+      expect(git(repo, ['log', '--oneline', 'main']).includes('work 1')).toBe(true);
+    });
+
+    it('a failing gate rolls the merge back → gate-failed, target clean', async () => {
+      const before = readyWorker();
+      const res = await integrateBranch(repo, 'hotsheet/worker-1', 'main', undefined, { gate: { command: FAIL } });
+      expect(res.ok).toBe(false);
+      expect(res.status).toBe('gate-failed');
+      expect(res.gate?.passed).toBe(false);
+      expect(res.gate?.output).toContain('gate boom');
+      // Rolled all the way back — HEAD is the pre-merge commit, work NOT on main.
+      expect(git(repo, ['rev-parse', 'HEAD']).trim()).toBe(before);
+      expect(git(repo, ['log', '--oneline', 'main']).includes('work 1')).toBe(false);
+      expect(git(repo, ['status', '--porcelain']).trim()).toBe('');
+    });
+
+    it('a hanging gate is bounded → gate-timeout, rolled back', async () => {
+      const before = readyWorker();
+      const res = await integrateBranch(repo, 'hotsheet/worker-1', 'main', undefined, { gate: { command: HANG, timeoutMs: 400 } });
+      expect(res.ok).toBe(false);
+      expect(res.status).toBe('gate-timeout');
+      expect(res.gate).toMatchObject({ ran: true, passed: false, timedOut: true });
+      expect(git(repo, ['rev-parse', 'HEAD']).trim()).toBe(before);
+      expect(git(repo, ['status', '--porcelain']).trim()).toBe('');
+    });
+
+    it('runs the gate via an injected runner (no real spawn) and reports its outcome', async () => {
+      readyWorker();
+      const calls: Array<{ cwd: string; command: string }> = [];
+      const res = await integrateBranch(repo, 'hotsheet/worker-1', 'main', undefined, {
+        gate: {
+          command: 'pretend-gate',
+          run: (cwd, command) => { calls.push({ cwd, command }); return Promise.resolve({ exitCode: 0, output: 'ok', timedOut: false }); },
+        },
+      });
+      expect(res.status).toBe('merged');
+      expect(res.gate).toEqual({ ran: true, passed: true, output: 'ok', timedOut: false });
+      expect(calls).toEqual([{ cwd: repo, command: 'pretend-gate' }]);
+    });
+
+    it('without a gate, behavior is unchanged → merged, no gate field', async () => {
+      readyWorker();
+      const res = await integrateBranch(repo, 'hotsheet/worker-1', 'main');
+      expect(res.status).toBe('merged');
+      expect(res.gate).toBeUndefined();
+    });
+  });
 });
