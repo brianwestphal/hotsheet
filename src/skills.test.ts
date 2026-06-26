@@ -142,6 +142,10 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('pending_integration');
     // HS-9048 — the owner integrates via the helper endpoints.
     expect(content).toContain('/api/workers/integrate');
+    // HS-9098 — the owner skill explains the HS-9091 in-helper gate statuses.
+    expect(content).toContain('gate-failed');
+    expect(content).toContain('gate-timeout');
+    expect(content).toContain('integrationGate');
   });
 
   it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {
