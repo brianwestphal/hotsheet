@@ -6,12 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker,   type PoolState, registerPoolWorker,
-  releaseTicket, removePoolWorker, removeWorktree, setPoolTarget,
+  releaseTicket, removePoolWorker, removeWorktree, reviewInGlassbox, setPoolTarget,
 type WorkerSlotView,
 } from '../api/index.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  closeWorkerPoolPanel, gitChipTitle, refreshPool, releaseWorkerClaims, renderPoolControls, renderWorkerTile,
+  closeWorkerPoolPanel, gitChipTitle, refreshPool, releaseWorkerClaims, renderPoolControls, renderWorkerTile, reviewWorkerBranch,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -27,6 +27,8 @@ vi.mock('../api/index.js', () => ({
   getTicketPartition: vi.fn(),
   getTicketClaims: vi.fn(),
   releaseTicket: vi.fn(),
+  getGlassboxStatus: vi.fn().mockResolvedValue({ available: false }),
+  reviewInGlassbox: vi.fn().mockResolvedValue({ ok: true }),
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
@@ -143,6 +145,32 @@ describe('renderWorkerTile (HS-8962)', () => {
     expect(renderWorkerTile(slot({ git: { ahead: 0, behind: 0, dirty: false } })).querySelector('.worker-tile-git')).toBeNull();
     expect(renderWorkerTile(slot()).querySelector('.worker-tile-git')).toBeNull(); // git undefined
   });
+
+  // HS-9082 (docs/102 §102.2) — per-tile "Review" affordance → Glassbox diff vs target.
+  it('shows a wired Review button when the worker has committed work + onReview is provided', () => {
+    const onReview = vi.fn();
+    const tile = renderWorkerTile(slot({ git: { ahead: 2, behind: 0, dirty: false } }), vi.fn(), undefined, undefined, onReview);
+    const btn = tile.querySelector<HTMLButtonElement>('.worker-review-btn');
+    expect(btn).not.toBeNull();
+    btn!.click();
+    expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ worker: 'pw1' }));
+  });
+
+  it('hides Review when there is no committed work (ahead 0), no branch, or no onReview', () => {
+    // ahead 0 → nothing to integrate/review.
+    expect(renderWorkerTile(slot({ git: { ahead: 0, behind: 1, dirty: true } }), vi.fn(), undefined, undefined, vi.fn()).querySelector('.worker-review-btn')).toBeNull();
+    // no branch → can't build a range.
+    expect(renderWorkerTile(slot({ branch: null, git: { ahead: 2, behind: 0, dirty: false } }), vi.fn(), undefined, undefined, vi.fn()).querySelector('.worker-review-btn')).toBeNull();
+    // onReview omitted (Glassbox unavailable / no target) → no button.
+    expect(renderWorkerTile(slot({ git: { ahead: 2, behind: 0, dirty: false } })).querySelector('.worker-review-btn')).toBeNull();
+  });
+
+  it('offers Review even for a stopped worker whose branch still has integratable commits', () => {
+    const tile = renderWorkerTile(slot({ state: 'stopped', git: { ahead: 3, behind: 0, dirty: false } }), vi.fn(), undefined, undefined, vi.fn());
+    expect(tile.querySelector('.worker-review-btn')).not.toBeNull();
+    // …and a stopped worker still has no Drain button.
+    expect(tile.querySelector('.worker-drain-btn')).toBeNull();
+  });
 });
 
 describe('gitChipTitle (HS-9081)', () => {
@@ -152,6 +180,30 @@ describe('gitChipTitle (HS-9081)', () => {
   });
   it('says the tree is clean when not dirty', () => {
     expect(gitChipTitle({ ahead: 0, behind: 0, dirty: false })).toBe('working tree clean');
+  });
+});
+
+describe('reviewWorkerBranch (HS-9082)', () => {
+  const slot = (over: Partial<WorkerSlotView> = {}): WorkerSlotView => ({
+    label: 'worker-1', worker: 'pw1', worktreePath: '/wt/pw1', branch: 'hotsheet/worker-1',
+    terminalId: 't-pw1', state: 'idle', currentTicket: null, queueOnly: false,
+    ready: false, readyBranch: null, ...over,
+  });
+
+  it('opens Glassbox on the target..branch range ("what integrating this branch adds")', async () => {
+    const review = vi.mocked(reviewInGlassbox);
+    review.mockClear();
+    await reviewWorkerBranch(slot({ branch: 'hotsheet/worker-1' }), 'main');
+    expect(review).toHaveBeenCalledWith({ mode: 'range', from: 'main', to: 'hotsheet/worker-1' });
+  });
+
+  it('no-ops (no Glassbox call) when the branch or target is missing', async () => {
+    const review = vi.mocked(reviewInGlassbox);
+    review.mockClear();
+    await reviewWorkerBranch(slot({ branch: null }), 'main');
+    await reviewWorkerBranch(slot({ branch: 'hotsheet/worker-1' }), null);
+    await reviewWorkerBranch(slot({ branch: 'hotsheet/worker-1' }), '');
+    expect(review).not.toHaveBeenCalled();
   });
 });
 

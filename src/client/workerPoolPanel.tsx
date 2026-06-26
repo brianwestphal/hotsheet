@@ -9,8 +9,8 @@
 // ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
 // layer onto these tiles later.
 import {
-  drainAllPoolWorkers, drainPoolWorker, getTicketClaims, getWorkerPool, launchWorker,
-  type PoolState, registerPoolWorker, releaseTicket, removePoolWorker, removeWorktree,
+  drainAllPoolWorkers, drainPoolWorker, getGlassboxStatus, getTicketClaims, getWorkerPool, launchWorker,
+  type PoolState, registerPoolWorker, releaseTicket, removePoolWorker, removeWorktree, reviewInGlassbox,
   setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
@@ -22,6 +22,9 @@ import { showToast } from './toast.js';
 
 let activeOverlay: HTMLElement | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+/** HS-9082 — whether the Glassbox CLI is installed (probed once on panel open).
+ *  Gates the per-tile "Review" affordance so we never show a button that errors. */
+let glassboxAvailable = false;
 /** Workers whose stopped-cleanup is already running, so a poll mid-cleanup doesn't double-run it. */
 const cleaningUp = new Set<string>();
 /** Adds launched but not yet registered, counted toward the live total so the
@@ -98,8 +101,12 @@ export function renderWorkerTile(
   onDrain?: (w: WorkerSlotView) => void,
   onDispatch?: (w: WorkerSlotView, ticketIds: number[]) => void,
   onQueueOnly?: (w: WorkerSlotView, queueOnly: boolean) => void,
+  onReview?: (w: WorkerSlotView) => void, // HS-9082 — open Glassbox on this worker's branch vs the target
 ): HTMLElement {
   const canDrain = w.state === 'idle' || w.state === 'working';
+  // HS-9082 — offer a "Review" affordance only when there's committed work to
+  // diff against the target (ahead > 0) on a known branch + Glassbox is wired.
+  const canReview = onReview !== undefined && w.branch !== null && (w.git?.ahead ?? 0) > 0;
   const tile = toElement(
     <div className="worker-tile" data-worker={w.worker} data-state={w.state}>
       <div className="worker-tile-head">
@@ -118,6 +125,12 @@ export function renderWorkerTile(
           : <span className="worker-tile-ticket-none">{w.state === 'stopped' || w.state === 'dead' ? 'cleaning up…' : '—'}</span>}
       </div>
       <div className="worker-tile-actions">
+        {/* HS-9082 — review what integrating this worker's branch adds, in Glassbox.
+            Shown for any state with committed work (incl. stopped/dead — its branch
+            is still integratable), so it sits before the drain controls. */}
+        {canReview
+          ? <button type="button" className="btn btn-sm worker-review-btn" title={`Review what integrating ${w.branch ?? ''} adds vs the target branch, in Glassbox`}>Review</button>
+          : null}
         {canDrain && onQueueOnly !== undefined
           ? <label className="worker-queue-only" title="Work only dispatched tickets, then stop (don't self-claim from the shared pool)">
               <input type="checkbox" className="worker-queue-only-cb" checked={w.queueOnly} /> queue-only
@@ -129,6 +142,9 @@ export function renderWorkerTile(
       </div>
     </div>,
   );
+  if (canReview) {
+    tile.querySelector('.worker-review-btn')?.addEventListener('click', () => onReview(w));
+  }
   if (canDrain && onDrain !== undefined) {
     tile.querySelector('.worker-drain-btn')?.addEventListener('click', () => onDrain(w));
   }
@@ -265,11 +281,17 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
   if (pool.workers.length === 0) {
     bodyEl.replaceChildren(toElement(<div className="worker-pool-empty">No workers. Use + to start workers draining Up Next in parallel.</div>));
   } else {
+    // HS-9082 — wire "Review" only when Glassbox is installed + we know the target
+    // branch to diff against (so the menu can build `target..hotsheet/worker-N`).
+    const onReview = glassboxAvailable && pool.target != null && pool.target !== ''
+      ? (ww: WorkerSlotView) => void reviewWorkerBranch(ww, pool.target)
+      : undefined;
     const tiles = pool.workers.map(w => renderWorkerTile(
       w,
       (ww) => void handleDrain(ww, pool, bodyEl),
       (ww, ids) => void dispatchAndReport(ww.worker, ww.label, ids).then(() => refreshPool(bodyEl)),
       (ww, q) => void handleQueueOnly(ww, q, bodyEl),
+      onReview,
     ));
     bodyEl.replaceChildren(...tiles);
   }
@@ -279,6 +301,22 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
     renderPoolControls(controlsEl, pool.targetN, activeCount(pool),
       (delta) => void handleStep(pool, delta, bodyEl),
       () => void handleDrainAll(bodyEl), pool.readyCount);
+  }
+}
+
+/** HS-9082 — open Glassbox on the diff of `w.branch` vs the integration `target`
+ *  ("what integrating this worker's branch adds") — the `target..hotsheet/worker-N`
+ *  range. Toasts on failure (e.g. the Glassbox CLI vanished between the open-time
+ *  probe and the click). Exported for tests. */
+export async function reviewWorkerBranch(w: WorkerSlotView, target: string | null | undefined): Promise<void> {
+  if (w.branch === null || target == null || target === '') {
+    showToast('No target branch to diff against.', { variant: 'warning' });
+    return;
+  }
+  try {
+    await reviewInGlassbox({ mode: 'range', from: target, to: w.branch });
+  } catch {
+    showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
   }
 }
 
@@ -412,6 +450,12 @@ export function openWorkerPoolPanel(): void {
   // Re-render whenever the engine reports a background change (a launch/cleanup
   // started by `syncPoolHeadless`, including ones driven by headless auto mode).
   setPoolChangeListener(() => void refreshPool(bodyEl));
+  // HS-9082 — probe Glassbox availability once; re-render so the per-tile "Review"
+  // buttons appear as soon as we know (the first paint may precede this).
+  void getGlassboxStatus().then((s) => {
+    glassboxAvailable = s.available;
+    if (s.available) void refreshPool(bodyEl);
+  }).catch(() => { /* probe failed — leave Review hidden */ });
   void refreshPool(bodyEl);
   pollTimer = setInterval(() => void refreshPool(bodyEl), POLL_MS);
 }

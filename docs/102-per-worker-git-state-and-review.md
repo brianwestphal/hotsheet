@@ -1,16 +1,26 @@
 # 102. Per-Worker Git State + Review Across Worktrees
 
-**Status: PARTIAL** — Part 2, the per-worktree git chip on the pool tiles
-(§102.3-102.4), **SHIPPED** (HS-9081, 2026-06-26); Part 1, the Glassbox
-worktree/branch review selector (§102.2), is HS-9082 (pending). Design HS-9060.
-From the HS-9040 design investigation.
+**Status: SHIPPED (core)** — Part 2, the per-worktree git chip (§102.3-102.4),
+**SHIPPED** (HS-9081); Part 1, the Glassbox **diff-vs-target** review selector
+(§102.2), **SHIPPED** (HS-9082). Both 2026-06-26. Design HS-9060. Remaining
+follow-ups: the **review-in-worktree** mode (HS-9106) and the **merge-pending
+badge** Review affordance (HS-9107). From the HS-9040 design investigation.
 
-**What shipped (HS-9081):** `summarizeWorktreesGit(repoRoot, worktrees, git?)` in
-`src/workers/integrate.ts` batches ahead/behind (reusing `listReadyBranches`) +
+**What shipped (HS-9081):** `summarizeWorktreesGit(repoRoot, worktrees, git?, target?)`
+in `src/workers/integrate.ts` batches ahead/behind (reusing `listReadyBranches`) +
 one `git status --porcelain` per worktree (parallel, failure-open); the result is
 folded into `GET /api/workers/pool` as an optional `git: {ahead, behind, dirty}`
 per worker (`WorkerSlotViewSchema`), and `workerPoolPanel.tsx` renders a compact
-`↑/↓/•dirty` chip per tile. The sidebar git chip (§48) stays main-worktree-focused. Today the Glassbox "view changes" button and the sidebar
+`↑/↓/•dirty` chip per tile. The sidebar git chip (§48) stays main-worktree-focused.
+
+**What shipped (HS-9082):** the pool poll also surfaces the integration `target`
+branch (`PoolState.target`, computed once server-side), and each worker tile gets
+a **"Review"** button (shown when it has committed work — `git.ahead > 0` — on a
+known branch + the Glassbox CLI is installed, probed on panel open) that opens
+Glassbox on the **`target..hotsheet/worker-N` range** via the existing
+`reviewInGlassbox({mode:'range'})` endpoint — "what integrating this branch adds."
+The in-place review-in-worktree variant + the merge-pending-badge pre-targeting are
+the follow-ups above. Today the Glassbox "view changes" button and the sidebar
 git-status chip/diff (§48) operate on the **main/owner worktree only**. With
 workers in separate worktrees (each its own branch + dirty/ahead/behind), the
 owner can't see or review worker changes from those surfaces. This adds
@@ -113,9 +123,12 @@ overloading the single-project chip.
 
 - **Per-worktree git summary** (ahead/behind + dirty) folded into the pool state +
   the tile chip (§102.3-102.4). ✅ SHIPPED (HS-9081).
-- **Glassbox worktree/branch target selector** (review a worker's work / diff vs.
-  target before integrating) (§102.2), wired from the pool tile + merge-pending
-  badge. — **HS-9082** (pending; the chip from HS-9081 is the partner surface).
+- **Glassbox worktree/branch target selector** (diff a worker branch vs. the target
+  before integrating) (§102.2), wired from the pool tile. ✅ SHIPPED (HS-9082).
+- **(follow-up) Glassbox review-in-worktree mode** — launch with `cwd = worktree`
+  to review a worker's in-place state. **HS-9106**.
+- **(follow-up) Merge-pending badge Review** affordance pre-targeting the ticket's
+  branch (needs a ticket→branch mapping). **HS-9107**.
 - **(Optional) worktrees git summary** in the sidebar git popover (§102.3).
 - Relates: HS-9040 (investigation), HS-9045 (merge-pending), HS-9048
   (`integrateBranch` / `listReadyBranches`), §48 (git chip).

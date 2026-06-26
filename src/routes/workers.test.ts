@@ -199,9 +199,12 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
 
       const res = await app.request('/api/workers/pool');
       expect(res.status).toBe(200);
-      const data = await res.json() as { workers: { worker: string; git?: { ahead: number; behind: number; dirty: boolean } }[] };
+      const data = await res.json() as { target?: string | null; workers: { worker: string; git?: { ahead: number; behind: number; dirty: boolean } }[] };
       const w1 = data.workers.find(w => w.worker === 'w1');
       expect(w1?.git).toEqual({ ahead: 1, behind: 0, dirty: true });
+      // HS-9082 — the integration target is surfaced so the panel can build the
+      // "diff worker branch vs target" Glassbox review range.
+      expect(data.target).toBe('main');
     } finally {
       await cleanupTestDb(dbDir);
     }

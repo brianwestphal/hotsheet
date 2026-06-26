@@ -73,6 +73,10 @@ export type WorkerSlotView = z.infer<typeof WorkerSlotViewSchema>;
 export const PoolStateSchema = z.object({
   targetN: z.number(),
   workers: z.array(WorkerSlotViewSchema),
+  /** HS-9082 — the integration target branch (e.g. `main`), so the panel can build
+   *  the "diff this worker's branch vs the target" Glassbox review range. Null for
+   *  a non-git project; absent on older servers (`.nullish()` for back-compat). */
+  target: z.string().nullish(),
   /** HS-9090 — how many workers are currently signaling a branch ready (the panel
    *  surfaces "N branches ready to integrate"). */
   readyCount: z.number(),

@@ -209,6 +209,7 @@ export async function summarizeWorktreesGit(
   repoRoot: string,
   worktrees: { worktreePath: string; branch: string | null }[],
   git: GitRunner = defaultGit,
+  target?: string, // HS-9082 — pass the already-detected target to avoid re-detecting
 ): Promise<Map<string, WorktreeGitSummary>> {
   const result = new Map<string, WorktreeGitSummary>();
   if (worktrees.length === 0) return result;
@@ -216,8 +217,8 @@ export async function summarizeWorktreesGit(
   // Ahead/behind for every ahead-of-target `hotsheet/*` branch, in one pass.
   let aheadBehind = new Map<string, { ahead: number; behind: number }>();
   try {
-    const target = await detectTargetBranch(repoRoot, git);
-    aheadBehind = new Map((await listReadyBranches(repoRoot, target, git)).map(r => [r.branch, { ahead: r.ahead, behind: r.behind }]));
+    const t = target ?? await detectTargetBranch(repoRoot, git);
+    aheadBehind = new Map((await listReadyBranches(repoRoot, t, git)).map(r => [r.branch, { ahead: r.ahead, behind: r.behind }]));
   } catch { /* leave empty — every worker reads ahead:0/behind:0 */ }
 
   await Promise.all(worktrees.map(async (wt) => {

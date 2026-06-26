@@ -56,16 +56,26 @@ function toView(
   };
 }
 
-/** HS-9081 — per-worker git summary (ahead/behind/dirty) for the pool tiles,
- *  keyed by worktree path. Empty when the project isn't a git repo. Failure-open
- *  so a git hiccup never fails the pool poll. */
-async function workerGitByWorktree(dataDir: string, workers: WorkerSlot[]): Promise<Map<string, WorktreeGitSummary>> {
+/** HS-9081 / HS-9082 — the integration target branch + per-worker git summary
+ *  (ahead/behind/dirty) for the pool tiles. The `target` is surfaced so the panel
+ *  can build the "diff this worker's branch vs the target" Glassbox review range.
+ *  Both are null/empty when the project isn't a git repo; failure-open so a git
+ *  hiccup never fails the pool poll. Computes the target ONCE (shared with the
+ *  git summary) rather than re-detecting per worker. */
+async function workerGitState(dataDir: string, workers: WorkerSlot[]): Promise<{ target: string | null; gitByWorktree: Map<string, WorktreeGitSummary> }> {
   const repoRoot = projectRootFromDataDir(dataDir);
-  if (!isGitRepo(repoRoot)) return new Map();
+  if (!isGitRepo(repoRoot)) return { target: null, gitByWorktree: new Map() };
   try {
-    return await summarizeWorktreesGit(repoRoot, workers.map(w => ({ worktreePath: w.worktreePath, branch: w.branch })));
+    const target = await detectTargetBranch(repoRoot);
+    const gitByWorktree = await summarizeWorktreesGit(
+      repoRoot,
+      workers.map(w => ({ worktreePath: w.worktreePath, branch: w.branch })),
+      undefined,
+      target,
+    );
+    return { target, gitByWorktree };
   } catch {
-    return new Map();
+    return { target: null, gitByWorktree: new Map() };
   }
 }
 
@@ -97,11 +107,14 @@ workerRoutes.get('/workers/pool', async (c) => {
   const { targetN, workers } = getPoolState(dataDir);
   // HS-9081 — fold the per-worktree git summary (ahead/behind/dirty) into the
   // pool poll the panel already runs (no extra round-trip); batched + failure-open.
-  const gitByWorktree = await workerGitByWorktree(dataDir, workers);
+  // HS-9082 — also surface the integration `target` so the panel can build the
+  // "diff worker branch vs target" Glassbox review range.
+  const { target, gitByWorktree } = await workerGitState(dataDir, workers);
   return c.json({
     targetN,
     workers: workers.map(w => toView(w, claimByWorker, gitByWorktree.get(w.worktreePath))),
     readyCount: readyCount(dataDir),
+    target,
   });
 });
 
