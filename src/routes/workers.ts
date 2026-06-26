@@ -18,7 +18,7 @@ import { readFileSettings } from '../file-settings.js';
 import { isGitRepo } from '../gitignore.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
-import { detectTargetBranch, integrateBranch, listReadyBranches } from '../workers/integrate.js';
+import { detectTargetBranch, integrateBranch, listReadyBranches, summarizeWorktreesGit, type WorktreeGitSummary } from '../workers/integrate.js';
 import { prepareWorker } from '../workers/launchWorker.js';
 import { partitionTickets } from '../workers/partition.js';
 import {
@@ -35,7 +35,11 @@ export const workerRoutes = new Hono<AppEnv>();
 /** Combine a registry slot with the live claims into the panel's view: a worker
  *  that holds a live claim is `working` (with that ticket); a drained/stopped slot
  *  shows its lifecycle state; a silent slot is `dead` (HS-8972); otherwise `idle`. */
-function toView(slot: WorkerSlot, claimByWorker: Map<string, { id: number; ticketNumber: string; title: string }>): WorkerSlotView {
+function toView(
+  slot: WorkerSlot,
+  claimByWorker: Map<string, { id: number; ticketNumber: string; title: string }>,
+  git?: WorktreeGitSummary, // HS-9081 — per-worktree git summary (omitted for non-git projects)
+): WorkerSlotView {
   const claim = claimByWorker.get(slot.worker);
   const state = slot.stopped ? 'stopped'
     : slot.drain ? 'draining'
@@ -48,7 +52,21 @@ function toView(slot: WorkerSlot, claimByWorker: Map<string, { id: number; ticke
     currentTicket: claim ?? null,
     queueOnly: slot.queueOnly,
     ready: slot.ready, readyBranch: slot.readyBranch,
+    git,
   };
+}
+
+/** HS-9081 — per-worker git summary (ahead/behind/dirty) for the pool tiles,
+ *  keyed by worktree path. Empty when the project isn't a git repo. Failure-open
+ *  so a git hiccup never fails the pool poll. */
+async function workerGitByWorktree(dataDir: string, workers: WorkerSlot[]): Promise<Map<string, WorktreeGitSummary>> {
+  const repoRoot = projectRootFromDataDir(dataDir);
+  if (!isGitRepo(repoRoot)) return new Map();
+  try {
+    return await summarizeWorktreesGit(repoRoot, workers.map(w => ({ worktreePath: w.worktreePath, branch: w.branch })));
+  } catch {
+    return new Map();
+  }
 }
 
 /** POST /api/workers/launch — prepare a worker in an isolated worktree of this
@@ -77,7 +95,14 @@ workerRoutes.get('/workers/pool', async (c) => {
   const claims = await getClaims();
   const claimByWorker = new Map(claims.map(cl => [cl.claimedBy, { id: cl.ticketId, ticketNumber: cl.ticketNumber, title: cl.title }]));
   const { targetN, workers } = getPoolState(dataDir);
-  return c.json({ targetN, workers: workers.map(w => toView(w, claimByWorker)), readyCount: readyCount(dataDir) });
+  // HS-9081 — fold the per-worktree git summary (ahead/behind/dirty) into the
+  // pool poll the panel already runs (no extra round-trip); batched + failure-open.
+  const gitByWorktree = await workerGitByWorktree(dataDir, workers);
+  return c.json({
+    targetN,
+    workers: workers.map(w => toView(w, claimByWorker, gitByWorktree.get(w.worktreePath))),
+    readyCount: readyCount(dataDir),
+  });
 });
 
 /** POST /api/workers/pool/register — record a worker the panel just launched. */

@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { detectTargetBranch, integrateBranch, listReadyBranches } from './integrate.js';
+import { detectTargetBranch, integrateBranch, listReadyBranches, summarizeWorktreesGit } from './integrate.js';
 
 function git(repo: string, args: string[]): string {
   return execFileSync('git', args, { cwd: repo, encoding: 'utf-8' });
@@ -193,6 +193,43 @@ describe('integrate — real git', () => {
       const res = await integrateBranch(repo, 'hotsheet/worker-1', 'main');
       expect(res.status).toBe('merged');
       expect(res.gate).toBeUndefined();
+    });
+  });
+
+  // HS-9081 (docs/102 §102.3) — per-worktree git summary for the pool tiles.
+  describe('summarizeWorktreesGit', () => {
+    it('reports ahead/behind from the worker branch + dirty from the worktree', async () => {
+      // worker-1 gains a commit ahead of main…
+      git(repo, ['checkout', '-q', '-b', 'hotsheet/worker-1']);
+      commitFile(repo, 'a.txt', 'a\n', 'work 1');
+      // …and main advances, so worker-1 is also 1 behind.
+      git(repo, ['checkout', '-q', 'main']);
+      commitFile(repo, 'b.txt', 'b\n', 'main moves');
+      // Leave the (main) worktree dirty with an untracked file.
+      writeFileSync(join(repo, 'scratch.txt'), 'wip\n');
+
+      const summary = await summarizeWorktreesGit(repo, [{ worktreePath: repo, branch: 'hotsheet/worker-1' }]);
+      expect(summary.get(repo)).toEqual({ ahead: 1, behind: 1, dirty: true });
+    });
+
+    it('reports a clean, in-sync worktree as 0/0/clean', async () => {
+      const summary = await summarizeWorktreesGit(repo, [{ worktreePath: repo, branch: 'main' }]);
+      expect(summary.get(repo)).toEqual({ ahead: 0, behind: 0, dirty: false });
+    });
+
+    it('a branch with no commits ahead reads 0/0 (listReadyBranches filter)', async () => {
+      git(repo, ['branch', 'hotsheet/worker-2', 'main']); // even with main, no commits ahead
+      const summary = await summarizeWorktreesGit(repo, [{ worktreePath: repo, branch: 'hotsheet/worker-2' }]);
+      expect(summary.get(repo)).toMatchObject({ ahead: 0, behind: 0 });
+    });
+
+    it('is failure-open — an unreadable worktree path is reported clean, never throws', async () => {
+      const summary = await summarizeWorktreesGit(repo, [{ worktreePath: join(repo, 'does-not-exist'), branch: null }]);
+      expect(summary.get(join(repo, 'does-not-exist'))).toEqual({ ahead: 0, behind: 0, dirty: false });
+    });
+
+    it('returns an empty map for no worktrees', async () => {
+      expect((await summarizeWorktreesGit(repo, [])).size).toBe(0);
     });
   });
 });

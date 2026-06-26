@@ -63,6 +63,10 @@ export const WorkerSlotViewSchema = z.object({
    *  integrate (once per batch boundary). `readyBranch` is null when not ready. */
   ready: z.boolean(),
   readyBranch: z.string().nullable(),
+  /** HS-9081 (docs/102 §102.3) — the worktree's git state for the tile chip:
+   *  ahead/behind vs the target + dirty. Omitted for non-git projects (and so
+   *  back-compatible with older servers that didn't send it). */
+  git: z.object({ ahead: z.number(), behind: z.number(), dirty: z.boolean() }).optional(),
 });
 export type WorkerSlotView = z.infer<typeof WorkerSlotViewSchema>;
 

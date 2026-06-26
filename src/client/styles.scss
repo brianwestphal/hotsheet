@@ -10757,6 +10757,16 @@ label.detail-details-label {
     color: var(--success, #2ea043);
   }
   .worker-tile-ready + .worker-tile-state { margin-left: 0; }
+  /* HS-9081 (docs/102) — per-worktree git state chip: ahead/behind vs target + dirty. */
+  .worker-tile-git {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 9px; font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 1px 5px; border-radius: 6px; white-space: nowrap;
+    background: var(--bg-hover); color: var(--text-muted);
+  }
+  .worker-tile-git-ahead { color: var(--success, #2ea043); }
+  .worker-tile-git-behind { color: var(--accent); }
+  .worker-tile-git-dirty { color: var(--warning, #d29922); }
   .worker-tile-ticket {
     grid-area: ticket; font-size: 11px; color: var(--text-muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

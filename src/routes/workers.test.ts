@@ -13,6 +13,7 @@ import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WorkerLaunchSpec } from '../api/workers.js';
+import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { _resetPoolsForTesting, readyCount } from '../workers/poolManager.js';
 import { listWorktrees } from '../worktrees.js';
@@ -180,5 +181,29 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
   it('POST /api/workers/ready returns 404 for an unregistered worker', async () => {
     const res = await appFor(ownerData).request('/api/workers/ready', post({ worker: 'ghost', branch: 'hotsheet/x' }));
     expect(res.status).toBe(404);
+  });
+
+  // HS-9081 (docs/102 §102.3) — the pool poll folds in the per-worktree git summary.
+  it('GET /api/workers/pool includes a per-worker git summary (ahead/behind/dirty)', async () => {
+    // The pool route reads live claims, so it needs the DB connection up.
+    const dbDir = await setupTestDb();
+    try {
+      const app = appFor(ownerData);
+      // A worker branch one commit ahead of main, then back on main; leave the
+      // (owner) worktree dirty so the porcelain check trips.
+      commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
+      execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+      writeFileSync(join(repoRoot, 'scratch.txt'), 'wip\n');
+      // Register a worker whose worktree is the repo root + branch is that worker branch.
+      await app.request('/api/workers/pool/register', post({ label: 'worker-1', worker: 'w1', worktreePath: repoRoot, branch: 'hotsheet/worker-1' }));
+
+      const res = await app.request('/api/workers/pool');
+      expect(res.status).toBe(200);
+      const data = await res.json() as { workers: { worker: string; git?: { ahead: number; behind: number; dirty: boolean } }[] };
+      const w1 = data.workers.find(w => w.worker === 'w1');
+      expect(w1?.git).toEqual({ ahead: 1, behind: 0, dirty: true });
+    } finally {
+      await cleanupTestDb(dbDir);
+    }
   });
 });

@@ -13,6 +13,7 @@ import {
   type PoolState, registerPoolWorker, releaseTicket, removePoolWorker, removeWorktree,
   setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
+import type { SafeHtml } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
@@ -65,6 +66,31 @@ function activeCount(pool: PoolState): number {
   return pool.workers.filter(w => w.state === 'idle' || w.state === 'working').length;
 }
 
+/** HS-9081 (docs/102 §102.3) — human-readable tooltip for a worker's git chip.
+ *  Exported for tests. */
+export function gitChipTitle(git: { ahead: number; behind: number; dirty: boolean }): string {
+  const parts: string[] = [];
+  if (git.ahead > 0) parts.push(`${String(git.ahead)} commit(s) ahead of the target`);
+  if (git.behind > 0) parts.push(`${String(git.behind)} behind (needs rebase)`);
+  parts.push(git.dirty ? 'uncommitted changes' : 'working tree clean');
+  return parts.join(' · ');
+}
+
+/** HS-9081 — the compact per-worktree git chip (`↑3 ↓1 •dirty`) for a worker
+ *  tile. Returns null when there's nothing to show (no git summary, or 0
+ *  ahead/behind + clean) so a tidy worker adds no clutter. */
+function renderGitChip(git: WorkerSlotView['git']): SafeHtml | null {
+  if (git === undefined) return null;
+  if (git.ahead === 0 && git.behind === 0 && !git.dirty) return null;
+  return (
+    <span className="worker-tile-git" title={gitChipTitle(git)}>
+      {git.ahead > 0 ? <span className="worker-tile-git-ahead">↑{git.ahead}</span> : null}
+      {git.behind > 0 ? <span className="worker-tile-git-behind">↓{git.behind}</span> : null}
+      {git.dirty ? <span className="worker-tile-git-dirty">•dirty</span> : null}
+    </span>
+  );
+}
+
 /** Build one worker tile. `onDrain` is omitted once the worker is draining/stopped.
  *  Exported for unit tests. */
 export function renderWorkerTile(
@@ -78,6 +104,8 @@ export function renderWorkerTile(
     <div className="worker-tile" data-worker={w.worker} data-state={w.state}>
       <div className="worker-tile-head">
         <span className="worker-tile-label">{w.label}</span>
+        {/* HS-9081 — per-worktree git state: ahead/behind vs target + dirty. */}
+        {renderGitChip(w.git)}
         {/* HS-9090 — explicit "branch ready to integrate" signal. */}
         {w.ready && w.readyBranch !== null
           ? <span className="worker-tile-ready" title={`${w.readyBranch} is committed, rebased, and ready to integrate`}>● ready</span>

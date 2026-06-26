@@ -11,7 +11,7 @@ type WorkerSlotView,
 } from '../api/index.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  closeWorkerPoolPanel, refreshPool, releaseWorkerClaims, renderPoolControls, renderWorkerTile,
+  closeWorkerPoolPanel, gitChipTitle, refreshPool, releaseWorkerClaims, renderPoolControls, renderWorkerTile,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -118,6 +118,40 @@ describe('renderWorkerTile (HS-8962)', () => {
     expect(badge).not.toBeNull();
     expect(badge?.getAttribute('title')).toContain('hotsheet/worker-1');
     expect(renderWorkerTile(slot({ ready: false })).querySelector('.worker-tile-ready')).toBeNull();
+  });
+
+  // HS-9081 (docs/102 §102.3) — the per-worktree git chip on the tile.
+  it('renders a git chip with ↑ahead / ↓behind / •dirty when the worker has unmerged or uncommitted work', () => {
+    const tile = renderWorkerTile(slot({ git: { ahead: 3, behind: 1, dirty: true } }));
+    const chip = tile.querySelector('.worker-tile-git');
+    expect(chip).not.toBeNull();
+    expect(chip!.querySelector('.worker-tile-git-ahead')?.textContent).toBe('↑3');
+    expect(chip!.querySelector('.worker-tile-git-behind')?.textContent).toBe('↓1');
+    expect(chip!.querySelector('.worker-tile-git-dirty')?.textContent).toBe('•dirty');
+    expect(chip!.getAttribute('title')).toContain('ahead');
+  });
+
+  it('omits the parts that are zero/clean (e.g. ahead-only shows ↑ but no ↓ / dirty)', () => {
+    const tile = renderWorkerTile(slot({ git: { ahead: 2, behind: 0, dirty: false } }));
+    const chip = tile.querySelector('.worker-tile-git');
+    expect(chip!.querySelector('.worker-tile-git-ahead')?.textContent).toBe('↑2');
+    expect(chip!.querySelector('.worker-tile-git-behind')).toBeNull();
+    expect(chip!.querySelector('.worker-tile-git-dirty')).toBeNull();
+  });
+
+  it('shows no git chip for a clean, in-sync worker or when the summary is absent', () => {
+    expect(renderWorkerTile(slot({ git: { ahead: 0, behind: 0, dirty: false } })).querySelector('.worker-tile-git')).toBeNull();
+    expect(renderWorkerTile(slot()).querySelector('.worker-tile-git')).toBeNull(); // git undefined
+  });
+});
+
+describe('gitChipTitle (HS-9081)', () => {
+  it('describes ahead/behind/dirty in words', () => {
+    expect(gitChipTitle({ ahead: 3, behind: 1, dirty: true }))
+      .toBe('3 commit(s) ahead of the target · 1 behind (needs rebase) · uncommitted changes');
+  });
+  it('says the tree is clean when not dirty', () => {
+    expect(gitChipTitle({ ahead: 0, behind: 0, dirty: false })).toBe('working tree clean');
   });
 });
 

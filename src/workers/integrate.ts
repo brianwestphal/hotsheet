@@ -180,6 +180,57 @@ export async function listReadyBranches(repoRoot: string, target: string, git: G
   return ready;
 }
 
+/** HS-9081 (docs/102 §102.3) — per-worktree git state for the worker-pool tiles:
+ *  ahead/behind vs the target + whether the worktree is dirty. */
+export interface WorktreeGitSummary {
+  /** Commits on this worktree's branch not yet on the target. */
+  ahead: number;
+  /** Commits on the target not yet on the branch (needs a rebase). */
+  behind: number;
+  /** Uncommitted changes in the worktree (`git status --porcelain` non-empty). */
+  dirty: boolean;
+}
+
+/**
+ * HS-9081 (docs/102 §102.3-102.4) — summarize each worker worktree's git state
+ * for the pool tiles, keyed by `worktreePath`. **Batched**: detects the target
+ * once, scans ahead/behind for every `hotsheet/*` branch in a single
+ * `listReadyBranches` pass (reused), and runs one `git status --porcelain` per
+ * worktree IN PARALLEL — so N workers stay cheap on the panel's 3 s poll.
+ *
+ * Ahead/behind come from the OWNER repo (all `hotsheet/*` branches live in the
+ * shared git dir); dirty is per worktree (its own working tree). A worktree whose
+ * git call fails is reported `{0,0,false}` rather than throwing — the pool poll
+ * must never fail because one worktree is mid-checkout. Branches with no commits
+ * ahead aren't in `listReadyBranches`, so they read `ahead:0, behind:0` (the chip
+ * then shows only a dirty marker, if any).
+ */
+export async function summarizeWorktreesGit(
+  repoRoot: string,
+  worktrees: { worktreePath: string; branch: string | null }[],
+  git: GitRunner = defaultGit,
+): Promise<Map<string, WorktreeGitSummary>> {
+  const result = new Map<string, WorktreeGitSummary>();
+  if (worktrees.length === 0) return result;
+
+  // Ahead/behind for every ahead-of-target `hotsheet/*` branch, in one pass.
+  let aheadBehind = new Map<string, { ahead: number; behind: number }>();
+  try {
+    const target = await detectTargetBranch(repoRoot, git);
+    aheadBehind = new Map((await listReadyBranches(repoRoot, target, git)).map(r => [r.branch, { ahead: r.ahead, behind: r.behind }]));
+  } catch { /* leave empty — every worker reads ahead:0/behind:0 */ }
+
+  await Promise.all(worktrees.map(async (wt) => {
+    const ab = (wt.branch !== null ? aheadBehind.get(wt.branch) : undefined) ?? { ahead: 0, behind: 0 };
+    let dirty = false;
+    try {
+      dirty = (await git(wt.worktreePath, ['status', '--porcelain'])).trim() !== '';
+    } catch { /* unreadable worktree — treat as clean */ }
+    result.set(wt.worktreePath, { ahead: ab.ahead, behind: ab.behind, dirty });
+  }));
+  return result;
+}
+
 /**
  * Perform one safe merge of `branch` into `target`. Guards:
  *   - the owner worktree must be **clean** (`dirty-tree` otherwise — never merge
