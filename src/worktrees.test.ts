@@ -1,10 +1,10 @@
 import { execFileSync } from 'child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { basename, join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { readFileSettings } from './file-settings.js';
+import { readFileSettings, writeFileSettings } from './file-settings.js';
 import type { ProvisionResult } from './workers/provisionNodeModules.js';
 import {
   awaitPendingProvisions, createWorktree, defaultWorktreePath, isFollowerWorktree,
@@ -152,6 +152,19 @@ describe('worktrees — real git', () => {
     const wt = await createWorktree(repoRoot, ownerData, { branch: 'prov-fail', newBranch: true }, undefined, boom);
     expect(wt.branch).toBe('prov-fail');
     await awaitPendingProvisions(); // the rejected job drains without throwing
+    await removeWorktree(repoRoot, wt.path, { force: true });
+  });
+
+  // HS-9089 — the worktree-setup hook runs (after provisioning) in the worktree dir.
+  it('runs the worktreeSetup command after provisioning, in the worktree dir', async () => {
+    // A real, harmless setup command that drops a sentinel into the worktree.
+    writeFileSettings(ownerData, { worktreeSetup: 'node -e "require(\'fs\').writeFileSync(\'setup-ran.txt\',\'1\')"' });
+    const spy = provisionSpy();
+    const wt = await createWorktree(repoRoot, ownerData, { branch: 'setup', newBranch: true }, undefined, spy.fn);
+    await awaitPendingProvisions();
+    // Provisioning ran first, then the setup command produced the sentinel.
+    expect(spy.calls).toHaveLength(1);
+    expect(existsSync(join(wt.path, 'setup-ran.txt'))).toBe(true);
     await removeWorktree(repoRoot, wt.path, { force: true });
   });
 });

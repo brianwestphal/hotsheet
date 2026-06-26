@@ -25,6 +25,7 @@ import { readFileSettings, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { ensureSkillsForDir } from './skills.js';
 import { provisionNodeModules, type ProvisionResult } from './workers/provisionNodeModules.js';
+import { runWorktreeSetup } from './workers/worktreeSetup.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,13 +49,13 @@ export type GitRunner = (repoRoot: string, args: string[]) => Promise<string>;
  *  `provisionNodeModules` (the `opts` arg is omitted at the call site). */
 export type ProvisionRunner = (worktreeRoot: string, ownerRoot: string) => Promise<ProvisionResult>;
 
-// HS-9088 — `createWorktree` provisions `node_modules` in the BACKGROUND (so the
-// create API responds immediately). Track the in-flight promises so a caller or a
-// test can await completion deterministically.
+// HS-9088 / HS-9089 — `createWorktree` provisions `node_modules` + runs the
+// worktree-setup hook in the BACKGROUND (so the create API responds immediately).
+// Track the in-flight promises so a caller or a test can await completion.
 const pendingProvisions = new Set<Promise<unknown>>();
-/** Number of `node_modules` provisioning jobs still running. */
+/** Number of in-flight worktree provisioning+setup jobs still running. */
 export function pendingProvisionCount(): number { return pendingProvisions.size; }
-/** Await every in-flight provisioning job (mainly for tests + graceful shutdown). */
+/** Await every in-flight provisioning+setup job (for tests + graceful shutdown). */
 export async function awaitPendingProvisions(): Promise<void> {
   await Promise.allSettled([...pendingProvisions]);
 }
@@ -173,11 +174,16 @@ export async function createWorktree(
   try { ensureSkillsForDir(path, undefined, owner); } catch { /* best-effort agent wiring */ }
 
   // HS-9088 (docs/105 §105.1) — provision the worktree's `node_modules` from the
-  // owner's (CoW clone / symlink / npm ci) so the worker can build immediately.
-  // BACKGROUND + best-effort: it must not delay the create response (a slow
-  // `npm ci` path can take minutes) and a hiccup must never fail create — the
+  // owner's (CoW clone / symlink / npm ci) so the worker can build immediately,
+  // THEN (HS-9089 §105.3) run the per-project worktree-setup hook (the
+  // `worktreeSetup` command + the `worktree-setup.sh` convention). BACKGROUND +
+  // best-effort: the chain must not delay the create response (a slow `npm ci` /
+  // setup can take minutes) and a hiccup must never fail create — the
   // `/hotsheet-worker` skill detects the lock diff + reconciles if it's mid-flight.
-  const provisioning = provision(path, repoRoot).catch(() => undefined);
+  const provisioning = provision(path, repoRoot)
+    .catch(() => undefined)
+    .then(() => runWorktreeSetup(path, owner))
+    .catch(() => undefined);
   pendingProvisions.add(provisioning);
   void provisioning.finally(() => pendingProvisions.delete(provisioning));
 
