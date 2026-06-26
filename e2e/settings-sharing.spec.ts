@@ -159,6 +159,43 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     expect(sharedCmd.map(c => c.id)).toEqual(['shared-a', 'shared-b']); // shared unchanged — local-only add
   });
 
+  // HS-9094 — a shared CHILD command moves into the local layer: it physically
+  // leaves its shared group in settings.json and becomes a `childAdded` child in
+  // settings.local.json (so it's machine-only but still appears in the group).
+  test('HS-9094: a shared child command moves to the local layer (childAdded), leaving the shared group', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { custom_commands: [
+        { type: 'group', id: 'grp-1', name: 'Group One', children: [
+          { id: 'child-a', name: 'Child A', prompt: 'pa', target: 'shell' },
+          { id: 'child-b', name: 'Child B', prompt: 'pb', target: 'shell' },
+        ] },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+
+    const list = page.locator('#settings-commands-list');
+    await expect(list.locator('.scope-list-hint-local')).toBeVisible({ timeout: 5000 });
+    // The child row carries a "shared" tag + a "Move to Local" (↓) button.
+    const childRow = list.locator('.cmd-outline-row.cmd-outline-indented').filter({ hasText: 'Child A' });
+    await expect(childRow.locator('.cmd-scope-tag.scope-tag-shared')).toBeVisible();
+    await childRow.locator('.cmd-outline-move-btn[data-move="to-local"]').click();
+    await page.waitForTimeout(500);
+
+    const layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: Record<string, unknown>; local: Record<string, unknown>;
+    };
+    // Shared group no longer holds child-a (it physically left settings.json).
+    const sharedGroup = (layered.shared.custom_commands as { id: string; children: { id: string }[] }[])[0];
+    expect(sharedGroup.children.map(c => c.id)).toEqual(['child-b']);
+    // The local delta re-adds it into the same group as a childAdded child.
+    const localCmd = layered.local.custom_commands as { childAdded?: Record<string, { children: { id: string }[] }> } | undefined;
+    expect(localCmd?.childAdded?.['grp-1']?.children.map(c => c.id)).toEqual(['child-a']);
+  });
+
   test('HS-9016: auto-context is editable per-layer in Local mode and saves a local delta', async ({ page }) => {
     // Context panel is no longer wholesale-locked (it's now scope-aware).
     await page.locator('.scope-seg-btn.scope-seg-local').click();

@@ -393,6 +393,80 @@ export function moveTopLevelToShared(layers: CommandLayers, id: string): Command
   return { shared, delta: pruneDelta(delta) };
 }
 
+/**
+ * HS-9094 — move a SHARED child command (one living in a shared group's
+ * `children`) into the LOCAL layer: physically remove it from the shared group
+ * (so it leaves `settings.json`, like the top-level move) and add it as a local
+ * `childAdded` child of the same group. The resolved group still contains it
+ * (now appended among the group's local children — no reorder), but it's no
+ * longer committed. No-op if `childId` isn't a shared child. Pure.
+ */
+export function moveChildToLocal(layers: CommandLayers, childId: string): CommandLayers {
+  // Locate the parent group + the child (plain for-loop so the narrowing is
+  // tracked — a `.map` closure assignment would not be).
+  let found: { group: CommandGroup; child: CustomCommand } | undefined;
+  for (const item of layers.shared) {
+    if (!isGroup(item)) continue;
+    const child = item.children.find(c => idOf(c) === childId);
+    if (child !== undefined) { found = { group: item, child }; break; }
+  }
+  if (found === undefined) return layers;
+  const gid = idOf(found.group);
+  const movedChild = found.child;
+
+  const shared = layers.shared.map((item): CommandItem =>
+    isGroup(item) && idOf(item) === gid
+      ? { ...item, children: item.children.filter(c => idOf(c) !== childId) }
+      : item);
+
+  const delta = cloneDelta(layers.delta);
+  // Defensively drop any delta entries that targeted the now-removed shared child.
+  if (delta.hidden !== undefined) delta.hidden = delta.hidden.filter(h => h !== childId);
+  if (delta.overrides !== undefined) delta.overrides = omitKey(delta.overrides, childId);
+
+  const childAdded = delta.childAdded ?? {};
+  childAdded[gid] = gid in childAdded
+    ? { group: childAdded[gid].group, children: [...childAdded[gid].children, { ...movedChild }] }
+    : { group: { id: gid, name: found.group.name }, children: [{ ...movedChild }] };
+  delta.childAdded = childAdded;
+  return { shared, delta: pruneDelta(delta) };
+}
+
+/**
+ * HS-9094 — move a LOCAL `childAdded` child into the SHARED layer: append it to
+ * its parent shared group's `children` and drop it from the local delta. No-op
+ * if `childId` isn't a local child addition, or its parent group is gone from
+ * shared (an orphaned local group can't be promoted child-by-child). Pure.
+ */
+export function moveChildToShared(layers: CommandLayers, childId: string): CommandLayers {
+  const delta = cloneDelta(layers.delta);
+  const childAdded = delta.childAdded ?? {};
+  let groupId: string | null = null;
+  let child: CustomCommand | null = null;
+  for (const [gid, add] of Object.entries(childAdded)) {
+    const idx = add.children.findIndex(c => idOf(c) === childId);
+    if (idx >= 0) { groupId = gid; child = add.children[idx]; break; }
+  }
+  if (groupId === null || child === null) return layers;
+  // The parent group must still exist in shared to receive the child.
+  const sharedGroupIdx = layers.shared.findIndex(i => idOf(i) === groupId && isGroup(i));
+  if (sharedGroupIdx < 0) return layers;
+  const movedChild: CustomCommand = child;
+  const gid: string = groupId;
+
+  // Remove from childAdded (drop the entry when it empties).
+  const remaining = childAdded[gid].children.filter(c => idOf(c) !== childId);
+  delta.childAdded = remaining.length > 0
+    ? { ...childAdded, [gid]: { group: childAdded[gid].group, children: remaining } }
+    : omitKey(childAdded, gid);
+
+  const shared = layers.shared.map((item, i): CommandItem => {
+    if (i !== sharedGroupIdx || !isGroup(item)) return item;
+    return { ...item, children: [...item.children, { ...movedChild }] };
+  });
+  return { shared, delta: pruneDelta(delta) };
+}
+
 /** Drop empty delta fields so a fully-reconciled delta serializes as `{}`. */
 function pruneDelta(delta: CommandTreeDelta): CommandTreeDelta {
   const out: CommandTreeDelta = {};

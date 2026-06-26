@@ -107,13 +107,21 @@ A per-row **shared↔local move** (top-level commands/groups):
 - **Move to Shared** ("promote to shared"): append a local-only item to the shared
   tree and drop it from the local delta's `added`.
 
+**Child-level move (HS-9094):** the same two directions for an individual command
+inside a group — `moveChildToLocal` physically removes the child from its shared
+group (it leaves `settings.json`) and adds it as a local `childAdded` child of the
+same group; `moveChildToShared` appends a local `childAdded` child into its parent
+shared group's `children` and drops it from the delta (no-op if the parent group
+is gone from shared — an orphan can't be promoted child-by-child). The editor's
+move button shows on child rows too; `moveCommandLayer(id, direction, 'child')`
+routes to these.
+
 `moveCommandLayer` edits both layer files in one action, then reloads the editor
 + refreshes the sidebar.
 
 ## 108.6 Follow-ups (not in this build)
 
-- **Child-level shared↔local move** (HS-9094) — the move is top-level (commands +
-  whole groups) only; moving an individual child between layers is deferred.
+- *(done — HS-9094)* Child-level shared↔local move shipped (see §108.5).
 
 ## 108.8 Group collapse is per-device (HS-9095)
 

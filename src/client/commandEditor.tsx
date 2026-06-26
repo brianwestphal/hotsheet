@@ -204,14 +204,17 @@ function isSharedItem(item: CommandItem, ctx: ScopeCtx): boolean {
   return typeof item.id === 'string' && ctx.sharedIds.has(item.id);
 }
 
-/** HS-9014 - the origin tag + (top-level) shared/local move button shown in
- *  Shared/Local mode. Returns an empty fragment in Resolved mode. */
+/** HS-9014 / HS-9094 - the origin tag + shared/local move button shown in
+ *  Shared/Local mode, for top-level commands/groups AND group children. Returns
+ *  an empty fragment in Resolved mode. */
 function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
   if (ctx.mode === 'resolved') return <></>;
   const shared = isSharedItem(item, ctx);
   const tag = <span className={`cmd-scope-tag scope-tag ${shared ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{shared ? 'shared' : 'local'}</span>;
-  // Move is top-level only for now (child-level move is a follow-up).
-  if (ref.type !== 'top') return tag;
+  // HS-9094 \u2014 a group itself isn't movable as a "child"; a top-level group moves
+  // whole (covered by ref.type === 'top'). Skip the move button only for a group
+  // row that is a child (groups are never nested, so this never triggers today).
+  if (ref.type === 'child' && isGroup(item)) return tag;
   const direction = shared ? 'to-local' : 'to-shared';
   const title = shared ? 'Move to Local (make this machine-only)' : 'Move to Shared (commit for the team)';
   const moveBtn = <button className="cmd-outline-move-btn" data-move={direction} title={title}>{shared ? '\u2193' : '\u2191'}</button>;
@@ -313,18 +316,20 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     void saveCommandItems();
   }));
 
-  // HS-9014 — shared↔local move button (top-level rows, Shared/Local mode).
-  // `data-move` carries the direction; `moveCommandLayer` edits both layer files
-  // then reloads + re-renders the editor for the active mode.
+  // HS-9014 / HS-9094 — shared↔local move button (top-level + child rows,
+  // Shared/Local mode). `data-move` carries the direction; `moveCommandLayer`
+  // edits both layer files then reloads + re-renders the editor.
   d.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-move-btn', (e, btn) => {
     e.stopPropagation();
     const ref = readRef(btn);
-    if (ref === null || ref.type !== 'top') return;
-    const item = getEditTree()[ref.index];
+    if (ref === null) return;
+    const item = ref.type === 'top'
+      ? getEditTree()[ref.index]
+      : resolveCommand(ref);
     const id = item.id;
     if (typeof id !== 'string' || id === '') return;
     const direction = btn.dataset.move === 'to-shared' ? 'to-shared' : 'to-local';
-    void moveCommandLayer(id, direction);
+    void moveCommandLayer(id, direction, ref.type === 'child' ? 'child' : 'top');
   }));
 
   // Group name (contentEditable) — commit on blur, Enter blurs, Escape reverts.

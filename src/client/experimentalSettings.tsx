@@ -11,6 +11,8 @@ import {
   type CustomCommand,
   isCommandTreeDelta,
   isGroup,
+  moveChildToLocal,
+  moveChildToShared,
   moveTopLevelToLocal,
   moveTopLevelToShared,
   resolveCommandTreeDelta,
@@ -399,22 +401,24 @@ async function persistLocalCommandDelta(delta: CommandTreeDelta): Promise<void> 
 }
 
 /**
- * HS-9014 (maintainer request) — move a TOP-LEVEL command/group between the
+ * HS-9014 (maintainer request) + HS-9094 — move a command/group between the
  * shared + local layers in one action, editing both layer files. `to-local`
  * makes a shared item local-only (drops from `settings.json`, adds as a local
  * addition); `to-shared` promotes a local-only item into the committed tree.
- * Reloads the editor for the active mode afterward. Child-level move is a
- * follow-up (see HS-9014 notes).
+ * `level` is `top` for a top-level command/group or `child` for a command inside
+ * a group (a shared child relocates into/out of its group's `childAdded`).
+ * Reloads the editor for the active mode + refreshes the sidebar afterward.
  */
-export async function moveCommandLayer(id: string, direction: 'to-local' | 'to-shared'): Promise<void> {
+export async function moveCommandLayer(id: string, direction: 'to-local' | 'to-shared', level: 'top' | 'child' = 'top'): Promise<void> {
   noteCommandItemsMutation();
   const layered = await getLayeredFileSettings();
   const shared = backfillCommandIds(asCommandArray(layered.shared.custom_commands)).items;
   const localVal = layered.local.custom_commands;
   const delta: CommandTreeDelta = isCommandTreeDelta(localVal) ? localVal : {};
-  const next = direction === 'to-local'
-    ? moveTopLevelToLocal({ shared, delta }, id)
-    : moveTopLevelToShared({ shared, delta }, id);
+  const layers = { shared, delta };
+  const next = level === 'child'
+    ? (direction === 'to-local' ? moveChildToLocal(layers, id) : moveChildToShared(layers, id))
+    : (direction === 'to-local' ? moveTopLevelToLocal(layers, id) : moveTopLevelToShared(layers, id));
   await updateFileSettingsLayer('shared', { custom_commands: next.shared });
   await persistLocalCommandDelta(next.delta);
   await loadScopedCommands();
