@@ -272,6 +272,46 @@ test.describe('Custom commands', () => {
     await expect(btns.first()).toContainText('Sidebar Cmd');
   });
 
+  // HS-9095 — collapsing a sidebar group persists per-device (localStorage), NOT
+  // into the committed command tree. Toggling collapse must NOT write
+  // `custom_commands` to settings.json (that wholesale shared write would leak a
+  // local delta), and the state must survive a reload.
+  test('sidebar group collapse persists per-device without writing the command tree (HS-9095)', async ({ page }) => {
+    await setCommandsAndReload(page, [
+      { type: 'group', name: 'Sidebar Group', children: [
+        { name: 'Grouped Shell', prompt: 'echo hi', target: 'shell' },
+      ] },
+    ]);
+    await page.waitForTimeout(1000);
+
+    const container = page.locator('#channel-commands-container');
+    if (await container.count() === 0) { test.skip(); return; }
+    const header = container.locator('.cmd-group-header').filter({ hasText: 'Sidebar Group' });
+    const body = container.locator('.cmd-group-body');
+    if (await header.count() === 0) { test.skip(); return; }
+
+    // Snapshot the committed tree, then collapse the group.
+    const before = (await (await page.request.get('/api/file-settings')).json() as { custom_commands?: unknown }).custom_commands;
+    await expect(body).toBeVisible();
+    await header.click();
+    await expect(body).toBeHidden({ timeout: 3000 });
+    await page.waitForTimeout(300);
+
+    // The committed `custom_commands` is byte-identical — collapse was NOT written.
+    const after = (await (await page.request.get('/api/file-settings')).json() as { custom_commands?: unknown }).custom_commands;
+    expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+    expect(JSON.stringify(after)).not.toContain('collapsed');
+
+    // Collapse survives a reload (restored from localStorage).
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.waitForTimeout(1000);
+    const bodyAfterReload = page.locator('#channel-commands-container .cmd-group-body');
+    if (await bodyAfterReload.count() > 0) {
+      await expect(bodyAfterReload.first()).toBeHidden({ timeout: 3000 });
+    }
+  });
+
   // HS-6636: a "Show log on completion" shell command must switch the drawer to
   // the Commands Log tab if the user happens to be on a terminal tab when it
   // finishes — otherwise the auto-show is silently invisible.

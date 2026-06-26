@@ -114,10 +114,17 @@ A per-row **shared↔local move** (top-level commands/groups):
 
 - **Child-level shared↔local move** (HS-9094) — the move is top-level (commands +
   whole groups) only; moving an individual child between layers is deferred.
-- **Sidebar group-collapse vs. a local command delta** (HS-9095) — the sidebar's
-  collapse persistence (`saveCommandItemsExternal`) still writes the effective tree
-  to the shared default layer regardless of mode; with a local delta present this
-  is the same latent resolved-mode behavior as the flat sibling editors.
+
+## 108.8 Group collapse is per-device (HS-9095)
+
+Sidebar group-collapse is a **per-machine display preference**, so it does NOT
+ride on the command tree (which would force a wholesale shared write that leaks a
+local delta). It's stored in `localStorage` via `src/client/commandGroupCollapse.ts`
+(`isGroupCollapsed`/`setGroupCollapsed`, keyed `${secret}::${groupId-or-name}`),
+reads falling back to a group's legacy `collapsed` field for migration. The
+sidebar no longer writes `custom_commands` on collapse (`saveCommandItemsExternal`
+removed). Tests: `commandGroupCollapse.test.ts` + an `e2e/commands.spec.ts` case
+asserting collapse leaves `settings.json` byte-identical and survives a reload.
 
 ## 108.7 Tests
 

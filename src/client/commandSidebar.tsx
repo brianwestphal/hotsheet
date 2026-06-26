@@ -1,12 +1,13 @@
-import { createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, killShellCommand, updateSettings } from '../api/index.js';
+import { createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, killShellCommand } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
+import { isGroupCollapsed, setGroupCollapsed } from './commandGroupCollapse.js';
 import { refreshLogBadge } from './commandLog.js';
 import { getCommandLastRun, recordCommandRun } from './commandRunTimes.js';
 import { hideCommandTooltip, showCommandTooltip } from './commandTooltip.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
-import { CMD_COLORS, CMD_ICONS, type CommandItem, contrastColor, type CustomCommand, getCommandItems,isGroup, noteCommandItemsMutation } from './experimentalSettings.js';
+import { CMD_COLORS, CMD_ICONS, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
 import { getActiveProject, state } from './state.js';
 import { showToast } from './toast.js';
@@ -377,7 +378,11 @@ export function renderChannelCommands() {
       const hasVisibleCmd = item.children.some(child => isCommandVisible(child, channelEnabled));
       if (!hasVisibleCmd) continue;
 
-      const isCollapsed = item.collapsed === true;
+      // HS-9095 — collapse is a per-device display preference, persisted in
+      // localStorage (NOT the command tree → no shared write that would leak a
+      // local delta; see `commandGroupCollapse.ts`).
+      const collapseSecret = getActiveProject()?.secret ?? '';
+      const isCollapsed = isGroupCollapsed(collapseSecret, item);
       const header = toElement(
         <div className="cmd-group-header">
           <span className="cmd-group-name">{item.name}</span>
@@ -388,13 +393,11 @@ export function renderChannelCommands() {
 
       const groupRef = item;
       header.addEventListener('click', () => {
-        const nowCollapsed = !(groupRef.collapsed ?? false);
-        groupRef.collapsed = nowCollapsed ? true : undefined;
+        const nowCollapsed = !isGroupCollapsed(collapseSecret, groupRef);
+        setGroupCollapsed(collapseSecret, groupRef, nowCollapsed);
         const chevronHost = header.querySelector('.cmd-group-chevron')!;
         chevronHost.replaceChildren(toElement(nowCollapsed ? CHEVRON_RIGHT : CHEVRON_DOWN));
         body.style.display = nowCollapsed ? 'none' : '';
-        // Persist collapse state
-        void saveCommandItemsExternal(commandItems);
       });
 
       // Render children into the group body
@@ -411,17 +414,6 @@ export function renderChannelCommands() {
       container.appendChild(renderButton(item));
     }
   }
-}
-
-/** Save command items via API and re-render sidebar. */
-async function saveCommandItemsExternal(commandItems: CommandItem[]) {
-  // HS-8440 — same epoch bump as `experimentalSettings.tsx::saveCommandItems`.
-  // This path saves the group-collapse mutation from the sidebar header
-  // click; without the bump a concurrent `reloadCustomCommands` could
-  // overwrite the collapsed flag back to its pre-click value.
-  noteCommandItemsMutation();
-  await updateSettings({ custom_commands: JSON.stringify(commandItems) });
-  renderChannelCommands();
 }
 
 // --- Shell command execution ---
