@@ -2,8 +2,8 @@
  * HS-9033 — the device (phone) side of mTLS QR pairing (docs/94 §94.4.2 Phase 2),
  * the client entry for the standalone `/pair` page (`src/components/pairPage.tsx`).
  *
- * Flow: read the desktop's pairing payload (in-page camera scan via the native
- * `BarcodeDetector`, or paste/hash fallback) → collect a device label + a `.p12`
+ * Flow: read the desktop's pairing payload (in-page camera scan via the bundled
+ * `@zxing/browser` decoder, or paste/hash fallback) → collect a device label + a `.p12`
  * password → generate an RSA keypair + CSR IN THE BROWSER (the private key never
  * leaves the device) → POST it with the single-use token to
  * `/api/auth/pair/complete` → assemble a password-protected `.p12` from the
@@ -18,6 +18,8 @@
  * manually (docs/manual-test-plan.md §7) — this surface gets the bytes onto the
  * device and explains the per-OS steps; the OS keychain import is the user's.
  */
+import type { IScannerControls } from '@zxing/browser';
+import { BrowserQRCodeReader } from '@zxing/browser';
 import type { z } from 'zod';
 
 import { PairCompleteResSchema } from '../api/enrollment.js';
@@ -35,25 +37,24 @@ function show(el: HTMLElement): void {
   if (r !== null) r.replaceChildren(el);
 }
 
-/** A `BarcodeDetector`-like constructor, when the platform exposes one. Narrowed
- *  off `window` without `any` — absent on iOS before 17 and on Firefox, hence the
- *  camera step is offered only when this is present (paste always works). */
-interface BarcodeDetectorLike {
-  detect(source: CanvasImageSource): Promise<Array<{ rawValue: string }>>;
-}
-interface BarcodeDetectorCtor {
-  new (opts?: { formats?: string[] }): BarcodeDetectorLike;
-  getSupportedFormats?: () => Promise<string[]>;
-}
-function barcodeDetectorCtor(): BarcodeDetectorCtor | null {
-  const ctor = (window as unknown as { BarcodeDetector?: unknown }).BarcodeDetector;
-  return typeof ctor === 'function' ? (ctor as BarcodeDetectorCtor) : null;
+/** Whether this browser can open a camera at all. We decode QR frames with the
+ *  bundled `@zxing/browser` (a pure-JS decoder that works everywhere — Firefox,
+ *  older iOS, Android), so the only gate on the in-page scan is `getUserMedia`;
+ *  the native `BarcodeDetector` is no longer required. Paste always works.
+ *
+ *  `lib.dom` types `navigator.mediaDevices` as always-present, but it is absent in
+ *  non-secure contexts and on old browsers — so widen to an optional view (an
+ *  intentional type-only `as`, no runtime erasure) to make the runtime existence
+ *  check honest rather than a lint-flagged always-true comparison. */
+function canOpenCamera(): boolean {
+  const md = (navigator as Omit<Navigator, 'mediaDevices'> & { mediaDevices?: Partial<MediaDevices> }).mediaDevices;
+  return typeof md?.getUserMedia === 'function';
 }
 
 // --- Step 1: obtain the pairing payload ------------------------------------
 
 function renderStart(message?: { text: string; kind: 'error' | 'info' }): void {
-  const canScan = barcodeDetectorCtor() !== null;
+  const canScan = canOpenCamera();
   const el = toElement(
     <div className="pair-step pair-step-start">
       {message !== undefined
@@ -87,59 +88,46 @@ function renderStart(message?: { text: string; kind: 'error' | 'info' }): void {
   });
 }
 
-/** Open the camera and poll frames for a QR via `BarcodeDetector`. Best-effort:
- *  any failure (permission denied, no camera) falls back to the paste flow. */
+/** Open the camera and decode QR frames with `@zxing/browser` until a valid Hot
+ *  Sheet pairing payload appears. ZXing's continuous decoder calls `getUserMedia`
+ *  itself (preferring the rear/environment camera) and reports each frame's
+ *  result through the callback; we ignore non-Hot-Sheet codes and keep scanning,
+ *  stopping only on the first valid payload. Best-effort: any failure (permission
+ *  denied, no camera) falls back to the paste flow. Exposed for the e2e fake-
+ *  camera test, which feeds a Y4M QR through Chromium's fake capture device. */
 async function startCameraScan(): Promise<void> {
-  const ctor = barcodeDetectorCtor();
   const area = byIdOrNull('pair-scan-area');
-  if (ctor === null || area === null) return;
-
-  let stream: MediaStream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-  } catch {
-    renderStart({ text: 'Camera unavailable or permission denied. Enter the code manually below.', kind: 'error' });
-    return;
-  }
+  if (area === null) return;
 
   const video = toElement(<video className="pair-video"></video>) as unknown as HTMLVideoElement;
   video.playsInline = true; // inline playback on iOS (attribute casing varies; set the prop)
   video.muted = true;
-  const canvas = toElement(<canvas></canvas>) as unknown as HTMLCanvasElement; // offscreen frame buffer (never mounted)
   area.replaceChildren(video);
   area.style.display = '';
-  video.srcObject = stream;
-  await video.play().catch(() => undefined);
 
-  const detector = new ctor({ formats: ['qr_code'] });
-  // A holder object (not a bare `let`) so TS doesn't narrow `stopped` to a
-  // literal and flag the post-`stop()` re-check as always-truthy — the flag is
-  // mutated across async ticks.
-  const scan = { stopped: false };
-  const stop = (): void => { scan.stopped = true; for (const t of stream.getTracks()) t.stop(); };
+  const reader = new BrowserQRCodeReader();
+  // A holder object (not a bare `let`) so the post-stop guard isn't narrowed to a
+  // constant — `done` is mutated across async decode callbacks.
+  const scan: { done: boolean; controls: IScannerControls | null } = { done: false, controls: null };
+  const stop = (): void => { scan.done = true; scan.controls?.stop(); };
 
-  const tick = async (): Promise<void> => {
-    if (scan.stopped) return;
-    if (video.videoWidth > 0) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx !== null) {
-        ctx.drawImage(video, 0, 0);
-        try {
-          const codes = await detector.detect(canvas);
-          for (const code of codes) {
-            const payload = parsePairingPayload(code.rawValue);
-            if (payload !== null) { stop(); renderEnroll(payload); return; }
-          }
-        } catch { /* transient detect error — keep polling */ }
-      }
-    }
-    // Always reschedule; the top-of-tick guard stops the loop after `stop()`
-    // (one extra tick may fire and immediately return — harmless).
-    window.setTimeout(() => { void tick(); }, 250);
-  };
-  void tick();
+  try {
+    scan.controls = await reader.decodeFromConstraints(
+      { video: { facingMode: 'environment' } },
+      video,
+      (result) => {
+        if (scan.done || result === undefined) return; // most frames report no code — keep scanning
+        const payload = parsePairingPayload(result.getText());
+        if (payload !== null) { stop(); renderEnroll(payload); }
+        // A non-Hot-Sheet QR (a Wi-Fi/URL code) parses to null — ignore and keep scanning.
+      },
+    );
+    // The decoder may have stopped synchronously (payload found before this
+    // resolves); honor that so we don't leave the camera running.
+    if (scan.done) scan.controls.stop();
+  } catch {
+    renderStart({ text: 'Camera unavailable or permission denied. Enter the code manually below.', kind: 'error' });
+  }
 }
 
 // --- Step 2: collect label + password, then enroll -------------------------

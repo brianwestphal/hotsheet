@@ -106,6 +106,21 @@ to render it; `@types/qrcode` is a devDependency.
   transitive deps `dijkstrajs`/`pngjs`/`yargs` are clean). Not security-critical (the *token* it
   encodes is what's gated — single-use + short TTL, server-side, HS-8996).
 
+### `@zxing/browser` + `@zxing/library` (HS-9097 — in-page QR scanner)
+
+The device-side `/pair` page (§94.4.2 Phase 2) decodes the operator's pairing QR with the phone's
+camera. `src/client/pair.tsx` uses **`@zxing/browser@^0.2.0`** (`BrowserQRCodeReader.decodeFromConstraints`,
+peer `@zxing/library@^0.22.0`), replacing the native `BarcodeDetector` so the scan works on every
+browser (Firefox / older iOS). Bundled into the `/pair` IIFE only, alongside node-forge.
+
+- **Why this lib:** the standard pure-JS multi-format barcode decoder; no native addon, runs in any
+  browser. **Client-only, decode-only** — the decoded payload is `parsePairingPayload`-validated (zod,
+  `pairingPayload.ts`) before use, and the *token* inside is what's gated server-side (single-use +
+  short TTL, HS-8996), so a hostile QR can at worst feed a malformed/expired payload that's rejected.
+- **Posture:** `npm audit` reports **no advisories against `@zxing/browser@0.2.0` / `@zxing/library@0.22.0`**
+  (checked 2026-06-26). Not on the cert-signing path. Pinned to the matching peer pair (browser 0.2.0
+  needs library ^0.22.0; the newer 0.23.0 was held back to satisfy the peer range).
+
 ## The cargo (src-tauri) baseline (HS-8649)
 
 HS-8649 ran the first `cargo audit` over `src-tauri/Cargo.lock`. It reported **6
