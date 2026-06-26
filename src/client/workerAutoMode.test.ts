@@ -15,6 +15,7 @@ import {
 const mocks = vi.hoisted(() => ({
   getSuggestedWorkerCount: vi.fn(),
   setPoolTarget: vi.fn(),
+  updateSettings: vi.fn(),
   syncPoolHeadless: vi.fn(),
   getActiveProject: vi.fn<() => { secret: string } | null>(),
   showToast: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../api/index.js', () => ({
   getSuggestedWorkerCount: mocks.getSuggestedWorkerCount,
   setPoolTarget: mocks.setPoolTarget,
+  updateSettings: mocks.updateSettings,
 }));
 vi.mock('./workerPoolPanel.js', () => ({ MAX_TARGET: 16, syncPoolHeadless: mocks.syncPoolHeadless }));
 vi.mock('./state.js', () => ({ getActiveProject: mocks.getActiveProject }));
@@ -46,6 +48,7 @@ beforeEach(() => {
   mocks.getActiveProject.mockReturnValue({ secret: 's1' });
   mocks.getSuggestedWorkerCount.mockResolvedValue({ n: 3, rationale: 'ok', source: 'heuristic' });
   mocks.setPoolTarget.mockResolvedValue({ ok: true });
+  mocks.updateSettings.mockResolvedValue({ ok: true });
   mocks.syncPoolHeadless.mockResolvedValue({ targetN: 0, workers: [] });
 });
 
@@ -85,10 +88,13 @@ describe('toggle + UI sync', () => {
     cb.dispatchEvent(new Event('change'));
     expect(isAutoModeEnabled('s1')).toBe(true);
     expect(mocks.showToast).toHaveBeenCalledWith(expect.stringContaining('Auto worker pool on'));
+    // HS-9110 — the toggle also writes the server-readable headless-pool enable.
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ headless_worker_pool: 'true' });
 
     cb.checked = false;
     cb.dispatchEvent(new Event('change'));
     expect(isAutoModeEnabled('s1')).toBe(false);
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ headless_worker_pool: 'false' });
   });
 
   it('reflects the persisted flag onto the checkbox', () => {

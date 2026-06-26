@@ -305,6 +305,16 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     } catch (e: unknown) {
       console.warn(`[startup] Starting claim-lease sweep timer failed (non-fatal): ${getErrorMessage(e)}`);
     }
+    // HS-9110 (docs/100 §100.2.1(a)) — periodic server-side worker-pool reconcile
+    // so a headless target keeps self-healing/scaling with no UI. Gated on the
+    // server-readable headless-pool enable + a live channel; off-loop via §75;
+    // unref'd + cleared on shutdown.
+    try {
+      const { startPoolReconcileTimer } = await import('./workers/poolReconcileTimer.js');
+      startPoolReconcileTimer(dataDir);
+    } catch (e: unknown) {
+      console.warn(`[startup] Starting worker-pool reconcile timer failed (non-fatal): ${getErrorMessage(e)}`);
+    }
     startupMark('post-startup: migrating global config');
     await migrateGlobalConfig();
     startupMark('post-startup: cleaning up stale channels');

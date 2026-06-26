@@ -14,7 +14,7 @@
 // loop re-sizes on a SLOW cadence (~once a minute) while the cheap reconcile/
 // cleanup tick runs frequently. Turning Auto OFF stops the auto-sizing but leaves
 // any running workers to finish (they're durable; drain them from the panel).
-import { getSuggestedWorkerCount, setPoolTarget } from '../api/index.js';
+import { getSuggestedWorkerCount, setPoolTarget, updateSettings } from '../api/index.js';
 import { getActiveProject } from './state.js';
 import { showToast } from './toast.js';
 import { MAX_TARGET, syncPoolHeadless } from './workerPoolPanel.js';
@@ -145,6 +145,10 @@ export function bindWorkerAutoToggle(): void {
     const secret = activeSecret();
     if (secret === null) { cb.checked = false; return; }
     setAutoModeEnabledPersisted(secret, cb.checked);
+    // HS-9110 — also write the SERVER-readable enable so the server's periodic
+    // reconcile loop (docs/100 §100.2.1(a)) keeps scaling the pool with no UI
+    // open. Best-effort: localStorage already drives the in-window loop.
+    void updateSettings({ headless_worker_pool: String(cb.checked) }).catch(() => { /* transient */ });
     applyAutoModeForActiveProject();
     showToast(cb.checked
       ? 'Auto worker pool on — sizing the pool to Up Next automatically'

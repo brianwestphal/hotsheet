@@ -1,9 +1,9 @@
 # 100. Server-Driven Worker Launch
 
-**Status: PARTIAL** — the **server-owned terminal lifecycle** (§100.2.2, HS-9077)
-+ the **server reconcile endpoint** (§100.2.1, HS-9076) **SHIPPED** (2026-06-26);
-only **client adoption** (§100.2.3, HS-9078) remains (plus the optional periodic
-interval loop, deferred — see below). Design HS-9062.
+**Status: PARTIAL** — the **server-owned terminal lifecycle** (§100.2.2, HS-9077),
+the **server reconcile endpoint** (§100.2.1(b), HS-9076), and the **periodic
+reconcile interval loop** (§100.2.1(a), HS-9110) **SHIPPED** (2026-06-26/27); only
+**client adoption** (§100.2.3, HS-9078) remains. Design HS-9062.
 
 **What shipped (HS-9076):** `reconcilePool(secret, dataDir, repoRoot, deps?)`
 (`src/workers/reconcilePool.ts`) — the server analog of the client
@@ -16,10 +16,23 @@ AI raising the target with no UI **actually scales the pool**. The pool
 **self-heals**: the reconcile captures the owner's intended target up front and
 restores it after reaping (since `removeWorker` lowers `targetN` to the slot
 count), so a crashed worker is replaced rather than silently dropping the target.
-**Two open items:** (a) the periodic **interval loop** (§100.2.1(a)) is deferred —
-it needs a SERVER-readable enable signal, but the Auto-pool switch (§91.11) is
-**client-localStorage only** (HS-9110); (b) the open UI shows server-spawned tiles
-**without an attached terminal view** until the HS-9078 adoption lands.
+**One open item:** (b) the open UI shows server-spawned tiles **without an
+attached terminal view** until the HS-9078 adoption lands.
+
+**What shipped (HS-9110):** the periodic **interval loop** (§100.2.1(a)) —
+`startPoolReconcileTimer(dataDir)` (`src/workers/poolReconcileTimer.ts`), mirroring
+`leaseSweepTimer.ts` / `telemetryRetentionTimer.ts`: started in `cli.ts`, stopped
+in `lifecycle.ts`, off-loop via the §75 scheduler (GC priority, deferred under lag,
+coalesced), `unref()`'d. Each ~10 s tick runs `reconcileEnabledHeadlessPools`,
+which reconciles a project ONLY when **all three** safety gates hold (§100.3):
+(1) the server-readable **headless-pool enable** is set, (2) `targetN > 0` (the
+§91.7 empty-pool back-off — an idle pool is skipped, no hammering), and (3) a
+worker-capable Claude is connected (`isChannelAlive`). The enable is a new
+machine-LOCAL `FileSettings` key `headless_worker_pool`
+(`src/workers/headlessPool.ts`, `isHeadlessPoolEnabled`) that the client **Auto
+switch also writes** (`workerAutoMode.ts` → `updateSettings`), so turning Auto on
+lets the server keep scaling/healing the pool with no window open. `reconcilePool`
+still clamps spawns to `poolMax()`.
 
 Closes the gap surfaced by HS-9031:
 the worker-pool target (`hotsheet_set_worker_target` / `setPoolTarget`) only
@@ -120,10 +133,13 @@ When the UI **is** open, it must not re-launch slots the server already started:
   PTY with no attached xterm indefinitely (buffering/backpressure) — workers are
   long-lived and headless. May need the §54 terminal-checkout/orphan-sink model
   applied server-side.
-- **Gating headless launch.** A server loop that spawns `claude` processes with no
-  human present needs a clear enable signal (Auto worker pool on, or an explicit
-  headless-pool opt-in) so it never spawns unexpectedly. Tie to the §91.11 Auto
-  switch + a connected-worker-context check.
+- **Gating headless launch.** ✅ RESOLVED (HS-9110). A server loop that spawns
+  `claude` processes with no human present needs a clear enable signal. Decision:
+  a dedicated machine-LOCAL `FileSettings` key `headless_worker_pool` (the explicit
+  opt-in) that the §91.11 Auto switch **also writes** — so the existing single
+  user-facing switch enables headless scaling, no new UI. The loop additionally
+  gates on `targetN > 0` and `isChannelAlive` (a connected worker-capable Claude),
+  so it never spawns unexpectedly.
 - **Resource/cap safety.** `poolMax()` (CPU-cores−2, capped 8) still bounds N;
   confirm the server loop honors it and the §91.7 empty-pool/back-off behavior.
 
@@ -144,8 +160,9 @@ When the UI **is** open, it must not re-launch slots the server already started:
 - **Server reconcile loop / endpoint** (§100.2.1) — the core. ✅ SHIPPED (HS-9076):
   the `reconcilePool` core + `POST /api/workers/pool/reconcile` + the
   `hotsheet_set_worker_target` MCP-tool trigger (the no-UI scaling path). The
-  optional periodic **interval loop** (§100.2.1(a)) is deferred — it needs a
-  server-readable enable signal (the Auto-pool switch is client-only). **HS-9110**.
+  periodic **interval loop** (§100.2.1(a)) ✅ SHIPPED (HS-9110):
+  `src/workers/poolReconcileTimer.ts` + the `headless_worker_pool` enable
+  (`src/workers/headlessPool.ts`), gated on enable + `targetN > 0` + `isChannelAlive`.
 - **Server-owned terminal lifecycle** for pool workers (§100.2.2) — server-side
   close/reap of the worker PTY (couples with the HS-9051 reap path). ✅ SHIPPED
   (HS-9077): `src/workers/serverWorkerLifecycle.ts` — `spawnWorkerTerminal(secret,

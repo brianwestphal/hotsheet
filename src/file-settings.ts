@@ -148,6 +148,9 @@ const LOCAL_SCOPE_KEYS = new Set([
   //   model/rate/speak-permissions live in machine-Global config already).
   'announcer_enabled',
   'announcer_dismissed_topics',
+  //   HS-9110 (docs/100 §100.2.1(a)) — whether THIS machine may spawn headless
+  //   workers (the server reconcile loop's enable). Per-device, never committed.
+  'headless_worker_pool',
 ]);
 
 /** Key suffixes that default to the `local` layer (e.g. `ai_instructions_nudge_dismissed`). */

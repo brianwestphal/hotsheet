@@ -227,6 +227,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await runStep('stopFreezeHeartbeat', stopFreezeHeartbeat);
   await runStep('stopTelemetryRetentionTimer', stopTelemetryRetentionTimerStep);
   await runStep('stopLeaseSweepTimer', stopLeaseSweepTimerStep);
+  await runStep('stopPoolReconcileTimer', stopPoolReconcileTimerStep);
   await runStep('releaseProjectLocks', releaseProjectLocks);
   await runStep('removeLockfile', removeLockfile);
 
@@ -261,6 +262,15 @@ async function stopLeaseSweepTimerStep(): Promise<void> {
   try {
     const { stopLeaseSweepTimer } = await import('./claims/leaseSweepTimer.js');
     stopLeaseSweepTimer();
+  } catch { /* never started — nothing to stop */ }
+}
+
+/** HS-9110 — stop the periodic worker-pool reconcile timer on shutdown (unref'd,
+ *  but explicit cleanup keeps it from outliving the data dir in tests). */
+async function stopPoolReconcileTimerStep(): Promise<void> {
+  try {
+    const { stopPoolReconcileTimer } = await import('./workers/poolReconcileTimer.js');
+    stopPoolReconcileTimer();
   } catch { /* never started — nothing to stop */ }
 }
 
