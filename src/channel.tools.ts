@@ -523,7 +523,15 @@ async function dispatchSetWorkerTarget(args: unknown, settings: ChannelSettings,
   if (!parsed.success) {
     return errorResult(`hotsheet_set_worker_target — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   }
-  return await proxyRequest(settings, '/api/workers/pool/target', { method: 'POST', body: parsed.data }, fetchFn);
+  const setRes = await proxyRequest(settings, '/api/workers/pool/target', { method: 'POST', body: parsed.data }, fetchFn);
+  if (setRes.isError === true) return setRes;
+  // HS-9076 — apply the new target SERVER-SIDE immediately so it scales the pool
+  // with no UI open (the headless path docs/100 §100.2.1 wants). The reconcile is
+  // best-effort: the target is already recorded, so a non-git project / reconcile
+  // hiccup just means the change takes effect when a client opens. Return the
+  // reconcile summary when it succeeds so the agent sees what changed.
+  const reconcileRes = await proxyRequest(settings, '/api/workers/pool/reconcile', { method: 'POST' }, fetchFn);
+  return reconcileRes.isError === true ? setRes : reconcileRes;
 }
 
 async function dispatchDrainWorkers(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {

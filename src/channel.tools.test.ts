@@ -831,6 +831,21 @@ describe('worker-pool management tools (HS-9031)', () => {
     expect(call[0]).toBe('http://localhost:4174/api/workers/pool/target');
     expect(call[1].method).toBe('POST');
     expect(JSON.parse(call[1].body)).toEqual({ targetN: 3 });
+    // HS-9076 — after setting the target it reconciles server-side so the change
+    // actually scales the pool with no UI open.
+    const reconcileCall = fetchSpy.mock.calls[1] as [string, { method: string }];
+    expect(reconcileCall[0]).toBe('http://localhost:4174/api/workers/pool/reconcile');
+    expect(reconcileCall[1].method).toBe('POST');
+  });
+
+  it('hotsheet_set_worker_target — does NOT reconcile when the target POST fails', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: false, status: 400, text: 'bad target' }; });
+    const result = await callTool('hotsheet_set_worker_target', { targetN: 3 }, tmpDataDir, fetchFn);
+    expect(result.isError).toBe(true);
+    // Only the /target call was made — no reconcile after a failed set.
+    expect(fetchSpy.mock.calls).toHaveLength(1);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/target');
   });
 
   it('hotsheet_set_worker_target — rejects an out-of-range target', async () => {

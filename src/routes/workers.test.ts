@@ -183,6 +183,23 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
     expect(res.status).toBe(404);
   });
 
+  // HS-9076 — the server reconcile endpoint (the no-UI scaling trigger).
+  it('POST /api/workers/pool/reconcile is a no-op at target 0 (no workers spawned)', async () => {
+    const res = await appFor(ownerData).request('/api/workers/pool/reconcile', post({}));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ spawned: 0, drained: 0, reaped: 0, targetN: 0 });
+  });
+
+  it('POST /api/workers/pool/reconcile returns 400 on a non-git project', async () => {
+    const nonGit = mkdtempSync(join(tmpdir(), 'hs-reconcile-nogit-'));
+    try {
+      const res = await appFor(nonGit).request('/api/workers/pool/reconcile', post({}));
+      expect(res.status).toBe(400);
+    } finally {
+      rmSync(nonGit, { recursive: true, force: true });
+    }
+  });
+
   // HS-9081 (docs/102 §102.3) — the pool poll folds in the per-worktree git summary.
   it('GET /api/workers/pool includes a per-worker git summary (ahead/behind/dirty)', async () => {
     // The pool route reads live claims, so it needs the DB connection up.

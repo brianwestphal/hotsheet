@@ -26,6 +26,7 @@ import {
   removeWorker, requestDrain, requestDrainAll, setQueueOnly, setReady, setTarget,
   type WorkerSlot,
 } from '../workers/poolManager.js';
+import { reconcilePool } from '../workers/reconcilePool.js';
 import { suggestWorkerCount } from '../workers/suggestN.js';
 import { projectRootFromDataDir } from './git.js';
 import { parseBody } from './validation.js';
@@ -158,6 +159,22 @@ workerRoutes.post('/workers/pool/target', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   setTarget(c.get('dataDir'), parsed.data.targetN);
   return c.json({ ok: true });
+});
+
+/** POST /api/workers/pool/reconcile — HS-9076: drive the live worker count toward
+ *  the pool's `targetN` SERVER-SIDE (spawn/drain/reap with no client open). The
+ *  headless trigger the `hotsheet_set_worker_target` MCP tool fires after setting
+ *  the target; the open UI keeps its own client reconcile (until HS-9078 adoption),
+ *  so this route is the explicit no-UI path. */
+workerRoutes.post('/workers/pool/reconcile', async (c) => {
+  const dataDir = c.get('dataDir');
+  const repoRoot = projectRootFromDataDir(dataDir);
+  if (!isGitRepo(repoRoot)) return c.json({ error: 'Not a git repository' }, 400);
+  try {
+    return c.json(await reconcilePool(c.get('projectSecret'), dataDir, repoRoot));
+  } catch (e) {
+    return c.json({ error: getErrorMessage(e) }, 500);
+  }
 });
 
 /** POST /api/workers/pool/queue-only — HS-8975: toggle a worker's queue-only mode. */

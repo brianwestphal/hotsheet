@@ -134,6 +134,23 @@ export async function removePoolWorker(req: WorkerRef): Promise<{ ok: true }> {
   return apiCall(OkSchema, '/workers/pool/remove', { method: 'POST', body: req });
 }
 
+/** HS-9076 — `POST /workers/pool/reconcile` summary: what the server reconcile
+ *  pass changed (spawn/drain/reap toward `targetN`). */
+export const ReconcileResultSchema = z.object({
+  spawned: z.number(),
+  drained: z.number(),
+  reaped: z.number(),
+  targetN: z.number(),
+  live: z.number(),
+});
+export type ReconcilePoolResult = z.infer<typeof ReconcileResultSchema>;
+
+/** POST `/workers/pool/reconcile` → drive the live worker count toward the pool's
+ *  target SERVER-SIDE (spawn/drain/reap with no client open, HS-9076). */
+export async function reconcileWorkerPool(): Promise<ReconcilePoolResult> {
+  return apiCall(ReconcileResultSchema, '/workers/pool/reconcile', { method: 'POST' });
+}
+
 /** POST `/workers/pool/target` → set the desired worker count (UI hint). */
 export async function setPoolTarget(req: SetTargetReq): Promise<{ ok: true }> {
   return apiCall(OkSchema, '/workers/pool/target', { method: 'POST', body: req });

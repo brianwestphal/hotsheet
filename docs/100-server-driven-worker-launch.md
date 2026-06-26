@@ -1,9 +1,27 @@
 # 100. Server-Driven Worker Launch
 
-**Status: PARTIAL** — the **server-owned terminal lifecycle** (§100.2.2)
-**SHIPPED** (HS-9077, 2026-06-26); the server reconcile loop (§100.2.1, HS-9076)
-and client adoption (§100.2.3, HS-9078) are still pending. Design HS-9062. Closes
-the gap surfaced by HS-9031:
+**Status: PARTIAL** — the **server-owned terminal lifecycle** (§100.2.2, HS-9077)
++ the **server reconcile endpoint** (§100.2.1, HS-9076) **SHIPPED** (2026-06-26);
+only **client adoption** (§100.2.3, HS-9078) remains (plus the optional periodic
+interval loop, deferred — see below). Design HS-9062.
+
+**What shipped (HS-9076):** `reconcilePool(secret, dataDir, repoRoot, deps?)`
+(`src/workers/reconcilePool.ts`) — the server analog of the client
+`workerPoolPanel.tsx::reconcile`: reap finished/crashed slots (`reapWorker`) →
+scale up (`prepareWorker` → `spawnWorkerTerminal` → `registerWorker`) → scale down
+(graceful `requestDrain`, newest-first), clamped to `poolMax()`. Exposed as
+`POST /api/workers/pool/reconcile` (typed `reconcileWorkerPool`); the
+`hotsheet_set_worker_target` MCP tool now calls it after setting the target, so an
+AI raising the target with no UI **actually scales the pool**. The pool
+**self-heals**: the reconcile captures the owner's intended target up front and
+restores it after reaping (since `removeWorker` lowers `targetN` to the slot
+count), so a crashed worker is replaced rather than silently dropping the target.
+**Two open items:** (a) the periodic **interval loop** (§100.2.1(a)) is deferred —
+it needs a SERVER-readable enable signal, but the Auto-pool switch (§91.11) is
+**client-localStorage only** (HS-9110); (b) the open UI shows server-spawned tiles
+**without an attached terminal view** until the HS-9078 adoption lands.
+
+Closes the gap surfaced by HS-9031:
 the worker-pool target (`hotsheet_set_worker_target` / `setPoolTarget`) only
 actually **launches** workers while the owner Hot Sheet window is open — launch
 is client-driven. So an AI/headless caller that sets the target with no UI open
@@ -123,8 +141,11 @@ When the UI **is** open, it must not re-launch slots the server already started:
 
 ## 100.5 Follow-up tickets
 
-- **Server reconcile loop / endpoint** (§100.2.1) — the core. — **HS-9076** (pending;
-  consumes the HS-9077 primitives).
+- **Server reconcile loop / endpoint** (§100.2.1) — the core. ✅ SHIPPED (HS-9076):
+  the `reconcilePool` core + `POST /api/workers/pool/reconcile` + the
+  `hotsheet_set_worker_target` MCP-tool trigger (the no-UI scaling path). The
+  optional periodic **interval loop** (§100.2.1(a)) is deferred — it needs a
+  server-readable enable signal (the Auto-pool switch is client-only). **HS-9110**.
 - **Server-owned terminal lifecycle** for pool workers (§100.2.2) — server-side
   close/reap of the worker PTY (couples with the HS-9051 reap path). ✅ SHIPPED
   (HS-9077): `src/workers/serverWorkerLifecycle.ts` — `spawnWorkerTerminal(secret,
