@@ -9,9 +9,12 @@ import {
   releaseTicket, removePoolWorker, removeWorktree, reviewInGlassbox, setPoolTarget,
 type WorkerSlotView,
 } from '../api/index.js';
+import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './channelUI.js';
+import { confirmDialog } from './confirm.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  closeWorkerPoolPanel, gitChipTitle, refreshPool, releaseWorkerClaims, renderPoolControls, renderWorkerTile, reviewWorkerBranch,
+  buildWorkerManagementPrompt, closeWorkerPoolPanel, gitChipTitle, refreshPool, releaseWorkerClaims,
+  renderPoolControls, renderPoolPrompt, renderWorkerTile, reviewWorkerBranch, submitWorkerPrompt,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -32,6 +35,12 @@ vi.mock('../api/index.js', () => ({
 }));
 vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn() }));
+// HS-9079 — the prompt box routes through the channel to the main agent.
+vi.mock('./channelUI.js', () => ({
+  isChannelAlive: vi.fn(() => true),
+  isChannelBusy: vi.fn(() => false),
+  triggerChannelAndMarkBusy: vi.fn(),
+}));
 vi.mock('./terminalInstanceLifecycle.js', () => ({ closeDynamicTerminal: vi.fn() }));
 vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new') }));
 vi.mock('./dispatch.js', () => ({
@@ -342,5 +351,85 @@ describe('releaseWorkerClaims (HS-9051)', () => {
     vi.mocked(getTicketClaims).mockRejectedValue(new Error('boom'));
     await expect(releaseWorkerClaims('worker-1')).resolves.toBeUndefined();
     expect(releaseTicket).not.toHaveBeenCalled();
+  });
+});
+
+// HS-9079 (docs/101 §101.1-101.2) — the natural-language worker-management prompt.
+describe('buildWorkerManagementPrompt (HS-9079)', () => {
+  it('wraps the instruction + names the worker MCP tools (query/size/partition/dispatch)', () => {
+    const p = buildWorkerManagementPrompt('  parallelize tickets tagged refactor  ');
+    expect(p).toContain('«parallelize tickets tagged refactor»'); // trimmed + quoted
+    expect(p).toContain('hotsheet_query_tickets');
+    expect(p).toContain('hotsheet_set_worker_target');
+    expect(p).toContain('hotsheet_dispatch_tickets');
+    expect(p).toContain('partition');
+    // It tells the agent to manage, not do the work itself.
+    expect(p.toLowerCase()).toContain("do not do the tickets' work yourself");
+  });
+});
+
+describe('renderPoolPrompt (HS-9079)', () => {
+  let host: HTMLElement;
+  beforeEach(() => { host = document.createElement('div'); });
+
+  it('submits the trimmed value on Go and clears the input', () => {
+    const onSubmit = vi.fn();
+    renderPoolPrompt(host, onSubmit);
+    const input = host.querySelector<HTMLInputElement>('.worker-pool-prompt-input')!;
+    input.value = '  split the backlog  ';
+    host.querySelector<HTMLButtonElement>('.worker-pool-prompt-go')!.click();
+    expect(onSubmit).toHaveBeenCalledWith('split the backlog');
+    expect(input.value).toBe('');
+  });
+
+  it('submits on Enter, and does nothing for an empty/whitespace value', () => {
+    const onSubmit = vi.fn();
+    renderPoolPrompt(host, onSubmit);
+    const input = host.querySelector<HTMLInputElement>('.worker-pool-prompt-input')!;
+    input.value = '   ';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    input.value = 'parallelize tag x';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(onSubmit).toHaveBeenCalledWith('parallelize tag x');
+  });
+});
+
+describe('submitWorkerPrompt (HS-9079)', () => {
+  beforeEach(() => {
+    vi.mocked(triggerChannelAndMarkBusy).mockReset();
+    vi.mocked(confirmDialog).mockReset();
+    vi.mocked(isChannelAlive).mockReturnValue(true);
+    vi.mocked(isChannelBusy).mockReturnValue(false);
+  });
+
+  it('routes the wrapped directive to the main agent when idle (no confirm)', async () => {
+    await submitWorkerPrompt('parallelize tag x');
+    expect(confirmDialog).not.toHaveBeenCalled();
+    expect(triggerChannelAndMarkBusy).toHaveBeenCalledOnce();
+    expect(vi.mocked(triggerChannelAndMarkBusy).mock.calls[0][0]).toContain('«parallelize tag x»');
+  });
+
+  it('no-ops on an empty instruction', async () => {
+    await submitWorkerPrompt('   ');
+    expect(triggerChannelAndMarkBusy).not.toHaveBeenCalled();
+  });
+
+  it('warns + does not send when the channel is not connected', async () => {
+    vi.mocked(isChannelAlive).mockReturnValue(false);
+    await submitWorkerPrompt('parallelize tag x');
+    expect(triggerChannelAndMarkBusy).not.toHaveBeenCalled();
+  });
+
+  it('busy-aware: confirms before stacking on a mid-task agent; sends on confirm, not on cancel', async () => {
+    vi.mocked(isChannelBusy).mockReturnValue(true);
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    await submitWorkerPrompt('parallelize tag x');
+    expect(confirmDialog).toHaveBeenCalledOnce();
+    expect(triggerChannelAndMarkBusy).not.toHaveBeenCalled();
+
+    vi.mocked(confirmDialog).mockResolvedValueOnce(true);
+    await submitWorkerPrompt('parallelize tag x');
+    expect(triggerChannelAndMarkBusy).toHaveBeenCalledOnce();
   });
 });

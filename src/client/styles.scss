@@ -10811,6 +10811,24 @@ label.detail-details-label {
   .worker-pool-controls-right { display: flex; align-items: center; gap: 8px; }
 }
 
+/* HS-9079 (docs/101) — natural-language worker-management prompt box. */
+.worker-pool-prompt {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border);
+
+  .worker-pool-prompt-inner { display: flex; align-items: center; gap: 8px; }
+  .worker-pool-prompt-input {
+    flex: 1; min-width: 0;
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 12px;
+  }
+  .worker-pool-prompt-go { white-space: nowrap; }
+}
+
 .git-popover-header {
   display: flex;
   align-items: center;

@@ -15,6 +15,8 @@ import {
 } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './channelUI.js';
+import { confirmDialog } from './confirm.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
@@ -202,6 +204,83 @@ export function renderPoolControls(
   controlsEl.querySelector('.worker-pool-step-up')?.addEventListener('click', () => onStep(1));
   controlsEl.querySelector('.worker-pool-step-down')?.addEventListener('click', () => onStep(-1));
   controlsEl.querySelector('.worker-pool-drain-all')?.addEventListener('click', () => onDrainAll());
+}
+
+/**
+ * HS-9079 (docs/101 §101.1) — wrap the owner's natural-language instruction in a
+ * worker-management directive for the MAIN agent. The agent carries it out with
+ * the shipped worker MCP tools (query → size → partition → dispatch). Pure +
+ * exported for tests. The actual orchestration is the agent's job at runtime;
+ * this only builds the prompt it receives over the channel.
+ */
+export function buildWorkerManagementPrompt(instruction: string): string {
+  return [
+    'You are managing the Hot Sheet worker pool. The owner asked:',
+    '',
+    `«${instruction.trim()}»`,
+    '',
+    'Carry it out using the worker MCP tools — do NOT do the tickets\' work yourself:',
+    '- `hotsheet_query_tickets` — resolve the exact set the request names (by tag / category / status / free-text). If nothing matches or the request is ambiguous, say so and stop.',
+    '- `hotsheet_set_worker_target` — size the pool to fit that set (use the suggest-N heuristic; the pool enforces its own maximum, so never try to exceed it).',
+    '- partition the set into coherent per-worker batches: group small/related tickets (shared files/area, shared tag/category) together, isolate large/risky ones, and never put a ticket in the same batch as one of its own `blocked_by` dependencies.',
+    '- `hotsheet_dispatch_tickets` — dispatch each batch to a specific worker.',
+    '',
+    'Show the proposed assignment (which tickets → which worker) for the owner to review before dispatching when you can. Report the outcome (sized to N, dispatched M tickets across K workers) when done.',
+  ].join('\n');
+}
+
+/**
+ * HS-9079 — send a worker-management instruction to the main agent over the
+ * channel. Gated on the channel being connected; busy-aware (warn before stacking
+ * onto a mid-task main agent, per §101.4). No-op on an empty instruction.
+ * Exported for tests.
+ */
+export async function submitWorkerPrompt(instruction: string): Promise<void> {
+  const trimmed = instruction.trim();
+  if (trimmed === '') return;
+  if (!isChannelAlive()) {
+    showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
+    return;
+  }
+  if (isChannelBusy()) {
+    const ok = await confirmDialog({
+      title: 'Main agent is busy',
+      message: 'The main agent is mid-task. This worker-management request will queue behind its current work. Send it anyway?',
+      confirmLabel: 'Send',
+      cancelLabel: 'Cancel',
+    });
+    if (!ok) return;
+  }
+  triggerChannelAndMarkBusy(buildWorkerManagementPrompt(trimmed));
+  showToast('Sent to the main agent — it will query, size, partition, and dispatch.', { variant: 'success' });
+}
+
+/** HS-9079 — render the prompt text box + "Go" into `promptEl`. `onSubmit` fires
+ *  with the trimmed instruction on Go or Enter (no-op on empty); the input clears
+ *  after a submit. Exported for tests. */
+export function renderPoolPrompt(promptEl: HTMLElement, onSubmit: (instruction: string) => void): void {
+  promptEl.replaceChildren(toElement(
+    <div className="worker-pool-prompt-inner">
+      <input
+        type="text"
+        className="worker-pool-prompt-input"
+        placeholder="Tell the pool what to parallelize (e.g. “parallelize tickets tagged refactor”)"
+        aria-label="Worker-pool instruction"
+      />
+      <button type="button" className="btn btn-sm worker-pool-prompt-go">Go</button>
+    </div>,
+  ));
+  const input = promptEl.querySelector<HTMLInputElement>('.worker-pool-prompt-input');
+  const go = promptEl.querySelector<HTMLButtonElement>('.worker-pool-prompt-go');
+  const submit = (): void => {
+    if (input === null) return;
+    const value = input.value.trim();
+    if (value === '') return;
+    input.value = '';
+    onSubmit(value);
+  };
+  go?.addEventListener('click', submit);
+  input?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
 }
 
 /** Tear down a finished worker — `stopped` (drained gracefully) or `dead`
@@ -435,6 +514,8 @@ export function openWorkerPoolPanel(): void {
         </div>
         <div className="worker-pool-body"></div>
         <div className="worker-pool-controls"></div>
+        {/* HS-9079 — natural-language worker-management prompt → the main agent. */}
+        <div className="worker-pool-prompt"></div>
       </div>
     </div>,
   );
@@ -444,6 +525,10 @@ export function openWorkerPoolPanel(): void {
   document.addEventListener('keydown', onKeydown, true);
 
   const bodyEl = overlay.querySelector<HTMLElement>('.worker-pool-body')!;
+
+  // HS-9079 — the worker-management prompt box (wraps + triggers the main agent).
+  const promptEl = overlay.querySelector<HTMLElement>('.worker-pool-prompt');
+  if (promptEl) renderPoolPrompt(promptEl, (instruction) => void submitWorkerPrompt(instruction));
 
   document.body.appendChild(overlay);
   activeOverlay = overlay;

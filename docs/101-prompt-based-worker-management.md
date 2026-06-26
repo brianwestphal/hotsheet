@@ -1,9 +1,22 @@
 # 101. Prompt-Based Worker / Work-Splitting Management
 
-**Status: DESIGN ONLY** (HS-9061, 2026-06-26). The second half of HS-9031 — the
-MCP worker tools (`hotsheet_get_worker_pool` / `hotsheet_set_worker_target` /
-`hotsheet_dispatch_tickets` / `hotsheet_drain_workers`) already shipped; this is
-the **prompt-driven** owner-facing manager that drives them. Builds on the worker
+**Status: PARTIAL** — the core **prompt box + channel-trigger wrapper** (§101.1-101.2)
+**SHIPPED** (HS-9079, 2026-06-26); the "Parallelize tag…" quick action + the
+plan-preview wiring to the partition editor are HS-9080 (pending, also wants the
+HS-9073 coherent partitioner for good default chunks). Design HS-9061. The second
+half of HS-9031 — the MCP worker tools (`hotsheet_get_worker_pool` /
+`hotsheet_set_worker_target` / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers`)
+already shipped; this is the **prompt-driven** owner-facing manager that drives them.
+
+**What shipped (HS-9079):** a prompt text box + "Go" in the worker-pool panel
+(`workerPoolPanel.tsx`). `buildWorkerManagementPrompt(instruction)` wraps the
+owner's natural-language request in a worker-management directive (query → size →
+partition → dispatch via the `hotsheet_*` tools; "manage, don't do the work
+yourself"); `submitWorkerPrompt` routes it through `triggerChannelAndMarkBusy` to
+the **main** FIFO-leader agent (the unchanged default target of `triggerChannel`,
+HS-9084), gated on the channel being connected and **busy-aware** (a `confirmDialog`
+before stacking onto a mid-task agent, §101.4). The agent does the actual
+orchestration at runtime with the MCP tools. Builds on the worker
 pool ([91-worker-pool-scaling.md](91-worker-pool-scaling.md)), coordinator
 dispatch ([92-coordinator-dispatch.md](92-coordinator-dispatch.md)), and the
 batching policy ([98-worker-batching-policy.md](98-worker-batching-policy.md)).
@@ -98,8 +111,8 @@ orchestration engine:
 
 ## 101.6 Follow-up tickets
 
-- **Prompt box + channel-trigger wrapper** in the pool panel (the core).
-- **"Parallelize tag…" quick action.**
+- **Prompt box + channel-trigger wrapper** in the pool panel (the core). ✅ SHIPPED (HS-9079).
+- **"Parallelize tag…" quick action.** — HS-9080.
 - **Wire the plan preview** to the HS-8965/8977 partition editor with accept/edit/
-  cancel → `hotsheet_dispatch_tickets`.
+  cancel → `hotsheet_dispatch_tickets`. — HS-9080.
 - Depends on coherent partitioner grouping (HS-9073, §98) for good default chunks.
