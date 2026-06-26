@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   backfillCommandIds,
-  type CommandGroup,
   type CommandItem,
   type CommandTreeDelta,
   computeCommandTreeDelta,
