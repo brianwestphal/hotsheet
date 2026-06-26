@@ -6,7 +6,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { claudeAllowRulePattern, syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
+import { getMcpServerKey } from './channel-config.js';
+import { claudeAllowRulePattern, syncClaudeAllowRule, unsyncClaudeAllowRule, writeWorktreeApprovals } from './claude-allow-rule.js';
 
 let tempDir: string;
 let dataDir: string;
@@ -227,6 +228,125 @@ describe('unsyncClaudeAllowRule (HS-8377)', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* swallow */ });
     expect(() => { unsyncClaudeAllowRule(dataDir); }).not.toThrow();
     expect(readFileSync(settingsPath, 'utf-8')).toBe(bogus);
+    expect(warnSpy).toHaveBeenCalled();
+  });
+});
+
+// HS-9058 (docs/104 §104.4) — the worktree approvals writer. A git worktree is
+// a follower of the owner project: its `.claude/settings.local.json` is at the
+// WORKTREE root, while the opt-out + server slug come from the OWNER's dataDir.
+describe('writeWorktreeApprovals (HS-9058, docs/104)', () => {
+  // A separate worktree root (distinct from the owner `tempDir`/`dataDir` set up
+  // in beforeEach), so the regression guard can assert the OWNER root is never
+  // touched.
+  let worktreeRoot: string;
+  let worktreeClaudeDir: string;
+  let worktreeSettings: string;
+
+  const SKILLS = ['hotsheet', 'hotsheet-worker', 'hs-bug'];
+
+  function setupWorktree(): void {
+    worktreeRoot = join(tmpdir(), `hs-wt-approve-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    worktreeClaudeDir = join(worktreeRoot, '.claude');
+    worktreeSettings = join(worktreeClaudeDir, 'settings.local.json');
+    mkdirSync(worktreeClaudeDir, { recursive: true });
+  }
+
+  function readWorktreeSettings(): { enabledMcpjsonServers?: string[]; permissions: { allow: string[] }; [k: string]: unknown } {
+    return JSON.parse(readFileSync(worktreeSettings, 'utf-8')) as { enabledMcpjsonServers?: string[]; permissions: { allow: string[] }; [k: string]: unknown };
+  }
+
+  beforeEach(() => {
+    setupWorktree();
+  });
+
+  afterEach(() => {
+    rmSync(worktreeRoot, { recursive: true, force: true });
+  });
+
+  it('writes enabledMcpjsonServers + the tool wildcard + a Skill() rule per generated skill', () => {
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    const serverKey = getMcpServerKey(dataDir);
+    const settings = readWorktreeSettings();
+    expect(settings.enabledMcpjsonServers).toEqual([serverKey]);
+    expect(settings.permissions.allow).toContain(`mcp__${serverKey}__*`);
+    expect(settings.permissions.allow).toContain('Skill(hotsheet)');
+    expect(settings.permissions.allow).toContain('Skill(hotsheet-worker)');
+    expect(settings.permissions.allow).toContain('Skill(hs-bug)');
+    // The tool wildcard matches claudeAllowRulePattern for the OWNER dataDir.
+    expect(settings.permissions.allow).toContain(claudeAllowRulePattern(dataDir));
+  });
+
+  it('merges with a pre-existing settings.local.json — preserves unrelated keys + existing allow entries', () => {
+    writeFileSync(worktreeSettings, JSON.stringify({
+      model: 'claude-opus-4-8',
+      env: { FOO: 'bar' },
+      enabledMcpjsonServers: ['some-other-server'],
+      permissions: { allow: ['Bash(npm *)'] },
+    }, null, 2) + '\n');
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    const serverKey = getMcpServerKey(dataDir);
+    const settings = readWorktreeSettings();
+    // Unrelated top-level keys round-trip verbatim.
+    expect(settings.model).toBe('claude-opus-4-8');
+    expect(settings.env).toEqual({ FOO: 'bar' });
+    // Existing server entry kept; ours appended.
+    expect(settings.enabledMcpjsonServers).toEqual(['some-other-server', serverKey]);
+    // Existing allow entry kept; ours appended after it.
+    expect(settings.permissions.allow[0]).toBe('Bash(npm *)');
+    expect(settings.permissions.allow).toContain(`mcp__${serverKey}__*`);
+    expect(settings.permissions.allow).toContain('Skill(hotsheet-worker)');
+  });
+
+  it('is idempotent — a second call neither duplicates entries nor rewrites the file', () => {
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    const afterFirst = readFileSync(worktreeSettings, 'utf-8');
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    // Byte-identical — no duplicate server keys or allow rules, no churn.
+    expect(readFileSync(worktreeSettings, 'utf-8')).toBe(afterFirst);
+    const settings = readWorktreeSettings();
+    const serverKey = getMcpServerKey(dataDir);
+    expect(settings.enabledMcpjsonServers).toEqual([serverKey]);
+    expect(settings.permissions.allow.filter(r => r === 'Skill(hotsheet)')).toHaveLength(1);
+  });
+
+  it('§104.2 regression guard — targets the WORKTREE root, never the owner root', () => {
+    // The owner project has its own `.claude/` (distinct from the worktree's).
+    mkdirSync(claudeDir, { recursive: true });
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    // Worktree file written…
+    expect(existsSync(worktreeSettings)).toBe(true);
+    // …and the OWNER's `.claude/settings.local.json` was NOT created. This is the
+    // bug: `syncClaudeAllowRule` derived `.claude/` from the owner root, so a
+    // worktree's approvals never landed (and conversely the owner must stay clean
+    // here — the writer is worktree-scoped).
+    expect(existsSync(settingsPath)).toBe(false);
+  });
+
+  it("respects the OWNER's claude_auto_allow_rule:false opt-out → writes nothing", () => {
+    writeProjectSettings({ claude_auto_allow_rule: false });
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    expect(existsSync(worktreeSettings)).toBe(false);
+  });
+
+  it("respects the OWNER's claude_auto_allow_rule:true (explicit) → writes as normal", () => {
+    writeProjectSettings({ claude_auto_allow_rule: true });
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    expect(existsSync(worktreeSettings)).toBe(true);
+  });
+
+  it('no-op when the worktree has no `.claude/` directory (worker not using Claude Code)', () => {
+    rmSync(worktreeClaudeDir, { recursive: true, force: true });
+    writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS);
+    expect(existsSync(worktreeSettings)).toBe(false);
+  });
+
+  it('malformed JSON: warns + leaves the worktree file unchanged (no throw)', () => {
+    const bogus = '{ this is not json';
+    writeFileSync(worktreeSettings, bogus);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* swallow */ });
+    expect(() => { writeWorktreeApprovals(worktreeRoot, dataDir, SKILLS); }).not.toThrow();
+    expect(readFileSync(worktreeSettings, 'utf-8')).toBe(bogus);
     expect(warnSpy).toHaveBeenCalled();
   });
 });

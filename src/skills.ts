@@ -108,13 +108,31 @@ interface SkillDef {
   description: string;
 }
 
+/** The generated `hs-<cat>` skill name for a category id (underscores → dashes).
+ *  Shared by `buildTicketSkills` (which authors the skill files) and
+ *  `generatedClaudeSkillNames` (which lists them for the worktree approvals
+ *  writer) so the two can never drift. */
+function ticketSkillName(catId: string): string {
+  return `hs-${catId.replace(/_/g, '-')}`;
+}
+
 function buildTicketSkills(): SkillDef[] {
   return skillsState.categories.map(cat => ({
-    name: `hs-${cat.id.replace(/_/g, '-')}`,
+    name: ticketSkillName(cat.id),
     category: cat.id,
     label: cat.label.toLowerCase(),
     description: cat.description,
   }));
+}
+
+/** HS-9058 (docs/104) — the Claude skill names `ensureClaudeSkills` generates
+ *  for `categories` (defaults to the process-global set): the main `hotsheet`
+ *  + `hotsheet-worker` skills plus one `hs-<cat>` per category. The worktree
+ *  approvals writer (`writeWorktreeApprovals`) pre-approves `Skill(<name>)` for
+ *  each so a worker doesn't prompt to invoke them. Kept in lockstep with
+ *  `buildTicketSkills` via the shared `ticketSkillName`. */
+export function generatedClaudeSkillNames(categories: CategoryDef[] = skillsState.categories): string[] {
+  return ['hotsheet', 'hotsheet-worker', ...categories.map(cat => ticketSkillName(cat.id))];
 }
 
 // --- Version tracking ---

@@ -1,13 +1,20 @@
 # 104. Auto-Approve Worker Worktree MCP Server + Skills
 
-**Status: DESIGN ONLY** (HS-9058, 2026-06-26). Implementation follow-up to the
-HS-9046 investigation. A new worker prompts on first launch to (a) allow the MCP
-server connection and (b) allow the worker skills — breaking the autonomous flow.
-Make Hot Sheet **pre-approve both** by writing the **worktree's**
+**Status: SHIPPED** (core, HS-9085, 2026-06-26; design HS-9058). Implementation
+follow-up to the HS-9046 investigation. A new worker prompts on first launch to
+(a) allow the MCP server connection and (b) allow the worker skills — breaking the
+autonomous flow. Hot Sheet now **pre-approves both** by writing the **worktree's**
 `.claude/settings.local.json` when it wires the worktree
 ([89-git-worktrees.md](89-git-worktrees.md) §89.2 Phase C, `createWorktree` →
-`registerChannelAt` + `ensureSkillsForDir`). Extends the auto-allow-rule mechanism
-([64-claude-allow-rule.md](64-claude-allow-rule.md)).
+`registerChannelAt` + `ensureSkillsForDir` + `writeWorktreeApprovals`). Extends the
+auto-allow-rule mechanism ([64-claude-allow-rule.md](64-claude-allow-rule.md)).
+
+**What shipped (HS-9085):** `writeWorktreeApprovals(worktreeRoot, ownerDataDir,
+skillNames)` in `src/claude-allow-rule.ts` (sharing the extracted
+`mutateClaudeSettings` read-mutate-write core with `syncClaudeAllowRule`), wired
+into `createWorktree` after `ensureSkillsForDir`, with the skill names from
+`generatedClaudeSkillNames()` in `src/skills.ts`. The residual workspace-trust
+prompt (§104.3) was documented in HS-9086.
 
 ## 104.0 Problem
 
@@ -104,9 +111,9 @@ asserting the worktree's `settings.local.json`:
 
 - **Worktree-targeted approvals writer** (`enabledMcpjsonServers` + tool wildcard +
   `Skill(...)`) called from `createWorktree`; refactor the shared read-mutate-write
-  with `claude-allow-rule.ts` (§104.1-104.2). **The core.**
+  with `claude-allow-rule.ts` (§104.1-104.2). **The core.** ✅ SHIPPED (HS-9085).
 - **Fix the worktree allow-rule gap** — ensure the MCP-tools wildcard reaches the
   worktree root (folded into the writer above; called out separately because it's
-  a live bug, not just new behavior).
+  a live bug, not just new behavior). ✅ SHIPPED (HS-9085).
 - **Docs** — note the residual workspace-trust prompt in docs/64 + the manual test
-  plan (§104.3).
+  plan (§104.3). ✅ SHIPPED (HS-9086).

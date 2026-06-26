@@ -14,19 +14,29 @@ import { readFileSettings } from './file-settings.js';
  * second `__`, so the slug must be embedded into the pattern rather than
  * passed as a separate matcher.
  *
- * The two exported functions are called from `registerChannel` /
+ * The two `*ClaudeAllowRule` functions are called from `registerChannel` /
  * `unregisterChannel` (in `channel-config.ts`) so the allow rule stays in
  * lockstep with the `.mcp.json` entry — enabling the channel adds it,
  * disabling removes it.
  *
- * Design + decision rationale lives in `docs/64-claude-allow-rule.md`.
+ * HS-9058 (docs/104) — a worktree worker additionally needs the MCP **server**
+ * enabled + the worker **skills** pre-approved. `writeWorktreeApprovals` writes
+ * those into the WORKTREE's `.claude/settings.local.json`. The owner-rooted
+ * `syncClaudeAllowRule` never reached worktrees (§104.2 bug), so the read-mutate-
+ * write core was extracted (`mutateClaudeSettings`) and both paths share it.
+ *
+ * Design + decision rationale lives in `docs/64-claude-allow-rule.md` +
+ * `docs/104-worker-worktree-auto-approve.md`.
  */
 
 /** Match the Claude-Code allow-array entries (`permissions.allow`) plus
- *  preserve every other key the user might have under `permissions` and at
- *  the top level. `.loose()` at both levels keeps the unrelated keys
- *  byte-stable across our read-mutate-write cycle. */
+ *  `enabledMcpjsonServers` (HS-9058), and preserve every other key the user
+ *  might have under `permissions` and at the top level. `.loose()` at both
+ *  levels keeps the unrelated keys byte-stable across our read-mutate-write
+ *  cycle. `enabledMcpjsonServers` is typed (not just `.loose()` pass-through)
+ *  because the worktree approvals writer reads + appends to it. */
 const ClaudeSettingsSchema = z.object({
+  enabledMcpjsonServers: z.array(z.string()).optional(),
   permissions: z.object({
     allow: z.array(z.string()).default([]),
   }).loose().default(() => ({ allow: [] })),
@@ -51,12 +61,20 @@ function projectRoot(dataDir: string): string {
   return dataDir.replace(/[\\/]\.hotsheet[\\/]?$/, '');
 }
 
+/** Resolve `<root>/.claude/settings.local.json` for an explicit project root.
+ *  HS-9058 — the worktree approvals writer targets the WORKTREE root directly,
+ *  while the dataDir-rooted `settingsLocalPath` below is the main-project
+ *  wrapper (derives the owner project root from its `.hotsheet`). */
+function settingsLocalPathForRoot(root: string): string {
+  return join(root, '.claude', 'settings.local.json');
+}
+
 function claudeDir(dataDir: string): string {
   return join(projectRoot(dataDir), '.claude');
 }
 
 function settingsLocalPath(dataDir: string): string {
-  return join(claudeDir(dataDir), 'settings.local.json');
+  return settingsLocalPathForRoot(projectRoot(dataDir));
 }
 
 /** §64.2 D7 — read the per-project opt-out boolean. Default `true` when
@@ -72,12 +90,11 @@ function isAutoAllowRuleEnabled(dataDir: string): boolean {
   }
 }
 
-/** Read + parse `.claude/settings.local.json`. Returns `null` on parse
- *  failure so the caller knows to abort without writing back a fresh
+/** Read + parse the `.claude/settings.local.json` at `path`. Returns `null` on
+ *  parse failure so the caller knows to abort without writing back a fresh
  *  shape over a user-intended-but-malformed file. Returns
  *  `{ permissions: { allow: [] } }` when the file is missing. */
-function readClaudeSettings(dataDir: string): ClaudeSettings | null {
-  const path = settingsLocalPath(dataDir);
+function readClaudeSettingsAt(path: string): ClaudeSettings | null {
   if (!existsSync(path)) return { permissions: { allow: [] } };
   try {
     const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
@@ -94,12 +111,10 @@ function readClaudeSettings(dataDir: string): ClaudeSettings | null {
   }
 }
 
-/** Write `.claude/settings.local.json` with 2-space indent + trailing
- *  newline (matches Claude Code's own convention). Creates `.claude/` if
- *  it doesn't exist — but the public entry points only reach here after
- *  confirming `.claude/` already exists, so this is a defensive belt. */
-function writeClaudeSettings(dataDir: string, settings: ClaudeSettings): void {
-  const path = settingsLocalPath(dataDir);
+/** Write `.claude/settings.local.json` at `path` with 2-space indent + trailing
+ *  newline (matches Claude Code's own convention). Creates the parent `.claude/`
+ *  if it doesn't exist. Failure-open: a write error is logged, never thrown. */
+function writeClaudeSettingsAt(path: string, settings: ClaudeSettings): void {
   try {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
@@ -107,6 +122,18 @@ function writeClaudeSettings(dataDir: string, settings: ClaudeSettings): void {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[claude-allow-rule] Failed to write ${path}: ${msg}; channel registration continues`);
   }
+}
+
+/** HS-9058 — shared read-mutate-write core. Read the settings at `path`, run
+ *  `mutate` (which returns whether it changed anything), and write back ONLY
+ *  when changed. Both the main allow-rule sync and the worktree approvals writer
+ *  go through here, so the JSON merge + failure-open + malformed-skip + idempotent
+ *  no-op semantics live in exactly one place. */
+function mutateClaudeSettings(path: string, mutate: (settings: ClaudeSettings) => boolean): void {
+  const settings = readClaudeSettingsAt(path);
+  if (settings === null) return; // malformed — leave the file untouched
+  if (!mutate(settings)) return; // nothing changed — byte-stable no-op
+  writeClaudeSettingsAt(path, settings);
 }
 
 /**
@@ -127,12 +154,12 @@ function writeClaudeSettings(dataDir: string, settings: ClaudeSettings): void {
 export function syncClaudeAllowRule(dataDir: string): void {
   if (!existsSync(claudeDir(dataDir))) return;
   if (!isAutoAllowRuleEnabled(dataDir)) return;
-  const settings = readClaudeSettings(dataDir);
-  if (settings === null) return;
   const rule = claudeAllowRulePattern(dataDir);
-  if (settings.permissions.allow.includes(rule)) return;
-  settings.permissions.allow = [...settings.permissions.allow, rule];
-  writeClaudeSettings(dataDir, settings);
+  mutateClaudeSettings(settingsLocalPath(dataDir), settings => {
+    if (settings.permissions.allow.includes(rule)) return false;
+    settings.permissions.allow = [...settings.permissions.allow, rule];
+    return true;
+  });
 }
 
 /**
@@ -151,10 +178,62 @@ export function unsyncClaudeAllowRule(dataDir: string): void {
   const path = settingsLocalPath(dataDir);
   if (!existsSync(path)) return;
   if (!isAutoAllowRuleEnabled(dataDir)) return;
-  const settings = readClaudeSettings(dataDir);
-  if (settings === null) return;
   const rule = claudeAllowRulePattern(dataDir);
-  if (!settings.permissions.allow.includes(rule)) return;
-  settings.permissions.allow = settings.permissions.allow.filter(r => r !== rule);
-  writeClaudeSettings(dataDir, settings);
+  mutateClaudeSettings(path, settings => {
+    if (!settings.permissions.allow.includes(rule)) return false;
+    settings.permissions.allow = settings.permissions.allow.filter(r => r !== rule);
+    return true;
+  });
+}
+
+/**
+ * HS-9058 (docs/104) — pre-approve a worker WORKTREE's channel MCP server +
+ * worker skills by writing `<worktreeRoot>/.claude/settings.local.json`, so a
+ * `claude "/hotsheet-worker"` agent in a fresh worktree doesn't stall on the
+ * "Allow MCP server X?" + "Allow skill Y?" prompts (fatal for headless / auto-
+ * scaled workers — nobody's there to click).
+ *
+ * Writes, merging into any existing file (preserve unrelated keys, idempotent):
+ * - **`enabledMcpjsonServers += hotsheet-channel-<slug>`** — skips the
+ *   per-server approval. `<slug>` = `getMcpServerKey(ownerDataDir)`.
+ * - **`permissions.allow +=`** the `mcp__hotsheet-channel-<slug>__*` tool wildcard
+ *   (the §104.2 bug fix — the owner-rooted `syncClaudeAllowRule` never reached
+ *   worktrees, so even the `hotsheet_*` tool CALLS prompt today) AND a
+ *   `Skill(<name>)` entry for each generated worker/category skill name.
+ *
+ * The worktree is a **follower** with no settings of its own, so the
+ * `claude_auto_allow_rule` opt-out is read from the OWNER's `ownerDataDir`.
+ * Failure-open + gated on the worktree actually using Claude Code (the
+ * `.claude/` gate, which `createWorktree` satisfies by calling
+ * `ensureSkillsForDir` first when a worker will run there).
+ */
+export function writeWorktreeApprovals(worktreeRoot: string, ownerDataDir: string, skillNames: string[]): void {
+  // Only when the worktree actually uses Claude Code (mirrors the main path's
+  // `.claude/` gate). `createWorktree` calls `ensureSkillsForDir` first, which
+  // creates `.claude/` exactly when a worker will run there.
+  if (!existsSync(join(worktreeRoot, '.claude'))) return;
+  // Gated on the OWNER's opt-out — the worktree follower has no settings of its own.
+  if (!isAutoAllowRuleEnabled(ownerDataDir)) return;
+  const serverKey = getMcpServerKey(ownerDataDir);
+  const allowRules = [
+    claudeAllowRulePattern(ownerDataDir),
+    ...skillNames.map(name => `Skill(${name})`),
+  ];
+  mutateClaudeSettings(settingsLocalPathForRoot(worktreeRoot), settings => {
+    let changed = false;
+    const servers = settings.enabledMcpjsonServers ?? [];
+    if (!servers.includes(serverKey)) {
+      settings.enabledMcpjsonServers = [...servers, serverKey];
+      changed = true;
+    }
+    let allow = settings.permissions.allow;
+    for (const rule of allowRules) {
+      if (!allow.includes(rule)) {
+        allow = [...allow, rule];
+        changed = true;
+      }
+    }
+    settings.permissions.allow = allow;
+    return changed;
+  });
 }

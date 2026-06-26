@@ -21,9 +21,10 @@ import { basename, join, resolve } from 'path';
 import { promisify } from 'util';
 
 import { registerChannelAt } from './channel-config.js';
+import { writeWorktreeApprovals } from './claude-allow-rule.js';
 import { readFileSettings, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
-import { ensureSkillsForDir } from './skills.js';
+import { ensureSkillsForDir, generatedClaudeSkillNames } from './skills.js';
 import { provisionNodeModules, type ProvisionResult } from './workers/provisionNodeModules.js';
 import { runWorktreeSetup } from './workers/worktreeSetup.js';
 
@@ -172,6 +173,14 @@ export async function createWorktree(
   // owner. Best-effort: a wiring hiccup must never fail worktree creation.
   try { registerChannelAt(path, owner); } catch { /* best-effort agent wiring */ }
   try { ensureSkillsForDir(path, undefined, owner); } catch { /* best-effort agent wiring */ }
+  // HS-9058 (docs/104) — pre-approve the worktree's channel MCP server + the
+  // generated worker skills by writing <worktree>/.claude/settings.local.json, so
+  // a `claude "/hotsheet-worker"` agent doesn't stall on the "Allow MCP server?" +
+  // "Allow skill?" prompts. Targets the WORKTREE root and also lands the
+  // `mcp__hotsheet-channel-<slug>__*` tool wildcard the owner-rooted
+  // `syncClaudeAllowRule` never reached (the §104.2 gap). Best-effort + ordered
+  // AFTER `ensureSkillsForDir`, which creates `.claude/` (the writer's gate).
+  try { writeWorktreeApprovals(path, owner, generatedClaudeSkillNames()); } catch { /* best-effort agent wiring */ }
 
   // HS-9088 (docs/105 §105.1) — provision the worktree's `node_modules` from the
   // owner's (CoW clone / symlink / npm ci) so the worker can build immediately,

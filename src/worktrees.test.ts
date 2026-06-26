@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { basename, join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { getMcpServerKey } from './channel-config.js';
 import { readFileSettings, writeFileSettings } from './file-settings.js';
 import type { ProvisionResult } from './workers/provisionNodeModules.js';
 import {
@@ -152,6 +153,32 @@ describe('worktrees — real git', () => {
     const wt = await createWorktree(repoRoot, ownerData, { branch: 'prov-fail', newBranch: true }, undefined, boom);
     expect(wt.branch).toBe('prov-fail');
     await awaitPendingProvisions(); // the rejected job drains without throwing
+    await removeWorktree(repoRoot, wt.path, { force: true });
+  });
+
+  // HS-9058 (docs/104) — createWorktree pre-approves the worktree's channel MCP
+  // server + worker skills by writing <worktree>/.claude/settings.local.json. The
+  // writer only fires when the worktree uses Claude Code, so commit a `.claude/`
+  // dir into the repo first — `git worktree add` then materializes it in the
+  // worktree (deterministic regardless of whether `claude` is on PATH in CI).
+  it('writes worktree MCP-server + skill approvals into <worktree>/.claude/settings.local.json', async () => {
+    mkdirSync(join(repoRoot, '.claude'), { recursive: true });
+    writeFileSync(join(repoRoot, '.claude', '.gitkeep'), '');
+    execFileSync('git', ['add', '.'], { cwd: repoRoot });
+    execFileSync('git', ['commit', '-q', '-m', 'add .claude'], { cwd: repoRoot });
+
+    const wt = await createWorktree(repoRoot, ownerData, { branch: 'approve', newBranch: true });
+    const serverKey = getMcpServerKey(ownerData);
+    const approvals = JSON.parse(readFileSync(join(wt.path, '.claude', 'settings.local.json'), 'utf-8')) as {
+      enabledMcpjsonServers?: string[]; permissions: { allow: string[] };
+    };
+    // MCP server pre-enabled (skips the "Allow MCP server?" prompt).
+    expect(approvals.enabledMcpjsonServers).toContain(serverKey);
+    // The tool wildcard (the §104.2 gap fix) + the worker/main skill invocations.
+    expect(approvals.permissions.allow).toContain(`mcp__${serverKey}__*`);
+    expect(approvals.permissions.allow).toContain('Skill(hotsheet)');
+    expect(approvals.permissions.allow).toContain('Skill(hotsheet-worker)');
+
     await removeWorktree(repoRoot, wt.path, { force: true });
   });
 
