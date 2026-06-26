@@ -171,3 +171,13 @@ Integration test in `channel-config.test.ts`:
 - [63-mcp-tools.md](63-mcp-tools.md) §63 — the 14 `hotsheet_*` MCP tools the allow rule unlocks.
 - HS-8349 — per-project server naming (`hotsheet-channel-<slug>`); the allow rule's wildcard scope ends at the second `__`, so the slug must be embedded into the pattern.
 - HS-7951 / HS-7952 / HS-7953 (§47) — Hot Sheet's own permission allow-list mechanism. Conceptually adjacent — both let a user pre-approve repetitive tool calls — but they operate on different surfaces (Hot Sheet's permission overlay vs. Claude Code's MCP-tool permission) and use different storage (Hot Sheet's `permission_allow_rules` in `<dataDir>/settings.json` vs. Claude Code's `permissions.allow` in `.claude/settings.local.json`). No code shared.
+
+## 64.8 Residual workspace-trust prompt for fresh worktrees (HS-9086, expected — not a bug)
+
+Claude Code shows a **workspace-trust dialog** ("Do you trust the files in this directory?") the **first time** it opens a brand-new directory. This is a separate gate from the MCP-tool / skill permissions this doc covers, and — unlike those — it **cannot be pre-approved by any settings file** (it's keyed to the directory's trust state, which Claude Code tracks itself, not a `.claude/settings*.json` key).
+
+So a freshly-created git-worktree worker (docs/89) still shows **that one prompt** on its first launch, even after **HS-9058** (docs/104) writes the worktree's `.claude/settings.local.json` to pre-approve the MCP server + skills and so eliminates the *tool*-permission prompts. The sequence on a brand-new worker worktree is therefore: one workspace-trust prompt (unavoidable today), then no further allow prompts for the `hotsheet-channel-<slug>` tools or the generated skills.
+
+- **Status:** expected behavior, documented so it isn't re-filed as a bug. There is no Hot Sheet-side fix — the trust gate is owned by Claude Code.
+- **Revisit if** Claude Code adds a file-based / directory-allowlist trust mechanism (e.g. a settable trusted-paths key); at that point `createWorktree` could pre-trust the worktree the same way it writes the approvals (HS-9085).
+- Tracked as a manual item in `docs/manual-test-plan.md` §7.
