@@ -5933,6 +5933,25 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 .cv-layer-shared { color: #047857; background: rgba(4, 120, 87, .12); }
 .cv-layer-local { color: #b45309; background: rgba(180, 83, 9, .12); }
 
+// HS-9093 — Settings "Views" management tab rows.
+.settings-views-add { display: inline-flex; gap: 6px; }
+.settings-view-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  margin-bottom: 6px;
+
+  .settings-view-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings-view-actions { display: inline-flex; gap: 2px; flex-shrink: 0; }
+  &.settings-view-hidden { opacity: 0.55; }
+}
+.settings-view-empty { padding: 12px 0; color: var(--text-muted); font-size: 13px; }
+
 .sidebar-add-view-btn {
   font-size: 14px;
   font-weight: 400;

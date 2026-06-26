@@ -3,10 +3,13 @@ import { type ArrayDelta, isArrayDelta } from '../settingsDelta.js';
 import { suppressAnimation } from './animate.js';
 import {
   addLocalView,
+  addSharedView,
   deleteLocalView,
   editView,
   hideSharedView,
   isSharedView as isSharedViewIn,
+  moveViewToLocal,
+  moveViewToShared,
   reorderViews,
   resolveViews,
   unhideSharedView,
@@ -15,7 +18,7 @@ import {
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import { ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
+import { ICON_ARROW_DOWN, ICON_ARROW_UP, ICON_EYE, ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
 import type { CustomView, CustomViewCondition } from './state.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
@@ -52,6 +55,7 @@ async function persistViews(next: ViewLayers): Promise<void> {
   viewLayers = next;
   state.customViews = resolveViews(next);
   renderSidebarViews();
+  renderViewsTab(); // HS-9093 — keep the Settings "Views" tab in sync if it's open
   if (sharedChanged) await updateFileSettingsLayer('shared', { custom_views: next.shared });
   if (deltaChanged) {
     if (Object.keys(next.delta).length === 0) await clearLocalSettingOverride(['custom_views']);
@@ -236,6 +240,66 @@ async function hideView(view: CustomView) {
   });
 }
 
+// --- HS-9093 — Settings "Views" management tab ---
+
+/** Bind the Views tab's add buttons + initial render (called once at dialog bind). */
+export function bindViewsTab() {
+  byIdOrNull('settings-views-add-local-btn')?.addEventListener('click', () => showViewEditor(undefined, { addLayer: 'local' }));
+  byIdOrNull('settings-views-add-shared-btn')?.addEventListener('click', () => showViewEditor(undefined, { addLayer: 'shared' }));
+  byId('settings-btn').addEventListener('click', () => { renderViewsTab(); });
+}
+
+/** One management row in the Views tab. `hidden` only applies to shared views. */
+function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: boolean): HTMLElement {
+  const row = toElement(
+    <div className={`settings-view-row${hidden ? ' settings-view-hidden' : ''}`}>
+      <span className={`cv-layer-badge ${layer === 'shared' ? 'cv-layer-shared' : 'cv-layer-local'}`}>{layer === 'shared' ? 'Shared' : 'Local'}</span>
+      <span className="settings-view-name">{view.name}{hidden ? ' (hidden here)' : ''}</span>
+      <div className="settings-view-actions"></div>
+    </div>
+  );
+  const actions = row.querySelector('.settings-view-actions')!;
+  const addBtn = (label: string, icon: typeof ICON_PENCIL, title: string, onClick: () => void) => {
+    const b = toElement(<button className="cmd-outline-edit-btn" title={title}>{icon}</button>);
+    void label;
+    b.addEventListener('click', onClick);
+    actions.appendChild(b);
+  };
+
+  addBtn('Edit', ICON_PENCIL, 'Edit', () => showViewEditor(view));
+  if (layer === 'shared') {
+    if (hidden) {
+      addBtn('Unhide', ICON_EYE, 'Unhide on this machine', () => { void persistViews(unhideSharedView(viewLayers, view.id)); });
+    } else {
+      addBtn('Hide', ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
+    }
+    addBtn('Move to Local', ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
+  } else {
+    addBtn('Move to Shared', ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
+    const del = toElement(<button className="cmd-outline-delete-btn" title="Delete">{ICON_TRASH_SIMPLE}</button>);
+    del.addEventListener('click', () => { void deleteView(view.id); });
+    actions.appendChild(del);
+  }
+  return row;
+}
+
+/** Render the Views tab list: every shared view (kept + hidden) then every local
+ *  addition, each with layer-appropriate actions. No-op when the panel is absent. */
+function renderViewsTab() {
+  const list = byIdOrNull('settings-views-list');
+  if (!list) return;
+  const hiddenSet = new Set(viewLayers.delta.hidden ?? []);
+  const localViews = viewLayers.delta.added ?? [];
+  const rows: HTMLElement[] = [];
+  for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', hiddenSet.has(v.id)));
+  for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false));
+  if (rows.length === 0) {
+    list.replaceChildren(toElement(<div className="settings-view-empty">No custom views yet. Add one above, or with the + next to “Views” in the sidebar.</div>));
+    return;
+  }
+  list.replaceChildren(...rows);
+}
+
 /** Add a tag to one or more tickets (used by drop-to-tag). */
 async function addTagToTickets(tag: string, ticketIds: number[]) {
   const normalized = normalizeTag(tag);
@@ -370,8 +434,9 @@ function setupTagAutocomplete(input: HTMLInputElement, dropdown: HTMLElement, on
 
 // --- View editor dialog ---
 
-function showViewEditor(existing?: CustomView) {
+function showViewEditor(existing?: CustomView, opts: { addLayer?: 'local' | 'shared' } = {}) {
   const isEdit = !!existing;
+  const addLayer = opts.addLayer ?? 'local';
   const conditions: CustomViewCondition[] = existing ? existing.conditions.map(c => ({ ...c })) : [];
   let logic: 'all' | 'any' = existing?.logic ?? 'all';
   let name = existing?.name ?? '';
@@ -538,10 +603,13 @@ function showViewEditor(existing?: CustomView) {
       conditions: conditions.filter(c => c.value !== ''),
     };
 
-    // HS-9092 — route by action: a NEW view adds LOCALLY by default (never
-    // touches the committed file); an EDIT writes the layer the view lives in
-    // (a shared view → the shared array; a local view → its `added` entry).
-    const next = isEdit ? editView(viewLayers, view) : addLocalView(viewLayers, view);
+    // HS-9092/9093 — route by action: an EDIT writes the layer the view lives in
+    // (shared view → the shared array; local view → its `added` entry); a NEW
+    // view adds to `addLayer` (the sidebar "+" defaults to local; the Views tab
+    // passes 'shared' for its "+ Add Shared" button).
+    const next = isEdit
+      ? editView(viewLayers, view)
+      : (addLayer === 'shared' ? addSharedView(viewLayers, view) : addLocalView(viewLayers, view));
     await persistViews(next);
     // Select the new/edited view
     document.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));

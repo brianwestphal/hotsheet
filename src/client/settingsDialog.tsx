@@ -4,6 +4,7 @@ import { applyAiInstructions, getFileSettings, getTags, updateFileSettings, upda
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
+import { bindViewsTab } from './customViews.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
@@ -42,6 +43,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   }
   bindExperimentalSettings();
   bindCategorySettings(rebuildCategoryUI);
+  bindViewsTab(); // HS-9093 — Custom Views management tab
   bindCliToolSettings();
   bindKeysSettings();
   bindDevicesSettings();

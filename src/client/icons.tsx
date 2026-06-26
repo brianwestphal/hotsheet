@@ -70,6 +70,10 @@ export const ICON_ARCHIVE = <svg {...LUCIDE_14}><rect width="20" height="5" x="2
 
 export const ICON_EYE = <svg {...LUCIDE_14}><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>;
 
+// HS-9093 — layer-move arrows (Move to Local / Move to Shared).
+export const ICON_ARROW_DOWN = <svg {...LUCIDE_14}><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>;
+export const ICON_ARROW_UP = <svg {...LUCIDE_14}><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>;
+
 export const ICON_EYE_OFF = <svg {...LUCIDE_14}><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>;
 
 export const ICON_CALENDAR = <svg {...LUCIDE_14}><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>;

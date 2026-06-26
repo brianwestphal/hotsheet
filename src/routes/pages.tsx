@@ -560,6 +560,11 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>
               <span>Context</span>
             </button>
+            {/* HS-9093 — Custom Views management tab (add Local|Shared, hide, move between layers). */}
+            <button className="settings-tab" data-tab="views" id="settings-tab-views">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
+              <span>Views</span>
+            </button>
             {PLUGINS_ENABLED ? <button className="settings-tab" data-tab="plugins" id="settings-tab-plugins">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
               <span>Plugins</span>
@@ -763,6 +768,20 @@ pageRoutes.get('/', (c) => {
               </div>
               <span className="settings-hint" style="margin-bottom:12px;display:block">Automatically prepend instructions to ticket details in the worklist, based on category or tag. Category context appears first, then tag context in alphabetical order.</span>
               <div id="auto-context-list"></div>
+            </div>
+            {/* HS-9093 — Custom Views management tab. The layer (Shared vs Local)
+                is chosen per-action here (add picker + per-row move), so this tab
+                isn't driven by the dialog-wide scope control. */}
+            <div className="settings-tab-panel" data-panel="views" id="settings-views-panel">
+              <div className="settings-section-header">
+                <h3>Custom Views</h3>
+                <div className="settings-views-add">
+                  <button className="btn btn-sm" id="settings-views-add-local-btn">+ Add Local</button>
+                  <button className="btn btn-sm" id="settings-views-add-shared-btn">+ Add Shared</button>
+                </div>
+              </div>
+              <span className="settings-hint" style="margin-bottom:12px;display:block">Custom views in the sidebar. <strong>Shared</strong> views are committed to the project (settings.json); <strong>Local</strong> views are this machine only (settings.local.json). Move a view between layers, or hide a shared view on this machine.</span>
+              <div id="settings-views-list"></div>
             </div>
             {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel" data-scope-complex>
               <div className="settings-section-header" style="margin-bottom:12px">

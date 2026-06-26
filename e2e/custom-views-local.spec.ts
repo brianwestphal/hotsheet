@@ -77,4 +77,41 @@ test.describe('Custom views — sidebar local customization (HS-9092)', () => {
     const local = layered.local.custom_views as { hidden?: string[] } | undefined;
     expect(local?.hidden ?? []).not.toContain('shared-view');
   });
+
+  // HS-9093 — the Settings "Views" tab: add Local vs Shared lands in the right
+  // file, and "Move to Local" promotes a shared view into the local layer.
+  test('Settings Views tab: add Local/Shared lands in the right layer; Move to Local relocates a shared view', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
+    await page.locator('.settings-tab[data-tab="views"]').click();
+    const list = page.locator('#settings-views-list');
+    await expect(list.locator('.settings-view-row', { hasText: 'Shared View' })).toBeVisible({ timeout: 5000 });
+
+    // Add a SHARED view via the tab's "+ Add Shared".
+    await page.locator('#settings-views-add-shared-btn').click();
+    const editor = page.locator('.custom-view-editor-overlay');
+    await expect(editor).toBeVisible({ timeout: 3000 });
+    await editor.locator('#cv-name').fill('Tab Shared View');
+    await editor.locator('#cv-save').click();
+    await expect(editor).toBeHidden({ timeout: 3000 });
+    await page.waitForTimeout(400);
+
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: Record<string, unknown>; local: Record<string, unknown>;
+    };
+    // It went to the SHARED array (committed), not the local delta.
+    expect((layered.shared.custom_views as { name: string }[]).some(v => v.name === 'Tab Shared View')).toBe(true);
+
+    // Move the original shared view to Local via its row action.
+    const row = list.locator('.settings-view-row', { hasText: 'Shared View' }).first();
+    await row.locator('button[title^="Move to Local"]').click();
+    await page.waitForTimeout(400);
+
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: Record<string, unknown>; local: Record<string, unknown>;
+    };
+    // shared-view physically left settings.json and became a local addition.
+    expect((layered.shared.custom_views as { id: string }[]).map(v => v.id)).not.toContain('shared-view');
+    expect((layered.local.custom_views as { added?: { id: string }[] }).added?.some(v => v.id === 'shared-view')).toBe(true);
+  });
 });
