@@ -1,9 +1,24 @@
 # 100. Server-Driven Worker Launch
 
-**Status: PARTIAL** — the **server-owned terminal lifecycle** (§100.2.2, HS-9077),
-the **server reconcile endpoint** (§100.2.1(b), HS-9076), and the **periodic
-reconcile interval loop** (§100.2.1(a), HS-9110) **SHIPPED** (2026-06-26/27); only
-**client adoption** (§100.2.3, HS-9078) remains. Design HS-9062.
+**Status: SHIPPED** — the **server-owned terminal lifecycle** (§100.2.2, HS-9077),
+the **server reconcile endpoint** (§100.2.1(b), HS-9076), the **periodic reconcile
+interval loop** (§100.2.1(a), HS-9110), and **client adoption** (§100.2.3, HS-9078)
+all SHIPPED (2026-06-26/27). Design HS-9062.
+
+**What shipped (HS-9078):** the open client now **adopts** server-spawned workers
+instead of double-launching. `workerPoolPanel.tsx` gained `serverOwnsSpawning()`
+(true when the active project's Auto/headless enable is set — `isAutoModeEnabled`,
+which writes the §100.2.1(a) `headless_worker_pool` setting): while the server owns
+spawning, the client `reconcile` does **not** `addOneWorker` (the §100.2.1(a) loop
+launches the missing workers) and `syncPoolHeadless` skips the client `cleanupStopped`
+reap (the server `reapWorker` owns teardown — no double-reap). `adoptServerWorkerTerminals`
+renders a drawer tab for any pool slot whose `terminalId` the client isn't showing
+yet, attaching an xterm to the **already-spawned** PTY via the normal
+`loadAndRenderTerminalTabs` reconcile (the server-spawned terminal already
+registered a config; no second PTY). The manual path (Auto off → no server loop)
+keeps client-side launch unchanged, so there's no "viewless tiles" intermediate
+state. Visual attach verified via the manual test plan (terminal/xterm rendering
+isn't headless-testable); logic covered by unit tests.
 
 **What shipped (HS-9076):** `reconcilePool(secret, dataDir, repoRoot, deps?)`
 (`src/workers/reconcilePool.ts`) — the server analog of the client
@@ -16,8 +31,6 @@ AI raising the target with no UI **actually scales the pool**. The pool
 **self-heals**: the reconcile captures the owner's intended target up front and
 restores it after reaping (since `removeWorker` lowers `targetN` to the slot
 count), so a crashed worker is replaced rather than silently dropping the target.
-**One open item:** (b) the open UI shows server-spawned tiles **without an
-attached terminal view** until the HS-9078 adoption lands.
 
 **What shipped (HS-9110):** the periodic **interval loop** (§100.2.1(a)) —
 `startPoolReconcileTimer(dataDir)` (`src/workers/poolReconcileTimer.ts`), mirroring
@@ -125,10 +138,12 @@ When the UI **is** open, it must not re-launch slots the server already started:
 
 ## 100.3 Open questions
 
-- **Single owner of reconcile.** Should the client reconciler be fully retired in
-  favor of the server loop (client becomes pure view/attach), or kept as a
-  fallback when the server loop is disabled? Lean: server is authoritative; client
-  attaches + can request, never spawns.
+- **Single owner of reconcile.** ✅ RESOLVED (HS-9078). The chosen split: when the
+  server owns spawning (Auto/headless enabled), the server loop is authoritative —
+  the client attaches/renders + requests scale (stepper/sizing) but never spawns or
+  reaps. When headless is OFF (manual stepper, no server loop), the client keeps
+  owning launch (no server loop to conflict with). So there's always exactly one
+  spawner; the client never double-launches.
 - **Server PTY without a UI.** Confirm the terminal subsystem can hold a spawned
   PTY with no attached xterm indefinitely (buffering/backpressure) — workers are
   long-lived and headless. May need the §54 terminal-checkout/orphan-sink model
@@ -172,7 +187,13 @@ When the UI **is** open, it must not re-launch slots the server already started:
   reusing the extracted `createDynamicTerminal` / `destroyDynamicTerminal` server
   services. Confirmed an unattached PTY buffers in the session RingBuffer (§54), so
   a headless worker terminal is safe.
-- **Client adoption** of server-launched workers (§100.2.3) — attach-don't-spawn,
-  retire the client's independent launch. — **HS-9078** (pending).
+- **Client adoption** of server-launched workers (§100.2.3) — attach-don't-spawn.
+  ✅ SHIPPED (HS-9078): `serverOwnsSpawning()` gates the client `reconcile` (skip
+  `addOneWorker` when the server owns it) + `syncPoolHeadless` (skip client reap),
+  and `adoptServerWorkerTerminals` renders a drawer tab for each server slot's
+  existing PTY (`loadAndRenderTerminalTabs`, no second spawn). Manual path
+  unchanged. Tests: `workerPoolPanel.test.ts` (serverOwnsSpawning gate, adopt
+  reload/no-op, no-client-spawn + skip-reap when server-owned, manual still
+  spawns); visual attach in the manual test plan.
 - Relates: HS-9031 (investigation), §91.11 Auto switch, §75 background scheduler,
   HS-9051 (reap path).

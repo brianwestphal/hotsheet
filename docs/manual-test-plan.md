@@ -126,6 +126,12 @@ This document lists features that require manual verification before each releas
 - [ ] **Play/triggers route to main with workers running (HS-9038):** with workers active, click the play button / fire a command → it routes to the **main** agent (the oldest non-worktree connection), never a worker — even if a worker's channel server started before the main's.
 - [ ] **Clean up spares workers (HS-9038):** force a second *main* connection (two Claude windows in the owner repo root) while workers run → the warning shows; **Clean up** terminates only the duplicate main, leaving the leader main **and every worker** connected.
 
+### Worker pool: server-driven launch + client adoption (HS-9078 / docs/100 §100.2.3)
+- [ ] **Server-spawned workers are adopted, not double-launched (Auto on).** In a git repo with the channel connected, turn the **Auto worker pool** switch ON and ensure Up Next has work so the target rises. The server reconcile loop (HS-9110) spawns the workers server-side; in the open UI, each worker appears as a **drawer terminal tab attached to the existing PTY** (you see its `claude "/hotsheet-worker"` output) — and there is **exactly one** terminal/PTY per worker (no duplicate tabs, no second `claude` per slot). Confirm the worktree count (`git worktree list`) matches the worker count (no extras from a double-launch).
+- [ ] **No double-reap on drain/finish (Auto on).** Let a worker finish/drain (or drain it). It's torn down **once** — its tab closes, its worktree is removed, and there are no errors in the console about closing an already-closed terminal / removing a missing worktree (the server `reapWorker` owns teardown; the client doesn't also reap).
+- [ ] **Manual path unchanged (Auto off).** With Auto OFF, open the worker-pool panel and use the **+ stepper** to add a worker. It launches **client-side** as before (tab opens immediately, worker runs). Drain removes it. (No server loop runs when Auto is off, so the client stays the spawner.)
+- [ ] **Adopt on UI reopen.** With Auto on and workers running server-side, close + reopen the Hot Sheet window (or switch away and back to the project). The running workers' terminals are **re-adopted** (tabs reappear attached to the live PTYs) rather than re-launched.
+
 ### Visibility
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80
 - [ ] Channel toggle in Settings → Experimental registers `.mcp.json`

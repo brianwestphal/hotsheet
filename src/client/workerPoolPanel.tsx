@@ -21,8 +21,10 @@ import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, type DropdownItem, positionDropdown } from './dropdown.js';
 import { openPartitionEditor } from './partitionEditor.js';
+import { getActiveProject } from './state.js';
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
 import { showToast } from './toast.js';
+import { isAutoModeEnabled } from './workerAutoMode.js';
 
 let activeOverlay: HTMLElement | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -71,6 +73,60 @@ const STATE_LABEL: Record<WorkerSlotView['state'], string> = {
 /** Workers that count toward the live total (everything not on its way out). */
 function activeCount(pool: PoolState): number {
   return pool.workers.filter(w => w.state === 'idle' || w.state === 'working').length;
+}
+
+/**
+ * HS-9078 (docs/100 §100.2.3) — is the SERVER the authoritative spawner for the
+ * active project's pool? True when headless scaling is enabled (the Auto switch,
+ * which also writes the server-readable `headless_worker_pool` setting, HS-9110):
+ * then the server reconcile loop owns launch + reap, so the open client must
+ * **adopt** server-spawned slots and NOT independently spawn/reap (else both would
+ * launch — split-brain). When false (manual stepper, no headless), the client
+ * keeps owning launch. Exported for tests. `getEnabled` is injectable.
+ */
+export function serverOwnsSpawning(
+  getEnabled: (secret: string) => boolean = isAutoModeEnabled,
+): boolean {
+  const secret = getActiveProject()?.secret;
+  return secret !== undefined && secret !== '' && getEnabled(secret);
+}
+
+/**
+ * HS-9078 — adopt server-spawned worker terminals: when a pool slot carries a
+ * `terminalId` we haven't rendered yet (the SERVER spawned its PTY), reload the
+ * terminal tabs so the existing PTY gets an attached xterm view. No second PTY is
+ * created — `loadAndRenderTerminalTabs` reconciles the rendered tabs against the
+ * server's live config list (the server-spawned worker terminal already registered
+ * a config). A no-op when every slot is already rendered, so it doesn't refetch on
+ * every poll. Returns whether it reloaded (test signal). Deps injectable for tests.
+ */
+export async function adoptServerWorkerTerminals(
+  pool: PoolState,
+  deps: {
+    knownTerminalIds?: () => Promise<Set<string>>;
+    reloadTabs?: () => Promise<void>;
+  } = {},
+): Promise<boolean> {
+  // Cheap pre-check FIRST: nothing to adopt (and no module import needed) unless a
+  // slot carries a server terminalId. Keeps the common empty/manual case import-free.
+  const slotsWithTerminal = pool.workers.filter(w => w.terminalId !== null && w.terminalId !== '');
+  if (slotsWithTerminal.length === 0) return false;
+
+  const knownTerminalIds = deps.knownTerminalIds ?? (async (): Promise<Set<string>> => {
+    const { getLastKnownTerminalConfigs } = await import('./terminal.js');
+    const cfgs = getLastKnownTerminalConfigs();
+    return new Set<string>([...cfgs.configured.map(c => c.id), ...cfgs.dynamic.map(c => c.id)]);
+  });
+  const reloadTabs = deps.reloadTabs ?? (async (): Promise<void> => {
+    const { loadAndRenderTerminalTabs } = await import('./terminal.js');
+    await loadAndRenderTerminalTabs();
+  });
+
+  const known = await knownTerminalIds();
+  const hasUnadopted = slotsWithTerminal.some(w => !known.has(w.terminalId as string));
+  if (!hasUnadopted) return false;
+  await reloadTabs();
+  return true;
 }
 
 /** HS-9081 (docs/102 §102.3) — human-readable tooltip for a worker's git chip.
@@ -416,14 +472,26 @@ export async function releaseWorkerClaims(worker: string): Promise<void> {
  *  how to surface that (the panel renders an error tile; auto mode ignores + retries). */
 export async function syncPoolHeadless(): Promise<PoolState> {
   const pool = await getWorkerPool();
+  // HS-9078 — when the server owns the pool lifecycle (headless/Auto), the server
+  // reconcile loop (HS-9110) spawns AND reaps; the client only ADOPTS + renders.
+  const serverOwned = serverOwnsSpawning();
+
+  // HS-9078 — adopt server-spawned worker terminals (attach an xterm to the
+  // existing PTY by terminalId). Best-effort; never blocks the sync.
+  void adoptServerWorkerTerminals(pool).catch(() => { /* next poll retries */ });
+
   // Auto-clean finished workers (best-effort, in the background): gracefully
   // drained (`stopped`) or reaped-as-dead (`dead`, HS-8972). Toast once per reap
   // (guarded by `cleaningUp` so a mid-cleanup poll doesn't re-toast). On
   // completion, notify the open panel (if any) to re-render.
-  for (const w of pool.workers) {
-    if ((w.state === 'stopped' || w.state === 'dead') && !cleaningUp.has(w.worker)) {
-      if (w.state === 'dead') showToast(`Worker ${w.label} looked unresponsive — reaped`);
-      void cleanupStopped(w).then(notifyPoolChanged);
+  // HS-9078 — SKIP when the server owns the lifecycle: the server `reapWorker`
+  // already closes the PTY + removes the worktree; a client cleanup would race it.
+  if (!serverOwned) {
+    for (const w of pool.workers) {
+      if ((w.state === 'stopped' || w.state === 'dead') && !cleaningUp.has(w.worker)) {
+        if (w.state === 'dead') showToast(`Worker ${w.label} looked unresponsive — reaped`);
+        void cleanupStopped(w).then(notifyPoolChanged);
+      }
     }
   }
   // Reconcile the live count toward the target (HS-8971).
@@ -532,11 +600,16 @@ export function openReviewModeMenu(
 
 /** Add/drain to move the live worker count toward `pool.targetN`. Idempotent +
  *  guarded by `pendingAdds` so concurrent polls don't over-add. Scale-down always
- *  uses graceful drain (never kills mid-ticket); idle workers are drained first. */
+ *  uses graceful drain (never kills mid-ticket); idle workers are drained first.
+ *  HS-9078 — scale-UP is skipped when the server owns spawning (headless/Auto):
+ *  the server reconcile loop launches the missing workers; the client only adopts,
+ *  so the two reconcilers never both spawn (split-brain). Scale-DOWN (drain) is a
+ *  request the server mediates either way, so it stays. */
 function reconcile(pool: PoolState): void {
   const target = pool.targetN;
   const active = activeCount(pool) + pendingAdds;
   if (active < target) {
+    if (serverOwnsSpawning()) return; // server loop spawns; client adopts (no double-launch)
     for (let i = 0; i < target - active; i++) void addOneWorker();
   } else if (active > target) {
     const candidates = [
@@ -547,6 +620,14 @@ function reconcile(pool: PoolState): void {
       void drainPoolWorker({ worker: candidates[i].worker }).catch(() => { /* next poll retries */ });
     }
   }
+}
+
+/** Test seam (HS-9078) — reset the module-global reconcile bookkeeping
+ *  (`pendingAdds` + `cleaningUp`) so a fire-and-forget `addOneWorker`/cleanup still
+ *  in flight at a test boundary can't leak its counters into the next test. */
+export function _resetReconcileStateForTesting(): void {
+  pendingAdds = 0;
+  cleaningUp.clear();
 }
 
 /** Choose the next `worker-N` label not already used by a live slot. */

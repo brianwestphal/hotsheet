@@ -12,11 +12,14 @@ type WorkerSlotView,
 import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { openPartitionEditor } from './partitionEditor.js';
+import { setActiveProject } from './state.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
+import { _stopAutoModeForTesting, setAutoModeEnabledPersisted } from './workerAutoMode.js';
 import {
-  buildReviewModeItems, buildWorkerManagementPrompt, closeWorkerPoolPanel, gitChipTitle, parallelizeTag, refreshPool,
-  releaseWorkerClaims, renderPoolControls, renderPoolPrompt, renderWorkerTile, reviewWorkerBranch, reviewWorkerWorktree,
-  submitWorkerPrompt,
+  _resetReconcileStateForTesting, adoptServerWorkerTerminals, buildReviewModeItems, buildWorkerManagementPrompt,
+  closeWorkerPoolPanel, gitChipTitle, parallelizeTag, refreshPool, releaseWorkerClaims, renderPoolControls,
+  renderPoolPrompt, renderWorkerTile, reviewWorkerBranch, reviewWorkerWorktree, serverOwnsSpawning, submitWorkerPrompt,
+  syncPoolHeadless,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -48,7 +51,13 @@ vi.mock('./channelUI.js', () => ({
   triggerChannelAndMarkBusy: vi.fn(),
 }));
 vi.mock('./terminalInstanceLifecycle.js', () => ({ closeDynamicTerminal: vi.fn() }));
-vi.mock('./terminal.js', () => ({ openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new') }));
+vi.mock('./terminal.js', () => ({
+  openTerminalRunningCommand: vi.fn().mockResolvedValue('term-new'),
+  // HS-9078 — adoption reads the rendered config list + reloads tabs to attach a
+  // server-spawned worker's existing PTY.
+  getLastKnownTerminalConfigs: vi.fn(() => ({ configured: [], dynamic: [] })),
+  loadAndRenderTerminalTabs: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('./dispatch.js', () => ({
   dispatchAndReport: vi.fn().mockResolvedValue({ dispatched: 0, failed: [], failures: [] }),
   dispatchTicketsToWorker: vi.fn().mockResolvedValue({ dispatched: 0, failed: [], failures: [] }),
@@ -85,6 +94,8 @@ const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
 beforeEach(() => {
   document.body.innerHTML = '';
   dragHolder.ids.length = 0;
+  localStorage.clear(); // HS-9078 — reset Auto/headless persistence so serverOwnsSpawning defaults false
+  _resetReconcileStateForTesting(); // HS-9078 — clear any leaked pendingAdds/cleaningUp from a prior test
   vi.clearAllMocks();
   mockDrain.mockResolvedValue({ ok: true });
   mockRemove.mockResolvedValue({ ok: true });
@@ -257,6 +268,64 @@ describe('reviewWorkerWorktree + review-mode menu (HS-9106)', () => {
     btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(document.querySelector('.dropdown-menu')).not.toBeNull();
     closeWorkerPoolPanel();
+  });
+});
+
+describe('HS-9078 — client adoption of server-launched workers', () => {
+  afterEach(() => { _stopAutoModeForTesting(); localStorage.clear(); });
+
+  it('serverOwnsSpawning gates on the active project + headless enable', () => {
+    setActiveProject({ name: 'P', dataDir: '/tmp/p', secret: 's1' });
+    expect(serverOwnsSpawning(() => true)).toBe(true);
+    expect(serverOwnsSpawning(() => false)).toBe(false);
+  });
+
+  it('adoptServerWorkerTerminals reloads tabs when a slot has an unrendered server terminalId', async () => {
+    const reloadTabs = vi.fn().mockResolvedValue(undefined);
+    const did = await adoptServerWorkerTerminals(
+      pool({ workers: [slot({ terminalId: 'srv-1' })] }),
+      { knownTerminalIds: () => Promise.resolve(new Set<string>()), reloadTabs },
+    );
+    expect(did).toBe(true);
+    expect(reloadTabs).toHaveBeenCalledOnce();
+  });
+
+  it('adoptServerWorkerTerminals is a no-op when every slot terminal is already rendered', async () => {
+    const reloadTabs = vi.fn().mockResolvedValue(undefined);
+    const did = await adoptServerWorkerTerminals(
+      pool({ workers: [slot({ terminalId: 'srv-1' })] }),
+      { knownTerminalIds: () => Promise.resolve(new Set<string>(['srv-1'])), reloadTabs },
+    );
+    expect(did).toBe(false);
+    expect(reloadTabs).not.toHaveBeenCalled();
+  });
+
+  it('syncPoolHeadless does NOT client-spawn when the server owns spawning (Auto on)', async () => {
+    setActiveProject({ name: 'P', dataDir: '/tmp/p', secret: 's-auto' });
+    setAutoModeEnabledPersisted('s-auto', true);
+    mockPool.mockResolvedValue(pool({ targetN: 2, workers: [] })); // below target
+    await syncPoolHeadless();
+    await flush();
+    expect(mockLaunch).not.toHaveBeenCalled(); // server loop spawns; client adopts
+  });
+
+  it('syncPoolHeadless STILL client-spawns when Auto is off (manual path unchanged)', async () => {
+    setActiveProject({ name: 'P', dataDir: '/tmp/p', secret: 's-manual' });
+    setAutoModeEnabledPersisted('s-manual', false);
+    mockPool.mockResolvedValue(pool({ targetN: 1, workers: [] }));
+    await syncPoolHeadless();
+    await flush();
+    expect(mockLaunch).toHaveBeenCalled();
+  });
+
+  it('syncPoolHeadless skips client cleanup of a stopped worker when server-owned (no double-reap)', async () => {
+    setActiveProject({ name: 'P', dataDir: '/tmp/p', secret: 's-auto2' });
+    setAutoModeEnabledPersisted('s-auto2', true);
+    mockPool.mockResolvedValue(pool({ targetN: 1, workers: [slot({ state: 'stopped' })] }));
+    await syncPoolHeadless();
+    await flush();
+    expect(mockRemoveWt).not.toHaveBeenCalled(); // server reapWorker handles it
+    expect(mockCloseTerm).not.toHaveBeenCalled();
   });
 });
 
