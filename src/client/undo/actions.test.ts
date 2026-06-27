@@ -33,7 +33,7 @@ const mockRestoreTicket = vi.fn<(id: number) => Promise<unknown>>();
 const mockPutNotesBulk = vi.fn<(id: number, notes: string) => Promise<unknown>>();
 const mockLoadTickets = vi.fn<() => Promise<void>>();
 const mockRenderTicketList = vi.fn<() => void>();
-const mockRefreshDetail = vi.fn<() => void>();
+const mockRefreshDetail = vi.fn<(forceTextFields?: boolean) => void>();
 const mockSetSuppressAutoRead = vi.fn<(v: boolean) => void>();
 
 // Mock the typed callers but keep the REAL request schemas — `actions.ts`
@@ -53,7 +53,7 @@ vi.mock('../../api/index.js', async () => {
 });
 
 vi.mock('../detail.js', () => ({
-  refreshDetail: (): void => mockRefreshDetail(),
+  refreshDetail: (forceTextFields?: boolean): void => mockRefreshDetail(forceTextFields),
   setSuppressAutoRead: (v: boolean): void => mockSetSuppressAutoRead(v),
 }));
 
@@ -317,6 +317,26 @@ describe('performUndo / performRedo', () => {
     expect(mockUpdateTicket).toHaveBeenCalledWith(1, expect.objectContaining({ title: 'Old' }));
     expect(mockLoadTickets).toHaveBeenCalled();
     expect(mockRefreshDetail).toHaveBeenCalled();
+    // HS-9117 — undo must force-refresh focused text fields so a revert shows
+    // immediately even while the title/details field still has focus.
+    expect(mockRefreshDetail).toHaveBeenCalledWith(true);
+  });
+
+  it('HS-9117 — performRedo force-refreshes the detail panel (forceTextFields=true)', async () => {
+    vi.useFakeTimers();
+    const { trackedPatch, performUndo, performRedo } = await freshActions();
+    mockUpdateTicket.mockResolvedValue(ticket({ title: 'New' }));
+    await trackedPatch(ticket({ title: 'Old' }), { title: 'New' }, 'Edit');
+    mockLoadTickets.mockResolvedValue();
+
+    let p = performUndo();
+    await vi.runAllTimersAsync();
+    await p;
+    mockRefreshDetail.mockClear();
+    p = performRedo();
+    await vi.runAllTimersAsync();
+    await p;
+    expect(mockRefreshDetail).toHaveBeenCalledWith(true);
   });
 
   it('performUndo is a no-op when the stack is empty', async () => {

@@ -380,10 +380,17 @@ function loadPreviewDetail(id: number) {
 }
 
 /** Force-reload the detail panel for the currently active ticket.
- *  Skips updating text fields that currently have focus to avoid cursor disruption. */
-export function refreshDetail() {
+ *  Skips updating text fields that currently have focus to avoid cursor disruption.
+ *
+ *  HS-9117 — pass `forceTextFields` when the reload is a *deliberate* value
+ *  change the user just asked for (undo / redo). The HS-1454 focus guard that
+ *  protects in-progress typing from a background poll is wrong for undo/redo:
+ *  if the user reverts while still focused in the title/details field, the new
+ *  value must show immediately, not only after the panel redraws for some other
+ *  reason. Background callers (poll, wsSync) keep the default `false`. */
+export function refreshDetail(forceTextFields = false) {
   if (state.activeTicketId != null) {
-    void loadDetail(state.activeTicketId);
+    void loadDetail(state.activeTicketId, forceTextFields);
   }
 }
 
@@ -408,7 +415,7 @@ export function refreshFeedbackDrafts(ticketId: number): void {
   }).catch(() => { /* best-effort — drafts reappear on next detail open */ });
 }
 
-async function loadDetail(id: number) {
+async function loadDetail(id: number, forceTextFields = false) {
   // HS-8642 — typed detail payload (ticket + attachments + syncInfo) via the
   // shared `TicketDetailSchema`; the wire shape is validated by `apiCall`.
   const ticket = await getTicketDetail(id);
@@ -435,10 +442,17 @@ async function loadDetail(id: number) {
 
   byId('detail-ticket-number').textContent = ticket.ticket_number;
 
-  // Skip updating text fields that are currently focused to avoid cursor disruption (HS-1454)
+  // Skip updating text fields that are currently focused to avoid cursor disruption (HS-1454).
+  // HS-9117 — `forceTextFields` (undo/redo) overrides the guard so a deliberate
+  // revert shows immediately even while the field is focused; place the caret at
+  // the end since the whole value just changed underneath the user.
   const titleInput = byId<HTMLInputElement>('detail-title');
-  if (document.activeElement !== titleInput) {
+  if (forceTextFields || document.activeElement !== titleInput) {
     titleInput.value = ticket.title;
+    if (forceTextFields && document.activeElement === titleInput) {
+      const len = titleInput.value.length;
+      titleInput.setSelectionRange(len, len);
+    }
   }
   updateDetailCategory(ticket.category);
   updateDetailPriority(ticket.priority);
@@ -447,8 +461,12 @@ async function loadDetail(id: number) {
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
   const detailsArea = byId<HTMLTextAreaElement>('detail-details');
-  if (document.activeElement !== detailsArea) {
+  if (forceTextFields || document.activeElement !== detailsArea) {
     detailsArea.value = ticket.details;
+    if (forceTextFields && document.activeElement === detailsArea) {
+      const len = detailsArea.value.length;
+      detailsArea.setSelectionRange(len, len);
+    }
   }
   // HS-8020 — paint the markdown-rendered view on every detail-load so
   // the rendered view stays current with the source. Skip the swap to

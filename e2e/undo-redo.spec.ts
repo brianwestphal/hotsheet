@@ -65,6 +65,34 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
     await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
   });
 
+  test('HS-9117 — undo reverts the details textarea immediately while it has focus', async ({ page, request }) => {
+    const suffix = Date.now();
+    const title = `Undo details focus test ${suffix}`;
+    await request.post('/api/tickets', { headers, data: { title, defaults: { details: 'original details' } } });
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) }).first();
+    // Open the detail panel for this ticket.
+    await row.locator('.ticket-number').click();
+    await expect(page.locator('#detail-title')).toHaveValue(title, { timeout: 5000 });
+
+    // Enter edit mode on the Details field (click the rendered view), then type.
+    await page.locator('#detail-details-rendered').click();
+    const detailsArea = page.locator('#detail-details');
+    await expect(detailsArea).toBeFocused();
+    await detailsArea.fill('original details — edited');
+    // Let the debounced auto-save (300ms) round-trip so state is persisted.
+    await page.waitForTimeout(600);
+
+    // Keep focus in the textarea and undo. Pre-HS-9117 the focus guard skipped
+    // the value update, so the revert only showed after the panel redrew.
+    await detailsArea.focus();
+    await page.keyboard.press('Meta+z');
+
+    await expect(detailsArea).toHaveValue('original details', { timeout: 5000 });
+  });
+
   test.skip('undo up-next toggle reverts the star', async ({ page, request }) => {
     // Skip: inline star toggle uses trackedPatch but the undo may be
     // coalesced or the re-render doesn't reflect the revert fast enough.

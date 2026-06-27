@@ -175,8 +175,10 @@ export async function performUndo(): Promise<void> {
   try {
     await applySnapshots(entry.before);
     await loadTickets();
-    // Force detail panel to re-fetch after the render cycle settles
-    setTimeout(() => refreshDetail(), 50);
+    // Force detail panel to re-fetch after the render cycle settles.
+    // HS-9117 — pass `true` so the title/details fields update even when one is
+    // still focused (undo is a deliberate revert, not a background poll).
+    setTimeout(() => refreshDetail(true), 50);
   } finally {
     undoRedoInFlight = false;
   }
@@ -190,7 +192,8 @@ export async function performRedo(): Promise<void> {
   try {
     await applySnapshots(entry.after);
     await loadTickets();
-    setTimeout(() => refreshDetail(), 50);
+    // HS-9117 — force focused text fields to update (deliberate redo revert).
+    setTimeout(() => refreshDetail(true), 50);
   } finally {
     undoRedoInFlight = false;
   }
