@@ -240,6 +240,9 @@ dashboardRoutes.post('/glassbox/launch', async (c) => {
  * exported for testing.
  */
 export function buildGlassboxReviewArgs(req: GlassboxReviewReq): string[] | null {
+  // HS-9106 — the worktree mode carries no diff args (it reviews the working
+  // state in place); it's handled by the route via `cwd`, not here.
+  if (req.mode === 'worktree') return null;
   // A ref starts with a word char (never `-`) and uses only ref-safe chars.
   const SAFE_REF = /^[\w][\w./-]*$/;
   if (req.mode === 'commit') {
@@ -250,23 +253,57 @@ export function buildGlassboxReviewArgs(req: GlassboxReviewReq): string[] | null
   return ['--range', `${req.from}..${req.to}`];
 }
 
+/**
+ * HS-9106 — validate a `worktree`-mode review path: it MUST be a real worktree of
+ * this repo (`listWorktrees(repoRoot)`), so a malicious/typo'd path can't make us
+ * spawn Glassbox with an arbitrary cwd. Returns the canonical worktree path on a
+ * match, else null. `repoRoot` is the owner project root; `list` is injectable for
+ * tests. Pure aside from the injected listing.
+ */
+export async function resolveReviewWorktreeCwd(
+  repoRoot: string,
+  worktree: string,
+  list: (root: string) => Promise<{ path: string }[]> = async (root) => (await import('../worktrees.js')).listWorktrees(root),
+): Promise<string | null> {
+  const target = resolve(worktree);
+  const worktrees = await list(repoRoot).catch(() => []);
+  const match = worktrees.find(w => resolve(w.path) === target);
+  return match ? match.path : null;
+}
+
 // HS-8472 — open Glassbox focused on a specific pending commit or the whole
 // pending range, launched from the git-status popover.
 dashboardRoutes.post('/glassbox/review', async (c) => {
   const raw: unknown = await c.req.json().catch(() => null);
   const parsed = GlassboxReviewReqSchema.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
-  const args = buildGlassboxReviewArgs(parsed.data);
-  if (args === null) return c.json({ error: 'Invalid commit / ref' }, 400);
+
+  const path = await import('path');
+  const projectRoot = path.dirname(c.get('dataDir'));
+
+  // Resolve the spawn args + cwd per mode. commit/range diff against the owner
+  // project root; worktree (HS-9106) reviews the working state IN the worktree —
+  // no diff args, cwd = the validated worktree path.
+  let args: string[];
+  let cwd: string;
+  if (parsed.data.mode === 'worktree') {
+    const resolved = await resolveReviewWorktreeCwd(projectRoot, parsed.data.worktree);
+    if (resolved === null) return c.json({ error: 'Not a worktree of this repository' }, 400);
+    args = [];
+    cwd = resolved;
+  } else {
+    const built = buildGlassboxReviewArgs(parsed.data);
+    if (built === null) return c.json({ error: 'Invalid commit / ref' }, 400);
+    args = built;
+    cwd = projectRoot;
+  }
 
   const bin = await resolveGlassboxBin();
   if (bin === null) return c.json({ error: 'Glassbox CLI not found. Install it (e.g. in /usr/local/bin) and try again.' }, 404);
   const { spawn } = await import('child_process');
-  const path = await import('path');
-  const projectRoot = path.dirname(c.get('dataDir'));
   try {
     const child = spawn(bin, args, {
-      cwd: projectRoot,
+      cwd,
       detached: true,
       stdio: 'ignore',
       env: { ...process.env, PATH: augmentedPath() },

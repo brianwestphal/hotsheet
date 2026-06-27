@@ -14,8 +14,9 @@ import { confirmDialog } from './confirm.js';
 import { openPartitionEditor } from './partitionEditor.js';
 import { closeDynamicTerminal } from './terminalInstanceLifecycle.js';
 import {
-  buildWorkerManagementPrompt, closeWorkerPoolPanel, gitChipTitle, parallelizeTag, refreshPool, releaseWorkerClaims,
-  renderPoolControls, renderPoolPrompt, renderWorkerTile, reviewWorkerBranch, submitWorkerPrompt,
+  buildReviewModeItems, buildWorkerManagementPrompt, closeWorkerPoolPanel, gitChipTitle, parallelizeTag, refreshPool,
+  releaseWorkerClaims, renderPoolControls, renderPoolPrompt, renderWorkerTile, reviewWorkerBranch, reviewWorkerWorktree,
+  submitWorkerPrompt,
 } from './workerPoolPanel.js';
 
 vi.mock('../api/index.js', () => ({
@@ -218,6 +219,44 @@ describe('reviewWorkerBranch (HS-9082)', () => {
     await reviewWorkerBranch(slot({ branch: 'hotsheet/worker-1' }), null);
     await reviewWorkerBranch(slot({ branch: 'hotsheet/worker-1' }), '');
     expect(review).not.toHaveBeenCalled();
+  });
+});
+
+describe('reviewWorkerWorktree + review-mode menu (HS-9106)', () => {
+  const slot = (over: Partial<WorkerSlotView> = {}): WorkerSlotView => ({
+    label: 'worker-1', worker: 'pw1', worktreePath: '/wt/pw1', branch: 'hotsheet/worker-1',
+    terminalId: 't-pw1', state: 'idle', currentTicket: null, queueOnly: false,
+    ready: false, readyBranch: null, ...over,
+  });
+
+  it('opens Glassbox in the worktree (cwd) to review the working state in place', async () => {
+    const review = vi.mocked(reviewInGlassbox);
+    review.mockClear();
+    await reviewWorkerWorktree(slot({ worktreePath: '/wt/pw1' }));
+    expect(review).toHaveBeenCalledWith({ mode: 'worktree', worktree: '/wt/pw1' });
+  });
+
+  it('buildReviewModeItems offers diff-vs-target (default, first) then review-in-place', () => {
+    const onReview = vi.fn();
+    const onReviewWorktree = vi.fn();
+    const items = buildReviewModeItems(slot(), onReview, onReviewWorktree);
+    expect(items.map(i => i.label)).toEqual(['Diff vs target', 'Review worktree in place']);
+    items[0].action();
+    expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ worker: 'pw1' }));
+    items[1].action();
+    expect(onReviewWorktree).toHaveBeenCalledWith(expect.objectContaining({ worker: 'pw1' }));
+  });
+
+  it('the Review button gets a contextmenu handler only when onReviewWorktree is provided', () => {
+    const withWorktree = renderWorkerTile(
+      slot({ git: { ahead: 2, behind: 0, dirty: false } }), vi.fn(), undefined, undefined, vi.fn(), vi.fn());
+    const btn = withWorktree.querySelector<HTMLButtonElement>('.worker-review-btn')!;
+    // The title hints at the right-click secondary mode.
+    expect(btn.title).toContain('right-click');
+    // Dispatching contextmenu opens the dropdown menu (rendered into the body).
+    btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(document.querySelector('.dropdown-menu')).not.toBeNull();
+    closeWorkerPoolPanel();
   });
 });
 

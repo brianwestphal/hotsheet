@@ -102,12 +102,17 @@ export const PendingCommitsResSchema = z.object({
 export type PendingCommitsRes = z.infer<typeof PendingCommitsResSchema>;
 
 // --- /glassbox/review (HS-8472) ---
-/** Open Glassbox focused on a specific commit, or on a ref range (all pending
- *  changes). The server maps these to `glassbox --commit <sha>` /
- *  `glassbox --range <from>..<to>`. */
+/** Open Glassbox focused on a specific commit, on a ref range (all pending
+ *  changes), or in a worker's worktree in place (HS-9106). The server maps these
+ *  to `glassbox --commit <sha>` / `glassbox --range <from>..<to>` / `glassbox`
+ *  launched with `cwd = <worktree>` (no review args — review the working state). */
 export const GlassboxReviewReqSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('commit'), sha: z.string() }),
   z.object({ mode: z.literal('range'), from: z.string(), to: z.string() }),
+  // HS-9106 — review a worker's worktree in place (its uncommitted + committed
+  // working state). `worktree` is the absolute worktree path; the server validates
+  // it against `listWorktrees(repoRoot)` before spawning (no arbitrary cwd).
+  z.object({ mode: z.literal('worktree'), worktree: z.string() }),
 ]);
 export type GlassboxReviewReq = z.infer<typeof GlassboxReviewReqSchema>;
 

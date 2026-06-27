@@ -106,6 +106,7 @@ export function renderWorkerTile(
   onDispatch?: (w: WorkerSlotView, ticketIds: number[]) => void,
   onQueueOnly?: (w: WorkerSlotView, queueOnly: boolean) => void,
   onReview?: (w: WorkerSlotView) => void, // HS-9082 — open Glassbox on this worker's branch vs the target
+  onReviewWorktree?: (w: WorkerSlotView) => void, // HS-9106 — open Glassbox in the worktree (review working state in place)
 ): HTMLElement {
   const canDrain = w.state === 'idle' || w.state === 'working';
   // HS-9082 — offer a "Review" affordance only when there's committed work to
@@ -133,7 +134,7 @@ export function renderWorkerTile(
             Shown for any state with committed work (incl. stopped/dead — its branch
             is still integratable), so it sits before the drain controls. */}
         {canReview
-          ? <button type="button" className="btn btn-sm worker-review-btn" title={`Review what integrating ${w.branch ?? ''} adds vs the target branch, in Glassbox`}>Review</button>
+          ? <button type="button" className="btn btn-sm worker-review-btn" title={`Review what integrating ${w.branch ?? ''} adds vs the target branch, in Glassbox${onReviewWorktree !== undefined ? ' — right-click to review the worktree in place' : ''}`}>Review</button>
           : null}
         {canDrain && onQueueOnly !== undefined
           ? <label className="worker-queue-only" title="Work only dispatched tickets, then stop (don't self-claim from the shared pool)">
@@ -147,7 +148,17 @@ export function renderWorkerTile(
     </div>,
   );
   if (canReview) {
-    tile.querySelector('.worker-review-btn')?.addEventListener('click', () => onReview(w));
+    const reviewBtn = tile.querySelector('.worker-review-btn');
+    // Left-click = the default diff-vs-target review (docs/102 §102.5).
+    reviewBtn?.addEventListener('click', () => onReview(w));
+    // HS-9106 — right-click offers the secondary mode: review the worktree IN
+    // PLACE (its uncommitted + committed working state) vs the default diff.
+    if (onReviewWorktree !== undefined) {
+      reviewBtn?.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openReviewModeMenu(reviewBtn as HTMLElement, w, onReview, onReviewWorktree);
+      });
+    }
   }
   if (canDrain && onDrain !== undefined) {
     tile.querySelector('.worker-drain-btn')?.addEventListener('click', () => onDrain(w));
@@ -438,12 +449,18 @@ export async function refreshPool(bodyEl: HTMLElement): Promise<void> {
     const onReview = glassboxAvailable && pool.target != null && pool.target !== ''
       ? (ww: WorkerSlotView) => void reviewWorkerBranch(ww, pool.target)
       : undefined;
+    // HS-9106 — the in-place worktree review only needs Glassbox + a worktree path
+    // (no target branch), so it's offered whenever Glassbox is installed.
+    const onReviewWorktree = glassboxAvailable
+      ? (ww: WorkerSlotView) => void reviewWorkerWorktree(ww)
+      : undefined;
     const tiles = pool.workers.map(w => renderWorkerTile(
       w,
       (ww) => void handleDrain(ww, pool, bodyEl),
       (ww, ids) => void dispatchAndReport(ww.worker, ww.label, ids).then(() => refreshPool(bodyEl)),
       (ww, q) => void handleQueueOnly(ww, q, bodyEl),
       onReview,
+      onReviewWorktree,
     ));
     bodyEl.replaceChildren(...tiles);
   }
@@ -470,6 +487,47 @@ export async function reviewWorkerBranch(w: WorkerSlotView, target: string | nul
   } catch {
     showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
   }
+}
+
+/** HS-9106 — open Glassbox IN the worker's worktree (review its uncommitted +
+ *  committed working state in place) by launching with `cwd = w.worktreePath`.
+ *  The server validates the path is a real worktree of this repo before spawning.
+ *  Exported for tests. */
+export async function reviewWorkerWorktree(w: WorkerSlotView): Promise<void> {
+  try {
+    await reviewInGlassbox({ mode: 'worktree', worktree: w.worktreePath });
+  } catch {
+    showToast('Could not open Glassbox. Make sure the Glassbox CLI is installed.', { variant: 'warning' });
+  }
+}
+
+/** HS-9106 — the two Review modes as dropdown items: the default diff-vs-target
+ *  review (§102.5) first, then the in-place worktree review. Pure + exported for
+ *  tests (the dropdown rendering itself isn't unit-tested). */
+export function buildReviewModeItems(
+  w: WorkerSlotView,
+  onReview: (w: WorkerSlotView) => void,
+  onReviewWorktree: (w: WorkerSlotView) => void,
+): DropdownItem[] {
+  return [
+    { label: 'Diff vs target', key: '', action: () => { onReview(w); } },
+    { label: 'Review worktree in place', key: '', action: () => { onReviewWorktree(w); } },
+  ];
+}
+
+/** HS-9106 — the Review button's right-click menu: choose the default diff-vs-target
+ *  review or the in-place worktree review. */
+export function openReviewModeMenu(
+  anchor: HTMLElement,
+  w: WorkerSlotView,
+  onReview: (w: WorkerSlotView) => void,
+  onReviewWorktree: (w: WorkerSlotView) => void,
+): void {
+  closeAllMenus();
+  const menu = createDropdown(anchor, buildReviewModeItems(w, onReview, onReviewWorktree));
+  document.body.appendChild(menu);
+  positionDropdown(menu, anchor);
+  menu.style.visibility = '';
 }
 
 /** Add/drain to move the live worker count toward `pool.targetN`. Idempotent +

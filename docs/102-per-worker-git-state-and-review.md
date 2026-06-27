@@ -2,9 +2,22 @@
 
 **Status: SHIPPED (core)** — Part 2, the per-worktree git chip (§102.3-102.4),
 **SHIPPED** (HS-9081); Part 1, the Glassbox **diff-vs-target** review selector
-(§102.2), **SHIPPED** (HS-9082). Both 2026-06-26. Design HS-9060. Remaining
-follow-ups: the **review-in-worktree** mode (HS-9106) and the **merge-pending
-badge** Review affordance (HS-9107). From the HS-9040 design investigation.
+(§102.2), **SHIPPED** (HS-9082); the **review-in-worktree** mode (§102.2/§102.5),
+**SHIPPED** (HS-9106, 2026-06-27). Design HS-9060. Remaining follow-up: the
+**merge-pending badge** Review affordance (HS-9107). From the HS-9040 design
+investigation.
+
+**What shipped (HS-9106):** the in-place worktree review. `GlassboxReviewReqSchema`
+(`src/api/git.ts`) gained a `{ mode: 'worktree', worktree }` variant; `POST
+/glassbox/review` validates the path against `listWorktrees(repoRoot)` (via the
+exported, injectable `resolveReviewWorktreeCwd` — **no arbitrary cwd injection**)
+then spawns `glassbox` with **`cwd = <worktree>` and no diff args**, so it reviews
+the worker's uncommitted + committed working state in place. On the pool tile, the
+Review button's **left-click stays the default diff-vs-target** (§102.5); a
+**right-click** opens a small menu (`buildReviewModeItems`/`openReviewModeMenu`) to
+choose "Diff vs target" or "Review worktree in place" (`reviewWorkerWorktree` →
+`reviewInGlassbox({mode:'worktree'})`). The worktree option is offered whenever
+Glassbox is installed (it needs no target branch).
 
 **What shipped (HS-9081):** `summarizeWorktreesGit(repoRoot, worktrees, git?, target?)`
 in `src/workers/integrate.ts` batches ahead/behind (reusing `listReadyBranches`) +
@@ -125,8 +138,10 @@ overloading the single-project chip.
   the tile chip (§102.3-102.4). ✅ SHIPPED (HS-9081).
 - **Glassbox worktree/branch target selector** (diff a worker branch vs. the target
   before integrating) (§102.2), wired from the pool tile. ✅ SHIPPED (HS-9082).
-- **(follow-up) Glassbox review-in-worktree mode** — launch with `cwd = worktree`
-  to review a worker's in-place state. **HS-9106**.
+- **Glassbox review-in-worktree mode** — launch with `cwd = worktree` to review a
+  worker's in-place state. ✅ SHIPPED (HS-9106): `{mode:'worktree'}` on
+  `/glassbox/review`, path-validated via `resolveReviewWorktreeCwd` →
+  `listWorktrees`; right-click the tile's Review button to choose it.
 - **(follow-up) Merge-pending badge Review** affordance pre-targeting the ticket's
   branch (needs a ticket→branch mapping). **HS-9107**.
 - **(Optional) worktrees git summary** in the sidebar git popover (§102.3).

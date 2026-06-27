@@ -45,7 +45,7 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() })),
 }));
 
-const { dashboardRoutes, resolveGlassboxBinWith, buildGlassboxReviewArgs } = await import('./dashboard.js');
+const { dashboardRoutes, resolveGlassboxBinWith, buildGlassboxReviewArgs, resolveReviewWorktreeCwd } = await import('./dashboard.js');
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -387,5 +387,39 @@ describe('buildGlassboxReviewArgs (HS-8472)', () => {
   it('rejects a flag-like ref (leading dash) so it cannot reach git as an option', () => {
     expect(buildGlassboxReviewArgs({ mode: 'range', from: '--upload-pack=evil', to: 'HEAD' })).toBeNull();
     expect(buildGlassboxReviewArgs({ mode: 'range', from: 'origin/main', to: '-x' })).toBeNull();
+  });
+
+  it('HS-9106: worktree mode carries no diff args (handled via cwd, not here)', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'worktree', worktree: '/some/wt' })).toBeNull();
+  });
+});
+
+describe('resolveReviewWorktreeCwd (HS-9106)', () => {
+  const list = (paths: string[]) => () => Promise.resolve(paths.map(path => ({ path })));
+
+  it('returns the canonical worktree path when it matches a real worktree of the repo', async () => {
+    const cwd = await resolveReviewWorktreeCwd('/repo', '/repo/.worktrees/worker-1', list(['/repo', '/repo/.worktrees/worker-1']));
+    expect(cwd).toBe('/repo/.worktrees/worker-1');
+  });
+
+  it('returns null for a path that is NOT a worktree of the repo (no arbitrary cwd)', async () => {
+    const cwd = await resolveReviewWorktreeCwd('/repo', '/etc/passwd', list(['/repo', '/repo/.worktrees/worker-1']));
+    expect(cwd).toBeNull();
+  });
+
+  it('returns null (never throws) when listing the worktrees fails', async () => {
+    const cwd = await resolveReviewWorktreeCwd('/repo', '/repo/.worktrees/worker-1', () => Promise.reject(new Error('git boom')));
+    expect(cwd).toBeNull();
+  });
+});
+
+describe('POST /glassbox/review — worktree mode (HS-9106)', () => {
+  it('400s when the path is not a worktree of this repo', async () => {
+    // The test dataDir's project root is not a git repo, so `listWorktrees`
+    // yields nothing matching → the route rejects before spawning.
+    const res = await app.request('/api/glassbox/review', post({ mode: 'worktree', worktree: '/definitely/not/a/worktree' }));
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain('worktree');
   });
 });
