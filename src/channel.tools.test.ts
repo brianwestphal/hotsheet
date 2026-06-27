@@ -253,6 +253,18 @@ describe('hotsheet_update_ticket (HS-8346)', () => {
     expect(JSON.parse(call[1].body)).toEqual({ status: 'completed', pending_integration: true });
   });
 
+  it('HS-9107 — forwards the integration_branch in the PATCH body', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => {
+      fetchSpy(url, init);
+      return { ok: true, status: 200, text: JSON.stringify({ id: 42, integration_branch: 'hotsheet/worker-1' }) };
+    });
+    const result = await callTool('hotsheet_update_ticket', { id: 42, status: 'completed', pending_integration: true, integration_branch: 'hotsheet/worker-1' }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeUndefined();
+    const call = fetchSpy.mock.calls[0] as [string, { body: string }];
+    expect(JSON.parse(call[1].body)).toEqual({ status: 'completed', pending_integration: true, integration_branch: 'hotsheet/worker-1' });
+  });
+
   it('Zod rejection — invalid status enum value returns isError with the validation message', async () => {
     const result = await callTool('hotsheet_update_ticket', { id: 42, status: 'banana' }, tmpDataDir, vi.fn());
     expect(result.isError).toBe(true);

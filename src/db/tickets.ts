@@ -137,6 +137,7 @@ export async function updateTicket(id: number, updates: Partial<{
   up_next: boolean;
   last_read_at: string | null;
   pending_integration: boolean;
+  integration_branch: string | null;
 }>, options?: { keepRead?: boolean }): Promise<Ticket | null> {
   const db = await getDb();
   // Don't bump updated_at when only last_read_at is being changed (read tracking shouldn't make tickets "unread")
@@ -175,7 +176,7 @@ export async function updateTicket(id: number, updates: Partial<{
     ? new Set(['completed_at', 'verified_at', 'deleted_at', 'up_next'])
     : new Set(['completed_at', 'verified_at', 'deleted_at']);
 
-  const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at', 'last_read_at', 'pending_integration']);
+  const ALLOWED_COLUMNS = new Set(['title', 'details', 'tags', 'category', 'priority', 'status', 'up_next', 'notes', 'completed_at', 'verified_at', 'deleted_at', 'last_read_at', 'pending_integration', 'integration_branch']);
   for (const [key, value] of Object.entries(updates) as [string, unknown][]) {
     if (value === undefined) continue;
     if (!ALLOWED_COLUMNS.has(key)) continue;

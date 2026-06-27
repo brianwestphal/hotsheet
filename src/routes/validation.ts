@@ -40,6 +40,8 @@ export const UpdateTicketSchema = z.object({
   last_read_at: z.string().nullable().optional(),
   // HS-9045 — worker-completed-but-not-merged flag (docs/89 §89.7).
   pending_integration: z.boolean().optional(),
+  // HS-9107 — the worker branch the work landed on; nullable so it can be cleared.
+  integration_branch: z.string().nullable().optional(),
 });
 
 export const BatchActionSchema = z.object({

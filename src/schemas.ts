@@ -68,6 +68,10 @@ export const TicketSchema = z.object({
   // (= not pending); the DB column is NOT NULL DEFAULT FALSE so a real row is
   // always a boolean. Drives the "pending merge" indicator on completed tickets.
   pending_integration: z.boolean().optional(),
+  // HS-9107 — the worker branch this ticket's pending-integration work landed on
+  // (e.g. `hotsheet/worker-1`). Nullable: only set when a worker marks the ticket
+  // merge-pending; absent for owner-direct completions + pre-HS-9107 rows.
+  integration_branch: z.string().nullish(),
 });
 
 export type Ticket = z.infer<typeof TicketSchema>;

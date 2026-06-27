@@ -162,6 +162,9 @@ const UpdateTicketInputSchema = z.object({
   // its own branch but not yet merged into the target (drives the "pending merge"
   // indicator); the OWNER sets it false when it integrates the branch (docs/89 §89.7).
   pending_integration: z.boolean().optional().describe('Worker-completed but not yet merged into the target branch. A worker sets true on completion; the owner clears it when it integrates the branch.'),
+  // HS-9107 — the worker branch the work landed on (e.g. "hotsheet/worker-1"), set
+  // alongside pending_integration so the owner's "merge pending" badge can review it.
+  integration_branch: z.string().nullish().describe('The worker branch this ticket\'s work landed on (e.g. "hotsheet/worker-1"). A worker sets it alongside pending_integration=true so the owner can review what it added; pass null/omit to clear.'),
 });
 
 const CreateTicketInputSchema = z.object({

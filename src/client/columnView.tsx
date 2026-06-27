@@ -7,6 +7,7 @@ import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { clearNewTicketHost, syncNewTicketHost } from './draftRow.js';
+import { renderMergePendingBadge } from './integrationReview.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, effect } from './reactive.js';
 import { bindList, bindText } from './reactive-bind.js';
@@ -703,9 +704,8 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
         return;
       }
       if (t.status === 'completed' && t.pending_integration === true) {
-        claimedSlot.replaceChildren(toElement(
-          <span className="ticket-pending-merge" title="Completed by a worker — not yet merged into the target branch (docs/89 §89.7)">merge pending</span>,
-        ));
+        // HS-9107 — the badge is a Review affordance when the worker recorded its branch.
+        claimedSlot.replaceChildren(renderMergePendingBadge(t));
       } else if (claimedSlot.firstChild !== null) {
         claimedSlot.replaceChildren();
       }

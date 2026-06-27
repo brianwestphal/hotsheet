@@ -69,7 +69,9 @@ import { getProjectSecret } from './secret-file.js';
 // v15 (HS-9031) — worker-pool management tools so an AI tool can parallelize work
 //   across the distributed pool: `hotsheet_get_worker_pool` / `hotsheet_set_worker_target`
 //   / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers` (23 tools total).
-export const CHANNEL_VERSION = 15;
+// v16 (HS-9107) — `hotsheet_update_ticket` gained an optional `integration_branch`
+//   input (the worker branch the work landed on; lets the merge-pending badge review it).
+export const CHANNEL_VERSION = 16;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';

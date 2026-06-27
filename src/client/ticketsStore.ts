@@ -113,7 +113,9 @@ function ticketEqualForRender(a: Ticket, b: Ticket): boolean {
     // HS-9045 — the "merge pending" row indicator reads this, so a change to it
     // (worker sets it / owner clears it on integration) must fire the per-row
     // signal even when nothing else changed.
-    && a.pending_integration === b.pending_integration;
+    && a.pending_integration === b.pending_integration
+    // HS-9107 — the merge-pending badge's Review action reads the branch.
+    && a.integration_branch === b.integration_branch;
 }
 
 /** Reconcile the per-ticket signal Map against a new ticket list.

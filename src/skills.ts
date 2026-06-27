@@ -42,7 +42,10 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // `refreshWorktree` rebase + gates ONCE at the batch boundary (not per ticket),
 // isolating large/risky tickets; the owner skill notes a ready branch may carry a
 // batch of several tickets (the "branch ready" signal fires once per batch).
-export const SKILL_VERSION = 19;
+// HS-9107 — bumped 19 → 20: when a worker marks a ticket `pending_integration: true`,
+// it also passes `integration_branch` (its current branch, e.g. `hotsheet/worker-1`)
+// so the owner's "merge pending" badge can review what the ticket added.
+export const SKILL_VERSION = 20;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -294,7 +297,7 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     '3. **Do the work** described in the ticket details — implement it fully, the same way you would under `/hotsheet`, but for THIS one claimed ticket only.',
     '   - **Heartbeat on long work — don\'t let the lease lapse while you\'re heads-down.** You work in long silent bursts (a single big file read + analysis can run minutes), and nothing renews the lease automatically. So **renew proactively**: call `hotsheet_renew_lease` with `{ "id": <id>, "worker": "<your-id>" }` (optionally a larger `ttlSeconds` up to 3600) **before** starting any step you expect to take several minutes, and again any time you\'ve been working a while without renewing. The 30-minute default gives headroom, but treat renewing as a normal part of long work, not an afterthought. If a renew ever returns `{ "ok": false }`, your lease lapsed and the ticket may have been reclaimed by another worker — **stop working it**, do NOT mark it completed, and go back to step 1.',
     '4. **Commit your work** on your worktree\'s branch with a clear, scoped message referencing the ticket (follow the project\'s git conventions). Commit only what this ticket touched — don\'t sweep in unrelated pending changes. **NEVER `git push`** without the maintainer\'s explicit permission. (You do NOT merge into the target branch yourself — see **Staying in sync** below.)',
-    '5. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance). **If you committed code for this ticket (step 4), also pass `"pending_integration": true`** — it marks the ticket "merge pending" in the owner\'s UI so they know your branch still needs integrating (the owner clears it when they merge). Omit it for tickets with no committed code.',
+    '5. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance). **If you committed code for this ticket (step 4), also pass `"pending_integration": true` AND `"integration_branch": "<your branch>"`** (your worktree\'s branch, e.g. `hotsheet/worker-1` — run `git branch --show-current` if unsure) — `pending_integration` marks the ticket "merge pending" in the owner\'s UI, and `integration_branch` lets the owner review exactly what your branch added before merging. Omit both for tickets with no committed code.',
     '   - **File follow-up tickets** for any incomplete work BEFORE completing (per the project\'s incomplete-work checklist).',
     '6. **Release the claim.** Call `hotsheet_release` with `{ "id": <id>, "worker": "<your-id>" }` so the slot is freed.',
     '7. **Go back to step 1** and claim the next ticket — **batching small, related tickets** onto the SAME branch (see below) instead of refreshing after every one.',

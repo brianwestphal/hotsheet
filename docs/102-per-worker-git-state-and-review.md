@@ -3,9 +3,25 @@
 **Status: SHIPPED (core)** — Part 2, the per-worktree git chip (§102.3-102.4),
 **SHIPPED** (HS-9081); Part 1, the Glassbox **diff-vs-target** review selector
 (§102.2), **SHIPPED** (HS-9082); the **review-in-worktree** mode (§102.2/§102.5),
-**SHIPPED** (HS-9106, 2026-06-27). Design HS-9060. Remaining follow-up: the
-**merge-pending badge** Review affordance (HS-9107). From the HS-9040 design
+**SHIPPED** (HS-9106); the **merge-pending badge** Review affordance (§102.2),
+**SHIPPED** (HS-9107). All 2026-06-27. Design HS-9060. From the HS-9040 design
 investigation.
+
+**What shipped (HS-9107):** the ticket→branch mapping + the badge Review action.
+A new nullable **`tickets.integration_branch`** column (migration in
+`connection.ts`; `TicketSchema`/`UpdateTicketSchema`/`updateTicket` `ALLOWED_COLUMNS`/
+client `Ticket`) records which worker branch a `pending_integration` ticket's work
+landed on. The worker sets it alongside `pending_integration: true` via the
+`hotsheet_update_ticket` MCP tool (new `integration_branch` input;
+`CHANNEL_VERSION`/`EXPECTED_CHANNEL_VERSION` → 16; worker skill `SKILL_VERSION` →
+20 instructs it to pass its current branch). The HS-9045 "merge pending" badge is
+now rendered by the shared `renderMergePendingBadge` (`integrationReview.tsx`, used
+by both `ticketRow.tsx` + `columnView.tsx`): when `integration_branch` is set the
+badge is a clickable `.ticket-pending-merge-reviewable` affordance →
+`reviewIntegrationBranch(branch)` resolves the target from the live pool
+(`getWorkerPool().target`) and opens Glassbox on `target..<branch>` (`mode:'range'`),
+mirroring the pool-tile Review button. Owner-direct completions / pre-HS-9107
+tickets have no branch → the badge stays passive.
 
 **What shipped (HS-9106):** the in-place worktree review. `GlassboxReviewReqSchema`
 (`src/api/git.ts`) gained a `{ mode: 'worktree', worktree }` variant; `POST
@@ -142,8 +158,10 @@ overloading the single-project chip.
   worker's in-place state. ✅ SHIPPED (HS-9106): `{mode:'worktree'}` on
   `/glassbox/review`, path-validated via `resolveReviewWorktreeCwd` →
   `listWorktrees`; right-click the tile's Review button to choose it.
-- **(follow-up) Merge-pending badge Review** affordance pre-targeting the ticket's
-  branch (needs a ticket→branch mapping). **HS-9107**.
+- **Merge-pending badge Review** affordance pre-targeting the ticket's branch.
+  ✅ SHIPPED (HS-9107): new nullable `tickets.integration_branch` column (set by the
+  worker with `pending_integration`); the badge (`renderMergePendingBadge`) becomes
+  a clickable `target..<branch>` Glassbox review when the branch is recorded.
 - **(Optional) worktrees git summary** in the sidebar git popover (§102.3).
 - Relates: HS-9040 (investigation), HS-9045 (merge-pending), HS-9048
   (`integrateBranch` / `listReadyBranches`), §48 (git chip).

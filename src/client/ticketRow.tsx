@@ -7,6 +7,7 @@ import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { renderMergePendingBadge } from './integrationReview.js';
 import { parseJsonArrayOr } from './json.js';
 import { effect } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -221,9 +222,8 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
         return;
       }
       if (t.status === 'completed' && t.pending_integration === true) {
-        claimedSlot.replaceChildren(toElement(
-          <span className="ticket-pending-merge" title="Completed by a worker — not yet merged into the target branch (docs/89 §89.7)">merge pending</span>,
-        ));
+        // HS-9107 — the badge is a Review affordance when the worker recorded its branch.
+        claimedSlot.replaceChildren(renderMergePendingBadge(t));
       } else if (claimedSlot.firstChild !== null) {
         claimedSlot.replaceChildren();
       }

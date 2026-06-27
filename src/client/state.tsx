@@ -157,6 +157,9 @@ export interface Ticket {
   // HS-9045 — worker-completed but not yet merged into the target branch
   // (docs/89 §89.7). Drives the "pending merge" row indicator when completed.
   pending_integration?: boolean;
+  // HS-9107 — the worker branch the work landed on; lets the merge-pending badge
+  // pre-target Glassbox on `target..<branch>`.
+  integration_branch?: string | null;
 }
 
 export interface SyncInfo {

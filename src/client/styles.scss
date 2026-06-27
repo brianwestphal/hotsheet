@@ -10611,6 +10611,13 @@ label.detail-details-label {
     border-radius: 50%;
     background: currentColor;
   }
+
+  // HS-9107 — when the worker recorded its branch, the badge is a clickable
+  // "Review in Glassbox" affordance; signal that with a pointer + hover lift.
+  &.ticket-pending-merge-reviewable {
+    cursor: pointer;
+    &:hover { background: color-mix(in srgb, var(--warning) 28%, transparent); }
+  }
 }
 
 // A subtle amber left accent so a pending-merge row is distinguishable in the list

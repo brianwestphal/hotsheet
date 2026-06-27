@@ -312,6 +312,16 @@ describe('ticket CRUD', () => {
     expect((await clearRes.json() as { pending_integration?: boolean }).pending_integration).toBe(false);
   });
 
+  it('HS-9107: PATCH /api/tickets/:id persists + clears integration_branch', async () => {
+    const created = await app.request('/api/tickets', post({ title: 'integration-branch test' }));
+    const { id } = await created.json() as TicketResponse;
+    const setRes = await app.request(`/api/tickets/${id}`, patch({ status: 'completed', pending_integration: true, integration_branch: 'hotsheet/worker-1' }));
+    expect(setRes.status).toBe(200);
+    expect((await setRes.json() as { integration_branch?: string | null }).integration_branch).toBe('hotsheet/worker-1');
+    const clearRes = await app.request(`/api/tickets/${id}`, patch({ pending_integration: false, integration_branch: null }));
+    expect((await clearRes.json() as { integration_branch?: string | null }).integration_branch).toBeNull();
+  });
+
   it('POST /api/tickets returns 400 for malformed JSON', async () => {
     const res = await app.request('/api/tickets', {
       method: 'POST',

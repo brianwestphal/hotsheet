@@ -756,6 +756,12 @@ async function initSchema(db: PGlite): Promise<void> {
     -- styling. Defaults false so existing + owner-direct-completed tickets aren't
     -- flagged.
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS pending_integration BOOLEAN NOT NULL DEFAULT FALSE;
+    -- HS-9107 — the worker branch a pending_integration ticket's work landed on
+    -- (e.g. hotsheet/worker-1), recorded by the worker when it marks the ticket
+    -- merge-pending. Lets the "merge pending" badge pre-target Glassbox on the
+    -- target..branch diff ("what this finished ticket added"). Nullable: owner-direct
+    -- completions and pre-HS-9107 tickets have none. Cleared with pending_integration.
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS integration_branch TEXT;
     CREATE INDEX IF NOT EXISTS idx_tickets_claimed_by ON tickets(claimed_by);
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (claim columns):', e.message); });
 
