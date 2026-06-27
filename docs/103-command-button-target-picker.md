@@ -1,9 +1,8 @@
 # 103. Custom Command Buttons: Opt-In Target Picker (Main / Worker / All)
 
 **Status: SHIPPED** — routing + warn-gate (HS-9084) + picker UI (HS-9083), both
-2026-06-26. Design HS-9059. The only remaining follow-up is the optional
-**worker-safe command flag** (HS-9102 — the gate already accepts the opt). From
-the HS-9040 design investigation. A custom Claude command button today always triggers the
+2026-06-26, + the **worker-safe command flag** (HS-9102, 2026-06-27). Design
+HS-9059. From the HS-9040 design investigation. A custom Claude command button today always triggers the
 **main** Claude (the FIFO-leader channel server). With workers running — each its
 own channel server in a worktree — that's the right **default**, but the owner
 sometimes wants to **fan a command out** or **target a specific worker**. This
@@ -119,7 +118,13 @@ be previewed before Claude connects; the not-connected guard + the
 - **`triggerChannel` target routing** (main / specific worker server / broadcast)
   — ✅ SHIPPED (HS-9084). HS-9036 per-server addressing was already in place.
 - **Busy-worker warn gate** (`workerTargetWarning`) — ✅ SHIPPED (HS-9084). The
-  optional **"worker-safe" command flag** (persisted on the command model + edited
-  in the command editor) is a remaining follow-up — the gate already accepts the
-  `workerSafe` opt; it just isn't persisted/edited yet.
+  **"worker-safe" command flag** — ✅ SHIPPED (HS-9102): `workerSafe?: boolean` on
+  the `CustomCommand` model (`settingsCommandDelta.ts`; no zod schema exists for
+  `custom_commands` — the TS interface is the SSOT), a Claude-only "Safe to run on
+  busy workers" checkbox in the command editor (`commandEditor.tsx`), and
+  `runClaudeCommandOnTarget` (`commandSidebar.tsx`) passes `cmd.workerSafe` into
+  `workerTargetWarning` so a marked command fans out to a busy worker without the
+  confirm. Tests: `commandEditor.test.ts` (toggle persists + Claude-only
+  visibility), `commandSidebar.test.ts` (safe skips confirm / unsafe confirms /
+  decline aborts), `triggerTarget.test.ts` (the gate suppression).
 - Relates: HS-9040 (investigation), §83 long-press, §92 dispatch, HS-9036.

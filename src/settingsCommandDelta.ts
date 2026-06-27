@@ -43,6 +43,10 @@ export interface CustomCommand {
   target?: 'claude' | 'shell';
   autoShowLog?: boolean;
   launchInNewTerminal?: boolean;
+  /** HS-9102 (docs/103 §103.2/§103.4) — marks a Claude command as idempotent /
+   *  maintenance-safe so the §103.3 "Run on…" worker picker can fan it out to a
+   *  busy worker WITHOUT the §9084 busy-worker confirm (`workerTargetWarning`). */
+  workerSafe?: boolean;
 }
 
 export interface CommandGroup {

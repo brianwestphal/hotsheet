@@ -388,7 +388,9 @@ export async function runClaudeCommandOnTarget(
     showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
     return;
   }
-  const warning = workerTargetWarning(target, workers);
+  // HS-9102 — a command marked worker-safe (idempotent / maintenance) suppresses
+  // the busy-worker confirm so it can fan out mid-task without prompting.
+  const warning = workerTargetWarning(target, workers, { workerSafe: cmd.workerSafe });
   if (warning.warn) {
     const ok = await confirmDialog({
       title: 'Trigger a busy worker?',

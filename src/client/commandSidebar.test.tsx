@@ -576,4 +576,21 @@ describe('runClaudeCommandOnTarget (HS-9083)', () => {
     expect(confirmDialogMock).toHaveBeenCalledOnce();
     expect(triggerBusyMock).not.toHaveBeenCalled();
   });
+
+  // HS-9102 — a command flagged worker-safe suppresses the busy-worker confirm.
+  it('HS-9102: a worker-safe command fires on a BUSY worker with no confirm', async () => {
+    const cmd: CustomCommand = { ...makeClaudeCommand('Lint', 'lint'), workerSafe: true };
+    const workers = [makeWorker('worker-2', 'working', '/wt/b')];
+    await runClaudeCommandOnTarget(cmd, { kind: 'worker', worktree: '/wt/b' }, workers);
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(triggerBusyMock).toHaveBeenCalledWith('lint', { kind: 'worker', worktree: '/wt/b' });
+  });
+
+  it('HS-9102: a worker-safe command skips the confirm on All workers too', async () => {
+    const cmd: CustomCommand = { ...makeClaudeCommand('Lint', 'lint'), workerSafe: true };
+    const workers = [makeWorker('worker-1', 'working', '/wt/a'), makeWorker('worker-2', 'working', '/wt/b')];
+    await runClaudeCommandOnTarget(cmd, { kind: 'all-workers' }, workers);
+    expect(confirmDialogMock).not.toHaveBeenCalled();
+    expect(triggerBusyMock).toHaveBeenCalledWith('lint', { kind: 'all-workers' });
+  });
 });

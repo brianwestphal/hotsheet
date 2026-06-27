@@ -76,6 +76,41 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
     expect(names).toEqual(['Test']);
   });
 
+  it('HS-9102: toggling "Safe to run on busy workers" persists workerSafe on a Claude command', async () => {
+    await seed([{ name: 'Lint', prompt: 'run the linter', target: 'claude' }]);
+
+    const rows = document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row');
+    rows[0].querySelector<HTMLButtonElement>('.cmd-outline-edit-btn')!.click();
+
+    const overlay = document.querySelector('.cmd-editor-overlay')!;
+    const label = overlay.querySelector<HTMLElement>('.command-worker-safe-label')!;
+    const checkbox = overlay.querySelector<HTMLInputElement>('.command-worker-safe')!;
+    // Visible for a Claude command, unchecked by default.
+    expect(label.style.display).not.toBe('none');
+    expect(checkbox.checked).toBe(false);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+
+    const item = getCommandItems()[0];
+    expect('workerSafe' in item && item.workerSafe).toBe(true);
+  });
+
+  it('HS-9102: the worker-safe checkbox is hidden for a Shell command', async () => {
+    await seed([{ name: 'Build', prompt: 'npm run build', target: 'shell' }]);
+
+    const rows = document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row');
+    rows[0].querySelector<HTMLButtonElement>('.cmd-outline-edit-btn')!.click();
+
+    const overlay = document.querySelector('.cmd-editor-overlay')!;
+    const label = overlay.querySelector<HTMLElement>('.command-worker-safe-label')!;
+    expect(label.style.display).toBe('none');
+
+    // Switching the target to Claude reveals it.
+    overlay.querySelector<HTMLButtonElement>('.seg-btn[data-target="claude"]')!.click();
+    expect(label.style.display).not.toBe('none');
+  });
+
   it('REBUILD INVARIANT: deleting "row 0" twice removes the right items in order', async () => {
     await seed([
       { name: 'A', prompt: 'a', target: 'shell' },

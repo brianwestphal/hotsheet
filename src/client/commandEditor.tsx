@@ -82,6 +82,13 @@ export function showCommandEditorModal(ref: ItemRef) {
           <label className="command-launch-terminal-label" style={currentTarget === 'shell' ? '' : 'display:none'}>
             <input type="checkbox" className="command-launch-terminal" checked={cmd.launchInNewTerminal === true} /> Launch in new terminal
           </label>
+          {/* HS-9102 — Claude-only: mark a command idempotent/maintenance-safe so the
+              "Run on…" worker picker fans it out to a busy worker without the
+              busy-worker confirm (docs/103 §103.2). Shown only for Claude commands —
+              worker targets are a Claude-command feature. */}
+          <label className="command-worker-safe-label" style={currentTarget === 'shell' ? 'display:none' : ''}>
+            <input type="checkbox" className="command-worker-safe" checked={cmd.workerSafe === true} /> Safe to run on busy workers
+          </label>
           <div className="command-claude-warning" style={currentTarget !== 'shell' && !isChannelEnabled() ? '' : 'display:none'}>
             {'\u26A0'} This command won't appear in the sidebar unless Claude Channel is enabled above.
           </div>
@@ -112,6 +119,8 @@ export function showCommandEditorModal(ref: ItemRef) {
   const autoShowCheckbox = overlay.querySelector('.command-auto-show') as HTMLInputElement;
   const launchTerminalLabel = overlay.querySelector('.command-launch-terminal-label') as HTMLElement;
   const launchTerminalCheckbox = overlay.querySelector('.command-launch-terminal') as HTMLInputElement;
+  const workerSafeLabel = overlay.querySelector('.command-worker-safe-label') as HTMLElement;
+  const workerSafeCheckbox = overlay.querySelector('.command-worker-safe') as HTMLInputElement;
   const claudeWarning = overlay.querySelector('.command-claude-warning') as HTMLElement;
 
   const save = () => {
@@ -133,6 +142,12 @@ export function showCommandEditorModal(ref: ItemRef) {
     void saveCommandItems();
   });
 
+  // HS-9102 — per-command "Safe to run on busy workers" flag.
+  workerSafeCheckbox.addEventListener('change', () => {
+    updateCommand(ref, c => { c.workerSafe = workerSafeCheckbox.checked; });
+    void saveCommandItems();
+  });
+
   for (const segBtn of segBtns) {
     segBtn.addEventListener('click', () => {
       const target = (segBtn as HTMLElement).dataset.target as 'claude' | 'shell';
@@ -143,6 +158,7 @@ export function showCommandEditorModal(ref: ItemRef) {
       promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
       autoShowLabel.style.display = target === 'shell' ? '' : 'none';
       launchTerminalLabel.style.display = target === 'shell' ? '' : 'none';
+      workerSafeLabel.style.display = target === 'shell' ? 'none' : ''; // HS-9102 — Claude-only
       claudeWarning.style.display = target !== 'shell' && !isChannelEnabled() ? '' : 'none';
       void saveCommandItems();
     });

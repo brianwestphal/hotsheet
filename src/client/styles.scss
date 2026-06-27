@@ -2887,8 +2887,11 @@ body.cross-project-stats-active {
   // the generic `.cmd-editor-dialog-body label` rule below (`--text-muted`,
   // 11px), so a *checked* "Launch in new terminal" rendered in the lightest gray
   // and read as disabled next to its active checkbox. They must look identical.
+  // HS-9102 — the Claude-only "Safe to run on busy workers" label shares the same
+  // look as the shell sub-option rows (so a checked box never reads as disabled).
   .command-auto-show-label,
-  .command-launch-terminal-label {
+  .command-launch-terminal-label,
+  .command-worker-safe-label {
     display: flex;
     align-items: center;
     gap: 6px;
