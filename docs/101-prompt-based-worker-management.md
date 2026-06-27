@@ -127,13 +127,65 @@ undo). On accept, each chunk is dispatched via the shipped `dispatchAndReport`
 (claim-by-id, §92); cancel does nothing. All in `workerPoolPanel.tsx`
 (`parallelizeTag` / `openTagParallelize`, exported for tests).
 
+## 101.7 Agent-in-the-loop plan preview (HS-9108 — design, optional)
+
+**Status: design only — a build/no-build decision for the maintainer.** The
+common preview-first case is already covered by the **client-side** "Parallelize
+tag…" quick action (HS-9080, Option A): the client computes the partition and shows
+the HS-8977 editor *before* any dispatch. The **free-text prompt box** (HS-9079),
+by contrast, routes to the MAIN agent over the channel, which queries → sizes →
+partitions → **dispatches at runtime with no client preview**. HS-9108 is the
+literal §101.2 reading: surface the *agent's* proposed assignment in the partition
+editor for accept/edit/cancel **before** it dispatches. This needs an
+**agent→client proposed-plan handshake** that doesn't exist today (the agent and
+the open client only communicate one-way, owner→agent, via the channel trigger).
+
+**The gap.** The agent runs `hotsheet_dispatch_tickets` directly; there's no way
+for it to say "here's my plan — show it to the human and wait." Three ways to add
+that:
+
+- **(a) Server slot + poll.** A new `POST /api/workers/partition/propose` writes
+  the agent's proposed assignment to a per-project in-memory slot (keyed by
+  project secret). The open panel polls (or is notified) for a pending proposal,
+  opens `openPartitionEditor(proposal)`, and on accept dispatches client-side via
+  the existing `dispatchAndReport` (claim-by-id). Reuses ALL the shipped preview +
+  dispatch infra; the only new surface is the propose slot + its read.
+- **(b) WS push (preferred now that §93 shipped).** Push the proposed plan to the
+  client over the `/ws/sync` event bus (a new `worker-partition-proposed` event
+  type) instead of polling — same server slot for catch-up/`?since`, but instant.
+  The §93 client reducer gains a handler that opens the editor.
+- **(c) "Propose, don't dispatch" MCP tool.** A new `hotsheet_propose_partition`
+  tool the agent calls *instead of* `hotsheet_dispatch_tickets` when a preview is
+  wanted; it writes the same server slot as (a)/(b). Pairs with either transport.
+
+**Recommendation.** Build it as **(c) the propose MCP tool writing a server slot +
+(b) a §93 WS event to surface it** (poll fallback for clients on the long-poll
+path), then reuse `openPartitionEditor` → `dispatchAndReport` on accept. The agent
+is instructed (skill prose) to *propose* rather than *dispatch* when the owner's
+prompt implies they want to review first ("...and let me review", or a global
+"always preview agent plans" setting). On accept, the client dispatches (so the
+human, not the agent, commits the work); on cancel, nothing dispatches and the
+agent is told (channel-done result line) the plan was declined.
+
+**Why it's gated.** Dispatch via the agent already works; this only adds a
+human-in-the-loop gate to the *free-text* path, which the tag quick action already
+covers for the common case. Worth building if the maintainer wants every
+agent-driven dispatch preview-gated (not just the tag quick action); otherwise the
+two existing paths (preview-first tag action + direct free-text agent dispatch)
+suffice. **Decision needed before implementing** — tracked as the HS-9108
+follow-up below.
+
 ## 101.6 Follow-up tickets
 
 - **Prompt box + channel-trigger wrapper** in the pool panel (the core). ✅ SHIPPED (HS-9079).
 - **"Parallelize tag…" quick action.** ✅ SHIPPED (HS-9080, client-side Option A).
 - **Wire the plan preview** to the HS-8965/8977 partition editor with accept/edit/
   cancel → dispatch. ✅ SHIPPED (HS-9080).
-- **(deferred) Agent-in-the-loop plan preview** — let the free-text prompt's
-  agent-driven dispatch be previewed/confirmed in the editor too (needs an
-  agent→client proposed-plan handshake). **HS-9108** (optional).
+- **(design, optional) Agent-in-the-loop plan preview** — let the free-text
+  prompt's agent-driven dispatch be previewed/confirmed in the editor too (needs an
+  agent→client proposed-plan handshake). **Design captured in §101.7** (HS-9108);
+  recommended shape = a `hotsheet_propose_partition` MCP tool → server slot →
+  §93 WS event → `openPartitionEditor` → client dispatch. **Build gated on a
+  maintainer decision** ("only build if you want every agent dispatch
+  preview-gated"). Implementation follow-up: **HS-9112**.
 - Depends on coherent partitioner grouping (HS-9073, §98) for good default chunks. ✅ SHIPPED.
