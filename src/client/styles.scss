@@ -2203,6 +2203,13 @@ body.cross-project-stats-active {
   }
 }
 
+// HS-9113 — iconic variant: no label, so don't stretch full-width. Compact
+// square buttons sized to the 16px glyph instead.
+.sidebar-worker-action-btn-iconic {
+  flex: 0 0 auto;
+  padding: 6px;
+}
+
 .sidebar-worker-auto {
   padding: 6px 10px 0;
 }

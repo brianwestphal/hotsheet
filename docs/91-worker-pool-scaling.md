@@ -86,9 +86,11 @@ than losing it.
 
 Shipped as a **sibling panel** `src/client/workerPoolPanel.tsx`, opened from the
 iconic **"Worker pool" sidebar button** (`#sidebar-worker-pool-btn`, lucide
-`users`) — one of the two worker-action buttons sitting just above the "Auto
-worker pool" switch (moved off the git popover in HS-9068; wired in
-`workerActionButtons.ts`). It renders a
+`bolt` — HS-9113) — one of the two worker-action buttons sitting just above the
+"Auto worker pool" switch (moved off the git popover in HS-9068; wired in
+`workerActionButtons.ts`). Both worker-action buttons are **icon-only** (HS-9113
+dropped their text labels; the `title` tooltips carry the meaning) — the sibling
+**"In-flight work" button** (`#sidebar-inflight-btn`) uses lucide `radio`. It renders a
 tile per worker (label, state chip, current ticket from the live claims), a
 **target-N stepper** (`−  N  +` + "X running", HS-8971) the panel reconciles
 toward, a per-worker "Drain", and "Drain all". **Reconcile (HS-8971):** on every
