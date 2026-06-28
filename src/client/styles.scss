@@ -2203,10 +2203,13 @@ body.cross-project-stats-active {
   }
 }
 
-// HS-9113 — iconic variant: no label, so don't stretch full-width. Compact
-// square buttons sized to the 16px glyph instead.
+// HS-9113 — iconic variant: no label, just the glyph. HS-9153 — share the row
+// width evenly between the worker-pool + in-flight buttons (was `flex: 0 0 auto`,
+// which left them as small left-aligned squares with empty space to the right);
+// `flex: 1 1 0` makes each take an equal half of the available width, glyph
+// centered (the base rule already centers content).
 .sidebar-worker-action-btn-iconic {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   padding: 6px;
 }
 
@@ -5135,6 +5138,27 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   font-size: 11px;
   color: var(--text-secondary);
   margin-top: 4px;
+}
+
+// HS-9156 — "local to this machine" banner shown at the top of settings tabs
+// whose values are never shared (API Keys, Plugins, Permissions, Announcer).
+// Reused by HS-9157 / HS-9159.
+.settings-local-note {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  margin: 0 0 14px;
+  padding: 8px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.25));
+  background: var(--bg-tertiary, rgba(127, 127, 127, 0.06));
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+
+  strong { color: var(--text-primary, inherit); font-weight: 600; }
+  code { font-size: 11px; }
+  &::before { content: ""; }
 }
 
 // --- Skills Banner ---

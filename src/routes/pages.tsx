@@ -802,6 +802,8 @@ pageRoutes.get('/', (c) => {
                 bar is hidden on this tab (see HIDDEN_SCOPE_BAR_TABS). No
                 `data-scope-complex` lock. */}
             {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel">
+              {/* HS-9156 — these settings are never shared with the team. */}
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> Plugin installation and configuration live in <code>~/.hotsheet/</code> and this machine's database — never committed to git or shared with your team.</span></p>
               <div className="settings-section-header" style="margin-bottom:12px">
                 <h3>Installed Plugins</h3>
                 <button className="btn btn-sm" id="plugin-install-btn">Find Plugins...</button>
@@ -844,6 +846,8 @@ pageRoutes.get('/', (c) => {
                 write-only here. Projects select a key by name (e.g. the
                 Announcer). The list rows are rendered by keysSettings.tsx. */}
             <div className="settings-tab-panel" data-panel="keys" id="settings-keys-panel">
+              {/* HS-9156 — machine-local: keys never leave this machine / the keychain. */}
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> API key values live in your OS keychain and their names in <code>~/.hotsheet/config.json</code> — never committed to git or shared with your team.</span></p>
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>API Keys <span className="global-setting-badge" title="These keys are shared across every project on this machine.">Global Setting</span></h3>
