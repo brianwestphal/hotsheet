@@ -95,26 +95,25 @@ jobs:
         env:
           E2E_SCOPE: terminal
 
-  # HS-9140 / HS-9139 — merged (unit + e2e server + e2e browser) coverage + the
-  # threshold gate. Heavy (full unit suite + an instrumented e2e run + nyc merge),
-  # so it runs only on push to main (post-merge baseline + regression gate), not
-  # on every PR. The e2e half uses E2E_SCOPE=no-terminal so a timing-sensitive
-  # terminal flake can't wedge the shared server mid-coverage-capture (terminal
-  # SOURCE is still counted via the unit suite, which includes src/terminals).
-  # `scripts/test-all.sh` prints the merged "All files" row and ends with an
-  # `nyc check-coverage` gate; the floor below sits just under the measured unit
-  # baseline (≈64% lines), so it catches regressions without false-failing — and
-  # since merged ≥ unit, it's safe whether or not the e2e half merges cleanly.
-  # Ratchet the floor up toward the real merged number after the first green run.
+  # HS-9140 / HS-9139 / HS-9142 — merged (unit + e2e server + e2e browser)
+  # coverage + the threshold gate. Heavy (full unit suite + two instrumented e2e
+  # passes + nyc merge), so it runs only on push to main (post-merge baseline +
+  # regression gate), not on every PR. `scripts/test-all.sh` runs e2e in two
+  # passes (no-terminal then terminal, each on a fresh server) so terminal-e2e
+  # coverage is folded in without a flake wedging the shared capture. It prints
+  # the merged "All files" row and ends with an `nyc check-coverage` gate; the
+  # floors below sit ~2-3 pts under the measured merged baseline. Raise as
+  # coverage improves after a green run.
   coverage:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     env:
-      E2E_SCOPE: no-terminal
-      # Ratcheted to ~2-3 pts below the first green merged run (run 28320784494:
-      # lines 93.09 / stmts 77.95 / funcs 69.58 / branches 68.01). Margin absorbs
-      # run-to-run variation (a skipped/flaked e2e test drops a few lines) while
-      # still catching a real coverage regression. Raise as coverage improves.
+      # No E2E_SCOPE here — HS-9142 test-all.sh runs both e2e passes (no-terminal
+      # + terminal) internally so terminal-e2e coverage is folded into the merge.
+      # Floors are ~2-3 pts below the first green merged run (run 28320784494:
+      # lines 93.09 / stmts 77.95 / funcs 69.58 / branches 68.01) — they stay safe
+      # as terminal-e2e coverage only raises the merged numbers. Raise as coverage
+      # improves; absorbs run-to-run variation (a flaked e2e test drops a few lines).
       COVERAGE_MIN_LINES: '90'
       COVERAGE_MIN_STATEMENTS: '74'
       COVERAGE_MIN_FUNCTIONS: '66'

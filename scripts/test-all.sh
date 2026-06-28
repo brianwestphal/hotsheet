@@ -20,27 +20,39 @@ echo ""
 echo "=== Build client for E2E ==="
 npm run build:client
 
-echo ""
-echo "=== Start server with V8 coverage ==="
-# Use isolated HOME so global files (instance.json, projects.json, config.json)
-# don't interfere with any running Hot Sheet instance
-HOME="$E2E_HOME" NODE_V8_COVERAGE="$E2E_V8_DIR" node --enable-source-maps --import tsx src/cli.ts \
-  --data-dir "$E2E_DATA_DIR" --no-open --port 4190 --strict-port &
-SERVER_PID=$!
-for i in $(seq 1 30); do
-  curl -s http://localhost:4190/ > /dev/null 2>&1 && break
-  sleep 0.5
-done
+# HS-9142 — run e2e in TWO passes, each against its own fresh server, both
+# writing V8 coverage to $E2E_V8_DIR (c8 converts them together below):
+#   1. no-terminal — the bulk of the suite
+#   2. terminal    — the timing-sensitive terminal/PTY/OSC specs (E2E_SCOPE in
+#                    playwright.config.ts), on a clean server so a terminal flake
+#                    can't wedge the shared capture and lose the rest's coverage.
+# This folds terminal-e2e coverage into the merged report (was unit-only for the
+# terminal client `.tsx`). Each pass's server uses an isolated HOME so global
+# files (instance.json/projects.json/config.json) don't touch a real instance.
+run_e2e_pass() {
+  local scope="$1"
+  echo ""
+  echo "=== Start server with V8 coverage (E2E_SCOPE=$scope) ==="
+  HOME="$E2E_HOME" NODE_V8_COVERAGE="$E2E_V8_DIR" node --enable-source-maps --import tsx src/cli.ts \
+    --data-dir "$E2E_DATA_DIR" --no-open --port 4190 --strict-port &
+  SERVER_PID=$!
+  for i in $(seq 1 30); do
+    curl -s http://localhost:4190/ > /dev/null 2>&1 && break
+    sleep 0.5
+  done
 
-echo "=== E2E tests (server + browser coverage) ==="
-NO_WEB_SERVER=1 BROWSER_V8_COVERAGE="$E2E_V8_DIR" npx playwright test 2>&1 \
-  | grep -E '^\s*(✓|✗|[0-9]+ (passed|failed))' || true
+  echo "=== E2E tests ($scope; server + browser coverage) ==="
+  E2E_SCOPE="$scope" NO_WEB_SERVER=1 BROWSER_V8_COVERAGE="$E2E_V8_DIR" npx playwright test 2>&1 \
+    | grep -E '^\s*(✓|✗|[0-9]+ (passed|failed))' || true
 
-echo ""
-echo "=== Stop server ==="
-kill $SERVER_PID 2>/dev/null
-wait $SERVER_PID 2>/dev/null || true
-sleep 1
+  echo "=== Stop server ($scope) ==="
+  kill $SERVER_PID 2>/dev/null
+  wait $SERVER_PID 2>/dev/null || true
+  sleep 1
+}
+
+run_e2e_pass no-terminal
+run_e2e_pass terminal
 
 echo ""
 echo "=== Convert V8 coverage to Istanbul JSON ==="
