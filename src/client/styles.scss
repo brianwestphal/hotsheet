@@ -5633,8 +5633,6 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 }
 .scope-bar-note { font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
 
-// HS-9096 — the whole segmented control reads as inert on a per-row-layer tab.
-.settings-scope-bar.scope-bar-per-row .scope-seg { opacity: .5; }
 
 // Per-field affordance: top-right of the field it decorates.
 .settings-field.scope-host { position: relative; }

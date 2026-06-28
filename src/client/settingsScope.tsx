@@ -127,23 +127,15 @@ let initialized = false;
  */
 const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices']);
 
-/**
- * HS-9096 — tabs that manage the shared/local layer **per row**, so the
- * dialog-wide Shared / Local / Resolved bar is irrelevant there (it isn't a
- * scoped scalar field nor a `data-scope-complex` panel, so it would otherwise sit
- * active-but-inert). On these tabs the segmented control is disabled and the note
- * points the user at the per-row controls — distinct from the global-only case
- * (`views` is NOT machine-global).
- *
- *  - `views` — the Views tab (docs/107 §107.6) adds local-by-default views +
- *              per-row Add Local|Shared / Move / Hide.
- */
-const PER_ROW_LAYER_TABS = new Set(['views']);
+// HS-9123 — the Views tab now PARTICIPATES in the dialog-wide scope bar (Shared
+// shows only shared views, Local shows shared+local with hide, Resolved shows the
+// effective list; the single Add button targets the active layer). It used to be
+// a per-row-layer tab (HS-9096) with the bar disabled — that mechanism is gone.
 
-/** Tabs where the dialog-wide scope bar is inert (hidden or per-row-layer), so
- *  segment clicks are ignored. */
+/** Tabs where the dialog-wide scope bar is inert (hidden), so segment clicks are
+ *  ignored. */
 function isLayerBarDisabledTab(tab: string): boolean {
-  return HIDDEN_SCOPE_BAR_TABS.has(tab) || PER_ROW_LAYER_TABS.has(tab);
+  return HIDDEN_SCOPE_BAR_TABS.has(tab);
 }
 
 let activeTab = 'general';
@@ -285,19 +277,14 @@ function updateToolbar(): void {
   const hidden = HIDDEN_SCOPE_BAR_TABS.has(activeTab);
   bar.classList.toggle('scope-bar-hidden', hidden);
   if (hidden) return;
-  const perRowLayer = PER_ROW_LAYER_TABS.has(activeTab);
-  bar.classList.toggle('scope-bar-per-row', perRowLayer);
   bar.dataset.scopeMode = mode;
   bar.querySelectorAll<HTMLButtonElement>('.scope-seg-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.scopeMode === mode);
-    btn.disabled = perRowLayer;
+    btn.disabled = false;
   });
   const note = byIdOrNull('settings-scope-note');
-  if (note !== null) note.textContent = perRowLayer ? PER_ROW_LAYER_NOTE : SCOPE_NOTE[mode];
+  if (note !== null) note.textContent = SCOPE_NOTE[mode];
 }
-
-// HS-9096 — the Views tab manages layers per row, not dialog-wide.
-const PER_ROW_LAYER_NOTE = 'Layers are managed per-view on this tab — use each view’s own Local / Shared controls.';
 
 const SCOPE_NOTE: Record<ScopeMode, string> = {
   resolved: 'Effective values in use. Each field is tagged with where its value comes from.',

@@ -782,18 +782,19 @@ pageRoutes.get('/', (c) => {
               <span className="settings-hint" style="margin-bottom:12px;display:block">Automatically prepend instructions to ticket details in the worklist, based on category or tag. Category context appears first, then tag context in alphabetical order.</span>
               <div id="auto-context-list"></div>
             </div>
-            {/* HS-9093 — Custom Views management tab. The layer (Shared vs Local)
-                is chosen per-action here (add picker + per-row move), so this tab
-                isn't driven by the dialog-wide scope control. */}
+            {/* HS-9093 / HS-9123 — Custom Views management tab. Driven by the
+                dialog-wide Shared|Local|Resolved scope bar: Shared shows only
+                shared views, Local shows shared+local (with hide), Resolved shows
+                the effective list. The single Add button targets the active
+                layer. */}
             <div className="settings-tab-panel" data-panel="views" id="settings-views-panel">
               <div className="settings-section-header">
                 <h3>Custom Views</h3>
                 <div className="settings-views-add">
-                  <button className="btn btn-sm" id="settings-views-add-local-btn">+ Add Local</button>
-                  <button className="btn btn-sm" id="settings-views-add-shared-btn">+ Add Shared</button>
+                  <button className="btn btn-sm" id="settings-views-add-btn">+ Add View</button>
                 </div>
               </div>
-              <span className="settings-hint" style="margin-bottom:12px;display:block">Custom views in the sidebar. <strong>Shared</strong> views are committed to the project (settings.json); <strong>Local</strong> views are this machine only (settings.local.json). Move a view between layers, or hide a shared view on this machine.</span>
+              <span className="settings-hint" style="margin-bottom:12px;display:block">Custom views in the sidebar. <strong>Shared</strong> views are committed to the project (settings.json); <strong>Local</strong> views are this machine only (settings.local.json). Use the Shared / Local tabs above to choose which you're adding; in Local you can also hide a shared view on this machine.</span>
               <div id="settings-views-list"></div>
             </div>
             {/* HS-9124 — plugins are DB-backed + machine-local (never shared via

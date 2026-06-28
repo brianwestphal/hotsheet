@@ -120,6 +120,25 @@ export function deleteLocalView(layers: ViewLayers, id: string): ViewLayers {
 }
 
 /**
+ * HS-9123 — Delete a SHARED view outright (remove it from the committed array,
+ * editing `settings.json` for the whole team). Also drops any local `hidden` /
+ * `overrides` entry that referenced it so no stale delta lingers. No-op if the
+ * id isn't a shared view.
+ */
+export function deleteSharedView(layers: ViewLayers, id: string): ViewLayers {
+  if (!isSharedView(layers, id)) return layers;
+  const shared = layers.shared.filter(v => idOf(v) !== id);
+  const delta = cloneDelta(layers.delta);
+  if (delta.hidden !== undefined) delta.hidden = delta.hidden.filter(h => h !== id);
+  if (delta.overrides !== undefined) {
+    const { [id]: _dropped, ...rest } = delta.overrides;
+    void _dropped;
+    delta.overrides = rest;
+  }
+  return { shared, delta: pruneViewDelta(delta) };
+}
+
+/**
  * Reorder a view before another, WITHIN its layer (the local layer can't reorder
  * shared items — docs/95 §95.3). A shared→shared drag reorders the shared array;
  * a local→local drag reorders `added`. A cross-layer drag is a no-op (the

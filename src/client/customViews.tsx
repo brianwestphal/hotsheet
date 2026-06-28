@@ -1,10 +1,12 @@
 import { clearLocalSettingOverride, getLayeredFileSettings, updateFileSettingsLayer, updateTicket } from '../api/index.js';
 import { type ArrayDelta, isArrayDelta } from '../settingsDelta.js';
 import { suppressAnimation } from './animate.js';
+import { confirmDialog } from './confirm.js';
 import {
   addLocalView,
   addSharedView,
   deleteLocalView,
+  deleteSharedView,
   editView,
   hideSharedView,
   isSharedView as isSharedViewIn,
@@ -19,6 +21,7 @@ import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
 import { ICON_ARROW_DOWN, ICON_ARROW_UP, ICON_EYE, ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
+import { getScopeMode } from './settingsScope.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
 import type { CustomView, CustomViewCondition } from './state.js';
 import { allKnownTags, refreshAllKnownTags, state } from './state.js';
@@ -238,13 +241,32 @@ async function hideView(view: CustomView) {
 
 /** Bind the Views tab's add buttons + initial render (called once at dialog bind). */
 export function bindViewsTab() {
-  byIdOrNull('settings-views-add-local-btn')?.addEventListener('click', () => showViewEditor(undefined, { addLayer: 'local' }));
-  byIdOrNull('settings-views-add-shared-btn')?.addEventListener('click', () => showViewEditor(undefined, { addLayer: 'shared' }));
+  // HS-9123 — one Add button; its target layer follows the active scope mode
+  // (Shared → shared, Local/Resolved → local, matching the sidebar's
+  // local-by-default add).
+  byIdOrNull('settings-views-add-btn')?.addEventListener('click', () => {
+    showViewEditor(undefined, { addLayer: getScopeMode() === 'shared' ? 'shared' : 'local' });
+  });
   byId('settings-btn').addEventListener('click', () => { renderViewsTab(); });
+  // HS-9123 — re-render for the new layer when the dialog-wide scope changes.
+  document.addEventListener('hotsheet:scope-mode-changed', () => { renderViewsTab(); });
 }
 
-/** One management row in the Views tab. `hidden` only applies to shared views. */
-function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: boolean): HTMLElement {
+/** HS-9123 — delete a SHARED view (confirm — it edits the committed team file). */
+async function deleteSharedViewAction(view: CustomView) {
+  const ok = await confirmDialog({
+    title: 'Delete shared view?',
+    message: `Delete "${view.name}" from the shared (committed) views? This removes it for everyone on the project.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  resetViewIfActive(view.id);
+  await persistViews(deleteSharedView(viewLayers, view.id));
+}
+
+/** One management row in the Views tab. `hidden`/`mode` shape the actions. */
+function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: boolean, mode: 'shared' | 'local' | 'resolved'): HTMLElement {
   const row = toElement(
     <div className={`settings-view-row${hidden ? ' settings-view-hidden' : ''}`}>
       <span className={`cv-layer-badge ${layer === 'shared' ? 'cv-layer-shared' : 'cv-layer-local'}`}>{layer === 'shared' ? 'Shared' : 'Local'}</span>
@@ -253,40 +275,58 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
     </div>
   );
   const actions = row.querySelector('.settings-view-actions')!;
-  const addBtn = (label: string, icon: typeof ICON_PENCIL, title: string, onClick: () => void) => {
-    const b = toElement(<button className="cmd-outline-edit-btn" title={title}>{icon}</button>);
-    void label;
+  const addBtn = (icon: typeof ICON_PENCIL, title: string, onClick: () => void, cls = 'cmd-outline-edit-btn') => {
+    const b = toElement(<button className={cls} title={title}>{icon}</button>);
     b.addEventListener('click', onClick);
     actions.appendChild(b);
   };
 
-  addBtn('Edit', ICON_PENCIL, 'Edit', () => showViewEditor(view));
+  addBtn(ICON_PENCIL, 'Edit', () => showViewEditor(view));
   if (layer === 'shared') {
-    if (hidden) {
-      addBtn('Unhide', ICON_EYE, 'Unhide on this machine', () => { void persistViews(unhideSharedView(viewLayers, view.id)); });
-    } else {
-      addBtn('Hide', ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
+    // Hide/Unhide is a Local-layer action (only meaningful in Local mode).
+    if (mode === 'local') {
+      if (hidden) addBtn(ICON_EYE, 'Unhide on this machine', () => { void persistViews(unhideSharedView(viewLayers, view.id)); });
+      else addBtn(ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
     }
-    addBtn('Move to Local', ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
+    // Move to Local is layer management (Shared/Local tabs, not Resolved).
+    if (mode !== 'resolved') addBtn(ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
+    // HS-9123 — shared views can now be deleted outright.
+    addBtn(ICON_TRASH_SIMPLE, 'Delete (removes for the whole team)', () => { void deleteSharedViewAction(view); }, 'cmd-outline-delete-btn');
   } else {
-    addBtn('Move to Shared', ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
-    const del = toElement(<button className="cmd-outline-delete-btn" title="Delete">{ICON_TRASH_SIMPLE}</button>);
-    del.addEventListener('click', () => { void deleteView(view.id); });
-    actions.appendChild(del);
+    if (mode !== 'resolved') addBtn(ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
+    addBtn(ICON_TRASH_SIMPLE, 'Delete', () => { void deleteView(view.id); }, 'cmd-outline-delete-btn');
   }
   return row;
 }
 
-/** Render the Views tab list: every shared view (kept + hidden) then every local
- *  addition, each with layer-appropriate actions. No-op when the panel is absent. */
+/**
+ * HS-9123 — Render the Views tab list per the active scope mode:
+ *  - Shared:   only the shared (committed) views.
+ *  - Local:    shared views (with hide/unhide) + local additions.
+ *  - Resolved: the effective list (shared-not-hidden + local), no layer moves.
+ * No-op when the panel is absent.
+ */
 function renderViewsTab() {
   const list = byIdOrNull('settings-views-list');
   if (!list) return;
+  const mode = getScopeMode();
+  // Keep the Add button label in step with the active layer.
+  const addBtnEl = byIdOrNull('settings-views-add-btn');
+  if (addBtnEl !== null) addBtnEl.textContent = mode === 'shared' ? '+ Add Shared View' : mode === 'local' ? '+ Add Local View' : '+ Add View';
+
   const hiddenSet = new Set(viewLayers.delta.hidden ?? []);
   const localViews = viewLayers.delta.added ?? [];
   const rows: HTMLElement[] = [];
-  for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', hiddenSet.has(v.id)));
-  for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false));
+  if (mode === 'shared') {
+    for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', false, mode));
+  } else if (mode === 'local') {
+    for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', hiddenSet.has(v.id), mode));
+    for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false, mode));
+  } else {
+    // Resolved — the effective list (shared minus hidden, then local additions).
+    for (const v of viewLayers.shared) if (!hiddenSet.has(v.id)) rows.push(renderViewsTabRow(v, 'shared', false, mode));
+    for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false, mode));
+  }
   if (rows.length === 0) {
     list.replaceChildren(toElement(<div className="settings-view-empty">No custom views yet. Add one above, or with the + next to “Views” in the sidebar.</div>));
     return;

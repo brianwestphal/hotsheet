@@ -144,8 +144,12 @@ suffices — no tree-aware resolver needed (that's the custom_commands superset)
 - **Edit a shared view from the sidebar** — allowed from both the sidebar + Views
   tab; the origin badge makes the target layer clear.
 - **Views tab vs sidebar menu** — they coexist (tab = power surface, sidebar =
-  quick). The Views tab is **not** wired to the §95 scope control (it manages
-  layers per-row); **HS-9096 (SHIPPED)** disables the dialog-wide scope bar on the
-  Views tab (a `PER_ROW_LAYER_TABS` set in `settingsScope.tsx`, mirroring the
-  global-only-tab handling but with a "layers are managed per-view" note — Views
-  is NOT machine-global).
+  quick). **HS-9096** originally disabled the dialog-wide scope bar on the Views
+  tab (a per-row-layer set). **HS-9123 (SHIPPED) reversed that:** the Views tab now
+  **participates in the §95 scope bar** (the `PER_ROW_LAYER_TABS` mechanism was
+  removed). Shared mode lists only shared views; Local mode lists shared (with
+  hide/unhide) + local additions; Resolved shows the effective list (no layer
+  moves). A **single Add button** targets the active layer (Shared → shared,
+  Local/Resolved → local; the label relabels per mode), replacing the old
+  "+ Add Local"/"+ Add Shared" pair. Shared views can now be **deleted outright**
+  (`deleteSharedView`, with a confirm) — previously only hide/move was offered.

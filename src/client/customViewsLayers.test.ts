@@ -4,6 +4,7 @@ import {
   addLocalView,
   addSharedView,
   deleteLocalView,
+  deleteSharedView,
   editView,
   hideSharedView,
   isSharedView,
@@ -81,6 +82,18 @@ describe('customViewsLayers (HS-9092/9093)', () => {
     expect(deleteLocalView(withLocal, 'l1').delta.added).toBeUndefined();
     const b = base();
     expect(deleteLocalView(b, 's1')).toBe(b); // shared view: not deletable here (no-op)
+  });
+
+  // HS-9123 — shared views can be deleted outright (edits the committed array).
+  it('deleteSharedView removes from the shared array + clears stale hidden/override; no-op for a local id', () => {
+    const layers: ViewLayers = { shared: [view('s1'), view('s2')], delta: { hidden: ['s1'], added: [view('l1')] } };
+    const out = deleteSharedView(layers, 's1');
+    expect(out.shared.map(v => v.id)).toEqual(['s2']);
+    expect(out.delta.hidden).toBeUndefined(); // pruned the now-stale hidden entry
+    expect(out.delta.added?.map(v => v.id)).toEqual(['l1']); // local addition untouched
+    // A local id isn't a shared view → no-op.
+    const withLocal = addLocalView(base(), view('l1'));
+    expect(deleteSharedView(withLocal, 'l1')).toBe(withLocal);
   });
 
   it('moveViewToLocal: shared view leaves the array, becomes a local addition; resolved membership unchanged', () => {

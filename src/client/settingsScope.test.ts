@@ -71,37 +71,25 @@ describe('settings scope bar — hidden on machine-local tabs (HS-9116/9118/9119
   });
 });
 
-// HS-9096 — the Views tab manages the shared/local layer per ROW, so the
-// dialog-wide bar is disabled there (with a per-view note, NOT the global one).
-describe('settings scope bar — per-row-layer tabs (HS-9096)', () => {
+// HS-9123 — the Views tab now PARTICIPATES in the scope bar (it used to be a
+// per-row-layer tab with the bar disabled, HS-9096). The bar is shown + active.
+describe('settings scope bar — Views tab participates (HS-9123)', () => {
   beforeEach(() => {
     resetScopeMode();
     setActiveSettingsTab('general');
   });
 
-  it('disables the segment buttons on the Views tab with a per-view note (not the global one)', () => {
+  it('shows the bar enabled on the Views tab (not hidden, not disabled)', () => {
     setActiveSettingsTab('views');
     const bar = document.getElementById('settings-scope-bar')!;
-    expect(segButtons().every(b => b.disabled)).toBe(true);
-    expect(bar.classList.contains('scope-bar-per-row')).toBe(true);
-    // It is NOT hidden (Views is project-scoped, managed per-row).
     expect(bar.classList.contains('scope-bar-hidden')).toBe(false);
     expect(isScopeBarHiddenTab('views')).toBe(false);
-    const note = document.getElementById('settings-scope-note')!.textContent;
-    expect(note).toContain('per-view');
+    expect(segButtons().some(b => b.disabled)).toBe(false);
   });
 
-  it('ignores a segment click on the Views tab', () => {
+  it('honors a segment click on the Views tab', () => {
     setActiveSettingsTab('views');
     document.querySelector<HTMLButtonElement>('.scope-seg-shared')!.click();
-    expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('resolved');
-  });
-
-  it('re-enables + clears the per-row class when switching back to a scoped tab', () => {
-    setActiveSettingsTab('views');
-    setActiveSettingsTab('general');
-    const bar = document.getElementById('settings-scope-bar')!;
-    expect(bar.classList.contains('scope-bar-per-row')).toBe(false);
-    expect(segButtons().some(b => b.disabled)).toBe(false);
+    expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('shared');
   });
 });
