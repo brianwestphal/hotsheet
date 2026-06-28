@@ -111,10 +111,14 @@ jobs:
     runs-on: ubuntu-latest
     env:
       E2E_SCOPE: no-terminal
-      COVERAGE_MIN_LINES: '58'
-      COVERAGE_MIN_STATEMENTS: '58'
-      COVERAGE_MIN_FUNCTIONS: '56'
-      COVERAGE_MIN_BRANCHES: '52'
+      # Ratcheted to ~2-3 pts below the first green merged run (run 28320784494:
+      # lines 93.09 / stmts 77.95 / funcs 69.58 / branches 68.01). Margin absorbs
+      # run-to-run variation (a skipped/flaked e2e test drops a few lines) while
+      # still catching a real coverage regression. Raise as coverage improves.
+      COVERAGE_MIN_LINES: '90'
+      COVERAGE_MIN_STATEMENTS: '74'
+      COVERAGE_MIN_FUNCTIONS: '66'
+      COVERAGE_MIN_BRANCHES: '65'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
