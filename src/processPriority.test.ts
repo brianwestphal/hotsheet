@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildTaskpolicyArgs,
+  bumpProcessPriorityBestEffort,
   shouldBumpProcessPriority,
   TASKPOLICY_QOS_CLASS,
 } from './processPriority.js';
+
+const spawnSyncMock = vi.hoisted(() => vi.fn());
+vi.mock('child_process', () => ({ spawnSync: spawnSyncMock }));
 
 describe('shouldBumpProcessPriority — pure platform gate', () => {
   it('returns true on darwin', () => {
@@ -69,5 +73,44 @@ describe('buildTaskpolicyArgs — argv builder (HS-8358 form-2 maximum-priority)
     // QoS class the bump is TARGETING, so the success-log message stays
     // accurate ("targeting user-interactive equivalent").
     expect(TASKPOLICY_QOS_CLASS).toBe('user-interactive');
+  });
+});
+
+// HS-9133 — the actual best-effort bump (spawnSync gated on darwin).
+describe('bumpProcessPriorityBestEffort', () => {
+  const realPlatform = process.platform;
+  const setPlatform = (p: NodeJS.Platform): void => { Object.defineProperty(process, 'platform', { value: p, configurable: true }); };
+  beforeEach(() => { spawnSyncMock.mockReset(); });
+  afterEach(() => { Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true }); });
+
+  it('returns false without spawning on a non-darwin platform', () => {
+    setPlatform('linux');
+    expect(bumpProcessPriorityBestEffort()).toBe(false);
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('returns true on darwin when taskpolicy exits 0', () => {
+    setPlatform('darwin');
+    spawnSyncMock.mockReturnValue({ status: 0, stderr: '', error: undefined });
+    expect(bumpProcessPriorityBestEffort()).toBe(true);
+    expect(spawnSyncMock).toHaveBeenCalledWith('taskpolicy', buildTaskpolicyArgs(process.pid), expect.objectContaining({ timeout: 2000 }));
+  });
+
+  it('returns false on a non-zero taskpolicy exit', () => {
+    setPlatform('darwin');
+    spawnSyncMock.mockReturnValue({ status: 1, stderr: 'nope', error: undefined });
+    expect(bumpProcessPriorityBestEffort()).toBe(false);
+  });
+
+  it('returns false when spawnSync reports an error (binary missing)', () => {
+    setPlatform('darwin');
+    spawnSyncMock.mockReturnValue({ status: null, stderr: '', error: new Error('ENOENT') });
+    expect(bumpProcessPriorityBestEffort()).toBe(false);
+  });
+
+  it('returns false when spawnSync throws', () => {
+    setPlatform('darwin');
+    spawnSyncMock.mockImplementation(() => { throw new Error('boom'); });
+    expect(bumpProcessPriorityBestEffort()).toBe(false);
   });
 });
