@@ -39,10 +39,18 @@ docker pull "${IMAGE}"
 # `-e HOME=/tmp` so `npm`/`tsx` write their caches to a writable dir.
 # `-e CI=true` so npm + playwright pick CI defaults (no progress bars,
 #   silent install, etc.).
+# `-v /work/node_modules` (HS-9154) — CRITICAL: an anonymous volume that SHADOWS
+#   node_modules so the container's `npm ci` writes Linux binaries into a
+#   throwaway volume, NOT your host (macOS) tree. Without this, `npm ci` rebuilds
+#   node_modules IN THE MOUNT and overwrites the host's native binaries
+#   (node-pty `pty.node`, `@esbuild/<platform>`), which then can't load on macOS
+#   and breaks launching Hot Sheet until you reinstall. dist/coverage/test-results
+#   stay on the bind mount so artifacts still come back.
 docker run --rm -it \
   --ipc=host \
   --init \
   -v "$(pwd):/work" \
+  -v /work/node_modules \
   -w /work \
   -e HOME=/tmp \
   -e CI=true \
