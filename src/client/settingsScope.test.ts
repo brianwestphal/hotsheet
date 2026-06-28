@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 /**
- * HS-9020 — the dialog-wide scope segmented control disables itself on
- * global-only tabs (API Keys / Updates), where the Shared / Local / Resolved
- * distinction is meaningless because every setting writes to machine-global
- * storage (`~/.hotsheet/config.json` / the OS keychain).
+ * HS-9116/9118/9119/9124 — the dialog-wide scope segmented control is now
+ * HIDDEN entirely on machine-local tabs (API Keys / Updates / Plugins / Remote
+ * Access), where the Shared / Local / Resolved distinction doesn't apply. (Was:
+ * shown-but-disabled with a "global to this machine" note — HS-9020.)
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { initSettingsScope, isGlobalOnlyTab, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
+import { initSettingsScope, isScopeBarHiddenTab, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
 
 function segButtons(): HTMLButtonElement[] {
   return Array.from(document.querySelectorAll<HTMLButtonElement>('.scope-seg-btn'));
@@ -29,45 +29,36 @@ beforeAll(() => {
   initSettingsScope();
 });
 
-describe('settings scope bar — global-only tabs (HS-9020)', () => {
+describe('settings scope bar — hidden on machine-local tabs (HS-9116/9118/9119/9124)', () => {
   beforeEach(() => {
     resetScopeMode();
     setActiveSettingsTab('general');
   });
 
-  it('classifies keys + updates as global-only, others not', () => {
-    expect(isGlobalOnlyTab('keys')).toBe(true);
-    expect(isGlobalOnlyTab('updates')).toBe(true);
-    expect(isGlobalOnlyTab('general')).toBe(false);
-    expect(isGlobalOnlyTab('telemetry')).toBe(false);
-    expect(isGlobalOnlyTab('devices')).toBe(false);
+  it('classifies keys / updates / plugins / devices as scope-bar-hidden, others not', () => {
+    expect(isScopeBarHiddenTab('keys')).toBe(true);
+    expect(isScopeBarHiddenTab('updates')).toBe(true);
+    expect(isScopeBarHiddenTab('plugins')).toBe(true);
+    expect(isScopeBarHiddenTab('devices')).toBe(true);
+    expect(isScopeBarHiddenTab('general')).toBe(false);
+    expect(isScopeBarHiddenTab('telemetry')).toBe(false);
   });
 
-  it('disables the segment buttons + swaps the note on the API Keys tab', () => {
-    setActiveSettingsTab('keys');
-    const bar = document.getElementById('settings-scope-bar')!;
-    expect(bar.classList.contains('scope-bar-global')).toBe(true);
-    expect(segButtons().every(b => b.disabled)).toBe(true);
-    expect(document.getElementById('settings-scope-note')!.textContent).toContain('global to this machine');
+  it.each(['keys', 'updates', 'plugins', 'devices'])('hides the whole bar on the %s tab', (tab) => {
+    setActiveSettingsTab(tab);
+    expect(document.getElementById('settings-scope-bar')!.classList.contains('scope-bar-hidden')).toBe(true);
   });
 
-  it('disables the control on the Updates tab too', () => {
-    setActiveSettingsTab('updates');
-    expect(segButtons().every(b => b.disabled)).toBe(true);
-    expect(document.getElementById('settings-scope-bar')!.classList.contains('scope-bar-global')).toBe(true);
-  });
-
-  it('re-enables the control + restores the note when switching back to a scoped tab', () => {
+  it('shows the bar again when switching back to a scoped tab', () => {
     setActiveSettingsTab('keys');
     setActiveSettingsTab('general');
     const bar = document.getElementById('settings-scope-bar')!;
-    expect(bar.classList.contains('scope-bar-global')).toBe(false);
+    expect(bar.classList.contains('scope-bar-hidden')).toBe(false);
     expect(segButtons().some(b => b.disabled)).toBe(false);
-    expect(document.getElementById('settings-scope-note')!.textContent).not.toContain('global to this machine');
   });
 
-  it('ignores a segment click while disabled on a global-only tab', () => {
-    setActiveSettingsTab('keys');
+  it('ignores a segment click while the bar is hidden', () => {
+    setActiveSettingsTab('plugins');
     document.querySelector<HTMLButtonElement>('.scope-seg-shared')!.click();
     // Mode stays resolved — the click was guarded.
     expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('resolved');
@@ -93,12 +84,11 @@ describe('settings scope bar — per-row-layer tabs (HS-9096)', () => {
     const bar = document.getElementById('settings-scope-bar')!;
     expect(segButtons().every(b => b.disabled)).toBe(true);
     expect(bar.classList.contains('scope-bar-per-row')).toBe(true);
-    // It is NOT styled/labeled as a global-only tab (Views is project-scoped).
-    expect(bar.classList.contains('scope-bar-global')).toBe(false);
-    expect(isGlobalOnlyTab('views')).toBe(false);
+    // It is NOT hidden (Views is project-scoped, managed per-row).
+    expect(bar.classList.contains('scope-bar-hidden')).toBe(false);
+    expect(isScopeBarHiddenTab('views')).toBe(false);
     const note = document.getElementById('settings-scope-note')!.textContent;
     expect(note).toContain('per-view');
-    expect(note).not.toContain('global to this machine');
   });
 
   it('ignores a segment click on the Views tab', () => {

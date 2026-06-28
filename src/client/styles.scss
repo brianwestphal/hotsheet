@@ -5572,6 +5572,11 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   text-align: center;
+
+  // HS-9116/9118/9119/9124 — hidden entirely on machine-local tabs (API Keys /
+  // Updates / Plugins / Remote Access) where the Shared/Local distinction
+  // doesn't apply.
+  &.scope-bar-hidden { display: none; }
 }
 .scope-seg {
   display: inline-flex;
@@ -5614,9 +5619,8 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 }
 .scope-bar-note { font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }
 
-// HS-9020 — the whole segmented control reads as inert on a global-only tab.
-.settings-scope-bar.scope-bar-global .scope-seg,
-.settings-scope-bar.scope-bar-per-row .scope-seg { opacity: .5; } /* HS-9096 — Views tab manages layers per-row */
+// HS-9096 — the whole segmented control reads as inert on a per-row-layer tab.
+.settings-scope-bar.scope-bar-per-row .scope-seg { opacity: .5; }
 
 // Per-field affordance: top-right of the field it decorates.
 .settings-field.scope-host { position: relative; }

@@ -110,17 +110,22 @@ let layered: LayeredFileSettings | null = null;
 let initialized = false;
 
 /**
- * HS-9020 — tabs whose settings are ALL machine-global (written to
- * `~/.hotsheet/config.json` / the OS keychain, never to a project's
- * `settings.json` / `settings.local.json`). On these tabs the Shared / Local /
- * Resolved distinction is meaningless, so the scope segmented control is
- * disabled and the note explains that every setting on the tab is global.
+ * HS-9116 / HS-9118 / HS-9119 / HS-9124 — tabs where the Shared / Local /
+ * Resolved distinction simply doesn't apply, so the scope bar is **hidden
+ * entirely** (was: shown-but-disabled with a "global to this machine" note,
+ * HS-9020 — the maintainer found that note redundant/noisy on these tabs).
  *
  *  - `keys`    — the named API-key registry (docs/79; values live in the OS
- *                keychain, the names in `~/.hotsheet/config.json`).
+ *                keychain, the names in `~/.hotsheet/config.json`). HS-9119.
  *  - `updates` — Software Updates (the auto-update channel/check; machine-wide).
+ *                HS-9116.
+ *  - `plugins` — plugin enablement + config are DB-backed and machine-local
+ *                (never committed to git), so they're effectively local-only.
+ *                HS-9124.
+ *  - `devices` — Remote Access mTLS enrollment is per-machine (CA + enrolled
+ *                client certs live on this machine), so local-only. HS-9118.
  */
-const GLOBAL_ONLY_TABS = new Set(['keys', 'updates']);
+const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices']);
 
 /**
  * HS-9096 — tabs that manage the shared/local layer **per row**, so the
@@ -135,9 +140,10 @@ const GLOBAL_ONLY_TABS = new Set(['keys', 'updates']);
  */
 const PER_ROW_LAYER_TABS = new Set(['views']);
 
-/** Tabs where the dialog-wide scope bar is inert (global-only or per-row-layer). */
+/** Tabs where the dialog-wide scope bar is inert (hidden or per-row-layer), so
+ *  segment clicks are ignored. */
 function isLayerBarDisabledTab(tab: string): boolean {
-  return GLOBAL_ONLY_TABS.has(tab) || PER_ROW_LAYER_TABS.has(tab);
+  return HIDDEN_SCOPE_BAR_TABS.has(tab) || PER_ROW_LAYER_TABS.has(tab);
 }
 
 let activeTab = 'general';
@@ -219,9 +225,10 @@ export function setActiveSettingsTab(tab: string): void {
   updateToolbar();
 }
 
-/** HS-9020 — whether the active tab's settings are all machine-global. */
-export function isGlobalOnlyTab(tab: string): boolean {
-  return GLOBAL_ONLY_TABS.has(tab);
+/** Whether the active tab hides the scope bar entirely (machine-local /
+ *  not-shareable settings — HS-9116/9118/9119/9124). */
+export function isScopeBarHiddenTab(tab: string): boolean {
+  return HIDDEN_SCOPE_BAR_TABS.has(tab);
 }
 
 /** Fetch the layered settings, then decorate every field for the current mode. */
@@ -273,22 +280,22 @@ export function applyScope(opts: { skipValues?: boolean } = {}): void {
 function updateToolbar(): void {
   const bar = byIdOrNull('settings-scope-bar');
   if (bar === null) return;
-  // HS-9020 — on a global-only tab, grey out + disable the segmented control
-  // and swap in the "everything here is global" note.
-  const globalOnly = GLOBAL_ONLY_TABS.has(activeTab);
+  // HS-9116/9118/9119/9124 — hide the whole bar on machine-local tabs (API
+  // Keys / Updates / Plugins / Remote Access). Nothing else to decorate there.
+  const hidden = HIDDEN_SCOPE_BAR_TABS.has(activeTab);
+  bar.classList.toggle('scope-bar-hidden', hidden);
+  if (hidden) return;
   const perRowLayer = PER_ROW_LAYER_TABS.has(activeTab);
-  bar.classList.toggle('scope-bar-global', globalOnly);
   bar.classList.toggle('scope-bar-per-row', perRowLayer);
   bar.dataset.scopeMode = mode;
   bar.querySelectorAll<HTMLButtonElement>('.scope-seg-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.scopeMode === mode);
-    btn.disabled = globalOnly || perRowLayer;
+    btn.disabled = perRowLayer;
   });
   const note = byIdOrNull('settings-scope-note');
-  if (note !== null) note.textContent = globalOnly ? GLOBAL_TAB_NOTE : perRowLayer ? PER_ROW_LAYER_NOTE : SCOPE_NOTE[mode];
+  if (note !== null) note.textContent = perRowLayer ? PER_ROW_LAYER_NOTE : SCOPE_NOTE[mode];
 }
 
-const GLOBAL_TAB_NOTE = 'Every setting on this tab is global to this machine — the Shared / Local distinction doesn’t apply here.';
 // HS-9096 — the Views tab manages layers per row, not dialog-wide.
 const PER_ROW_LAYER_NOTE = 'Layers are managed per-view on this tab — use each view’s own Local / Shared controls.';
 

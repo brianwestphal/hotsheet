@@ -566,10 +566,6 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
               <span>Views</span>
             </button>
-            {PLUGINS_ENABLED ? <button className="settings-tab" data-tab="plugins" id="settings-tab-plugins">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
-              <span>Plugins</span>
-            </button> : null}
             <button className="settings-tab" data-tab="terminal" id="settings-tab-terminal" style="display:none">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
               <span>Terminal</span>
@@ -577,12 +573,6 @@ pageRoutes.get('/', (c) => {
             <button className="settings-tab" data-tab="permissions" id="settings-tab-permissions">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               <span>Permissions</span>
-            </button>
-            {/* HS-8751 — API Keys tab. Machine-global named-secret registry
-                (Anthropic API keys) that projects select from. */}
-            <button className="settings-tab" data-tab="keys" id="settings-tab-keys">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
-              <span>API Keys</span>
             </button>
             {/* HS-9024 — Remote Access tab. Enrolled mTLS client devices for
                 serving over `--bind` (docs/94 / docs/97). Mint a .p12 locally,
@@ -606,6 +596,20 @@ pageRoutes.get('/', (c) => {
             <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
               <span>Experimental</span>
+            </button>
+            {/* HS-9124 — Plugins tab moved here, just before API Keys (which
+                HS-9119 moved just before Updates), so the tail reads:
+                …, Plugins, API Keys, Updates. */}
+            {PLUGINS_ENABLED ? <button className="settings-tab" data-tab="plugins" id="settings-tab-plugins">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+              <span>Plugins</span>
+            </button> : null}
+            {/* HS-8751 — API Keys tab. Machine-global named-secret registry
+                (Anthropic API keys) that projects select from. HS-9119 — moved
+                to just before the Updates tab. */}
+            <button className="settings-tab" data-tab="keys" id="settings-tab-keys">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
+              <span>API Keys</span>
             </button>
             <button className="settings-tab" data-tab="updates" id="settings-tab-updates" style="display:none">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
@@ -792,7 +796,11 @@ pageRoutes.get('/', (c) => {
               <span className="settings-hint" style="margin-bottom:12px;display:block">Custom views in the sidebar. <strong>Shared</strong> views are committed to the project (settings.json); <strong>Local</strong> views are this machine only (settings.local.json). Move a view between layers, or hide a shared view on this machine.</span>
               <div id="settings-views-list"></div>
             </div>
-            {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel" data-scope-complex>
+            {/* HS-9124 — plugins are DB-backed + machine-local (never shared via
+                git), so the panel is always editable and the dialog-wide scope
+                bar is hidden on this tab (see HIDDEN_SCOPE_BAR_TABS). No
+                `data-scope-complex` lock. */}
+            {PLUGINS_ENABLED ? <div className="settings-tab-panel" data-panel="plugins" id="settings-plugins-panel">
               <div className="settings-section-header" style="margin-bottom:12px">
                 <h3>Installed Plugins</h3>
                 <button className="btn btn-sm" id="plugin-install-btn">Find Plugins...</button>

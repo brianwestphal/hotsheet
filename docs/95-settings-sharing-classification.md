@@ -18,12 +18,14 @@ Follow-up to HS-9004 (the dialog-wide **Shared | Local overrides | Resolved** sc
 
 The scope control (`settingsScope.tsx`) operates on Shared vs Local. Global settings keep their "Global Setting" badge and are layer-agnostic (editable in any mode). The resolved view the app runs on is `{...shared, ...local}` for file keys.
 
-**Global-only tabs (HS-9020).** Two Settings tabs are *entirely* global — every setting on them writes to machine-global storage, so the Shared / Local / Resolved distinction is meaningless there:
+**Scope-bar-hidden tabs (HS-9116/9118/9119/9124).** On tabs where the Shared / Local / Resolved distinction simply doesn't apply, the segmented control is **hidden entirely** (was: shown-but-disabled with a "global to this machine" note — HS-9020; the maintainer found that note redundant):
 
-- **API Keys** (`data-panel="keys"`) — named keys in the OS keychain + names in `~/.hotsheet/config.json` (docs/79).
+- **API Keys** (`data-panel="keys"`) — named keys in the OS keychain + names in `~/.hotsheet/config.json` (docs/79). Machine-global.
 - **Updates** (`data-panel="updates"`) — Software Updates (auto-update channel/check; machine-wide).
+- **Plugins** (`data-panel="plugins"`) — plugin enablement (`plugin_enabled:{id}` in the project DB) + config are machine-local (the DB is gitignored, never committed), so plugins are effectively local-only and the panel is **always editable** (no `data-scope-complex` lock; HS-9124).
+- **Remote Access / Devices** (`data-panel="devices"`) — mTLS enrollment (CA + enrolled client certs live on this machine), so per-machine / local-only (HS-9118).
 
-On these tabs the segmented control is **disabled** (greyed, non-clickable) and its note is replaced with "Every setting on this tab is global to this machine — the Shared / Local distinction doesn’t apply here." `settingsScope.tsx` tracks the active tab (`setActiveSettingsTab`, fed by the tab-switch handler in `settingsDialog.tsx`); `GLOBAL_ONLY_TABS = {keys, updates}` drives `updateToolbar`'s disable + note swap. The **Devices** tab (mTLS device pairing) is per-project, so it is *not* global-only.
+`settingsScope.tsx` tracks the active tab (`setActiveSettingsTab`, fed by the tab-switch handler in `settingsDialog.tsx`); `HIDDEN_SCOPE_BAR_TABS = {keys, updates, plugins, devices}` drives `updateToolbar`, which adds `.scope-bar-hidden` (CSS `display:none`) on those tabs. The **Tab order** of the tail is now `…, Plugins, API Keys, Updates` (HS-9119 moved API Keys before Updates; HS-9124 moved Plugins before API Keys).
 
 ## 95.2 Classification principle
 
