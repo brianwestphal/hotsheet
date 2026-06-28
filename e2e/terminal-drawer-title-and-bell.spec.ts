@@ -98,8 +98,10 @@ test.describe('Drawer terminal — OSC title + bell indicators', () => {
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:osc"]');
     await expect(pane).toBeVisible({ timeout: 5000 });
 
-    // The in-pane toolbar follows the OSC title.
-    await expect(pane.locator('.terminal-label')).toHaveText('Custom Title', { timeout: 8000 });
+    // The in-pane toolbar follows the OSC title. HS-9141 — generous timeout: the
+    // title round-trips through a live PTY → server detect → push → render, which
+    // is slow under a constrained CI runner.
+    await expect(pane.locator('.terminal-label')).toHaveText('Custom Title', { timeout: 15000 });
 
     // The drawer tab keeps the configured name — this is the deliberate
     // HS-6473 follow-up (noisy per-cwd titles are unreadable in a tab).
@@ -173,8 +175,11 @@ test.describe('Drawer terminal — OSC title + bell indicators', () => {
     await otherTab.click();
     await expect(otherTab).toHaveClass(/active/, { timeout: 3000 });
 
-    // Wait for the bell to arrive + the has-bell class to flip.
-    await expect(bellTab).toHaveClass(/has-bell/, { timeout: 5000 });
+    // Wait for the bell to arrive + the has-bell class to flip. HS-9141 —
+    // generous timeout: the BEL round-trips through a live PTY → server detect →
+    // push → render, which is slow under a constrained CI runner (this was the
+    // most timing-tight terminal assertion, reproducibly missing 5s under load).
+    await expect(bellTab).toHaveClass(/has-bell/, { timeout: 15000 });
     await expect(bellTab.locator('.drawer-tab-bell')).toBeVisible();
 
     // Activating the bell-src tab clears the bell.

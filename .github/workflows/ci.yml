@@ -62,6 +62,13 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
       - run: npm run test:rust
 
+  # HS-9141 — the e2e suite is split into two jobs. The terminal/PTY/OSC specs
+  # are timing-sensitive (real escape-sequence round-trips through a live PTY) and
+  # cascade under the shared server on GH's constrained 2-CPU runner (the suite is
+  # healthy locally — see HS-9141). Running them on their OWN job gives them a
+  # fresh server + the full runner, and keeps a terminal cascade from taking down
+  # the rest of the e2e suite (where the typed-API/mock-drift signal lives). The
+  # split is driven by `E2E_SCOPE` (see playwright.config.ts).
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -72,3 +79,18 @@ jobs:
       - run: npm run build:client
       - run: npx playwright install chromium --with-deps
       - run: npm run test:e2e:fast
+        env:
+          E2E_SCOPE: no-terminal
+
+  e2e-terminal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm run build:client
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:e2e:fast
+        env:
+          E2E_SCOPE: terminal
