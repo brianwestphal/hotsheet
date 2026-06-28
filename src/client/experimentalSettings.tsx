@@ -75,6 +75,15 @@ export function getCommandMode(): ScopeMode {
   return commandMode;
 }
 
+/** Test-only — force the editor scope mode. Production derives it from
+ *  `getScopeMode()` on dialog open / scope switch (`loadScopedCommands`); tests
+ *  that don't go through that path (no layered-settings transport) set it
+ *  directly, e.g. to render the editable Shared view (HS-9127 made Resolved
+ *  read-only). */
+export function _setCommandModeForTests(mode: ScopeMode): void {
+  commandMode = mode;
+}
+
 /** The pristine shared command tree (for the editor's origin tags). */
 export function getCommandShared(): CommandItem[] {
   return commandShared;

@@ -12,13 +12,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ApiIndex from '../api/index.js';
 import { _resetCommandRowDelegationForTests, renderCustomCommandSettings } from './commandEditor.js';
-import { getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
+import { _setCommandModeForTests, getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
 
 const getSettingsMock = vi.hoisted(() => vi.fn<() => Promise<{ custom_commands: string }>>());
 vi.mock('../api/index.js', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiIndex>()),
   getSettings: () => getSettingsMock(),
   updateSettings: vi.fn(() => Promise.resolve({})),
+  // HS-9127 — these tests now render the editable Shared view, whose saves route
+  // through `updateFileSettingsLayer` (no client transport in unit tests).
+  updateFileSettingsLayer: vi.fn(() => Promise.resolve({ shared: {}, local: {} })),
 }));
 // `saveCommandItems` re-renders the sidebar — stub it so the test doesn't need
 // the channel-sidebar DOM.
@@ -46,6 +49,9 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
   async function seed(items: { name: string; prompt: string; target?: 'claude' | 'shell' }[]): Promise<void> {
     getSettingsMock.mockResolvedValue({ custom_commands: JSON.stringify(items) });
     await reloadCustomCommands();
+    // HS-9127 — the Resolved view is read-only (no edit/delete/add buttons), so
+    // these delegated edit/delete tests run in the editable Shared view.
+    _setCommandModeForTests('shared');
     renderCustomCommandSettings();
   }
 
