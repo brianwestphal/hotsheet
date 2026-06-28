@@ -4907,7 +4907,12 @@ body.cross-project-stats-active {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
   width: 540px;
   max-width: 90vw;
-  max-height: 85vh;
+  // HS-9115 — pin the height (the max available on screen, capped at 2000px)
+  // rather than letting it shrink to each tab's content. Keeps the dialog the
+  // same size across tabs; `.settings-body` (flex:1, overflow-y:auto) fills +
+  // scrolls within it.
+  height: min(90vh, 2000px);
+  max-height: min(90vh, 2000px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

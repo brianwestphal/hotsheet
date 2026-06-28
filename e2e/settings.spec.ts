@@ -46,6 +46,27 @@ test.describe('Settings dialog', () => {
     await expect(page.locator('.project-tab.active .project-tab-name')).toHaveText('My Project Board', { timeout: 5000 });
   });
 
+  test('HS-9115: dialog height stays constant across tabs', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    const dialog = page.locator('.settings-dialog');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+
+    // General tab (default, content-light).
+    const generalHeight = (await dialog.boundingBox())!.height;
+
+    // Switch to a content-heavy tab (Telemetry) — pre-HS-9115 the dialog grew
+    // to fit each tab's content, so the height differed between tabs.
+    await page.locator('.settings-tab[data-tab="telemetry"]').click();
+    const telemetryHeight = (await dialog.boundingBox())!.height;
+
+    // Back to a light tab.
+    await page.locator('.settings-tab[data-tab="backups"]').click();
+    const backupsHeight = (await dialog.boundingBox())!.height;
+
+    expect(Math.abs(telemetryHeight - generalHeight)).toBeLessThan(2);
+    expect(Math.abs(backupsHeight - generalHeight)).toBeLessThan(2);
+  });
+
   test('close settings with Escape key', async ({ page }) => {
     await page.locator('#settings-btn').click();
     const overlay = page.locator('#settings-overlay');
