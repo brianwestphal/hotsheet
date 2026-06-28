@@ -1,10 +1,10 @@
 import { homedir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { globalHotsheetDir } from '../global-dir.js';
 import { isTestMode, setTestMode } from '../test-mode.js';
-import { parseArgs, TEST_MODE_PORT } from './args.js';
+import { parseArgs, printUsage, TEST_MODE_PORT } from './args.js';
 
 // HS-8921 — `--test` turnkey isolation. `parseArgs` here has two real side
 // effects worth asserting AND cleaning up between cases: it sets
@@ -83,5 +83,54 @@ describe('parseArgs --bind (HS-7940)', () => {
   it('parses --bind <address>', () => {
     expect(parseArgs(argv('--bind', '0.0.0.0'))?.bind).toBe('0.0.0.0');
     expect(parseArgs(argv('--bind', '192.168.1.10'))?.bind).toBe('192.168.1.10');
+  });
+});
+
+describe('parseArgs — flags + valid values', () => {
+  const argv = (...flags: string[]): string[] => ['node', 'cli.js', ...flags];
+
+  it('defaults are sane with no flags', () => {
+    const p = parseArgs(argv())!;
+    expect(p).toMatchObject({ port: 4174, demo: null, forceUpdateCheck: false, noOpen: false, strictPort: false, replace: false, close: false, force: false, list: false, test: false });
+    expect(p.bind).toBeUndefined();
+  });
+
+  it('parses every boolean flag', () => {
+    const p = parseArgs(argv('--no-open', '--strict-port', '--replace', '--close', '--force', '--list', '--check-for-updates'))!;
+    expect(p).toMatchObject({ noOpen: true, strictPort: true, replace: true, close: true, force: true, list: true, forceUpdateCheck: true });
+  });
+
+  it('parses --port and --demo:N', () => {
+    expect(parseArgs(argv('--port', '8080'))?.port).toBe(8080);
+    expect(parseArgs(argv('--demo:3'))?.demo).toBe(3);
+  });
+});
+
+describe('parseArgs — error + usage exits', () => {
+  const argv = (...flags: string[]): string[] => ['node', 'cli.js', ...flags];
+  let exitMock: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // Make process.exit throw so the test stops at the exit call + can assert the code.
+    exitMock = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit:${String(code)}`); }) as never);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it.each([
+    ['--demo:0'], ['--demo:abc'], ['--port', 'notnum'], ['--bind'], ['--bind', '--force'], ['--totally-unknown'],
+  ])('exits 1 on invalid input: %s', (...flags: string[]) => {
+    expect(() => parseArgs(argv(...flags))).toThrow('exit:1');
+    expect(exitMock).toHaveBeenCalledWith(1);
+  });
+
+  it.each([['--help'], ['-h']])('prints usage and exits 0 on %s', (flag: string) => {
+    expect(() => parseArgs(argv(flag))).toThrow('exit:0');
+    expect(exitMock).toHaveBeenCalledWith(0);
+  });
+
+  it('printUsage runs without throwing', () => {
+    expect(() => printUsage()).not.toThrow();
   });
 });
