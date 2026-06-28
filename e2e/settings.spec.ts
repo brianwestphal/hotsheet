@@ -14,6 +14,10 @@ test.describe('Settings dialog', () => {
     const overlay = page.locator('#settings-overlay');
     await expect(overlay).toBeVisible({ timeout: 3000 });
 
+    // HS-9127 — Resolved is read-only; appName is a shared-only field, so edit it
+    // in Shared mode.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+
     // Wait for the async file-settings fetch to populate the app name field.
     // The app fetches /api/file-settings after opening and sets the input value.
     // We detect load completion by waiting for the input to become stable (not disabled)

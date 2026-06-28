@@ -25,6 +25,8 @@ test.describe('Worklist preamble (HS-8917 / §6)', () => {
     const firstScopeLoad = page.waitForResponse((r) => r.url().includes('/file-settings/layered'));
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible();
+    // HS-9127 — Resolved is read-only; edit the (standard) preamble field in Shared.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
     await page.waitForResponse((r) => r.url().includes('/api/file-settings') && r.request().method() === 'GET');
     await firstScopeLoad;
     await page.waitForTimeout(300); // let decorate's synchronous re-apply run
@@ -48,6 +50,7 @@ test.describe('Worklist preamble (HS-8917 / §6)', () => {
     // "Cleared".
     const secondScopeLoad = page.waitForResponse((r) => r.url().includes('/file-settings/layered'));
     await page.locator('#settings-btn').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — edit in Shared
     await secondScopeLoad;
     await page.waitForTimeout(300);
     await expect(page.locator('#settings-worklist-preamble')).toHaveValue(PREAMBLE);

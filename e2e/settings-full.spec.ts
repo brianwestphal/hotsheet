@@ -35,7 +35,8 @@ test.describe('Settings persistence', () => {
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
 
-    // Change the trash cleanup days
+    // HS-9127 — trash_cleanup_days is a DB-only project setting (not a Shared/Local
+    // file key), so it stays editable in the default Resolved view.
     const trashInput = page.locator('#settings-trash-days');
     await trashInput.fill('7');
 
@@ -56,6 +57,8 @@ test.describe('Settings persistence', () => {
     // Open settings
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
+    // HS-9127 — Resolved is read-only; edit scoped fields in Shared mode.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
 
     const autoOrderCheckbox = page.locator('#settings-auto-order');
 

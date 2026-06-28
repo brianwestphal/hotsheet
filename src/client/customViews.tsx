@@ -281,6 +281,9 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
     actions.appendChild(b);
   };
 
+  // HS-9127 — Resolved is the read-only effective view: list only, no actions.
+  if (mode === 'resolved') return row;
+
   addBtn(ICON_PENCIL, 'Edit', () => showViewEditor(view));
   if (layer === 'shared') {
     // Hide/Unhide is a Local-layer action (only meaningful in Local mode).
@@ -288,12 +291,11 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
       if (hidden) addBtn(ICON_EYE, 'Unhide on this machine', () => { void persistViews(unhideSharedView(viewLayers, view.id)); });
       else addBtn(ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
     }
-    // Move to Local is layer management (Shared/Local tabs, not Resolved).
-    if (mode !== 'resolved') addBtn(ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
+    addBtn(ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
     // HS-9123 — shared views can now be deleted outright.
     addBtn(ICON_TRASH_SIMPLE, 'Delete (removes for the whole team)', () => { void deleteSharedViewAction(view); }, 'cmd-outline-delete-btn');
   } else {
-    if (mode !== 'resolved') addBtn(ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
+    addBtn(ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
     addBtn(ICON_TRASH_SIMPLE, 'Delete', () => { void deleteView(view.id); }, 'cmd-outline-delete-btn');
   }
   return row;
@@ -303,16 +305,20 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
  * HS-9123 — Render the Views tab list per the active scope mode:
  *  - Shared:   only the shared (committed) views.
  *  - Local:    shared views (with hide/unhide) + local additions.
- *  - Resolved: the effective list (shared-not-hidden + local), no layer moves.
+ *  - Resolved: the effective list (shared-not-hidden + local), read-only (HS-9127).
  * No-op when the panel is absent.
  */
 function renderViewsTab() {
   const list = byIdOrNull('settings-views-list');
   if (!list) return;
   const mode = getScopeMode();
-  // Keep the Add button label in step with the active layer.
+  // Keep the Add button label in step with the active layer; HS-9127 — hide it
+  // entirely in Resolved (read-only effective view).
   const addBtnEl = byIdOrNull('settings-views-add-btn');
-  if (addBtnEl !== null) addBtnEl.textContent = mode === 'shared' ? '+ Add Shared View' : mode === 'local' ? '+ Add Local View' : '+ Add View';
+  if (addBtnEl !== null) {
+    addBtnEl.style.display = mode === 'resolved' ? 'none' : '';
+    addBtnEl.textContent = mode === 'shared' ? '+ Add Shared View' : '+ Add Local View';
+  }
 
   const hiddenSet = new Set(viewLayers.delta.hidden ?? []);
   const localViews = viewLayers.delta.added ?? [];

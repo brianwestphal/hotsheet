@@ -38,6 +38,9 @@ vi.mock('../api/index.js', () => ({
 }));
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('./commandLog.js', () => ({ previewDrawerTab: vi.fn(() => () => { /* restore no-op */ }) }));
+// HS-9127 — the editor is read-only (no drag/edit/delete) in Resolved, so run
+// these row-interaction tests in Shared mode.
+vi.mock('./settingsScope.js', () => ({ getScopeMode: () => 'shared' }));
 
 /** Minimal DragEvent shim — happy-dom's plain Event has no `dataTransfer`, and
  *  the delegated handlers touch `dataTransfer.setData` / `.effectAllowed`. */

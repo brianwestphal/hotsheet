@@ -214,11 +214,19 @@ test.describe('OSC 133 Phase 2 jumps + popover (HS-7328)', () => {
     // (PATCHing the API alone wouldn't fire the event — the event is
     // dispatched from the checkbox change handler, not from a settings
     // poll.)
+    // HS-9127 — Resolved is read-only, and the default-on `shell_integration_ui`
+    // isn't present in the file layers, so seed it into Shared (still effectively
+    // "on") and edit it there.
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { shell_integration_ui: true } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
     // Switch to the Terminal tab — the checkbox lives in that panel and the
     // panel is `display:none` until its tab is active.
     await page.locator('#settings-tab-terminal').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
     const checkbox = page.locator('#settings-shell-integration-ui');
     await expect(checkbox).toBeVisible({ timeout: 3000 });
     await expect(checkbox).toBeChecked();

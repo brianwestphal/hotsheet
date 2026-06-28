@@ -80,8 +80,12 @@ const SCOPED_FIELDS: ScopedField[] = [
   // project build contract, so shared-only (no per-machine override), like the
   // other hard team values above.
   { controlId: 'settings-integration-gate', key: 'integrationGate', kind: 'text', share: 'shared-only' },
-  { controlId: 'settings-trash-days', key: 'trash_cleanup_days', kind: 'number' },
-  { controlId: 'settings-verified-days', key: 'verified_cleanup_days', kind: 'number' },
+  // NOTE: `trash_cleanup_days` / `verified_cleanup_days` are intentionally NOT
+  // here — they're DB-only project settings (`updateSettings`), not file-layer
+  // keys, so they can't be Shared/Local-layered. Leaving them out keeps them
+  // plain + always editable (incl. Resolved); putting them here would disable
+  // them in Resolved (HS-9127) while Shared/Local writes silently misroute to the
+  // file layer the server ignores for them. (HS-9127)
   { controlId: 'settings-auto-order', key: 'auto_order', kind: 'boolean' },
   { controlId: 'settings-hide-verified-column', key: 'hide_verified_column', kind: 'boolean' },
   { controlId: 'settings-notify-permission', key: 'notify_permission', kind: 'text' },
@@ -287,7 +291,7 @@ function updateToolbar(): void {
 }
 
 const SCOPE_NOTE: Record<ScopeMode, string> = {
-  resolved: 'Effective values in use. Each field is tagged with where its value comes from.',
+  resolved: 'Effective values in use — read-only. Switch to Shared or Local to edit. Each field is tagged with where its value comes from.',
   shared: 'Editing settings.json — committed to git, shared with your team.',
   local: 'Editing settings.local.json — gitignored, this machine only. Local values win.',
 };
@@ -301,14 +305,15 @@ const SCOPE_NOTE: Record<ScopeMode, string> = {
 function lockComplexPanels(): void {
   document.querySelectorAll<HTMLElement>('[data-scope-complex]').forEach(panel => {
     // HS-9009 — `data-scope-complex` variants: '' (default) is a SHARED setting
-    // editable only in Shared (locked in Resolved + Local; HS-9021 — Resolved is
-    // the read-only effective view, so editing belongs in Shared, not Resolved);
-    // 'shared-only' locks only in Local; 'local-only' locks only in Shared. The
-    // chip text is driven by the matching CSS class.
+    // editable only in Shared; 'shared-only' editable in Shared; 'local-only'
+    // editable in Local. HS-9127 — Resolved is the read-only effective view, so
+    // EVERY variant locks in Resolved (the variant chip still points at the
+    // right edit-home: Shared for default/shared-only, Local for local-only).
     const variant = panel.getAttribute('data-scope-complex') ?? '';
-    const locked = variant === 'shared-only' ? mode === 'local'
-      : variant === 'local-only' ? mode === 'shared'
-        : mode !== 'shared';
+    const locked = mode === 'resolved' ? true
+      : variant === 'shared-only' ? mode === 'local'
+        : variant === 'local-only' ? mode === 'shared'
+          : mode !== 'shared';
     panel.classList.toggle('scope-locked', locked);
     panel.classList.toggle('scope-locked-shared-only', locked && variant === 'shared-only');
     panel.classList.toggle('scope-locked-local-only', locked && variant === 'local-only');
@@ -331,13 +336,16 @@ function decorateField(field: ScopedField, skipValues: boolean): void {
 
   const scope = resolveFieldScope(layered, field.key);
 
-  // Editability (HS-9009):
+  // Editability:
+  //  - HS-9127: Resolved is the read-only effective view — every scoped field is
+  //    disabled there; you switch to Shared or Local to edit.
   //  - shared-only: read-only in Local (can't override a hard team value).
   //  - local-only: read-only in Shared (never committed).
   //  - default: inherited Local fields are read-only until "+ Override".
-  control.disabled = field.share === 'shared-only' ? mode === 'local'
-    : field.share === 'local-only' ? mode === 'shared'
-      : mode === 'local' && !scope.overridden;
+  control.disabled = mode === 'resolved' ? true
+    : field.share === 'shared-only' ? mode === 'local'
+      : field.share === 'local-only' ? mode === 'shared'
+        : mode === 'local' && !scope.overridden;
 
   // Value, per mode:
   //  - shared: the literal settings.json value (blank when absent — truthful;

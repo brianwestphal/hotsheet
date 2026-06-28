@@ -178,6 +178,7 @@ test.describe('Embedded terminal drawer', () => {
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
     await page.locator('.settings-tab[data-tab="terminal"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     await expect(page.locator('#settings-terminal-panel')).toBeVisible({ timeout: 3000 });
 
     // Wait for the terminals list to load (loadAndRenderTerminalsSettings is async).
@@ -218,6 +219,7 @@ test.describe('Embedded terminal drawer', () => {
 
     await page.locator('#settings-btn').click();
     await page.locator('.settings-tab[data-tab="terminal"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     const list = page.locator('#settings-terminals-list');
     await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
 
@@ -252,6 +254,7 @@ test.describe('Embedded terminal drawer', () => {
     await page.locator('#settings-btn').click();
     await scopeLoaded;
     await page.locator('.settings-tab[data-tab="terminal"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     const list = page.locator('#settings-terminals-list');
     await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
 
@@ -307,6 +310,7 @@ test.describe('Embedded terminal drawer', () => {
     const settingsOverlay = page.locator('#settings-overlay');
     await expect(settingsOverlay).toBeVisible({ timeout: 3000 });
     await page.locator('.settings-tab[data-tab="terminal"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     const list = page.locator('#settings-terminals-list');
     await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
 
@@ -353,6 +357,7 @@ test.describe('Embedded terminal drawer', () => {
 
     await page.locator('#settings-btn').click();
     await page.locator('.settings-tab[data-tab="terminal"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     const list = page.locator('#settings-terminals-list');
     await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
 
@@ -579,6 +584,7 @@ test.describe('Embedded terminal drawer', () => {
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-tab-terminal')).toBeVisible();
     await page.locator('.settings-tab[data-tab="terminal"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     await expect(page.locator('#settings-terminal-panel')).toBeVisible({ timeout: 3000 });
     // The "Show Terminal tabs in the bottom drawer" checkbox was removed.
     await expect(page.locator('#settings-terminal-enabled')).toHaveCount(0);

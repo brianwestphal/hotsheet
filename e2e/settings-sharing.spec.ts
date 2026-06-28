@@ -82,12 +82,30 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('#settings-permissions-panel.scope-locked')).toHaveCount(0);
   });
 
-  test('complex / non-overridable surfaces lock in Shared/Local mode', async ({ page }) => {
-    // Categories is a complex list editor — read-only outside Resolved.
-    await page.locator('.scope-seg-btn.scope-seg-local').click();
-    await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(1);
+  test('HS-9127: Resolved is read-only — a scoped scalar field is disabled there, editable in Shared/Local', async ({ page }) => {
+    // Default open mode is Resolved.
+    const preamble = page.locator('#settings-worklist-preamble');
+    await expect(preamble).toBeDisabled();
+    await expect(page.locator('#settings-scope-note')).toContainText(/read-only/i);
+    // Shared → editable.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(preamble).toBeEnabled();
+    // Back to Resolved → disabled again.
     await page.locator('.scope-seg-btn.scope-seg-resolved').click();
-    await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
+    await expect(preamble).toBeDisabled();
+  });
+
+  test('HS-9127: categories (shared-only complex) is read-only in Local AND Resolved, editable in Shared', async ({ page }) => {
+    const cat = page.locator('.settings-tab-panel[data-panel="categories"].scope-locked');
+    // Local → locked.
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await expect(cat).toHaveCount(1);
+    // HS-9127 — Resolved is now the read-only effective view, so it's locked here too.
+    await page.locator('.scope-seg-btn.scope-seg-resolved').click();
+    await expect(cat).toHaveCount(1);
+    // Shared → editable (its edit-home).
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(cat).toHaveCount(0);
   });
 
   // HS-9021 — a default `data-scope-complex` surface (e.g. the terminal default-

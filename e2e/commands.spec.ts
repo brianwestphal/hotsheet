@@ -27,11 +27,12 @@ async function openExperimentalSettings(page: import('@playwright/test').Page) {
   await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
   await page.locator('.settings-tab[data-tab="experimental"]').click();
   await expect(page.locator('.settings-tab-panel[data-panel="experimental"]')).toHaveClass(/active/);
-  // HS-9014 — the Custom Commands editor is now element-level scope-aware (docs/95
-  // §95.3), so it's editable in EVERY scope mode (no longer locked via
-  // `data-scope-complex`). These tests run in the default Resolved view, where an
-  // edit writes to the shared (default) layer — exactly the pre-scope-control
-  // behavior. The list is never `scope-locked` now.
+  // HS-9127 — Resolved is the read-only effective view, so editing commands (add /
+  // edit / delete / reorder) requires Shared or Local mode. These tests seed +
+  // verify via the shared (default) layer, so switch to Shared. (The commands
+  // editor is element-level scope-aware, not `data-scope-complex`, so the list is
+  // never wholesale `scope-locked`.)
+  await page.locator('.scope-seg-btn.scope-seg-shared').click();
   await expect(page.locator('#settings-commands-list')).not.toHaveClass(/scope-locked/);
   await expect(page.locator('.cmd-outline-add-btn')).toBeVisible({ timeout: 5000 });
   await snapSettled;

@@ -572,6 +572,9 @@ function bindAutoContextSettings() {
   function renderEntries() {
     list.innerHTML = '';
     renderScopeListHint(list, autoContextMode);
+    // HS-9127 — Resolved is the read-only effective view: no add/edit/delete.
+    const readonly = autoContextMode === 'resolved';
+    addBtn.style.display = readonly ? 'none' : '';
 
     // HS-9121 — in Local mode, shared entries the local layer hides (deleted
     // locally) still get a disabled row with a Re-enable button so they can be
@@ -594,29 +597,31 @@ function bindAutoContextSettings() {
           <div className="auto-context-header">
             <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKeyOf(entry)}</span>
             <span className="auto-context-scope-slot" />
-            <button className="category-delete-btn" title={isSharedHere ? 'Disable on this machine' : 'Remove'}>{'×'}</button>
+            {readonly ? '' : <button className="category-delete-btn" title={isSharedHere ? 'Disable on this machine' : 'Remove'}>{'×'}</button>}
           </div>
-          <textarea className="auto-context-text" rows={3}>{entry.text}</textarea>
+          <textarea className="auto-context-text" rows={3} readOnly={readonly}>{entry.text}</textarea>
         </div>
       );
       paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, entry);
       const textarea = row.querySelector('.auto-context-text') as HTMLTextAreaElement;
-      let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-      textarea.addEventListener('input', () => {
-        if (saveTimeout) clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(() => {
-          autoContextEntries[i] = { ...entry, text: textarea.value };
+      if (!readonly) {
+        let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+        textarea.addEventListener('input', () => {
+          if (saveTimeout) clearTimeout(saveTimeout);
+          saveTimeout = setTimeout(() => {
+            autoContextEntries[i] = { ...entry, text: textarea.value };
+            void saveEntries();
+            // HS-9120 — refresh the origin tag in place (shared→overridden) without
+            // re-rendering, so the textarea keeps focus + caret.
+            paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, autoContextEntries[i]);
+          }, 500);
+        });
+        row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
+          autoContextEntries.splice(i, 1);
           void saveEntries();
-          // HS-9120 — refresh the origin tag in place (shared→overridden) without
-          // re-rendering, so the textarea keeps focus + caret.
-          paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, autoContextEntries[i]);
-        }, 500);
-      });
-      row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
-        autoContextEntries.splice(i, 1);
-        void saveEntries();
-        renderEntries();
-      });
+          renderEntries();
+        });
+      }
       list.appendChild(row);
     }
 

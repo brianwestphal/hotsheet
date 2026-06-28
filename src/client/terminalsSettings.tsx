@@ -235,6 +235,10 @@ function renderList(): void {
   // HS-9015 — per-mode scope hint (null in Resolved).
   const hint = scopeListHintElement(terminalsMode);
   const lead: HTMLElement[] = hint !== null ? [hint] : [];
+  // HS-9127 — Resolved is the read-only effective view: no add/edit/delete/drag.
+  const readonly = terminalsMode === 'resolved';
+  const addBtn = byIdOrNull('settings-terminals-add-btn');
+  if (addBtn !== null) addBtn.style.display = readonly ? 'none' : '';
   // HS-9125 — in Local mode, shared terminals the local layer hides still get a
   // disabled row with a Re-enable button so they can be restored.
   const hiddenShared = terminalsMode === 'local'
@@ -355,15 +359,17 @@ function renderRow(index: number): HTMLElement {
   const origin = termOrigin(entry);
   const showTag = terminalsMode !== 'resolved';
   const isSharedHere = terminalsMode === 'local' && origin !== 'local';
+  // HS-9127 — Resolved is the read-only effective view: no drag/edit/delete/reset.
+  const readonly = terminalsMode === 'resolved';
   const row = toElement(
-    <div className="cmd-outline-row settings-terminal-row" draggable="true" data-index={String(index)}>
-      <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>
+    <div className="cmd-outline-row settings-terminal-row" draggable={readonly ? 'false' : 'true'} data-index={String(index)}>
+      {readonly ? '' : <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>}
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>
       {showTag ? <span className={`scope-tag ${origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{origin}</span> : null}
       {terminalsMode === 'local' && origin === 'overridden' ? <button type="button" className="scope-link term-reset-btn" title="Discard the local override">Reset to shared</button> : null}
-      <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
-      <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>
+      {readonly ? '' : <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>}
+      {readonly ? '' : <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>}
     </div>
   );
 
@@ -374,8 +380,8 @@ function renderRow(index: number): HTMLElement {
   // the pre-fix code attached were dead (a `<button>` isn't draggable, so the
   // drag always starts on the row, never the button) and are dropped.
   const swallow = (e: Event) => { e.stopPropagation(); };
-  row.querySelector('.cmd-outline-edit-btn')!.addEventListener('mousedown', swallow);
-  row.querySelector('.cmd-outline-delete-btn')!.addEventListener('mousedown', swallow);
+  row.querySelector('.cmd-outline-edit-btn')?.addEventListener('mousedown', swallow);
+  row.querySelector('.cmd-outline-delete-btn')?.addEventListener('mousedown', swallow);
   row.querySelector('.term-reset-btn')?.addEventListener('mousedown', swallow);
 
   return row;
