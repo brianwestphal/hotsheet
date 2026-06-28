@@ -109,3 +109,27 @@ npx nyc report \
 
 echo ""
 echo "HTML report: coverage/index.html"
+
+# === Merged coverage threshold gate (HS-9139) ===
+# Fails the run when the MERGED (unit + e2e server + e2e browser) coverage drops
+# below the floor. The floor below is a deliberately-conservative PLACEHOLDER —
+# the merged baseline can only be captured by running THIS script in CI (it runs
+# the macOS-hazardous `src/terminals` suite + sandbox-off Playwright, so it isn't
+# safe to run on a logged-in dev Mac). After the first green CI run, ratchet
+# these to ~2 pts below the "All files" row printed above. Override per-run with
+# COVERAGE_MIN_{LINES,STATEMENTS,FUNCTIONS,BRANCHES}. Set COVERAGE_GATE=off to skip.
+if [ "${COVERAGE_GATE:-on}" != "off" ]; then
+  echo ""
+  echo "=== Coverage threshold gate (merged) ==="
+  npx nyc check-coverage \
+    --temp-dir .nyc_output \
+    --include 'src/**' \
+    --exclude 'src/**/*.test.*' \
+    --exclude 'src/test-helpers.ts' \
+    --exclude 'src/types.ts' \
+    --lines "${COVERAGE_MIN_LINES:-45}" \
+    --statements "${COVERAGE_MIN_STATEMENTS:-45}" \
+    --functions "${COVERAGE_MIN_FUNCTIONS:-45}" \
+    --branches "${COVERAGE_MIN_BRANCHES:-40}"
+  echo "Coverage gate passed (floor: lines ${COVERAGE_MIN_LINES:-45} / branches ${COVERAGE_MIN_BRANCHES:-40})."
+fi
