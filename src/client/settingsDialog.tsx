@@ -12,6 +12,7 @@ import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
+import { restoreLastSettingsTab, setLastSettingsTab } from './settingsLastTab.js';
 import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
 import { loadScopedList, renderScopeListHint, saveScopedList } from './settingsScopeList.js';
 import type { NotifyLevel } from './state.js';
@@ -57,6 +58,13 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     resetScopeMode();
     void loadAndApplyScope();
   });
+
+  // HS-9126 — restore the remembered tab LAST (after the open handler reset to
+  // General and after the scope handler's resetScopeMode), so clicking the saved
+  // tab sets the final active tab + scope-bar state. No-op for General/hidden.
+  byId('settings-btn').addEventListener('click', () => {
+    restoreLastSettingsTab();
+  });
 }
 
 // --- Tab switching + dialog open/close ---
@@ -73,6 +81,8 @@ function bindTabSwitching() {
       document.querySelector(`.settings-tab-panel[data-panel="${target}"]`)?.classList.add('active');
       // HS-9020 — let the scope bar disable itself on global-only tabs.
       if (typeof target === 'string') setActiveSettingsTab(target);
+      // HS-9126 — remember the selected tab (across opens + projects).
+      if (typeof target === 'string') setLastSettingsTab(target);
       // HS-7953 — lazy-load the Permissions tab's allow-list when it's
       // first shown so the rule list renders without an extra fetch on
       // every settings-dialog open.
