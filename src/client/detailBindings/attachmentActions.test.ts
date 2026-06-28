@@ -16,7 +16,20 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { previewAttachment } from './attachmentActions.js';
+import { bindDetailAttachmentActions, previewAttachment } from './attachmentActions.js';
+
+// HS-9143 — mocks for the `bindDetailAttachmentActions` handlers. `previewAttachment`
+// (tested above) uses none of these (only getTauriInvoke), so the mocks don't affect
+// those cases. `reactive` (delegate) + `dom` stay real so event delegation works.
+const m = vi.hoisted(() => ({
+  deleteAttachment: vi.fn<(id: number) => Promise<void>>(),
+  revealAttachment: vi.fn<(id: number) => Promise<void>>(),
+  openDetail: vi.fn(),
+  state: { activeTicketId: null as number | null },
+}));
+vi.mock('../../api/index.js', () => ({ deleteAttachment: m.deleteAttachment, revealAttachment: m.revealAttachment }));
+vi.mock('../detail.js', () => ({ openDetail: m.openDetail }));
+vi.mock('../state.js', () => ({ state: m.state }));
 
 interface TauriWindow extends Window { __TAURI__?: { core?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } } }
 
@@ -128,5 +141,95 @@ describe('previewAttachment — browser fallback overlay (HS-8826)', () => {
     document.body.appendChild(el);
     await previewAttachment(el);
     expect(overlay()).toBeNull();
+  });
+});
+
+// HS-9143 — the row click / delete / reveal / keyboard handlers.
+describe('bindDetailAttachmentActions', () => {
+  const flush = (): Promise<void> => new Promise(r => setTimeout(r, 0));
+
+  function row(attId: string): HTMLElement {
+    const item = document.createElement('div');
+    item.className = 'attachment-item';
+    item.tabIndex = 0;
+    item.dataset.attId = attId;
+    item.innerHTML = `<button class="attachment-reveal" data-att-id="${attId}"></button><button class="attachment-delete" data-att-id="${attId}"></button>`;
+    return item;
+  }
+  function container(...ids: string[]): HTMLElement {
+    const c = document.createElement('div');
+    c.id = 'detail-attachments';
+    for (const id of ids) c.appendChild(row(id));
+    document.body.appendChild(c);
+    return c;
+  }
+
+  beforeEach(() => {
+    m.deleteAttachment.mockReset().mockResolvedValue(undefined);
+    m.revealAttachment.mockReset().mockResolvedValue(undefined);
+    m.openDetail.mockReset();
+    m.state.activeTicketId = null;
+  });
+
+  it('reveal button click reveals the attachment in the file manager', () => {
+    container('11');
+    bindDetailAttachmentActions();
+    document.querySelector<HTMLElement>('.attachment-reveal')!.click();
+    expect(m.revealAttachment).toHaveBeenCalledWith(11);
+  });
+
+  it('delete button click deletes then reopens the detail', async () => {
+    m.state.activeTicketId = 4;
+    container('12');
+    bindDetailAttachmentActions();
+    document.querySelector<HTMLElement>('.attachment-delete')!.click();
+    expect(m.deleteAttachment).toHaveBeenCalledWith(12);
+    await flush();
+    expect(m.openDetail).toHaveBeenCalledWith(4);
+  });
+
+  it('clicking the row (not a button) selects + focuses it', () => {
+    const c = container('13');
+    bindDetailAttachmentActions();
+    const item = c.querySelector<HTMLElement>('.attachment-item')!;
+    item.click();
+    expect(item.classList.contains('selected')).toBe(true);
+    expect(m.revealAttachment).not.toHaveBeenCalled();
+    expect(m.deleteAttachment).not.toHaveBeenCalled();
+  });
+
+  it('ArrowDown moves the selection to the next item', () => {
+    const c = container('1', '2');
+    bindDetailAttachmentActions();
+    const items = c.querySelectorAll<HTMLElement>('.attachment-item');
+    items[0].focus();
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(items[1].classList.contains('selected')).toBe(true);
+  });
+
+  it('double-click previews the row (browser image overlay)', async () => {
+    const c = container('1');
+    bindDetailAttachmentActions();
+    const item = c.querySelector<HTMLElement>('.attachment-item')!;
+    item.dataset.filename = 'pic.png';
+    item.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    await flush();
+    expect(overlay()).not.toBeNull();
+  });
+
+  it('Space on a focused item triggers the preview branch (preventDefault)', () => {
+    const c = container('1');
+    bindDetailAttachmentActions();
+    const item = c.querySelector<HTMLElement>('.attachment-item')!;
+    item.dataset.filename = 'pic.png';
+    item.focus();
+    // The Space branch is the only key path that calls previewAttachment; it
+    // preventDefaults. (The opened overlay's own esc-handler closes on the same
+    // bubbling Space, so asserting the overlay persists would be racy — assert
+    // the branch ran instead.)
+    const ev = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    const spy = vi.spyOn(ev, 'preventDefault');
+    c.dispatchEvent(ev);
+    expect(spy).toHaveBeenCalled();
   });
 });
