@@ -15,8 +15,10 @@ added per-machine local customization. The delta infra was already in place
 `moveViewToShared`), unit-tested in `customViewsLayers.test.ts`. `customViews.tsx`
 loads the shared array + local delta via `getLayeredFileSettings` and routes each
 action through `persistViews` (writes only the changed layer; clears the local key
-when the delta empties). The sidebar shows Shared/Local origin badges + hide-on-
-this-machine + Undo (HS-9092); the Settings → **Views** tab (HS-9093) is the power
+when the delta empties). The sidebar offers hide-on-this-machine + Undo (HS-9092);
+the shared/local origin badges that used to sit on each sidebar row were **removed
+in HS-9122** (noise — the distinction lives on the Views settings tab). The
+Settings → **Views** tab (HS-9093) is the power
 surface (add Local|Shared, Edit, Hide/Unhide, Move between layers, Delete). e2e in
 `e2e/custom-views-local.spec.ts`. The Views tab manages layers per-row, so it's
 intentionally not driven by the §95 scope control.

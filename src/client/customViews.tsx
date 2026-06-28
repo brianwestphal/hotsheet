@@ -111,14 +111,11 @@ export function renderSidebarViews() {
   // Add a separator before custom views
   container.appendChild(toElement(<div className="sidebar-divider"></div>));
 
-  // HS-9092 — only badge origin when BOTH layers are in play (a project with no
-  // local customization shouldn't show "Shared" on every row — noise).
-  const hasLocalCustomization = (viewLayers.delta.added?.length ?? 0) > 0
-    || (viewLayers.delta.hidden?.length ?? 0) > 0;
-
+  // HS-9122 — the sidebar no longer shows shared/local origin badges on custom
+  // views (noise; the Shared/Local distinction is managed on the Views settings
+  // tab). The layer info still drives the context-menu actions below.
   for (let i = 0; i < state.customViews.length; i++) {
     const view = state.customViews[i];
-    const shared = isSharedView(view.id);
     const btn = toElement(
       <button
         className={`sidebar-item sidebar-custom-view${state.view === `custom:${view.id}` ? ' active' : ''}`}
@@ -128,9 +125,6 @@ export function renderSidebarViews() {
       >
         {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{ICON_TAG}</span> : null}
         <span className="sidebar-view-name">{view.name}</span>
-        {hasLocalCustomization
-          ? <span className={`cv-layer-badge ${shared ? 'cv-layer-shared' : 'cv-layer-local'}`} title={shared ? 'Shared — edits are committed to the project' : 'Local — this machine only'}>{shared ? 'Shared' : 'Local'}</span>
-          : null}
       </button>
     );
     btn.addEventListener('click', () => {

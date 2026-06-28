@@ -1,9 +1,9 @@
 import { expect, test } from './coverage-fixture.js';
 
 // HS-9092 (docs/107) — sidebar custom-view local customization: adding a view is
-// LOCAL by default (never touches the committed settings.json), shared vs local
-// views carry an origin badge, and a shared view can be hidden on this machine
-// (local `hidden` delta) with an Undo.
+// LOCAL by default (never touches the committed settings.json), and a shared view
+// can be hidden on this machine (local `hidden` delta) with an Undo. (HS-9122
+// removed the sidebar shared/local origin badges.)
 test.describe('Custom views — sidebar local customization (HS-9092)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -44,9 +44,9 @@ test.describe('Custom views — sidebar local customization (HS-9092)', () => {
     const localViews = layered.local.custom_views as { added?: { name: string }[] } | undefined;
     expect(localViews?.added?.some(v => v.name === 'My Local View')).toBe(true);
 
-    // Both rows render with origin badges (local customization now exists).
-    await expect(container.locator('.sidebar-custom-view', { hasText: 'Shared View' }).locator('.cv-layer-shared')).toBeVisible();
-    await expect(container.locator('.sidebar-custom-view', { hasText: 'My Local View' }).locator('.cv-layer-local')).toBeVisible();
+    // HS-9122 — the sidebar no longer shows shared/local origin badges (the
+    // distinction is managed on the Views settings tab instead).
+    await expect(container.locator('.sidebar-custom-view .cv-layer-badge')).toHaveCount(0);
   });
 
   test('hide a shared view on this machine writes a local hidden delta; Undo restores it', async ({ page }) => {
