@@ -56,7 +56,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
@@ -65,7 +65,7 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
@@ -76,7 +76,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
@@ -85,7 +85,7 @@ jobs:
   npm-dry-run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
@@ -116,7 +116,7 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - uses: dtolnay/rust-toolchain@stable
@@ -166,7 +166,7 @@ jobs:
       beta_version: ${{ steps.version.outputs.beta_version }}
       release_id: ${{ steps.create.outputs.result }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extract beta version from tag
         id: version
@@ -252,7 +252,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       base_version: ${{ steps.version.outputs.base_version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { ref: '${{ github.ref }}' }
       - uses: actions/setup-node@v6
         with:
@@ -324,7 +324,7 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
@@ -502,7 +502,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
@@ -550,7 +550,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
@@ -628,7 +628,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: '${{ github.ref }}'
           fetch-depth: 0
