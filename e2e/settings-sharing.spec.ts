@@ -300,6 +300,59 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('.settings-field:has(#settings-terminals-list).scope-locked')).toHaveCount(0);
   });
 
+  test('HS-9128: a shared terminal shows a "shared" origin tag in Local mode', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { terminals: [
+        { id: 'shared-term', name: 'Shared Term', command: 'zsh' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="terminal"]').click();
+
+    const row = page.locator('.settings-terminal-row', { hasText: 'Shared Term' }).first();
+    await expect(row.locator('.scope-tag')).toContainText('shared', { timeout: 5000 });
+  });
+
+  test('HS-9125: hide a shared terminal locally → disabled row + Re-enable', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { terminals: [
+        { id: 'shared-term', name: 'Shared Term', command: 'zsh' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="terminal"]').click();
+
+    const row = page.locator('.settings-terminal-row', { hasText: 'Shared Term' }).first();
+    await expect(row).toBeVisible({ timeout: 5000 });
+    // Delete it (= hide locally in Local mode) → confirm in the in-app dialog.
+    await row.locator('.cmd-outline-delete-btn').click();
+    const confirmBtn = page.locator('.confirm-dialog-confirm');
+    await expect(confirmBtn).toBeVisible({ timeout: 3000 });
+    await confirmBtn.click();
+
+    const hidden = page.locator('.settings-terminal-row-hidden', { hasText: 'Shared Term' });
+    await expect(hidden).toBeVisible({ timeout: 5000 });
+    await expect(hidden.locator('.scope-tag')).toContainText('Locally hidden');
+
+    // The local layer recorded the hide.
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+    expect((layered.local.terminals as { hidden?: string[] }).hidden).toContain('shared-term');
+
+    // Re-enable restores the editable row + clears the hidden delta.
+    await hidden.locator('.term-reenable-btn').click();
+    await page.waitForTimeout(600);
+    await expect(page.locator('.settings-terminal-row-hidden')).toHaveCount(0);
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+    const localTerms = layered.local.terminals as { hidden?: string[] } | undefined;
+    expect(localTerms?.hidden ?? []).not.toContain('shared-term');
+  });
+
   test('HS-9006/9009: Announcer is local-only — enable toggle editable in Local, read-only in Shared; panel not wholesale-locked', async ({ page }) => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await page.locator('.settings-tab[data-tab="announcer"]').click();

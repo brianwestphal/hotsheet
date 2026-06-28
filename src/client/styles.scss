@@ -8433,6 +8433,15 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  // HS-9125 — a shared terminal hidden by the local layer: dimmed, dashed,
+  // not draggable, name struck through; just a Re-enable affordance.
+  &.settings-terminal-row-hidden {
+    cursor: default;
+    opacity: 0.55;
+    border-style: dashed;
+    .cmd-outline-name { text-decoration: line-through; }
+  }
 }
 
 .settings-terminals-empty {

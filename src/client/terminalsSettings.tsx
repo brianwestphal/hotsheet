@@ -148,9 +148,45 @@ function normalizeEntry(item: unknown, index: number): EditableTerminalConfig | 
   return out;
 }
 
+/**
+ * HS-9128 — classify a terminal against the committed shared array for the
+ * Local-mode origin tag: `local` (not in shared), `shared` (in shared,
+ * unchanged), or `overridden` (in shared but edited locally).
+ */
+function termOrigin(entry: EditableTerminalConfig): 'local' | 'shared' | 'overridden' {
+  const sharedMatch = terminalsShared.find(s => termIdOf(s) === termIdOf(entry));
+  if (sharedMatch === undefined) return 'local';
+  return JSON.stringify(sharedMatch) === JSON.stringify(entry) ? 'shared' : 'overridden';
+}
+
+/** HS-9128 — drop a local override, restoring the shared terminal config. */
+function resetTerminalToShared(index: number): void {
+  const entry = terminals[index];
+  const sharedMatch = terminalsShared.find(s => termIdOf(s) === termIdOf(entry));
+  if (sharedMatch === undefined) return;
+  terminals[index] = { ...sharedMatch };
+  renderList();
+  void scheduleSave();
+  document.dispatchEvent(new CustomEvent('hotsheet:terminal-config-changed', { detail: { terminalId: entry.id } }));
+}
+
+/** HS-9125 — re-enable a shared terminal hidden by the local layer. */
+function reenableTerminal(id: string): void {
+  if (terminals.some(t => termIdOf(t) === id)) return;
+  const sharedMatch = terminalsShared.find(s => termIdOf(s) === id);
+  if (sharedMatch === undefined) return;
+  terminals.push({ ...sharedMatch });
+  renderList();
+  void scheduleSave();
+}
+
 async function handleDelete(index: number): Promise<void> {
   const entry = terminals[index];
   const displayName = entry.name !== undefined && entry.name !== '' ? entry.name : '(unnamed)';
+  // HS-9125 — in Local mode a shared terminal can't be truly deleted (it lives in
+  // the committed array); deleting it here HIDES it on this machine (a local
+  // `hidden` delta), restorable via Re-enable.
+  const hidingShared = terminalsMode === 'local' && termOrigin(entry) !== 'local';
 
   // Reveal the target terminal in the drawer and get the settings dialog out
   // of the way so the user can see what they're about to remove.
@@ -164,9 +200,11 @@ async function handleDelete(index: number): Promise<void> {
   } catch { /* drawer preview is best-effort */ }
 
   const confirmed = await confirmDialog({
-    title: 'Remove Terminal?',
-    message: `Remove terminal "${displayName}"? Its running process (if any) will be stopped.`,
-    confirmLabel: 'Remove',
+    title: hidingShared ? 'Hide Terminal?' : 'Remove Terminal?',
+    message: hidingShared
+      ? `Hide terminal "${displayName}" on this machine? It won't appear here — you can re-enable it later. Its running process (if any) will be stopped.`
+      : `Remove terminal "${displayName}"? Its running process (if any) will be stopped.`,
+    confirmLabel: hidingShared ? 'Hide' : 'Remove',
     danger: true,
   });
 
@@ -197,12 +235,31 @@ function renderList(): void {
   // HS-9015 — per-mode scope hint (null in Resolved).
   const hint = scopeListHintElement(terminalsMode);
   const lead: HTMLElement[] = hint !== null ? [hint] : [];
-  if (terminals.length === 0) {
+  // HS-9125 — in Local mode, shared terminals the local layer hides still get a
+  // disabled row with a Re-enable button so they can be restored.
+  const hiddenShared = terminalsMode === 'local'
+    ? terminalsShared.filter(s => !terminals.some(t => termIdOf(t) === termIdOf(s)))
+    : [];
+  if (terminals.length === 0 && hiddenShared.length === 0) {
     list.replaceChildren(...lead, toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
     return;
   }
   const rows = terminals.map((_, i) => renderRow(i));
-  list.replaceChildren(...lead, ...rows);
+  const hiddenRows = hiddenShared.map(s => renderHiddenRow(s));
+  list.replaceChildren(...lead, ...rows, ...hiddenRows);
+}
+
+/** HS-9125 — a dimmed row for a shared terminal hidden by the local layer. */
+function renderHiddenRow(entry: EditableTerminalConfig): HTMLElement {
+  const displayName = entry.name !== undefined && entry.name !== '' ? entry.name : '(unnamed)';
+  return toElement(
+    <div className="cmd-outline-row settings-terminal-row settings-terminal-row-hidden" data-term-id={termIdOf(entry)}>
+      <span className="cmd-outline-name">{displayName}</span>
+      <span className="settings-terminal-command">{entry.command}</span>
+      <span className="scope-tag scope-tag-local"><span className="scope-tag-dot" />Locally hidden</span>
+      <button type="button" className="scope-link term-reenable-btn">Re-enable</button>
+    </div>
+  );
 }
 
 /** Read the row index a delegated handler should act on from the row's
@@ -242,6 +299,21 @@ function ensureRowDelegationBound(list: HTMLElement): void {
     const i = rowIndexOf(btn);
     if (i >= 0) void handleDelete(i);
   }));
+  // HS-9128 — Reset a locally overridden shared terminal back to the shared value.
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'click', '.term-reset-btn', (e, btn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const i = rowIndexOf(btn);
+    if (i >= 0) resetTerminalToShared(i);
+  }));
+  // HS-9125 — Re-enable a locally-hidden shared terminal (the hidden row carries
+  // its id in `data-term-id`, not a `terminals[]` index).
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'click', '.term-reenable-btn', (e, btn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const id = btn.closest('.settings-terminal-row-hidden')?.getAttribute('data-term-id');
+    if (id !== null && id !== undefined && id !== '') reenableTerminal(id);
+  }));
 
   // Drag-to-reorder. The drag events bubble (or are capture-promoted by
   // `delegate`), so one listener per type at the container handles every row.
@@ -277,13 +349,21 @@ function ensureRowDelegationBound(list: HTMLElement): void {
 function renderRow(index: number): HTMLElement {
   const entry = terminals[index];
   const displayName = entry.name !== undefined && entry.name !== '' ? entry.name : '(unnamed)';
+  // HS-9128 — origin tag in non-Resolved modes; Reset-to-shared for a locally
+  // overridden shared terminal. HS-9125 — in Local mode the delete of a shared
+  // terminal hides it locally (relabel the button accordingly).
+  const origin = termOrigin(entry);
+  const showTag = terminalsMode !== 'resolved';
+  const isSharedHere = terminalsMode === 'local' && origin !== 'local';
   const row = toElement(
     <div className="cmd-outline-row settings-terminal-row" draggable="true" data-index={String(index)}>
       <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>
+      {showTag ? <span className={`scope-tag ${origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{origin}</span> : null}
+      {terminalsMode === 'local' && origin === 'overridden' ? <button type="button" className="scope-link term-reset-btn" title="Discard the local override">Reset to shared</button> : null}
       <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
-      <button type="button" className="cmd-outline-delete-btn" title="Delete">{TRASH_ICON}</button>
+      <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>
     </div>
   );
 
@@ -296,6 +376,7 @@ function renderRow(index: number): HTMLElement {
   const swallow = (e: Event) => { e.stopPropagation(); };
   row.querySelector('.cmd-outline-edit-btn')!.addEventListener('mousedown', swallow);
   row.querySelector('.cmd-outline-delete-btn')!.addEventListener('mousedown', swallow);
+  row.querySelector('.term-reset-btn')?.addEventListener('mousedown', swallow);
 
   return row;
 }
