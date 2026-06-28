@@ -4,8 +4,9 @@
  * runs for a project whose lease the client is renewing, so a closed/crashed
  * window can't silently keep spending the API key.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { notifyChange } from '../routes/notify.js';
 import {
   _resetLiveGeneratorForTesting, getLiveProjects, isLive, LIVE_LEASE_MS,
   registerLiveListener, unregisterLiveListener,
@@ -54,5 +55,40 @@ describe('live-listen lease registry (HS-8750)', () => {
     registerLiveListener('secA', '/data/a', NOW);
     registerLiveListener('secB', '/data/b', NOW);
     expect(getLiveProjects(NOW).map(p => p.secret).sort()).toEqual(['secA', 'secB']);
+  });
+});
+
+// HS-9137 — the producer-loop wiring: a change-version wake pings the coalescing
+// trigger, which fires the generation pass once the quiet window elapses; the
+// loop stops itself when no project is live.
+describe('live generation loop wiring (HS-8750 2a)', () => {
+  const QUIET_MS = 15_000;
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('fires the generation pass once after a coalesced change burst', async () => {
+    vi.useFakeTimers();
+    let passes = 0;
+    _resetLiveGeneratorForTesting(() => { passes += 1; return Promise.resolve(); });
+    registerLiveListener('secA', '/data/a'); // starts the loop + arms a poll waiter
+
+    // Two changes inside the quiet window coalesce into a single pass.
+    notifyChange();
+    await vi.advanceTimersByTimeAsync(5_000);
+    notifyChange();
+    expect(passes).toBe(0); // not yet — still inside the quiet window
+    await vi.advanceTimersByTimeAsync(QUIET_MS + 100);
+    expect(passes).toBe(1);
+  });
+
+  it('stops the loop (no pass) once no project is live', async () => {
+    vi.useFakeTimers();
+    let passes = 0;
+    _resetLiveGeneratorForTesting(() => { passes += 1; return Promise.resolve(); });
+    registerLiveListener('secA', '/data/a');
+    unregisterLiveListener('secA'); // lease gone before the next wake
+    notifyChange();                 // waiter sees 0 live → stopLoop, no trigger ping
+    await vi.advanceTimersByTimeAsync(QUIET_MS + 5_000);
+    expect(passes).toBe(0);
   });
 });
