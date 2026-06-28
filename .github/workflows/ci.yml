@@ -94,3 +94,31 @@ jobs:
       - run: npm run test:e2e:fast
         env:
           E2E_SCOPE: terminal
+
+  # HS-9140 / HS-9139 — merged (unit + e2e server + e2e browser) coverage + the
+  # threshold gate. Heavy (full unit suite + an instrumented e2e run + nyc merge),
+  # so it runs only on push to main (post-merge baseline + regression gate), not
+  # on every PR. The e2e half uses E2E_SCOPE=no-terminal so a timing-sensitive
+  # terminal flake can't wedge the shared server mid-coverage-capture (terminal
+  # SOURCE is still counted via the unit suite, which includes src/terminals).
+  # `scripts/test-all.sh` prints the merged "All files" row and ends with an
+  # `nyc check-coverage` gate; the floor below sits just under the measured unit
+  # baseline (≈64% lines), so it catches regressions without false-failing — and
+  # since merged ≥ unit, it's safe whether or not the e2e half merges cleanly.
+  # Ratchet the floor up toward the real merged number after the first green run.
+  coverage:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      E2E_SCOPE: no-terminal
+      COVERAGE_MIN_LINES: '58'
+      COVERAGE_MIN_STATEMENTS: '58'
+      COVERAGE_MIN_FUNCTIONS: '56'
+      COVERAGE_MIN_BRANCHES: '52'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:all
