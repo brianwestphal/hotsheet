@@ -13,6 +13,15 @@ export default defineConfig({
   },
   test: {
     pool: 'forks',
+    // HS-9141 — retry in CI only. The heavy spawn/timing suites (real `tsx`
+    // child boots, PGLite teardown, worker-pool server tests) flake under the
+    // full parallel coverage run (200+ files + V8 instrumentation) from CPU
+    // starvation — a real-server boot or signal-exit occasionally misses its
+    // window (e.g. lifecycle.e2e SIGINT → 130, api.test worker-pool → 30s
+    // timeout). These are environment-noise, not logic failures; a retry greens
+    // the genuinely-transient ones while a real failure still fails every
+    // attempt. Local stays 0 so flakes surface during dev.
+    retry: process.env.CI !== undefined && process.env.CI !== '' ? 2 : 0,
     testTimeout: 30000,
     // HS-8650 — raise the per-hook timeout from vitest's 10s default to match
     // `testTimeout`. The PGLite-heavy DB suites tear down real embedded-Postgres
