@@ -71,20 +71,21 @@
       "description": "Items requiring research or analysis"
     }
   ],
-  "custom_views": [],
   "channel_enabled": "true",
   "custom_commands": [
     {
       "name": "Commit Changes",
       "prompt": "make a commit message for the recently completed tickets, without wrapping long lines.  Don't include any co-authored by Anthropic type lines in the commit message.  add all unstaged changes to the git commit.  git commit with the message you generated but don't push",
       "icon": "send",
-      "color": "#3b82f6"
+      "color": "#3b82f6",
+      "id": "1977aa24-20e8-4b2a-9f3c-ccaf52681c03"
     },
     {
       "name": "Update Requirements",
       "prompt": "Update the requirements docs as appropriate",
       "icon": "file-text",
-      "color": "#6b7280"
+      "color": "#6b7280",
+      "id": "71c998dd-d6d7-46e5-8d0a-ba7577f8d242"
     },
     {
       "type": "group",
@@ -94,33 +95,39 @@
           "name": "Reqs ↔︎ Code",
           "prompt": "/check-requirements-against-code",
           "icon": "arrow-left-right",
-          "color": "#ec4899"
+          "color": "#ec4899",
+          "id": "a22e5d85-2ed4-4bf8-a228-67bf2a46a1e1"
         },
         {
           "name": "Analyze Code Quality",
           "prompt": "/analyze-code-quality",
           "icon": "circle-check-big",
-          "color": "#8b5cf6"
+          "color": "#8b5cf6",
+          "id": "a28b33d0-061d-4af7-b2e3-d4ff39dace6f"
         },
         {
           "name": "Kerf Usage Audit",
           "prompt": "Audit this codebase for kerf usage.  See ~/.claude/skills/kerf-app/SKILL.md or node_modules/kerfjs/ai/skill.md.  For each finding, make Hot Sheet tickets with: file:line, which rule or pattern, the fix shape. Don't speculate - only flag patterns you can point to in the code. Top \"must fix\" list, then \"consider\" list.",
           "icon": "slice",
-          "color": "#f97316"
+          "color": "#f97316",
+          "id": "15d9f030-6184-489f-8ffe-d5d1429fa30d"
         },
         {
           "name": "Check Code Hygene",
           "prompt": "/check-code-hygiene",
           "icon": "soap-dispenser-droplet",
-          "color": "#f97316"
+          "color": "#f97316",
+          "id": "a87360f0-d094-476f-b3df-5de85ac415e3"
         },
         {
           "name": "Everything",
           "prompt": "do these sequentially, creating follow up tickets for all concerns encountered:\n/check-requirements-against-code\n/check-code-hygiene\n/analyze-code-quality\n",
           "icon": "balloon",
-          "color": "#e5e7eb"
+          "color": "#e5e7eb",
+          "id": "afdfaf50-ee38-473f-8d6a-0d5a2036ae38"
         }
-      ]
+      ],
+      "id": "18556f13-1273-43ff-88aa-8cf54b99bce8"
     },
     {
       "type": "group",
@@ -132,21 +139,25 @@
           "icon": "git-compare",
           "color": "#e5e7eb",
           "target": "shell",
-          "autoShowLog": true
+          "autoShowLog": true,
+          "id": "fc45ca14-ff30-4bc6-8869-586b9b4686f8"
         },
         {
           "name": "git push",
           "prompt": "git push",
           "icon": "git-compare-arrows",
-          "target": "shell"
+          "target": "shell",
+          "id": "6f1dba5a-81b0-435e-9c2f-2522fdb9e363"
         }
-      ]
+      ],
+      "id": "f56cf1b0-fda2-4fd4-9382-9924dd39f628"
     },
     {
       "name": "Prep Major Release",
       "prompt": "We've made a lot of changes.  Review and update the README.md file as necessary.  Make sure it stays compelling and advertises our most important and interesting features.\n\nReview the demo modes and revise those if you think new / different / fewer screenshots are needed.  Then re-capture all of the demos (always do all of them in case minor details changed).\n",
       "icon": "wand",
-      "color": "#14b8a6"
+      "color": "#14b8a6",
+      "id": "faee8606-e6e7-4e89-a5be-2d34af2df199"
     }
   ],
   "ping_enabled": "false",
@@ -156,10 +167,7 @@
       "id": "default",
       "command": "{{claudeCommand}}",
       "name": "Claude",
-      "lazy": false,
-      "theme": "github-dark",
-      "fontFamily": "system",
-      "fontSize": 17
+      "lazy": false
     }
   ],
   "hotsheet_skill_clear_context": true
