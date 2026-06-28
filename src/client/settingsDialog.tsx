@@ -527,30 +527,79 @@ function bindAutoContextSettings() {
       () => updateSettings({ auto_context: JSON.stringify(autoContextEntries) }));
   }
 
+  const displayKeyOf = (entry: AutoContextEntry): string => entry.type === 'category'
+    ? (state.categories.find(c => c.id === entry.key)?.label ?? entry.key)
+    : entry.key.replace(/\b\w/g, c => c.toUpperCase());
+
+  /**
+   * HS-9120 — classify an entry against the committed shared array for the
+   * Local-mode origin tag: `local` (not in shared), `shared` (in shared,
+   * unchanged), or `overridden` (in shared but the text differs locally).
+   */
+  function entryOrigin(entry: AutoContextEntry): 'local' | 'shared' | 'overridden' {
+    const sharedMatch = autoContextShared.find(s => acIdOf(s) === acIdOf(entry));
+    if (sharedMatch === undefined) return 'local';
+    return sharedMatch.text === entry.text ? 'shared' : 'overridden';
+  }
+
+  /**
+   * HS-9120 — (re)paint a row's scope slot: the origin tag plus, for a locally
+   * overridden shared entry, a "Reset to shared" button. Done in place (not via a
+   * full re-render) so it can run after the debounced text save without stealing
+   * focus from the textarea the user is typing in.
+   */
+  function paintRowScope(slot: HTMLElement, entry: AutoContextEntry): void {
+    slot.replaceChildren();
+    if (autoContextMode === 'resolved') return;
+    const origin = entryOrigin(entry);
+    const tagClass = origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local';
+    slot.appendChild(toElement(<span className={`scope-tag ${tagClass}`}><span className="scope-tag-dot" />{origin}</span>));
+    if (autoContextMode === 'local' && origin === 'overridden') {
+      const resetBtn = toElement(<button type="button" className="scope-link" data-scope-action="reset">Reset to shared</button>);
+      resetBtn.addEventListener('click', () => {
+        const sharedMatch = autoContextShared.find(s => acIdOf(s) === acIdOf(entry));
+        if (sharedMatch === undefined) return;
+        const idx = autoContextEntries.findIndex(e => acIdOf(e) === acIdOf(entry));
+        if (idx === -1) return;
+        autoContextEntries[idx] = { ...entry, text: sharedMatch.text };
+        void saveEntries();
+        renderEntries();
+      });
+      slot.appendChild(resetBtn);
+    }
+  }
+
   function renderEntries() {
     list.innerHTML = '';
     renderScopeListHint(list, autoContextMode);
-    if (autoContextEntries.length === 0) {
+
+    // HS-9121 — in Local mode, shared entries the local layer hides (deleted
+    // locally) still get a disabled row with a Re-enable button so they can be
+    // restored. In Resolved/Shared mode there is no "hidden" concept to surface.
+    const hiddenShared = autoContextMode === 'local'
+      ? autoContextShared.filter(s => !autoContextEntries.some(e => acIdOf(e) === acIdOf(s)))
+      : [];
+
+    if (autoContextEntries.length === 0 && hiddenShared.length === 0) {
       list.appendChild(toElement(<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>));
       return;
     }
     for (let i = 0; i < autoContextEntries.length; i++) {
       const entry = autoContextEntries[i];
-      const displayKey = entry.type === 'category'
-        ? (state.categories.find(c => c.id === entry.key)?.label ?? entry.key)
-        : entry.key.replace(/\b\w/g, c => c.toUpperCase());
-      // HS-9016 — origin tag: is this entry in the committed shared array?
-      const fromShared = autoContextShared.some(s => acIdOf(s) === acIdOf(entry));
+      // HS-9121 — a shared entry deleted in Local mode is "disabled locally", not
+      // removed; label the delete accordingly so the move-to-disabled is clear.
+      const isSharedHere = autoContextMode === 'local' && entryOrigin(entry) !== 'local';
       const row = toElement(
         <div className="auto-context-entry">
           <div className="auto-context-header">
-            <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKey}</span>
-            {autoContextMode !== 'resolved' ? <span className={`scope-tag ${fromShared ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{fromShared ? 'shared' : 'local'}</span> : ''}
-            <button className="category-delete-btn" title="Remove">{'×'}</button>
+            <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKeyOf(entry)}</span>
+            <span className="auto-context-scope-slot" />
+            <button className="category-delete-btn" title={isSharedHere ? 'Disable on this machine' : 'Remove'}>{'×'}</button>
           </div>
           <textarea className="auto-context-text" rows={3}>{entry.text}</textarea>
         </div>
       );
+      paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, entry);
       const textarea = row.querySelector('.auto-context-text') as HTMLTextAreaElement;
       let saveTimeout: ReturnType<typeof setTimeout> | null = null;
       textarea.addEventListener('input', () => {
@@ -558,10 +607,32 @@ function bindAutoContextSettings() {
         saveTimeout = setTimeout(() => {
           autoContextEntries[i] = { ...entry, text: textarea.value };
           void saveEntries();
+          // HS-9120 — refresh the origin tag in place (shared→overridden) without
+          // re-rendering, so the textarea keeps focus + caret.
+          paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, autoContextEntries[i]);
         }, 500);
       });
       row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
         autoContextEntries.splice(i, 1);
+        void saveEntries();
+        renderEntries();
+      });
+      list.appendChild(row);
+    }
+
+    // HS-9121 — locally-disabled shared rows.
+    for (const s of hiddenShared) {
+      const row = toElement(
+        <div className="auto-context-entry locally-disabled">
+          <div className="auto-context-header">
+            <span className="auto-context-badge" data-type={s.type}>{s.type === 'category' ? 'Category' : 'Tag'}: {displayKeyOf(s)}</span>
+            <span className="scope-tag scope-tag-local"><span className="scope-tag-dot" />Locally disabled</span>
+            <button type="button" className="scope-link" data-scope-action="reenable">Re-enable</button>
+          </div>
+        </div>
+      );
+      row.querySelector('[data-scope-action="reenable"]')!.addEventListener('click', () => {
+        autoContextEntries.push({ ...s });
         void saveEntries();
         renderEntries();
       });

@@ -223,6 +223,74 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     expect(layered.shared.auto_context).toBeUndefined();
   });
 
+  test('HS-9120: a locally-edited shared auto-context shows "overridden" + Reset to shared', async ({ page }) => {
+    // Seed a SHARED auto-context entry, then reopen the dialog in Local mode.
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { auto_context: [
+        { type: 'tag', key: 'urgent', text: 'Shared urgent note' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="context"]').click();
+
+    const entry = page.locator('#auto-context-list .auto-context-entry').filter({ hasText: 'Urgent' }).first();
+    // Inherited shared entry starts tagged "shared", no Reset.
+    await expect(entry.locator('.scope-tag')).toContainText('shared', { timeout: 5000 });
+    await expect(entry.locator('[data-scope-action="reset"]')).toHaveCount(0);
+
+    // Edit the text locally → becomes "overridden" with a Reset-to-shared button.
+    await entry.locator('.auto-context-text').fill('Locally tweaked note');
+    await page.waitForTimeout(700); // debounced save + in-place tag repaint
+    await expect(entry.locator('.scope-tag')).toContainText('overridden');
+    const resetBtn = entry.locator('[data-scope-action="reset"]');
+    await expect(resetBtn).toBeVisible();
+
+    // Reset returns it to the shared value + "shared" tag.
+    await resetBtn.click();
+    const resetEntry = page.locator('#auto-context-list .auto-context-entry').filter({ hasText: 'Urgent' }).first();
+    await expect(resetEntry.locator('.auto-context-text')).toHaveValue('Shared urgent note', { timeout: 3000 });
+    await expect(resetEntry.locator('.scope-tag')).toContainText('shared');
+  });
+
+  test('HS-9121: deleting a shared auto-context in Local mode disables it with a Re-enable', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { auto_context: [
+        { type: 'tag', key: 'urgent', text: 'Shared urgent note' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="context"]').click();
+
+    const entry = page.locator('#auto-context-list .auto-context-entry').filter({ hasText: 'Urgent' }).first();
+    await expect(entry.locator('.auto-context-text')).toBeVisible({ timeout: 5000 });
+
+    // Delete it → becomes a dimmed "Locally disabled" row with Re-enable (not gone).
+    await entry.locator('.category-delete-btn').click();
+    await page.waitForTimeout(500);
+    const disabled = page.locator('#auto-context-list .auto-context-entry.locally-disabled').filter({ hasText: 'Urgent' });
+    await expect(disabled).toBeVisible();
+    await expect(disabled.locator('.scope-tag')).toContainText('Locally disabled');
+
+    // The local layer recorded it as hidden.
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+    expect((layered.local.auto_context as { hidden?: string[] }).hidden).toContain('tag:urgent');
+
+    // Re-enable restores the editable entry + clears the hidden delta.
+    await disabled.locator('[data-scope-action="reenable"]').click();
+    await page.waitForTimeout(500);
+    await expect(page.locator('#auto-context-list .auto-context-entry.locally-disabled')).toHaveCount(0);
+    await expect(page.locator('#auto-context-list .auto-context-entry').filter({ hasText: 'Urgent' }).locator('.auto-context-text')).toBeVisible();
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+    const localAc = layered.local.auto_context as { hidden?: string[] } | undefined;
+    expect(localAc?.hidden ?? []).not.toContain('tag:urgent');
+  });
+
   test('HS-9015: terminals editor is scope-aware (editable + hint in Local, not locked)', async ({ page }) => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await page.locator('.settings-tab[data-tab="terminal"]').click();

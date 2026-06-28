@@ -5061,6 +5061,15 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 8px;
+
+  // HS-9121 — a shared entry hidden by the local layer: dimmed, no textarea,
+  // just the badge + "Locally disabled" tag + Re-enable button.
+  &.locally-disabled {
+    opacity: 0.55;
+    border-style: dashed;
+    .auto-context-header { margin-bottom: 0; }
+    .auto-context-badge { text-decoration: line-through; }
+  }
 }
 
 .auto-context-header {
