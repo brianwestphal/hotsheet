@@ -340,7 +340,8 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(hidden).toBeVisible({ timeout: 5000 });
     await expect(hidden.locator('.scope-tag')).toContainText('Locally hidden');
 
-    // The local layer recorded the hide.
+    // The local layer recorded the hide (terminals scheduleSave is debounced ~400ms).
+    await page.waitForTimeout(700);
     let layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
     expect((layered.local.terminals as { hidden?: string[] }).hidden).toContain('shared-term');
 
