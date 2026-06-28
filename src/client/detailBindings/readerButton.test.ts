@@ -88,4 +88,19 @@ describe('bindDetailReaderButton', () => {
     const arg = h.openReaderOverlay.mock.calls[0][0] as { navigation?: unknown };
     expect(arg.navigation).toBeUndefined();
   });
+
+  it('handles no active ticket (ticket null) + a details-less entry list', async () => {
+    setup();
+    h.state.activeTicketId = null; // not found → ticket null
+    h.buildCombinedReaderEntries.mockReturnValue([
+      { id: 'n1', title: 'Note', markdown: 'a' },
+      { id: 'n2', title: 'Note2', markdown: 'b' },
+    ]); // no 'details' entry → detailsIdx === -1 → initialIndex 0
+    bindDetailReaderButton();
+    document.getElementById('detail-reader-btn')!.click();
+    await flush();
+    expect(h.parseNotesJson).not.toHaveBeenCalled(); // ticket-null branch skips note parsing
+    const arg = h.openReaderOverlay.mock.calls[0][0] as { navigation: { initialIndex: number } };
+    expect(arg.navigation.initialIndex).toBe(0);
+  });
 });

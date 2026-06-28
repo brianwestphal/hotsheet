@@ -93,4 +93,18 @@ describe('applyDetailChange (via a selected item action)', () => {
     expect(h.trackedPatch).not.toHaveBeenCalled();
     expect(h.updateTicket).not.toHaveBeenCalled();
   });
+
+  it('priority + status dropdowns build their items + run the right update helper', async () => {
+    h.state.activeTicketId = 2; h.state.tickets = [{ id: 2 }];
+    document.getElementById('detail-priority')!.click();
+    h.createDropdown.mock.calls[0][1][0].action();
+    await flush();
+    expect(h.updateDetailPriority).toHaveBeenCalledWith('high');
+
+    h.createDropdown.mockClear();
+    document.getElementById('detail-status')!.click();
+    h.createDropdown.mock.calls[0][1][0].action();
+    await flush();
+    expect(h.updateDetailStatus).toHaveBeenCalledWith('started');
+  });
 });

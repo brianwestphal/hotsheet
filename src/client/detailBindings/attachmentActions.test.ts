@@ -232,4 +232,44 @@ describe('bindDetailAttachmentActions', () => {
     c.dispatchEvent(ev);
     expect(spy).toHaveBeenCalled();
   });
+
+  it('reveal/delete with an empty attId do nothing', () => {
+    container(''); // buttons carry data-att-id=""
+    bindDetailAttachmentActions();
+    document.querySelector<HTMLElement>('.attachment-reveal')!.click();
+    document.querySelector<HTMLElement>('.attachment-delete')!.click();
+    expect(m.revealAttachment).not.toHaveBeenCalled();
+    expect(m.deleteAttachment).not.toHaveBeenCalled();
+  });
+
+  it('delete with no active ticket deletes but does not reopen the detail', async () => {
+    m.state.activeTicketId = null;
+    container('20');
+    bindDetailAttachmentActions();
+    document.querySelector<HTMLElement>('.attachment-delete')!.click();
+    expect(m.deleteAttachment).toHaveBeenCalledWith(20);
+    await flush();
+    expect(m.openDetail).not.toHaveBeenCalled();
+  });
+
+  it('ignores keydown when no attachment item is focused', () => {
+    const c = container('1', '2'); // nothing focused → activeElement is not an .attachment-item
+    bindDetailAttachmentActions();
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(c.querySelector('.selected')).toBeNull();
+  });
+
+  it('ArrowUp moves up; an arrow at the boundary is a no-op', () => {
+    const c = container('1', '2');
+    bindDetailAttachmentActions();
+    const items = c.querySelectorAll<HTMLElement>('.attachment-item');
+    items[1].focus();
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(items[0].classList.contains('selected')).toBe(true);
+    // At the top, ArrowUp → nextIdx -1 (out of bounds) → no change.
+    items[0].focus();
+    items.forEach(el => el.classList.remove('selected'));
+    c.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(c.querySelector('.selected')).toBeNull();
+  });
 });

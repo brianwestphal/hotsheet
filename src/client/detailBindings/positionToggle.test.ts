@@ -68,4 +68,14 @@ describe('bindDetailPositionToggle', () => {
     expect(h.state.settings.detail_visible).toBe(true);
     expect(h.applyDetailPosition).toHaveBeenCalledWith('side');
   });
+
+  it('tolerates a missing panel + handle (null guards, both paths)', () => {
+    document.getElementById('detail-panel')!.remove();
+    document.getElementById('detail-resize-handle')!.remove();
+    bindDetailPositionToggle();
+    expect(() => btn('side').click()).not.toThrow();    // toggle-off path, panel/handle absent
+    h.state.settings = { detail_position: 'side', detail_visible: true };
+    expect(() => btn('bottom').click()).not.toThrow();  // switch path, panel/handle absent
+    expect(h.applyDetailPosition).toHaveBeenCalledWith('bottom');
+  });
 });

@@ -87,4 +87,20 @@ describe('drag-and-drop', () => {
     await flush();
     expect(h.uploadAttachment).not.toHaveBeenCalled();
   });
+
+  it('dragover sets the copy drop-effect (and tolerates no dataTransfer)', () => {
+    const dt: { files?: File[]; types?: string[]; dropEffect?: string } = { types: ['Files'], dropEffect: '' };
+    body().dispatchEvent(dragEvent('dragover', dt));
+    expect(dt.dropEffect).toBe('copy');
+    expect(() => body().dispatchEvent(dragEvent('dragover', undefined))).not.toThrow(); // no-dataTransfer branch
+  });
+
+  it('nested dragenter/dragleave balances the counter before clearing drop-active', () => {
+    body().dispatchEvent(dragEvent('dragenter', { types: ['Files'] }));
+    body().dispatchEvent(dragEvent('dragenter', { types: ['Files'] })); // counter = 2
+    body().dispatchEvent(dragEvent('dragleave', undefined));
+    expect(body().classList.contains('drop-active')).toBe(true); // counter 1, still active
+    body().dispatchEvent(dragEvent('dragleave', undefined));
+    expect(body().classList.contains('drop-active')).toBe(false); // counter 0
+  });
 });
