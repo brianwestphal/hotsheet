@@ -15,6 +15,19 @@ import { attach, detach, resizeTerminal, type TerminalSubscriber, writeInput } f
 
 const WS_PATH = '/api/terminal/ws';
 
+/** HS-9114 — live terminal sockets, tracked so graceful shutdown can close them
+ *  proactively before `server.close()` (they're long-lived, so otherwise they
+ *  make `close()` wait out its step timeout). */
+const openTerminalSockets = new Set<WebSocket>();
+
+/** HS-9114 — proactively close every live terminal WebSocket during graceful
+ *  shutdown (the PTYs themselves are torn down by the `destroyTerminals` step). */
+export function closeAllTerminalSockets(): void {
+  for (const ws of [...openTerminalSockets]) {
+    try { ws.close(1001, 'server shutting down'); } catch { /* ignore */ }
+  }
+}
+
 // HS-8192 — schema validates inbound text-frame control messages. Pre-fix
 // the handler did `JSON.parse(text) as ControlMessage` with a raw `as` cast,
 // so a malformed payload (wrong type literal, missing cols/rows on a resize,
@@ -49,6 +62,9 @@ export function wireTerminalWebSocket(httpServer: HttpServer, options?: { expose
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
+      // HS-9114 — track for proactive close on graceful shutdown.
+      openTerminalSockets.add(ws);
+      ws.on('close', () => openTerminalSockets.delete(ws));
       handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows, authResult.noSpawn);
       // HS-9025 — on the exposed (Tier-1) mTLS listener, track the socket so the
       // revocation sweep closes it if the device is revoked / the cert expires

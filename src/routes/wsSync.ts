@@ -85,11 +85,20 @@ export function wireSyncWebSocket(httpServer: HttpServer, options: WireSyncOptio
 
   // HS-7931 — when the HTTP server closes during graceful shutdown, terminate
   // every live sync socket so nothing keeps the process (or the close) hanging.
-  httpServer.on('close', () => {
-    for (const ws of [...openSockets]) {
-      try { ws.close(1001, 'server shutting down'); } catch { /* ignore */ }
-    }
-  });
+  // HS-9114 — note this `'close'` listener fires too LATE to unblock `close()`
+  // (the event emits only after the server has already drained), so the shutdown
+  // pipeline now calls `closeAllSyncSockets()` proactively BEFORE `server.close()`.
+  // This handler is kept as a belt-and-braces for any non-pipeline close path.
+  httpServer.on('close', () => { closeAllSyncSockets(); });
+}
+
+/** HS-9114 — proactively close every live `/ws/sync` socket. Called by the
+ *  graceful-shutdown pipeline before `server.close()` so these long-lived
+ *  connections don't make `close()` wait out its step timeout. */
+export function closeAllSyncSockets(): void {
+  for (const ws of [...openSockets]) {
+    try { ws.close(1001, 'server shutting down'); } catch { /* ignore */ }
+  }
 }
 
 /** Authenticate the upgrade: a valid per-project secret is mandatory (no open

@@ -18,6 +18,7 @@
  */
 import { rmSync } from 'fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
 
 import {
   canRunServerSpawnTests,
@@ -124,14 +125,56 @@ describe.skipIf(!canRunServerSpawnTests)('graceful shutdown e2e (HS-7934) (skipp
     expect(elapsed).toBeLessThan(10_000);
   }, 60_000);
 
+  // HS-9114 — the reported bug: shutdown "always uses the full 90s" even right
+  // after launch, because the client always holds an open `/ws/sync` WebSocket
+  // (and an in-flight long-poll), and `server.close()` waited each out to the
+  // closeHttpServer step's 90s budget. The fix proactively closes those sockets
+  // + force-closes any straggler after a short grace, so shutdown stays prompt.
+  it('shutdown stays prompt with an open /ws/sync WebSocket + in-flight long-poll (HS-9114)', async () => {
+    const child = spawnTracked();
+    await child.ready;
+    const secret = readSecret(child.dataDir);
+
+    // Open the persistent connections the real client holds right after launch.
+    const ws = new WebSocket(`ws://localhost:${child.port}/ws/sync?project=${secret}`);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', () => resolve());
+      ws.once('error', reject);
+    });
+    const pollAbort = new AbortController();
+    const longPoll = fetch(`http://localhost:${child.port}/api/poll?version=0`, { signal: pollAbort.signal }).catch(() => undefined);
+    // Let both register on the server before tearing down.
+    await new Promise(r => setTimeout(r, 300));
+
+    const t0 = Date.now();
+    const shutdownRes = await postJson(`http://localhost:${child.port}/api/shutdown`, {}, secret);
+    expect(shutdownRes.status).toBe(200);
+    const exit = await waitForExit(child.proc, 30_000);
+    const elapsed = Date.now() - t0;
+
+    expect(exit.code).toBe(0);
+    // Pre-fix this was ~90s (closeHttpServer waiting on the WS + long-poll). The
+    // fix keeps it to a couple seconds; ceiling is generous for CI/tsx jitter but
+    // far below the old 90s budget — that's the regression guard.
+    expect(elapsed).toBeLessThan(15_000);
+
+    pollAbort.abort();
+    await longPoll;
+    try { ws.close(); } catch { /* already gone with the process */ }
+  }, 60_000);
+
   // HS-7939 — deterministic double-SIGINT escalation. The earlier attempt
   // at proving the contract through a spawned-tsx child was racy because the
   // shutdown pipeline can complete in well under a millisecond on a fresh DB,
   // so a JS-driven second `proc.kill` would routinely arrive after `exit(0)`
   // had already been scheduled. The fix here is to hold an in-flight
-  // long-poll request open before sending SIGINT: `httpServer.close()` blocks
-  // on existing connections, which pins `closeHttpServer` (the first await
-  // inside `runShutdownPipeline`) for the long-poll's full 30s window. We
+  // long-poll request open before sending SIGINT: it pins `closeHttpServer`
+  // (the first await inside `runShutdownPipeline`) for the
+  // `HTTP_CLOSE_GRACE_MS` grace window. (HS-9114 — `closeHttpServer` now wakes
+  // long-poll waiters + force-closes stragglers after that grace rather than
+  // waiting out the poll's full 30s, but the poll's keep-alive socket only goes
+  // idle AFTER `closeIdleConnections()` has already run, so it still lingers to
+  // the grace backstop — a ~1s window, ample for the second signal to land.) We
   // then wait for the `[lifecycle] gracefulShutdown(...) — starting` stdout
   // marker — printed synchronously at the top of `runShutdownPipeline` —
   // before firing the second SIGINT. With both gates in place the second

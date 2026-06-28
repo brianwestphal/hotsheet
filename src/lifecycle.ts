@@ -89,11 +89,13 @@ export function gracefulShutdown(reason: ShutdownReason): Promise<void> {
  * safety net for steps the deadline skipped.
  *
  * HS-9028 — the original 3s/step ceiling was too tight for the genuinely heavy
- * steps: closing the HTTP server (draining keep-alive sockets) and the DB work
- * (the snapshot CHECKPOINT + close + fsync), which under real load — and
- * especially with several projects' DBs handled in one step — legitimately need
- * more than 3s and were being cut off ("step closeHttpServer/snapshotDatabases
- * failed after 3000ms"). Now that shutdown has clear per-step feedback (the
+ * steps: the DB work (the snapshot CHECKPOINT + close + fsync), which under real
+ * load — and especially with several projects' DBs handled in one step —
+ * legitimately needs more than 3s and was being cut off ("step snapshotDatabases
+ * failed after 3000ms"). (HS-9028 originally also gave `closeHttpServer` the heavy
+ * budget for keep-alive draining; HS-9114 removed it — see `HEAVY_STEPS` — now
+ * that `closeHttpServer` bounds itself and never waits out a long-lived socket.)
+ * Now that shutdown has clear per-step feedback (the
  * `[lifecycle:progress]` markers → the Tauri "Shutting Down" overlay), we can
  * afford to wait: the named heavy steps get up to `HEAVY_STEP_TIMEOUT_MS` (90s)
  * each, while the light steps keep the short default. The overall ceiling is
@@ -104,23 +106,30 @@ export function gracefulShutdown(reason: ShutdownReason): Promise<void> {
  * ultimate backstop for a wedge that outlasts even this.
  */
 const STEP_TIMEOUT_MS = 3000;
-/** Heavy steps (HTTP drain + DB snapshot/close) get a much longer budget — the
- *  two operations the user can actually see take a while on quit (HS-9028). */
+/** Heavy steps (DB snapshot + close) get a much longer budget — the operations
+ *  the user can actually see take a while on quit (HS-9028). */
 const HEAVY_STEP_TIMEOUT_MS = 90_000;
-/** Steps granted the heavy budget. Everything else uses `STEP_TIMEOUT_MS`. */
-const HEAVY_STEPS = new Set(['closeHttpServer', 'snapshotDatabases', 'closeDatabases']);
-/** Comfortably above the sum of the heavy budgets (3 × 90s) + the light steps,
+/** Steps granted the heavy budget. Everything else uses `STEP_TIMEOUT_MS`.
+ *  HS-9114 — `closeHttpServer` was dropped from this set: it now bounds itself
+ *  with `HTTP_CLOSE_GRACE_MS` + a `closeAllConnections()` backstop (it no longer
+ *  waits out a long-lived socket), so it resolves in ~1s and doesn't need 90s. */
+const HEAVY_STEPS = new Set(['snapshotDatabases', 'closeDatabases']);
+/** Comfortably above the sum of the heavy budgets (2 × 90s) + the light steps,
  *  so the overall deadline only ever fires for a genuinely pathological cascade,
  *  never to cut short a heavy step still within its own budget (HS-9028). */
 const OVERALL_TIMEOUT_MS = 300_000;
 
 /** Test-only overrides so the timeout contract is unit-testable without
- *  waiting multiple real seconds. Production never sets these. */
+ *  waiting multiple real seconds. Production never sets these.
+ *  `httpGrace` (HS-9114) overrides `HTTP_CLOSE_GRACE_MS` for the closeHttpServer
+ *  backstop; omit to leave it at the production value. */
 let stepTimeoutOverrideMs: number | null = null;
 let overallTimeoutOverrideMs: number | null = null;
-export function _setShutdownTimeoutsForTests(step: number | null, overall: number | null): void {
+let httpGraceOverrideMs: number | null = null;
+export function _setShutdownTimeoutsForTests(step: number | null, overall: number | null, httpGrace: number | null = null): void {
   stepTimeoutOverrideMs = step;
   overallTimeoutOverrideMs = overall;
+  httpGraceOverrideMs = httpGrace;
 }
 
 /** The timeout budget for a named step (pure — unit-testable). A test override
@@ -198,6 +207,7 @@ export function _resetLifecycleForTests(): void {
   httpServer = null;
   stepTimeoutOverrideMs = null;
   overallTimeoutOverrideMs = null;
+  httpGraceOverrideMs = null;
 }
 
 /** Test-only — true once `gracefulShutdown` has been called. */
@@ -320,28 +330,65 @@ async function terminateHashWorkerStep(): Promise<void> {
   }
 }
 
+/** HS-9114 — grace before force-closing any still-active socket. Long enough for
+ *  the /api/shutdown 200 to flush + idle keep-alives to close, short enough that
+ *  a lingering long-lived socket can't drag shutdown toward the step timeout. */
+const HTTP_CLOSE_GRACE_MS = 1200;
+
 async function closeHttpServer(): Promise<void> {
   if (httpServer === null) return;
-  await new Promise<void>((resolve) => {
-    // HS-8096: `server.close()` only stops accepting NEW connections — it
-    // still waits for every existing connection (including idle keep-alive
-    // sockets in the client's connection pool) to drain. A SIGINT-initiated
-    // shutdown right after a client request will routinely have an idle
-    // keep-alive socket from that request still in the pool, which would
-    // otherwise block `close()` until Node's keep-alive timeout. We use
-    // `closeIdleConnections()` (Node 18.2+) — NOT `closeAllConnections()` —
-    // because the /api/shutdown route depends on the in-flight response
-    // socket being able to finish writing the 200 OK reply before the
-    // socket goes away.
-    httpServer!.close((err) => {
-      if (err !== undefined) {
-        console.error('[lifecycle] http server close error:', err);
-      }
-      resolve();
-    });
-    httpServer!.closeIdleConnections();
-  });
+  const server = httpServer;
   httpServer = null;
+
+  // HS-9114 — proactively release the long-lived connections `server.close()`
+  // would otherwise wait on. Right after launch the client always holds an open
+  // `/ws/sync` socket + an in-flight `/api/poll` long-poll (and a terminal WS per
+  // configured terminal); none are "idle", so `closeIdleConnections()` can't free
+  // them and `close()` would burn the full step timeout (the bug: shutdown always
+  // taking ~90s). The old wsSync `on('close')` handler fired too late — `'close'`
+  // emits only AFTER `close()` has drained, the very thing it meant to unblock.
+  await releaseLongLivedConnections();
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    // HS-8096: `server.close()` waits for every existing connection (incl. idle
+    // keep-alive sockets) to drain; `closeIdleConnections()` (Node 18.2+) frees
+    // the idle ones immediately.
+    server.close((err) => {
+      if (err !== undefined) console.error('[lifecycle] http server close error:', err);
+      finish();
+    });
+    server.closeIdleConnections();
+    // Backstop: anything still active after a short grace (a stray keep-alive, a
+    // socket mid-drain, a connection that re-opened) is force-closed so `close()`
+    // can't hang. Safe re `closeAllConnections()`: the /api/shutdown route returns
+    // its 200 BEFORE `gracefulShutdown`'s async pipeline reaches this step, so the
+    // reply has long since flushed by the time the grace elapses.
+    const t = setTimeout(() => {
+      try { server.closeAllConnections(); } catch { /* ignore */ }
+      finish();
+    }, httpGraceOverrideMs ?? HTTP_CLOSE_GRACE_MS);
+    t.unref();
+  });
+}
+
+/** HS-9114 — close the WebSocket sockets + wake the long-poll waiters that keep
+ *  `server.close()` from draining. Lazy-imported (matches the rest of this
+ *  module) + fully best-effort: a missing module in a unit-test env is a no-op. */
+async function releaseLongLivedConnections(): Promise<void> {
+  try {
+    const { closeAllSyncSockets } = await import('./routes/wsSync.js');
+    closeAllSyncSockets();
+  } catch { /* not wired (test env) — nothing to close */ }
+  try {
+    const { closeAllTerminalSockets } = await import('./terminals/websocket.js');
+    closeAllTerminalSockets();
+  } catch { /* not wired (test env) — nothing to close */ }
+  try {
+    const { wakeAllWaitersForShutdown } = await import('./routes/notify.js');
+    wakeAllWaitersForShutdown();
+  } catch { /* not wired (test env) — nothing to wake */ }
 }
 
 async function destroyTerminals(): Promise<void> {

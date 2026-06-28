@@ -106,3 +106,13 @@ export function notifyBellWaiters() {
   bellWaiters = [];
   for (const resolve of waiters) resolve();
 }
+
+/** HS-9114 — on graceful shutdown, resolve every pending long-poll waiter
+ *  (data + permission + bell) so each held HTTP response flushes and its socket
+ *  frees up immediately. Without this, `server.close()` waits out the full
+ *  long-poll timeout (up to 30s) for the in-flight poll the client always holds
+ *  right after launch, instead of closing promptly. */
+export function wakeAllWaitersForShutdown(): void {
+  notifyChange();      // wakes data-poll + permission waiters
+  notifyBellWaiters(); // wakes bell waiters
+}

@@ -54,6 +54,17 @@ vi.mock('./db/snapshot.js', () => ({
   snapshotAllForShutdown: () => snapshotAllForShutdownMock(),
 }));
 
+// HS-9114 — closeHttpServer proactively releases the long-lived connections that
+// would otherwise make `server.close()` wait out its timeout. Mock the three
+// release functions it lazy-imports so the test can assert they fire (and so the
+// real modules' deps aren't pulled in).
+const closeAllSyncSocketsMock = vi.fn();
+vi.mock('./routes/wsSync.js', () => ({ closeAllSyncSockets: (): void => { closeAllSyncSocketsMock(); } }));
+const closeAllTerminalSocketsMock = vi.fn();
+vi.mock('./terminals/websocket.js', () => ({ closeAllTerminalSockets: (): void => { closeAllTerminalSocketsMock(); } }));
+const wakeAllWaitersForShutdownMock = vi.fn();
+vi.mock('./routes/notify.js', () => ({ wakeAllWaitersForShutdown: (): void => { wakeAllWaitersForShutdownMock(); } }));
+
 beforeEach(() => {
   _resetLifecycleForTests();
   removeInstanceMock.mockReset();
@@ -64,6 +75,9 @@ beforeEach(() => {
   killAllRunningShellCommandsMock.mockImplementation(() => Promise.resolve({ killed: 0 }));
   snapshotAllForShutdownMock.mockReset();
   snapshotAllForShutdownMock.mockImplementation(() => Promise.resolve());
+  closeAllSyncSocketsMock.mockReset();
+  closeAllTerminalSocketsMock.mockReset();
+  wakeAllWaitersForShutdownMock.mockReset();
 });
 
 afterEach(() => {
@@ -84,7 +98,10 @@ function makeFakeServer(closeBehavior: 'immediate' | 'delayed' | 'error' = 'imme
   // it without an optional chain (Node 18.2+ always provides it; the prod
   // code's `?.` was purely a test-stub accommodation).
   const closeIdleConnectionsFn = vi.fn();
-  return { close: closeFn, closeIdleConnections: closeIdleConnectionsFn } as unknown as HttpServer;
+  // HS-9114 — production closeHttpServer force-closes lingering sockets via the
+  // grace backstop; the fake provides the spy so the never-drains test can assert.
+  const closeAllConnectionsFn = vi.fn();
+  return { close: closeFn, closeIdleConnections: closeIdleConnectionsFn, closeAllConnections: closeAllConnectionsFn } as unknown as HttpServer;
 }
 
 describe('gracefulShutdown (HS-7931)', () => {
@@ -114,6 +131,38 @@ describe('gracefulShutdown (HS-7931)', () => {
     // writes can arrive) and BEFORE databases close (the DBs must still be
     // open to dump).
     expect(order).toEqual(['http', 'shells', 'terminals', 'snapshot', 'databases', 'lockfile']);
+  });
+
+  // HS-9114 — closeHttpServer proactively releases the long-lived connections
+  // (sync WS + terminal WS + long-poll waiters) that would otherwise make
+  // `server.close()` wait out its timeout right after launch.
+  it('HS-9114: proactively closes sync/terminal sockets + wakes long-poll waiters on http close', async () => {
+    registerHttpServerForShutdown(makeFakeServer());
+    await gracefulShutdown('test');
+    expect(closeAllSyncSocketsMock).toHaveBeenCalledTimes(1);
+    expect(closeAllTerminalSocketsMock).toHaveBeenCalledTimes(1);
+    expect(wakeAllWaitersForShutdownMock).toHaveBeenCalledTimes(1);
+  });
+
+  // HS-9114 — the real bug: a long-lived socket (an open /ws/sync) keeps
+  // `server.close()` from ever calling back. The grace backstop must force-close
+  // it (`closeAllConnections`) so shutdown still completes promptly.
+  it('HS-9114: a never-draining server.close() is unblocked by the grace backstop', async () => {
+    _setShutdownTimeoutsForTests(null, null, 10); // 10ms http grace for a fast test
+    const closeAllConnectionsFn = vi.fn();
+    const server = {
+      close: vi.fn(() => { /* a lingering socket means the callback never fires */ }),
+      closeIdleConnections: vi.fn(),
+      closeAllConnections: closeAllConnectionsFn,
+    } as unknown as HttpServer;
+    registerHttpServerForShutdown(server);
+
+    // Resolves despite close() never calling back (the test would hang otherwise).
+    await gracefulShutdown('test');
+
+    expect(closeAllConnectionsFn).toHaveBeenCalledTimes(1);
+    // The pipeline advanced past the http step to the end.
+    expect(removeInstanceMock).toHaveBeenCalledTimes(1);
   });
 
   // HS-8040 — pipeline doesn't wedge if the shell-kill step throws.
@@ -239,18 +288,20 @@ describe('registerHttpServerForShutdown', () => {
   });
 });
 
-// HS-9028 — the heavy steps (HTTP drain + DB snapshot/close) get a 90s budget so
-// a real shutdown isn't cut off at 3s; the light steps keep the short default.
+// HS-9028 — the heavy steps (DB snapshot + close) get a 90s budget so a real
+// shutdown isn't cut off at 3s; the light steps keep the short default.
 describe('stepTimeoutFor (HS-9028 per-step budgets)', () => {
   afterEach(() => { _resetLifecycleForTests(); });
 
-  it('grants the HTTP + DB steps the 90s heavy budget', () => {
-    expect(stepTimeoutFor('closeHttpServer')).toBe(90_000);
+  it('grants the DB steps the 90s heavy budget', () => {
     expect(stepTimeoutFor('snapshotDatabases')).toBe(90_000);
     expect(stepTimeoutFor('closeDatabases')).toBe(90_000);
   });
 
-  it('keeps light steps on the short default (3s)', () => {
+  it('keeps light steps (incl. closeHttpServer post-HS-9114) on the short default (3s)', () => {
+    // HS-9114 — closeHttpServer is no longer heavy; it bounds itself with its own
+    // grace + closeAllConnections backstop, so it resolves fast.
+    expect(stepTimeoutFor('closeHttpServer')).toBe(3000);
     expect(stepTimeoutFor('killShellCommands')).toBe(3000);
     expect(stepTimeoutFor('disposeGitWatchers')).toBe(3000);
     expect(stepTimeoutFor('removeLockfile')).toBe(3000);
