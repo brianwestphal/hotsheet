@@ -24,8 +24,14 @@ test.describe('Worker integration gate (HS-9099 / §106.2)', () => {
     await firstScopeLoad;
     await page.waitForTimeout(300);
 
+    // HS-9127 — the Resolved (default) scope view is read-only; scoped fields are
+    // editable only in a concrete layer. `integrationGate` is shared-only, so
+    // switch to Shared before editing.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+
     const input = page.locator('#settings-integration-gate');
     await expect(input).toBeVisible();
+    await expect(input).toBeEnabled();
     await input.fill(GATE);
     await expect(input).toHaveValue(GATE);
     // Debounced save (800 ms) — the hint confirms the write.
@@ -42,6 +48,8 @@ test.describe('Worker integration gate (HS-9099 / §106.2)', () => {
     await page.locator('#settings-btn').click();
     await secondScopeLoad;
     await page.waitForTimeout(300);
+    // Re-enter Shared to read back + edit the persisted value (Resolved is read-only).
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
     await expect(page.locator('#settings-integration-gate')).toHaveValue(GATE);
 
     // Clearing it removes the gate (back to the agent-runs-gates default) — and
