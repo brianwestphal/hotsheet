@@ -13,7 +13,10 @@
  */
 import type { LayeredFileSettings } from '../api/index.js';
 
-export type ScopeMode = 'shared' | 'local' | 'resolved';
+// HS-9155/HS-9166 — the dialog-wide scope control is Shared | Local; the old
+// "Resolved" view was removed (Local already shows the effective value for fields
+// with no local override).
+export type ScopeMode = 'shared' | 'local';
 export type SettingKind = 'text' | 'number' | 'boolean' | 'complex';
 /** Where a key's effective (resolved) value comes from. */
 export type Origin = 'shared' | 'local' | 'default';
@@ -55,17 +58,15 @@ export function resolveFieldScope(layered: LayeredFileSettings, key: string): Fi
  *   overridden** (the bug the rework fixes: a Server port overridden in the
  *   local layer used to render blank under the Shared segment).
  * - `local` → the local override when present, otherwise the inherited
- *   (resolved) value shown read-only behind a "+ Override" affordance.
- * - `resolved` → the effective value.
+ *   (effective) value shown read-only behind a "+ Override" affordance.
  *
  * Shared/Local surface the literal file contents (blank when the key is absent
- * from that layer); Resolved surfaces the effective value (which the field's
- * own populate path may have defaulted).
+ * from that layer); the inherited fallback surfaces the effective value (which
+ * the field's own populate path may have defaulted).
  */
 export function scopedDisplayValue(scope: FieldScope, mode: ScopeMode): unknown {
   if (mode === 'shared') return scope.sharedValue;
-  if (mode === 'local') return scope.overridden ? scope.localValue : scope.resolvedValue;
-  return scope.resolvedValue;
+  return scope.overridden ? scope.localValue : scope.resolvedValue; // local
 }
 
 /** A short, scannable summary of a settings value (used for read-only displays). */

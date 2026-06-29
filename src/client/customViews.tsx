@@ -313,10 +313,9 @@ function renderViewsTab() {
   if (!list) return;
   const mode = getScopeMode();
   // Keep the Add button label in step with the active layer; HS-9127 — hide it
-  // entirely in Resolved (read-only effective view).
   const addBtnEl = byIdOrNull('settings-views-add-btn');
   if (addBtnEl !== null) {
-    addBtnEl.style.display = mode === 'resolved' ? 'none' : '';
+    addBtnEl.style.display = '';
     addBtnEl.textContent = mode === 'shared' ? '+ Add Shared View' : '+ Add Local View';
   }
 
@@ -325,12 +324,8 @@ function renderViewsTab() {
   const rows: HTMLElement[] = [];
   if (mode === 'shared') {
     for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', false, mode));
-  } else if (mode === 'local') {
-    for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', hiddenSet.has(v.id), mode));
-    for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false, mode));
   } else {
-    // Resolved — the effective list (shared minus hidden, then local additions).
-    for (const v of viewLayers.shared) if (!hiddenSet.has(v.id)) rows.push(renderViewsTabRow(v, 'shared', false, mode));
+    for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', hiddenSet.has(v.id), mode));
     for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false, mode));
   }
   if (rows.length === 0) {

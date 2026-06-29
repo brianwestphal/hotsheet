@@ -84,9 +84,4 @@ describe('scopedDisplayValue', () => {
     expect(s.overridden).toBe(false);
     expect(scopedDisplayValue(s, 'local')).toBe('Team');
   });
-
-  it('Resolved mode shows the effective value', () => {
-    const s = resolveFieldScope(layered, 'port');
-    expect(scopedDisplayValue(s, 'resolved')).toBe(4180);
-  });
 });

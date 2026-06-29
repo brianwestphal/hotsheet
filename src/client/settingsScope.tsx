@@ -208,7 +208,7 @@ export function initSettingsScope(): void {
       // only or per-row-layer tab).
       if (isLayerBarDisabledTab(activeTab)) return;
       const next = btn.dataset.scopeMode;
-      if (next !== 'shared' && next !== 'local' && next !== 'resolved') return;
+      if (next !== 'shared' && next !== 'local') return;
       if (next === mode) return;
       mode = next;
       applyScope();
@@ -257,25 +257,17 @@ export async function loadAndApplyScope(): Promise<void> {
 }
 
 /**
- * Write a scoped scalar setting. In `resolved` mode the field's own
- * default-routed `fallback` runs (preserving today's behavior + side-effects);
- * in `shared`/`local` mode the value is written to that explicit layer.
- * Refreshes the cached layers + badges (without clobbering the focused input).
- * Returns `true` on success, `false` on failure, so callers that need to revert
- * an optimistic control (e.g. the Announcer toggle) can react.
+ * Write a scoped scalar setting to the active layer (`shared` → settings.json,
+ * `local` → settings.local.json). Refreshes the cached layers + badges (without
+ * clobbering the focused input). Returns `true` on success, `false` on failure,
+ * so callers that need to revert an optimistic control can react.
+ *
+ * NB: only for `SCOPED_FIELDS` (file-layerable) keys. DB-only settings (e.g.
+ * `trash_cleanup_days`) call `updateSettings` directly — HS-9168.
  */
-export async function persistScopedSetting(
-  key: string,
-  layerValue: unknown,
-  fallback: () => Promise<unknown>,
-): Promise<boolean> {
+export async function persistScopedSetting(key: string, layerValue: unknown): Promise<boolean> {
   try {
-    if (mode === 'resolved') {
-      await fallback();
-      layered = await getLayeredFileSettings();
-    } else {
-      layered = await updateFileSettingsLayer(mode, { [key]: layerValue });
-    }
+    layered = await updateFileSettingsLayer(mode, { [key]: layerValue });
   } catch {
     return false; // network popup handled by the api layer
   }
@@ -310,7 +302,6 @@ function updateToolbar(): void {
 }
 
 const SCOPE_NOTE: Record<ScopeMode, string> = {
-  resolved: 'Effective values in use — read-only. Switch to Shared or Local to edit. Each field is tagged with where its value comes from.',
   shared: 'Editing settings.json — committed to git, shared with your team.',
   local: 'Editing settings.local.json — gitignored, this machine only. Local values win.',
 };
@@ -325,13 +316,11 @@ function lockComplexPanels(): void {
   document.querySelectorAll<HTMLElement>('[data-scope-complex]').forEach(panel => {
     // HS-9009 — `data-scope-complex` variants: '' (default) is a SHARED setting
     // editable only in Shared; 'shared-only' editable in Shared; 'local-only'
-    // editable in Local. HS-9127 — Resolved is the read-only effective view, so
-    // EVERY variant locks in Resolved (the variant chip still points at the
-    // right edit-home: Shared for default/shared-only, Local for local-only).
+    // editable in Local. The variant chip points at the edit-home: Shared for
+    // default/shared-only, Local for local-only.
     const variant = panel.getAttribute('data-scope-complex') ?? '';
-    const locked = mode === 'resolved' ? true
-      : variant === 'shared-only' ? mode === 'local'
-        : variant === 'local-only' ? mode === 'shared'
+    const locked = variant === 'shared-only' ? mode === 'local'
+      : variant === 'local-only' ? mode === 'shared'
           : mode !== 'shared';
     panel.classList.toggle('scope-locked', locked);
     panel.classList.toggle('scope-locked-shared-only', locked && variant === 'shared-only');
@@ -356,15 +345,12 @@ function decorateField(field: ScopedField, skipValues: boolean): void {
   const scope = resolveFieldScope(layered, field.key);
 
   // Editability:
-  //  - HS-9127: Resolved is the read-only effective view — every scoped field is
-  //    disabled there; you switch to Shared or Local to edit.
   //  - shared-only: read-only in Local (can't override a hard team value).
   //  - local-only: read-only in Shared (never committed).
   //  - default: inherited Local fields are read-only until "+ Override".
-  control.disabled = mode === 'resolved' ? true
-    : field.share === 'shared-only' ? mode === 'local'
-      : field.share === 'local-only' ? mode === 'shared'
-        : mode === 'local' && !scope.overridden;
+  control.disabled = field.share === 'shared-only' ? mode === 'local'
+    : field.share === 'local-only' ? mode === 'shared'
+      : mode === 'local' && !scope.overridden;
 
   // Value, per mode:
   //  - shared: the literal settings.json value (blank when absent — truthful;
@@ -379,7 +365,7 @@ function decorateField(field: ScopedField, skipValues: boolean): void {
   if (!skipValues) {
     if (mode === 'shared') {
       applyValueToControl(control, field.kind, field.share === 'local-only' ? scope.resolvedValue : scope.sharedValue);
-    } else if (mode === 'local' && scope.overridden) {
+    } else if (scope.overridden) { // local + overridden
       applyValueToControl(control, field.kind, scope.localValue);
     } else if (scope.resolvedValue !== undefined) {
       applyValueToControl(control, field.kind, scope.resolvedValue);
@@ -404,10 +390,7 @@ function renderAffordance(host: HTMLElement, field: ScopedField, scope: ReturnTy
   removeAffordance(host);
   let content: HTMLElement | null = null;
 
-  if (mode === 'resolved') {
-    const label = scope.origin === 'local' ? 'from Local' : scope.origin === 'shared' ? 'from Shared' : 'default';
-    content = toElement(<span className={`scope-tag scope-tag-${scope.origin}`}><span className="scope-tag-dot" />{label}</span>);
-  } else if (field.share === 'shared-only') {
+  if (field.share === 'shared-only') {
     // Editable in Shared (it IS the shared value); read-only "shared only" in Local.
     if (mode === 'local') content = toElement(<span className="scope-tag scope-tag-shared"><span className="scope-tag-dot" />shared only</span>);
   } else if (field.share === 'local-only') {

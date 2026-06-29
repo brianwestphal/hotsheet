@@ -1,4 +1,4 @@
-import { destroyTerminal, getCommandSuggestions, updateFileSettings } from '../api/index.js';
+import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { delegate } from './reactive.js';
@@ -51,7 +51,7 @@ export const COMMAND_INPUT_PLACEHOLDER = 'Pick a command…';
 let terminals: EditableTerminalConfig[] = [];
 // HS-9015 — scope-aware editing: the committed shared array + the active mode.
 let terminalsShared: EditableTerminalConfig[] = [];
-let terminalsMode: 'shared' | 'local' | 'resolved' = 'resolved';
+let terminalsMode: 'shared' | 'local' | 'resolved' = 'local';
 /** Stable identity for a terminal config (matches the file-settings idOf). */
 const termIdOf = (t: EditableTerminalConfig): string => (typeof t.id === 'string' ? t.id : '');
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -711,10 +711,8 @@ function scheduleSave(): Promise<void> {
   return new Promise((resolve) => {
     saveTimeout = setTimeout(async () => {
       saveTimeout = null;
-      // HS-9015 — Shared → write the array; Local → write the delta vs shared;
-      // Resolved → today's default-routed save.
-      await saveScopedList('terminals', termIdOf, terminalsShared, terminals,
-        () => updateFileSettings({ terminals }));
+      // HS-9015 — Shared → write the array; Local → write the delta vs shared.
+      await saveScopedList('terminals', termIdOf, terminalsShared, terminals);
       try {
         const mod = await import('./terminal.js');
         await mod.refreshTerminalsAfterSettingsChange();

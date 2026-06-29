@@ -1,4 +1,4 @@
-import { clearLocalSettingOverride, disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getLayeredFileSettings, getSettings, updateFileSettingsLayer, updateSettings } from '../api/index.js';
+import { clearLocalSettingOverride, disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getLayeredFileSettings, getSettings, updateFileSettingsLayer } from '../api/index.js';
 // HS-9014 — the canonical command-tree types + `isGroup` live in the server-safe
 // `settingsCommandDelta` module (shared with the file-settings resolver). Re-export
 // them here so the many `from './experimentalSettings.js'` importers keep working.
@@ -52,7 +52,7 @@ let commandItems: CommandItem[] = [];
 // array, in Local mode the effective tree resolved from shared + the local
 // delta. `commandShared` is the pristine shared tree, kept so a Local-mode save
 // can derive the delta (`computeCommandTreeDelta`) against it.
-let commandMode: ScopeMode = 'resolved';
+let commandMode: ScopeMode = 'local'; // HS-9166 — default mode (was the removed 'resolved')
 let commandShared: CommandItem[] = [];
 
 // HS-9014 — `commandItems` is the SIDEBAR's tree (always the resolved/effective
@@ -229,12 +229,11 @@ export async function reloadCustomCommands(): Promise<void> {
     if (commandItemsMutationEpoch !== epochBeforeFetch) return;
     commandItems = [];
   }
-  // HS-9014 — `getSettings()` returns the RESOLVED (effective) tree, which is
-  // exactly what the sidebar renders, so reloading drops us back into Resolved
-  // mode. The scope-aware editor loader (`loadScopedCommands`) re-derives the
-  // mode-specific tree on the next settings-dialog open / scope switch. In
-  // Resolved mode the editor edits the SAME array as the sidebar, so alias them.
-  commandMode = 'resolved';
+  // HS-9014 — `getSettings()` returns the effective tree (what the sidebar
+  // renders). The scope-aware editor loader (`loadScopedCommands`) re-derives the
+  // mode-specific tree on the next settings-dialog open / scope switch; until then
+  // alias the editor tree to the sidebar's effective tree as a transient default.
+  commandMode = 'local'; // HS-9166 — was the removed 'resolved'
   editTree = commandItems;
 }
 
@@ -257,7 +256,6 @@ function asCommandArray(v: unknown): CommandItem[] {
  *  - **Shared** → the committed `settings.json` array.
  *  - **Local** → the effective tree (shared resolved against the local delta);
  *    edits are persisted back as a tree delta vs `commandShared`.
- *  - **Resolved** → the effective tree; edits route to the default (shared) layer.
  *
  * Backfills stable ids into the shared tree and PERSISTS them to `settings.json`
  * so the local delta can target stable ids across renames/reorders (the
@@ -291,9 +289,6 @@ export async function loadScopedCommands(): Promise<void> {
     }
     // Backfill any local-only items lacking ids (so delete/override can target them).
     editTree = backfillCommandIds(display).items;
-    // In Resolved mode the editor + sidebar share one tree; alias so an edit
-    // updates the sidebar directly (and `getCommandItems()` reflects it).
-    if (commandMode === 'resolved') commandItems = editTree;
   } catch {
     if (commandItemsMutationEpoch !== epochBeforeFetch) return;
     editTree = [];
@@ -380,14 +375,9 @@ export async function saveCommandItems() {
     await updateFileSettingsLayer('shared', { custom_commands: editTree });
     commandShared = backfillCommandIds(editTree).items.map(cloneItem);
     await refreshSidebarFromResolved();
-  } else if (commandMode === 'local') {
+  } else {
     await persistLocalCommandDelta(computeCommandTreeDelta(commandShared, editTree));
     await refreshSidebarFromResolved();
-  } else {
-    // Resolved mode: `editTree` IS `commandItems`, so the write + sidebar render
-    // reflect the edit immediately (pre-HS-9014 behavior preserved).
-    await updateSettings({ custom_commands: JSON.stringify(editTree) });
-    renderChannelCommands();
   }
 }
 

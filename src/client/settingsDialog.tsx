@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { applyAiInstructions, getFileSettings, getTags, updateFileSettings, updateSettings } from '../api/index.js';
+import { applyAiInstructions, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
@@ -222,13 +222,13 @@ function bindGeneralTab() {
   // Auto-prioritize toggle
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
-    void persistScopedSetting('auto_order', String(autoOrderCheckbox.checked), () => updateSettings({ auto_order: String(autoOrderCheckbox.checked) }));
+    void persistScopedSetting('auto_order', String(autoOrderCheckbox.checked));
   });
 
   // Hide verified column toggle
   hideVerifiedCheckbox.addEventListener('change', async () => {
     state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
-    await persistScopedSetting('hide_verified_column', String(hideVerifiedCheckbox.checked), () => updateSettings({ hide_verified_column: String(hideVerifiedCheckbox.checked) }));
+    await persistScopedSetting('hide_verified_column', String(hideVerifiedCheckbox.checked));
     // Re-render to apply column change immediately
     const { renderTicketList } = await import('./ticketList.js');
     renderTicketList();
@@ -240,7 +240,7 @@ function bindGeneralTab() {
   // visibility on the currently-active instance without a full rebuild.
   shellIntegrationCheckbox.addEventListener('change', () => {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
-    void persistScopedSetting('shell_integration_ui', String(shellIntegrationCheckbox.checked), () => updateSettings({ shell_integration_ui: String(shellIntegrationCheckbox.checked) }));
+    void persistScopedSetting('shell_integration_ui', String(shellIntegrationCheckbox.checked));
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
   });
 
@@ -252,7 +252,7 @@ function bindGeneralTab() {
   // consumers decide whether to act on it.
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
-    void persistScopedSetting('shell_streaming_enabled', String(shellStreamingCheckbox.checked), () => updateSettings({ shell_streaming_enabled: String(shellStreamingCheckbox.checked) }));
+    void persistScopedSetting('shell_streaming_enabled', String(shellStreamingCheckbox.checked));
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`
@@ -277,11 +277,11 @@ function bindGeneralTab() {
   // Notification dropdowns
   notifyPermSelect.addEventListener('change', () => {
     state.settings.notify_permission = notifyPermSelect.value as NotifyLevel;
-    void persistScopedSetting('notify_permission', notifyPermSelect.value, () => updateSettings({ notify_permission: notifyPermSelect.value }));
+    void persistScopedSetting('notify_permission', notifyPermSelect.value);
   });
   notifyCompSelect.addEventListener('change', () => {
     state.settings.notify_completed = notifyCompSelect.value as NotifyLevel;
-    void persistScopedSetting('notify_completed', notifyCompSelect.value, () => updateSettings({ notify_completed: notifyCompSelect.value }));
+    void persistScopedSetting('notify_completed', notifyCompSelect.value);
   });
 
   // App name (file-based setting)
@@ -291,7 +291,7 @@ function bindGeneralTab() {
     if (appNameTimeout) clearTimeout(appNameTimeout);
     appNameTimeout = setTimeout(() => {
       const val = appNameInput.value.trim();
-      void persistScopedSetting('appName', val, () => updateFileSettings({ appName: val })).then(() => {
+      void persistScopedSetting('appName', val).then(() => {
         // HS-8451 — `setAppTitle` now also pushes the title through to
         // the native Tauri window via `set_window_title`, so the
         // "Restart the desktop app to update the title bar" hint that
@@ -319,7 +319,7 @@ function bindGeneralTab() {
         prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
         return;
       }
-      void persistScopedSetting('ticketPrefix', val, () => updateFileSettings({ ticketPrefix: val })).then(() => {
+      void persistScopedSetting('ticketPrefix', val).then(() => {
         prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
       });
     }, 800);
@@ -333,7 +333,7 @@ function bindGeneralTab() {
     if (worklistPreambleTimeout) clearTimeout(worklistPreambleTimeout);
     worklistPreambleTimeout = setTimeout(() => {
       const val = worklistPreambleInput.value;
-      void persistScopedSetting('worklist_preamble', val, () => updateFileSettings({ worklist_preamble: val })).then(() => {
+      void persistScopedSetting('worklist_preamble', val).then(() => {
         worklistPreambleHint.textContent = val.trim()
           ? 'Saved — added near the top of worklist.md.'
           : 'Cleared — no preamble in worklist.md.';
@@ -350,7 +350,7 @@ function bindGeneralTab() {
     if (integrationGateTimeout) clearTimeout(integrationGateTimeout);
     integrationGateTimeout = setTimeout(() => {
       const val = integrationGateInput.value;
-      void persistScopedSetting('integrationGate', val, () => updateFileSettings({ integrationGate: val })).then(() => {
+      void persistScopedSetting('integrationGate', val).then(() => {
         integrationGateHint.textContent = val.trim()
           ? 'Saved — runs after each worker-branch merge (rolls back on failure).'
           : 'Cleared — the integrating agent runs the gates itself.';
@@ -423,7 +423,7 @@ function bindBackupsTab() {
     if (backupDirTimeout) clearTimeout(backupDirTimeout);
     backupDirTimeout = setTimeout(() => {
       const val = backupDirInput.value.trim();
-      void persistScopedSetting('backupDir', val, () => updateFileSettings({ backupDir: val })).then(() => {
+      void persistScopedSetting('backupDir', val).then(() => {
         backupDirHint.textContent = val ? 'Saved. New backups will use this location.' : 'Using default location inside the data directory.';
       });
     }, 800);
@@ -457,12 +457,12 @@ function bindTerminalTab() {
     termScrollbackTimeout = setTimeout(() => {
       const raw = termScrollbackInput.value.trim();
       if (raw === '') {
-        void persistScopedSetting('terminal_scrollback_bytes', '', () => updateFileSettings({ terminal_scrollback_bytes: '' }));
+        void persistScopedSetting('terminal_scrollback_bytes', '');
         return;
       }
       const n = Math.max(65536, Math.min(16777216, parseInt(raw, 10) || 1048576));
       termScrollbackInput.value = String(n);
-      void persistScopedSetting('terminal_scrollback_bytes', String(n), () => updateFileSettings({ terminal_scrollback_bytes: String(n) }));
+      void persistScopedSetting('terminal_scrollback_bytes', String(n));
     }, 800);
   });
 
@@ -504,7 +504,7 @@ let autoContextEntries: AutoContextEntry[] = [];
 // HS-9016 — scope-aware editing: `autoContextShared` is the committed shared array
 // (to derive the local delta on save); `autoContextMode` is the active scope view.
 let autoContextShared: AutoContextEntry[] = [];
-let autoContextMode: 'shared' | 'local' | 'resolved' = 'resolved';
+let autoContextMode: 'shared' | 'local' | 'resolved' = 'local';
 /** Stable identity for an auto-context entry (per docs/95 §95.3 / file-settings idOf). */
 const acIdOf = (e: AutoContextEntry): string => `${e.type}:${e.key}`;
 
@@ -526,9 +526,8 @@ function bindAutoContextSettings() {
 
   async function saveEntries() {
     // HS-9016 — Shared → write the array to settings.json; Local → write the
-    // delta vs shared to settings.local.json; Resolved → today's default route.
-    await saveScopedList('auto_context', acIdOf, autoContextShared, autoContextEntries,
-      () => updateSettings({ auto_context: JSON.stringify(autoContextEntries) }));
+    // delta vs shared to settings.local.json.
+    await saveScopedList('auto_context', acIdOf, autoContextShared, autoContextEntries);
   }
 
   const displayKeyOf = (entry: AutoContextEntry): string => entry.type === 'category'
@@ -848,7 +847,7 @@ function bindTelemetryTab() {
   // metrics + logs, default-off for traces" — so we always write the
   // explicit boolean rather than rely on absence.
   masterEl.addEventListener('change', () => {
-    void persistScopedSetting('telemetry_enabled', masterEl.checked, () => updateFileSettings({ telemetry_enabled: masterEl.checked })).then(() => {
+    void persistScopedSetting('telemetry_enabled', masterEl.checked).then(() => {
       // HS-8479 — refresh the conditional Telemetry sidebar entry so
       // it appears / disappears instantly on toggle.
       void import('./crossProjectStatsButton.js').then(({ refreshTelemetrySidebarVisibility }) => {
@@ -857,13 +856,13 @@ function bindTelemetryTab() {
     });
   });
   metricsEl.addEventListener('change', () => {
-    void persistScopedSetting('telemetry_metrics_enabled', metricsEl.checked, () => updateFileSettings({ telemetry_metrics_enabled: metricsEl.checked }));
+    void persistScopedSetting('telemetry_metrics_enabled', metricsEl.checked);
   });
   logsEl.addEventListener('change', () => {
-    void persistScopedSetting('telemetry_logs_enabled', logsEl.checked, () => updateFileSettings({ telemetry_logs_enabled: logsEl.checked }));
+    void persistScopedSetting('telemetry_logs_enabled', logsEl.checked);
   });
   tracesEl.addEventListener('change', () => {
-    void persistScopedSetting('telemetry_traces_enabled', tracesEl.checked, () => updateFileSettings({ telemetry_traces_enabled: tracesEl.checked }));
+    void persistScopedSetting('telemetry_traces_enabled', tracesEl.checked);
   });
 
   // Retention picker — debounced (matches the §52 scrollback pattern
@@ -875,7 +874,7 @@ function bindTelemetryTab() {
       const raw = retentionEl.value.trim();
       const n = raw === '' ? 30 : Math.max(0, parseInt(raw, 10) || 0);
       retentionEl.value = String(n);
-      void persistScopedSetting('telemetry_retention_days', n, () => updateFileSettings({ telemetry_retention_days: n }));
+      void persistScopedSetting('telemetry_retention_days', n);
     }, 600);
   });
 

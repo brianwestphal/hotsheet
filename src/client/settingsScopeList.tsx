@@ -22,7 +22,9 @@ import { toElement } from './dom.js';
 import { getScopeMode } from './settingsScope.js';
 
 /** A short banner explaining how edits behave in the active scope mode.
- *  Appended into a list editor's container (no-op in Resolved). HS-9014–9016. */
+ *  Appended into a list editor's container (no-op in the dead 'resolved' case).
+ *  HS-9014–9016. (HS-9166 — 'resolved' is unreachable; the local editor mode
+ *  types still declare it pending a follow-up cleanup.) */
 const SCOPE_LIST_HINT: Record<'shared' | 'local' | 'resolved', string> = {
   shared: 'Editing the shared (committed) list — versioned for your team.',
   local: 'Editing local overrides — removing a shared item hides it on this machine; added items are local-only.',
@@ -33,8 +35,8 @@ export function renderScopeListHint(container: HTMLElement, mode: 'shared' | 'lo
   if (el !== null) container.appendChild(el);
 }
 
-/** The hint as a standalone element (or null in Resolved) — for editors that
- *  rebuild via `replaceChildren(...)` and need to include it in the array. */
+/** The hint as a standalone element (null in the dead 'resolved' case) — for
+ *  editors that rebuild via `replaceChildren(...)`. */
 export function scopeListHintElement(mode: 'shared' | 'local' | 'resolved'): HTMLElement | null {
   if (mode === 'resolved') return null;
   return toElement(<div className={`scope-list-hint scope-list-hint-${mode}`}>{SCOPE_LIST_HINT[mode]}</div>);
@@ -53,7 +55,7 @@ function asArray(v: unknown): unknown[] {
 }
 
 export interface ScopedListData<T> {
-  mode: 'shared' | 'local' | 'resolved';
+  mode: 'shared' | 'local';
   /** The raw shared-layer (`settings.json`) array — needed to compute the local delta on save. */
   shared: T[];
   /** The list the editor should display + edit: the shared array in Shared mode, else the resolved (effective) list. */
@@ -70,24 +72,20 @@ export async function loadScopedList<T>(key: string): Promise<ScopedListData<T>>
 }
 
 /**
- * Persist an edited complex list per the active scope mode. `shared` is the
- * shared-layer array from {@link loadScopedList} (used to derive the delta in
- * Local mode). `fallback` is the editor's existing default-routed save, used in
- * Resolved mode so today's behavior is preserved exactly.
+ * Persist an edited complex list per the active scope mode: Shared writes the
+ * array to settings.json; Local writes the delta vs `shared` (from
+ * {@link loadScopedList}) to settings.local.json.
  */
 export async function saveScopedList<T>(
   key: string,
   idOf: (item: T) => string,
   shared: T[],
   edited: T[],
-  fallback: () => Promise<unknown>,
 ): Promise<void> {
   const mode = getScopeMode();
   if (mode === 'shared') {
     await updateFileSettingsLayer('shared', { [key]: edited });
-  } else if (mode === 'local') {
-    await updateFileSettingsLayer('local', { [key]: computeArrayDelta(shared, edited, idOf) });
   } else {
-    await fallback();
+    await updateFileSettingsLayer('local', { [key]: computeArrayDelta(shared, edited, idOf) });
   }
 }
