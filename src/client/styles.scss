@@ -1705,6 +1705,13 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
   // stats cluster pinned right. `container-type: inline-size` makes the tile
   // label a query container so the cluster can drop its counts text on narrow
   // tiles (keeping just the spinner).
+  // HS-9000 — `container-type: inline-size` establishes size containment, so the
+  // label STOPS stretching to the tile width and collapses to ~0 (the name then
+  // overflows + the container query always reads 0 < threshold, hiding counts).
+  // Pin it to the tile width so the query measures the real width + the name
+  // truncates within it.
+  width: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 6px;
