@@ -133,8 +133,56 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
     await overlay.click({ position: { x: 5, y: 5 } });
     // Still visible.
     await expect(overlay).toBeVisible();
-    // The user can still close explicitly via the × button.
+    // HS-9180 — the × now guards unsaved text: it asks Save Draft / Discard /
+    // Keep Editing instead of silently dropping the text. Choosing Discard closes.
     await overlay.locator('#feedback-close').click();
+    const guard = page.locator('.confirm-dialog-overlay');
+    await expect(guard).toBeVisible({ timeout: 3000 });
+    await guard.locator('.confirm-dialog-secondary').click(); // Discard
+    await expect(overlay).toHaveCount(0);
+  });
+
+  // HS-9180 — the × close-guard: Keep Editing keeps the form, Save Draft persists.
+  test('HS-9180: closing with unsaved text offers Keep Editing + Save Draft', async ({ page }) => {
+    await createTicket(page, 'Close guard ticket');
+    await addFeedbackNote(page, 'Close guard ticket', 'Pick one?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Close guard ticket');
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+    await overlay.locator('#feedback-catchall-text').fill('Half-written thought');
+
+    // × → guard. "Keep Editing" leaves the form open with the text intact.
+    await overlay.locator('#feedback-close').click();
+    const guard = page.locator('.confirm-dialog-overlay');
+    await expect(guard).toBeVisible({ timeout: 3000 });
+    await guard.locator('.confirm-dialog-cancel').click(); // Keep Editing
+    await expect(guard).toHaveCount(0);
+    await expect(overlay).toBeVisible();
+    await expect(overlay.locator('#feedback-catchall-text')).toHaveValue('Half-written thought');
+
+    // × again → guard → "Save Draft" persists + closes; the draft renders inline.
+    await overlay.locator('#feedback-close').click();
+    await expect(guard).toBeVisible({ timeout: 3000 });
+    await guard.locator('.confirm-dialog-confirm').click(); // Save Draft
+    await expect(overlay).toHaveCount(0, { timeout: 5000 });
+    const draftEntry = page.locator('.feedback-draft-entry').first();
+    await expect(draftEntry).toBeVisible({ timeout: 5000 });
+    await expect(draftEntry.locator('.feedback-draft-preview')).toContainText('Half-written thought');
+  });
+
+  // No text → the × closes immediately (no guard).
+  test('HS-9180: closing with no text closes immediately (no guard)', async ({ page }) => {
+    await createTicket(page, 'Empty close ticket');
+    await addFeedbackNote(page, 'Empty close ticket', 'Anything?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Empty close ticket');
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+    await overlay.locator('#feedback-close').click();
+    await expect(page.locator('.confirm-dialog-overlay')).toHaveCount(0);
     await expect(overlay).toHaveCount(0);
   });
 

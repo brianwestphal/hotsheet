@@ -4,6 +4,7 @@ import {
   uploadDraftAttachment as uploadDraftAttachmentToServer,
 } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
+import { choiceDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import {
   type BlockResponse,
@@ -586,7 +587,6 @@ export function showFeedbackDialog(
     disposeFileDeleteDelegate();
     overlay.remove();
   };
-  requireChild<HTMLButtonElement>(overlay, '#feedback-close').addEventListener('click', close);
   requireChild<HTMLButtonElement>(overlay, '#feedback-later').addEventListener('click', close);
   // HS-7599 — click outside dismisses ONLY when no text has been entered.
   overlay.addEventListener('click', (e) => {
@@ -600,9 +600,33 @@ export function showFeedbackDialog(
     sessionDraftId, effectiveParentNoteId, effectivePrompt, state, close,
   };
 
+  // One shared Save Draft handler — used by both the explicit button and the
+  // HS-9180 close-guard below (it saves the draft + calls `close()`).
+  const saveDraftHandler = buildSaveDraftHandler(ctx);
+
+  // HS-9180 — closing via the × with unsaved text must NOT silently lose it.
+  // Offer Save Draft / Discard / Keep Editing (the outside-click path above
+  // already refuses to close when there's text; the × was the lone data-loss
+  // gap). No text → close immediately. Esc/backdrop on the prompt = Keep Editing.
+  const closeWithUnsavedGuard = async () => {
+    if (!overlayHasAnyText(overlay)) { close(); return; }
+    const choice = await choiceDialog({
+      title: 'Unsaved feedback',
+      message: `You have unsaved changes for ${ticketNumber}. Save them as a draft to come back to later?`,
+      primaryLabel: 'Save Draft',
+      secondaryLabel: 'Discard',
+      cancelLabel: 'Keep Editing',
+      secondaryDanger: true,
+    });
+    if (choice === 'primary') await saveDraftHandler();
+    else if (choice === 'secondary') close();
+    // 'cancel' → keep editing (leave the dialog open)
+  };
+  requireChild<HTMLButtonElement>(overlay, '#feedback-close').addEventListener('click', () => { void closeWithUnsavedGuard(); });
+
   const noResponseBtn = requireChild<HTMLButtonElement>(overlay, '#feedback-no-response');
   noResponseBtn.addEventListener('click', buildNoResponseHandler(ctx, noResponseBtn));
-  overlay.querySelector('#feedback-save-draft')!.addEventListener('click', buildSaveDraftHandler(ctx));
+  overlay.querySelector('#feedback-save-draft')!.addEventListener('click', saveDraftHandler);
   overlay.querySelector('#feedback-submit')!.addEventListener('click', buildSubmitHandler(ctx));
 
   // HS-8836 — wire the prev/next context navigation when there's a list to page.
