@@ -240,9 +240,10 @@ export async function loadAndApplyScope(): Promise<void> {
   applyScope();
   // HS-9155 — sync the complex list editors (commands / auto-context / terminals /
   // views) to the current mode on dialog OPEN. They reload on `scope-mode-changed`;
-  // before, the dialog opened in `resolved` and the user's first segment click into
-  // Local fired this. Now Local is the default, so opening would never emit it and
-  // the editors would render stale (the seed→reopen→Local complex-editor flows broke).
+  // pre-HS-9155 the dialog opened in `resolved` and the user's first click into
+  // Local fired this. With Local the default, opening would otherwise never emit it
+  // and the editors would render stale. (Single load path: editors must NOT also
+  // self-load on open, or the double-render detaches their row closures — HS-9120.)
   emitScopeModeChanged();
 }
 

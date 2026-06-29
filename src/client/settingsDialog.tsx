@@ -593,7 +593,9 @@ function bindAutoContextSettings() {
       // removed; label the delete accordingly so the move-to-disabled is clear.
       const isSharedHere = autoContextMode === 'local' && entryOrigin(entry) !== 'local';
       const row = toElement(
-        <div className="auto-context-entry">
+        // HS-9165 — `data-ac-id` lets the in-place repaint find the LIVE row even
+        // if a re-render replaced the one this closure captured (see below).
+        <div className="auto-context-entry" data-ac-id={acIdOf(entry)}>
           <div className="auto-context-header">
             <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKeyOf(entry)}</span>
             <span className="auto-context-scope-slot" />
@@ -609,11 +611,19 @@ function bindAutoContextSettings() {
         textarea.addEventListener('input', () => {
           if (saveTimeout) clearTimeout(saveTimeout);
           saveTimeout = setTimeout(() => {
-            autoContextEntries[i] = { ...entry, text: textarea.value };
+            // HS-9165 — derive the index by id (a re-render may have reordered or
+            // replaced rows since this handler was wired, leaving `i`/`row` stale).
+            const idx = autoContextEntries.findIndex(e => acIdOf(e) === acIdOf(entry));
+            if (idx === -1) return;
+            autoContextEntries[idx] = { ...autoContextEntries[idx], text: textarea.value };
             void saveEntries();
-            // HS-9120 — refresh the origin tag in place (shared→overridden) without
-            // re-rendering, so the textarea keeps focus + caret.
-            paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, autoContextEntries[i]);
+            // HS-9120/9165 — refresh the origin tag in place (shared→overridden)
+            // without a full re-render (keeps focus/caret). Repaint the LIVE slot:
+            // the closure's `row` can be detached if a re-render replaced it, so the
+            // paint would hit a dead element while the on-screen row kept "shared".
+            const liveSlot = list.querySelector<HTMLElement>(`[data-ac-id="${CSS.escape(acIdOf(entry))}"] .auto-context-scope-slot`)
+              ?? row.querySelector<HTMLElement>('.auto-context-scope-slot');
+            if (liveSlot) paintRowScope(liveSlot, autoContextEntries[idx]);
           }, 500);
         });
         row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
@@ -724,11 +734,12 @@ function bindAutoContextSettings() {
     }
   }
 
-  // HS-9016 / HS-9155 — (re)load the auto-context list for the active layer on
-  // every scope-mode change. `loadAndApplyScope` emits this on dialog OPEN too
-  // (Local is the default mode), so this single path covers open + mode switches.
-  // A separate open-time `loadEntries` would double-fire and the second async
-  // load could clobber a mid-edit (the HS-9120 edit→override race).
+  // HS-9016 / HS-9155 — single load path: the auto-context list reloads only on
+  // `scope-mode-changed`, which `loadAndApplyScope` emits on dialog OPEN (Local is
+  // the default) AND on every mode switch. A separate open-time `loadEntries` would
+  // double-render and detach this list's row closures, breaking in-place edits
+  // (the HS-9120 edit→override repaint hit a dead element). The repaint also
+  // re-queries the LIVE slot by `data-ac-id` as a belt-and-suspenders.
   document.addEventListener('hotsheet:scope-mode-changed', () => { void loadEntries(); });
 }
 
