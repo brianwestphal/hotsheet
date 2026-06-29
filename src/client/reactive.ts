@@ -11,9 +11,19 @@
  * Library choice: `kerfjs` (sister project at `~/Documents/kerf`,
  * published as `kerfjs` on npm; written by the same author as Hot Sheet).
  * It wraps the underlying signals primitive verbatim for the four primitive
- * functions, AND ships `defineStore` / `resetAllStores` (HS-8238 / §61) PLUS
- * `mount` / `morph` / `each` / `toElement` / `SafeHtml` / `raw` / `Fragment`
- * (HS-8241+ / §62). One dependency covers all three design-doc chains.
+ * functions, AND ships `defineStore` / `resetAllStores` (HS-8238 / §61) plus a
+ * JSX/DOM layer (`mount` / `morph` / `each` / `toElement` / `SafeHtml` / `raw` /
+ * `Fragment`, HS-8241+ / §62). One dependency covers all three design-doc chains.
+ *
+ * What THIS module actually re-exports is narrower than kerf's full surface — see
+ * the `export` on line 74: the signals primitives (`signal` / `computed` /
+ * `effect` / `batch`), the store layer (`defineStore` / `resetAllStores`), the
+ * event delegators (`delegate` / `delegateCapture`), and `morph`. The JSX surface
+ * (`toElement` / `SafeHtml` / `raw` / `Fragment`) is re-exported from the `#jsx`
+ * runtime (§62), NOT here. `mount` and `each` are kerf functions Hot Sheet does
+ * NOT use (HS-9201) — we render lists with `.map()` + `toElement` +
+ * `morph()` / `replaceChildren()`, never kerf's `each()`, so kerf's `each()`
+ * changes (e.g. 0.15 `key`→`cacheKey`) need no remediation here.
  * §63 (the parallel `morphdom`-based reactivity-demo plan) was retired
  * under HS-8315 in favour of kerf — see the §63 cleanup note in
  * `docs/60-reactivity-primitive.md` §60.3.
