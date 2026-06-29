@@ -217,6 +217,81 @@ test.describe('Settings scope control (Shared | Local)', () => {
     expect(layered.local.custom_commands?.hidden ?? []).not.toContain('sh-a');
   });
 
+  // HS-9182 — the per-row "move to shared/local" button must act on the CLICKED
+  // command, not its neighbor.
+  test('HS-9182: move-to-local acts on the clicked command (not the one above)', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { custom_commands: [
+        { id: 'h', name: 'hello', prompt: 'ph', target: 'shell' },
+        { id: 'r', name: 'random', prompt: 'pr', target: 'shell' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'local', settings: { custom_commands: { added: [
+        { id: 'g', name: 'goodbye', prompt: 'pg', target: 'shell' },
+      ] } } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const list = page.locator('#settings-commands-list');
+    await expect(list.locator('.cmd-outline-row').filter({ hasText: 'random' })).toBeVisible({ timeout: 5000 });
+
+    // (a) Move-to-local on the RANDOM row → random (not hello) becomes local.
+    await list.locator('.cmd-outline-row').filter({ hasText: 'random' }).locator('.cmd-outline-move-btn').click();
+    await page.waitForTimeout(400);
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: { custom_commands?: { id: string }[] };
+      local: { custom_commands?: { added?: { id: string }[] } };
+    };
+    expect((layered.shared.custom_commands ?? []).map(c => c.id)).toContain('h');     // hello stays shared
+    expect((layered.shared.custom_commands ?? []).map(c => c.id)).not.toContain('r'); // random left shared
+    expect((layered.local.custom_commands?.added ?? []).map(c => c.id)).toContain('r');
+
+    // (b) Move-to-shared on the GOODBYE row (local) → goodbye (not its neighbor) promotes.
+    await list.locator('.cmd-outline-row').filter({ hasText: 'goodbye' }).locator('.cmd-outline-move-btn').click();
+    await page.waitForTimeout(400);
+    layered = await (await page.request.get('/api/file-settings/layered')).json();
+    expect((layered.shared.custom_commands ?? []).map(c => c.id)).toContain('g'); // goodbye promoted
+    expect((layered.local.custom_commands?.added ?? []).map(c => c.id)).not.toContain('g');
+  });
+
+  // HS-9182 — the same, for a command INSIDE a shared group (child move path).
+  test('HS-9182: move-to-local on a group child acts on the clicked child', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { custom_commands: [
+        { id: 'grp', type: 'group', name: 'Grp', children: [
+          { id: 'c1', name: 'child1', prompt: 'p1', target: 'shell' },
+          { id: 'c2', name: 'child2', prompt: 'p2', target: 'shell' },
+        ] },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const list = page.locator('#settings-commands-list');
+    const child2Row = list.locator('.cmd-outline-row.cmd-outline-indented').filter({ hasText: 'child2' });
+    await expect(child2Row).toBeVisible({ timeout: 5000 });
+    await child2Row.locator('.cmd-outline-move-btn').click();
+    await page.waitForTimeout(400);
+
+    const layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: { custom_commands?: { id: string; children?: { id: string }[] }[] };
+      local: { custom_commands?: { childAdded?: Record<string, { children: { id: string }[] }> } };
+    };
+    // child2 (not child1) left the shared group and landed in the local childAdded.
+    const sharedChildIds = (layered.shared.custom_commands?.[0].children ?? []).map(c => c.id);
+    expect(sharedChildIds).toContain('c1');
+    expect(sharedChildIds).not.toContain('c2');
+    const localChildIds = (layered.local.custom_commands?.childAdded?.grp?.children ?? []).map(c => c.id);
+    expect(localChildIds).toContain('c2');
+  });
+
   // HS-9181 — a command added in Shared mode is tagged "shared" IMMEDIATELY,
   // not "local" until the dialog is reopened.
   test('HS-9181: a command added in Shared mode is tagged "shared" immediately', async ({ page }) => {
