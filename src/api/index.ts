@@ -53,6 +53,7 @@ export * from './channel.js';
 export * from './commandLog.js';
 export * from './dashboard.js';
 export * from './db.js';
+export * from './devices.js';
 export * from './diagnostics.js';
 export * from './enrollment.js';
 export * from './feedbackDrafts.js';

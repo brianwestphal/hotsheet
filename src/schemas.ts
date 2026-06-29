@@ -358,6 +358,17 @@ const SYNC_EVENT_INPUT_VARIANTS = [
   // (docs/90 §90.8). Drives the claimed-by chip's live push off the bus instead
   // of its 5 s poll.
   z.object({ type: z.literal('claims-changed') }),
+  // HS-9189 (docs/109 §109.5) — the per-project active-device lease changed
+  // (a device claimed/superseded, the holder expired and freed the slot, or the
+  // holder released). `deviceId` is the new holder, or null when the slot is
+  // now free. `expiresAt` is the lease expiry (ms epoch) when held, else null.
+  // Every connected client compares `deviceId` to its own to render terminals
+  // live (it's active) or as the §54 borrowed placeholder (it isn't).
+  z.object({
+    type: z.literal('active-device-changed'),
+    deviceId: z.string().nullable(),
+    expiresAt: z.number().nullable(),
+  }),
 ] as const;
 
 /** The event a mutation handler passes to `emitEvent` (no `seq` yet). */

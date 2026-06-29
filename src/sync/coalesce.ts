@@ -37,7 +37,8 @@ function idsOf(event: SyncEvent): number[] {
     case 'status-changed': return [...event.ticketIds];
     case 'settings-changed':
     case 'batch-operation':
-    case 'claims-changed': return [];
+    case 'claims-changed':
+    case 'active-device-changed': return [];
   }
 }
 

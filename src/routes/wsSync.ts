@@ -22,6 +22,7 @@ import { WebSocketServer } from 'ws';
 
 import { peerCertInfoFromRequest } from '../auth/tlsListener.js';
 import { trackAuthenticatedSocket } from '../auth/wsRevocationSweep.js';
+import { claimActiveDevice, releaseActiveDevice } from '../devices/activeDeviceLease.js';
 import { getProjectBySecret } from '../projects.js';
 import { coalesceEvents } from '../sync/coalesce.js';
 import { eventBus, getEventsSince, registerSyncSink } from '../sync/eventBus.js';
@@ -69,12 +70,15 @@ export function wireSyncWebSocket(httpServer: HttpServer, options: WireSyncOptio
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
-      handleSyncConnection(ws, auth.secret, auth.since);
-      // HS-9025 — on the exposed (Tier-1) mTLS listener, track the socket so the
-      // revocation sweep can close it if its device is revoked / its cert expires
-      // mid-connection. Tier-0 (loopback) has no client cert, so this is a no-op.
+      // HS-9189 — on the exposed (Tier-1) mTLS listener the cert's `clientId` is
+      // the authoritative device id for the active-device lease; pass it so a
+      // claim frame can't spoof another device. Tier-0 (loopback) has no cert, so
+      // the client supplies its own synthetic id in the frame.
+      const peer = options.exposed ? peerCertInfoFromRequest(req) : null;
+      handleSyncConnection(ws, auth.secret, auth.since, peer?.clientId);
+      // HS-9025 — track the socket so the revocation sweep can close it if its
+      // device is revoked / its cert expires mid-connection. Tier-0 is a no-op.
       if (options.exposed) {
-        const peer = peerCertInfoFromRequest(req);
         const project = getProjectBySecret(auth.secret);
         if (peer !== null && project) {
           trackAuthenticatedSocket(ws, { dataDir: project.dataDir, clientId: peer.clientId, notAfterMs: peer.notAfterMs });
@@ -128,8 +132,13 @@ export function authenticateSync(req: IncomingMessage, options: WireSyncOptions)
   return { ok: true, secret, since: parseSince(url.query.since) };
 }
 
-function handleSyncConnection(ws: WebSocket, secret: string, since: number | undefined): void {
+function handleSyncConnection(ws: WebSocket, secret: string, since: number | undefined, certDeviceId?: string): void {
   openSockets.add(ws);
+
+  // HS-9189 — the active-device lease this socket currently holds (so a graceful
+  // close releases it for an immediate handoff). On Tier-1 the cert's clientId is
+  // authoritative; on Tier-0 the client supplies a synthetic id in the frame.
+  let heldDeviceId: string | null = null;
 
   // Baseline: tell the client the current seq so it knows where the stream
   // starts (and can detect gaps against its own last-applied seq).
@@ -164,7 +173,23 @@ function handleSyncConnection(ws: WebSocket, secret: string, since: number | und
   ws.on('message', (data) => {
     let raw: unknown;
     try { raw = JSON.parse(normalizeMessage(data)); } catch { return; }
-    if (raw !== null && typeof raw === 'object' && (raw as { type?: unknown }).type === 'pong') missed = 0;
+    if (raw === null || typeof raw !== 'object') return;
+    const frame = raw as { type?: unknown; deviceId?: unknown };
+    if (frame.type === 'pong') { missed = 0; return; }
+    // HS-9189 — active-device lease control frames (docs/109 §109.3). Tier-1
+    // pins the device id to the cert; Tier-0 trusts the client-supplied id.
+    if (frame.type === 'claim-active') {
+      const deviceId = certDeviceId ?? (typeof frame.deviceId === 'string' ? frame.deviceId : undefined);
+      if (deviceId !== undefined && deviceId !== '') {
+        claimActiveDevice(secret, deviceId);
+        heldDeviceId = deviceId;
+      }
+      return;
+    }
+    if (frame.type === 'release-active') {
+      if (heldDeviceId !== null) { releaseActiveDevice(secret, heldDeviceId); heldDeviceId = null; }
+      return;
+    }
   });
 
   const cleanup = (): void => {
@@ -172,7 +197,18 @@ function handleSyncConnection(ws: WebSocket, secret: string, since: number | und
     unregister();
     openSockets.delete(ws);
   };
-  ws.on('close', cleanup);
+  // HS-9189 — on a GRACEFUL close (the tab/app went away deliberately) release
+  // the lease so another device gets an immediate handoff. On an abnormal drop
+  // (code 1006 — a transient network blip) leave it: the client reconnects +
+  // re-claims within the TTL, and the periodic sweep frees a truly-gone device.
+  // This avoids flapping the active slot on every momentary disconnect.
+  ws.on('close', (code: number) => {
+    if (heldDeviceId !== null && (code === 1000 || code === 1001)) {
+      releaseActiveDevice(secret, heldDeviceId);
+      heldDeviceId = null;
+    }
+    cleanup();
+  });
   ws.on('error', cleanup);
 }
 

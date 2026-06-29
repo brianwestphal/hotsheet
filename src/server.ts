@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { createMtlsAuthzMiddleware } from './auth/authz.js';
 import { buildMtlsServeConfig, collectServerCertHosts, type MtlsServeConfig, peerIdentityFromEnv } from './auth/tlsListener.js';
 import { runWithDataDir } from './db/connection.js';
+import { startActiveDeviceLeaseSweep } from './devices/activeDeviceLease.js';
 import { readGlobalConfig } from './global-config.js';
 import { gracefulShutdown, registerHttpServerForShutdown } from './lifecycle.js';
 import { getMimeType } from './mime-types.js';
@@ -295,6 +296,10 @@ export async function startServer(
     // HS-8979 — `/ws/sync` push channel (docs/93). Same shared-port upgrade
     // pattern; honors the HS-7940 exposed/trusted-origin gate.
     wireSyncWebSocket(httpServer, { exposed, trustedOrigins });
+    // HS-9189 — periodic sweep of expired active-device leases (docs/109), so a
+    // slept/disconnected active device frees the slot (broadcast on the §93 bus)
+    // even without an explicit release. Unref'd; stopped on graceful shutdown.
+    startActiveDeviceLeaseSweep();
     // HS-7931: register the live HTTP server with the lifecycle module so
     // `gracefulShutdown` can close it before issuing CHECKPOINTs.
     registerHttpServerForShutdown(httpServer);
