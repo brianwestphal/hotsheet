@@ -2688,8 +2688,7 @@ body.cross-project-stats-active {
 
   .cmd-outline-edit-btn,
   .cmd-outline-delete-btn,
-  .cmd-outline-move-btn,
-  .scope-reset-btn { // HS-9184/9187 — undo-2 "reset to shared" icon button
+  .cmd-outline-move-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -6049,6 +6048,25 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &.settings-view-hidden { opacity: 0.55; }
 }
 .settings-view-empty { padding: 12px 0; color: var(--text-muted); font-size: 13px; }
+
+// HS-9184/9187 — the undo-2 "reset to shared" icon button. A standalone rule (not
+// nested under .cmd-outline-row) so it styles consistently across the command
+// editor, the Views tab (.settings-view-row), and the terminals list.
+.scope-reset-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+  padding: 0;
+  &:hover { background: var(--bg-hover); color: var(--accent); }
+}
 
 .sidebar-add-view-btn {
   font-size: 14px;
