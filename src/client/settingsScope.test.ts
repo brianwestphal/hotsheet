@@ -18,13 +18,12 @@ function segButtons(): HTMLButtonElement[] {
 // per-test remount would orphan the listeners.
 beforeAll(() => {
   document.body.innerHTML = `
-    <div class="settings-scope-bar" id="settings-scope-bar" data-scope-mode="resolved">
+    <div class="settings-scope-bar" id="settings-scope-bar" data-scope-mode="local">
       <div class="scope-seg">
         <button class="scope-seg-btn scope-seg-shared" data-scope-mode="shared">Shared</button>
-        <button class="scope-seg-btn scope-seg-local" data-scope-mode="local">Local overrides</button>
-        <button class="scope-seg-btn scope-seg-resolved active" data-scope-mode="resolved">Resolved</button>
+        <button class="scope-seg-btn scope-seg-local active" data-scope-mode="local">Local</button>
       </div>
-      <span class="scope-bar-note" id="settings-scope-note">resolved note</span>
+      <span class="scope-bar-note" id="settings-scope-note">local note</span>
     </div>`;
   initSettingsScope();
 });
@@ -60,8 +59,8 @@ describe('settings scope bar — hidden on machine-local tabs (HS-9116/9118/9119
   it('ignores a segment click while the bar is hidden', () => {
     setActiveSettingsTab('plugins');
     document.querySelector<HTMLButtonElement>('.scope-seg-shared')!.click();
-    // Mode stays resolved — the click was guarded.
-    expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('resolved');
+    // Mode stays the default (local) — the click was guarded. (HS-9155 — was resolved.)
+    expect(document.getElementById('settings-scope-bar')!.dataset.scopeMode).toBe('local');
   });
 
   it('still honors a segment click on a normal (scoped) tab', () => {

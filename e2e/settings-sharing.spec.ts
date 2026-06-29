@@ -1,9 +1,10 @@
 import { expect, test } from './coverage-fixture.js';
 
-// HS-9004 — dialog-wide Shared | Local overrides | Resolved scope control. A
-// persistent toolbar under the Settings tab strip decorates each file-settings
-// field in place (no dedicated "Sharing" tab).
-test.describe('Settings scope control (Shared | Local | Resolved)', () => {
+// HS-9004 — dialog-wide Shared | Local scope control. A persistent toolbar under
+// the Settings tab strip decorates each file-settings field in place (no
+// dedicated "Sharing" tab). HS-9155 — the "Resolved" segment was removed; Local
+// is the default and shows the effective value for fields with no local override.
+test.describe('Settings scope control (Shared | Local)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
@@ -17,12 +18,14 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('#settings-scope-bar')).toBeVisible();
   });
 
-  test('renders the dialog-wide toolbar; defaults to Resolved with origin tags', async ({ page }) => {
-    await expect(page.locator('.scope-seg-btn')).toHaveCount(3);
-    await expect(page.locator('.scope-seg-btn.scope-seg-resolved.active')).toBeVisible();
+  test('renders the dialog-wide toolbar; defaults to Local (HS-9155 — no Resolved segment)', async ({ page }) => {
+    await expect(page.locator('.scope-seg-btn')).toHaveCount(2);
+    await expect(page.locator('.scope-seg-btn.scope-seg-resolved')).toHaveCount(0);
+    await expect(page.locator('.scope-seg-btn.scope-seg-local.active')).toBeVisible();
+    await expect(page.locator('#settings-scope-note')).toContainText('settings.local.json');
     // Settings stay in their own tabs — the General tab is shown, not a Sharing tab.
     await expect(page.locator('.settings-tab[data-tab="sharing"]')).toHaveCount(0);
-    // A scalar field carries an origin tag in Resolved mode.
+    // A scalar field still carries a scope tag in Local mode (appName is shared-only).
     const field = page.locator('.settings-field:has(#settings-app-name)');
     await expect(field.locator('.scope-tag')).toBeVisible({ timeout: 5000 });
   });
@@ -82,41 +85,40 @@ test.describe('Settings scope control (Shared | Local | Resolved)', () => {
     await expect(page.locator('#settings-permissions-panel.scope-locked')).toHaveCount(0);
   });
 
-  test('HS-9127: Resolved is read-only — a scoped scalar field is disabled there, editable in Shared/Local', async ({ page }) => {
-    // Default open mode is Resolved.
+  test('HS-9155: Local default shows an inherited scoped scalar read-only; Shared edits it', async ({ page }) => {
+    // Default open mode is Local; worklist_preamble is inherited (no local override)
+    // → read-only behind a "+ Override".
     const preamble = page.locator('#settings-worklist-preamble');
     await expect(preamble).toBeDisabled();
-    await expect(page.locator('#settings-scope-note')).toContainText(/read-only/i);
+    await expect(page.locator('.settings-field:has(#settings-worklist-preamble) [data-scope-action="override"]')).toBeVisible();
     // Shared → editable.
     await page.locator('.scope-seg-btn.scope-seg-shared').click();
     await expect(preamble).toBeEnabled();
-    // Back to Resolved → disabled again.
-    await page.locator('.scope-seg-btn.scope-seg-resolved').click();
+    // Back to Local → disabled again (still inherited).
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
     await expect(preamble).toBeDisabled();
   });
 
-  test('HS-9127: categories (shared-only complex) is read-only in Local AND Resolved, editable in Shared', async ({ page }) => {
+  test('HS-9155: categories (shared-only complex) is read-only in Local (default), editable in Shared', async ({ page }) => {
     const cat = page.locator('.settings-tab-panel[data-panel="categories"].scope-locked');
-    // Local → locked.
-    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    // Default Local → locked (shared-only complex; its edit-home is Shared).
     await expect(cat).toHaveCount(1);
-    // HS-9127 — Resolved is now the read-only effective view, so it's locked here too.
-    await page.locator('.scope-seg-btn.scope-seg-resolved').click();
-    await expect(cat).toHaveCount(1);
-    // Shared → editable (its edit-home).
+    // Shared → editable.
     await page.locator('.scope-seg-btn.scope-seg-shared').click();
     await expect(cat).toHaveCount(0);
+    // Local → locked again.
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await expect(cat).toHaveCount(1);
   });
 
   // HS-9021 — a default `data-scope-complex` surface (e.g. the terminal default-
   // appearance block) is a SHARED setting: editable only in Shared, read-only in
-  // Resolved + Local (Resolved is the read-only effective view; you edit in
-  // Shared). The lock chip points to Shared, not Resolved. (The custom-commands
-  // list is NO LONGER such a surface — HS-9014 made it element-level scope-aware;
-  // see the dedicated test below.)
-  test('HS-9021: default complex panels edit in Shared, read-only in Resolved + Local', async ({ page }) => {
+  // Local (the default view; HS-9155). The lock chip points to Shared. (The
+  // custom-commands list is NO LONGER such a surface — HS-9014 made it element-
+  // level scope-aware; see the dedicated test below.)
+  test('HS-9021: default complex panels edit in Shared, read-only in Local (default)', async ({ page }) => {
     const panel = page.locator('.settings-terminal-default-appearance');
-    // Default open mode is Resolved → read-only.
+    // Default open mode is Local → read-only.
     await expect(panel).toHaveClass(/scope-locked/);
     // Shared → editable.
     await page.locator('.scope-seg-btn.scope-seg-shared').click();

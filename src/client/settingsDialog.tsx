@@ -724,10 +724,11 @@ function bindAutoContextSettings() {
     }
   }
 
-  // Load when settings dialog opens
-  const settingsBtn = byId('settings-btn');
-  settingsBtn.addEventListener('click', () => { void loadEntries(); });
-  // HS-9016 — reload for the new layer when the scope mode changes.
+  // HS-9016 / HS-9155 — (re)load the auto-context list for the active layer on
+  // every scope-mode change. `loadAndApplyScope` emits this on dialog OPEN too
+  // (Local is the default mode), so this single path covers open + mode switches.
+  // A separate open-time `loadEntries` would double-fire and the second async
+  // load could clobber a mid-edit (the HS-9120 edit→override race).
   document.addEventListener('hotsheet:scope-mode-changed', () => { void loadEntries(); });
 }
 

@@ -109,7 +109,10 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-announcer-enabled', key: 'announcer_enabled', kind: 'boolean', share: 'local-only' },
 ];
 
-let mode: ScopeMode = 'resolved';
+// HS-9155 — default to `local` (the "Resolved" mode was removed). Local already
+// shows the effective value for fields with no local override, so it doubles as
+// the read-only "resolved" view while letting the user override per-machine.
+let mode: ScopeMode = 'local';
 let layered: LayeredFileSettings | null = null;
 let initialized = false;
 
@@ -205,9 +208,9 @@ export function initSettingsScope(): void {
   });
 }
 
-/** Reset to the default (resolved) view — called when the dialog opens. */
+/** Reset to the default (local) view — called when the dialog opens. HS-9155. */
 export function resetScopeMode(): void {
-  mode = 'resolved';
+  mode = 'local';
   activeTab = 'general';
 }
 
@@ -235,6 +238,12 @@ export async function loadAndApplyScope(): Promise<void> {
     layered = null;
   }
   applyScope();
+  // HS-9155 — sync the complex list editors (commands / auto-context / terminals /
+  // views) to the current mode on dialog OPEN. They reload on `scope-mode-changed`;
+  // before, the dialog opened in `resolved` and the user's first segment click into
+  // Local fired this. Now Local is the default, so opening would never emit it and
+  // the editors would render stale (the seed→reopen→Local complex-editor flows broke).
+  emitScopeModeChanged();
 }
 
 /**
@@ -364,6 +373,13 @@ function decorateField(field: ScopedField, skipValues: boolean): void {
       applyValueToControl(control, field.kind, scope.localValue);
     } else if (scope.resolvedValue !== undefined) {
       applyValueToControl(control, field.kind, scope.resolvedValue);
+    } else if (field.kind === 'boolean') {
+      // HS-9155 — an inherited boolean absent from BOTH files: show it OFF (what
+      // the Shared view shows), not the page's effective-default render. Without
+      // this the checkbox stayed stale-checked under Local even when the shared
+      // value was unchecked. (text/number with a runtime-default populate are
+      // left as-is so they don't blank — but none of those remain scoped today.)
+      applyValueToControl(control, 'boolean', false);
     }
   }
 

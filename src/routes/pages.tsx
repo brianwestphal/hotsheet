@@ -616,17 +616,17 @@ pageRoutes.get('/', (c) => {
               <span>Updates</span>
             </button>
           </div>
-          {/* HS-9004 — dialog-wide Shared | Local overrides | Resolved scope
-              control. A persistent toolbar over every tab (state survives tab
-              switches); decorates each file-settings field in place. Wired by
-              src/client/settingsScope.ts. */}
-          <div className="settings-scope-bar" id="settings-scope-bar" data-scope-mode="resolved">
+          {/* HS-9004 — dialog-wide Shared | Local scope control. A persistent
+              toolbar over every tab (state survives tab switches); decorates each
+              file-settings field in place. Wired by src/client/settingsScope.ts.
+              HS-9155 — the "Resolved" segment was removed; Local is the default and
+              already shows the effective value for fields with no local override. */}
+          <div className="settings-scope-bar" id="settings-scope-bar" data-scope-mode="local">
             <div className="scope-seg" role="tablist" aria-label="Settings scope">
               <button type="button" className="scope-seg-btn scope-seg-shared" data-scope-mode="shared"><span className="scope-seg-dot" />Shared</button>
-              <button type="button" className="scope-seg-btn scope-seg-local" data-scope-mode="local"><span className="scope-seg-dot" />Local overrides</button>
-              <button type="button" className="scope-seg-btn scope-seg-resolved active" data-scope-mode="resolved"><span className="scope-seg-dot" />Resolved</button>
+              <button type="button" className="scope-seg-btn scope-seg-local active" data-scope-mode="local"><span className="scope-seg-dot" />Local</button>
             </div>
-            <span className="scope-bar-note" id="settings-scope-note">Effective values in use. Each field is tagged with where its value comes from.</span>
+            <span className="scope-bar-note" id="settings-scope-note">Editing settings.local.json — gitignored, this machine only. Local values win.</span>
           </div>
           <div className="settings-body">
             <div className="settings-tab-panel active" data-panel="general">
