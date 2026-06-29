@@ -51,7 +51,7 @@ export const COMMAND_INPUT_PLACEHOLDER = 'Pick a command…';
 let terminals: EditableTerminalConfig[] = [];
 // HS-9015 — scope-aware editing: the committed shared array + the active mode.
 let terminalsShared: EditableTerminalConfig[] = [];
-let terminalsMode: 'shared' | 'local' | 'resolved' = 'local';
+let terminalsMode: 'shared' | 'local' = 'local';
 /** Stable identity for a terminal config (matches the file-settings idOf). */
 const termIdOf = (t: EditableTerminalConfig): string => (typeof t.id === 'string' ? t.id : '');
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -232,13 +232,10 @@ function renderList(): void {
   // index-capturing listeners moved to one delegated set on the container
   // (see `ensureRowDelegationBound`), so rows are now near-pure markup
   // (only the stateless WebKit mousedown swallow stays per-button).
-  // HS-9015 — per-mode scope hint (null in Resolved).
-  const hint = scopeListHintElement(terminalsMode);
-  const lead: HTMLElement[] = hint !== null ? [hint] : [];
-  // HS-9127 — Resolved is the read-only effective view: no add/edit/delete/drag.
-  const readonly = terminalsMode === 'resolved';
+  // HS-9015 — per-mode scope hint.
+  const lead: HTMLElement[] = [scopeListHintElement(terminalsMode)];
   const addBtn = byIdOrNull('settings-terminals-add-btn');
-  if (addBtn !== null) addBtn.style.display = readonly ? 'none' : '';
+  if (addBtn !== null) addBtn.style.display = '';
   // HS-9125 — in Local mode, shared terminals the local layer hides still get a
   // disabled row with a Re-enable button so they can be restored.
   const hiddenShared = terminalsMode === 'local'
@@ -357,19 +354,16 @@ function renderRow(index: number): HTMLElement {
   // overridden shared terminal. HS-9125 — in Local mode the delete of a shared
   // terminal hides it locally (relabel the button accordingly).
   const origin = termOrigin(entry);
-  const showTag = terminalsMode !== 'resolved';
   const isSharedHere = terminalsMode === 'local' && origin !== 'local';
-  // HS-9127 — Resolved is the read-only effective view: no drag/edit/delete/reset.
-  const readonly = terminalsMode === 'resolved';
   const row = toElement(
-    <div className="cmd-outline-row settings-terminal-row" draggable={readonly ? 'false' : 'true'} data-index={String(index)}>
-      {readonly ? '' : <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>}
+    <div className="cmd-outline-row settings-terminal-row" draggable="true" data-index={String(index)}>
+      <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>
-      {showTag ? <span className={`scope-tag ${origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{origin}</span> : null}
+      <span className={`scope-tag ${origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{origin}</span>
       {terminalsMode === 'local' && origin === 'overridden' ? <button type="button" className="scope-link term-reset-btn" title="Discard the local override">Reset to shared</button> : null}
-      {readonly ? '' : <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>}
-      {readonly ? '' : <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>}
+      <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
+      <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>
     </div>
   );
 

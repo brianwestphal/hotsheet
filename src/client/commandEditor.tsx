@@ -198,7 +198,7 @@ function refEqual(a: ItemRef | null, b: ItemRef | null): boolean {
  *  of ids that live in the SHARED tree (top-level + children), so each row can
  *  show its origin tag + the right move/hide affordance. */
 interface ScopeCtx {
-  mode: 'shared' | 'local' | 'resolved';
+  mode: 'shared' | 'local';
   sharedIds: Set<string>;
 }
 
@@ -221,10 +221,8 @@ function isSharedItem(item: CommandItem, ctx: ScopeCtx): boolean {
 }
 
 /** HS-9014 / HS-9094 - the origin tag + shared/local move button shown in
- *  Shared/Local mode, for top-level commands/groups AND group children. Returns
- *  an empty fragment in Resolved mode. */
+ *  Shared/Local mode, for top-level commands/groups AND group children. */
 function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
-  if (ctx.mode === 'resolved') return <></>;
   const shared = isSharedItem(item, ctx);
   const tag = <span className={`cmd-scope-tag scope-tag ${shared ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{shared ? 'shared' : 'local'}</span>;
   // HS-9094 \u2014 a group itself isn't movable as a "child"; a top-level group moves
@@ -251,16 +249,14 @@ function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
   // HS-8614 \u2014 pure markup. The edit / delete clicks + the drag handlers are
   // delegated once at `#settings-commands-list` (`ensureCommandRowDelegationBound`),
   // reading the `ItemRef` back from `data-ref`. HS-9014 adds the scope tag + move btn.
-  // HS-9127 \u2014 Resolved is the read-only effective view: no drag/edit/delete.
-  const readonly = ctx.mode === 'resolved';
   return toElement(
-    <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} draggable={readonly ? 'false' : 'true'} data-ref={JSON.stringify(ref)}>
-      {readonly ? '' : <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>}
+    <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} draggable="true" data-ref={JSON.stringify(ref)}>
+      <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{renderIconSvg(currentIcon.svg, 12, textColor)}</span>
       <span className="cmd-outline-name">{cmd.name !== '' ? cmd.name : '(untitled)'}</span>
       {renderScopeAffordances(cmd, ref, ctx)}
-      {readonly ? '' : <button className="cmd-outline-edit-btn" title="Edit">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13)}</button>}
-      {readonly ? '' : <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>}
+      <button className="cmd-outline-edit-btn" title="Edit">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13)}</button>
+      <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
     </div>
   );
 }
@@ -277,14 +273,12 @@ function renderGroupOutlineRow(topIndex: number, ctx: ScopeCtx): HTMLElement {
   // `#settings-commands-list` (`ensureCommandRowDelegationBound`). `commandItems`
   // is only read here for the markup; the handlers re-fetch it via
   // `getEditTree()` so they always see the live array.
-  // HS-9127 \u2014 Resolved is the read-only effective view: no drag/rename/delete.
-  const readonly = ctx.mode === 'resolved';
   return toElement(
-    <div className="cmd-outline-row cmd-outline-group-row" draggable={readonly ? 'false' : 'true'} data-ref={JSON.stringify(ref)}>
-      {readonly ? '' : <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>}
-      <span className="cmd-outline-group-name" contentEditable={readonly ? 'false' : 'true'}>{group.name}</span>
+    <div className="cmd-outline-row cmd-outline-group-row" draggable="true" data-ref={JSON.stringify(ref)}>
+      <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
+      <span className="cmd-outline-group-name" contentEditable="true">{group.name}</span>
       {renderScopeAffordances(group, ref, ctx)}
-      {!readonly && group.children.length === 0
+      {group.children.length === 0
         ? <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
         : ''
       }
@@ -511,8 +505,7 @@ export function renderCustomCommandSettings() {
   // HS-9014 — origin tags + the scope hint banner reflect the active mode.
   const ctx = buildScopeCtx();
   const children: Element[] = [];
-  const hint = scopeListHintElement(ctx.mode);
-  if (hint !== null) children.push(hint);
+  children.push(scopeListHintElement(ctx.mode));
   for (let i = 0; i < commandItems.length; i++) {
     const item = commandItems[i];
     if (isGroup(item)) {
@@ -565,7 +558,6 @@ export function renderCustomCommandSettings() {
   // The btnRow keeps per-element click listeners: it's a single (non-row)
   // element rebuilt fresh on every render, so there's no stale-closure or
   // re-attach-waste concern the per-row delegation addresses.
-  // HS-9127 — Resolved is read-only: no Add Command / Add Group.
-  if (ctx.mode !== 'resolved') children.push(btnRow);
+  children.push(btnRow);
   list.replaceChildren(...children);
 }

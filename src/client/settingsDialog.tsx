@@ -504,7 +504,7 @@ let autoContextEntries: AutoContextEntry[] = [];
 // HS-9016 — scope-aware editing: `autoContextShared` is the committed shared array
 // (to derive the local delta on save); `autoContextMode` is the active scope view.
 let autoContextShared: AutoContextEntry[] = [];
-let autoContextMode: 'shared' | 'local' | 'resolved' = 'local';
+let autoContextMode: 'shared' | 'local' = 'local';
 /** Stable identity for an auto-context entry (per docs/95 §95.3 / file-settings idOf). */
 const acIdOf = (e: AutoContextEntry): string => `${e.type}:${e.key}`;
 
@@ -553,7 +553,6 @@ function bindAutoContextSettings() {
    */
   function paintRowScope(slot: HTMLElement, entry: AutoContextEntry): void {
     slot.replaceChildren();
-    if (autoContextMode === 'resolved') return;
     const origin = entryOrigin(entry);
     const tagClass = origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local';
     slot.appendChild(toElement(<span className={`scope-tag ${tagClass}`}><span className="scope-tag-dot" />{origin}</span>));
@@ -575,9 +574,7 @@ function bindAutoContextSettings() {
   function renderEntries() {
     list.innerHTML = '';
     renderScopeListHint(list, autoContextMode);
-    // HS-9127 — Resolved is the read-only effective view: no add/edit/delete.
-    const readonly = autoContextMode === 'resolved';
-    addBtn.style.display = readonly ? 'none' : '';
+    addBtn.style.display = '';
 
     // HS-9121 — in Local mode, shared entries the local layer hides (deleted
     // locally) still get a disabled row with a Re-enable button so they can be
@@ -602,39 +599,37 @@ function bindAutoContextSettings() {
           <div className="auto-context-header">
             <span className="auto-context-badge" data-type={entry.type}>{entry.type === 'category' ? 'Category' : 'Tag'}: {displayKeyOf(entry)}</span>
             <span className="auto-context-scope-slot" />
-            {readonly ? '' : <button className="category-delete-btn" title={isSharedHere ? 'Disable on this machine' : 'Remove'}>{'×'}</button>}
+            <button className="category-delete-btn" title={isSharedHere ? 'Disable on this machine' : 'Remove'}>{'×'}</button>
           </div>
-          <textarea className="auto-context-text" rows={3} readOnly={readonly}>{entry.text}</textarea>
+          <textarea className="auto-context-text" rows={3}>{entry.text}</textarea>
         </div>
       );
       paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, entry);
       const textarea = row.querySelector('.auto-context-text') as HTMLTextAreaElement;
-      if (!readonly) {
-        let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-        textarea.addEventListener('input', () => {
-          if (saveTimeout) clearTimeout(saveTimeout);
-          saveTimeout = setTimeout(() => {
-            // HS-9165 — derive the index by id (a re-render may have reordered or
-            // replaced rows since this handler was wired, leaving `i`/`row` stale).
-            const idx = autoContextEntries.findIndex(e => acIdOf(e) === acIdOf(entry));
-            if (idx === -1) return;
-            autoContextEntries[idx] = { ...autoContextEntries[idx], text: textarea.value };
-            void saveEntries();
-            // HS-9120/9165 — refresh the origin tag in place (shared→overridden)
-            // without a full re-render (keeps focus/caret). Repaint the LIVE slot:
-            // the closure's `row` can be detached if a re-render replaced it, so the
-            // paint would hit a dead element while the on-screen row kept "shared".
-            const liveSlot = list.querySelector<HTMLElement>(`[data-ac-id="${CSS.escape(acIdOf(entry))}"] .auto-context-scope-slot`)
-              ?? row.querySelector<HTMLElement>('.auto-context-scope-slot');
-            if (liveSlot) paintRowScope(liveSlot, autoContextEntries[idx]);
-          }, 500);
-        });
-        row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
-          autoContextEntries.splice(i, 1);
+      let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+      textarea.addEventListener('input', () => {
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = setTimeout(() => {
+          // HS-9165 — derive the index by id (a re-render may have reordered or
+          // replaced rows since this handler was wired, leaving `i`/`row` stale).
+          const idx = autoContextEntries.findIndex(e => acIdOf(e) === acIdOf(entry));
+          if (idx === -1) return;
+          autoContextEntries[idx] = { ...autoContextEntries[idx], text: textarea.value };
           void saveEntries();
-          renderEntries();
-        });
-      }
+          // HS-9120/9165 — refresh the origin tag in place (shared→overridden)
+          // without a full re-render (keeps focus/caret). Repaint the LIVE slot:
+          // the closure's `row` can be detached if a re-render replaced it, so the
+          // paint would hit a dead element while the on-screen row kept "shared".
+          const liveSlot = list.querySelector<HTMLElement>(`[data-ac-id="${CSS.escape(acIdOf(entry))}"] .auto-context-scope-slot`)
+            ?? row.querySelector<HTMLElement>('.auto-context-scope-slot');
+          if (liveSlot) paintRowScope(liveSlot, autoContextEntries[idx]);
+        }, 500);
+      });
+      row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
+        autoContextEntries.splice(i, 1);
+        void saveEntries();
+        renderEntries();
+      });
       list.appendChild(row);
     }
 

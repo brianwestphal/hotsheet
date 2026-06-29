@@ -1,17 +1,16 @@
 /**
  * HS-9010 Phase 3 (HS-9014–9016) — helper for making the Settings dialog's
  * complex LIST editors (auto-context, terminals, custom commands) scope-aware,
- * so they participate in the dialog-wide Shared | Local overrides | Resolved
- * control (docs/95 §95.3) without each editor re-implementing the layer logic.
+ * so they participate in the dialog-wide Shared | Local control (docs/95 §95.3)
+ * without each editor re-implementing the layer logic.
  *
  * The editors keep their existing whole-list editing UX. The mode only changes
  * which layer they read + write:
- *   - Resolved (default): edit the effective list; writes route to the key's
- *     default layer (the editor's existing `fallback` save) — unchanged behavior.
+ *   - Local (default): edit the effective list; on save the change vs the shared
+ *     array is persisted as an element-level delta in `settings.local.json`
+ *     (removing a shared item hides it; adding one is local-only; editing one
+ *     overrides it).
  *   - Shared: edit the committed `settings.json` array directly.
- *   - Local: edit the effective list; on save the change vs the shared array is
- *     persisted as an element-level delta in `settings.local.json` (removing a
- *     shared item hides it; adding one is local-only; editing one overrides it).
  *
  * Editors should reload on the `hotsheet:scope-mode-changed` event + on dialog
  * open, and render an origin hint so the user can tell shared from local items.
@@ -22,23 +21,18 @@ import { toElement } from './dom.js';
 import { getScopeMode } from './settingsScope.js';
 
 /** A short banner explaining how edits behave in the active scope mode.
- *  Appended into a list editor's container (no-op in the dead 'resolved' case).
- *  HS-9014–9016. (HS-9166 — 'resolved' is unreachable; the local editor mode
- *  types still declare it pending a follow-up cleanup.) */
-const SCOPE_LIST_HINT: Record<'shared' | 'local' | 'resolved', string> = {
+ *  Appended into a list editor's container. HS-9014–9016. */
+const SCOPE_LIST_HINT: Record<'shared' | 'local', string> = {
   shared: 'Editing the shared (committed) list — versioned for your team.',
   local: 'Editing local overrides — removing a shared item hides it on this machine; added items are local-only.',
-  resolved: '',
 };
-export function renderScopeListHint(container: HTMLElement, mode: 'shared' | 'local' | 'resolved'): void {
-  const el = scopeListHintElement(mode);
-  if (el !== null) container.appendChild(el);
+export function renderScopeListHint(container: HTMLElement, mode: 'shared' | 'local'): void {
+  container.appendChild(scopeListHintElement(mode));
 }
 
-/** The hint as a standalone element (null in the dead 'resolved' case) — for
- *  editors that rebuild via `replaceChildren(...)`. */
-export function scopeListHintElement(mode: 'shared' | 'local' | 'resolved'): HTMLElement | null {
-  if (mode === 'resolved') return null;
+/** The hint as a standalone element — for editors that rebuild via
+ *  `replaceChildren(...)` and need to include it in the array. */
+export function scopeListHintElement(mode: 'shared' | 'local'): HTMLElement {
   return toElement(<div className={`scope-list-hint scope-list-hint-${mode}`}>{SCOPE_LIST_HINT[mode]}</div>);
 }
 
