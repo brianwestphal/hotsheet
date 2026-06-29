@@ -119,6 +119,45 @@ test.describe('Custom views — sidebar local customization (HS-9092)', () => {
     expect((layered.local.custom_views as { added?: { id: string }[] }).added?.some(v => v.id === 'shared-view')).toBe(true);
   });
 
+  // HS-9187 — editing a shared view in Local mode customizes it on this machine
+  // (a local `overrides` entry, not a mutation of the team value) and the row
+  // gains an undo-2 "reset to shared" button that restores the shared value.
+  test('HS-9187: a Local-mode edit of a shared view is an override with a reset-to-shared button', async ({ page }) => {
+    type Layered = { shared: { custom_views: { id: string; name: string }[] }; local: { custom_views?: { overrides?: Record<string, { name?: string }> } } };
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
+    await page.locator('.settings-tab[data-tab="views"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const list = page.locator('#settings-views-list');
+    const sharedRow = list.locator('.settings-view-row', { hasText: 'Shared View' }).first();
+    await expect(sharedRow).toBeVisible({ timeout: 5000 });
+    await expect(sharedRow.locator('.view-reset-btn')).toHaveCount(0); // not overridden yet
+
+    // Edit it in Local mode → a local override (shared/team value untouched).
+    await sharedRow.locator('button[title="Edit"]').click();
+    const editor = page.locator('.custom-view-editor-overlay');
+    await expect(editor).toBeVisible({ timeout: 3000 });
+    await editor.locator('#cv-name').fill('Shared View (local)');
+    await editor.locator('#cv-save').click();
+    await expect(editor).toBeHidden({ timeout: 3000 });
+    await page.waitForTimeout(400);
+
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as Layered;
+    expect(layered.shared.custom_views.find(v => v.id === 'shared-view')?.name).toBe('Shared View'); // team value intact
+    expect(layered.local.custom_views?.overrides?.['shared-view']?.name).toBe('Shared View (local)');
+
+    // The overridden row now offers the reset-to-shared button.
+    const overriddenRow = list.locator('.settings-view-row', { hasText: 'Shared View (local)' }).first();
+    await expect(overriddenRow.locator('.view-reset-btn')).toHaveCount(1);
+
+    // Reset → the override is dropped and the name reverts to the shared value.
+    await overriddenRow.locator('.view-reset-btn').click();
+    await page.waitForTimeout(400);
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as Layered;
+    expect(layered.local.custom_views?.overrides?.['shared-view']).toBeUndefined();
+    await expect(list.locator('.settings-view-row', { hasText: 'Shared View (local)' })).toHaveCount(0);
+  });
+
   // HS-9123 — shared views can now be deleted outright from the Views tab.
   test('HS-9123: a shared view can be deleted from the Views tab', async ({ page }) => {
     await page.locator('#settings-btn').click();

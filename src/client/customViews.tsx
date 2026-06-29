@@ -9,10 +9,13 @@ import {
   deleteSharedView,
   editView,
   hideSharedView,
+  isOverriddenView as isOverriddenViewIn,
   isSharedView as isSharedViewIn,
   moveViewToLocal,
   moveViewToShared,
+  overrideSharedView,
   reorderViews,
+  resetViewToShared,
   resolveViews,
   unhideSharedView,
   type ViewLayers,
@@ -20,7 +23,7 @@ import {
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import { ICON_ARROW_DOWN, ICON_ARROW_UP, ICON_EYE, ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE } from './icons.js';
+import { ICON_ARROW_DOWN, ICON_ARROW_UP, ICON_EYE, ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE, ICON_UNDO_2 } from './icons.js';
 import { getScopeMode } from './settingsScope.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
 import type { CustomView, CustomViewCondition } from './state.js';
@@ -286,6 +289,11 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
   if (layer === 'shared') {
     // Hide/Unhide is a Local-layer action (only meaningful in Local mode).
     if (mode === 'local') {
+      // HS-9187 — a locally-overridden shared view offers an undo-2 "reset to
+      // shared" button (discards the local override), mirroring commands/terminals.
+      if (isOverriddenViewIn(viewLayers, view.id)) {
+        addBtn(ICON_UNDO_2, 'Reset to shared (discard the local override)', () => { void persistViews(resetViewToShared(viewLayers, view.id)); }, 'scope-reset-btn view-reset-btn');
+      }
       if (hidden) addBtn(ICON_EYE, 'Unhide on this machine', () => { void persistViews(unhideSharedView(viewLayers, view.id)); });
       else addBtn(ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
     }
@@ -323,7 +331,14 @@ function renderViewsTab() {
   if (mode === 'shared') {
     for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', false, mode));
   } else {
-    for (const v of viewLayers.shared) rows.push(renderViewsTabRow(v, 'shared', hiddenSet.has(v.id), mode));
+    // HS-9187 — in Local mode a shared view may be locally OVERRIDDEN; display the
+    // resolved (customized) value so the user sees their edit, and the row offers
+    // the reset-to-shared affordance.
+    const overrides = viewLayers.delta.overrides ?? {};
+    for (const v of viewLayers.shared) {
+      const display = v.id in overrides ? { ...v, ...overrides[v.id] } : v;
+      rows.push(renderViewsTabRow(display, 'shared', hiddenSet.has(v.id), mode));
+    }
     for (const v of localViews) rows.push(renderViewsTabRow(v, 'local', false, mode));
   }
   if (rows.length === 0) {
@@ -640,8 +655,14 @@ function showViewEditor(existing?: CustomView, opts: { addLayer?: 'local' | 'sha
     // (shared view → the shared array; local view → its `added` entry); a NEW
     // view adds to `addLayer` (the sidebar "+" defaults to local; the Views tab
     // passes 'shared' for its "+ Add Shared" button).
+    // HS-9187 — editing a SHARED view while in LOCAL mode customizes it on THIS
+    // machine (a local `overrides` entry) rather than mutating the team value;
+    // the row then offers a "reset to shared" affordance. Shared-mode edits + local
+    // additions are unchanged.
     const next = isEdit
-      ? editView(viewLayers, view)
+      ? (getScopeMode() === 'local' && isSharedViewIn(viewLayers, view.id)
+          ? overrideSharedView(viewLayers, view)
+          : editView(viewLayers, view))
       : (addLayer === 'shared' ? addSharedView(viewLayers, view) : addLocalView(viewLayers, view));
     await persistViews(next);
     // Select the new/edited view

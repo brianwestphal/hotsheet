@@ -72,7 +72,8 @@ action is a delta write via `updateFileSettingsLayer('local'|'shared', …)`:
 |---|---|
 | Sidebar add (default) | local `added += view` |
 | Sidebar edit a local view | local `added[i]` (or `overrides`) update |
-| Sidebar edit a shared view | shared array update |
+| Edit a shared view in **Shared** mode | shared array update (the team value) |
+| **Edit a shared view in Local mode (HS-9187)** | local `overrides[id]` += the edited fields (the team value is untouched); the row gains an undo-2 **reset-to-shared** button (`resetViewToShared` drops the override) |
 | Sidebar "hide on this machine" (shared view) | local `hidden += id` |
 | Settings add → Local | local `added += view` |
 | Settings add → Shared | shared array `+= view` |

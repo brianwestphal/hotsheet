@@ -39,6 +39,42 @@ export function isSharedView(layers: ViewLayers, id: string): boolean {
   return layers.shared.some(v => idOf(v) === id);
 }
 
+/** HS-9187 — whether a shared view is currently OVERRIDDEN by the local layer
+ *  (so a "reset to shared" affordance applies). */
+export function isOverriddenView(layers: ViewLayers, id: string): boolean {
+  return layers.delta.overrides?.[id] !== undefined && isSharedView(layers, id);
+}
+
+/**
+ * HS-9187 — customize a SHARED view at the LOCAL level: record the edited fields
+ * as a per-machine `overrides` entry (shallow-merged onto the shared item by
+ * `resolveDeltaArray`) instead of mutating the shared/team value. The shared
+ * array is untouched, so a "reset to shared" (drop the override) restores it.
+ * No-op if `view.id` isn't a shared view. Pure.
+ */
+export function overrideSharedView(layers: ViewLayers, view: CustomView): ViewLayers {
+  const id = idOf(view);
+  if (!isSharedView(layers, id)) return layers;
+  const delta = cloneDelta(layers.delta);
+  const { id: _id, ...fields } = view; // the override carries the edited fields (sans id)
+  void _id;
+  delta.overrides = { ...(delta.overrides ?? {}), [id]: fields };
+  return { shared: layers.shared, delta: pruneViewDelta(delta) };
+}
+
+/** HS-9187 — discard a shared view's local override, reverting it to the shared
+ *  value, by dropping its `overrides` entry. No-op if it isn't overridden. Pure. */
+export function resetViewToShared(layers: ViewLayers, id: string): ViewLayers {
+  if (layers.delta.overrides?.[id] === undefined) return layers;
+  const delta = cloneDelta(layers.delta);
+  if (delta.overrides !== undefined) {
+    const { [id]: _dropped, ...rest } = delta.overrides;
+    void _dropped;
+    delta.overrides = rest;
+  }
+  return { shared: layers.shared, delta: pruneViewDelta(delta) };
+}
+
 function cloneDelta(delta: ArrayDelta<CustomView>): ArrayDelta<CustomView> {
   const out: ArrayDelta<CustomView> = {};
   if (delta.hidden !== undefined) out.hidden = [...delta.hidden];

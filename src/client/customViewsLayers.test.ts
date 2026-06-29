@@ -7,10 +7,13 @@ import {
   deleteSharedView,
   editView,
   hideSharedView,
+  isOverriddenView,
   isSharedView,
   moveViewToLocal,
   moveViewToShared,
+  overrideSharedView,
   reorderViews,
+  resetViewToShared,
   resolveViews,
   unhideSharedView,
   type ViewLayers,
@@ -59,6 +62,40 @@ describe('customViewsLayers (HS-9092/9093)', () => {
   it('editView is a no-op for an unknown id', () => {
     const layers = base();
     expect(editView(layers, view('nope'))).toBe(layers);
+  });
+
+  // HS-9187 — local customization of a shared view (override) + reset.
+  it('overrideSharedView records the edit as a local override WITHOUT touching the shared array', () => {
+    const layers = overrideSharedView(base(), view('s1', 'My Local Name'));
+    expect(layers.shared.find(v => v.id === 's1')?.name).toBe('s1'); // shared/team value untouched
+    expect(layers.delta.overrides?.s1).toMatchObject({ name: 'My Local Name' });
+    // The RESOLVED list shows the override (shallow-merged onto the shared item).
+    expect(resolveViews(layers).find(v => v.id === 's1')?.name).toBe('My Local Name');
+  });
+
+  it('overrideSharedView is a no-op for a non-shared (local-only) id', () => {
+    const start = addLocalView(base(), view('l1'));
+    expect(overrideSharedView(start, view('l1', 'x'))).toBe(start);
+  });
+
+  it('isOverriddenView is true only for a shared view with an override', () => {
+    const layers = overrideSharedView(base(), view('s1', 'Local'));
+    expect(isOverriddenView(layers, 's1')).toBe(true);
+    expect(isOverriddenView(layers, 's2')).toBe(false); // not overridden
+    expect(isOverriddenView(base(), 's1')).toBe(false); // no override at all
+  });
+
+  it('resetViewToShared drops the override, reverting to the shared value', () => {
+    const overridden = overrideSharedView(base(), view('s1', 'Local'));
+    const reset = resetViewToShared(overridden, 's1');
+    expect(isOverriddenView(reset, 's1')).toBe(false);
+    expect(reset.delta.overrides).toBeUndefined(); // pruned when empty
+    expect(resolveViews(reset).find(v => v.id === 's1')?.name).toBe('s1'); // back to shared
+  });
+
+  it('resetViewToShared is a no-op when there is no override', () => {
+    const layers = base();
+    expect(resetViewToShared(layers, 's1')).toBe(layers);
   });
 
   it('hideSharedView + unhideSharedView round-trip (resolved omits then restores)', () => {
