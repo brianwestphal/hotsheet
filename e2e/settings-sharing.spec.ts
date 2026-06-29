@@ -178,6 +178,45 @@ test.describe('Settings scope control (Shared | Local)', () => {
     expect(sharedCmd.map(c => c.id)).toEqual(['shared-a', 'shared-b']); // shared unchanged — local-only add
   });
 
+  // HS-9183 — hiding a shared command in Local mode shows a DIMMED row with a
+  // restore (eye) button (not a delete), like custom views / terminals.
+  test('HS-9183: hiding a shared command in Local mode shows a dimmed row with restore', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { custom_commands: [
+        { id: 'sh-a', name: 'Shared A', prompt: 'pa', target: 'shell' },
+        { id: 'sh-b', name: 'Shared B', prompt: 'pb', target: 'shell' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const list = page.locator('#settings-commands-list');
+    const rowA = list.locator('.cmd-outline-row').filter({ hasText: 'Shared A' }).first();
+    await expect(rowA).toBeVisible({ timeout: 5000 });
+
+    // The shared command's "delete" is the eye-off HIDE in Local mode.
+    await expect(rowA.locator('.cmd-outline-delete-btn')).toHaveAttribute('title', 'Hide on this machine');
+    await rowA.locator('.cmd-outline-delete-btn').click();
+    await page.waitForTimeout(400);
+
+    // It becomes a DIMMED hidden row (not gone) with a restore (eye) button.
+    const hiddenRow = list.locator('.cmd-outline-row-hidden').filter({ hasText: 'Shared A' });
+    await expect(hiddenRow).toHaveCount(1);
+    await expect(hiddenRow.locator('.cmd-reenable-btn')).toHaveCount(1);
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: { custom_commands?: { hidden?: string[] } } };
+    expect(layered.local.custom_commands?.hidden).toContain('sh-a');
+
+    // Restore → the hidden row goes away, Shared A returns as a normal row, delta cleared.
+    await hiddenRow.locator('.cmd-reenable-btn').click();
+    await page.waitForTimeout(400);
+    await expect(list.locator('.cmd-outline-row-hidden')).toHaveCount(0);
+    await expect(list.locator('.cmd-outline-row:not(.cmd-outline-row-hidden)').filter({ hasText: 'Shared A' })).toHaveCount(1);
+    layered = await (await page.request.get('/api/file-settings/layered')).json();
+    expect(layered.local.custom_commands?.hidden ?? []).not.toContain('sh-a');
+  });
+
   // HS-9094 — a shared CHILD command moves into the local layer: it physically
   // leaves its shared group in settings.json and becomes a `childAdded` child in
   // settings.local.json (so it's machine-only but still appears in the group).

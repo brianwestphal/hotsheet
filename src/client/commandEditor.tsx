@@ -11,6 +11,7 @@ import {
   getCommandOverriddenIds,
   getCommandShared,
   getEditTree,
+  getHiddenSharedCommands,
   isChannelEnabled,
   isGroup,
   type ItemRef,
@@ -19,10 +20,11 @@ import {
   resetCommandOverride,
   resolveCommand,
   saveCommandItems,
+  unhideCommand,
   updateCommand,
 } from './experimentalSettings.js';
 import { showColorDropdown, showIconPicker } from './iconPicker.js';
-import { ICON_UNDO_2,renderIconSvg } from './icons.js';
+import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2,renderIconSvg } from './icons.js';
 import { delegate } from './reactive.js';
 import { scopeListHintElement } from './settingsScopeList.js';
 
@@ -257,7 +259,14 @@ function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
   // HS-9014 \u2014 in Local mode, removing a SHARED command hides it on this machine
   // (the delta records it as `hidden`); a local-only addition is truly deleted.
   const shared = isSharedItem(cmd, ctx);
-  const deleteTitle = ctx.mode === 'local' && shared ? 'Hide on this machine' : 'Delete';
+  // HS-9183 \u2014 in Local mode a SHARED command can only be HIDDEN on this machine
+  // (an eye-off button), not deleted; a local-only addition keeps the trash delete.
+  // Mirrors views + terminals (HS-9186). The `.cmd-outline-delete-btn` handler is
+  // unchanged \u2014 `deleteAtRef` + the delta computation turn a shared "delete" into a
+  // `hidden` entry; the hidden row then re-renders below.
+  const hideHere = ctx.mode === 'local' && shared;
+  const deleteTitle = hideHere ? 'Hide on this machine' : 'Delete';
+  const deleteIcon = hideHere ? ICON_EYE_OFF : renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13);
 
   // HS-8614 \u2014 pure markup. The edit / delete clicks + the drag handlers are
   // delegated once at `#settings-commands-list` (`ensureCommandRowDelegationBound`),
@@ -269,7 +278,19 @@ function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
       <span className="cmd-outline-name">{cmd.name !== '' ? cmd.name : '(untitled)'}</span>
       {renderScopeAffordances(cmd, ref, ctx)}
       <button className="cmd-outline-edit-btn" title="Edit">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13)}</button>
-      <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
+      <button className="cmd-outline-delete-btn" title={deleteTitle} aria-label={deleteTitle}>{deleteIcon}</button>
+    </div>
+  );
+}
+
+/** HS-9183: a dimmed row for a shared command hidden on this machine, with an
+ *  eye (restore) button. Mirrors the terminals hidden row. */
+function renderHiddenCommandRow(entry: { id: string; name: string }): HTMLElement {
+  return toElement(
+    <div className="cmd-outline-row cmd-outline-row-hidden" data-cmd-id={entry.id}>
+      <span className="cmd-outline-name">{entry.name}</span>
+      <span className="cmd-scope-tag scope-tag scope-tag-local"><span className="scope-tag-dot" />hidden</span>
+      <button className="scope-reset-btn cmd-reenable-btn" title="Show on this machine" aria-label="Show on this machine">{ICON_EYE}</button>
     </div>
   );
 }
@@ -368,6 +389,14 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     const id = item.id;
     if (typeof id !== 'string' || id === '') return;
     void resetCommandOverride(id);
+  }));
+
+  // HS-9183 — restore (unhide) a shared command hidden on this machine. The
+  // dimmed hidden row carries its id in `data-cmd-id` (not a `data-ref` index).
+  d.push(delegate<HTMLElement>(list, 'click', '.cmd-reenable-btn', (e, btn) => {
+    e.stopPropagation();
+    const id = btn.closest<HTMLElement>('.cmd-outline-row-hidden')?.dataset.cmdId;
+    if (id !== undefined && id !== '') void unhideCommand(id);
   }));
 
   // Group name (contentEditable) — commit on blur, Enter blurs, Escape reverts.
@@ -540,6 +569,12 @@ export function renderCustomCommandSettings() {
     } else {
       children.push(renderCommandOutlineRow({ type: 'top', index: i }, ctx));
     }
+  }
+
+  // HS-9183 — append the shared commands HIDDEN on this machine (Local mode) as
+  // dimmed rows with a restore (eye) button, so they don't just vanish.
+  for (const hidden of getHiddenSharedCommands()) {
+    children.push(renderHiddenCommandRow(hidden));
   }
 
   const btnRow = toElement(

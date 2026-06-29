@@ -2717,6 +2717,13 @@ body.cross-project-stats-active {
   }
   .cmd-outline-move-btn { font-size: 14px; font-weight: 600; }
 
+  // HS-9183 — a shared command hidden on this machine: dimmed, non-draggable,
+  // with just its name + a "hidden" tag + the restore (eye) button.
+  &.cmd-outline-row-hidden {
+    opacity: 0.55;
+    .cmd-outline-name { flex: 1; }
+  }
+
   // Group header row styling
   &.cmd-outline-group-row {
     background: var(--bg);

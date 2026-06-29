@@ -90,8 +90,13 @@ by the server resolve + the client editor, unit-tested in isolation):
   (`refreshSidebarFromResolved`) and on dialog close
   (`refreshCommandsAfterDialogClose`).
 - **Editor UI** (`commandEditor.tsx`): per-row origin tags (shared/local) + a
-  scope hint banner; in Local mode a shared item's delete reads "Hide on this
-  machine" (resolves to a `hidden` delta entry); the `#settings-commands-list`
+  scope hint banner; in Local mode a shared item's delete is an **eye-off "Hide
+  on this machine"** button (HS-9183 — not a trash delete; resolves to a `hidden`
+  delta entry), and the hidden command then renders as a **dimmed `.cmd-outline-row-hidden`
+  row with an eye "restore" button** (`getHiddenSharedCommands` computes the hidden
+  set LIVE as the shared ids absent from `editTree`, so a just-hidden command shows
+  immediately; `unhideCommand` drops the id from the local delta's `hidden`). This
+  mirrors the custom-views (§107) + terminals hide/show affordance. The `#settings-commands-list`
   container is no longer locked via `data-scope-complex` (it's element-level
   scope-aware).
 

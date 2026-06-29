@@ -86,6 +86,49 @@ export function _setCommandOverriddenIdsForTests(ids: Set<string>): void {
   commandOverriddenIds = ids;
 }
 
+/** HS-9183 — the shared commands HIDDEN on this machine (Local mode), each as a
+ *  flat `{ id, name }` for the dimmed "hidden" rows. Computed LIVE: a shared item
+ *  (top-level command/group or group child) that's absent from the editor's
+ *  resolved tree (`editTree`) is hidden — so a just-hidden command surfaces
+ *  immediately, before the next reload. A hidden group covers its children.
+ *  Empty outside Local mode (hide-on-this-machine doesn't apply). */
+export function getHiddenSharedCommands(): { id: string; name: string }[] {
+  if (commandMode !== 'local') return [];
+  // Every shared id currently PRESENT in the resolved editor tree.
+  const present = new Set<string>();
+  for (const item of editTree) {
+    if (typeof item.id === 'string' && item.id !== '') present.add(item.id);
+    if (isGroup(item)) {
+      for (const ch of item.children) {
+        if (typeof ch.id === 'string' && ch.id !== '') present.add(ch.id);
+      }
+    }
+  }
+  const out: { id: string; name: string }[] = [];
+  for (const item of commandShared) {
+    const id = typeof item.id === 'string' ? item.id : '';
+    if (id !== '' && !present.has(id)) {
+      out.push({ id, name: item.name !== '' ? item.name : '(untitled)' });
+      continue; // a hidden group covers its children — don't list them twice
+    }
+    if (isGroup(item) && present.has(id)) {
+      for (const ch of item.children) {
+        const cid = typeof ch.id === 'string' ? ch.id : '';
+        if (cid !== '' && !present.has(cid)) {
+          out.push({ id: cid, name: `${item.name} › ${ch.name !== '' ? ch.name : '(untitled)'}` });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Test-only — seed the pristine shared tree (production fills it from the shared
+ *  layer in `loadScopedCommands`). Needed to resolve hidden ids → names. */
+export function _setCommandSharedForTests(items: CommandItem[]): void {
+  commandShared = items;
+}
+
 /** The scope mode the command editor last loaded for. */
 export function getCommandMode(): ScopeMode {
   return commandMode;
@@ -460,6 +503,26 @@ export async function resetCommandOverride(id: string): Promise<void> {
   const delta: CommandTreeDelta = { ...localVal };
   if (Object.keys(nextOverrides).length > 0) delta.overrides = nextOverrides;
   else delete delta.overrides;
+  await persistLocalCommandDelta(delta);
+  await loadScopedCommands();
+  renderCustomCommandSettings();
+  await refreshSidebarFromResolved();
+}
+
+/**
+ * HS-9183 — restore (unhide) a shared command hidden on this machine by dropping
+ * its id from the local delta's `hidden` list, so it reappears in the resolved
+ * tree. No-op if `id` isn't hidden. Reloads + re-renders + refreshes the sidebar.
+ */
+export async function unhideCommand(id: string): Promise<void> {
+  noteCommandItemsMutation();
+  const layered = await getLayeredFileSettings();
+  const localVal = layered.local.custom_commands;
+  if (!isCommandTreeDelta(localVal) || localVal.hidden === undefined || !localVal.hidden.includes(id)) return;
+  const nextHidden = localVal.hidden.filter(h => h !== id);
+  const delta: CommandTreeDelta = { ...localVal };
+  if (nextHidden.length > 0) delta.hidden = nextHidden;
+  else delete delta.hidden;
   await persistLocalCommandDelta(delta);
   await loadScopedCommands();
   renderCustomCommandSettings();

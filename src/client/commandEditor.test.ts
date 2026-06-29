@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ApiIndex from '../api/index.js';
 import { _resetCommandRowDelegationForTests, renderCustomCommandSettings } from './commandEditor.js';
-import { _setCommandModeForTests, _setCommandOverriddenIdsForTests, getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
+import { _setCommandModeForTests, _setCommandOverriddenIdsForTests, _setCommandSharedForTests, getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
 
 const getSettingsMock = vi.hoisted(() => vi.fn<() => Promise<{ custom_commands: string }>>());
 vi.mock('../api/index.js', async (importOriginal) => ({
@@ -156,5 +156,38 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
     _setCommandOverriddenIdsForTests(new Set());
     renderCustomCommandSettings();
     expect(document.querySelectorAll('#settings-commands-list .cmd-reset-btn').length).toBe(0);
+  });
+
+  // HS-9183 — a shared command hidden on this machine renders as a dimmed row
+  // with a restore button (instead of vanishing), in Local mode.
+  it('HS-9183: shows hidden shared commands as dimmed rows with a restore (eye) button', async () => {
+    // editTree shows only the visible command; the shared baseline has both;
+    // `c2` is hidden on this machine.
+    getSettingsMock.mockResolvedValue({ custom_commands: JSON.stringify([
+      { id: 'c1', name: 'Build', prompt: 'npm run build', target: 'shell' },
+    ]) });
+    await reloadCustomCommands();
+    // The shared baseline has BOTH; the editor tree (resolved) shows only c1 →
+    // c2 is "absent from the editor in Local mode" = hidden on this machine.
+    _setCommandSharedForTests([
+      { id: 'c1', name: 'Build', prompt: 'npm run build' },
+      { id: 'c2', name: 'Hidden One', prompt: 'echo hi' },
+    ]);
+    _setCommandModeForTests('local');
+    renderCustomCommandSettings();
+
+    const hiddenRows = document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row-hidden');
+    expect(hiddenRows.length).toBe(1);
+    expect(hiddenRows[0].textContent).toContain('Hidden One');
+    expect(hiddenRows[0].querySelector('.cmd-reenable-btn')).not.toBeNull();
+    expect(hiddenRows[0].getAttribute('data-cmd-id')).toBe('c2');
+    // The visible command (c1) is a normal (non-hidden) row.
+    const visible = document.querySelectorAll('#settings-commands-list .cmd-outline-row:not(.cmd-outline-row-hidden):not(.cmd-outline-group-row)');
+    expect(visible.length).toBe(1);
+
+    // Shared mode: hidden-on-this-machine doesn't apply → no hidden rows.
+    _setCommandModeForTests('shared');
+    renderCustomCommandSettings();
+    expect(document.querySelectorAll('#settings-commands-list .cmd-outline-row-hidden').length).toBe(0);
   });
 });
