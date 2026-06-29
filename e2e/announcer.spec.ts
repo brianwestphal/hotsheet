@@ -244,6 +244,54 @@ test('announcer "All Projects" interleaves entries with project chips (HS-8762)'
   await expect(pip.locator('.announcer-pip-project-chip')).toHaveText('Alpha');
 });
 
+// HS-9169 — the cross-project context picker lists EVERY project but DISABLES
+// the ones without a usable model (greyed, non-selectable), with a hint — rather
+// than hiding them (the pre-HS-9169 filter behavior).
+test('announcer context picker disables projects with no usable model (HS-9169)', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
+    });
+    (window as unknown as { SpeechSynthesisUtterance: unknown }).SpeechSynthesisUtterance = class { constructor(public text: string) {} };
+  });
+
+  // Alpha is usable (active); Beta has no model configured (usable: false).
+  await page.route('**/api/announcer/overview**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ activeSecret: 'sec-a', appleAvailable: false, localAvailable: false, projects: [
+      { secret: 'sec-a', name: 'Alpha', enabled: true, hasKey: true, entryCount: 1, usable: true },
+      { secret: 'sec-b', name: 'Beta', enabled: true, hasKey: false, entryCount: 0, usable: false },
+    ] }),
+  }));
+  await page.route('**/api/announcer/generate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], generated: 0 }) }));
+  await page.route('**/api/announcer/entries**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [
+    { id: 1, created_at: '2026-06-05T01:00:00.000Z', covers_from: null, covers_to: null, title: 'Alpha work', script: 'Alpha did things.', position: 0, dismissed: false },
+  ] }) }));
+  await page.route('**/api/announcer/cursor**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+
+  await page.goto('/');
+  await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+  // The Listen button is enabled because ≥1 project (Alpha) is usable.
+  await expect(page.locator('#announcer-listen-btn')).toBeEnabled({ timeout: 8000 });
+  await page.locator('#announcer-listen-btn').click();
+  const pip = page.locator('.announcer-pip');
+  await expect(pip).toBeVisible({ timeout: 8000 });
+
+  // Both projects appear in the picker; the usable one is selectable…
+  const alphaOpt = pip.locator('.announcer-pip-context-select option[value="sec-a"]');
+  const betaOpt = pip.locator('.announcer-pip-context-select option[value="sec-b"]');
+  await expect(alphaOpt).toBeEnabled();
+  // …and the unusable one is disabled, labeled, and carries the hint.
+  await expect(betaOpt).toBeDisabled();
+  await expect(betaOpt).toHaveText(/no model configured/i);
+  await expect(betaOpt).toHaveAttribute('title', /no model configured/i);
+
+  // The disabled option can't be selected (the browser rejects it; the context
+  // stays on the active usable project).
+  await expect(pip.locator('.announcer-pip-context-select')).toHaveValue('sec-a');
+});
+
 // HS-8767 — live mode: the Live toggle registers a lease, shows the presence
 // line, and tails newly-generated entries into the player.
 test('announcer live mode tails new entries (HS-8767)', async ({ page }) => {
@@ -538,7 +586,7 @@ test('local-provider settings: model option + field toggle + Listen gate (HS-879
     status: 200, contentType: 'application/json',
     body: JSON.stringify({
       activeSecret: 'proj-a',
-      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: false, entryCount: 0 }],
+      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: false, entryCount: 0, usable: true }],
       appleAvailable: false, localAvailable: true,
     }),
   }));
@@ -602,7 +650,10 @@ test('local-provider settings: "Local model" option hidden when unavailable (HS-
     status: 200, contentType: 'application/json',
     body: JSON.stringify({
       activeSecret: 'proj-a',
-      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: false, entryCount: 0 }],
+      // HS-9169 — no key + no on-device provider → the server stamps usable:false
+      // (the project is listed but the Listen button gate / picker treat it as
+      // unusable).
+      projects: [{ secret: 'proj-a', name: 'My Project', enabled: true, hasKey: false, entryCount: 0, usable: false }],
       appleAvailable: false, localAvailable: false,
     }),
   }));

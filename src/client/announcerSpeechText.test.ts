@@ -42,7 +42,7 @@ describe('reelSpeechText (HS-8782)', () => {
 
 describe('clearTargetSecrets (HS-8827)', () => {
   const proj = (secret: string, name: string): AnnouncerProjectInfo => ({
-    secret, name, enabled: true, hasKey: true, entryCount: 0,
+    secret, name, enabled: true, hasKey: true, entryCount: 0, usable: true,
   });
   const projects = [proj('sec-a', 'Alpha'), proj('sec-b', 'Beta')];
 

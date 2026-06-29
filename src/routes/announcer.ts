@@ -52,15 +52,16 @@ announcerRoutes.get('/announcer/overview', async (c) => {
   // configured (on-device available OR the project has an Anthropic key).
   const appleAvailable = await isAppleFoundationAvailable();
   const localAvailable = await isLocalProviderAvailable();
-  const projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] = [];
+  // HS-9169 — list EVERY project with a `usable` flag (was: filter to usable
+  // only). The context picker renders the unusable ones disabled; the toolbar
+  // Listen-button gate still enables when ≥1 project is usable.
+  const projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number; usable: boolean }[] = [];
   for (const p of getAllProjects()) {
     const info = await runWithDataDir(p.dataDir, async () => {
       return { hasKey: await hasAnnouncerKey(), entryCount: (await getActiveAnnouncements()).length };
     });
     const usable = appleAvailable || localAvailable || info.hasKey;
-    if (usable) {
-      projects.push({ secret: p.secret, name: p.name, enabled: true, hasKey: info.hasKey, entryCount: info.entryCount });
-    }
+    projects.push({ secret: p.secret, name: p.name, enabled: true, hasKey: info.hasKey, entryCount: info.entryCount, usable });
   }
   return c.json({ activeSecret, projects, appleAvailable, localAvailable });
 });

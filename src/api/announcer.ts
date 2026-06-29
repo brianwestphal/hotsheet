@@ -38,6 +38,11 @@ export const AnnouncerProjectInfoSchema = z.object({
   enabled: z.boolean(),
   hasKey: z.boolean(),
   entryCount: z.number(),
+  // HS-9169 — whether this project has a usable provider (on-device Apple/local
+  // OR an Anthropic key). The overview now lists EVERY project (not just usable
+  // ones); the context picker renders the unusable ones disabled. `.default(true)`
+  // keeps pre-HS-9169 servers (which only ever returned usable projects) valid.
+  usable: z.boolean().default(true),
 });
 export type AnnouncerProjectInfo = z.infer<typeof AnnouncerProjectInfoSchema>;
 

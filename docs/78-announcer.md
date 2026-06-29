@@ -13,8 +13,19 @@ settings + transcript PIP + playback + TTS) SHIPPED (HS-8747, 2026-06-05 — see
 > an Anthropic key). The default model is the free on-device provider when
 > available. The header **Listen** button is always shown but **disabled** until
 > a usable model is configured. All Announcer settings are machine-local-only
-> (the tab has no Shared|Local scope bar). Cross-project picker refinement — show
-> all projects, disable the unusable ones — tracked in HS-9169.
+> (the tab has no Shared|Local scope bar).
+>
+> **HS-9169 (2026-06-29) — cross-project picker shows all projects, disables the
+> unusable ones.** `GET /announcer/overview` now lists **every** project (it no
+> longer filters to usable-only), stamping each with a `usable` boolean (an
+> Anthropic key OR an on-device provider). The PIP context dropdown
+> (`announcerPip.tsx`) renders all projects; ones without a usable model are
+> **disabled** (non-selectable, greyed) and labeled "— no model configured" with a
+> hint. The Listen-button gate now enables when **≥1 project is `usable`**
+> (`overview.projects.some(p => p.usable)`); a project launch only defaults its
+> context to the active project when that project is usable. This is the UI
+> refinement deferred from HS-9159 (which shipped the always-on core + a safe
+> usable-only filter as v1).
 
 The rest of this document is the design for
 an opt-in audio/visual "announcer" that narrates the work being done on a

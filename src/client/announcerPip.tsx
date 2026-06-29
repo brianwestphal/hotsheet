@@ -235,7 +235,18 @@ export function openAnnouncerPip(entries: ReelEntry[], opts: OpenPipOptions): An
       <div className="announcer-pip-context">
         <select className="announcer-pip-context-select" aria-label="Announcer context">
           <option value={ALL_PROJECTS}>All Projects</option>
-          {opts.projects.map(p => <option value={p.secret}>{p.name}</option>)}
+          {/* HS-9169 — list EVERY project; the ones without a usable model
+              (no Anthropic key + no on-device provider) render disabled
+              (non-selectable) with a hint, rather than being hidden. */}
+          {opts.projects.map(p => (
+            <option
+              value={p.secret}
+              disabled={!p.usable}
+              title={p.usable ? undefined : 'No model configured — set one in Settings → Announcer'}
+            >
+              {p.usable ? p.name : `${p.name} — no model configured`}
+            </option>
+          ))}
         </select>
         {/* HS-8767 — Live toggle: tail work as it happens. */}
         <button className="announcer-pip-live" type="button" title="Live — narrate work as it happens" aria-pressed="false">{LIVE_ICON}<span>Live</span></button>

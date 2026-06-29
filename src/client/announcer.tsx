@@ -43,11 +43,12 @@ export async function refreshAnnouncerVisibility(): Promise<void> {
   let usable = false;
   try {
     const overview = await getAnnouncerOverview();
-    // HS-8790/8792 — a project is narratable with an Anthropic key OR an on-device
-    // provider (Apple Foundation Models / a reachable local endpoint), both
-    // machine-global. The overview lists only usable projects (server-side).
-    const onDevice = overview.appleAvailable || overview.localAvailable;
-    usable = overview.projects.some(p => p.hasKey) || (onDevice && overview.projects.length > 0);
+    // HS-9169 — the overview now lists EVERY project (usable + unusable) so the
+    // context picker can render the unusable ones disabled. A project is usable
+    // (narratable) with an Anthropic key OR an on-device provider (Apple Foundation
+    // Models / a reachable local endpoint); the server stamps that per project as
+    // `usable`. The Listen button enables when ≥1 project is usable.
+    usable = overview.projects.some(p => p.usable);
   } catch {
     usable = false;
   }
@@ -160,10 +161,13 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
     }
 
     // Default context: the active project from a project tab; "All Projects"
-    // from a global surface (dashboard / stats).
+    // from a global surface (dashboard / stats). HS-9169 — only default to the
+    // active project when it's USABLE (the picker disables unusable projects, so
+    // an unusable active project falls back to "All Projects" rather than
+    // pre-selecting a disabled option).
     let context = ALL_PROJECTS;
     if (!isGlobalContext() && overview.activeSecret !== null
-      && projects.some(p => p.secret === overview.activeSecret)) {
+      && projects.some(p => p.secret === overview.activeSecret && p.usable)) {
       context = overview.activeSecret;
     }
 

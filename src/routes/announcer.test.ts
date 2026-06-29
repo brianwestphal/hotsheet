@@ -225,25 +225,30 @@ describe('announcer routes (HS-8745)', () => {
     expect((await putRes.json() as { topics: string[] }).topics).toEqual(['only this']);
   });
 
-  // HS-8762 / HS-9159 — cross-project overview lists projects with a USABLE model
-  // (a key OR an on-device provider; the per-project enable toggle is gone), with
-  // their key + entry-count read in each project's own DB context.
-  it('overview lists usable projects with key + entry-count; excludes ones with no provider', async () => {
+  // HS-8762 / HS-9159 / HS-9169 — the cross-project overview lists EVERY project
+  // (key + entry-count read in each project's own DB context), each stamped with a
+  // `usable` flag (a key OR an on-device provider). HS-9169 changed it from
+  // filtering out unusable projects to including them disabled, so the context
+  // picker can show all projects and grey out the unusable ones.
+  it('overview lists ALL projects, stamping each with a `usable` flag', async () => {
     const fakeProject = { secret: 'sec1', name: 'Proj One', dataDir: tempDir } as unknown as ProjectContext;
     vi.mocked(getAllProjects).mockReturnValue([fakeProject]);
 
-    // A usable model (mocked key) + two entries → overview includes the project.
+    // A usable model (mocked key) + two entries → present with usable: true.
     await (await getDb()).query(`INSERT INTO announcements (title, script, position) VALUES ('A','a',1), ('B','b',2)`);
 
-    let overview = await (await app.request('/api/announcer/overview')).json() as { activeSecret: string; projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] };
+    let overview = await (await app.request('/api/announcer/overview')).json() as { activeSecret: string; projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number; usable: boolean }[] };
     expect(overview.projects).toEqual([
-      { secret: 'sec1', name: 'Proj One', enabled: true, hasKey: true, entryCount: 2 },
+      { secret: 'sec1', name: 'Proj One', enabled: true, hasKey: true, entryCount: 2, usable: true },
     ]);
 
-    // No usable provider (no key + Apple/local off) → excluded from the overview.
+    // No usable provider (no key + Apple/local off) → STILL listed (HS-9169),
+    // but flagged usable: false so the picker can render it disabled.
     vi.mocked(resolveAnnouncerKey).mockResolvedValue(null);
     vi.mocked(hasAnnouncerKey).mockResolvedValue(false);
-    overview = await (await app.request('/api/announcer/overview')).json() as { activeSecret: string; projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] };
-    expect(overview.projects).toHaveLength(0);
+    overview = await (await app.request('/api/announcer/overview')).json() as { activeSecret: string; projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number; usable: boolean }[] };
+    expect(overview.projects).toEqual([
+      { secret: 'sec1', name: 'Proj One', enabled: true, hasKey: false, entryCount: 2, usable: false },
+    ]);
   });
 });
