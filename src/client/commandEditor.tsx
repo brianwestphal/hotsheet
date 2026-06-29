@@ -8,6 +8,7 @@ import {
   type CustomCommand,
   deleteAtRef,
   getCommandMode,
+  getCommandOverriddenIds,
   getCommandShared,
   getEditTree,
   isChannelEnabled,
@@ -15,12 +16,13 @@ import {
   type ItemRef,
   moveCommandLayer,
   noteCommandItemsMutation,
+  resetCommandOverride,
   resolveCommand,
   saveCommandItems,
   updateCommand,
 } from './experimentalSettings.js';
 import { showColorDropdown, showIconPicker } from './iconPicker.js';
-import { renderIconSvg } from './icons.js';
+import { ICON_UNDO_2,renderIconSvg } from './icons.js';
 import { delegate } from './reactive.js';
 import { scopeListHintElement } from './settingsScopeList.js';
 
@@ -200,6 +202,7 @@ function refEqual(a: ItemRef | null, b: ItemRef | null): boolean {
 interface ScopeCtx {
   mode: 'shared' | 'local';
   sharedIds: Set<string>;
+  overriddenIds: Set<string>; // HS-9184 — shared ids the local layer overrides
 }
 
 function buildScopeCtx(): ScopeCtx {
@@ -212,12 +215,17 @@ function buildScopeCtx(): ScopeCtx {
       }
     }
   }
-  return { mode: getCommandMode(), sharedIds };
+  return { mode: getCommandMode(), sharedIds, overriddenIds: getCommandOverriddenIds() };
 }
 
 /** Is the item at `ref` a SHARED item (vs a local-only addition)? */
 function isSharedItem(item: CommandItem, ctx: ScopeCtx): boolean {
   return typeof item.id === 'string' && ctx.sharedIds.has(item.id);
+}
+
+/** HS-9184 — is this a shared item the local layer currently overrides? */
+function isOverriddenItem(item: CommandItem, ctx: ScopeCtx): boolean {
+  return ctx.mode === 'local' && typeof item.id === 'string' && ctx.overriddenIds.has(item.id);
 }
 
 /** HS-9014 / HS-9094 - the origin tag + shared/local move button shown in
@@ -232,7 +240,12 @@ function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) 
   const direction = shared ? 'to-local' : 'to-shared';
   const title = shared ? 'Move to Local (make this machine-only)' : 'Move to Shared (commit for the team)';
   const moveBtn = <button className="cmd-outline-move-btn" data-move={direction} title={title}>{shared ? '\u2193' : '\u2191'}</button>;
-  return <>{tag}{moveBtn}</>;
+  // HS-9184 \u2014 a locally-overridden shared command offers an undo-2 "reset to
+  // shared" button (discards the local override), mirroring terminals (HS-9128).
+  const resetBtn = isOverriddenItem(item, ctx)
+    ? <button className="scope-reset-btn cmd-reset-btn" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button>
+    : null;
+  return <>{tag}{resetBtn}{moveBtn}</>;
 }
 
 function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
@@ -344,6 +357,17 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     if (typeof id !== 'string' || id === '') return;
     const direction = btn.dataset.move === 'to-shared' ? 'to-shared' : 'to-local';
     void moveCommandLayer(id, direction, ref.type === 'child' ? 'child' : 'top');
+  }));
+
+  // HS-9184 — reset a locally-overridden shared command back to the shared value.
+  d.push(delegate<HTMLElement>(list, 'click', '.cmd-reset-btn', (e, btn) => {
+    e.stopPropagation();
+    const ref = readRef(btn);
+    if (ref === null) return;
+    const item = ref.type === 'top' ? getEditTree()[ref.index] : resolveCommand(ref);
+    const id = item.id;
+    if (typeof id !== 'string' || id === '') return;
+    void resetCommandOverride(id);
   }));
 
   // Group name (contentEditable) — commit on blur, Enter blurs, Escape reverts.

@@ -68,6 +68,10 @@ export const ICON_TAG = <svg {...LUCIDE_14}><path d="M12.586 2.586A2 2 0 0 0 11.
 
 export const ICON_ARCHIVE = <svg {...LUCIDE_14}><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>;
 
+// HS-9184/9187 — lucide `undo-2`, used as the "reset to shared" affordance on a
+// locally-overridden shared command / view / terminal.
+export const ICON_UNDO_2 = <svg {...LUCIDE_14}><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>;
+
 export const ICON_EYE = <svg {...LUCIDE_14}><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>;
 
 // HS-9093 — layer-move arrows (Move to Local / Move to Shared).

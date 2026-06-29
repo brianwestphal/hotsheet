@@ -65,9 +65,25 @@ let commandShared: CommandItem[] = [];
 // `renderChannelCommands` reads `commandItems`.
 let editTree: CommandItem[] = [];
 
+// HS-9184 — ids of shared commands the local layer OVERRIDES (the delta's
+// `overrides` keys, in Local mode). Drives the per-row "reset to shared"
+// (undo-2) affordance. Empty in Shared mode (nothing to reset there).
+let commandOverriddenIds = new Set<string>();
+
 /** The editor's working tree (mode-specific). */
 export function getEditTree(): CommandItem[] {
   return editTree;
+}
+
+/** HS-9184 — ids of shared commands locally overridden (Local mode only). */
+export function getCommandOverriddenIds(): Set<string> {
+  return commandOverriddenIds;
+}
+
+/** Test-only — seed the overridden-id set (production fills it from the local
+ *  delta in `loadScopedCommands`, which needs the layered-settings transport). */
+export function _setCommandOverriddenIdsForTests(ids: Set<string>): void {
+  commandOverriddenIds = ids;
 }
 
 /** The scope mode the command editor last loaded for. */
@@ -277,6 +293,11 @@ export async function loadScopedCommands(): Promise<void> {
     commandShared = sharedBackfill.items;
 
     const localVal = layered.local.custom_commands;
+    // HS-9184 — track which shared commands the local layer overrides (Local mode
+    // only) so each overridden row can offer a "reset to shared" affordance.
+    commandOverriddenIds = commandMode === 'local' && isCommandTreeDelta(localVal)
+      ? new Set(Object.keys(localVal.overrides ?? {}))
+      : new Set<string>();
     let display: CommandItem[];
     if (commandMode === 'shared') {
       display = commandShared;
@@ -420,6 +441,26 @@ export async function moveCommandLayer(id: string, direction: 'to-local' | 'to-s
     : (direction === 'to-local' ? moveTopLevelToLocal(layers, id) : moveTopLevelToShared(layers, id));
   await updateFileSettingsLayer('shared', { custom_commands: next.shared });
   await persistLocalCommandDelta(next.delta);
+  await loadScopedCommands();
+  renderCustomCommandSettings();
+  await refreshSidebarFromResolved();
+}
+
+/**
+ * HS-9184 — reset a locally-overridden shared command back to the shared value
+ * by dropping its entry from the local delta's `overrides` (the row's undo-2
+ * affordance). No-op when there's no local override for `id`. Reloads + re-renders.
+ */
+export async function resetCommandOverride(id: string): Promise<void> {
+  noteCommandItemsMutation();
+  const layered = await getLayeredFileSettings();
+  const localVal = layered.local.custom_commands;
+  if (!isCommandTreeDelta(localVal) || localVal.overrides === undefined || !(id in localVal.overrides)) return;
+  const nextOverrides = Object.fromEntries(Object.entries(localVal.overrides).filter(([k]) => k !== id));
+  const delta: CommandTreeDelta = { ...localVal };
+  if (Object.keys(nextOverrides).length > 0) delta.overrides = nextOverrides;
+  else delete delta.overrides;
+  await persistLocalCommandDelta(delta);
   await loadScopedCommands();
   renderCustomCommandSettings();
   await refreshSidebarFromResolved();

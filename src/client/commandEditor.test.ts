@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ApiIndex from '../api/index.js';
 import { _resetCommandRowDelegationForTests, renderCustomCommandSettings } from './commandEditor.js';
-import { _setCommandModeForTests, getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
+import { _setCommandModeForTests, _setCommandOverriddenIdsForTests, getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
 
 const getSettingsMock = vi.hoisted(() => vi.fn<() => Promise<{ custom_commands: string }>>());
 vi.mock('../api/index.js', async (importOriginal) => ({
@@ -132,5 +132,29 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
     // data-ref), not a stale ref. Leaves [C].
     deleteBtnAtRow(0).click();
     expect(getCommandItems().map(i => 'name' in i ? i.name : '?')).toEqual(['C']);
+  });
+
+  // HS-9184 — a locally-overridden shared command offers an undo-2 "reset to
+  // shared" button in Local mode; a non-overridden command doesn't, and the
+  // button never appears in Shared mode (nothing to reset there).
+  it('HS-9184: shows a reset-to-shared button only for an overridden shared command in Local mode', async () => {
+    getSettingsMock.mockResolvedValue({ custom_commands: JSON.stringify([
+      { id: 'c1', name: 'Build', prompt: 'npm run build', target: 'shell' },
+      { id: 'c2', name: 'Test', prompt: 'npm test', target: 'shell' },
+    ]) });
+    await reloadCustomCommands();
+    _setCommandModeForTests('local');
+    _setCommandOverriddenIdsForTests(new Set(['c2'])); // "Test" is overridden locally
+    renderCustomCommandSettings();
+
+    const rows = document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row');
+    expect(rows[0].querySelector('.cmd-reset-btn')).toBeNull();     // Build — not overridden
+    expect(rows[1].querySelector('.cmd-reset-btn')).not.toBeNull(); // Test — overridden → reset
+
+    // Shared mode: nothing is "overridden", so no reset buttons at all.
+    _setCommandModeForTests('shared');
+    _setCommandOverriddenIdsForTests(new Set());
+    renderCustomCommandSettings();
+    expect(document.querySelectorAll('#settings-commands-list .cmd-reset-btn').length).toBe(0);
   });
 });

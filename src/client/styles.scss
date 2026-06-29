@@ -2688,7 +2688,8 @@ body.cross-project-stats-active {
 
   .cmd-outline-edit-btn,
   .cmd-outline-delete-btn,
-  .cmd-outline-move-btn {
+  .cmd-outline-move-btn,
+  .scope-reset-btn { // HS-9184/9187 — undo-2 "reset to shared" icon button
     display: flex;
     align-items: center;
     justify-content: center;

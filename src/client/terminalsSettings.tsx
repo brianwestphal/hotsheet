@@ -1,6 +1,7 @@
 import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { ICON_UNDO_2 } from './icons.js';
 import { delegate } from './reactive.js';
 import { loadScopedList, saveScopedList, scopeListHintElement } from './settingsScopeList.js';
 import { getActiveProject } from './state.js';
@@ -361,7 +362,9 @@ function renderRow(index: number): HTMLElement {
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>
       <span className={`scope-tag ${origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{origin}</span>
-      {terminalsMode === 'local' && origin === 'overridden' ? <button type="button" className="scope-link term-reset-btn" title="Discard the local override">Reset to shared</button> : null}
+      {/* HS-9184 — the reset-to-shared affordance is now the lucide undo-2 icon
+          (the "Reset to shared" text was a long string for an icon-row). */}
+      {terminalsMode === 'local' && origin === 'overridden' ? <button type="button" className="scope-reset-btn term-reset-btn" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button> : null}
       <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
       <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>
     </div>
