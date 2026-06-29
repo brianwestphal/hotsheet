@@ -172,8 +172,22 @@ human-in-the-loop gate to the *free-text* path, which the tag quick action alrea
 covers for the common case. Worth building if the maintainer wants every
 agent-driven dispatch preview-gated (not just the tag quick action); otherwise the
 two existing paths (preview-first tag action + direct free-text agent dispatch)
-suffice. **Decision needed before implementing** — tracked as the HS-9108
-follow-up below.
+suffice.
+
+> **DECIDED (maintainer, 2026-06-29) — BUILD IT, trigger = a per-project setting.**
+> The propose-vs-dispatch trigger is a **per-project `alwaysPreviewAgentPlans`
+> setting (Shared *or* Local per the §95 classification), unchecked by default** —
+> NOT a per-prompt cue and not a server-global flag. When the setting is on for the
+> project, the agent calls **`hotsheet_propose_partition`** instead of
+> `hotsheet_dispatch_tickets`; when off (the default), today's direct dispatch is
+> unchanged. Build shape per the recommendation above: propose MCP tool
+> (`channel.tools.ts`, **CHANNEL_VERSION** bump) → `POST /api/workers/partition/propose`
+> writes a per-project in-memory slot + emits a `worker-partition-proposed` §93 event
+> (poll fallback) → the client opens `openPartitionEditor` → **accept** dispatches via
+> `dispatchAndReport` (the human commits the work), **cancel** dispatches nothing and
+> the agent is told via the channel-done result line. Skill prose (**SKILL_VERSION**
+> bump) instructs the agent to read the setting and propose-not-dispatch when it's on.
+> Implementation tracked as **HS-9112**.
 
 ## 101.6 Follow-up tickets
 
@@ -185,7 +199,8 @@ follow-up below.
   prompt's agent-driven dispatch be previewed/confirmed in the editor too (needs an
   agent→client proposed-plan handshake). **Design captured in §101.7** (HS-9108);
   recommended shape = a `hotsheet_propose_partition` MCP tool → server slot →
-  §93 WS event → `openPartitionEditor` → client dispatch. **Build gated on a
-  maintainer decision** ("only build if you want every agent dispatch
-  preview-gated"). Implementation follow-up: **HS-9112**.
+  §93 WS event → `openPartitionEditor` → client dispatch. **Go-ahead given
+  (2026-06-29): build it, gated on a per-project `alwaysPreviewAgentPlans` setting
+  (Shared/Local, default off) — see the §101.7 DECIDED note.** Implementation
+  follow-up: **HS-9112**.
 - Depends on coherent partitioner grouping (HS-9073, §98) for good default chunks. ✅ SHIPPED.
