@@ -77,7 +77,7 @@ action is a delta write via `updateFileSettingsLayer('local'|'shared', …)`:
 | Sidebar "hide on this machine" (shared view) | local `hidden += id` |
 | Settings add → Local | local `added += view` |
 | Settings add → Shared | shared array `+= view` |
-| Settings hide shared view | local `hidden += id` |
+| Settings hide shared view | local `hidden += id` (HS-9186 — in **Local** mode this is the ONLY remove affordance for a shared view; the Delete button is Shared-mode only) |
 | **Move shared → local** | remove from shared array **and** add to local `added` (net resolved list unchanged; view now lives in the local layer, so it's not committed) |
 | **Move local → shared** | move the local `added` item into the shared array, drop it from the local delta |
 

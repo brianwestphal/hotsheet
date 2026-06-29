@@ -298,8 +298,12 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
       else addBtn(ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
     }
     addBtn(ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
-    // HS-9123 — shared views can now be deleted outright.
-    addBtn(ICON_TRASH_SIMPLE, 'Delete (removes for the whole team)', () => { void deleteSharedViewAction(view); }, 'cmd-outline-delete-btn');
+    // HS-9186 — a shared view can only be DELETED (removed for the whole team)
+    // from Shared mode. In Local mode the only "remove" affordance is Hide on
+    // this machine (above) — you can't delete a team value from the local segment.
+    if (mode === 'shared') {
+      addBtn(ICON_TRASH_SIMPLE, 'Delete (removes for the whole team)', () => { void deleteSharedViewAction(view); }, 'cmd-outline-delete-btn');
+    }
   } else {
     addBtn(ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
     addBtn(ICON_TRASH_SIMPLE, 'Delete', () => { void deleteView(view.id); }, 'cmd-outline-delete-btn');

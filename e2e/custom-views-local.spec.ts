@@ -158,6 +158,24 @@ test.describe('Custom views — sidebar local customization (HS-9092)', () => {
     await expect(list.locator('.settings-view-row', { hasText: 'Shared View (local)' })).toHaveCount(0);
   });
 
+  // HS-9186 — a shared view can't be DELETED from the Local segment (only hidden
+  // on this machine); the Delete button is Shared-mode only.
+  test('HS-9186: a shared view in Local mode offers Hide, not Delete', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
+    await page.locator('.settings-tab[data-tab="views"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    const list = page.locator('#settings-views-list');
+    const row = list.locator('.settings-view-row', { hasText: 'Shared View' }).first();
+    await expect(row).toBeVisible({ timeout: 5000 });
+    // Local mode: Hide present, Delete absent.
+    await expect(row.locator('button[title="Hide on this machine"]')).toHaveCount(1);
+    await expect(row.locator('.cmd-outline-delete-btn')).toHaveCount(0);
+    // Shared mode: the Delete button returns.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(row.locator('.cmd-outline-delete-btn')).toHaveCount(1);
+  });
+
   // HS-9123 — shared views can now be deleted outright from the Views tab.
   test('HS-9123: a shared view can be deleted from the Views tab', async ({ page }) => {
     await page.locator('#settings-btn').click();

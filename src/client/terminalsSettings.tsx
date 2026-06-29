@@ -1,7 +1,7 @@
 import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
-import { ICON_UNDO_2 } from './icons.js';
+import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2 } from './icons.js';
 import { delegate } from './reactive.js';
 import { loadScopedList, saveScopedList, scopeListHintElement } from './settingsScopeList.js';
 import { getActiveProject } from './state.js';
@@ -259,7 +259,9 @@ function renderHiddenRow(entry: EditableTerminalConfig): HTMLElement {
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>
       <span className="scope-tag scope-tag-local"><span className="scope-tag-dot" />Locally hidden</span>
-      <button type="button" className="scope-link term-reenable-btn">Re-enable</button>
+      {/* HS-9186 — show/unhide via an eye icon button (consistent with views),
+          replacing the "Re-enable" text. */}
+      <button type="button" className="scope-reset-btn term-reenable-btn" title="Show on this machine" aria-label="Show on this machine">{ICON_EYE}</button>
     </div>
   );
 }
@@ -366,7 +368,11 @@ function renderRow(index: number): HTMLElement {
           (the "Reset to shared" text was a long string for an icon-row). */}
       {terminalsMode === 'local' && origin === 'overridden' ? <button type="button" className="scope-reset-btn term-reset-btn" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button> : null}
       <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
-      <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'}>{TRASH_ICON}</button>
+      {/* HS-9186 — a shared terminal in Local mode can only be HIDDEN on this
+          machine (an eye-off button), not deleted; a local terminal (or Shared
+          mode) keeps the trash delete. Same `.cmd-outline-delete-btn` handler —
+          `handleDelete` hides a shared terminal, deletes a local one. */}
+      <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'} aria-label={isSharedHere ? 'Hide on this machine' : 'Delete'}>{isSharedHere ? ICON_EYE_OFF : TRASH_ICON}</button>
     </div>
   );
 
