@@ -29,6 +29,7 @@ import { clearProjectAttention, isChannelBusy, setChannelBusy } from './channelU
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { renderEditDiffPreview } from './editDiffPreview.js';
+import { captureEditorFocus, restoreEditorFocus, type SavedEditorFocus } from './editorFocusRestore.js';
 import { buildAlwaysAllowAffordance } from './permissionAllowListUI.js';
 import { openPermissionDialogShell } from './permissionDialogShell.js';
 import {
@@ -114,7 +115,25 @@ initPermissionPopupStateMachine({
   mountPopupBody: (secret, perm) => { showPermissionPopupBody(secret, perm); },
 });
 
+// HS-9162 — the editor (ticket title / details / a note) the user was focused in
+// when the FIRST popup of a burst appeared, so Allow/Deny can hand focus + caret
+// back once the popup queue empties. Captured once per burst; cleared on restore.
+let savedEditorFocus: SavedEditorFocus | null = null;
+
+/** Restore the pre-popup editor focus, but only once no popup is still showing. */
+function restoreEditorFocusIfIdle(): void {
+  if (permissionState.activePopupRequestId !== null) return; // another popup is up
+  restoreEditorFocus(savedEditorFocus, window.getSelection());
+  savedEditorFocus = null;
+}
+
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
+  // HS-9162 — snapshot the focused editable field BEFORE the popup mounts (so the
+  // capture sees the user's editor, not the popup). Only the first popup of a
+  // burst captures; queued popups keep the original target.
+  if (savedEditorFocus === null) {
+    savedEditorFocus = captureEditorFocus(document.activeElement, window.getSelection());
+  }
   // HS-8781 — verbally announce the permission check (when the global setting is
   // on) so you hear what Claude is asking for while away. Deduped per
   // request_id; coordinates with any active narration so it doesn't talk over a
@@ -333,6 +352,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // wait up to ~100 ms for the next poll cycle to surface the next
     // pending permission.
     mountNextFromPendingStack();
+    restoreEditorFocusIfIdle(); // HS-9162
   }
 
   function cleanupAndMinimize() {
@@ -351,6 +371,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // permission immediately so the user sees it without waiting on a
     // poll round-trip.
     mountNextFromPendingStack();
+    restoreEditorFocusIfIdle(); // HS-9162
   }
 
   function respondToPermission(behavior: 'allow' | 'deny') {
@@ -385,6 +406,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     // HS-8219 — surface the next queued permission immediately
     // (before the next ~100 ms poll tick).
     mountNextFromPendingStack();
+    restoreEditorFocusIfIdle(); // HS-9162 — hand focus + caret back to the editor
   }
 
   // HS-8069 — chrome (header / anchor / footer-link row / close X) is now

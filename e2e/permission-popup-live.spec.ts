@@ -253,6 +253,49 @@ test.describe('Permission popup — live polling lifecycle (HS-8207)', () => {
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls[0]).toMatchObject({ request_id: 'req-live-1', behavior: 'deny' });
   });
+
+  // HS-9162 — responding to a permission while editing a ticket field must hand
+  // focus + caret back to that field (the popup often appears mid-edit).
+  test('Allow restores focus + caret to the field the user was editing', async ({ page }) => {
+    const popup = page.locator('.permission-popup');
+    // Clear the initial req-live-1 popup so the next one captures fresh.
+    await expect(popup).toBeVisible({ timeout: 5000 });
+    await popup.locator('.permission-popup-allow').dispatchEvent('click');
+    await expect(popup).toBeHidden({ timeout: 5000 });
+
+    // Focus the new-ticket field and place a caret mid-text.
+    const draft = page.locator('.draft-input').first();
+    await draft.click();
+    await draft.fill('editing in progress');
+    await page.evaluate(() => {
+      const el = document.querySelector('.draft-input') as HTMLInputElement | HTMLTextAreaElement;
+      el.focus();
+      el.setSelectionRange(4, 4);
+    });
+
+    // Surface a fresh permission (new request_id) while the field is focused.
+    await page.evaluate(() => {
+      const w = window as unknown as Window;
+      w.__HS8207_perm = { request_id: 'req-focus-1', tool_name: 'Bash', description: 'Run echo hi', input_preview: '{"command":"echo hi"}' };
+      w.__HS8207_phase = 'pending';
+      w.__HS8207_v = w.__HS8207_v + 1;
+    });
+    await expect(popup).toBeVisible({ timeout: 5000 });
+
+    // Simulate the focus-steal a real button click causes, then respond.
+    await page.evaluate(() => { (document.querySelector('.permission-popup-allow') as HTMLElement).focus(); });
+    await popup.locator('.permission-popup-allow').dispatchEvent('click');
+    await expect(popup).toBeHidden({ timeout: 5000 });
+
+    // Focus + caret are back on the editor (HS-9162).
+    const restored = await page.evaluate(() => {
+      const el = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
+      return { cls: el?.className ?? '', start: el?.selectionStart ?? -1, end: el?.selectionEnd ?? -1 };
+    });
+    expect(restored.cls).toContain('draft-input');
+    expect(restored.start).toBe(4);
+    expect(restored.end).toBe(4);
+  });
 });
 
 test.describe('Permission popup — live-terminal-checkout body (HS-8207)', () => {
