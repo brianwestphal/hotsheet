@@ -66,6 +66,9 @@ async function configureFixtureTerminal(
     data: {
       terminal_enabled: 'true',
       drawer_open: 'false',
+      // HS-9188 — shell integration is now OFF by default (experimental), so the
+      // OSC 133 UI tests must opt in explicitly.
+      shell_integration_ui: true,
       terminals: [
         {
           id,

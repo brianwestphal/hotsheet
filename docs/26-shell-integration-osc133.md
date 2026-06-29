@@ -2,6 +2,8 @@
 
 ## 26.1 Status
 
+> **HS-9188 (2026-06-29) — EXPERIMENTAL, off by default.** All phases below are shipped + tested, but the maintainer hasn't fully exercised them yet, so the `shell_integration_ui` setting now **defaults to OFF** (opt in under Settings → Terminal, badged "Experimental"). The OSC 133 parser only runs while the setting is on. A backlog ticket tracks a fuller evaluation before promoting it back to default-on (or removing it). Nothing was deleted — flipping the default back on is a one-line change.
+
 **Phase 1a shipped (HS-7267):** the OSC 133 parser hook, `CommandRecord` ring (bounded at 500), A/B/C/D state machine, gutter-glyph decoration, reset-on-restart, and dangling-record cleanup on PTY exit are all in `src/client/terminal.tsx`. Pure helpers extracted to `src/client/terminalOsc133.ts` (`parseOsc133ExitCode`, `exitCodeGutterClass`) with 11 unit tests covering bare-D / D;N / VS Code 633 D;N;key=value / non-numeric rejection / exit-code → CSS class mapping. CSS under `.terminal-osc133-gutter-{success,failure,neutral}` renders green check / red X / gray dot per command.
 
 **Phase 1b shipped (HS-7268):** a copy-last-output toolbar button that reads the most recent command's output via `computeLastOutputRange` (pure helper in `terminalOsc133.ts`, 12 new unit tests) and writes to `navigator.clipboard`. The button is hidden until the first OSC 133 escape arrives (`applyShellIntegrationToolbarVisibility`) and re-hides on PTY restart. See [31-osc133-copy-last-output.md](31-osc133-copy-last-output.md).

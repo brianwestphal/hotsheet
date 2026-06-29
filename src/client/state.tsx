@@ -256,7 +256,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notify_completed: 'once',
   auto_order: true,
   hide_verified_column: false,
-  shell_integration_ui: true,
+  shell_integration_ui: false, // HS-9188 — experimental, OFF by default (opt-in)
   shell_streaming_enabled: true,
 };
 
