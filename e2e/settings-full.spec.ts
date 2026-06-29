@@ -30,24 +30,28 @@ test.describe('Settings persistence', () => {
     await expect(categoryList.locator('.category-row').first()).toBeVisible({ timeout: 5000 });
   });
 
-  test('change trash cleanup days, persist across reopen', async ({ page }) => {
+  test('change trash cleanup days persists to the DB, not the file layer (HS-9168)', async ({ page }) => {
     // Open settings
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
 
-    // HS-9127 — trash_cleanup_days is a DB-only project setting (not a Shared/Local
-    // file key), so it stays editable in the default Resolved view.
+    // HS-9168 — trash_cleanup_days is a DB-only project setting (not in SCOPED_FIELDS).
+    // Under the default Local scope mode it must still write to the DB — NOT misroute
+    // to settings.local.json, which the server's cleanup logic ignores for this key.
     const trashInput = page.locator('#settings-trash-days');
     await trashInput.fill('7');
+    await page.waitForTimeout(1000); // debounced save (500ms) + API call
 
-    // Wait for the debounced save to fire (500ms debounce + API call)
-    await page.waitForTimeout(1000);
+    // It persisted to the DB (what the cleanup logic reads).
+    const db = await (await page.request.get('/api/settings')).json() as Record<string, string>;
+    expect(db.trash_cleanup_days).toBe('7');
+    // And it did NOT leak into the local file layer.
+    const layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+    expect(layered.local.trash_cleanup_days).toBeUndefined();
 
-    // Close settings
+    // Reopen settings and verify the value is shown.
     await page.locator('#settings-close').click();
     await expect(page.locator('#settings-overlay')).toBeHidden({ timeout: 3000 });
-
-    // Reopen settings and verify the value persisted
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
     await expect(trashInput).toHaveValue('7', { timeout: 3000 });

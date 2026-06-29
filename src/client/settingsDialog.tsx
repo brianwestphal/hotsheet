@@ -199,7 +199,10 @@ function bindGeneralTab() {
       const val = Math.max(1, parseInt(trashInput.value, 10) || 3);
       trashInput.value = String(val);
       state.settings.trash_cleanup_days = val;
-      void persistScopedSetting('trash_cleanup_days', String(val), () => updateSettings({ trash_cleanup_days: String(val) }));
+      // HS-9168 — DB-only setting (not in SCOPED_FIELDS): write straight to the DB.
+      // Routing through persistScopedSetting would misroute it to settings.local.json
+      // (which the server ignores for this key) under the default Local scope mode.
+      void updateSettings({ trash_cleanup_days: String(val) });
     }, 500);
   });
 
@@ -211,7 +214,8 @@ function bindGeneralTab() {
       const val = Math.max(1, parseInt(verifiedInput.value, 10) || 30);
       verifiedInput.value = String(val);
       state.settings.verified_cleanup_days = val;
-      void persistScopedSetting('verified_cleanup_days', String(val), () => updateSettings({ verified_cleanup_days: String(val) }));
+      // HS-9168 — DB-only setting: write straight to the DB (see trash_cleanup_days).
+      void updateSettings({ verified_cleanup_days: String(val) });
     }, 500);
   });
 
