@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { claimById, claimNext, getClaims, MAX_CLAIM_ATTEMPTS, QUARANTINE_TAG, release, renewLease, sweepExpiredClaims } from './claims.js';
+import { claimById, claimNext, enforceClaimForWrite, getClaims, MAX_CLAIM_ATTEMPTS, OWNER_ACTOR, QUARANTINE_TAG, release, renewLease, sweepExpiredClaims } from './claims.js';
 import { getDb } from './connection.js';
 import { parseNotes } from './notes.js';
 import { createTicket, getTicket } from './tickets.js';
@@ -256,6 +256,71 @@ describe('claim/lease primitive (HS-8862)', () => {
       const db = await getDb();
       await db.query('UPDATE tickets SET up_next = TRUE WHERE id = $1', [t.id]);
       expect((await claimNext('w3', 'W3'))!.id).toBe(t.id);
+    });
+  });
+
+  // HS-9198 — claim-before-work write enforcement.
+  describe('enforceClaimForWrite (HS-9198)', () => {
+    it('auto-claims an unclaimed actionable ticket for the actor (autoClaimed=true, count 0→1)', async () => {
+      const t = await upNext('unclaimed');
+      const r = await enforceClaimForWrite(t.id, OWNER_ACTOR, 'Owner');
+      expect(r.allowed).toBe(true);
+      expect(r.allowed && r.autoClaimed).toBe(true);
+      const after = (await getTicket(t.id))!;
+      expect(after.claimed_by).toBe(OWNER_ACTOR);
+      expect(after.worker_label).toBe('Owner');
+      expect(after.claim_count).toBe(1);
+    });
+
+    it('renewing the caller\'s OWN live lease does not bump claim_count or flag autoClaimed', async () => {
+      const t = await upNext('mine');
+      await enforceClaimForWrite(t.id, 'worker-1', 'W1'); // count → 1
+      const r = await enforceClaimForWrite(t.id, 'worker-1', 'W1'); // renew
+      expect(r.allowed && r.autoClaimed).toBe(false);
+      expect((await getTicket(t.id))!.claim_count).toBe(1); // NOT inflated by routine edits
+    });
+
+    it('rejects a write by another actor while a live foreign lease is held', async () => {
+      const t = await upNext('held');
+      await enforceClaimForWrite(t.id, 'worker-1', 'W1');
+      const r = await enforceClaimForWrite(t.id, 'worker-2', 'W2');
+      expect(r.allowed).toBe(false);
+      expect(!r.allowed && r.reason).toBe('conflict');
+      expect(!r.allowed && r.claimedBy).toBe('worker-1');
+      // The foreign claim is untouched.
+      expect((await getTicket(t.id))!.claimed_by).toBe('worker-1');
+    });
+
+    it('auto-claims when the foreign lease has EXPIRED (stale claim is reclaimable)', async () => {
+      const t = await upNext('expired');
+      await enforceClaimForWrite(t.id, 'worker-1', 'W1');
+      await expireLease(t.id);
+      const r = await enforceClaimForWrite(t.id, 'worker-2', 'W2');
+      expect(r.allowed && r.autoClaimed).toBe(true);
+      expect((await getTicket(t.id))!.claimed_by).toBe('worker-2');
+    });
+
+    it('allows a write to a TERMINAL (completed) ticket with NO claim', async () => {
+      const t = await createTicket('done', { status: 'completed' });
+      const r = await enforceClaimForWrite(t.id, OWNER_ACTOR);
+      expect(r.allowed).toBe(true);
+      expect(r.allowed && r.autoClaimed).toBe(false);
+      expect((await getTicket(t.id))!.claimed_by).toBeNull(); // no claim stamped
+    });
+
+    it('allows (no-op) when the ticket does not exist', async () => {
+      const r = await enforceClaimForWrite(999999, OWNER_ACTOR);
+      expect(r.allowed).toBe(true);
+      expect(r.allowed && r.autoClaimed).toBe(false);
+    });
+
+    it('solo owner editing the same ticket repeatedly never conflicts + never inflates the retry budget', async () => {
+      const t = await upNext('solo');
+      for (let i = 0; i < 6; i++) {
+        const r = await enforceClaimForWrite(t.id, OWNER_ACTOR, 'Owner');
+        expect(r.allowed).toBe(true);
+      }
+      expect((await getTicket(t.id))!.claim_count).toBe(1); // one claim, then renewals
     });
   });
 });

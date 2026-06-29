@@ -33,7 +33,7 @@ All tools live under the `hotsheet_` prefix so they sort together in the agent's
 
 | Tool | REST equivalent | Purpose |
 |------|-----------------|---------|
-| `hotsheet_update_ticket` | `PATCH /api/tickets/:id` | Status, notes, priority, category, up_next, tags |
+| `hotsheet_update_ticket` | `PATCH /api/tickets/:id` | Status, notes, priority, category, up_next, tags. **HS-9198 claim-before-work:** a write to an unclaimed actionable ticket transparently auto-claims it for the caller (the response then carries a `claim` block with a renew/release reminder); a write to a ticket another actor holds with a live lease is rejected **409 `claimed_by_other`**. Terminal tickets + read-tracking-only writes are exempt. The worker's actor id is auto-injected by its channel server (`basename(cwd)`, matching its `claim_next` id); the owner/main agent is `owner`. See docs/90 §90.2.2.1 |
 | `hotsheet_create_ticket` | `POST /api/tickets` | Create a new ticket |
 | `hotsheet_get_ticket` | `GET /api/tickets/:id` | Re-read a single ticket's current state |
 | `hotsheet_delete_ticket` | `DELETE /api/tickets/:id` | Soft-delete (moves to trash) |

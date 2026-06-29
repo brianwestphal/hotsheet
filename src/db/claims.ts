@@ -185,6 +185,80 @@ export async function release(id: number, worker?: string): Promise<{ ok: boolea
   return { ok: true };
 }
 
+/** The terminal/owner identity used when a write carries no explicit actor — the
+ *  owner UI + the main `/hotsheet` agent both write as `'owner'` (HS-9198). */
+export const OWNER_ACTOR = 'owner';
+
+export type EnforceWriteResult =
+  | { allowed: true; autoClaimed: boolean; leaseExpiresAt: string | null }
+  | { allowed: false; reason: 'conflict'; claimedBy: string; workerLabel: string | null; leaseExpiresAt: string };
+
+/**
+ * HS-9198 — claim-before-work enforcement for a WRITE to ticket `id` by `actor`.
+ * Used by the server-side write chokepoint so the invariant holds for every entry
+ * point (REST + MCP-over-REST + UI). Behavior:
+ *
+ *  - **Terminal** ticket (completed / verified / archive / deleted) → NO claim
+ *    required (editing a finished ticket isn't active "work"): allowed, not
+ *    auto-claimed. Same when the ticket doesn't exist (let the write path return
+ *    its normal 404).
+ *  - **Held by ANOTHER actor with a live lease** → rejected as a conflict
+ *    (the caller must wait / pick another ticket).
+ *  - **Unclaimed / expired / already-mine** → transparently **auto-claim / renew**
+ *    for `actor`, then allow. `claim_count` bumps ONLY on a genuinely fresh claim
+ *    (unclaimed/expired/stolen-back), never when renewing the caller's own live
+ *    lease — so routine editing can't inflate the poison-retry counter. The
+ *    `autoClaimed` flag is true when it was a fresh claim (the caller didn't
+ *    already hold a live lease), so the caller can surface a "you now hold a
+ *    claim — renew/release it" reminder.
+ *
+ * Single-connection PGLite makes the SELECT-then-UPDATE effectively atomic (no
+ * concurrent writer can interleave), matching the rest of this module.
+ */
+export async function enforceClaimForWrite(
+  id: number,
+  actor: string,
+  label: string | null = null,
+  ttlSeconds: number = DEFAULT_CLAIM_TTL_SECONDS,
+): Promise<EnforceWriteResult> {
+  const db = await getDb();
+  const cur = await db.query<{ status: string; claimed_by: string | null; worker_label: string | null; lease_live: boolean; lease: string | null }>(
+    `SELECT status, claimed_by, worker_label,
+            (claim_lease_expires_at >= NOW()) AS lease_live,
+            claim_lease_expires_at AS lease
+       FROM tickets WHERE id = $1`,
+    [id],
+  );
+  // Unknown ticket → let the downstream write path 404 as usual.
+  if (cur.rows.length === 0) return { allowed: true, autoClaimed: false, leaseExpiresAt: null };
+  const row = cur.rows[0];
+  // Terminal tickets need no claim — editing a finished ticket isn't "work".
+  if (['completed', 'verified', 'deleted', 'archive'].includes(row.status)) {
+    return { allowed: true, autoClaimed: false, leaseExpiresAt: row.lease };
+  }
+  // Held by someone else with a live lease → reject.
+  if (row.claimed_by != null && row.claimed_by !== actor && row.lease_live) {
+    return { allowed: false, reason: 'conflict', claimedBy: row.claimed_by, workerLabel: row.worker_label, leaseExpiresAt: row.lease ?? '' };
+  }
+  const wasMineLive = row.claimed_by === actor && row.lease_live;
+  // Auto-claim / renew. The CASE reads the row's PRE-update values, so the count
+  // bumps only when this isn't a renew of the caller's own live lease.
+  const upd = await db.query<{ claim_lease_expires_at: string }>(
+    `UPDATE tickets
+        SET claimed_by = $2,
+            worker_label = $3,
+            claim_lease_expires_at = NOW() + ($4 * INTERVAL '1 second'),
+            claim_count = claim_count + (CASE WHEN claimed_by = $2 AND claim_lease_expires_at >= NOW() THEN 0 ELSE 1 END)
+      WHERE id = $1 AND status NOT IN ${CLAIMABLE_STATUS_EXCLUDE}
+     RETURNING claim_lease_expires_at`,
+    [id, actor, label, ttlSeconds],
+  );
+  // Status flipped terminal between the SELECT + UPDATE (can't happen under the
+  // single connection, but be safe) → allow without a claim.
+  if (upd.rows.length === 0) return { allowed: true, autoClaimed: false, leaseExpiresAt: null };
+  return { allowed: true, autoClaimed: !wasMineLive, leaseExpiresAt: upd.rows[0].claim_lease_expires_at };
+}
+
 /** Currently-claimed tickets with a live lease (for the claimed-by / pool UI). */
 export async function getClaims(): Promise<ClaimRow[]> {
   const db = await getDb();

@@ -192,10 +192,10 @@ function post(body: unknown) {
   };
 }
 
-function patch(body: unknown) {
+function patch(body: unknown, extraHeaders: Record<string, string> = {}) {
   return {
     method: 'PATCH' as const,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   };
 }
@@ -2162,10 +2162,62 @@ describe('blocked_by gate endpoints (HS-8865)', () => {
     expect(first.ticket?.id).toBe(blk);
     const none = await (await app.request('/api/tickets/claim-next', post({ worker: 'w2' }))).json() as { ticket: unknown };
     expect(none.ticket).toBeNull();
-    // Complete the blocker → dep becomes claimable.
-    await app.request(`/api/tickets/${blk}`, patch({ status: 'completed' }));
+    // Complete the blocker → dep becomes claimable. HS-9198 — `blk` is held by
+    // `w1` (claim-next above), so complete it AS `w1` (its holder); the owner
+    // would be rejected 409 for stomping a worker's live claim.
+    await app.request(`/api/tickets/${blk}`, patch({ status: 'completed' }, { 'X-Hotsheet-Actor': 'w1' }));
     const got = await (await app.request('/api/tickets/claim-next', post({ worker: 'w2' }))).json() as { ticket: { id: number } | null };
     expect(got.ticket?.id).toBe(dep);
+  });
+});
+
+describe('claim-before-work enforcement (HS-9198)', () => {
+  async function mk(title: string): Promise<number> {
+    const res = await app.request('/api/tickets', post({ title }));
+    return ((await res.json()) as { id: number }).id;
+  }
+
+  it('an owner edit of an unclaimed ticket transparently auto-claims it (200 + claim info)', async () => {
+    const id = await mk('owner auto-claims');
+    const res = await app.request(`/api/tickets/${id}`, patch({ status: 'started' }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { claim?: { claimed_by: string; auto_claimed: boolean; reminder: string } };
+    expect(body.claim?.claimed_by).toBe('owner');
+    expect(body.claim?.auto_claimed).toBe(true);
+    expect(body.claim?.reminder).toMatch(/renew.*release|release/i);
+  });
+
+  it('rejects a worker editing a ticket the owner holds (409 + claimed_by_other)', async () => {
+    const id = await mk('owner-held');
+    await app.request(`/api/tickets/${id}`, patch({ details: 'owner edit' })); // owner auto-claims
+    const res = await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-9' }));
+    expect(res.status).toBe(409);
+    const body = await res.json() as { code: string; claimed_by: string };
+    expect(body.code).toBe('claimed_by_other');
+    expect(body.claimed_by).toBe('owner');
+  });
+
+  it('the holding actor keeps editing freely (renew — no conflict, no repeat claim field)', async () => {
+    const id = await mk('holder renews');
+    const first = await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-9' }));
+    expect((await first.json() as { claim?: unknown }).claim).toBeDefined();   // fresh claim surfaced
+    const second = await app.request(`/api/tickets/${id}`, patch({ details: 'more' }, { 'X-Hotsheet-Actor': 'worker-9' }));
+    expect(second.status).toBe(200);
+    expect((await second.json() as { claim?: unknown }).claim).toBeUndefined(); // renew, not a fresh claim
+  });
+
+  it('a terminal (completed) ticket needs no claim — any actor can edit it', async () => {
+    const id = await mk('finished');
+    await app.request(`/api/tickets/${id}`, patch({ status: 'completed' })); // owner completes
+    const res = await app.request(`/api/tickets/${id}`, patch({ notes: 'a note on the done ticket' }, { 'X-Hotsheet-Actor': 'someone-else' }));
+    expect(res.status).toBe(200);
+  });
+
+  it('read-tracking-only writes (last_read_at) are exempt from the claim gate', async () => {
+    const id = await mk('read-track');
+    await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-A' })); // A holds it
+    const res = await app.request(`/api/tickets/${id}`, patch({ last_read_at: '2026-06-29T00:00:00Z' }, { 'X-Hotsheet-Actor': 'worker-B' }));
+    expect(res.status).toBe(200); // marking-read isn't "work"
   });
 });
 

@@ -47,6 +47,26 @@ export interface ToolCallResult {
 interface ChannelSettings {
   port: number;
   secret: string;
+  /** HS-9198 — the claim actor identity injected on write requests (the worktree
+   *  folder name for a distributed worker; undefined for the owner / main agent,
+   *  which the REST layer defaults to `owner`). */
+  actor?: string;
+}
+
+/** HS-9198 — derive this channel server's claim actor. When it runs inside a
+ *  follower worktree (a distributed worker — detected by the `authoritativeDataDir`
+ *  pointer in the cwd's `.hotsheet/settings.json`, like `isFollowerCwd` in
+ *  channel.ts), the actor is `basename(cwd)` — the worktree folder name, which is
+ *  EXACTLY the `worker` id the `/hotsheet-worker` skill uses for hotsheet_claim_next
+ *  (skills.ts §"Your worker identity"). So a worker's auto-claim-on-write matches
+ *  its explicit claims (renew, not self-conflict). The main agent → undefined → the
+ *  REST layer treats it as `owner`. */
+function deriveChannelActor(): string | undefined {
+  try {
+    const ptr = readFileSettings(join(process.cwd(), '.hotsheet')).authoritativeDataDir;
+    if (typeof ptr === 'string' && ptr !== '') return basename(process.cwd());
+  } catch { /* read error → treat as the owner/main connection */ }
+  return undefined;
 }
 
 // HS-8567 — strict zod schema for the resolved file settings. Only `port` is
@@ -78,7 +98,7 @@ export function loadChannelSettings(dataDir: string): ChannelSettings | null {
     if (!result.success) return null;
     const secret = getProjectSecret(dataDir);
     if (secret === '') return null;
-    return { port: result.data.port, secret };
+    return { port: result.data.port, secret, actor: deriveChannelActor() };
   } catch {
     return null;
   }
@@ -117,6 +137,13 @@ async function proxyRequest(
   const headers: Record<string, string> = {
     'X-Hotsheet-Secret': settings.secret,
   };
+  // HS-9198 — tag write requests with the claim actor so the server's claim-
+  // before-work enforcement attributes auto-claims to THIS worker (matching its
+  // hotsheet_claim_next id). Omitted for the owner/main agent → server uses `owner`.
+  if (settings.actor !== undefined && settings.actor !== '') {
+    headers['X-Hotsheet-Actor'] = settings.actor;
+    headers['X-Hotsheet-Actor-Label'] = settings.actor;
+  }
   let body: string | undefined;
   if (init?.body !== undefined) {
     headers['Content-Type'] = 'application/json';

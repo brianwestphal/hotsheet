@@ -112,6 +112,51 @@ A claim without a lease leaks forever if a worker dies. Each claim carries a TTL
   to `not_started` (that would clobber real progress); the reclaim note is the
   signal.
 
+### 90.2.2.1 Claim-before-work enforcement (HS-9198)
+
+The claim/lease primitive describes coordination but, until HS-9198, nothing
+**enforced** it — an actor could move an unclaimed ticket straight to `started`
+and do real work with no claim, defeating the point (two actors could each
+"start" the same ticket and stomp each other). The server now enforces the
+invariant at the write chokepoint so it holds for every entry point (REST + the
+MCP tools, which proxy REST + the UI).
+
+`enforceClaimForWrite(id, actor, label)` (`src/db/claims.ts`) gates a write:
+
+- **Auto-claim on write (the key call).** A write to an **unclaimed / lease-expired**
+  actionable ticket **transparently auto-claims it** for the caller, then applies
+  the write — so the solo owner + the main `/hotsheet` agent never see friction and
+  nothing breaks. Renewing the caller's **own** live lease does NOT bump
+  `claim_count` (routine editing can't inflate the HS-8970 poison-retry counter);
+  only a genuinely fresh claim does.
+- **Reject only on a live FOREIGN lease.** A write to a ticket held by a **different**
+  actor with a live lease is rejected **HTTP 409** `{code:'claimed_by_other',
+  claimed_by, worker_label, lease_expires_at}`. The net rule: *"you can't write a
+  ticket another actor is actively holding; touching an unclaimed one claims it for
+  you."* Applies to **workers AND the owner** — no owner exemption (the owner must
+  force-release a worker's ticket to take it).
+- **Exemptions:** **terminal** tickets (completed / verified / archive / deleted)
+  need no claim — editing a finished ticket isn't active work; and **read-tracking-only**
+  writes (`last_read_at` alone) are exempt (marking-read ≠ work).
+- **Auto-claim disclosure.** When a write freshly auto-claims, the `PATCH /tickets/:id`
+  response carries a `claim` block (`{claimed_by, lease_expires_at, auto_claimed:true,
+  reminder}`) so an agent knows it now holds a lease and should renew on long tasks
+  + release when done. The owner UI ignores it.
+
+**Caller identity.** The actor comes from the `X-Hotsheet-Actor` request header.
+The channel server injects it automatically: a **worker** (follower-worktree channel
+server, `deriveChannelActor` in `channel.tools.ts`) sends `basename(cwd)` — the
+worktree folder name, which is EXACTLY the `worker` id the `/hotsheet-worker` skill
+uses for `claim_next`, so a worker's auto-claim-on-write matches its explicit claims
+(renew, never self-conflict). The owner UI + main agent send no header → the server
+defaults the actor to **`owner`**.
+
+**Chokepoint scope (HS-9198 first increment):** the primary `PATCH /api/tickets/:id`
+route — which is what `hotsheet_update_ticket` proxies AND the UI's main edit path
+(status, details, notes-append, up_next, tags, completion). The secondary write
+routes (`PUT …/blocked-by`, `PATCH …/notes/:noteId`, `PUT …/notes-bulk`, `DELETE`,
+batch) + a clean UI "held by worker-N" conflict toast are a tracked follow-up.
+
 ### 90.2.3 Atomic `claim-next` + selection policy
 
 The core anti-double-claim primitive is Postgres `SELECT … FOR UPDATE SKIP

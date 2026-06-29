@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 // HS-8555 — centralized attachment-blob delete helper.
 import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
 import { getBlockedBy, isBlocked, setBlockedBy } from '../db/blockedBy.js';
-import { claimById, claimNext, getClaims, release, renewLease } from '../db/claims.js';
+import { claimById, claimNext, enforceClaimForWrite, getClaims, OWNER_ACTOR, release, renewLease } from '../db/claims.js';
 import { getDb } from '../db/connection.js';
 import { createFeedbackDraft, deleteFeedbackDraft, listFeedbackDrafts, updateFeedbackDraft } from '../db/feedbackDrafts.js';
 import {
@@ -365,10 +365,36 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   const parsed = parseBody(UpdateTicketSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
+
+  // HS-9198 — claim-before-work enforcement. A write that represents actual work
+  // (anything but a read-tracking-only `last_read_at` poke) on an ACTIONABLE
+  // ticket must hold the lease — and transparently auto-claims it for the caller
+  // when it's unclaimed/expired. The actor identity comes from `X-Hotsheet-Actor`
+  // (the channel server injects a worker id for worktree workers; the owner UI +
+  // main agent default to `owner`), so the solo owner + main `/hotsheet` agent
+  // never see friction, while a write to a ticket a DIFFERENT actor actively holds
+  // is rejected 409. Read-tracking-only writes are exempt (marking-read ≠ work).
+  const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
+  let autoClaim: { claimedBy: string; leaseExpiresAt: string | null } | null = null;
+  if (!isReadTrackingOnly) {
+    const actor = c.req.header('X-Hotsheet-Actor') ?? OWNER_ACTOR;
+    const actorLabel = c.req.header('X-Hotsheet-Actor-Label') ?? null;
+    const verdict = await enforceClaimForWrite(id, actor, actorLabel);
+    if (!verdict.allowed) {
+      return c.json({
+        error: `Ticket is held by \`${verdict.workerLabel ?? verdict.claimedBy}\` (live claim) — claim it, pick another, or wait for the lease to lapse before editing.`,
+        code: 'claimed_by_other',
+        claimed_by: verdict.claimedBy,
+        worker_label: verdict.workerLabel,
+        lease_expires_at: verdict.leaseExpiresAt,
+      }, 409);
+    }
+    if (verdict.autoClaimed) autoClaim = { claimedBy: actor, leaseExpiresAt: verdict.leaseExpiresAt };
+  }
+
   const ticket = await updateTicket(id, parsed.data, { keepRead });
   if (!ticket) return c.json({ error: 'Not found' }, 404);
   // Don't notify/sync for read-tracking-only changes (prevents poll loop)
-  const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
   if (!isReadTrackingOnly) {
     notifyMutation(c.get('dataDir'));
     // HS-9043 — a status change clears `up_next` and sets the completed_at /
@@ -391,6 +417,20 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
     // runtime check. Spread into a plain object so the structural
     // assignability handles the conversion without a cast.
     void onTicketChanged(id, { ...parsed.data }).catch(() => {});
+  }
+  // HS-9198 — when this write transparently auto-claimed the ticket, tell the
+  // caller so an agent knows it now holds a lease (and should renew on long tasks
+  // + release when done). The owner UI ignores this; the MCP layer surfaces it.
+  if (autoClaim !== null) {
+    return c.json({
+      ...ticket,
+      claim: {
+        claimed_by: autoClaim.claimedBy,
+        lease_expires_at: autoClaim.leaseExpiresAt,
+        auto_claimed: true,
+        reminder: 'You auto-claimed this ticket by editing it. Renew the lease (hotsheet_renew_lease) during long tasks so it is not reclaimed, and release it (hotsheet_release) when you finish or move on.',
+      },
+    });
   }
   return c.json(ticket);
 });
