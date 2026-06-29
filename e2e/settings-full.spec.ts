@@ -76,9 +76,11 @@ test.describe('Settings persistence', () => {
     }
     await page.waitForTimeout(600); // debounced write to settings.local.json
 
-    // It persisted to the LOCAL file layer (the value the client now reads back).
+    // It persisted to the LOCAL file layer (the value the client now reads back),
+    // as a real JSON boolean (HS-9173 — not a "true"/"false" string).
     const layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
-    expect(String(layered.local.auto_order)).toBe(String(!initialChecked));
+    expect(typeof layered.local.auto_order).toBe('boolean');
+    expect(layered.local.auto_order).toBe(!initialChecked);
 
     // RELOAD the page (re-runs loadSettings) → this is the actual regression: the
     // file value must be read back, not reverted to the stale DB value.

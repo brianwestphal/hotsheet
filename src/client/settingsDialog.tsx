@@ -222,13 +222,14 @@ function bindGeneralTab() {
   // Auto-prioritize toggle
   autoOrderCheckbox.addEventListener('change', () => {
     state.settings.auto_order = autoOrderCheckbox.checked;
-    void persistScopedSetting('auto_order', String(autoOrderCheckbox.checked));
+    // HS-9173 — store a real JSON boolean (not "true"/"false"), like telemetry_*.
+    void persistScopedSetting('auto_order', autoOrderCheckbox.checked);
   });
 
   // Hide verified column toggle
   hideVerifiedCheckbox.addEventListener('change', async () => {
     state.settings.hide_verified_column = hideVerifiedCheckbox.checked;
-    await persistScopedSetting('hide_verified_column', String(hideVerifiedCheckbox.checked));
+    await persistScopedSetting('hide_verified_column', hideVerifiedCheckbox.checked); // HS-9173 — JSON boolean
     // Re-render to apply column change immediately
     const { renderTicketList } = await import('./ticketList.js');
     renderTicketList();
@@ -240,7 +241,7 @@ function bindGeneralTab() {
   // visibility on the currently-active instance without a full rebuild.
   shellIntegrationCheckbox.addEventListener('change', () => {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
-    void persistScopedSetting('shell_integration_ui', String(shellIntegrationCheckbox.checked));
+    void persistScopedSetting('shell_integration_ui', shellIntegrationCheckbox.checked); // HS-9173 — JSON boolean
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
   });
 
@@ -252,7 +253,7 @@ function bindGeneralTab() {
   // consumers decide whether to act on it.
   shellStreamingCheckbox.addEventListener('change', () => {
     state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
-    void persistScopedSetting('shell_streaming_enabled', String(shellStreamingCheckbox.checked));
+    void persistScopedSetting('shell_streaming_enabled', shellStreamingCheckbox.checked); // HS-9173 — JSON boolean
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`
