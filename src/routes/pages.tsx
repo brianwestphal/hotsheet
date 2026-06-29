@@ -570,10 +570,6 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
               <span>Terminal</span>
             </button>
-            <button className="settings-tab" data-tab="permissions" id="settings-tab-permissions">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              <span>Permissions</span>
-            </button>
             {/* HS-9024 — Remote Access tab. Enrolled mTLS client devices for
                 serving over `--bind` (docs/94 / docs/97). Mint a .p12 locally,
                 install it on the remote machine, revoke when needed. */}
@@ -586,16 +582,23 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
               <span>Telemetry</span>
             </button>
+            <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
+              <span>Experimental</span>
+            </button>
             {/* HS-8777 — Announcer gets its own tab (was a section under
-                Experimental). HS-9070 — the "Beta" chip was removed now that
-                the feature is no longer considered beta. */}
+                Experimental). HS-9070 — the "Beta" chip was removed. HS-9157 —
+                moved to just before Permissions + Plugins. */}
             <button className="settings-tab" data-tab="announcer" id="settings-tab-announcer">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
               <span>Announcer</span>
             </button>
-            <button className="settings-tab" data-tab="experimental" id="settings-tab-experimental">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>
-              <span>Experimental</span>
+            {/* HS-9157 — Permissions moved to just before Plugins; it's a
+                machine-local-only tab (no Shared|Local scope bar — see
+                HIDDEN_SCOPE_BAR_TABS — plus a "local to this machine" note). */}
+            <button className="settings-tab" data-tab="permissions" id="settings-tab-permissions">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span>Permissions</span>
             </button>
             {/* HS-9124 — Plugins tab moved here, just before API Keys (which
                 HS-9119 moved just before Updates), so the tail reads:
@@ -821,10 +824,14 @@ pageRoutes.get('/', (c) => {
             {/* HS-7953 — Permission allow-list management. Lists configured
                 rules; +Add inline form; per-row delete. Populated by
                 `permissionAllowListUI.tsx::loadAndRenderAllowList`. */}
-            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel" data-scope-complex="local-only">
+            {/* HS-9157 — Permissions is a machine-local-only tab: no Shared|Local
+                scope bar (HIDDEN_SCOPE_BAR_TABS), so no `data-scope-complex` lock —
+                the allow-rules always edit the local layer. */}
+            <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel">
               <div className="settings-section-header">
                 <h3>Auto-Allow Rules</h3>
               </div>
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> Auto-allow rules live in <code>.claude/settings.local.json</code> (gitignored) — never committed to git or shared with your team.</span></p>
               <p className="settings-hint">Permission requests that match a rule below are auto-allowed without showing the popup. Patterns are JS regex anchored with <code>^…$</code> so <code>git status</code> matches <code>git status</code> exactly, not <code>cd /tmp &amp;&amp; git status</code>. Edit / Write requests are never allow-listable — file path alone doesn't capture diff intent.</p>
               {/* HS-8026 — the inline +Add form was replaced by an
                   "Add rule" button rendered inside the list (mirrors the

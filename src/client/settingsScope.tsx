@@ -131,8 +131,10 @@ let initialized = false;
  *                HS-9124.
  *  - `devices` — Remote Access mTLS enrollment is per-machine (CA + enrolled
  *                client certs live on this machine), so local-only. HS-9118.
+ *  - `permissions` — the allow-rules live in `.claude/settings.local.json`
+ *                (gitignored), so the whole tab is machine-local-only. HS-9157.
  */
-const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices']);
+const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices', 'permissions']);
 
 // HS-9123 — the Views tab now PARTICIPATES in the dialog-wide scope bar (Shared
 // shows only shared views, Local shows shared+local with hide, Resolved shows the

@@ -78,10 +78,9 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(1);
     await page.locator('.scope-seg-btn.scope-seg-shared').click();
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
-
-    // Permissions is a local-only complex editor: locked in Shared, NOT in Local.
-    await expect(page.locator('#settings-permissions-panel.scope-locked')).toHaveCount(1);
-    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    // HS-9157 — Permissions is no longer a scoped complex panel: its tab is
+    // machine-local-only (scope bar hidden), so the panel never carries
+    // `scope-locked` and the allow-rules always edit the local layer.
     await expect(page.locator('#settings-permissions-panel.scope-locked')).toHaveCount(0);
   });
 
