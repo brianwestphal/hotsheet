@@ -28,6 +28,7 @@ import {
   type TerminalState,
   writeInput,
 } from '../terminals/registry.js';
+import { resolveTerminalCommand } from '../terminals/resolveCommand.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { notifyBellWaiters } from './notify.js';
@@ -346,7 +347,16 @@ export function createDynamicTerminal(
   // HS-8539 — `runCommand` runs in the freshly-spawned DEFAULT shell, so it
   // forces an eager spawn (the command needs a live PTY to receive it) even when
   // the caller didn't pass `spawn: true`.
-  const runCommand = typeof body.runCommand === 'string' ? body.runCommand : '';
+  const runCommandRaw = typeof body.runCommand === 'string' ? body.runCommand : '';
+  // HS-9036 — resolve the `{{claudeCommand}}` token in an ad-hoc `runCommand` so a
+  // programmatic Claude launch (the worktrees panel "open terminal", which should
+  // behave like a worker) gets the SAME channel-connected command the configured
+  // Claude terminal does — crucially the `--dangerously-load-development-channels`
+  // flag that routes permission prompts to Hot Sheet. A bare `claude` (no token)
+  // is injected unchanged, so callers that already build a full command are unaffected.
+  const runCommand = runCommandRaw.includes('{{claudeCommand}}')
+    ? resolveTerminalCommand({ dataDir, configOverride: { id, command: runCommandRaw } }).command
+    : runCommandRaw;
   if (body.spawn === true || runCommand !== '') {
     try {
       ensureSpawned(secret, dataDir, id, config);
