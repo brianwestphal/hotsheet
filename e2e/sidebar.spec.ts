@@ -107,6 +107,40 @@ test.describe('Sidebar navigation and custom views', () => {
     await expect(statusBar).toContainText('up next', { timeout: 5000 });
   });
 
+  // HS-9176 — end-to-end: the status-bar "up next" count refreshes on an
+  // out-of-band change (a channel/AI toggle, or another device/tab) WITHOUT a
+  // project switch. The precise, deterministic regression guard is the unit
+  // test in `wsSync.test.ts` (the WS in-place apply path must call
+  // `refreshStats` — pre-fix it updated the row reactively but never re-fetched
+  // `/api/stats`, so the count went stale until a project switch forced a full
+  // `updateStats()`); this test is the user-flow backstop.
+  test('status-bar up-next count refreshes live on an out-of-band toggle', async ({ page, request }) => {
+    const projects = await request.get('/api/projects').then(r => r.json()) as { secret: string }[];
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+
+    // Create the ticket via the API so we get its id back; it starts not up_next.
+    const title = `HS-9176 live up-next ${Date.now()}`;
+    const created = await request.post('/api/tickets', { headers, data: { title } }).then(r => r.json()) as { id: number };
+    await page.goto('/');
+    const statusBar = page.locator('#status-bar');
+    await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 10000 });
+
+    const upNextOf = async () => {
+      const text = (await statusBar.textContent()) ?? '';
+      return parseInt(/(\d+)\s+up next/.exec(text)?.[1] ?? '0', 10);
+    };
+    const before = await upNextOf();
+
+    // Out-of-band toggle (NOT through this client's UI) — mimics a channel/AI
+    // or second-device change pushed over `/ws/sync`.
+    await request.patch(`/api/tickets/${created.id}`, { headers, data: { up_next: true } });
+
+    // The count must climb on its own — no navigation, no project switch.
+    await expect(async () => {
+      expect(await upNextOf()).toBe(before + 1);
+    }).toPass({ timeout: 10000 });
+  });
+
   // HS-8511 — per-view count badges in the sidebar. Increment-based so it's
   // robust against tickets left over from other tests + the virtualized list.
   test('sidebar "All" view shows a count badge that tracks new tickets', async ({ page }) => {

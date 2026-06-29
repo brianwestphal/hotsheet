@@ -141,6 +141,11 @@ export interface WsSyncDeps {
   refreshData: () => void;
   /** Refresh the open detail panel (attachment changes). */
   refreshDetail: () => void;
+  /** HS-9176 — refresh the server-fetched status-bar stats + sidebar count
+   *  badges. In-place applies update the rows reactively, but the bar's
+   *  "Z up next" / "Y open" counts and the sidebar badges come from
+   *  `/api/stats` + `/api/sidebar-counts`, so they go stale without this. */
+  refreshStats: () => void;
   /** Refresh the distributed-execution claim set (claimed-by chip). */
   refreshClaims: () => void;
   /** HS-8984 — is a ticket currently in the in-memory list? (drives in-place
@@ -240,6 +245,11 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     for (const id of plan.remove) deps.removeTicket(id);
     for (const p of plan.optimistic) deps.optimisticUpdate(p.id, p.patch);
     deps.refreshDetail(); // keep the open detail panel current
+    // HS-9176 — the rows update reactively via the store, but the status-bar
+    // counts + sidebar badges are server-fetched and aren't subscribed to it,
+    // so refresh them too (e.g. a channel/AI or other-device up_next toggle
+    // otherwise left "Z up next" stale until a project switch).
+    deps.refreshStats();
   }
 
   function sendPong(): void {
@@ -347,6 +357,19 @@ function runDetailRefresh(): void {
   void import('./detail.js').then(({ refreshDetail }) => refreshDetail());
 }
 
+let statsCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** HS-9176 — coalesce a burst of in-place applies into one status-bar +
+ *  sidebar-count refresh (`updateStats` re-fetches `/api/stats` and kicks the
+ *  already-debounced `refreshSidebarCounts`). */
+function scheduleCoalescedStats(): void {
+  if (statsCoalesceTimer !== null) return;
+  statsCoalesceTimer = setTimeout(() => {
+    statsCoalesceTimer = null;
+    void import('./detail.js').then(({ updateStats }) => { void updateStats(); });
+  }, 30);
+}
+
 function runClaimsRefresh(): void {
   void import('./claimsStore.js').then(({ refreshClaims }) => refreshClaims());
 }
@@ -358,6 +381,7 @@ const wsSync = createWsSync({
   clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
   refreshData: scheduleCoalescedRefresh,
   refreshDetail: runDetailRefresh,
+  refreshStats: scheduleCoalescedStats,
   refreshClaims: runClaimsRefresh,
   hasTicket: (id) => ticketsStore.state.value.tickets.some(t => t.id === id),
   removeTicket: (id) => { ticketsStore.actions.removeTicket(id); },

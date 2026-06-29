@@ -105,6 +105,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
   let secret = initialSecret;
   const refreshData = vi.fn();
   const refreshDetail = vi.fn();
+  const refreshStats = vi.fn();
   const refreshClaims = vi.fn();
   const removeTicket = vi.fn();
   const optimisticUpdate = vi.fn();
@@ -117,6 +118,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     clearTimer: () => { /* no-op for the test */ },
     refreshData,
     refreshDetail,
+    refreshStats,
     refreshClaims,
     hasTicket: (id) => loaded.has(id),
     removeTicket,
@@ -126,7 +128,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshClaims, removeTicket, optimisticUpdate, showHint,
+    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, removeTicket, optimisticUpdate, showHint,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -194,6 +196,45 @@ describe('createWsSync flow', () => {
     h.last().push({ type: 'ticket-deleted', id: 2, seq: 1 });
     expect(h.removeTicket).toHaveBeenCalledWith(2);
     expect(h.refreshData).not.toHaveBeenCalled();
+  });
+
+  it('HS-9176 — refreshes the status-bar/sidebar counts after an in-place up_next toggle', () => {
+    const h = harness('sec', [1]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    // A channel/AI or other-device up_next toggle on a loaded ticket applies
+    // in place (optimisticUpdate) — the server-fetched counts must still refresh.
+    h.last().push({ type: 'batch-operation', op: 'up_next', ids: [1], changes: { up_next: true }, seq: 1 });
+    expect(h.optimisticUpdate).toHaveBeenCalledWith(1, { up_next: true });
+    expect(h.refreshData).not.toHaveBeenCalled();
+    expect(h.refreshStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('HS-9176 — refreshes the counts after an in-place delete (total/open change)', () => {
+    const h = harness('sec', [2]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'ticket-deleted', id: 2, seq: 1 });
+    expect(h.refreshStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('HS-9176 — the refetch path does NOT also fire the in-place stats refresh', () => {
+    const h = harness('sec', []); // id 9 not loaded → refetch
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'status-changed', ticketIds: [9], to: 'started', seq: 1 });
+    expect(h.refreshData).toHaveBeenCalledTimes(1);
+    // refreshData (loadTickets) already refreshes stats via renderTicketList,
+    // so the in-place refreshStats must not double up here.
+    expect(h.refreshStats).not.toHaveBeenCalled();
+  });
+
+  it('HS-9176 — detail-only / claims-only events do not touch the counts', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'attachment-added', ticketId: 1, attachment: {}, seq: 1 });
+    h.last().push({ type: 'claims-changed', seq: 2 });
+    expect(h.refreshStats).not.toHaveBeenCalled();
   });
 
   it('refetches placement-sensitive events (ticket-created)', () => {

@@ -13,7 +13,10 @@ into a buildable, phased spec, grounded in the code as it exists today.
 > the `?since` catch-up replay; live-fanout coalescing stays deferred — no flood, and the client
 > already debounces), HS-8984 (per-event in-memory reducer §93.5 — `reduceMutation` applies
 > `optimisticUpdate`/`removeTicket` to `ticketsStore` in place for loaded tickets, refetching only
-> when a change could pull a not-loaded ticket into view or is placement-sensitive). **The whole
+> when a change could pull a not-loaded ticket into view or is placement-sensitive), HS-9176 (the
+> in-place apply also kicks a coalesced `updateStats()` — the status-bar `total · open · up next`
+> counts and sidebar badges are server-fetched and not subscribed to the store, so an in-place apply
+> would otherwise leave them stale until a project switch). **The whole
 > WS-push stack is shipped end-to-end.** Decomposition + dependencies in §93.9.
 
 ## 93.1 Why — and why it is NOT a local win
