@@ -24,7 +24,7 @@ A device switch resizes the PTY exactly once (a deliberate handoff), which is ac
 
 The server tracks a single **active device** per *connection set* and gates terminal behavior on it.
 
-- **Scope decision:** the active device is tracked **per project's connection set** — i.e. per `projectSecret` (the bus key already used by §93). Rationale: terminals are per-project, the `/ws/sync` bus is already keyed by `projectSecret`, and a user viewing project A on their laptop while glancing at project B on their phone is a reasonable (if rare) split. *(Open refinement: a single server-global active device across all projects is simpler but couples unrelated projects; per-project is the safer default and is what the follow-ups implement. Revisit if it feels wrong in use.)*
+- **Scope decision (CONFIRMED, maintainer 2026-06-29): per-project.** The active device is tracked **per project's connection set** — i.e. per `projectSecret` (the bus key already used by §93). Rationale: terminals are per-project, the `/ws/sync` bus is already keyed by `projectSecret`, and a user can drive project A's terminals on their laptop while another device glances at project B. A single server-global active device was rejected (it couples unrelated projects). This also lines up with the **future multi-server client** direction the maintainer flagged: a single client may end up connected to *several* remote servers at once (each remote project HS-9193 mounts has its own origin + secret), so the natural lease key is the (server, project) pair — which `projectSecret` already is, since each mounted project carries its own secret. Keep the lease keyed by the project's secret, not by anything server-global.
 - **Lease, not a flag.** The active claim is a **heartbeat lease** mirroring the §54 checkout lease and the §80 announcer live lease: a TTL (proposed **15 s**, client-renewed every ~5 s). On expiry — the active device slept, lost network, or closed — the slot frees so another device can claim. This avoids a dead device holding the terminals hostage.
 - **Last-claim-wins.** A new claim supersedes the current holder immediately (the old active device flips to placeholders on the next lease broadcast). Deliberate handoff, no negotiation.
 - **Identity (`deviceId`):**
@@ -61,7 +61,6 @@ Each device:
 ## 109.8 Out of scope (future)
 
 - **Live passive viewing on a second device** (laptop-drives + phone-watches-live) — the letterbox / CSS-scale option from the HS-9161 note. Not needed for the "one device at a time" premise. Would require a canonical PTY size + scaling the non-active render rather than placeholdering it.
-- A single **server-global** active device across all projects (vs the per-project default chosen in §109.3).
 
 ## 109.9 Build plan (follow-up tickets)
 
