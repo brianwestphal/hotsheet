@@ -4,7 +4,7 @@ Shell command targets allow custom command buttons to execute shell commands dir
 
 ## 15.1 Custom Command Targets
 
-Each custom command (configured in Settings > Experimental > Custom Commands) has a **target** field:
+Each custom command (configured in Settings > Custom Commands — its own tab as of HS-8856, previously under Experimental) has a **target** field:
 
 - **Claude Code** — sends the prompt to the Claude Channel (see [12-claude-channel.md](12-claude-channel.md)). Requires Claude Channel to be enabled.
 - **Shell** — executes the prompt text as a shell command on the server. Works without Claude Channel.
@@ -13,7 +13,7 @@ When Claude Channel is disabled, new commands default to Shell target. If a comm
 
 ### Sidebar Visibility
 
-Shell commands always appear in the sidebar, regardless of Claude Channel status. Claude Code commands only appear when the channel is enabled. The custom commands settings section is always visible in the Experimental tab (even without Claude CLI installed).
+Shell commands always appear in the sidebar, regardless of Claude Channel status. Claude Code commands only appear when the channel is enabled. The custom commands settings section is always visible in its own **Custom Commands** tab (even without Claude CLI installed).
 
 The target is selected via a segmented control (two buttons: "Claude Code" and "Shell") in the command editor modal. When "Shell" is selected, the prompt label changes to "Shell command to run:" and the placeholder updates accordingly.
 
@@ -64,7 +64,7 @@ List currently running shell process IDs and their accumulated partial output.
 
 ### Streaming-output setting (HS-7984)
 
-The per-project `shell_streaming_enabled` setting (default `true`, surfaced in Settings → Experimental → Custom Commands) controls whether the client renders partial output as it arrives. When off, the server still buffers (so re-enabling mid-run picks up at the next chunk) but both consumers — the sidebar row preview and the Commands Log entry's live `<pre>` — gate rendering on the flag. A first-use toast fires once per browser when the user runs their first streaming command after upgrade, with a `localStorage` sentinel ensuring it appears at most once. See [53-streaming-shell-output.md](53-streaming-shell-output.md) §53.5 Phase 4.
+The per-project `shell_streaming_enabled` setting (default `true`, surfaced in Settings → Custom Commands) controls whether the client renders partial output as it arrives. When off, the server still buffers (so re-enabling mid-run picks up at the next chunk) but both consumers — the sidebar row preview and the Commands Log entry's live `<pre>` — gate rendering on the flag. A first-use toast fires once per browser when the user runs their first streaming command after upgrade, with a `localStorage` sentinel ensuring it appears at most once. See [53-streaming-shell-output.md](53-streaming-shell-output.md) §53.5 Phase 4.
 
 ## 15.5 Data Model
 

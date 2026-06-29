@@ -566,6 +566,12 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
               <span>Views</span>
             </button>
+            {/* HS-8856 — Custom Commands moved out of Experimental into its own
+                tab (grouped with the other per-project sidebar editors). */}
+            <button className="settings-tab" data-tab="commands" id="settings-tab-commands">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></svg>
+              <span>Custom Commands</span>
+            </button>
             <button className="settings-tab" data-tab="terminal" id="settings-tab-terminal" style="display:none">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
               <span>Terminal</span>
@@ -804,6 +810,37 @@ pageRoutes.get('/', (c) => {
               </div>
               <span className="settings-hint" style="margin-bottom:12px;display:block">Custom views in the sidebar. <strong>Shared</strong> views are committed to the project (settings.json); <strong>Local</strong> views are this machine only (settings.local.json). Use the Shared / Local tabs above to choose which you're adding; in Local you can also hide a shared view on this machine.</span>
               <div id="settings-views-list"></div>
+            </div>
+            {/* HS-8856 — Custom Commands now has its own tab (moved out of
+                Experimental). The `#settings-custom-commands-section` +
+                `#settings-commands-list` ids are preserved so the existing
+                `bindExperimentalSettings` wiring keeps working unchanged. */}
+            <div className="settings-tab-panel" data-panel="commands" id="settings-commands-panel">
+              <div id="settings-custom-commands-section" style="display:none">
+                <div className="settings-section">
+                  <div className="settings-section-header">
+                    <h3>Custom Commands</h3>
+                  </div>
+                  <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
+                  {/* HS-9014 — the command editor is now scope-aware (Shared
+                      edits the committed tree; Local stores an element-level
+                      tree delta — hide/add/override/childAdded), so it's NO
+                      LONGER locked via `data-scope-complex`. It renders its own
+                      per-mode origin tags + scope hint. */}
+                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
+                  {/* HS-7984 — per-project toggle for the §53 streaming
+                      shell-output behavior. When off, the server still
+                      buffers (cheap; no point in conditional buffering
+                      complexity) but the client gates rendering, so the
+                      sidebar preview stays hidden and the Commands Log
+                      entry stays at the pre-completion empty state until
+                      the final detail lands. Default true — see §53.8. */}
+                  <div className="settings-field settings-field-checkbox" style="margin-top:12px">
+                    <label><input type="checkbox" id="settings-shell-streaming-enabled" defaultChecked /> Stream shell command output as it arrives</label>
+                    <span className="settings-hint">When on, the sidebar shows the trailing 1–2 lines of output under a running custom shell command's button, and the Commands Log entry updates in place as chunks arrive. Turn off if the live trickle is distracting.</span>
+                  </div>
+                </div>
+              </div>
             </div>
             {/* HS-9124 — plugins are DB-backed + machine-local (never shared via
                 git), so the panel is always editable and the dialog-wide scope
@@ -1056,31 +1093,6 @@ pageRoutes.get('/', (c) => {
                   <div className="settings-channel-command">
                     <code id="settings-channel-cmd">claude --dangerously-load-development-channels server:hotsheet-channel-…</code>
                     <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
-                  </div>
-                </div>
-              </div>
-              <div id="settings-custom-commands-section" style="display:none">
-                <div className="settings-section" style="margin-top:16px">
-                  <div className="settings-section-header">
-                    <h3>Custom Commands</h3>
-                  </div>
-                  <span className="settings-hint">Custom buttons that trigger actions in Claude. They appear below the play button in the sidebar.</span>
-                  {/* HS-9014 — the command editor is now scope-aware (Shared
-                      edits the committed tree; Local stores an element-level
-                      tree delta — hide/add/override/childAdded), so it's NO
-                      LONGER locked via `data-scope-complex`. It renders its own
-                      per-mode origin tags + scope hint. */}
-                  <div id="settings-commands-list" className="settings-commands-list" style="margin-top:8px"></div>
-                  {/* HS-7984 — per-project toggle for the §53 streaming
-                      shell-output behavior. When off, the server still
-                      buffers (cheap; no point in conditional buffering
-                      complexity) but the client gates rendering, so the
-                      sidebar preview stays hidden and the Commands Log
-                      entry stays at the pre-completion empty state until
-                      the final detail lands. Default true — see §53.8. */}
-                  <div className="settings-field settings-field-checkbox" style="margin-top:12px">
-                    <label><input type="checkbox" id="settings-shell-streaming-enabled" defaultChecked /> Stream shell command output as it arrives</label>
-                    <span className="settings-hint">When on, the sidebar shows the trailing 1–2 lines of output under a running custom shell command's button, and the Commands Log entry updates in place as chunks arrive. Turn off if the live trickle is distracting.</span>
                   </div>
                 </div>
               </div>

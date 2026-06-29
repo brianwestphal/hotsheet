@@ -25,8 +25,8 @@ async function openExperimentalSettings(page: import('@playwright/test').Page) {
   const snapSettled = page.waitForResponse(r => /\/api\/db\/snapshot-status/.test(r.url()), { timeout: 5000 }).catch(() => null);
   await page.locator('#settings-btn').click();
   await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
-  await page.locator('.settings-tab[data-tab="experimental"]').click();
-  await expect(page.locator('.settings-tab-panel[data-panel="experimental"]')).toHaveClass(/active/);
+  await page.locator('.settings-tab[data-tab="commands"]').click();
+  await expect(page.locator('.settings-tab-panel[data-panel="commands"]')).toHaveClass(/active/);
   // HS-9127 — Resolved is the read-only effective view, so editing commands (add /
   // edit / delete / reorder) requires Shared or Local mode. These tests seed +
   // verify via the shared (default) layer, so switch to Shared. (The commands

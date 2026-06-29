@@ -57,7 +57,7 @@ export function maybeFireShellStreamFirstUseToast(): void {
     if (window.localStorage.getItem(SHELL_STREAM_TOAST_DISMISSED_KEY) !== null) return;
     window.localStorage.setItem(SHELL_STREAM_TOAST_DISMISSED_KEY, String(Date.now()));
   } catch { /* localStorage disabled — fall through and show the toast anyway, no harm */ }
-  showToast('Shell command output now streams live in the Commands Log — Settings → Experimental to disable.', { durationMs: 7000 });
+  showToast('Shell command output now streams live in the Commands Log — Settings → Custom Commands to disable.', { durationMs: 7000 });
 }
 
 /**

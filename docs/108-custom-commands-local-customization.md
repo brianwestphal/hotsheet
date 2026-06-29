@@ -7,7 +7,8 @@ the `ArrayDelta` model (`src/settingsDelta.ts`); `custom_commands` is a nested
 **tree** (top-level commands + groups holding child commands) that the flat model
 can't target, so it gets its own **tree-aware** delta + resolver.
 
-The Custom Commands editor (Settings → Experimental) now participates in the
+The Custom Commands editor (Settings → Custom Commands — its own tab as of
+HS-8856; previously under Settings → Experimental) now participates in the
 dialog-wide **Shared | Local overrides | Resolved** scope control (§95 / docs/2
 §2.3.1) at element granularity, and supports moving a command/group between the
 shared and local layers.

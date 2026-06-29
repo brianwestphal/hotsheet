@@ -37,6 +37,21 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(page.locator('#settings-app-name')).toBeEnabled();
   });
 
+  // HS-8856 — Custom Commands is its own settings tab (moved out of Experimental).
+  test('HS-8856: Custom Commands has its own settings tab (moved out of Experimental)', async ({ page }) => {
+    const tab = page.locator('.settings-tab[data-tab="commands"]');
+    await expect(tab).toBeVisible();
+    await expect(tab).toContainText('Custom Commands');
+    // Clicking it shows the commands editor in its own panel.
+    await tab.click();
+    await expect(page.locator('.settings-tab-panel[data-panel="commands"]')).toHaveClass(/active/);
+    await expect(page.locator('.settings-tab-panel[data-panel="commands"] #settings-commands-list')).toBeVisible();
+    // The Experimental panel no longer contains the commands list (channel toggle + diagnostics stay).
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await expect(page.locator('.settings-tab-panel[data-panel="experimental"] #settings-commands-list')).toHaveCount(0);
+    await expect(page.locator('.settings-tab-panel[data-panel="experimental"] #settings-channel-enabled')).toBeVisible();
+  });
+
   test('Local mode: override an inherited field, then reset it', async ({ page }) => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await expect(page.locator('#settings-scope-note')).toContainText('settings.local.json');
@@ -143,7 +158,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     // Reopen settings so the editor reloads the seeded shared tree.
     await page.locator('#settings-close').click();
     await page.locator('#settings-btn').click();
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.settings-tab[data-tab="commands"]').click();
 
     // Switch to Local mode → the commands list is NOT wholesale-locked and shows
     // the local hint + origin tags.
@@ -190,7 +205,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     });
     await page.locator('#settings-close').click();
     await page.locator('#settings-btn').click();
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.settings-tab[data-tab="commands"]').click();
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     const list = page.locator('#settings-commands-list');
     const rowA = list.locator('.cmd-outline-row').filter({ hasText: 'Shared A' }).first();
@@ -235,7 +250,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     });
     await page.locator('#settings-close').click();
     await page.locator('#settings-btn').click();
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.settings-tab[data-tab="commands"]').click();
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     const list = page.locator('#settings-commands-list');
     await expect(list.locator('.cmd-outline-row').filter({ hasText: 'random' })).toBeVisible({ timeout: 5000 });
@@ -272,7 +287,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     });
     await page.locator('#settings-close').click();
     await page.locator('#settings-btn').click();
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.settings-tab[data-tab="commands"]').click();
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     const list = page.locator('#settings-commands-list');
     const child2Row = list.locator('.cmd-outline-row.cmd-outline-indented').filter({ hasText: 'child2' });
@@ -295,7 +310,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
   // HS-9181 — a command added in Shared mode is tagged "shared" IMMEDIATELY,
   // not "local" until the dialog is reopened.
   test('HS-9181: a command added in Shared mode is tagged "shared" immediately', async ({ page }) => {
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.settings-tab[data-tab="commands"]').click();
     await page.locator('.scope-seg-btn.scope-seg-shared').click();
     const list = page.locator('#settings-commands-list');
     await list.locator('.cmd-outline-add-btn').click();
@@ -326,7 +341,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     });
     await page.locator('#settings-close').click();
     await page.locator('#settings-btn').click();
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.settings-tab[data-tab="commands"]').click();
     await page.locator('.scope-seg-btn.scope-seg-local').click();
 
     const list = page.locator('#settings-commands-list');
