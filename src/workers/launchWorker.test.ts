@@ -7,6 +7,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { claudeWithChannelCommand } from '../terminals/resolveCommand.js';
 import type { GitRunner } from '../worktrees.js';
 import { prepareWorker, workerLaunchCommand } from './launchWorker.js';
 
@@ -26,8 +27,14 @@ const gitWith = (worktrees: string[]): GitRunner => () =>
   Promise.resolve(worktrees.map(p => `worktree ${p}\nHEAD abc123\nbranch refs/heads/${p === repoRoot ? 'main' : 'feature-x'}\n`).join('\n'));
 
 describe('worker launcher (HS-8863)', () => {
-  it('workerLaunchCommand boots Claude into the worker skill', () => {
-    expect(workerLaunchCommand()).toBe('claude "/hotsheet-worker"');
+  it('HS-9036: workerLaunchCommand boots Claude into the worker skill WITH the development-channel flag', () => {
+    const dataDir = join(repoRoot, '.hotsheet');
+    const cmd = workerLaunchCommand(dataDir);
+    // The channel flag is what routes the worker's permission prompts (and events)
+    // to its channel server so they surface in the Hot Sheet UI — same as main.
+    expect(cmd).toBe(`${claudeWithChannelCommand(dataDir)} "/hotsheet-worker"`);
+    expect(cmd).toContain('--dangerously-load-development-channels server:hotsheet-channel-');
+    expect(cmd).toContain('"/hotsheet-worker"');
   });
 
   it('reuses an existing worktree and derives label + worker id from its branch', async () => {
@@ -37,7 +44,7 @@ describe('worker launcher (HS-8863)', () => {
     expect(spec.worktreeCreated).toBe(false);
     expect(spec.label).toBe('feature-x');
     expect(spec.worker).toBe('feature-x');           // slug of the label
-    expect(spec.command).toBe('claude "/hotsheet-worker"');
+    expect(spec.command).toBe(`${claudeWithChannelCommand(join(repoRoot, '.hotsheet'))} "/hotsheet-worker"`);
   });
 
   it('honors an explicit label/worker over the derived defaults', async () => {

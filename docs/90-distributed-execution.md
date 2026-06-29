@@ -272,7 +272,7 @@ not per ticket. Detailed design in
 ensures one isolated worktree slot (creating it via §89 `createWorktree` — which
 already wires the follower pointer + `.mcp.json` + skills at the owner — or reusing
 an existing one, refusing the main worktree) and returns the launch spec
-`{ worker, label, cwd, command }` where `command` is `claude "/hotsheet-worker"`.
+`{ worker, label, cwd, command }` where `command` is `claude --dangerously-load-development-channels server:hotsheet-channel-<slug> "/hotsheet-worker"` (**HS-9036** — the development-channel flag, keyed to the OWNER data dir like the main project's Claude command, is what routes the worker's **permission prompts** to its channel server so they surface in the Hot Sheet UI; without it the worker connected to the channel MCP for tools but Claude prompted permissions in the terminal).
 Exposed at `POST /api/workers/launch` (typed `launchWorker` in `src/api/workers.ts`).
 The caller opens the terminal via the Phase C `openTerminalRunningCommand(command,
 label, cwd)`. The pool that launches **N** of these + the scale controls is the

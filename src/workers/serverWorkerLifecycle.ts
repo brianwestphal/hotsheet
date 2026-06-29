@@ -7,7 +7,7 @@
  * This gives the server the two primitives the §100 reconcile loop (HS-9076) needs
  * to scale the pool headlessly:
  *
- *   - `spawnWorkerTerminal` — spawn a worker's `claude "/hotsheet-worker"` PTY
+ *   - `spawnWorkerTerminal` — spawn a worker's `claude … "/hotsheet-worker"` PTY
  *     server-side (no open client), returning a server-tracked `terminalId` for
  *     the pool slot. Mirrors the client `openTerminalRunningCommand`.
  *   - `reapWorker` — the server analog of the client `cleanupStopped` reap
@@ -29,7 +29,7 @@ import { removeWorker, type WorkerSlot } from './poolManager.js';
 /**
  * Spawn a worker's terminal SERVER-SIDE from a prepared `WorkerLaunchSpec`. Like
  * the client `openTerminalRunningCommand`, it opens the default shell in the
- * worktree cwd and injects `spec.command` (`claude "/hotsheet-worker"`) once the
+ * worktree cwd and injects `spec.command` (`claude --dangerously-load-development-channels … "/hotsheet-worker"`) once the
  * shell settles. Returns the server-tracked `terminalId` to store on the pool slot
  * (so `reapWorker` can later close it). Best-effort spawn (the create helper logs
  * but never throws on an eager-spawn hiccup).

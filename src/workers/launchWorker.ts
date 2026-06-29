@@ -10,6 +10,7 @@
 // N of these + the scale controls is HS-8962.
 import { basename } from 'path';
 
+import { claudeWithChannelCommand } from '../terminals/resolveCommand.js';
 import type { GitRunner } from '../worktrees.js';
 import { canonicalizePath, createWorktree, defaultGit, listWorktrees } from '../worktrees.js';
 
@@ -44,14 +45,20 @@ function slugify(s: string): string {
 }
 
 /**
- * The terminal command that boots a Claude worker. It starts `claude` with an
- * initial prompt that invokes the `/hotsheet-worker` skill, so the session
- * immediately enters the claim→work→complete loop. Kept as a single function so
- * the exact invocation is testable and tunable in one place (e.g. to swap the AI
- * tool or pass flags later).
+ * The terminal command that boots a Claude worker. It starts `claude` with the
+ * **development-channel flag** (`claudeWithChannelCommand`, keyed to the OWNER's
+ * data dir — the worker registers its channel server there, HS-8936) PLUS an
+ * initial prompt that invokes the `/hotsheet-worker` skill.
+ *
+ * HS-9036 — the channel flag is what routes the worker's **permission prompts**
+ * (and channel events) to its channel server so they surface in the Hot Sheet UI,
+ * exactly like the main project's Claude command. Pre-fix the worker launched as a
+ * bare `claude "/hotsheet-worker"` — it connected to the channel MCP (tools worked)
+ * but Claude never sent `permission_request` to it, so EVERY worker permission
+ * fell back to the terminal and never popped up in Hot Sheet.
  */
-export function workerLaunchCommand(): string {
-  return 'claude "/hotsheet-worker"';
+export function workerLaunchCommand(ownerDataDir: string): string {
+  return `${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker"`;
 }
 
 /**
@@ -90,5 +97,7 @@ export async function prepareWorker(
 
   const label = opts.label ?? derivedName;
   const worker = opts.worker ?? slugify(label);
-  return { worker, label, cwd, command: workerLaunchCommand(), worktreeCreated };
+  // HS-9036 — the channel flag is keyed to the OWNER data dir (the channel
+  // server the worker registers under + the maintainer is watching).
+  return { worker, label, cwd, command: workerLaunchCommand(ownerDataDir), worktreeCreated };
 }
