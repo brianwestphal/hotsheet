@@ -828,10 +828,12 @@ pageRoutes.get('/', (c) => {
                 scope bar (HIDDEN_SCOPE_BAR_TABS), so no `data-scope-complex` lock —
                 the allow-rules always edit the local layer. */}
             <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel">
+              {/* HS-9178 — the local-only note goes BEFORE all section headings (matching
+                  every other tab); pre-fix it sat below the "Auto-Allow Rules" heading. */}
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> Auto-allow rules live in <code>.claude/settings.local.json</code> (gitignored) — never committed to git or shared with your team.</span></p>
               <div className="settings-section-header">
                 <h3>Auto-Allow Rules</h3>
               </div>
-              <p className="settings-local-note"><span><strong>Local to this machine.</strong> Auto-allow rules live in <code>.claude/settings.local.json</code> (gitignored) — never committed to git or shared with your team.</span></p>
               <p className="settings-hint">Permission requests that match a rule below are auto-allowed without showing the popup. Patterns are JS regex anchored with <code>^…$</code> so <code>git status</code> matches <code>git status</code> exactly, not <code>cd /tmp &amp;&amp; git status</code>. Edit / Write requests are never allow-listable — file path alone doesn't capture diff intent.</p>
               {/* HS-8026 — the inline +Add form was replaced by an
                   "Add rule" button rendered inside the list (mirrors the
@@ -960,13 +962,15 @@ pageRoutes.get('/', (c) => {
                 is chosen from the global "API Keys" registry via the selector
                 below (or defaults to the first Anthropic key). */}
             <div className="settings-tab-panel" data-panel="announcer" id="settings-announcer-panel">
+              {/* HS-9159 — the Announcer is always-on (no per-project enable toggle);
+                  all its settings are machine-local-only. HS-9178 — the local-only note
+                  goes BEFORE all section headings (matching every other tab); pre-fix it
+                  sat below the "Announcer" heading. */}
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> Announcer settings (model, key selection, local endpoint) live in <code>~/.hotsheet/</code> and this machine's database — never committed to git or shared with your team. The Announcer is always on; its <strong>Listen</strong> button is enabled once a usable model is configured.</span></p>
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>Announcer</h3>
                 </div>
-                {/* HS-9159 — the Announcer is always-on (no per-project enable
-                    toggle); all its settings are machine-local-only. */}
-                <p className="settings-local-note"><span><strong>Local to this machine.</strong> Announcer settings (model, key selection, local endpoint) live in <code>~/.hotsheet/</code> and this machine's database — never committed to git or shared with your team. The Announcer is always on; its <strong>Listen</strong> button is enabled once a usable model is configured.</span></p>
                 <span className="settings-hint">Narrates recent work in this project aloud — a spoken summary of completion notes and activity since you last listened. <strong>Privacy &amp; cost:</strong> the work to summarize is sent to your selected model. An <strong>Anthropic</strong> model uses Anthropic's API with your own key (a departure from Hot Sheet's local-only default); the <strong>on-device Apple</strong> model keeps everything local + free. Either way only the notes you and your AI tools already write are sent — never code or ticket details.</span>
                 {/* HS-8790 — model field FIRST; spans providers (Apple on-device +
                     Anthropic). Provider-specific fields (the Anthropic key) show

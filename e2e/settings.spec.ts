@@ -109,4 +109,27 @@ test.describe('Settings dialog', () => {
     expect(styles.paddingTop).toBe('0px');
     expect(styles.marginTop).toBe('0px');
   });
+
+  // HS-9178 — the "Local to this machine" note must sit BEFORE all section
+  // headings on every tab that has one (it was below the heading on the
+  // Permissions + Announcer tabs, inconsistent with the others).
+  test('HS-9178: the local-only note precedes the first section heading', async ({ page }) => {
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
+
+    const panels = ['settings-permissions-panel', 'settings-announcer-panel', 'settings-keys-panel'];
+    for (const panelId of panels) {
+      const order = await page.evaluate((id) => {
+        const panel = document.getElementById(id);
+        if (panel === null) return 'no-panel';
+        const note = panel.querySelector('.settings-local-note');
+        const heading = panel.querySelector('h3');
+        if (note === null || heading === null) return 'n/a';
+        // DOCUMENT_POSITION_FOLLOWING set ⇒ the heading comes AFTER the note.
+        return (note.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 ? 'note-first' : 'heading-first';
+      }, panelId);
+      if (order === 'n/a' || order === 'no-panel') continue;
+      expect(order, `panel ${panelId}: local note should precede the first heading`).toBe('note-first');
+    }
+  });
 });
