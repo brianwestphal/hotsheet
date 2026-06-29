@@ -49,9 +49,9 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindKeysSettings();
   bindDevicesSettings();
 
-  // HS-9004 — dialog-wide Shared | Local overrides | Resolved scope control.
-  // Wire the toolbar once; on each open reset to Resolved (the default view)
-  // and decorate every file-settings field once the layered settings land.
+  // HS-9004 — dialog-wide Shared | Local scope control (HS-9155 removed Resolved).
+  // Wire the toolbar once; on each open reset to Local (the default) and decorate
+  // every file-settings field once the layered settings land.
   // Registered LAST so its open handler runs after every tab's populate.
   initSettingsScope();
   byId('settings-btn').addEventListener('click', () => {

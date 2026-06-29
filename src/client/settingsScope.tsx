@@ -1,17 +1,16 @@
 /**
- * HS-9004 — dialog-wide Shared | Local overrides | Resolved scope control.
+ * HS-9004 — dialog-wide Shared | Local scope control. (HS-9155 removed the third
+ * "Resolved" view; Local defaults + already shows the effective value for fields
+ * with no local override.)
  *
  * A persistent toolbar under the Settings tab strip switches the whole dialog
- * between three views of the HS-9002 shared/local split (docs/2 §2.3.1):
+ * between two views of the HS-9002 shared/local split (docs/2 §2.3.1):
  *
- *   - `resolved` (default) — the effective values, edited exactly as before
- *     (writes route to each key's default layer). Each field is tagged with
- *     where its value comes from.
+ *   - `local` (default) — edit the gitignored `settings.local.json`. Overridden
+ *     fields are editable with "Reset to shared"; inherited fields show the
+ *     inherited (effective) value read-only behind a "+ Override" affordance.
  *   - `shared` — edit the committed `settings.json`. A field shows the literal
  *     shared value (even when locally overridden) + an "overridden locally" tag.
- *   - `local` — edit the gitignored `settings.local.json`. Overridden fields are
- *     editable with "Reset to shared"; inherited fields show the inherited value
- *     read-only behind a "+ Override" affordance.
  *
  * Settings stay in their own tabs. File-settings fields decorate in place via a
  * declared registry (keyed by control id). Fields that can't participate are
@@ -20,8 +19,8 @@
  * (plugin toggles, complex list editors) are containers tagged
  * `data-scope-complex` and lock with a short note in the modes where they're not
  * editable — the default variant is a shared setting editable only in Shared
- * (read-only in Resolved + Local; HS-9021), with `shared-only`/`local-only`
- * variants locking just in Local / just in Shared respectively.
+ * (read-only in Local; HS-9021), with `shared-only`/`local-only` variants locking
+ * just in Local / just in Shared respectively.
  *
  * Pure layer logic lives in `settingsSharing.ts`; this module does the DOM.
  */
