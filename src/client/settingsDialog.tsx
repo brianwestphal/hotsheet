@@ -126,12 +126,10 @@ function bindDialogOpenClose() {
     void refreshCommandsAfterDialogClose();
   });
 
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) {
-      overlay.style.display = 'none';
-      void refreshCommandsAfterDialogClose();
-    }
-  });
+  // HS-9179 — do NOT close the dialog on a click outside it (the backdrop). An
+  // accidental click-away was dismissing settings mid-edit; closing now requires
+  // the explicit X button (or the deliberate Escape keypress). The backdrop click
+  // is intentionally a no-op.
 }
 
 // --- General tab ---

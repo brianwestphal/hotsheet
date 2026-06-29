@@ -104,13 +104,19 @@ test.describe('Settings persistence', () => {
     await expect(overlay).toBeHidden({ timeout: 3000 });
   });
 
-  test('close settings by clicking overlay background', async ({ page }) => {
+  // HS-9179 — clicking the backdrop must NOT dismiss the dialog (accidental
+  // click-away was closing settings mid-edit); only the X (or Escape) closes.
+  test('HS-9179: clicking the overlay background does NOT close settings; the X does', async ({ page }) => {
     await page.locator('#settings-btn').click();
     const overlay = page.locator('#settings-overlay');
     await expect(overlay).toBeVisible({ timeout: 3000 });
 
-    // Click the overlay background (top-left corner, outside the dialog)
+    // Click the backdrop (top-left corner, outside the dialog) — stays open.
     await overlay.click({ position: { x: 5, y: 5 } });
+    await expect(overlay).toBeVisible();
+
+    // The explicit X button closes it.
+    await page.locator('#settings-close').click();
     await expect(overlay).toBeHidden({ timeout: 3000 });
   });
 });
