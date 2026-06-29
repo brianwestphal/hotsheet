@@ -104,7 +104,15 @@ entry with its follower pointer, main first), `createWorktree(repoRoot,
 ownerDataDir, {branch, path?, newBranch?, baseRef?})` (`git worktree add` →
 default sibling `../<repo>-worktrees/<branch>`, then writes the follower
 `.hotsheet/settings.json` pointing at the owner + defensively ensures it's
-gitignored), `removeWorktree(repoRoot, path, {force?, deleteBranch?})`. Git is
+gitignored), `removeWorktree(repoRoot, path, {force?, deleteBranch?})`.
+**HS-9203 — robust `newBranch` create:** `git worktree add -b <branch>` fails
+hard when the branch already exists (e.g. the worktree dir was deleted but the
+branch lingered) or the path is taken, dead-ending worker creation. So
+`createWorktree` first `git worktree prune`s stale registrations, then picks the
+first FREE name — `<branch>`, else `<branch>-2`, `<branch>-3`, … (with a matching
+path); it never clobbers an existing branch and never prompts. The returned
+`WorktreeInfo.branch` is the ACTUAL (possibly deduped) branch, and `prepareWorker`
+labels the worker from it. Git is
 shelled async with an injectable runner; path matching is symlink-robust
 (`realpathSync` — macOS `/var`→`/private/var`). API: `GET /api/worktrees`,
 `POST /api/worktrees`, `POST /api/worktrees/remove` (`src/routes/worktrees.ts`,

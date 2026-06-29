@@ -92,7 +92,9 @@ export async function prepareWorker(
     const info = await createWorktree(repoRoot, ownerDataDir, { branch: opts.branch, newBranch: true }, git);
     cwd = info.path;
     worktreeCreated = true;
-    derivedName = opts.branch;
+    // HS-9203 — `createWorktree` may have deduped the branch (e.g. `hotsheet/worker-1`
+    // already existed → `hotsheet/worker-1-2`); use the ACTUAL branch for the label.
+    derivedName = info.branch ?? opts.branch;
   }
 
   const label = opts.label ?? derivedName;

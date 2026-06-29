@@ -16,7 +16,7 @@
  * injectable for unit tests; the integration test drives a real temp repo.
  */
 import { execFile } from 'child_process';
-import { mkdirSync, realpathSync } from 'fs';
+import { existsSync, mkdirSync, realpathSync } from 'fs';
 import { basename, join, resolve } from 'path';
 import { promisify } from 'util';
 
@@ -150,11 +150,29 @@ export async function createWorktree(
   git: GitRunner = defaultGit,
   provision: ProvisionRunner = provisionNodeModules,
 ): Promise<WorktreeInfo> {
-  const path = resolve(opts.path ?? defaultWorktreePath(repoRoot, opts.branch));
   const owner = resolve(ownerDataDir);
 
+  // HS-9203 — robust new-branch creation. `git worktree add -b <branch>` fails
+  // hard when the branch already exists (e.g. the worktree dir was deleted but the
+  // branch lingered) or the target path is taken — dead-ending worker creation.
+  // Prune stale worktree registrations first, then pick the first FREE name:
+  // `<branch>`, else `<branch>-2`, `<branch>-3`, … (with a matching path). No
+  // clobbering an existing branch, no interactive prompt.
+  if (opts.newBranch === true) {
+    try { await git(repoRoot, ['worktree', 'prune']); } catch { /* best-effort: a prune hiccup must not block create */ }
+  }
+  let branch = opts.branch;
+  let path = resolve(opts.path ?? defaultWorktreePath(repoRoot, opts.branch));
+  if (opts.newBranch === true) {
+    for (let n = 2; (await branchExists(repoRoot, branch, git)) || existsSync(path); n++) {
+      if (n > 100) throw new Error(`Could not find a free branch/path for "${opts.branch}" (tried up to -${n - 1})`);
+      branch = `${opts.branch}-${n}`;
+      path = resolve(opts.path !== undefined ? `${opts.path}-${n}` : defaultWorktreePath(repoRoot, branch));
+    }
+  }
+
   const args = ['worktree', 'add'];
-  if (opts.newBranch === true) args.push('-b', opts.branch, path, opts.baseRef ?? 'HEAD');
+  if (opts.newBranch === true) args.push('-b', branch, path, opts.baseRef ?? 'HEAD');
   else args.push(path, opts.branch);
   await git(repoRoot, args);
 
@@ -198,7 +216,18 @@ export async function createWorktree(
 
   const list = await listWorktrees(repoRoot, git);
   return list.find(w => canonical(w.path) === canonical(path))
-    ?? { path, branch: opts.branch, head: '', isMain: false, authoritativeDataDir: owner };
+    ?? { path, branch, head: '', isMain: false, authoritativeDataDir: owner };
+}
+
+/** HS-9203 — does a local branch exist? `git branch --list <branch>` exits 0 with
+ *  the branch name in stdout when present (empty otherwise), so we avoid
+ *  throw-for-control-flow on `rev-parse`. A runner error is treated as "absent". */
+async function branchExists(repoRoot: string, branch: string, git: GitRunner): Promise<boolean> {
+  try {
+    return (await git(repoRoot, ['branch', '--list', branch])).trim() !== '';
+  } catch {
+    return false;
+  }
 }
 
 /**

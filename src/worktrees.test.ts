@@ -130,6 +130,27 @@ describe('worktrees — real git', () => {
     await removeWorktree(repoRoot, wt.path, { force: true });
   });
 
+  // HS-9203 — creating a worker must not dead-end when the requested branch
+  // already exists (e.g. the worktree was removed but the branch lingered).
+  it('HS-9203: dedupes the branch + path when the requested branch already exists', async () => {
+    // Create on `feature-x`, then remove the worktree — the BRANCH survives.
+    const first = await createWorktree(repoRoot, ownerData, { branch: 'feature-x', newBranch: true });
+    expect(first.branch).toBe('feature-x');
+    await removeWorktree(repoRoot, first.path, { force: true }); // keeps the branch
+
+    // Re-create with the SAME requested branch → it picks the next free name.
+    const second = await createWorktree(repoRoot, ownerData, { branch: 'feature-x', newBranch: true });
+    expect(second.branch).toBe('feature-x-2');
+    expect(realpathSync(second.path)).toBe(realpathSync(join(base, `${basename(repoRoot)}-worktrees`, 'feature-x-2')));
+
+    // A THIRD create (both feature-x and feature-x-2 now exist) → feature-x-3.
+    const third = await createWorktree(repoRoot, ownerData, { branch: 'feature-x', newBranch: true });
+    expect(third.branch).toBe('feature-x-3');
+
+    await removeWorktree(repoRoot, second.path, { force: true, deleteBranch: true });
+    await removeWorktree(repoRoot, third.path, { force: true, deleteBranch: true });
+  });
+
   it('removeWorktree with deleteBranch also deletes the branch', async () => {
     const wt = await createWorktree(repoRoot, ownerData, { branch: 'throwaway', newBranch: true });
     await removeWorktree(repoRoot, wt.path, { force: true, deleteBranch: true });
