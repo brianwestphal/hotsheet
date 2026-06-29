@@ -1754,8 +1754,13 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
-// HS-9056 — on narrow tiles drop the counts text but keep the (tiny) spinner.
-@container (max-width: 150px) {
+// HS-9056 / HS-9000 — the project/terminal name is PRIMARY and must always show
+// left-aligned; the open/up-next counts are a bonus shown only "when there's
+// room". The counts cluster is fixed-width, so on smaller tiles it would crowd
+// the (min-width:0) name down to nothing — hence hide the counts text until the
+// tile is wide enough to fit the name + counts comfortably (~250px). The tiny
+// busy spinner stays at every width.
+@container (max-width: 250px) {
   .terminal-dashboard-tile-stats-counts { display: none; }
 }
 
