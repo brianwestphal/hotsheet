@@ -964,6 +964,9 @@ pageRoutes.get('/', (c) => {
                 <div className="settings-section-header">
                   <h3>Announcer</h3>
                 </div>
+                {/* HS-9159 — the Announcer is always-on (no per-project enable
+                    toggle); all its settings are machine-local-only. */}
+                <p className="settings-local-note"><span><strong>Local to this machine.</strong> Announcer settings (model, key selection, local endpoint) live in <code>~/.hotsheet/</code> and this machine's database — never committed to git or shared with your team. The Announcer is always on; its <strong>Listen</strong> button is enabled once a usable model is configured.</span></p>
                 <span className="settings-hint">Narrates recent work in this project aloud — a spoken summary of completion notes and activity since you last listened. <strong>Privacy &amp; cost:</strong> the work to summarize is sent to your selected model. An <strong>Anthropic</strong> model uses Anthropic's API with your own key (a departure from Hot Sheet's local-only default); the <strong>on-device Apple</strong> model keeps everything local + free. Either way only the notes you and your AI tools already write are sent — never code or ticket details.</span>
                 {/* HS-8790 — model field FIRST; spans providers (Apple on-device +
                     Anthropic). Provider-specific fields (the Anthropic key) show
@@ -984,10 +987,6 @@ pageRoutes.get('/', (c) => {
                     <option value="">None — don’t fall back (no narration if Apple fails)</option>
                   </select>
                   <span className="settings-hint">Used only when the on-device Apple model fails to generate. An Anthropic model calls the cloud with your key (so it spends when Apple fails); a local model stays on-device. Defaults to none.</span>
-                </div>
-                <div className="settings-field settings-field-checkbox" style="margin-top:12px">
-                  <label><input type="checkbox" id="settings-announcer-enabled" /> Enable the Announcer for this project</label>
-                  <span className="settings-hint">When on, a “Listen” button appears in the header toolbar (once a model is usable).</span>
                 </div>
                 {/* HS-8790 — Anthropic key: shown only when an Anthropic model is
                     selected (the on-device Apple model needs no key). */}

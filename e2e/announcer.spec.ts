@@ -620,8 +620,10 @@ test('local-provider settings: "Local model" option hidden when unavailable (HS-
   await page.goto('/');
   await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
-  // No usable provider (no key, no on-device) → Listen button stays hidden.
-  await expect(page.locator('#announcer-listen-btn')).toBeHidden();
+  // HS-9159 — no usable provider (no key, no on-device) → the Listen button is
+  // always shown now but DISABLED (was hidden pre-HS-9159).
+  await expect(page.locator('#announcer-listen-btn')).toBeVisible();
+  await expect(page.locator('#announcer-listen-btn')).toBeDisabled();
 
   await page.locator('#settings-btn').click();
   await page.locator('.settings-tab[data-tab="announcer"]').click();

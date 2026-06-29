@@ -105,8 +105,9 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-shell-streaming-enabled', key: 'shell_streaming_enabled', kind: 'boolean' },
   // Announcer (per-project file setting; the model/rate/etc. are machine-global
   // and write to ~/.hotsheet/config.json, so they're layer-safe and stay plain).
-  // local-only: the Announcer is never shared (docs/95 §95.4).
-  { controlId: 'settings-announcer-enabled', key: 'announcer_enabled', kind: 'boolean', share: 'local-only' },
+  // HS-9159 — the Announcer "enabled" toggle was removed (always-on); the whole
+  // Announcer tab is now machine-local-only (HIDDEN_SCOPE_BAR_TABS) with no
+  // per-field scope decoration.
 ];
 
 // HS-9155 — default to `local` (the "Resolved" mode was removed). Local already
@@ -133,8 +134,10 @@ let initialized = false;
  *                client certs live on this machine), so local-only. HS-9118.
  *  - `permissions` — the allow-rules live in `.claude/settings.local.json`
  *                (gitignored), so the whole tab is machine-local-only. HS-9157.
+ *  - `announcer` — all Announcer settings are per-machine (the enable toggle was
+ *                removed; key/model/endpoint are local), so local-only. HS-9159.
  */
-const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices', 'permissions']);
+const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices', 'permissions', 'announcer']);
 
 // HS-9123 — the Views tab now PARTICIPATES in the dialog-wide scope bar (Shared
 // shows only shared views, Local shows shared+local with hide, Resolved shows the

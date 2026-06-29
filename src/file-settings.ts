@@ -144,9 +144,9 @@ const LOCAL_SCOPE_KEYS = new Set([
   'telemetry_logs_enabled',
   'telemetry_traces_enabled',
   'telemetry_retention_days',
-  //   Announcer is local-only, never shared (incl. the enable + dismissed-topics;
-  //   model/rate/speak-permissions live in machine-Global config already).
-  'announcer_enabled',
+  //   Announcer is local-only, never shared. HS-9159 — the per-project enable
+  //   toggle was removed (always-on); model/rate/speak-permissions live in
+  //   machine-Global config already.
   'announcer_dismissed_topics',
   //   HS-9110 (docs/100 §100.2.1(a)) — whether THIS machine may spawn headless
   //   workers (the server reconcile loop's enable). Per-device, never committed.

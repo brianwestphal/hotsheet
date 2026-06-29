@@ -20,7 +20,7 @@ import { runWithDataDir } from '../db/connection.js';
 import { addPollWaiter } from '../routes/notify.js';
 import { tryConsumeCall } from './callBudget.js';
 import { CoalescingTrigger } from './coalescingTrigger.js';
-import { generateAnnouncementsOnce, isAnnouncerEnabled, prepareSummarizationProvider, resolveAnnouncerModel } from './generate.js';
+import { generateAnnouncementsOnce, prepareSummarizationProvider, resolveAnnouncerModel } from './generate.js';
 
 /** How long a single live-listen registration lasts without renewal. */
 export const LIVE_LEASE_MS = 90_000;
@@ -101,7 +101,8 @@ async function runGenerationPass(): Promise<void> {
   for (const { secret, dataDir } of getLiveProjects()) {
     try {
       await runWithDataDir(dataDir, async () => {
-        if (!(await isAnnouncerEnabled())) return;
+        // HS-9159 — the announcer is always-on (the per-project enable toggle was
+        // removed); the provider-readiness check below is the sole gate now.
         // HS-8790/8792 — pick the model (on-device default when available), then
         // gate via the shared provider-readiness check (Anthropic key / Apple
         // helper / local endpoint). Not ready → skip this project this pass.

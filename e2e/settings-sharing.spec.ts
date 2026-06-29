@@ -373,21 +373,15 @@ test.describe('Settings scope control (Shared | Local)', () => {
     expect(localTerms?.hidden ?? []).not.toContain('shared-term');
   });
 
-  test('HS-9006/9009: Announcer is local-only — enable toggle editable in Local, read-only in Shared; panel not wholesale-locked', async ({ page }) => {
-    await page.locator('.scope-seg-btn.scope-seg-local').click();
+  test('HS-9159: Announcer is a machine-local-only tab — scope bar hidden + local-only note, no enable toggle', async ({ page }) => {
     await page.locator('.settings-tab[data-tab="announcer"]').click();
-    // The whole Announcer panel is NOT locked (global fields stay editable).
+    // The scope bar is hidden on the Announcer tab (all settings are local).
+    await expect(page.locator('#settings-scope-bar.scope-bar-hidden')).toHaveCount(1);
+    // The "Enable the Announcer" toggle was removed (always-on, HS-9159).
+    await expect(page.locator('#settings-announcer-enabled')).toHaveCount(0);
+    // A "Local to this machine" note is shown.
+    await expect(page.locator('.settings-tab-panel[data-panel="announcer"] .settings-local-note')).toBeVisible();
+    // The panel is never wholesale scope-locked.
     await expect(page.locator('.settings-tab-panel[data-panel="announcer"].scope-locked')).toHaveCount(0);
-    // local-only: the enable toggle is editable in Local (its home, no + Override),
-    // and the local-only key sub-field is NOT locked in Local.
-    await expect(page.locator('#settings-announcer-enabled')).toBeEnabled();
-    await expect(page.locator('#settings-announcer-key-field.scope-locked')).toHaveCount(0);
-
-    // In Shared, local-only surfaces go read-only ("local only").
-    await page.locator('.scope-seg-btn.scope-seg-shared').click();
-    await expect(page.locator('#settings-announcer-enabled')).toBeDisabled();
-    const enableField = page.locator('.settings-field:has(#settings-announcer-enabled)');
-    await expect(enableField.locator('.scope-tag')).toContainText('local only');
-    await expect(page.locator('#settings-announcer-key-field.scope-locked')).toHaveCount(1);
   });
 });

@@ -13,8 +13,8 @@ import { Hono } from 'hono';
 import { isAppleFoundationAvailable } from '../announcer/appleFoundation.js';
 import { addDismissedTopic, getDismissedTopics, setDismissedTopics } from '../announcer/dismissedTopics.js';
 import {
-  ANNOUNCER_CURSOR_KEY, ANNOUNCER_ENABLED_KEY,
-  generateAnnouncementsOnce, isAnnouncerEnabled, listAnnouncerAnthropicModels,
+  ANNOUNCER_CURSOR_KEY,
+  generateAnnouncementsOnce, listAnnouncerAnthropicModels,
   prepareSummarizationProvider, resolveAnnouncerModel,
 } from '../announcer/generate.js';
 import { getAnnouncerKeyId, hasAnnouncerKey, setAnnouncerKeyId } from '../announcer/key.js';
@@ -22,7 +22,7 @@ import { registerLiveListener, unregisterLiveListener } from '../announcer/liveG
 import { isLocalProviderAvailable, listLocalModels } from '../announcer/localProvider.js';
 import {
   AdvanceCursorReqSchema, AnnounceReqSchema, GenerateAnnouncementsReqSchema,
-  MarkListenedReqSchema, SelectAnnouncerKeyReqSchema, SetAnnouncerEnabledReqSchema,
+  MarkListenedReqSchema, SelectAnnouncerKeyReqSchema,
   SetAnnouncerLiveReqSchema, SetDismissedTopicsReqSchema,
 } from '../api/announcer.js';
 import {
@@ -46,25 +46,23 @@ export const announcerRoutes = new Hono<AppEnv>();
 // via `runWithDataDir` (mirrors the §70 cross-project stats enumeration).
 announcerRoutes.get('/announcer/overview', async (c) => {
   const activeSecret = c.get('projectSecret');
+  // HS-8790/8792 — machine-global on-device availability (Apple Foundation Models
+  // OR a reachable local endpoint). HS-9159 — with the per-project enable toggle
+  // gone, the announcer is always-on; a project is "usable" iff a provider is
+  // configured (on-device available OR the project has an Anthropic key).
+  const appleAvailable = await isAppleFoundationAvailable();
+  const localAvailable = await isLocalProviderAvailable();
   const projects: { secret: string; name: string; enabled: boolean; hasKey: boolean; entryCount: number }[] = [];
   for (const p of getAllProjects()) {
     const info = await runWithDataDir(p.dataDir, async () => {
-      if ((await getSettings())[ANNOUNCER_ENABLED_KEY] !== 'true') return null;
       return { hasKey: await hasAnnouncerKey(), entryCount: (await getActiveAnnouncements()).length };
     });
-    if (info !== null) {
+    const usable = appleAvailable || localAvailable || info.hasKey;
+    if (usable) {
       projects.push({ secret: p.secret, name: p.name, enabled: true, hasKey: info.hasKey, entryCount: info.entryCount });
     }
   }
-  // HS-8790/8792 — machine-global on-device availability (Apple Foundation Models
-  // OR a reachable local endpoint) so the client can show the Listen button (and
-  // generate) for an enabled project even with no Anthropic key.
-  return c.json({
-    activeSecret,
-    projects,
-    appleAvailable: await isAppleFoundationAvailable(),
-    localAvailable: await isLocalProviderAvailable(),
-  });
+  return c.json({ activeSecret, projects, appleAvailable, localAvailable });
 });
 
 // GET /api/announcer/status — opt-in + key + entry-count + cursor.
@@ -72,7 +70,8 @@ announcerRoutes.get('/announcer/status', async (c) => {
   const settings = await getSettings();
   const entries = await getActiveAnnouncements();
   return c.json({
-    enabled: settings[ANNOUNCER_ENABLED_KEY] === 'true',
+    // HS-9159 — the announcer is always-on (the per-project toggle was removed).
+    enabled: true,
     hasKey: await hasAnnouncerKey(),
     selectedKeyId: await getAnnouncerKeyId(),
     entryCount: entries.length,
@@ -94,8 +93,7 @@ announcerRoutes.get('/announcer/status', async (c) => {
 // POST /api/announcer/generate — collect since cursor → summarize → persist.
 // Shares the generate core with the live-mode loop (HS-8750, `generate.ts`).
 announcerRoutes.post('/announcer/generate', async (c) => {
-  if (!(await isAnnouncerEnabled())) return c.json({ error: 'Announcer is not enabled for this project' }, 400);
-
+  // HS-9159 — always-on; the provider-readiness check below is the sole gate.
   // HS-8764 — model from the global setting; HS-8790/8792 — defaults to an
   // on-device provider when available, else the cheapest Anthropic model. The
   // shared readiness check gates by provider (Anthropic key / Apple helper /
@@ -144,8 +142,9 @@ announcerRoutes.post('/announcer/live', async (c) => {
     // the shared readiness check covers all three providers.
     const model = await resolveAnnouncerModel();
     const summarizable = (await prepareSummarizationProvider(model)).ready;
-    if (!(await isAnnouncerEnabled()) || !summarizable) {
-      return c.json({ error: 'Announcer is not enabled / configured for this project' }, 400);
+    // HS-9159 — always-on; only a usable provider gates the live lease now.
+    if (!summarizable) {
+      return c.json({ error: 'Announcer has no usable model configured for this project' }, 400);
     }
     registerLiveListener(secret, c.get('dataDir'));
   } else {
@@ -160,7 +159,8 @@ announcerRoutes.post('/announcer/live', async (c) => {
 // script. No-op when the project isn't opted in (so it can't create entries the
 // user never sees).
 announcerRoutes.post('/announcer/announce', async (c) => {
-  if (!(await isAnnouncerEnabled())) return c.json({ entries: [], inserted: 0 });
+  // HS-9159 — always-on: an agent-pushed highlight needs no AI provider, so it
+  // always inserts (the entry surfaces whenever the user listens).
   const raw: unknown = await c.req.json().catch(() => null);
   const parsed = AnnounceReqSchema.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
@@ -197,15 +197,6 @@ announcerRoutes.post('/announcer/listened', async (c) => {
   const parsed = MarkListenedReqSchema.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
   await markAnnouncementListened(parsed.data.id);
-  return c.json({ ok: true });
-});
-
-// POST /api/announcer/enabled — per-project opt-in toggle.
-announcerRoutes.post('/announcer/enabled', async (c) => {
-  const raw: unknown = await c.req.json().catch(() => null);
-  const parsed = SetAnnouncerEnabledReqSchema.safeParse(raw);
-  if (!parsed.success) return c.json({ error: 'Invalid request body' }, 400);
-  await updateSetting(ANNOUNCER_ENABLED_KEY, parsed.data.enabled ? 'true' : 'false');
   return c.json({ ok: true });
 });
 

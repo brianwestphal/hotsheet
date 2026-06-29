@@ -95,7 +95,6 @@ export const EntriesResSchema = z.object({ entries: z.array(AnnouncementSchema) 
 // HS-8751 — pick which registry key (by id) the announcer uses for this
 // project; null clears the selection (falls back to the first Anthropic key).
 export const SelectAnnouncerKeyReqSchema = z.object({ keyId: z.string().nullable() });
-export const SetAnnouncerEnabledReqSchema = z.object({ enabled: z.boolean() });
 export const AdvanceCursorReqSchema = z.object({ at: z.string().optional() });
 // HS-8803 — mark an entry listened (resets the 1h-grace clear; bumps later heard entries).
 export const MarkListenedReqSchema = z.object({ id: z.number() });
@@ -151,10 +150,6 @@ export async function markAnnouncementListened(id: number, secret?: string): Pro
 
 export async function selectAnnouncerKey(keyId: string | null): Promise<{ ok: true }> {
   return apiCall(OkResponseSchema, '/announcer/key-selection', { method: 'POST', body: { keyId } });
-}
-
-export async function setAnnouncerEnabled(enabled: boolean): Promise<{ ok: true }> {
-  return apiCall(OkResponseSchema, '/announcer/enabled', { method: 'POST', body: { enabled } });
 }
 
 // HS-8750 — register/renew or drop this project's live-listen lease. `secret`

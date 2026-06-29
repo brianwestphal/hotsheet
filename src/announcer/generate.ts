@@ -32,13 +32,7 @@ export function backlogCompressionLevel(activeCount: number): Compression {
   return activeCount >= BACKLOG_HIGH_THRESHOLD ? 'high' : 'normal';
 }
 
-export const ANNOUNCER_ENABLED_KEY = 'announcer_enabled';
 export const ANNOUNCER_CURSOR_KEY = 'announcer_last_listened_at';
-
-/** Whether the active project has opted in. */
-export async function isAnnouncerEnabled(): Promise<boolean> {
-  return (await getSettings())[ANNOUNCER_ENABLED_KEY] === 'true';
-}
 
 /**
  * The model to summarize with (HS-8790). The user's explicit `announcerModel`

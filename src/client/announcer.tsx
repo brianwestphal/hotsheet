@@ -33,24 +33,31 @@ function isGlobalContext(): boolean {
     || document.body.classList.contains('cross-project-stats-active');
 }
 
-/** Show/hide the Listen button. Visible whenever ANY project has the announcer
- *  enabled + configured (HS-8758). Called at init, after settings changes, and
- *  on project switch. */
+/** Refresh the Listen button's enabled state. HS-9159 — the button is ALWAYS
+ *  shown (the announcer is always-on); it's DISABLED until at least one project
+ *  has a usable model (an Anthropic key OR an on-device provider). Called at
+ *  init, after settings changes, and on project switch. */
 export async function refreshAnnouncerVisibility(): Promise<void> {
   const btn = listenButton();
   if (btn === null) return;
+  let usable = false;
   try {
     const overview = await getAnnouncerOverview();
     // HS-8790/8792 — a project is narratable with an Anthropic key OR an on-device
     // provider (Apple Foundation Models / a reachable local endpoint), both
-    // machine-global. `overview.projects` is already filtered to enabled projects,
-    // so any of them + on-device availability is enough.
+    // machine-global. The overview lists only usable projects (server-side).
     const onDevice = overview.appleAvailable || overview.localAvailable;
-    const usable = overview.projects.some(p => p.hasKey) || (onDevice && overview.projects.length > 0);
-    btn.style.display = usable ? '' : 'none';
+    usable = overview.projects.some(p => p.hasKey) || (onDevice && overview.projects.length > 0);
   } catch {
-    btn.style.display = 'none';
+    usable = false;
   }
+  btn.style.display = '';
+  // Don't fight an in-flight Listen session (the click handler toggles `disabled`
+  // while loading); only manage the no-usable-model gate here.
+  btn.disabled = !usable;
+  btn.title = usable
+    ? 'Listen to the Announcer'
+    : 'Announcer: configure a model in Settings → Announcer to enable';
 }
 
 /** Glow + relabel the Listen button while a session is minimized (HS-8757). */

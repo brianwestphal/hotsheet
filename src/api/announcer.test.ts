@@ -10,7 +10,6 @@ import {
   advanceAnnouncerCursor, AnnouncementSchema, clearAnnouncements, dismissAnnouncement,
   generateAnnouncements, getAnnouncerEntries, getAnnouncerOverview, getAnnouncerStatus,
   selectAnnouncerKey, SelectAnnouncerKeyReqSchema,
-  setAnnouncerEnabled, SetAnnouncerEnabledReqSchema,
 } from './announcer.js';
 
 let lastCall: { path: string; opts: ApiCallOpts } | undefined;
@@ -35,8 +34,6 @@ describe('announcer schemas (HS-8745)', () => {
     expect(SelectAnnouncerKeyReqSchema.safeParse({ keyId: 'abc' }).success).toBe(true);
     expect(SelectAnnouncerKeyReqSchema.safeParse({ keyId: null }).success).toBe(true);
     expect(SelectAnnouncerKeyReqSchema.safeParse({ keyId: 5 }).success).toBe(false);
-    expect(SetAnnouncerEnabledReqSchema.safeParse({ enabled: true }).success).toBe(true);
-    expect(SetAnnouncerEnabledReqSchema.safeParse({ enabled: 'yes' }).success).toBe(false);
   });
 });
 
@@ -78,11 +75,6 @@ describe('announcer callers (HS-8745)', () => {
     expect(lastCall).toEqual({ path: '/announcer/key-selection', opts: { method: 'POST', body: { keyId: null } } });
   });
 
-  it('setAnnouncerEnabled → POST /announcer/enabled', async () => {
-    stub({ ok: true });
-    await setAnnouncerEnabled(false);
-    expect(lastCall).toEqual({ path: '/announcer/enabled', opts: { method: 'POST', body: { enabled: false } } });
-  });
 
   it('dismissAnnouncement → POST /announcer/dismiss/:id', async () => {
     stub({ ok: true });

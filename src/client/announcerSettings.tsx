@@ -10,11 +10,10 @@
  * event) so adding a key in the Keys tab shows up here immediately.
  */
 import { ANNOUNCER_MODELS, APPLE_FOUNDATION_MODEL_ID, DEFAULT_ANNOUNCER_MODEL, LOCAL_MODEL_ID, providerForModel, resolveBestModelForSelection } from '../announcer/models.js';
-import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, setAnnouncerEnabled, updateGlobalConfig } from '../api/index.js';
+import { getAnnouncerDismissedTopics, getAnnouncerStatus, getGlobalConfig, type KeyType, listKeys, type SecretKeyMeta, selectAnnouncerKey, setAnnouncerDismissedTopics, updateGlobalConfig } from '../api/index.js';
 import { getAnnouncerSpeakPermissions, setAnnouncerSpeakPermissions } from './announcerPermissionPref.js';
 import { getAnnouncerSpeechRate, setAnnouncerSpeechRate } from './announcerSpeechRate.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { persistScopedSetting } from './settingsScope.js';
 import { showToast } from './toast.js';
 
 const ANTHROPIC: KeyType = 'anthropic_api_key';
@@ -41,13 +40,11 @@ async function populateKeySelect(select: HTMLSelectElement, selectedId: string |
 }
 
 async function refreshStatus(
-  enabledCb: HTMLInputElement,
   select: HTMLSelectElement,
   statusEl: HTMLElement,
 ): Promise<void> {
   try {
     const status = await getAnnouncerStatus();
-    enabledCb.checked = status.enabled;
     const hasAnthropicKey = await populateKeySelect(select, status.selectedKeyId);
     if (!hasAnthropicKey) {
       statusEl.textContent = 'No Anthropic keys yet — add one in the “API Keys” tab to enable narration.';
@@ -66,10 +63,9 @@ async function refreshStatus(
  * refresh dependent UI (the header Listen button) after a toggle/key change.
  */
 export function bindAnnouncerSettings(onStatusChange?: () => void): void {
-  const enabledCb = byIdOrNull<HTMLInputElement>('settings-announcer-enabled');
   const keySelect = byIdOrNull<HTMLSelectElement>('settings-announcer-key-select');
   const statusEl = byIdOrNull('settings-announcer-status');
-  if (enabledCb === null || keySelect === null || statusEl === null) return;
+  if (keySelect === null || statusEl === null) return;
 
   // HS-8754 — global playback-speed select (kept in sync with the PIP's control).
   const rateSelect = byIdOrNull<HTMLSelectElement>('settings-announcer-rate');
@@ -236,38 +232,20 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
   }
 
   // Refresh status whenever the settings dialog opens.
-  byId('settings-btn').addEventListener('click', () => { void refreshStatus(enabledCb, keySelect, statusEl); });
+  byId('settings-btn').addEventListener('click', () => { void refreshStatus(keySelect, statusEl); });
 
   // Repopulate when keys are added/edited/removed in the Keys tab.
   document.addEventListener('hotsheet:keys-changed', () => {
-    void refreshStatus(enabledCb, keySelect, statusEl);
+    void refreshStatus(keySelect, statusEl);
   });
 
-  enabledCb.addEventListener('change', () => {
-    void (async () => {
-      // HS-9006 — route through the dialog-wide scope control so the toggle
-      // honors the Shared / Local overrides / Resolved mode (Resolved keeps the
-      // existing /announcer/enabled path). `announcer_enabled` persists as the
-      // string 'true'/'false' (via updateSetting), so the layer value matches.
-      const ok = await persistScopedSetting(
-        'announcer_enabled',
-        String(enabledCb.checked),
-        () => setAnnouncerEnabled(enabledCb.checked),
-      );
-      if (!ok) {
-        enabledCb.checked = !enabledCb.checked; // revert on failure
-        showToast('Could not update the announcer setting.', { variant: 'warning' });
-        return;
-      }
-      onStatusChange?.();
-    })();
-  });
-
+  // HS-9159 — the per-project enable toggle was removed (the Announcer is
+  // always-on); changing the key selection still refreshes dependent UI.
   keySelect.addEventListener('change', () => {
     void (async () => {
       try {
         await selectAnnouncerKey(keySelect.value === '' ? null : keySelect.value);
-        await refreshStatus(enabledCb, keySelect, statusEl);
+        await refreshStatus(keySelect, statusEl);
         onStatusChange?.();
       } catch {
         showToast('Could not save the key selection.', { variant: 'warning' });
@@ -275,5 +253,5 @@ export function bindAnnouncerSettings(onStatusChange?: () => void): void {
     })();
   });
 
-  void refreshStatus(enabledCb, keySelect, statusEl);
+  void refreshStatus(keySelect, statusEl);
 }
