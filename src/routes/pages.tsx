@@ -728,7 +728,12 @@ pageRoutes.get('/', (c) => {
                 <span className="settings-hint" id="settings-integration-gate-hint">Optional shell command run after each worker branch is merged into the target. If it fails or times out (15&nbsp;min), the merge is <strong>rolled back</strong> automatically. Leave empty to keep the default — the integrating agent runs the project's gates itself. Shared across the project (a build contract).</span>
               </div>
             </div>
-            <div className="settings-tab-panel" data-panel="categories" data-scope-complex="shared-only">
+            {/* HS-9177 — categories are shared-only (team-wide), so the Shared|Local
+                scope bar is hidden for this tab (HIDDEN_SCOPE_BAR_TABS) and a "shared"
+                note is shown instead. No `data-scope-complex` lock: with no local mode
+                to switch to, the editor is always editable + always saves shared. */}
+            <div className="settings-tab-panel" data-panel="categories">
+              <p className="settings-local-note"><span><strong>Shared with your team.</strong> Categories are committed to git in this project's <code>settings.json</code> — everyone working on the project sees the same set. (There's no per-machine override.)</span></p>
               <div className="settings-section-header">
                 <h3>Categories</h3>
                 <div className="category-preset-controls">

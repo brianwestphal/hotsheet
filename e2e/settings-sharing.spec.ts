@@ -74,9 +74,8 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(appNameField.locator('[data-scope-action="override"]')).toHaveCount(0);
     await expect(appNameField.locator('.scope-tag')).toContainText('shared only');
     await expect(page.locator('#settings-app-name')).toBeDisabled();
-    // Categories is a shared-only complex editor: locked in Local, NOT in Shared.
-    await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(1);
-    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    // HS-9177 — Categories is no longer a scoped complex panel: its tab hides the
+    // scope bar (shared-only, team-wide), so the panel never carries `scope-locked`.
     await expect(page.locator('.settings-tab-panel[data-panel="categories"].scope-locked')).toHaveCount(0);
     // HS-9157 — Permissions is no longer a scoped complex panel: its tab is
     // machine-local-only (scope bar hidden), so the panel never carries
@@ -98,16 +97,17 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(preamble).toBeDisabled();
   });
 
-  test('HS-9155: categories (shared-only complex) is read-only in Local (default), editable in Shared', async ({ page }) => {
-    const cat = page.locator('.settings-tab-panel[data-panel="categories"].scope-locked');
-    // Default Local → locked (shared-only complex; its edit-home is Shared).
-    await expect(cat).toHaveCount(1);
-    // Shared → editable.
-    await page.locator('.scope-seg-btn.scope-seg-shared').click();
-    await expect(cat).toHaveCount(0);
-    // Local → locked again.
-    await page.locator('.scope-seg-btn.scope-seg-local').click();
-    await expect(cat).toHaveCount(1);
+  test('HS-9177: the Categories tab hides the scope bar, shows a shared note, and is always editable', async ({ page }) => {
+    await page.locator('.settings-tab[data-tab="categories"]').click();
+    const panel = page.locator('.settings-tab-panel[data-panel="categories"]');
+    await expect(panel).toHaveClass(/active/);
+    // Shared-only tab → the Shared|Local scope bar is hidden (no choice to make).
+    await expect(page.locator('#settings-scope-bar')).toHaveClass(/scope-bar-hidden/);
+    // A "Shared with your team" note replaces the segmented control.
+    await expect(panel.locator('.settings-local-note')).toContainText(/shared with your team/i);
+    // Never locked → the editor is always editable (always saves shared).
+    await expect(panel).not.toHaveClass(/scope-locked/);
+    await expect(page.locator('#category-add-btn')).toBeEnabled();
   });
 
   // HS-9021 — a default `data-scope-complex` surface (e.g. the terminal default-

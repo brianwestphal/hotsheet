@@ -140,7 +140,9 @@ let initialized = false;
  *  - `announcer` — all Announcer settings are per-machine (the enable toggle was
  *                removed; key/model/endpoint are local), so local-only. HS-9159.
  */
-const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices', 'permissions', 'announcer']);
+// HS-9177 — `categories` is shared-only (team-wide), so there's no Shared|Local
+// choice to make; hide the bar and show a "shared with your team" note instead.
+const HIDDEN_SCOPE_BAR_TABS = new Set(['keys', 'updates', 'plugins', 'devices', 'permissions', 'announcer', 'categories']);
 
 // HS-9123 — the Views tab now PARTICIPATES in the dialog-wide scope bar (Shared
 // shows only shared views, Local shows shared+local with hide, Resolved shows the
