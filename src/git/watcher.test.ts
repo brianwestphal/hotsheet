@@ -20,6 +20,7 @@ import {
   ensureGitWatcher,
   getCachedGitStatus,
   getGitChangeVersion,
+  pollWorkingTreesOnce,
   subscribeToGitChanges,
 } from './watcher.js';
 
@@ -37,6 +38,10 @@ const mockIsGitRepo = vi.fn<(root: string) => boolean>();
 const mockGetGitRoot = vi.fn<(root: string) => string | null>();
 const mockExistsSync = vi.fn<(path: string) => boolean>();
 const mockFsWatch = vi.fn<(path: string, cb: (event: string, filename: string | null) => void) => { close: () => void }>();
+// HS-9111 — the watcher now attaches an `error` listener (`handle.on('error', …)`),
+// so every fake watch handle needs an `on`. Injected by the `fs` mock wrapper
+// below so the individual `mockReturnValue({ close })` sites don't each repeat it.
+const noopOn = (): void => { /* no-op */ };
 
 vi.mock('./status.js', () => ({
   getGitStatus: (root: string): unknown => mockGetGitStatus(root),
@@ -49,7 +54,7 @@ vi.mock('../gitignore.js', () => ({
 
 vi.mock('fs', () => ({
   existsSync: (p: string): boolean => mockExistsSync(p),
-  watch: (p: string, cb: (event: string, filename: string | null) => void): { close: () => void } => mockFsWatch(p, cb),
+  watch: (p: string, cb: (event: string, filename: string | null) => void): { close: () => void; on: () => void } => ({ on: noopOn, ...mockFsWatch(p, cb) }),
 }));
 
 beforeEach(() => {
@@ -368,6 +373,83 @@ describe('debounced fire — fs.watch callback', () => {
     watcherCb!('change', 'index');
     vi.advanceTimersByTime(300);
     expect(heard).toEqual(['/tmp/proj']); // no new entry
+  });
+});
+
+// HS-9111 — the foreground working-tree poll (docs/48 §48.3.3): a working-tree
+// edit (tracked file modified / untracked file created) doesn't touch
+// `.git/index|HEAD`, so the `.git`-dir watcher never fires; the low-frequency
+// `git status` poll bumps the version when the working-tree signature moves.
+describe('working-tree poll (HS-9111)', () => {
+  const full = (over: Partial<Record<string, unknown>> = {}) => ({
+    branch: 'main', detached: false, ahead: 0, behind: 0,
+    staged: 0, unstaged: 0, untracked: 0, conflicted: 0, ...over,
+  });
+
+  function watch(root = '/tmp/proj') {
+    mockIsGitRepo.mockReturnValue(true);
+    mockGetGitRoot.mockReturnValue(root);
+    mockExistsSync.mockReturnValue(true);
+    ensureGitWatcher(root);
+  }
+
+  it('bumps the version + fans out when a working-tree edit changes the signature', async () => {
+    const heard: string[] = [];
+    const unsub = subscribeToGitChanges((root) => { heard.push(root); });
+    watch();
+    // First poll establishes the baseline (clean tree) — no fire.
+    mockGetGitStatus.mockResolvedValue(full());
+    await pollWorkingTreesOnce();
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0);
+    expect(heard).toEqual([]);
+
+    // A tracked file is modified (no `git add`) → unstaged climbs. Drop the
+    // 500 ms result cache to mimic the real >4 s gap between polls.
+    dropGitStatusCache('/tmp/proj');
+    mockGetGitStatus.mockResolvedValue(full({ unstaged: 1 }));
+    await pollWorkingTreesOnce();
+    expect(getGitChangeVersion('/tmp/proj')).toBe(1);
+    expect(heard).toEqual(['/tmp/proj']);
+    unsub();
+  });
+
+  it('does NOT fire when the signature is unchanged between polls', async () => {
+    const heard: string[] = [];
+    const unsub = subscribeToGitChanges((root) => { heard.push(root); });
+    watch();
+    mockGetGitStatus.mockResolvedValue(full({ untracked: 2 }));
+    await pollWorkingTreesOnce(); // baseline
+    dropGitStatusCache('/tmp/proj');
+    await pollWorkingTreesOnce(); // same signature
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0);
+    expect(heard).toEqual([]);
+    unsub();
+  });
+
+  it('skips a background (inactive) project — no poll-driven fire', async () => {
+    const heard: string[] = [];
+    const unsub = subscribeToGitChanges((root) => { heard.push(root); });
+    watch();
+    // Mark a DIFFERENT project active so /tmp/proj is a background tab.
+    markProjectActive(join('/tmp/other', '.hotsheet'));
+    mockGetGitStatus.mockResolvedValue(full());
+    await pollWorkingTreesOnce(); // baseline attempt — skipped (inactive)
+    dropGitStatusCache('/tmp/proj');
+    mockGetGitStatus.mockResolvedValue(full({ unstaged: 3 }));
+    await pollWorkingTreesOnce();
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0);
+    expect(heard).toEqual([]);
+    unsub();
+  });
+
+  it('untracked-only change (new file, never staged) also bumps the version', async () => {
+    watch();
+    mockGetGitStatus.mockResolvedValue(full());
+    await pollWorkingTreesOnce(); // baseline
+    dropGitStatusCache('/tmp/proj');
+    mockGetGitStatus.mockResolvedValue(full({ untracked: 1 }));
+    await pollWorkingTreesOnce();
+    expect(getGitChangeVersion('/tmp/proj')).toBe(1);
   });
 });
 

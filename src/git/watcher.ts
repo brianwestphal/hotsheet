@@ -90,6 +90,7 @@ export async function getCachedGitStatus(projectRoot: string): Promise<GitStatus
 export function _resetGitStatusCacheForTests(): void {
   cache.clear();
   inFlight.clear();
+  lastSig.clear(); // HS-9111
 }
 
 /** HS-7955 — drop the cached entry for one project. Called from the
@@ -127,6 +128,87 @@ const WATCHER_DEBOUNCE_MS = 250;
 
 const watchers = new Map<string, WatcherEntry>();
 const subscribers = new Set<(projectRoot: string) => void>();
+
+// ---------------------------------------------------------------------------
+// HS-9111 — foreground working-tree poll (docs/48 §48.3.3)
+// ---------------------------------------------------------------------------
+//
+// The `.git`-directory watcher above only fires on `index` / `HEAD` writes
+// (stage / commit / branch-switch). A **working-tree-only** edit — a tracked
+// file modified, or a new untracked file created — touches neither, so the
+// chip's unstaged / untracked counts wouldn't refresh until the next
+// `window.focus` / project-switch refetch.
+//
+// We deliberately do NOT recursively watch the working tree: `fs.watch(...,
+// {recursive:true})` isn't supported on Linux, and on macOS it would fan out a
+// huge event volume from `node_modules` / `dist` / build output. Instead we
+// poll `git status` at a low frequency for the **foreground** project(s) only
+// (the same `isProjectActive` gate the watcher's proactive path uses) and bump
+// the version when the working-tree signature changes. `git status` already
+// honors `.gitignore`, so `node_modules` / `dist` never register — no central
+// exclusion list to maintain. Cost is bounded: one cheap (cached/coalesced)
+// `git status` per foreground project every few seconds.
+
+const WORKING_TREE_POLL_MS = 4000;
+
+/** Last-observed working-tree signature per project root. Lets the poll fire
+ *  ONLY on an actual change, and lets the `.git`-watcher path (which already
+ *  reads fresh status on its pre-warm) update the baseline so the poll doesn't
+ *  redundantly re-notify a stage/commit the watcher already caught. */
+const lastSig = new Map<string, string>();
+
+let workingTreePoller: ReturnType<typeof setInterval> | null = null;
+
+/** Collapse a `GitStatus` to a compact change-signature. A working-tree edit
+ *  moves `unstaged` / `untracked` (a stage/commit moves `staged` / `branch` /
+ *  ahead-behind); any field change ⇒ a new signature ⇒ a refresh. */
+function gitStatusSignature(status: GitStatus | null): string {
+  if (status === null) return 'null';
+  return [
+    status.branch, status.detached ? 1 : 0, status.ahead, status.behind,
+    status.staged, status.unstaged, status.untracked, status.conflicted,
+  ].join('|');
+}
+
+/**
+ * One working-tree poll pass: for each foreground project, read git status and
+ * bump the version + fan out to subscribers when its signature changed since the
+ * last observation. The first observation of a project only establishes the
+ * baseline (the chip already shows current state from its own fetch / the
+ * project-switch refetch), so we never fire spuriously on startup.
+ */
+export async function pollWorkingTreesOnce(): Promise<void> {
+  for (const root of [...watchers.keys()]) {
+    // Foreground-scoped (HS-8725 parity): a background project the user isn't
+    // looking at refreshes lazily on switch, so N open projects don't fan out
+    // O(N) `git status` runs every tick.
+    if (!isProjectActive(join(root, '.hotsheet'))) continue;
+    let status: GitStatus | null;
+    try {
+      status = await getCachedGitStatus(root);
+    } catch {
+      continue;
+    }
+    const sig = gitStatusSignature(status);
+    const prev = lastSig.get(root);
+    lastSig.set(root, sig);
+    if (prev === undefined || prev === sig) continue; // baseline or unchanged
+    const entry = watchers.get(root);
+    if (entry === undefined) continue;
+    entry.version++;
+    for (const sub of subscribers) {
+      try { sub(root); } catch { /* swallow */ }
+    }
+  }
+}
+
+/** Start the shared low-frequency working-tree poll loop (idempotent). The
+ *  interval is unref'd so it never keeps the process alive on its own. */
+function ensureWorkingTreePoller(): void {
+  if (workingTreePoller !== null) return;
+  workingTreePoller = setInterval(() => { void pollWorkingTreesOnce(); }, WORKING_TREE_POLL_MS);
+  workingTreePoller.unref();
+}
 
 /**
  * Subscribe to "git state changed" notifications. The callback fires with
@@ -199,7 +281,10 @@ export function ensureGitWatcher(projectRoot: string): void {
         priority: PRIORITY.GIT_STATUS,
         projectKey: projectRoot,
         deferUnderLag: true,
-        run: () => getCachedGitStatus(projectRoot).then(() => undefined),
+        // HS-9111 — refresh the working-tree-poll baseline from the same fresh
+        // read, so the poll doesn't redundantly re-notify the stage/commit/branch
+        // change this watcher already fanned out.
+        run: () => getCachedGitStatus(projectRoot).then((s) => { lastSig.set(projectRoot, gitStatusSignature(s)); }),
       });
     }, WATCHER_DEBOUNCE_MS);
   };
@@ -215,12 +300,20 @@ export function ensureGitWatcher(projectRoot: string): void {
     const handle = fsWatch(gitDir, (_event, filename) => {
       if (filename === null || RELEVANT.has(filename)) fireDebounced();
     });
+    // An `fs.watch` handle is an EventEmitter — without an `error` listener an
+    // emitted error THROWS (unhandled). The `.git` dir being removed (repo
+    // deleted / worktree pruned) or an FD-limit (`EMFILE`) emits one; swallow it
+    // (the HS-9111 poll still refreshes the chip on its cadence).
+    handle.on('error', () => { /* degraded mode — poll-fallback covers it */ });
     handles.push(handle);
   } catch {
     // fs.watch isn't supported on every filesystem (e.g. some FUSE
     // mounts). Degraded mode — focus-refetch on the client still works.
   }
   watchers.set(projectRoot, { watchers: handles, version: 0, debounce: null });
+  // HS-9111 — drive the low-frequency working-tree poll (even if fs.watch above
+  // failed, the poll still catches working-tree + index changes on its cadence).
+  ensureWorkingTreePoller();
 }
 
 /** Tear down a project's watcher + drop its cache entry. Called on
@@ -236,10 +329,14 @@ export function disposeGitWatcher(projectRoot: string): void {
   }
   cache.delete(projectRoot);
   inFlight.delete(projectRoot);
+  lastSig.delete(projectRoot); // HS-9111
 }
 
 /** Tear down EVERY watcher. Called from the graceful-shutdown pipeline. */
 export function disposeAllGitWatchers(): void {
   for (const root of [...watchers.keys()]) disposeGitWatcher(root);
   subscribers.clear();
+  // HS-9111 — stop the shared working-tree poll once nothing is watched.
+  if (workingTreePoller !== null) { clearInterval(workingTreePoller); workingTreePoller = null; }
+  lastSig.clear();
 }
