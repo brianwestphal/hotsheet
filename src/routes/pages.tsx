@@ -1153,7 +1153,7 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint">Server-side ring buffer for reattach replay. 65 536–16 777 216 bytes. Takes effect on next terminal restart.</span>
                 </div>
                 <div className="settings-field">
-                  <label><input type="checkbox" id="settings-shell-integration-ui" /> Enable shell integration UI <span className="global-setting-badge" title="This feature is still experimental and off by default.">Experimental</span></label>
+                  <label><input type="checkbox" id="settings-shell-integration-ui" /> Enable shell integration UI <span className="experimental-badge" title="This feature is still experimental and off by default.">Experimental</span></label>
                   <span className="settings-hint">Shows OSC 133 gutter glyphs, the copy-last-output toolbar button, and Cmd/Ctrl+Arrow prompt navigation when your shell emits shell-integration escapes (Starship, VS Code's shell-integration rc, iTerm2 integration, etc.). <strong>Experimental — off by default (HS-9188);</strong> opt in here. The parser still runs when this is off — re-enabling reveals the UI without losing the current session's history.</span>
                 </div>
                 {/* HS-7596 / §37 — Quit confirmation. Three modes + editable

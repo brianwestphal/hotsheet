@@ -36,4 +36,17 @@ describe('pages.tsx — global-setting badge style is unified (HS-8450)', () => 
       expect(label).toBe('Global Setting');
     }
   });
+
+  // HS-9199 — the "Experimental" badge (HS-9188, shell integration UI) is a
+  // DISTINCT concept and uses its own `.experimental-badge` class, NOT
+  // `.global-setting-badge` — so the invariant above stays valid and the two
+  // badge types are visually/semantically separable.
+  it('renders the "Experimental" badge via the distinct `.experimental-badge` class', () => {
+    const spans = PAGES_SRC.match(/<span className="experimental-badge"[^>]*>([^<]*)<\/span>/g) ?? [];
+    expect(spans.length).toBeGreaterThanOrEqual(1);
+    for (const span of spans) {
+      const label = span.replace(/^<span [^>]*>/, '').replace(/<\/span>$/, '').trim();
+      expect(label).toBe('Experimental');
+    }
+  });
 });

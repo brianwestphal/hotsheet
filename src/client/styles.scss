@@ -6698,6 +6698,21 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   margin-left: 6px;
 }
 
+// HS-9199 — the "Experimental" badge is a DISTINCT concept from "Global Setting"
+// (don't reuse `.global-setting-badge`, whose HS-8450 invariant test asserts every
+// such badge reads "Global Setting"). Amber to signal opt-in/unproven.
+.experimental-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(217, 119, 6, 0.12);
+  color: #d97706;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
 .settings-divider {
   height: 1px;
   background: var(--border);
