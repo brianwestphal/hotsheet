@@ -158,6 +158,20 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
     expect(document.querySelectorAll('#settings-commands-list .cmd-reset-btn').length).toBe(0);
   });
 
+  // HS-9181 — a command shown in the Shared editor is tagged "shared" immediately,
+  // even a just-added one not yet folded into the shared baseline (pre-fix it
+  // flashed a "local" tag until the dialog was reopened).
+  it('HS-9181: Shared mode tags every command "shared" (incl. a just-added one)', async () => {
+    await seed([{ name: 'Build', prompt: 'npm run build', target: 'shell' }]);
+    // `seed` renders in Shared mode but the seeded item is NOT in `commandShared`
+    // (empty here) — simulating the just-added lag. The tag must still read shared.
+    _setCommandSharedForTests([]); // baseline empty → would have flashed "local" pre-fix
+    renderCustomCommandSettings();
+    const row = document.querySelector<HTMLElement>('#settings-commands-list .cmd-outline-row');
+    expect(row?.querySelector('.cmd-scope-tag.scope-tag-shared')).not.toBeNull();
+    expect(row?.querySelector('.cmd-scope-tag.scope-tag-local')).toBeNull();
+  });
+
   // HS-9183 — a shared command hidden on this machine renders as a dimmed row
   // with a restore button (instead of vanishing), in Local mode.
   it('HS-9183: shows hidden shared commands as dimmed rows with a restore (eye) button', async () => {

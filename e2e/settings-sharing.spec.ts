@@ -217,6 +217,25 @@ test.describe('Settings scope control (Shared | Local)', () => {
     expect(layered.local.custom_commands?.hidden ?? []).not.toContain('sh-a');
   });
 
+  // HS-9181 — a command added in Shared mode is tagged "shared" IMMEDIATELY,
+  // not "local" until the dialog is reopened.
+  test('HS-9181: a command added in Shared mode is tagged "shared" immediately', async ({ page }) => {
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    const list = page.locator('#settings-commands-list');
+    await list.locator('.cmd-outline-add-btn').click();
+    const modal = page.locator('.cmd-editor-overlay');
+    await expect(modal).toBeVisible({ timeout: 3000 });
+    await modal.locator('.settings-command-row-header input[type="text"]').fill('Brand New Shared');
+    await page.waitForTimeout(300);
+    await modal.locator('.cmd-editor-done-btn').click();
+    await page.waitForTimeout(300);
+
+    const row = list.locator('.cmd-outline-row').filter({ hasText: 'Brand New Shared' });
+    await expect(row.locator('.cmd-scope-tag.scope-tag-shared')).toHaveCount(1);
+    await expect(row.locator('.cmd-scope-tag.scope-tag-local')).toHaveCount(0);
+  });
+
   // HS-9094 — a shared CHILD command moves into the local layer: it physically
   // leaves its shared group in settings.json and becomes a `childAdded` child in
   // settings.local.json (so it's machine-only but still appears in the group).

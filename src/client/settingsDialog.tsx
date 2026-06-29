@@ -539,6 +539,10 @@ function bindAutoContextSettings() {
    * unchanged), or `overridden` (in shared but the text differs locally).
    */
   function entryOrigin(entry: AutoContextEntry): 'local' | 'shared' | 'overridden' {
+    // HS-9181 — the Shared editor only shows shared entries, so a just-added one
+    // is shared (commits to the shared layer on save). Pre-fix `autoContextShared`
+    // lagged the editor list, flashing a "local" tag until the dialog was reopened.
+    if (autoContextMode === 'shared') return 'shared';
     const sharedMatch = autoContextShared.find(s => acIdOf(s) === acIdOf(entry));
     if (sharedMatch === undefined) return 'local';
     return sharedMatch.text === entry.text ? 'shared' : 'overridden';

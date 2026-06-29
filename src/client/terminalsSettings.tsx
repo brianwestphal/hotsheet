@@ -155,6 +155,11 @@ function normalizeEntry(item: unknown, index: number): EditableTerminalConfig | 
  * unchanged), or `overridden` (in shared but edited locally).
  */
 function termOrigin(entry: EditableTerminalConfig): 'local' | 'shared' | 'overridden' {
+  // HS-9181 — the Shared editor only shows shared terminals, so a just-added one
+  // is shared (it commits to the shared layer on save). Pre-fix `terminalsShared`
+  // lagged the editor list, so a new shared terminal flashed a "local" tag until
+  // the dialog was reopened.
+  if (terminalsMode === 'shared') return 'shared';
   const sharedMatch = terminalsShared.find(s => termIdOf(s) === termIdOf(entry));
   if (sharedMatch === undefined) return 'local';
   return JSON.stringify(sharedMatch) === JSON.stringify(entry) ? 'shared' : 'overridden';

@@ -222,6 +222,11 @@ function buildScopeCtx(): ScopeCtx {
 
 /** Is the item at `ref` a SHARED item (vs a local-only addition)? */
 function isSharedItem(item: CommandItem, ctx: ScopeCtx): boolean {
+  // HS-9181 — the Shared editor only ever shows shared items, so everything in it
+  // is shared (incl. a just-added command not yet folded into `commandShared`).
+  // Pre-fix `sharedIds` lagged the editor tree, so a new shared command flashed a
+  // "local" tag until the dialog was reopened.
+  if (ctx.mode === 'shared') return true;
   return typeof item.id === 'string' && ctx.sharedIds.has(item.id);
 }
 
