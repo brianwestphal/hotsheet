@@ -3,7 +3,20 @@
 **Status: design exploration, with Phase 1a (server generation backbone) SHIPPED
 (HS-8745, 2026-06-05 — see §78.11) and Phase 1b (the after-the-fact audio client:
 settings + transcript PIP + playback + TTS) SHIPPED (HS-8747, 2026-06-05 — see
-§78.12).** The rest of this document is the design for
+§78.12).**
+
+> **HS-9159 (2026-06-29) — always-on.** The per-project "Enable the Announcer"
+> toggle (and the `announcer_enabled` setting + `POST /announcer/enabled`
+> endpoint) was **removed**. The Announcer is conceptually always on; whether it
+> can actually run is gated by **provider readiness** (`prepareSummarizationProvider`
+> → a usable model: Apple Intelligence available / a reachable local endpoint /
+> an Anthropic key). The default model is the free on-device provider when
+> available. The header **Listen** button is always shown but **disabled** until
+> a usable model is configured. All Announcer settings are machine-local-only
+> (the tab has no Shared|Local scope bar). Cross-project picker refinement — show
+> all projects, disable the unusable ones — tracked in HS-9169.
+
+The rest of this document is the design for
 an opt-in audio/visual "announcer" that narrates the work being done on a
 project — what changed, what the AI is doing now, what happened while you were
 away. It captures the value proposition, an honest assessment of what's useful
@@ -395,7 +408,8 @@ better than assumed, with three concrete wiring caveats Phase 2 must handle:
     newest when all are already heard. A one-time, sentinel-guarded backfill marks
     the pre-`announcer_last_listened_at` backlog as already-heard so existing reels
     clear on first read after upgrade.
-- **Per-project settings:** `announcer_enabled`, `announcer_last_listened_at`,
+- **Per-project settings:** `announcer_last_listened_at` (HS-9159 removed
+  `announcer_enabled` — always-on),
   `announcer_ai_provider`, `announcer_tts_provider`, `announcer_default_mode`,
   `announcer_dismissed_topics` (the learn-from-skips list), PIP `position/size`.
   Store via the existing file-settings / settings-table pattern; keys in the
@@ -527,7 +541,7 @@ Phase 1b.
   `getActiveAnnouncements`; `dismissAnnouncement`; `clearAnnouncements`;
   `getLatestCoversTo` — normalized to ISO so the `effectiveSince` cursor compare
   is correct).
-- Per-project settings (DB/file settings): `announcer_enabled`,
+- Per-project settings (DB/file settings):
   `announcer_last_listened_at` (the listen cursor — advanced on **listen**, not
   generate). The AI key lives in the OS keychain (§20), not settings.
 
