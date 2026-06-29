@@ -86,10 +86,14 @@ const SCOPED_FIELDS: ScopedField[] = [
   // plain + always editable (incl. Resolved); putting them here would disable
   // them in Resolved (HS-9127) while Shared/Local writes silently misroute to the
   // file layer the server ignores for them. (HS-9127)
-  { controlId: 'settings-auto-order', key: 'auto_order', kind: 'boolean' },
-  { controlId: 'settings-hide-verified-column', key: 'hide_verified_column', kind: 'boolean' },
-  { controlId: 'settings-notify-permission', key: 'notify_permission', kind: 'text' },
-  { controlId: 'settings-notify-completed', key: 'notify_completed', kind: 'text' },
+  // HS-9170 — auto_order / hide_verified_column / notify_* / shell_* are
+  // **local-only**: per-machine UI / notification / terminal prefs that live in
+  // settings.local.json (never committed). The client reads them from the file
+  // layer in `loadSettings` (was the DB, which broke persistence under default-Local).
+  { controlId: 'settings-auto-order', key: 'auto_order', kind: 'boolean', share: 'local-only' },
+  { controlId: 'settings-hide-verified-column', key: 'hide_verified_column', kind: 'boolean', share: 'local-only' },
+  { controlId: 'settings-notify-permission', key: 'notify_permission', kind: 'text', share: 'local-only' },
+  { controlId: 'settings-notify-completed', key: 'notify_completed', kind: 'text', share: 'local-only' },
   // Backups
   { controlId: 'settings-backup-dir', key: 'backupDir', kind: 'text' },
   // Telemetry
@@ -100,9 +104,9 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-telemetry-retention-days', key: 'telemetry_retention_days', kind: 'number' },
   // Terminal
   { controlId: 'settings-terminal-scrollback', key: 'terminal_scrollback_bytes', kind: 'number' },
-  { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean' },
+  { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only
   // Experimental
-  { controlId: 'settings-shell-streaming-enabled', key: 'shell_streaming_enabled', kind: 'boolean' },
+  { controlId: 'settings-shell-streaming-enabled', key: 'shell_streaming_enabled', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only
   // Announcer (per-project file setting; the model/rate/etc. are machine-global
   // and write to ~/.hotsheet/config.json, so they're layer-safe and stay plain).
   // HS-9159 — the Announcer "enabled" toggle was removed (always-on); the whole

@@ -57,35 +57,33 @@ test.describe('Settings persistence', () => {
     await expect(trashInput).toHaveValue('7', { timeout: 3000 });
   });
 
-  test('toggle auto-prioritize checkbox, persist across reopen', async ({ page }) => {
-    // Open settings
+  test('toggle auto-prioritize persists to settings.local.json + reopen (HS-9170 local-only)', async ({ page }) => {
+    // Open settings (default Local mode). HS-9170 — auto_order is now a local-only
+    // file setting, editable in Local; it must persist to settings.local.json and
+    // be read back from the file layer (not the DB).
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
-    // HS-9127 — Resolved is read-only; edit scoped fields in Shared mode.
-    await page.locator('.scope-seg-btn.scope-seg-shared').click();
 
     const autoOrderCheckbox = page.locator('#settings-auto-order');
-
-    // Get the initial checked state
+    await expect(autoOrderCheckbox).toBeEnabled(); // editable in the default Local mode
     const initialChecked = await autoOrderCheckbox.isChecked();
 
-    // Toggle the checkbox
     await autoOrderCheckbox.click();
-    // Verify it changed
     if (initialChecked) {
       await expect(autoOrderCheckbox).not.toBeChecked({ timeout: 3000 });
     } else {
       await expect(autoOrderCheckbox).toBeChecked({ timeout: 3000 });
     }
+    await page.waitForTimeout(600); // debounced write to settings.local.json
 
-    // Wait for the change event to fire and API call to complete
-    await page.waitForTimeout(500);
+    // It persisted to the LOCAL file layer (the value the client now reads back).
+    const layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+    expect(String(layered.local.auto_order)).toBe(String(!initialChecked));
 
-    // Close settings
-    await page.locator('#settings-close').click();
-    await expect(page.locator('#settings-overlay')).toBeHidden({ timeout: 3000 });
-
-    // Reopen settings and verify the toggled state persisted
+    // RELOAD the page (re-runs loadSettings) → this is the actual regression: the
+    // file value must be read back, not reverted to the stale DB value.
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
     if (initialChecked) {

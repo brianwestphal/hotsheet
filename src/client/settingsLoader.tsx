@@ -1,4 +1,4 @@
-import { getCategories, getSettings } from '../api/index.js';
+import { getCategories, getLayeredFileSettings, getSettings } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
 import { setAppTitleFromActiveProject } from './appTitle.js';
 import { applyDetailPosition, applyDetailSize, updateDetailCategory } from './detail.js';
@@ -10,6 +10,19 @@ import { loadTickets } from './ticketList.js';
 export async function loadSettings() {
   try {
     const settings = await getSettings();
+    // HS-9170 — these 6 are local-only FILE settings (settings.local.json), but
+    // are read here client-side. Overlay the resolved file-layer value (local
+    // wins) when present; fall back to the DB for legacy/unmigrated values. (The
+    // server-read SCOPED_FIELDS — appName, telemetry_*, … — don't pass through
+    // here, so they're unaffected.)
+    try {
+      const fileResolved = (await getLayeredFileSettings()).resolved;
+      for (const k of ['notify_permission', 'notify_completed', 'auto_order', 'hide_verified_column', 'shell_integration_ui', 'shell_streaming_enabled']) {
+        const v = fileResolved[k];
+        if (typeof v === 'string') settings[k] = v;
+        else if (typeof v === 'boolean' || typeof v === 'number') settings[k] = String(v);
+      }
+    } catch { /* file-settings fetch failed — keep DB values */ }
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;
     }
