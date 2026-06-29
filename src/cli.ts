@@ -771,6 +771,12 @@ async function main() {
   startupMark('starting server');
   const { actualPort, secret } = await startAndConfigure(port, dataDir, strictPort, bind);
   startupMark(`server started on port ${actualPort}`);
+  // HS-9163 — `--server <mode>` runs the server with no client auto-launched.
+  // Make that explicit (the absence of a browser pop could otherwise look like a
+  // failure); the bound URL / mTLS notice is printed by `server.ts`.
+  if (parsed.server !== null) {
+    console.log(`  Server-only mode (--server ${parsed.server}) — no client launched; connect a Hot Sheet client to this server.`);
+  }
   registerExistingProject(dataDir, secret, db);
   // Eager-spawn non-lazy terminals for the primary project (HS-6310).
   const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');

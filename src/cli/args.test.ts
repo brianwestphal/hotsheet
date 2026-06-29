@@ -86,12 +86,57 @@ describe('parseArgs --bind (HS-7940)', () => {
   });
 });
 
+describe('parseArgs --server (HS-9163)', () => {
+  const argv = (...flags: string[]): string[] => ['node', 'cli.js', ...flags];
+  // The error path calls process.exit; silence + trap it for the invalid case.
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit:${String(code)}`); }) as never);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('defaults server to null (today\'s behavior: server + auto-opened client)', () => {
+    const p = parseArgs(argv())!;
+    expect(p.server).toBeNull();
+    expect(p.noOpen).toBe(false);
+  });
+
+  it('--server localhost ⇒ server-only (noOpen), bind stays loopback default (undefined)', () => {
+    const p = parseArgs(argv('--server', 'localhost'))!;
+    expect(p.server).toBe('localhost');
+    expect(p.noOpen).toBe(true);
+    expect(p.bind).toBeUndefined();
+  });
+
+  it('--server remote-access ⇒ server-only + defaults bind to 0.0.0.0', () => {
+    const p = parseArgs(argv('--server', 'remote-access'))!;
+    expect(p.server).toBe('remote-access');
+    expect(p.noOpen).toBe(true);
+    expect(p.bind).toBe('0.0.0.0');
+  });
+
+  it('--server remote-access --bind <ip> ⇒ explicit --bind overrides the 0.0.0.0 default', () => {
+    expect(parseArgs(argv('--server', 'remote-access', '--bind', '192.168.1.10'))?.bind).toBe('192.168.1.10');
+    // Order-independent.
+    expect(parseArgs(argv('--bind', '192.168.1.10', '--server', 'remote-access'))?.bind).toBe('192.168.1.10');
+  });
+
+  it('--server localhost does NOT expose (bind stays undefined even alongside other flags)', () => {
+    expect(parseArgs(argv('--server', 'localhost', '--port', '8080'))?.bind).toBeUndefined();
+  });
+
+  it.each([['--server'], ['--server', 'public'], ['--server', '--bind']])('exits 1 on a missing/invalid mode: %s', (...flags: string[]) => {
+    expect(() => parseArgs(argv(...flags))).toThrow('exit:1');
+  });
+});
+
 describe('parseArgs — flags + valid values', () => {
   const argv = (...flags: string[]): string[] => ['node', 'cli.js', ...flags];
 
   it('defaults are sane with no flags', () => {
     const p = parseArgs(argv())!;
-    expect(p).toMatchObject({ port: 4174, demo: null, forceUpdateCheck: false, noOpen: false, strictPort: false, replace: false, close: false, force: false, list: false, test: false });
+    expect(p).toMatchObject({ port: 4174, demo: null, forceUpdateCheck: false, noOpen: false, strictPort: false, replace: false, close: false, force: false, list: false, test: false, server: null });
     expect(p.bind).toBeUndefined();
   });
 

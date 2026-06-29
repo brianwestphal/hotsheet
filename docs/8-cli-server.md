@@ -13,6 +13,8 @@ The application is launched from the command line via the `hotsheet` command (in
 | `--port <number>` | Run on a specific port (default: 4174) |
 | `--data-dir <path>` | Store data in a custom directory (default: `.hotsheet/`) |
 | `--no-open` | Don't open the browser on startup (used by Tauri sidecar) |
+| `--bind <address>` | Interface the HTTP server listens on (default `127.0.0.1`, loopback only). `0.0.0.0` / a specific IP exposes off-box → the exposed-bind path applies (untrusted-origin GET requires the secret + `config.json:trustedOrigins`; an exposed bind is HTTPS with **mutual TLS**, see [94-strong-remote-auth.md](94-strong-remote-auth.md) / [97-self-hosting-mtls.md](97-self-hosting-mtls.md)) |
+| `--server <mode>` (HS-9163) | Run the **server only** — no client (browser) auto-launched. `mode` = `localhost` (loopback bind, like the default) or `remote-access` (defaults the bind to `0.0.0.0`/all interfaces, overridable with `--bind`; the exposed bind requires mutual TLS). For headless / remote-access server hosts (see §8.2.1) |
 | `--strict-port` | Fail if the specified port is already in use (used by Tauri dev) |
 | `--replace` | Shut down any running Hot Sheet instance before starting a fresh one (used by `npm run tauri:dev`; see §8.4) |
 | `--close` | Unregister the current project from the running instance and exit |
@@ -21,6 +23,22 @@ The application is launched from the command line via the `hotsheet` command (in
 | `--check-for-updates` | Check the npm registry for a newer version immediately |
 | `--demo:<scenario>` | Launch with demo data (see §8.8) |
 | `--help` | Display usage information |
+
+### 8.2.1 Server-only launch modes (`--server`, HS-9163)
+
+By default `hotsheet` launches **both** a server and a client (it starts the HTTP server and auto-opens the browser). `--server <mode>` runs the **server only** — it sets `--no-open` so no client is launched — for headless hosts and remote-access servers where the UI runs on a different device:
+
+| Invocation | Bind | Client launched? |
+|---|---|---|
+| `hotsheet` | `127.0.0.1` (loopback) | Yes (browser) |
+| `hotsheet --server localhost` | `127.0.0.1` (loopback) | No |
+| `hotsheet --server remote-access` | `0.0.0.0` (all interfaces) | No |
+| `hotsheet --server remote-access --bind 192.168.1.10` | `192.168.1.10` | No |
+
+- `--server` **requires** a mode argument (`localhost` or `remote-access`); a missing/invalid mode exits 1.
+- `remote-access` defaults the bind to `0.0.0.0`; an explicit `--bind` overrides that default (order-independent). `localhost` keeps the loopback default.
+- An exposed bind (`remote-access`, or any non-loopback `--bind`) trips the existing exposed-bind path: **mutual TLS is required** (the server fails startup without a project CA — see [94-strong-remote-auth.md](94-strong-remote-auth.md) / [97-self-hosting-mtls.md](97-self-hosting-mtls.md)), plus the untrusted-origin GET-secret enforcement and `trustedOrigins` allow-list.
+- The flag composes the existing `--no-open` + `--bind` primitives, so a server-only instance is otherwise identical to a normal launch (port selection, multi-project, sync, backups).
 
 ### 8.3 Port Selection
 

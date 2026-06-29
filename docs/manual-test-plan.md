@@ -63,6 +63,13 @@ This document lists features that require manual verification before each releas
 
 ## 2. Platform-Specific (Run on Each Target OS)
 
+### Server-only launch modes (`--server`, HS-9163)
+*(CLI parsing is unit-tested in `src/cli/args.test.ts`; these verify the real launch behavior the parser composes.)*
+- [ ] `hotsheet --server localhost`: the server starts on `127.0.0.1` and **no browser opens** (prints "Server-only mode (--server localhost)…"). Opening `http://localhost:<port>` in a browser manually still works.
+- [ ] `hotsheet --server remote-access`: with a project CA configured (see [97-self-hosting-mtls.md](97-self-hosting-mtls.md)), the server binds `0.0.0.0`, prints the "🔒 Mutual TLS REQUIRED" notice, and **no browser opens**. A second device with an enrolled client cert can reach `https://<host>:<port>`; without a client cert the connection is refused.
+- [ ] `hotsheet --server remote-access --bind 192.168.1.10`: the explicit `--bind` overrides the `0.0.0.0` default (server reachable only on that interface).
+- [ ] `hotsheet --server remote-access` with **no CA / keychain available**: startup fails with a clear error (the exposed-bind mTLS requirement, HS-9019), not a silent insecure listen.
+
 ### Reveal in Finder / File Manager
 - [ ] macOS: "Show in Finder" on an attachment opens Finder with file selected
 - [ ] Windows: opens Explorer with file selected

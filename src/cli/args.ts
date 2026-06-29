@@ -58,6 +58,13 @@ export interface ParsedArgs {
    *  (loopback). Pass `0.0.0.0` or a specific IP to expose the server off-box
    *  (then the GET-secret enforcement + `trustedOrigins` allow-list apply). */
   bind: string | undefined;
+  /** HS-9163 — `--server <localhost|remote-access>`: run the server ONLY, with
+   *  no client (browser) auto-launched. `localhost` keeps the loopback bind;
+   *  `remote-access` defaults the bind to `0.0.0.0` (all interfaces) — overridable
+   *  with an explicit `--bind` — which trips the existing exposed-bind path
+   *  (mutual TLS required, HS-8993). `null` = not passed (today's behavior:
+   *  server + auto-opened client). */
+  server: 'localhost' | 'remote-access' | null;
 }
 
 export function printUsage(): void {
@@ -73,6 +80,10 @@ Options:
                            Use 0.0.0.0 or a specific IP to expose off-box — then GET
                            requests from untrusted origins require the secret and you
                            must list remote origins in config.json:trustedOrigins.
+  --server <mode>          Run the SERVER only — don't auto-launch a client (browser).
+                           mode = localhost  (loopback bind, like the default) or
+                                  remote-access  (binds 0.0.0.0 by default — override
+                                  with --bind; an exposed bind requires mutual TLS).
   --data-dir <path>        Store data in an alternative location (default: .hotsheet/)
   --no-open                Don't open the browser on startup
   --strict-port            Fail if the requested port is in use (don't auto-select)
@@ -94,6 +105,9 @@ Examples:
   hotsheet --close
   hotsheet --replace
   hotsheet --test
+  hotsheet --server localhost
+  hotsheet --server remote-access
+  hotsheet --server remote-access --bind 192.168.1.10
 `);
 }
 
@@ -111,6 +125,8 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
   let list = false;
   let test = false;
   let bind: string | undefined;
+  let bindExplicit = false; // HS-9163 — did the user pass --bind? (gates remote-access's 0.0.0.0 default)
+  let server: 'localhost' | 'remote-access' | null = null;
   // HS-8921 — track whether the user passed these explicitly so `--test`'s
   // defaults only apply when the user didn't (order-independent: `--test --port`
   // and `--port --test` behave identically).
@@ -175,12 +191,33 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
           process.exit(1);
         }
         bind = args[++i];
+        bindExplicit = true;
         break;
+      case '--server': {
+        // HS-9163 — `--server <mode>` runs the server only (no client launched).
+        const mode = args[i + 1];
+        if (mode !== 'localhost' && mode !== 'remote-access') {
+          console.error("--server requires a mode: 'localhost' (loopback) or 'remote-access' (binds 0.0.0.0 by default; override with --bind)");
+          process.exit(1);
+        }
+        server = mode;
+        i++;
+        break;
+      }
       default:
         console.error(`Unknown option: ${arg}`);
         printUsage();
         process.exit(1);
     }
+  }
+
+  // HS-9163 — `--server <mode>` = server-only. No client (browser) is
+  // auto-launched, and `remote-access` defaults the bind to all interfaces
+  // (overridable with an explicit `--bind`). `localhost` keeps the loopback
+  // default (bind stays undefined → config → 127.0.0.1).
+  if (server !== null) {
+    noOpen = true;
+    if (server === 'remote-access' && !bindExplicit) bind = '0.0.0.0';
   }
 
   if (test) {
@@ -200,5 +237,5 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
     setTestMode(true);
   }
 
-  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list, test, bind };
+  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list, test, bind, server };
 }
