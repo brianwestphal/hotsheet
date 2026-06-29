@@ -1547,16 +1547,20 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
 }
 
 // HS-8170 — focus ring on magnified terminals when they have keyboard focus.
-// `:focus-within` propagates from the xterm helper textarea (which `term.focus()`
-// targets programmatically) up through every ancestor, including the centered
-// tile / dedicated pane wrappers. Uses the standard accent (#3b82f6) for a
-// typical blue ring; stacks with the existing centered-tile drop shadow.
-.terminal-dashboard-tile.centered:focus-within {
+// HS-9200 — key the ring on xterm's OWN `.focus` class (xterm.js adds `.focus`
+// to the `.xterm` element exactly while its textarea holds keyboard focus) via
+// `:has(.xterm.focus)`, NOT `:focus-within`. `:focus-within` matched ANY focused
+// descendant — including the dedicated bar's search input + toolbar buttons — so
+// the ring lingered around a terminal that wasn't actually receiving keystrokes
+// (e.g. while typing in the find widget). `:has(.xterm.focus)` tracks the real
+// keyboard-input target. Uses the standard accent (#3b82f6); stacks with the
+// existing centered-tile drop shadow.
+.terminal-dashboard-tile.centered:has(.xterm.focus) {
   .terminal-dashboard-tile-preview {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 3px var(--accent, #3b82f6);
   }
 }
-.terminal-dashboard-dedicated-pane:focus-within {
+.terminal-dashboard-dedicated-pane:has(.xterm.focus) {
   box-shadow: 0 0 0 3px var(--accent, #3b82f6);
   border-radius: var(--radius);
 }
