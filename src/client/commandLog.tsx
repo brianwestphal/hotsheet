@@ -3,15 +3,9 @@
  * polling timer, search debounce, drawer-tab switching, per-project
  * persistence, and the bindList mount against the entries container.
  *
- * Per HS-8385 the streaming-side helpers + per-entry row rendering live
- * in dedicated modules:
- * - `commandLogStreaming.ts` — `writePartialIntoPre`,
- *   `shouldAutoScrollToBottom`, `applyShellPartialEvent`.
+ * Per HS-8385 the per-entry row rendering lives in a dedicated module:
  * - `commandLogEntryRow.tsx` — `renderEntryRow` + the context menu +
  *   `cancelingShellIds` + the pure formatting helpers.
- *
- * Their public surface is re-exported from here so existing importers
- * (including `commandLog.test.ts`) keep working without an import sweep.
  */
 
 import {
@@ -31,24 +25,12 @@ import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
   commandLogStore,
   filteredEntriesSignal,
-  getEntrySignals,
 } from './commandLogStore.js';
-import {
-  applyShellPartialEvent,
-  shouldAutoScrollToBottom,
-  writePartialIntoPre,
-} from './commandLogStreaming.js';
-import { SHELL_PARTIAL_OUTPUT_EVENT, type ShellPartialOutputEvent } from './commandSidebar.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull } from './dom.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { delegate } from './reactive.js';
 import { bindList } from './reactive-bind.js';
-
-// Re-export the streaming helpers so existing importers (and the
-// `commandLog.test.ts` harness) keep their `from './commandLog.js'`
-// shape after the HS-8385 split.
-export { applyShellPartialEvent, shouldAutoScrollToBottom, writePartialIntoPre };
 
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -153,7 +135,7 @@ async function loadEntries() {
     // Fetch entries and running shell processes in parallel
     const [fetchedEntries, fetchedRunning] = await Promise.all([
       getCommandLog(query),
-      getRunningShellCommands().catch((): RunningShell => ({ ids: [], outputs: {} })),
+      getRunningShellCommands().catch((): RunningShell => ({ ids: [] })),
     ]);
     entries = fetchedEntries;
     running = fetchedRunning;
@@ -163,26 +145,11 @@ async function loadEntries() {
   }
 
   // HS-8318 — feed the store. `setEntries` reconciles by id (per-entry
-  // signals survive surviving ids), then `setRunningOutput` writes the
-  // server-side `partialOutputs` snapshot into the per-entry partial
-  // signals (only fires effects for entries whose output actually changed
-  // since the last tick). The bindList view-layer re-renders only the
-  // rows whose shape or partial signal moved.
+  // signals survive surviving ids) + annotates which entries are running
+  // shells (`running.ids`). The bindList view-layer re-renders only the
+  // rows whose shape moved. A command's final output lands in its entry
+  // `detail` when its `close` handler writes the log entry.
   commandLogStore.actions.setEntries(entries, running.ids);
-  for (const idStr of Object.keys(running.outputs)) {
-    const idNum = Number(idStr);
-    if (!Number.isFinite(idNum)) continue;
-    const fromServer = running.outputs[idNum];
-    const sigs = getEntrySignals(idNum);
-    const cached = sigs?.partial.value ?? '';
-    // Use the longer of (cached, server) so a chunk that arrived via
-    // the live `applyShellPartialEvent` between this tick's request
-    // dispatch and its response doesn't get clobbered by the older
-    // poll snapshot. Partial buffers are monotonic on the server, so
-    // length is a safe proxy for "is newer".
-    const next = fromServer.length >= cached.length ? fromServer : cached;
-    if (next !== cached) commandLogStore.actions.setRunningOutput(idNum, next);
-  }
   // Drop ids whose process is no longer in the server-reported running
   // list (canceling-shell state cleanup — HS-8385: lives in
   // commandLogEntryRow.ts which owns the canceling Set).
@@ -573,15 +540,6 @@ async function clearLogEntries() {
 export function initCommandLog() {
   // Button click — toggles drawer open/closed
   byIdOrNull('command-log-btn')?.addEventListener('click', togglePanel);
-
-  // HS-7983 — module-level subscription to the streaming-shell-output
-  // event. Delegated to `applyShellPartialEvent` (now in
-  // `commandLogStreaming.ts`) so the listener wire-up is one line and
-  // the DOM-mutation logic stays unit-testable in happy-dom without
-  // bootstrapping the full drawer.
-  window.addEventListener(SHELL_PARTIAL_OUTPUT_EVENT, (e: Event) => {
-    applyShellPartialEvent((e as CustomEvent<ShellPartialOutputEvent>).detail);
-  });
 
   // HS-6312: expand drawer to full height (hides ticket area).
   byIdOrNull('drawer-expand-btn')?.addEventListener('click', toggleDrawerExpanded);

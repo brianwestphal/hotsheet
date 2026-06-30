@@ -4,56 +4,25 @@ import { type ChildProcess, spawn } from 'child_process';
 import { Hono } from 'hono';
 
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
-import { PARTIAL_OUTPUT_CAP_BYTES } from '../limits.js';
 import type { AppEnv } from '../types.js';
 import { notifyChange } from './notify.js';
 import { parseBody, ShellExecSchema, ShellKillSchema } from './validation.js';
 
 export const shellRoutes = new Hono<AppEnv>();
 
-const PARTIAL_TRUNCATION_MARKER = '[output truncated]\n';
-
-/** Pure helper — append a chunk to the existing partial, applying the
- *  head-truncation cap. Exported for testability.
- *  HS-8557 — the head-trunc slice runs at code-unit (UTF-16 code unit)
- *  boundaries; if the cut lands inside a surrogate pair (only matters for
- *  characters above U+FFFF, e.g. an emoji at exactly the wrong offset),
- *  the result would carry a lone low-surrogate code unit at the start.
- *  After slicing, shift by one if the first code unit IS a low surrogate
- *  so the kept portion never starts mid-pair. */
-export function appendPartialOutput(prev: string, chunk: string): string {
-  const next = prev + chunk;
-  if (next.length <= PARTIAL_OUTPUT_CAP_BYTES) return next;
-  const keep = PARTIAL_OUTPUT_CAP_BYTES - PARTIAL_TRUNCATION_MARKER.length;
-  let kept = next.slice(next.length - keep);
-  // Low surrogate range: 0xDC00 - 0xDFFF. A code unit in this range is
-  // only valid as the SECOND half of a surrogate pair; alone it's
-  // malformed. Drop it so the displayed output never starts with a
-  // broken codepoint.
-  const firstCode = kept.charCodeAt(0);
-  if (firstCode >= 0xDC00 && firstCode <= 0xDFFF) kept = kept.slice(1);
-  return PARTIAL_TRUNCATION_MARKER + kept;
-}
-
 /**
- * HS-8549 — `ShellProcessRegistry` owns the three module-level Maps that
- * pre-fix were juggled by hand across every spawn / kill / close / chunk
- * path. Each lifecycle event now calls exactly one method, which makes
- * the "remember to clear killedProcesses on close AND release the
- * partial buffer" coordination invariant readable in one place instead
- * of spread across five callsites.
+ * HS-8549 — `ShellProcessRegistry` owns the module-level Maps that pre-fix were
+ * juggled by hand across every spawn / kill / close path. Each lifecycle event
+ * now calls exactly one method, which keeps the "remember to clear killedProcesses
+ * on close" coordination invariant readable in one place.
  *
  *   - `register(logId, child)` — tracks a freshly-spawned child.
  *   - `markKilled(logId)` — adds to the killed set so the close handler
  *      can surface "Canceled" instead of "Killed by SIGTERM".
  *   - `wasKilled(logId)` — read-then-clear (close handler consumes).
- *   - `recordChunk(logId, chunk)` — appends to the partial buffer with
- *      the HS-7982 head-truncation cap.
- *   - `release(logId)` — removes from `running` + clears the partial
- *      buffer. Called from `close` AND `error`.
+ *   - `release(logId)` — removes from `running`. Called from `close` AND `error`.
  *   - `get(logId)` — peek the live ChildProcess (kill route + grace timer).
  *   - `runningIds()` — snapshot for `/shell/running` + shutdown.
- *   - `partial(logId)` — peek the partial buffer for `/shell/running`.
  *   - `size()` — count for `_runningShellCommandCountForTesting`.
  *
  * The Maps are private; nothing outside this module mutates them.
@@ -61,7 +30,6 @@ export function appendPartialOutput(prev: string, chunk: string): string {
 class ShellProcessRegistry {
   private readonly running = new Map<number, ChildProcess>();
   private readonly killed = new Set<number>();
-  private readonly partials = new Map<number, string>();
 
   register(logId: number, child: ChildProcess): void {
     this.running.set(logId, child);
@@ -76,12 +44,8 @@ class ShellProcessRegistry {
     this.killed.delete(logId);
     return was;
   }
-  recordChunk(logId: number, chunk: string): void {
-    this.partials.set(logId, appendPartialOutput(this.partials.get(logId) ?? '', chunk));
-  }
   release(logId: number): void {
     this.running.delete(logId);
-    this.partials.delete(logId);
   }
   get(logId: number): ChildProcess | undefined {
     return this.running.get(logId);
@@ -91,9 +55,6 @@ class ShellProcessRegistry {
   }
   runningIds(): number[] {
     return Array.from(this.running.keys());
-  }
-  partial(logId: number): string | undefined {
-    return this.partials.get(logId);
   }
   size(): number {
     return this.running.size;
@@ -107,9 +68,9 @@ const registry = new ShellProcessRegistry();
  * event-wire logic so the handler reduces to parsing + log-write +
  * delegation. The child process's lifecycle is fully encapsulated:
  * stdout / stderr are buffered through a `StringDecoder` (HS-8557 — UTF-8
- * chunk-boundary safety), `recordChunk` keeps the partial buffer in sync,
- * `close` writes the final log entry + notifies long-poll waiters,
- * `error` does the same with a spawn-error summary.
+ * chunk-boundary safety) into the FINAL output, then `close` writes the
+ * final log entry + notifies long-poll waiters, `error` does the same with
+ * a spawn-error summary.
  */
 function spawnTrackedShellCommand(logId: number, command: string, name: string | undefined, cwd: string): void {
   const child = spawn(command, { shell: true, cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -125,14 +86,10 @@ function spawnTrackedShellCommand(logId: number, command: string, name: string |
   const stderrDecoder = new StringDecoder('utf8');
 
   child.stdout.on('data', (data: Buffer) => {
-    const chunk = stdoutDecoder.write(data);
-    stdout += chunk;
-    registry.recordChunk(logId, chunk);
+    stdout += stdoutDecoder.write(data);
   });
   child.stderr.on('data', (data: Buffer) => {
-    const chunk = stderrDecoder.write(data);
-    stderr += chunk;
-    registry.recordChunk(logId, chunk);
+    stderr += stderrDecoder.write(data);
   });
 
   child.on('close', (code, signal) => {
@@ -141,16 +98,8 @@ function spawnTrackedShellCommand(logId: number, command: string, name: string |
     // sequence interrupted by the process closing mid-character gets
     // emitted as a single replacement char rather than silently
     // dropped. `.end()` returns the flushed string ('' when empty).
-    const stdoutFlush = stdoutDecoder.end();
-    const stderrFlush = stderrDecoder.end();
-    if (stdoutFlush.length > 0) {
-      stdout += stdoutFlush;
-      registry.recordChunk(logId, stdoutFlush);
-    }
-    if (stderrFlush.length > 0) {
-      stderr += stderrFlush;
-      registry.recordChunk(logId, stderrFlush);
-    }
+    stdout += stdoutDecoder.end();
+    stderr += stderrDecoder.end();
     registry.release(logId);
     const output = (stdout + (stderr ? '\n--- stderr ---\n' + stderr : '')).trim();
     const exitSummary = wasCanceled ? 'Canceled'
@@ -268,16 +217,8 @@ export function _runningShellCommandCountForTesting(): number {
 }
 
 shellRoutes.get('/shell/running', (c) => {
-  const ids = registry.runningIds();
-  // HS-7982 Phase 2 — extend the response with the per-id partial buffer
-  // so a polling client (today, the existing 2 s `setInterval` poll in
-  // `commandSidebar.tsx::startShellPoll`) gets the latest accumulated
-  // output without a separate request. Backwards-compatible — clients
-  // that ignore `outputs` continue to work.
-  const outputs: Record<number, string> = {};
-  for (const id of ids) {
-    const partial = registry.partial(id);
-    if (partial !== undefined) outputs[id] = partial;
-  }
-  return c.json({ ids, outputs });
+  // The running ids drive the client's completion detection + busy spinner
+  // (`commandSidebar.tsx::startShellPoll`) and the `isRunningShell` annotation
+  // (`commandLog.tsx`). Final output is written to the log entry on close.
+  return c.json({ ids: registry.runningIds() });
 });

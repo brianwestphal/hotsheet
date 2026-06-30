@@ -50,5 +50,5 @@ The created ticket's category is always **`task`** (whose `shortLabel` is "TSK")
 - [15-shell-commands.md](15-shell-commands.md) — custom shell command targets + execution.
 - [16-command-groups.md](16-command-groups.md) — the command sidebar.
 - [22-terminal.md](22-terminal.md) — drawer terminal lifecycle + PTY.
-- [53-streaming-shell-output.md](53-streaming-shell-output.md) — the inline-run streaming path the normal click uses.
+- [15-shell-commands.md](15-shell-commands.md) — the inline shell run the normal click uses (output lands in the Commands Log on completion).
 - [57-shell-command-button-spinner.md](57-shell-command-button-spinner.md) — running-state spinner + stop confirm on the same buttons.

@@ -268,7 +268,7 @@ describe('HS-9002 — shared/local settings split', () => {
     // HS-9005 (docs/95 §95.4) — personal/machine settings reclassified shared → local.
     it('classifies HS-9005 personal/machine preferences as local', () => {
       for (const k of ['hide_verified_column', 'sort_by', 'sort_dir', 'layout', 'notify_completed',
-        'auto_order', 'shell_integration_ui', 'shell_streaming_enabled', 'terminal_scrollback_bytes',
+        'auto_order', 'shell_integration_ui', 'terminal_scrollback_bytes',
         'terminal_default', 'confirm_quit_with_running_terminals', 'quit_confirm_exempt_processes',
         'db_snapshot_protection', 'telemetry_enabled', 'telemetry_metrics_enabled',
         'telemetry_logs_enabled', 'telemetry_traces_enabled', 'telemetry_retention_days',

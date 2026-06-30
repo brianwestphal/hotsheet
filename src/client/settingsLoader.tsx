@@ -17,7 +17,7 @@ export async function loadSettings() {
     // here, so they're unaffected.)
     try {
       const fileResolved = (await getLayeredFileSettings()).resolved;
-      for (const k of ['notify_permission', 'notify_completed', 'auto_order', 'hide_verified_column', 'shell_integration_ui', 'shell_streaming_enabled']) {
+      for (const k of ['notify_permission', 'notify_completed', 'auto_order', 'hide_verified_column', 'shell_integration_ui']) {
         const v = fileResolved[k];
         if (typeof v === 'string') settings[k] = v;
         else if (typeof v === 'boolean' || typeof v === 'number') settings[k] = String(v);
@@ -50,12 +50,6 @@ export async function loadSettings() {
     // installs get the Phase 2 UI without touching settings.
     if (settings.shell_integration_ui !== '') {
       state.settings.shell_integration_ui = settings.shell_integration_ui !== 'false';
-    }
-    // HS-7984 — §53 Phase 4 streaming toggle. Default true (recommended in
-    // §53.8 — change is small and reversible; default-on makes the
-    // feature discoverable via the first-use toast).
-    if (settings.shell_streaming_enabled !== '') {
-      state.settings.shell_streaming_enabled = settings.shell_streaming_enabled !== 'false';
     }
     if (settings.sort_by) state.sortBy = settings.sort_by;
     if (settings.sort_dir) state.sortDir = settings.sort_dir;

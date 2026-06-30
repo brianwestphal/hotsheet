@@ -13,15 +13,15 @@ function stub(result: unknown): void {
 afterEach(() => { setApiTransport(null as unknown as ApiTransport); lastCall = undefined; });
 
 describe('shell domain (HS-8638)', () => {
-  it('RunningShellSchema accepts ids + outputs, rejects a non-string output', () => {
-    expect(RunningShellSchema.safeParse({ ids: [1, 2], outputs: { 1: 'out' } }).success).toBe(true);
-    expect(RunningShellSchema.safeParse({ ids: [], outputs: {} }).success).toBe(true);
-    expect(RunningShellSchema.safeParse({ ids: [1], outputs: { 1: 5 } }).success).toBe(false);
+  it('RunningShellSchema accepts ids, rejects a non-number id', () => {
+    expect(RunningShellSchema.safeParse({ ids: [1, 2] }).success).toBe(true);
+    expect(RunningShellSchema.safeParse({ ids: [] }).success).toBe(true);
+    expect(RunningShellSchema.safeParse({ ids: ['x'] }).success).toBe(false);
   });
 
   it('getRunningShellCommands → GET /shell/running', async () => {
-    stub({ ids: [42], outputs: { 42: 'building…' } });
-    expect(await getRunningShellCommands()).toEqual({ ids: [42], outputs: { 42: 'building…' } });
+    stub({ ids: [42] });
+    expect(await getRunningShellCommands()).toEqual({ ids: [42] });
     expect(lastCall).toEqual({ path: '/shell/running', opts: {} });
   });
 

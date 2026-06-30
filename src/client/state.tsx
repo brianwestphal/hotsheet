@@ -235,14 +235,6 @@ export interface AppSettings {
    *  does not render. The server-side parser still runs and markers are
    *  tracked, so toggling back on reveals the UI without losing history. */
   shell_integration_ui: boolean;
-  /** HS-7984 (§53 Phase 4) — when false, the §53 streaming-shell-output
-   *  partial render is suppressed on both client surfaces (sidebar row
-   *  preview + Commands Log live `<pre>`). Server still buffers (cheap;
-   *  conditional buffering would add complexity for no payoff). Default
-   *  true so the behavior is on for everyone after upgrade — the
-   *  first-use toast on the very first `hotsheet:shell-partial-output`
-   *  event makes the change discoverable. */
-  shell_streaming_enabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -257,7 +249,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   auto_order: true,
   hide_verified_column: false,
   shell_integration_ui: false, // HS-9188 — experimental, OFF by default (opt-in)
-  shell_streaming_enabled: true,
 };
 
 export interface AppState {

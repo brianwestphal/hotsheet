@@ -10,7 +10,7 @@ When a custom command button (§15 Shell target) is running, the button itself s
 
 ## 57.2 Motivation
 
-Today the only running-state signal for shell commands is the global "Shell running" toolbar indicator (`setShellBusy(true)` in `commandSidebar.tsx`) and the Commands Log entry's live partial-output `<pre>`. Neither helps the user identify *which* command they kicked off — when several commands have similar names or icons, you have to check the log to remember. It also adds friction for the common "stop and rerun" loop: today the user has to open the Commands Log panel, find the entry, click its stop button, then come back to the sidebar to click the command again.
+Today the only running-state signal for shell commands is the global "Shell running" toolbar indicator (`setShellBusy(true)` in `commandSidebar.tsx`) and the Commands Log entry. Neither helps the user identify *which* command they kicked off — when several commands have similar names or icons, you have to check the log to remember. It also adds friction for the common "stop and rerun" loop: today the user has to open the Commands Log panel, find the entry, click its stop button, then come back to the sidebar to click the command again.
 
 The button is already the user's mental anchor for the action. Showing the spinner *on the button itself* keeps the state visible where the user clicked, and using the SAME button as the stop affordance turns "stop and rerun" into two clicks instead of four.
 
@@ -76,7 +76,7 @@ Custom commands don't have stable ids in the saved JSON — the existing structu
 
 - **Stop-button pulsing animation.** A subtle scale pulse on the stop icon would communicate "click me to stop" more strongly. Skipped to ship Phase 1 lean.
 - **Reflow-respecting layout** (giving the spinner a guaranteed width slot via `padding-right: 24px` on the button). The user explicitly asked for the no-reflow behavior with the partial-text-obscure tradeoff, so the spec follows that. If they later prefer the reflow variant, swap to `padding-right` on the running-state class.
-- **Per-button output preview** in the Running state (the existing §53 streaming output goes to the Commands Log; surfacing the latest line of output in the button itself would clutter the sidebar). Defer.
+- **Per-button output preview** in the Running state (a command's output goes to the Commands Log on completion; surfacing the latest line of output in the button itself would clutter the sidebar). Defer.
 - **Stop ALL running** affordance somewhere global. Defer until users actually run >2 commands concurrently.
 
 ## 57.5 Implementation outline (Phase 1 ticket)
@@ -97,4 +97,4 @@ No server-side change — `/api/shell/exec`, `/api/shell/kill`, `/api/shell/runn
 ## 57.6 Reading order pointers
 
 - `15-shell-commands.md` — the underlying execution model + log entry structure.
-- `53-streaming-shell-output.md` — how live output is fanned out (the new spinner doesn't need to subscribe to the partial-output stream; it just consumes the `ids[]` boolean).
+- The spinner consumes only the `ids[]` from `GET /api/shell/running` (a running/not-running boolean per command) — it doesn't subscribe to command output.

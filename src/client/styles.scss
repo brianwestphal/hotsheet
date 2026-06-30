@@ -9231,32 +9231,6 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   margin: 4px 0;
 }
 
-// HS-7983 / HS-8015 follow-up #2 — live partial-output `<pre>`s rendered
-// for running shell entries before the `---SHELL_OUTPUT---` separator
-// lands. Each running-shell entry now mounts TWO pres tagged with this
-// class (`.preview` + `.full`); the live writer fills both and the
-// row's `.expanded` class swaps which one is visible. Pre-fix the only
-// pre also carried `.command-log-detail` (which is declared LATER in
-// this file and so won 'display'/'overflow' over `.command-log-shell-partial`),
-// pinning the live preview to the FIRST 3 lines with no scroll —
-// chatty commands' most recent output was never visible.
-.command-log-shell-partial {
-  // Empty `<pre>` collapses to zero height — no flash-of-empty-state
-  // while we wait for the first chunk (applies to both preview + full).
-  &:empty { display: none; }
-}
-
-// Full pre (rendered + hidden until the user clicks to expand) needs a
-// max-height + scroll so a chatty long-running command doesn't push
-// every other entry off-screen. Lives on `.command-log-detail-full` so
-// it doesn't fight the `.command-log-detail`-based 3-line clamp on the
-// sibling preview pre.
-.command-log-detail-full.command-log-shell-partial-full {
-  max-height: 240px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-}
-
 .command-log-context-menu {
   position: fixed;
   z-index: 700;

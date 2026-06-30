@@ -10,10 +10,9 @@
  * Byte-typed values carry a `_BYTES` suffix.
  *
  * Tests: there are no tests on this file specifically — every existing
- * test that exercises the bound (`shell.test.ts` for `PARTIAL_OUTPUT_CAP_BYTES`,
- * `markdown.test.ts` for the debounce intervals, etc.) keeps working
- * against the same numbers, just imported from here rather than
- * re-declared locally.
+ * test that exercises a bound (`markdown.test.ts` for the debounce
+ * intervals, etc.) keeps working against the same numbers, just imported
+ * from here rather than re-declared locally.
  */
 
 /**
@@ -28,20 +27,6 @@
  * indefinitely. Used by `src/cleanup.ts`.
  */
 export const ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * HS-7982 — head-truncation cap for the per-command shell-output buffer
- * (`partialOutputs` in `src/routes/shell.ts`). When a chatty command
- * (e.g. `yes`, `npm install` with verbose flags) exceeds this size, the
- * oldest bytes are dropped and a `[output truncated]\n` marker is
- * prepended so the most recent output is always readable. Without the
- * cap, a single runaway command could OOM the server.
- *
- * 4 MiB chosen as a balance: large enough to capture realistic build
- * logs in full, small enough that ~10 concurrent runaway commands
- * still fit in 50 MiB.
- */
-export const PARTIAL_OUTPUT_CAP_BYTES = 4 * 1024 * 1024;
 
 /**
  * Debounce interval for the worklist markdown sync (`worklist.md`).

@@ -104,8 +104,6 @@ const SCOPED_FIELDS: ScopedField[] = [
   // Terminal
   { controlId: 'settings-terminal-scrollback', key: 'terminal_scrollback_bytes', kind: 'number' },
   { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only
-  // Experimental
-  { controlId: 'settings-shell-streaming-enabled', key: 'shell_streaming_enabled', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only
   // Announcer (per-project file setting; the model/rate/etc. are machine-global
   // and write to ~/.hotsheet/config.json, so they're layer-safe and stay plain).
   // HS-9159 — the Announcer "enabled" toggle was removed (always-on); the whole

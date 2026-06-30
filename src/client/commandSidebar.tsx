@@ -11,54 +11,8 @@ import { byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, type DropdownItem, positionDropdown } from './dropdown.js';
 import { CMD_COLORS, CMD_ICONS, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
 import { renderIconSvg } from './icons.js';
-import { getActiveProject, state } from './state.js';
+import { getActiveProject } from './state.js';
 import { showToast } from './toast.js';
-
-/**
- * HS-7983 — typed detail of the partial-output stream event dispatched
- * from `startShellPoll` whenever a running shell command's partial buffer
- * grew since the last poll tick. Consumers (`renderShellPartialPreview`
- * here in the sidebar AND the Commands Log live-render listener in
- * `commandLog.tsx`) gate on `id` equality and update their DOM
- * accordingly. Exported so the test suite + the listeners can share the
- * shape declaration.
- */
-export interface ShellPartialOutputEvent {
-  id: number;
-  partial: string;
-}
-
-/** Event name; centralized so callers don't typo-drift the string. */
-export const SHELL_PARTIAL_OUTPUT_EVENT = 'hotsheet:shell-partial-output';
-
-/**
- * HS-7984 — first-use toast persistence key. Lives in `localStorage` so
- * the toast appears at most once across reloads + projects (it's a
- * one-time discoverability nudge, not a per-project notice). Set on
- * either user dismiss OR the toast's auto-fade timer; either way means
- * the user got the message.
- */
-const SHELL_STREAM_TOAST_DISMISSED_KEY = 'hotsheet:shell-stream-toast-dismissed';
-
-/**
- * HS-7984 — fire the first-use discoverability toast on the very first
- * `hotsheet:shell-partial-output` event a session sees, IF the streaming
- * setting is on AND the user hasn't already seen it (localStorage
- * sentinel). HS-8015 moved the call site from the (now-removed) sidebar
- * preview into the Commands Log live-render path, since that's where the
- * streaming output is visible. Toast text mentions the Commands Log so
- * users know where to look. Idempotent — subsequent events no-op via the
- * sentinel check. Exported so the unit tests can drive the path without
- * dispatching real events.
- */
-export function maybeFireShellStreamFirstUseToast(): void {
-  if (!state.settings.shell_streaming_enabled) return;
-  try {
-    if (window.localStorage.getItem(SHELL_STREAM_TOAST_DISMISSED_KEY) !== null) return;
-    window.localStorage.setItem(SHELL_STREAM_TOAST_DISMISSED_KEY, String(Date.now()));
-  } catch { /* localStorage disabled — fall through and show the toast anyway, no harm */ }
-  showToast('Shell command output now streams live in the Commands Log — Settings → Custom Commands to disable.', { durationMs: 7000 });
-}
 
 /**
  * HS-8539 — first-use discoverability key for the long-press hint. One-time
@@ -529,57 +483,6 @@ export function renderChannelCommands() {
 // --- Shell command execution ---
 
 let shellPollTimer: ReturnType<typeof setInterval> | null = null;
-/**
- * HS-7983 — per-running-id last-seen partial buffer length. The poll
- * adapter only dispatches a `hotsheet:shell-partial-output` event when
- * the partial actually grew, so a stalled command (no new output between
- * ticks) doesn't re-render preview elements every 2 s. Cleared when the
- * id leaves `/api/shell/running`'s `ids` array.
- */
-const lastSeenPartialLength = new Map<number, number>();
-
-/** Pure helper exported for tests. Decides which `{id, partial}` pairs
- *  should be dispatched as `hotsheet:shell-partial-output` events given
- *  the current `/api/shell/running` response and the per-id last-seen
- *  length cache. Returns the events to dispatch + the next cache state.
- *  No DOM, no network — happy-dom doesn't even need to load.
- *
- *  - A dispatch fires for every running id whose partial length grew.
- *  - The cache is rewritten to drop ids that are no longer running.
- *  - Backwards-compat: `outputs` may be missing / empty when the server
- *    hasn't exposed the field yet (older servers); we still update
- *    completion bookkeeping but emit no events. */
-export function decideShellPartialEvents(
-  response: { ids: readonly number[]; outputs?: Record<number, string> },
-  cache: ReadonlyMap<number, number>,
-): { events: ShellPartialOutputEvent[]; nextCache: Map<number, number> } {
-  const events: ShellPartialOutputEvent[] = [];
-  const nextCache = new Map<number, number>();
-  const outputs = response.outputs ?? {};
-  for (const id of response.ids) {
-    // HS-8093 — TS sees `outputs[id]` as `string` (project doesn't enable
-    // `noUncheckedIndexedAccess`) so a direct `outputs[id] === undefined`
-    // check trips lint's `no-unnecessary-condition`. `Object.hasOwn` is a
-    // cleaner runtime presence check that doesn't depend on the indexed
-    // access type — and matches what the comment-block actually meant
-    // ("no output yet for this id").
-    if (!Object.hasOwn(outputs, id)) {
-      // No output yet for this id — preserve any prior length so a
-      // resumed-mid-flight client doesn't re-emit the whole buffer when
-      // the next chunk arrives.
-      const prev = cache.get(id);
-      if (prev !== undefined) nextCache.set(id, prev);
-      continue;
-    }
-    const partial = outputs[id];
-    const lastLen = cache.get(id) ?? 0;
-    if (partial.length > lastLen) {
-      events.push({ id, partial });
-    }
-    nextCache.set(id, partial.length);
-  }
-  return { events, nextCache };
-}
 
 /**
  * HS-8060 — single shared poll that watches every entry in
@@ -588,8 +491,7 @@ export function decideShellPartialEvents(
  *
  * Pre-fix the timer was per-command and `runShellCommand` would clear
  * the previous timer when a second command fired — so concurrent
- * commands silently lost partial-output streaming for the first one
- * AND raced their completion handlers. The new shape supports the
+ * commands raced their completion handlers. The new shape supports the
  * §57.3.4 concurrency model and the global `setShellBusy` is wired to
  * `runningButtons.size > 0` rather than a per-command boolean.
  */
@@ -598,28 +500,17 @@ function startShellPoll(): void {
   shellPollTimer = setInterval(async () => {
     try {
       const response = await getRunningShellCommands();
-      // HS-7983 — fan out partial-output events to the Commands Log live
-      // render (HS-8015 removed the sidebar row preview). Dedupe via the
-      // per-id length cache so a stalled command doesn't thrash the DOM.
-      const { events, nextCache } = decideShellPartialEvents(response, lastSeenPartialLength);
-      lastSeenPartialLength.clear();
-      for (const [k, v] of nextCache) lastSeenPartialLength.set(k, v);
-      for (const ev of events) {
-        window.dispatchEvent(new CustomEvent<ShellPartialOutputEvent>(SHELL_PARTIAL_OUTPUT_EVENT, { detail: ev }));
-      }
-
       // HS-8060 — drop completed runningButtons entries + fire the
       // per-id auto-show + per-id log-badge refresh. Re-render the
       // sidebar exactly once if anything changed so the affected
-      // buttons drop the spinner.
+      // buttons drop the spinner. Final output lands in the entry's detail
+      // when the command's `close` handler writes the log entry.
       const stillRunning = new Set(response.ids);
       const completedIds: number[] = [];
       for (const [key, id] of _runningButtonsForTesting) {
         if (!stillRunning.has(id)) {
           completedIds.push(id);
           _runningButtonsForTesting.delete(key);
-          // HS-7983 — drop the per-id partial-output cache entry too.
-          lastSeenPartialLength.delete(id);
         }
       }
       if (completedIds.length > 0) {

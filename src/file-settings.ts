@@ -130,7 +130,6 @@ const LOCAL_SCOPE_KEYS = new Set([
   'auto_order',
   //   Terminal UX + device appearance/perf.
   'shell_integration_ui',
-  'shell_streaming_enabled',
   'terminal_scrollback_bytes',
   'terminal_default',
   //   Quit-confirmation behavior (personal).

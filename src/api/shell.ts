@@ -1,20 +1,18 @@
 /**
  * HS-8638 (HS-8522 closeout) — typed callers + wire schemas for the shell
- * command-execution domain (`src/routes/shell.ts`, §15 / §53): run a custom
- * Shell-target command, kill a running one, and poll the running set + live
- * partial output. The streaming WebSocket-less design polls `/shell/running`
- * (the §53 partial-output buffer rides along on `outputs`).
+ * command-execution domain (`src/routes/shell.ts`, §15): run a custom
+ * Shell-target command, kill a running one, and poll the running set. The
+ * client polls `/shell/running` to detect completion + drive the busy spinner;
+ * a command's final output is written to its Commands Log entry on close.
  */
 import { z } from 'zod';
 
 import { type ShellExecSchema, type ShellKillSchema } from '../routes/validation.js';
 import { apiCall, type OkResponse, OkResponseSchema } from './_runner.js';
 
-/** `GET /shell/running` → ids of in-flight shell commands + their partial
- *  output buffers (§53; head-truncated, 4 MB cap server-side). */
+/** `GET /shell/running` → ids of in-flight shell commands. */
 export const RunningShellSchema = z.object({
   ids: z.array(z.number()),
-  outputs: z.record(z.string(), z.string()),
 });
 export type RunningShell = z.infer<typeof RunningShellSchema>;
 
@@ -25,7 +23,7 @@ export type ShellKillReq = z.infer<typeof ShellKillSchema>;
 
 // --- Typed callers ---
 
-/** GET `/shell/running` → running command ids + live partial output. */
+/** GET `/shell/running` → ids of in-flight shell commands. */
 export async function getRunningShellCommands(): Promise<RunningShell> {
   return apiCall(RunningShellSchema, '/shell/running');
 }

@@ -84,7 +84,7 @@ test.describe('Command-button long-press gestures (HS-8539 / HS-8538)', () => {
     await longPress(page, btn);
 
     // A new dynamic terminal tab opened in the drawer and is active — something a
-    // normal click (inline streaming run) never produces.
+    // normal click (inline run) never produces.
     const termTab = page.locator('.drawer-tab[data-drawer-tab^="terminal:dyn-"]');
     await expect(termTab.first()).toBeVisible({ timeout: 6000 });
     await expect(termTab.first()).toHaveClass(/active/, { timeout: 6000 });

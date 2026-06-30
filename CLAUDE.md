@@ -205,7 +205,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 49. `49-reader-mode.md` — reader-mode overlay for notes + Details
 50. `50-upgrade-nudge.md` — throttled npm→Tauri upgrade nudge overlay
 51. `51-shell-history.md` — per-(project, terminal) shell history scoping
-53. `53-streaming-shell-output.md` — streaming shell-command output buffer + UI
+53. `53-streaming-shell-output.md` — REMOVED (HS-9185): live streaming of shell-command output as it arrives was dropped; shell commands still run and their FINAL output lands in the Commands Log on completion. Tombstone kept to avoid renumbering.
 54. `54-terminal-checkout.md` — global terminal checkout / xterm stack
 55. `55-ticket-cross-references.md` — clickable `HS-NNNN` refs → stacking modal
 56. `56-magnified-grid-nav.md` — Shift+Cmd/Ctrl+Arrow magnified-tile navigation

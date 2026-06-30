@@ -9,13 +9,8 @@
  *   and the row's render state read it; cleaned up by the polling loop
  *   via {@link cleanupCancelingShellIds}.
  * - The right-click context menu (copy current selection / this entry).
- * - `renderEntryRow` — the bindList row contract, including all four
- *   per-row reactive effects (shape, selected-class, expanded-class,
- *   partial-output write).
- *
- * Streaming-side helpers (`writePartialIntoPre`, `shouldAutoScrollToBottom`)
- * live in `commandLogStreaming.ts`; this module imports from there so the
- * partial-output effect can reuse them without re-implementing the rules.
+ * - `renderEntryRow` — the bindList row contract, including the per-row
+ *   reactive effects (shape, selected-class, expanded-class).
  */
 
 import { killShellCommand } from '../api/index.js';
@@ -26,10 +21,8 @@ import {
   filteredEntriesSignal,
   getEntrySignals,
 } from './commandLogStore.js';
-import { shouldAutoScrollToBottom, writePartialIntoPre } from './commandLogStreaming.js';
-import { byIdOrNull, toElement } from './dom.js';
+import { toElement } from './dom.js';
 import { effect } from './reactive.js';
-import { state } from './state.js';
 
 /** Server-shape command-log entry. HS-8318 / §61 Phase 3b — the store's
  *  `AnnotatedEntry` wraps this with an `isRunningShell` flag baked in at
@@ -237,44 +230,13 @@ function buildLogEntryEl(entry: LogEntry, s: LogEntryRenderState): HTMLElement {
           {hasMore ? <pre className="command-log-detail-full" style="display:none">{displayDetail}</pre> : null}
         </div>
       ) : isRunningShell ? (
-        // HS-7983 — running shell entries don't carry the
-        // `---SHELL_OUTPUT---` separator yet (server only writes the final
-        // detail in `child.on('close')`), so `formatShellDetail` returned
-        // null. HS-8015 follow-up #2 mirrors the completed-shell layout
-        // above with a TWIN-pre design (preview + full) so the row is
-        // click-to-expand while running:
-        //
-        //   - Preview pre: `.command-log-detail` (3-line clamp via the
-        //     existing CSS rule). Live writer fills with the trailing
-        //     `RUNNING_SHELL_PREVIEW_LINES` lines so the user sees the
-        //     most recent output, not the first three lines of the
-        //     buffer.
-        //   - Full pre:    `.command-log-detail-full` (no clamp; gains a
-        //     max-height + scroll via `.command-log-shell-partial-full`
-        //     so a chatty long-running command doesn't push every other
-        //     entry off-screen). Hidden until the user clicks; the
-        //     existing display-swap logic in the click handler reveals
-        //     it (matches the completed-shell flow).
-        //
-        // Both pres share `data-shell-partial-id` so the live writer +
-        // hydrate find both; per-pre `data-shell-partial-mode` selects
-        // tail-vs-full content. The pre is empty until the first chunk
-        // arrives — `:empty { display: none }` collapses it so the
-        // divider above doesn't sit on dead space.
+        // A running shell entry's detail is just its command (the server
+        // writes the final output to the entry only in `child.on('close')`,
+        // at which point `formatShellDetail` splits on the `---SHELL_OUTPUT---`
+        // separator and the completed-shell branch above renders it). While
+        // running, show the command line; the Stop button is in the header.
         <div>
           <pre className="command-log-detail command-log-shell-input">{entry.detail}</pre>
-          <hr className="command-log-shell-divider" />
-          <pre
-            className="command-log-detail command-log-shell-partial command-log-shell-partial-preview"
-            data-shell-partial-id={String(entry.id)}
-            data-shell-partial-mode="preview"
-          ></pre>
-          <pre
-            className="command-log-detail-full command-log-shell-partial command-log-shell-partial-full"
-            data-shell-partial-id={String(entry.id)}
-            data-shell-partial-mode="full"
-            style="display:none"
-          ></pre>
         </div>
       ) : (
         <div>
@@ -442,28 +404,8 @@ export function renderEntryRow(entry: LogEntry): { el: Element; dispose: () => v
     applyExpansionDisplay(wrapper, isExpanded);
   });
 
-  // Per-row partial-output effect: subscribes to the per-entry `partial`
-  // signal and writes the latest chunk into the row's
-  // `<pre data-shell-partial-id>` slots. Sticky-bottom scroll lives
-  // here — captures pinned-state BEFORE the textContent write so the
-  // post-write `scrollHeight` doesn't fool the threshold check.
-  let firstPartialRun = true;
-  const disposePartial = effect(() => {
-    const partial = sigs?.partial.value ?? '';
-    if (firstPartialRun) { firstPartialRun = false; return; }
-    if (!state.settings.shell_streaming_enabled) return;
-    const partialEls = wrapper.querySelectorAll<HTMLElement>('pre.command-log-shell-partial');
-    if (partialEls.length === 0) return;
-    const container = byIdOrNull('command-log-entries');
-    const wasPinned = container !== null
-      ? shouldAutoScrollToBottom(container.scrollTop, container.clientHeight, container.scrollHeight)
-      : false;
-    for (const pre of partialEls) writePartialIntoPre(pre, partial);
-    if (wasPinned && container !== null) container.scrollTop = container.scrollHeight;
-  });
-
   return {
     el: wrapper,
-    dispose: () => { disposeShape(); disposeSelected(); disposeExpanded(); disposePartial(); },
+    dispose: () => { disposeShape(); disposeSelected(); disposeExpanded(); },
   };
 }

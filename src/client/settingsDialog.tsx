@@ -142,7 +142,6 @@ function bindGeneralTab() {
   const autoOrderCheckbox = byId<HTMLInputElement>('settings-auto-order');
   const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
   const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
-  const shellStreamingCheckbox = byId<HTMLInputElement>('settings-shell-streaming-enabled');
   // HS-8446 — global diagnostics opt-in. Single checkbox in Settings →
   // Experimental → Diagnostics that gates BOTH the slow-server banner
   // (HS-8175) AND the HS-8054 UI-hang toast. Stored in
@@ -167,8 +166,6 @@ function bindGeneralTab() {
     autoOrderCheckbox.checked = state.settings.auto_order;
     hideVerifiedCheckbox.checked = state.settings.hide_verified_column;
     shellIntegrationCheckbox.checked = state.settings.shell_integration_ui;
-    // HS-7984 — §53 Phase 4 streaming toggle.
-    shellStreamingCheckbox.checked = state.settings.shell_streaming_enabled;
     // HS-8446 — global diagnostics opt-in (read from the in-memory
     // cache hydrated at app boot by `loadGlobalDiagnostics`).
     diagnosticsEnabledCheckbox.checked = isDiagnosticsEnabled();
@@ -241,17 +238,6 @@ function bindGeneralTab() {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
     void persistScopedSetting('shell_integration_ui', shellIntegrationCheckbox.checked); // HS-9173 — JSON boolean
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
-  });
-
-  // HS-7984 — §53 Phase 4 streaming-output toggle. Per-project (DB-backed
-  // settings via `/settings`). When off, both client surfaces (sidebar
-  // row preview + Commands Log live `<pre>`) gate rendering on the flag
-  // — server still buffers so re-enabling mid-run picks up where we
-  // left off. The shell-partial-output event is still dispatched; the
-  // consumers decide whether to act on it.
-  shellStreamingCheckbox.addEventListener('change', () => {
-    state.settings.shell_streaming_enabled = shellStreamingCheckbox.checked;
-    void persistScopedSetting('shell_streaming_enabled', shellStreamingCheckbox.checked); // HS-9173 — JSON boolean
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`

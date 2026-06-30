@@ -1,10 +1,9 @@
 /**
  * §61 Phase 3b / HS-8318 — `commandLogStore` for the Commands Log drawer
  * tab. Pairs with the `commandLog.tsx::renderEntries` → `bindList`
- * migration in the same ticket so the §53 partial-output streaming
- * lands on per-entry signals (each running-shell row's `<pre>` updates
- * in place via a per-row `effect()` against a per-entry partial signal,
- * with no DOM thrash on the surrounding rows).
+ * migration so the log entries land on per-entry signals (each row updates
+ * in place via the bindList view-layer, with no DOM thrash on the
+ * surrounding rows).
  *
  * Per the FEEDBACK NEEDED design call on HS-8318: keyed-merge entries
  * (option a), fused filter `{ types, search }` (option a), selection /
@@ -25,19 +24,10 @@
  *     annotated shape (`detail` / `summary` / `isRunningShell`) actually
  *     differs structurally. This keeps poll ticks cheap (no spurious
  *     effect re-fires on no-op polls).
- *   - **New id**: create fresh `entry` + `partial` signals; add to the
- *     map; append to the ordering.
+ *   - **New id**: create a fresh `entry` signal; add to the map; append
+ *     to the ordering.
  *   - **Removed id** (in old but not new — aged off the server-side
- *     rolling 100 buffer): dispose the signals + drop from the map.
- *
- * ### Per-entry partial-output signal
- *
- * Each entry gets a `partial: Signal<string>` slot that the §53
- * `hotsheet:shell-partial-output` listener writes to via
- * `setRunningOutput(id, text)`. The row's render function installs an
- * `effect(() => sigs.partial.value)` that mutates the `<pre>`'s
- * `textContent` in place. A chunk arriving for entry 42 only re-runs
- * entry 42's effect — siblings are untouched, scroll position survives.
+ *     rolling 100 buffer): dispose the signal + drop from the map.
  *
  * ### Does NOT reset on project switch
  *
@@ -92,7 +82,6 @@ interface CommandLogStoreState {
  *  store's top-level state). */
 interface EntrySignals {
   entry: Signal<AnnotatedEntry>;
-  partial: Signal<string>;
 }
 
 const perEntrySignals = new Map<number, EntrySignals>();
@@ -150,7 +139,6 @@ export const commandLogStore = defineStore({
         } else {
           perEntrySignals.set(e.id, {
             entry: signal(annotated),
-            partial: signal(''),
           });
         }
       }
@@ -167,34 +155,6 @@ export const commandLogStore = defineStore({
         }
       }
       if (changed) set({ ...get(), entryIds: newIds });
-    },
-
-    /** Write a partial-output update for a running shell entry. Fires
-     *  the entry's `partial` signal so the per-row effect re-runs
-     *  exactly once — siblings untouched.
-     *
-     *  Lazy-creates the per-entry signal if the entry hasn't been seen
-     *  yet — handles the rare race where a `hotsheet:shell-partial-output`
-     *  event arrives before the next `loadEntries` poll has registered
-     *  the entry's row. The placeholder signal carries empty-shape
-     *  metadata and will be replaced wholesale by the next `setEntries`
-     *  call (or GC'd if the server never reports the id). */
-    setRunningOutput: (logId: number, text: string) => {
-      let sigs = perEntrySignals.get(logId);
-      if (sigs === undefined) {
-        const placeholder: AnnotatedEntry = {
-          id: logId,
-          event_type: 'shell_command',
-          direction: 'outgoing',
-          summary: '',
-          detail: '',
-          created_at: '',
-          isRunningShell: true,
-        };
-        sigs = { entry: signal(placeholder), partial: signal('') };
-        perEntrySignals.set(logId, sigs);
-      }
-      if (sigs.partial.value !== text) sigs.partial.value = text;
     },
 
     setFilterTypes: (types: ReadonlySet<string>) => {
