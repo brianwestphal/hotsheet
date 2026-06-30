@@ -604,7 +604,12 @@ export function initBackupScheduler(dataDir: string): void {
     // via `createBackup(...).then(() => scheduleFiveMinBackup(dataDir))`
     // without jitter — the completion-time offset preserves the spread.
     void triggerMissedBackups(dataDir).then(() => scheduleFiveMinBackup(dataDir, { jitter: true }));
-  }, 10_000);
+    // HS-9225 — was 10 s. Pushed to 30 s so the catch-up backup train (a heavy
+    // CHECKPOINT + dumpDataDir + fsync + manifest per overdue tier) lands AFTER
+    // the startup rush — PGLite init, first ticket load, a kicked-off resume,
+    // the first tab-switch — instead of on top of it. Durability is unaffected:
+    // 20 extra seconds against tier intervals of 5 min / 1 h / 24 h.
+  }, 30_000);
 
   // Recurring hourly + daily intervals keep firing while the process is
   // alive. The startup catch-up above handles short-lived processes.
@@ -693,6 +698,14 @@ export function findOverdueTiers(backups: BackupInfo[], now: number): Tier[] {
 export async function triggerMissedBackups(dataDir: string): Promise<void> {
   const overdue = findOverdueTiers(listBackups(dataDir), Date.now());
   for (const tier of overdue) {
+    // HS-9225 — the startup catch-up runs every overdue tier back-to-back; on a
+    // fresh restart that's 5min + hourly + daily heavy backups (CHECKPOINT +
+    // dumpDataDir + fsync + manifest) firing right as the user starts work
+    // (the reported "froze within a minute of launch"). Skip the least-valuable
+    // 5-min catch-up under backpressure — its regular cadence recreates it
+    // within minutes — while hourly/daily still run for durability. Under no
+    // pressure (incl. the unit test) the 5-min catch-up runs as before.
+    if (tier === '5min' && shouldDeferFiveMinBackup()) continue;
     await createBackup(dataDir, tier);
   }
 }

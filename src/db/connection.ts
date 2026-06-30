@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { createPglite } from './pglite.js';
+import { instrumentDbQueries } from './queryInstrumentation.js';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
  *  Bump this manually whenever `initSchema` adds/removes/renames a column,
@@ -326,7 +327,8 @@ export async function closeAllDatabases(): Promise<void> {
 
 export function adoptDb(instance: PGlite): void {
   if (defaultDbPath !== null) {
-    databases.set(defaultDbPath, instance);
+    // HS-9225 — instrument adopted (recovered/restored) instances too.
+    databases.set(defaultDbPath, instrumentDbQueries(instance, defaultDbPath));
   }
 }
 
@@ -436,8 +438,13 @@ async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlit
     try { await db.close(); } catch { /* half-initialized — best effort */ }
     throw err;
   }
-  databases.set(dbPath, db);
-  return db;
+  // HS-9225 — cache (and hand out) the instrumented wrapper so every `getDb`
+  // caller's queries are timed into freeze.log when they block the loop.
+  // `initSchema` ran on the raw `db` above, so one-time startup schema work
+  // isn't logged — only live request/sync/backup queries are.
+  const instrumented = instrumentDbQueries(db, dbPath);
+  databases.set(dbPath, instrumented);
+  return instrumented;
 }
 
 /**
