@@ -76,6 +76,29 @@ describe('decideVacuumMode (HS-8884)', () => {
     const lastFull = now - 8 * 24 * 60 * 60 * 1000; // 8 days ago, > 7-day throttle
     expect(decideVacuumMode(200 * MB, lastFull, now, opts)).toBe('full');
   });
+
+  // HS-9228 — the startup one-shot reclaim passes `throttleMs: 0` to reclaim disk
+  // a big retention delete just freed, even if a FULL ran recently. It must still
+  // respect the SIZE gate (don't FULL a small DB).
+  describe('throttleMs 0 (HS-9228 one-shot reclaim) bypasses the throttle, keeps the size gate', () => {
+    const bypass = { ...opts, throttleMs: 0 };
+    const now = 30 * 24 * 60 * 60 * 1000;
+    const recentFull = now - 1 * 24 * 60 * 60 * 1000; // 1 day ago — well within the normal throttle
+
+    it('full-vacuums a bloated DB even when a FULL ran 1 day ago', () => {
+      expect(decideVacuumMode(200 * MB, recentFull, now, bypass)).toBe('full');
+      // sanity: the SAME inputs under the normal throttle would only plain-vacuum.
+      expect(decideVacuumMode(200 * MB, recentFull, now, opts)).toBe('plain');
+    });
+
+    it('still only plain-vacuums between the plain and full thresholds (size gate kept)', () => {
+      expect(decideVacuumMode(50 * MB, recentFull, now, bypass)).toBe('plain');
+    });
+
+    it('still does nothing below the plain threshold (size gate kept)', () => {
+      expect(decideVacuumMode(5 * MB, recentFull, now, bypass)).toBe('none');
+    });
+  });
 });
 
 describe('isVacuumFullCatalogError (HS-8897)', () => {

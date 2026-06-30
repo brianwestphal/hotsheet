@@ -41,6 +41,12 @@ export const FULL_VACUUM_MIN_BYTES = 150 * 1024 * 1024; // 150 MB
 /** The heavy full reclaim runs at most this often per DB (it's expensive + holds
  *  an exclusive lock). Between full runs, plain VACUUM keeps growth in check. */
 export const FULL_VACUUM_THROTTLE_DAYS = 7;
+/** HS-9228 — if a single startup retention sweep deletes at least this many rows,
+ *  schedule a one-shot throttle-bypassed reclaim so the freed disk is physically
+ *  returned on this launch (a big DELETE leaves reclaimable dead tuples a routine,
+ *  throttled FULL would otherwise skip). Tuned high enough that ordinary
+ *  per-launch pruning doesn't trigger a FULL every boot. */
+export const ONE_SHOT_RECLAIM_MIN_DELETED = 5_000;
 const FULL_VACUUM_THROTTLE_MS = FULL_VACUUM_THROTTLE_DAYS * 24 * 60 * 60 * 1000;
 
 export type VacuumMode = 'none' | 'plain' | 'full';
@@ -311,6 +317,12 @@ export interface ScheduleOptions {
   scheduler?: BackgroundScheduler;
   /** Inject the per-dir worker (tests). Defaults to `maintainTelemetryDb`. */
   maintain?: (dataDir: string) => Promise<unknown>;
+  /** HS-9228 — extra options passed to the default `maintainTelemetryDb` worker.
+   *  Used by the startup one-shot reclaim to set `{ throttleMs: 0 }` (bypass the
+   *  7-day FULL throttle while KEEPING the size gate), so the disk freed by a big
+   *  retention delete is reclaimed even if a FULL was attempted recently. Ignored
+   *  when a custom `maintain` is injected. */
+  maintainOpts?: MaintainOptions;
 }
 
 /**
@@ -322,7 +334,7 @@ export interface ScheduleOptions {
  */
 export function scheduleTelemetryMaintenance(launchedDataDir: string, opts: ScheduleOptions = {}): Promise<void>[] {
   const scheduler = opts.scheduler ?? getBackgroundScheduler();
-  const maintain = opts.maintain ?? ((dir: string) => maintainTelemetryDb(dir));
+  const maintain = opts.maintain ?? ((dir: string) => maintainTelemetryDb(dir, opts.maintainOpts ?? {}));
   const dirs = new Set<string>([launchedDataDir, ...readProjectList(), centralTelemetryDataDir()]);
   return [...dirs].map(dir => scheduler.submit({
     key: `telemetry-vacuum:${telemetryDbDir(dir)}`,

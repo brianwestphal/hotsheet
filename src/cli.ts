@@ -86,6 +86,11 @@ async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
   return false;
 }
 
+/** HS-9228 — rows deleted by the startup retention sweep, read later by
+ *  `postStartup` to decide whether to schedule a one-shot throttle-bypassed
+ *  reclaim (a big delete leaves reclaimable dead tuples a throttled FULL skips). */
+let lastStartupTelemetrySweepDeleted = 0;
+
 /**
  * Initialize the project: data directory, gitignore, DB, cleanup, lock.
  * Returns the initialized database instance.
@@ -144,7 +149,7 @@ async function initializeProject(dataDir: string, demo: number | null): Promise<
     // pruned by its own secret + retention window. No `runWithDataDir`
     // wrapper — `cleanupAllProjectsTelemetry` resolves the shared DB via
     // `getTelemetryDb()` itself.
-    await cleanupAllProjectsTelemetry(dataDir);
+    lastStartupTelemetrySweepDeleted = (await cleanupAllProjectsTelemetry(dataDir)).deleted;
     startupMark('init-project: done');
   }
 
@@ -270,9 +275,19 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     // background while the server serves.
     startupMark('post-startup: scheduling telemetry vacuum');
     try {
-      const { scheduleTelemetryMaintenance } = await import('./db/telemetryVacuum.js');
+      const { scheduleTelemetryMaintenance, ONE_SHOT_RECLAIM_MIN_DELETED } = await import('./db/telemetryVacuum.js');
+      // HS-9228 — when the startup retention sweep just freed a big batch of rows
+      // (e.g. the first launch after the HS-9229 verbose-event/cap bounds prune a
+      // long backlog), bypass the 7-day FULL throttle ONCE so the freed disk is
+      // physically reclaimed on this launch (it stays bloated otherwise — DELETE
+      // doesn't shrink PGLite files, and a recently-attempted FULL is throttled).
+      // Still off-loop + size-gated + deferred-under-lag via the scheduler, so it
+      // never wedges startup or a mid-session interaction.
+      const maintainOpts = lastStartupTelemetrySweepDeleted >= ONE_SHOT_RECLAIM_MIN_DELETED
+        ? { throttleMs: 0 }
+        : undefined;
       // Fire-and-forget: the jobs drain in the background; we don't await them.
-      void scheduleTelemetryMaintenance(dataDir);
+      void scheduleTelemetryMaintenance(dataDir, maintainOpts === undefined ? {} : { maintainOpts });
     } catch (e: unknown) {
       console.warn(`[startup] Scheduling telemetry vacuum failed (non-fatal): ${getErrorMessage(e)}`);
     }
