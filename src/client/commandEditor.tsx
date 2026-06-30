@@ -235,9 +235,12 @@ function isOverriddenItem(item: CommandItem, ctx: ScopeCtx): boolean {
   return ctx.mode === 'local' && typeof item.id === 'string' && ctx.overriddenIds.has(item.id);
 }
 
-/** HS-9014 / HS-9094 - the origin tag + shared/local move button shown in
- *  Shared/Local mode, for top-level commands/groups AND group children. */
-function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
+/** HS-9014 / HS-9094 \u2014 the origin tag + (for an overridden shared item) the
+ *  undo-2 reset-to-shared button. HS-9216 \u2014 split out from the move button so
+ *  every settings editor uses one canonical action order:
+ *  `[tag] \u2192 reset \u2192 edit \u2192 hide/show \u2192 delete \u2192 move`. This renders the leading
+ *  `[tag] \u2192 reset`; `renderMoveBtn` renders the trailing `move`. */
+function renderScopeTagAndReset(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
   const shared = isSharedItem(item, ctx);
   const overridden = isOverriddenItem(item, ctx);
   // HS-9220 \u2014 a shared command edited on this machine reads "overridden" (styled
@@ -247,19 +250,24 @@ function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) 
   const tagLabel = overridden ? 'overridden' : shared ? 'shared' : 'local';
   const tagClass = overridden || !shared ? 'scope-tag-local' : 'scope-tag-shared';
   const tag = <span className={`cmd-scope-tag scope-tag ${tagClass}`}><span className="scope-tag-dot" />{tagLabel}</span>;
-  // HS-9094 \u2014 a group itself isn't movable as a "child"; a top-level group moves
-  // whole (covered by ref.type === 'top'). Skip the move button only for a group
-  // row that is a child (groups are never nested, so this never triggers today).
-  if (ref.type === 'child' && isGroup(item)) return tag;
-  const direction = shared ? 'to-local' : 'to-shared';
-  const title = shared ? 'Move to Local (make this machine-only)' : 'Move to Shared (commit for the team)';
-  const moveBtn = <button className="cmd-outline-move-btn" data-move={direction} title={title}>{shared ? '\u2193' : '\u2191'}</button>;
   // HS-9184 \u2014 a locally-overridden shared command offers an undo-2 "reset to
   // shared" button (discards the local override), mirroring terminals (HS-9128).
   const resetBtn = overridden
     ? <button className="scope-reset-btn cmd-reset-btn" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button>
     : null;
-  return <>{tag}{resetBtn}{moveBtn}</>;
+  return <>{tag}{resetBtn}</>;
+}
+
+/** HS-9216 \u2014 the trailing shared\u2194local move (transfer) button, rendered LAST in
+ *  the action row (after edit/hide/delete) for cross-editor consistency. Null for
+ *  a group row that is a child (groups are never nested, so this never triggers
+ *  today \u2014 a top-level group moves whole via `ref.type === 'top'`). */
+function renderMoveBtn(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
+  if (ref.type === 'child' && isGroup(item)) return null;
+  const shared = isSharedItem(item, ctx);
+  const direction = shared ? 'to-local' : 'to-shared';
+  const title = shared ? 'Move to Local (make this machine-only)' : 'Move to Shared (commit for the team)';
+  return <button className="cmd-outline-move-btn" data-move={direction} title={title}>{shared ? '\u2193' : '\u2191'}</button>;
 }
 
 function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
@@ -288,9 +296,11 @@ function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{renderIconSvg(currentIcon.svg, 12, textColor)}</span>
       <span className="cmd-outline-name">{cmd.name !== '' ? cmd.name : '(untitled)'}</span>
-      {renderScopeAffordances(cmd, ref, ctx)}
+      {/* HS-9216 — canonical action order: [tag] reset → edit → delete/hide → move. */}
+      {renderScopeTagAndReset(cmd, ref, ctx)}
       <button className="cmd-outline-edit-btn" title="Edit">{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'pencil') || CMD_ICONS[0]).svg, 13)}</button>
       <button className="cmd-outline-delete-btn" title={deleteTitle} aria-label={deleteTitle}>{deleteIcon}</button>
+      {renderMoveBtn(cmd, ref, ctx)}
     </div>
   );
 }
@@ -323,11 +333,13 @@ function renderGroupOutlineRow(topIndex: number, ctx: ScopeCtx): HTMLElement {
     <div className="cmd-outline-row cmd-outline-group-row" draggable="true" data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-group-name" contentEditable="true">{group.name}</span>
-      {renderScopeAffordances(group, ref, ctx)}
+      {/* HS-9216 — canonical action order: [tag] reset → (delete if empty) → move. */}
+      {renderScopeTagAndReset(group, ref, ctx)}
       {group.children.length === 0
         ? <button className="cmd-outline-delete-btn" title={deleteTitle}>{renderIconSvg((CMD_ICONS.find(ic => ic.name === 'trash-2') || CMD_ICONS[0]).svg, 13)}</button>
         : ''
       }
+      {renderMoveBtn(group, ref, ctx)}
     </div>
   );
 }

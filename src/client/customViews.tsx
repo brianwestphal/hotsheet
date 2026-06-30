@@ -285,28 +285,30 @@ function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: 
   };
 
 
+  // HS-9216 — canonical action order across every settings editor:
+  // [badge] → reset → edit → hide/show → delete → move (transfer last).
+  // HS-9187 — a locally-overridden shared view offers an undo-2 "reset to shared"
+  // button (discards the local override), mirroring commands/terminals.
+  if (layer === 'shared' && mode === 'local' && isOverriddenViewIn(viewLayers, view.id)) {
+    addBtn(ICON_UNDO_2, 'Reset to shared (discard the local override)', () => { void persistViews(resetViewToShared(viewLayers, view.id)); }, 'scope-reset-btn view-reset-btn');
+  }
   addBtn(ICON_PENCIL, 'Edit', () => showViewEditor(view));
   if (layer === 'shared') {
     // Hide/Unhide is a Local-layer action (only meaningful in Local mode).
     if (mode === 'local') {
-      // HS-9187 — a locally-overridden shared view offers an undo-2 "reset to
-      // shared" button (discards the local override), mirroring commands/terminals.
-      if (isOverriddenViewIn(viewLayers, view.id)) {
-        addBtn(ICON_UNDO_2, 'Reset to shared (discard the local override)', () => { void persistViews(resetViewToShared(viewLayers, view.id)); }, 'scope-reset-btn view-reset-btn');
-      }
       if (hidden) addBtn(ICON_EYE, 'Unhide on this machine', () => { void persistViews(unhideSharedView(viewLayers, view.id)); });
       else addBtn(ICON_EYE_OFF, 'Hide on this machine', () => { void hideView(view); });
     }
-    addBtn(ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
     // HS-9186 — a shared view can only be DELETED (removed for the whole team)
     // from Shared mode. In Local mode the only "remove" affordance is Hide on
     // this machine (above) — you can't delete a team value from the local segment.
     if (mode === 'shared') {
       addBtn(ICON_TRASH_SIMPLE, 'Delete (removes for the whole team)', () => { void deleteSharedViewAction(view); }, 'cmd-outline-delete-btn');
     }
+    addBtn(ICON_ARROW_DOWN, 'Move to Local (this machine only)', () => { void persistViews(moveViewToLocal(viewLayers, view.id)); });
   } else {
-    addBtn(ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
     addBtn(ICON_TRASH_SIMPLE, 'Delete', () => { void deleteView(view.id); }, 'cmd-outline-delete-btn');
+    addBtn(ICON_ARROW_UP, 'Move to Shared (commit for the team)', () => { void persistViews(moveViewToShared(viewLayers, view.id)); });
   }
   return row;
 }

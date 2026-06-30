@@ -118,6 +118,13 @@
           "icon": "balloon",
           "color": "#e5e7eb",
           "id": "afdfaf50-ee38-473f-8d6a-0d5a2036ae38"
+        },
+        {
+          "name": "Kerf Usage Audit",
+          "prompt": "Audit this codebase for kerf usage.  See ~/.claude/skills/kerf-app/SKILL.md or node_modules/kerfjs/ai/skill.md.  For each finding, make Hot Sheet tickets with: file:line, which rule or pattern, the fix shape. Don't speculate - only flag patterns you can point to in the code. Top \"must fix\" list, then \"consider\" list.",
+          "icon": "slice",
+          "color": "#f97316",
+          "id": "15d9f030-6184-489f-8ffe-d5d1429fa30d"
         }
       ],
       "id": "18556f13-1273-43ff-88aa-8cf54b99bce8"
