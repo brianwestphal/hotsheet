@@ -20,7 +20,7 @@ import { getMimeType } from '../mime-types.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
 import { getProjectBySecret } from '../projects.js';
 import type { AppEnv } from '../types.js';
-import { parseIntParam } from './helpers.js';
+import { parseIntParam, tryParseBody } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { emitSync } from './syncEmit.js';
 
@@ -33,10 +33,14 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
 
   const dataDir = c.get('dataDir');
-  const body = await c.req.parseBody();
+  const body = await tryParseBody(c);
+  if (body === null) return c.json({ error: 'Malformed upload body' }, 400);
   const file = body['file'];
 
-  if (typeof file === 'string') {
+  // Narrow to a real File: a missing field is `undefined` and a text field is a
+  // string — both mean no upload (HS-9227 — `undefined` previously fell through
+  // to `file.name` and threw).
+  if (!(file instanceof File)) {
     return c.json({ error: 'No file uploaded' }, 400);
   }
 
@@ -82,9 +86,10 @@ attachmentRoutes.post('/tickets/:id/feedback-drafts/:draftId/attachments', async
   if (!ticket) return c.json({ error: 'Ticket not found' }, 404);
 
   const dataDir = c.get('dataDir');
-  const body = await c.req.parseBody();
+  const body = await tryParseBody(c);
+  if (body === null) return c.json({ error: 'Malformed upload body' }, 400);
   const file = body['file'];
-  if (typeof file === 'string') return c.json({ error: 'No file uploaded' }, 400);
+  if (!(file instanceof File)) return c.json({ error: 'No file uploaded' }, 400);
 
   const originalName = file.name;
   const ext = extname(originalName);
