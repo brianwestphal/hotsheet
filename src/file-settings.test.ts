@@ -357,6 +357,43 @@ describe('HS-9002 — shared/local settings split', () => {
     expect(terms.map(t => t.id)).toEqual(['localwins']); // local wins wholesale, exactly as pre-HS-9010a
   });
 
+  // HS-9210 — an EMPTY delta object `{}` (written when Local mode saves with no
+  // changes) must resolve to the shared list, NOT clobber it. Pre-fix the
+  // `{...shared, ...local}` spread set the effective value to `{}` (which the
+  // editor read as "every shared item locally hidden").
+  it('readFileSettings resolves an empty {} delta to the shared list (terminals)', () => {
+    const dir = freshDir('empty-delta-terminals');
+    writeFileSync(sharedPath(dir), JSON.stringify({
+      terminals: [{ id: 'claude', name: 'Claude', command: '{{claudeCommand}}' }],
+    }));
+    writeFileSync(localPath(dir), JSON.stringify({ terminals: {} }));
+    const terms = readFileSettings(dir).terminals;
+    expect(Array.isArray(terms)).toBe(true);
+    expect((terms as { id: string }[]).map(t => t.id)).toEqual(['claude']); // not hidden
+  });
+
+  it('readFileSettings resolves an empty {} delta to the shared list (auto_context)', () => {
+    const dir = freshDir('empty-delta-context');
+    writeFileSync(sharedPath(dir), JSON.stringify({
+      auto_context: [{ type: 'category', key: 'feature', text: 'F' }, { type: 'category', key: 'bug', text: 'B' }],
+    }));
+    writeFileSync(localPath(dir), JSON.stringify({ auto_context: {} }));
+    const ctx = readFileSettings(dir).auto_context;
+    expect(Array.isArray(ctx)).toBe(true);
+    expect((ctx as { key: string }[]).map(c => c.key)).toEqual(['feature', 'bug']); // none disabled
+  });
+
+  it('readFileSettings resolves an empty {} delta to the shared tree (custom_commands)', () => {
+    const dir = freshDir('empty-delta-cmds');
+    writeFileSync(sharedPath(dir), JSON.stringify({
+      custom_commands: [{ id: 'cmd-a', name: 'A', prompt: 'pa' }],
+    }));
+    writeFileSync(localPath(dir), JSON.stringify({ custom_commands: {} }));
+    const cmds = readFileSettings(dir).custom_commands;
+    expect(Array.isArray(cmds)).toBe(true);
+    expect((cmds as { id: string }[]).map(c => c.id)).toEqual(['cmd-a']); // not hidden
+  });
+
   it('readSharedSettings / readLocalSettings read only their own file', () => {
     const dir = freshDir('isolation');
     writeFileSync(sharedPath(dir), JSON.stringify({ appName: 'Team', backupDir: '/team' }));

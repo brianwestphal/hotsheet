@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { readSecretFile, writeSecretFile } from './secret-file.js';
 import { type CommandItem, isCommandTreeDelta, resolveCommandTreeDelta } from './settingsCommandDelta.js';
-import { isArrayDelta, resolveDeltaArray } from './settingsDelta.js';
+import { resolveDeltaArray } from './settingsDelta.js';
 
 const FileSettingsSchema = z.object({
   appName: z.string().optional(),
@@ -42,6 +42,20 @@ const JSON_VALUE_KEYS = new Set([
   // tool/pattern pairs without showing the popup). See docs/47-richer-permission-overlay.md.
   'permission_allow_rules',
 ]);
+
+/**
+ * HS-9210 — the local-layer delta shape for an element-level override key: a
+ * non-array object. Crucially this is TRUE for an empty `{}` (a no-change delta,
+ * written when Local mode saves without edits), where `isArrayDelta` /
+ * `isCommandTreeDelta` are false. We resolve any delta-shaped local value so the
+ * `{...shared, ...local}` spread can't leave the effective list set to a bare
+ * `{}` (which read as "every shared item locally hidden"). A legacy
+ * whole-replacement array, a scalar, or an absent value is NOT delta-shaped and
+ * stays as the spread produced it.
+ */
+function isDeltaShape(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
 
 /** Safe string-property read for an unknown list item (no `as`). */
 function stringProp(item: unknown, prop: string): string {
@@ -285,14 +299,22 @@ export function readFileSettings(dataDir: string): FileSettings {
   const local = readLocalSettings(dataDir);
   const merged: FileSettings = { ...shared, ...local };
   // HS-9010a (docs/95 §95.3) — for the element-level delta keys, resolve the
-  // shared array against the local layer's delta. Gate strictly on the local
-  // value being a DELTA object: when it's a plain array / absent the spread
-  // above is already correct (local wins, or shared as-is), and — crucially —
-  // we must NOT touch the merged value, so a legacy stringified array (HS-6370)
-  // or any other shape is preserved for its consumer to parse. This makes the
-  // change a true no-op until an editor writes a delta.
+  // shared array against the local layer's delta. Gate on the local value being
+  // a delta-shaped object (a non-array object — see `isDeltaShape`): when it's a
+  // plain array / absent the spread above is already correct (local wins, or
+  // shared as-is), and — crucially — we must NOT touch the merged value, so a
+  // legacy stringified array (HS-6370) or any other shape is preserved for its
+  // consumer to parse. This is a true no-op for non-delta values.
   for (const { key, idOf } of DELTA_LIST_KEYS) {
-    if (!isArrayDelta(local[key])) continue;
+    // HS-9210 — resolve whenever the local value is a non-array object (the delta
+    // shape), NOT only when it's a *populated* delta. An EMPTY delta `{}` (written
+    // when Local mode saves with no changes) isn't an `isArrayDelta`, but the
+    // `{...shared, ...local}` spread above already clobbered `merged[key]` with that
+    // empty object — so without resolving here the effective list became `{}` and
+    // every shared item read as "locally hidden". `resolveDeltaArray` falls back to
+    // the shared array for an empty / non-delta object, so this is the correct no-op.
+    // Arrays (legacy whole-replacement) / scalars / absent are left to the spread.
+    if (!isDeltaShape(local[key])) continue;
     const sv: unknown = shared[key];
     let sharedArr: unknown[] = [];
     if (Array.isArray(sv)) {
@@ -306,13 +328,17 @@ export function readFileSettings(dataDir: string): FileSettings {
     merged[key] = resolveDeltaArray(sharedArr, local[key], idOf);
   }
   // HS-9010c/HS-9014 (docs/95 §95.3) — `custom_commands` is a nested group TREE,
-  // not a flat list, so it gets its own tree-aware resolver. Same strict gate as
-  // the flat keys above: only resolve when the local value is a tree DELTA object
-  // (a plain array / absent local is left to the `{...shared, ...local}` spread,
-  // preserving legacy whole-replacement + stringified-array shapes — a true
-  // no-op until the editor writes a delta).
-  if (isCommandTreeDelta(local.custom_commands)) {
-    merged.custom_commands = resolveCommandTreeDelta(asCommandTree(shared.custom_commands), local.custom_commands);
+  // not a flat list, so it gets its own tree-aware resolver. Resolve whenever the
+  // local value is a non-array object (the delta shape), incl. an EMPTY `{}`
+  // (HS-9210) — same clobber-via-spread reasoning as the flat keys above.
+  // `resolveCommandTreeDelta` of an empty / non-delta object falls back to the
+  // shared tree. Arrays (legacy whole-replacement) / scalars / absent are left to
+  // the spread, preserving legacy whole-replacement + stringified-array shapes.
+  if (isDeltaShape(local.custom_commands)) {
+    // A non-delta / empty object resolves to the shared tree (`{}` is a valid,
+    // all-optional CommandTreeDelta).
+    const delta = isCommandTreeDelta(local.custom_commands) ? local.custom_commands : {};
+    merged.custom_commands = resolveCommandTreeDelta(asCommandTree(shared.custom_commands), delta);
   }
   return merged;
 }
