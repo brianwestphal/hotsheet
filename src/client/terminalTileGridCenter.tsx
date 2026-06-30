@@ -255,6 +255,16 @@ export function uncenterTile(ctx: TileGridContext): void {
 }
 
 export function finishUncenterTile(ctx: TileGridContext, tile: InternalTile, placeholder: HTMLElement | null): void {
+  // HS-9200 — blur the xterm BEFORE dropping `.centered`. Uncentering re-applies
+  // the `:not(.centered)` rule that sets the focused `.xterm-helper-textarea` to
+  // `display:none`, and WKWebView (the Tauri webview) does NOT reliably fire a
+  // `blur` event when a focused element is hidden via CSS — so xterm keeps its
+  // `.xterm.focus` class and the focus ring (`:has(.xterm.focus)`) lingers around
+  // a terminal that no longer receives keystrokes. An EXPLICIT `term.blur()`
+  // while the textarea is still visible fires the blur synchronously, clearing
+  // the class and the stale activeElement. Playwright/Chromium blurs hidden
+  // elements correctly, which is why this only reproduces in the desktop build.
+  try { tile.checkout?.term.blur(); } catch { /* term disposed */ }
   tile.root.classList.remove('centered');
   tile.root.style.transition = '';
   tile.root.style.transform = '';
@@ -468,6 +478,11 @@ export function exitDedicatedView(ctx: TileGridContext): void {
   // is empty (rare — the tile was virtualized off-screen between
   // dedicated entry and exit), the entry is fully disposed and the
   // tile re-mounts on its next viewport-enter.
+  // HS-9200 — blur the dedicated xterm before reparenting it back to the tile.
+  // Same WKWebView quirk as `finishUncenterTile`: the live textarea is hidden by
+  // the tile's `:not(.centered)` rule once reparented, and an implicit blur
+  // doesn't fire, so the `.xterm.focus` class (and its focus ring) would stick.
+  try { view.term.blur(); } catch { /* term disposed */ }
   view.checkout.release();
   view.overlay.remove();
   if (ctx.opts.onTileShrink !== undefined) ctx.opts.onTileShrink(view.tile.entry);

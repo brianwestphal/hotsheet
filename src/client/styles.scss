@@ -9789,7 +9789,10 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 
   // HS-8170 — focus ring when the magnified tile has keyboard focus.
   // Stacks with the drop shadow so the ring reads on the dimmed backdrop.
-  &:focus-within .drawer-terminal-grid-tile-preview {
+  // HS-9200 — key on xterm's own `.focus` class (the real keyboard-input
+  // target), NOT `:focus-within` (which also matched the find widget / toolbar),
+  // mirroring the dashboard's `.terminal-dashboard-tile.centered` rule.
+  &:has(.xterm.focus) .drawer-terminal-grid-tile-preview {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 0 0 3px var(--accent, #3b82f6);
   }
 

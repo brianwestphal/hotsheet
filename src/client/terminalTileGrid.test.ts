@@ -15,7 +15,8 @@
  * minimal DOM tree under happy-dom that's enough for `term.element` to
  * exist + be reparentable.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _channelStoreForTesting, channelStore } from './channelStore.js';
 import { _projectsStoreForTesting, projectsStore } from './projectsStore.js';
@@ -456,6 +457,31 @@ describe('terminalTileGrid — magnified-tile click is a no-op (HS-8157)', () =>
     backdrop!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(grid.isCentered()).toBe(false);
 
+    grid.dispose();
+  });
+
+  // HS-9200 — uncentering must blur the xterm so its `.xterm.focus` class
+  // clears. In the Tauri WKWebView, hiding the focused helper-textarea via the
+  // `:not(.centered)` `display:none` rule doesn't fire an implicit blur, so the
+  // focus ring (`:has(.xterm.focus)`) would linger around a terminal that no
+  // longer takes keystrokes. The fix is an explicit `term.blur()` on the
+  // demagnify path; this pins that the call happens (the WKWebView visual itself
+  // is in docs/manual-test-plan.md).
+  it('clicking the backdrop blurs the centered xterm (HS-9200 stale-focus-ring fix)', async () => {
+    const blurSpy = vi.spyOn(XTerm.prototype, 'blur');
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tileRoot = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+    blurSpy.mockClear();
+
+    const backdrop = document.querySelector<HTMLElement>('.terminal-dashboard-center-backdrop');
+    backdrop!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(grid.isCentered()).toBe(false);
+    expect(blurSpy).toHaveBeenCalled(); // the centered terminal was blurred on demagnify
+
+    blurSpy.mockRestore();
     grid.dispose();
   });
 
