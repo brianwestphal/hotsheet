@@ -1,0 +1,347 @@
+/**
+ * HS-9234 (epic HS-9226 Phase 2) — backfill tests.
+ *
+ * Two layers:
+ *   1. `assembleDailyRows` — pure merge of metric grain rows with the per-day
+ *      distinct prompt/session counts (representative-row placement, synthesized
+ *      carrier rows).
+ *   2. `backfillDailyForDir` / `backfillTicketsForDir` against a real PGlite: raw
+ *      `otel_*` seeded in the telemetry CLUSTER, rollups recomputed into the MAIN
+ *      db, asserting parity with `getPerTicketRollup`, model_breakdown, the daily
+ *      aggregate, and IDEMPOTENCE (recompute twice → identical).
+ */
+import type { PGlite } from '@electric-sql/pglite';
+import { rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
+import { getPerTicketRollup } from './otelDashboard.js';
+import { assembleDailyRows, backfillDailyForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
+
+// The machine's local IANA tz — the daily bucket uses it so `(ts AT TIME ZONE TZ)::date`
+// matches the local date the `Date(...)` fixtures are constructed in (mirrors
+// production, where `serverLocalDay` and the backfill both use the server-local tz).
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+describe('assembleDailyRows (HS-9234, pure)', () => {
+  it('stamps a day\'s distinct counts onto the highest-datapoint grain row', () => {
+    const grain = [
+      { secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent', cost_usd: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 2 },
+      { secret: 'A', day: '2026-06-30', model: 'haiku', query_source: 'subagent', cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 9 },
+    ];
+    const prompt = [{ secret: 'A', day: '2026-06-30', prompt_count: 4 }];
+    const session = [{ secret: 'A', day: '2026-06-30', session_count: 2 }];
+
+    const rows = assembleDailyRows(grain, prompt, session);
+    expect(rows).toHaveLength(2);
+    // haiku/subagent has the most datapoints → carries the counts; the other is 0.
+    const haiku = rows.find(r => r.model === 'haiku');
+    const sonnet = rows.find(r => r.model === 'sonnet');
+    expect(haiku?.prompt_count).toBe(4);
+    expect(haiku?.session_count).toBe(2);
+    expect(sonnet?.prompt_count).toBe(0);
+    expect(sonnet?.session_count).toBe(0);
+    // SUM over the day equals the true per-day distinct count.
+    expect(rows.reduce((s, r) => s + r.prompt_count, 0)).toBe(4);
+  });
+
+  it('breaks ties deterministically by (model, query_source)', () => {
+    const grain = [
+      { secret: 'A', day: '2026-06-30', model: 'zeta', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 3 },
+      { secret: 'A', day: '2026-06-30', model: 'alpha', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 3 },
+    ];
+    const rows = assembleDailyRows(grain, [{ secret: 'A', day: '2026-06-30', prompt_count: 7 }], []);
+    expect(rows.find(r => r.model === 'alpha')?.prompt_count).toBe(7);
+    expect(rows.find(r => r.model === 'zeta')?.prompt_count).toBe(0);
+  });
+
+  it('synthesizes an (unknown) carrier row when a day has counts but no metric grain row', () => {
+    const rows = assembleDailyRows([], [{ secret: 'A', day: '2026-06-29', prompt_count: 3 }], [{ secret: 'A', day: '2026-06-29', session_count: 1 }]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ project_secret: 'A', day: '2026-06-29', model: '(unknown)', query_source: '(unknown)', prompt_count: 3, session_count: 1, cost_usd: 0 });
+  });
+
+  it('keeps distinct (secret, day) buckets independent', () => {
+    const grain = [
+      { secret: 'A', day: '2026-06-30', model: 'm', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 1 },
+      { secret: 'B', day: '2026-06-30', model: 'm', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 1 },
+    ];
+    const rows = assembleDailyRows(grain, [{ secret: 'A', day: '2026-06-30', prompt_count: 5 }], []);
+    expect(rows.find(r => r.project_secret === 'A')?.prompt_count).toBe(5);
+    expect(rows.find(r => r.project_secret === 'B')?.prompt_count).toBe(0);
+  });
+
+  it('ignores a (secret, day) whose counts are both zero (no carrier row)', () => {
+    const rows = assembleDailyRows([], [{ secret: 'A', day: '2026-06-30', prompt_count: 0 }], [{ secret: 'A', day: '2026-06-30', session_count: 0 }]);
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe('backfill against a real PGlite cluster (HS-9234)', () => {
+  let centralOverrideDir: string;
+  beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
+  afterAll(async () => {
+    await closeDbForDir(centralTelemetryDataDir());
+    delete process.env.HOTSHEET_TELEMETRY_DIR;
+    rmSync(centralOverrideDir, { recursive: true, force: true });
+  });
+
+  let tempDir: string;
+  let clusterDb: PGlite;
+  let mainDb: PGlite;
+  const SECRET = 'sec-A';
+
+  beforeEach(async () => {
+    tempDir = await setupTestDb();
+    // Raw telemetry lives in the relocated cluster; rollups in the main db.
+    clusterDb = await getDbForDir(telemetryClusterDataDir(tempDir));
+    mainDb = await getDb();
+  });
+  afterEach(async () => {
+    await closeDbForDir(telemetryClusterDataDir(tempDir));
+    await cleanupTestDb(tempDir);
+  });
+
+  async function insertCostMetric(ts: Date, model: string, source: string, cost: number, session = 'session-1'): Promise<void> {
+    await clusterDb.query(
+      `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+       VALUES ($1, $2, $3, 'claude_code.cost.usage', $4::jsonb, $5::jsonb, 'delta', true)`,
+      [ts, SECRET, session, JSON.stringify({ model, 'query.source': source, 'session.id': session }), JSON.stringify({ asDouble: cost })],
+    );
+  }
+  async function insertTokenMetric(ts: Date, model: string, source: string, type: string, tokens: number): Promise<void> {
+    await clusterDb.query(
+      `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+       VALUES ($1, $2, 'session-1', 'claude_code.token.usage', $3::jsonb, $4::jsonb, 'delta', true)`,
+      [ts, SECRET, JSON.stringify({ model, 'query.source': source, type }), JSON.stringify({ asInt: tokens })],
+    );
+  }
+  async function insertApiRequest(ts: Date, promptId: string, model: string, cost: number, tokens: number): Promise<void> {
+    await clusterDb.query(
+      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+       VALUES ($1, $2, 'session-1', $3, 'claude_code.api_request', $4::jsonb, '{}'::jsonb)`,
+      [ts, SECRET, promptId, JSON.stringify({ model, cost, tokens })],
+    );
+  }
+  async function insertUserPrompt(ts: Date, promptId: string, body: string): Promise<void> {
+    await clusterDb.query(
+      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+       VALUES ($1, $2, 'session-1', $3, 'claude_code.user_prompt', '{}'::jsonb, $4::jsonb)`,
+      [ts, SECRET, promptId, JSON.stringify({ stringValue: body })],
+    );
+  }
+  async function openInterval(ticket: string, started: Date, ended: Date | null): Promise<void> {
+    await clusterDb.query(
+      `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1, $2, $3, $4)`,
+      [SECRET, ticket, started, ended],
+    );
+  }
+
+  describe('backfillDailyForDir', () => {
+    it('recomputes cost / split tokens / datapoint_count per (day, model, source)', async () => {
+      const ts = new Date(2026, 5, 30, 10, 0, 0); // local 2026-06-30
+      await insertCostMetric(ts, 'sonnet', 'main_agent', 0.4);
+      await insertCostMetric(ts, 'sonnet', 'main_agent', 0.1);
+      await insertTokenMetric(ts, 'sonnet', 'main_agent', 'input', 100);
+      await insertTokenMetric(ts, 'sonnet', 'main_agent', 'output', 50);
+      await insertTokenMetric(ts, 'sonnet', 'main_agent', 'cacheRead', 999);
+
+      const written = await backfillDailyForDir(clusterDb, mainDb, TZ);
+      expect(written).toBe(1);
+
+      const r = await mainDb.query<{ cost_usd: string; input_tokens: string; output_tokens: string; cache_read_tokens: string; datapoint_count: number; day: string }>(
+        `SELECT cost_usd, input_tokens, output_tokens, cache_read_tokens, datapoint_count, day::text AS day FROM otel_rollup_daily WHERE project_secret = '${SECRET}'`,
+      );
+      expect(r.rows).toHaveLength(1);
+      expect(Number(r.rows[0].cost_usd)).toBeCloseTo(0.5, 6);
+      expect(Number(r.rows[0].input_tokens)).toBe(100);
+      expect(Number(r.rows[0].output_tokens)).toBe(50);
+      expect(Number(r.rows[0].cache_read_tokens)).toBe(999);
+      expect(r.rows[0].datapoint_count).toBe(5); // 2 cost + 3 token datapoints
+      expect(r.rows[0].day).toBe('2026-06-30');
+    });
+
+    it('excludes cumulative-monotonic counters (no re-inflation)', async () => {
+      const ts = new Date(2026, 5, 30, 10, 0, 0);
+      await clusterDb.query(
+        `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+         VALUES ($1, $2, 's', 'claude_code.cost.usage', $3::jsonb, $4::jsonb, 'cumulative', true)`,
+        [ts, SECRET, JSON.stringify({ model: 'm', 'query.source': 's' }), JSON.stringify({ asDouble: 100 })],
+      );
+      await backfillDailyForDir(clusterDb, mainDb, TZ);
+      const c = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_rollup_daily`);
+      expect(c.rows[0].c).toBe(0);
+    });
+
+    it('attaches per-day distinct prompt + session counts and is idempotent', async () => {
+      const ts = new Date(2026, 5, 30, 10, 0, 0);
+      await insertCostMetric(ts, 'sonnet', 'main_agent', 0.5, 'sessX');
+      await insertCostMetric(ts, 'sonnet', 'main_agent', 0.5, 'sessY');
+      await insertUserPrompt(ts, 'p1', 'hi');
+      await insertUserPrompt(ts, 'p2', 'yo');
+      await insertApiRequest(ts, 'p1', 'sonnet', 0.1, 10); // carries prompt_id p1 too
+
+      await backfillDailyForDir(clusterDb, mainDb, TZ);
+      const first = await mainDb.query<{ prompt_count: number; session_count: number; cost_usd: string }>(
+        `SELECT SUM(prompt_count)::int AS prompt_count, SUM(session_count)::int AS session_count, SUM(cost_usd) AS cost_usd FROM otel_rollup_daily`,
+      );
+      expect(first.rows[0].prompt_count).toBe(2); // distinct p1, p2
+      expect(first.rows[0].session_count).toBe(2); // distinct sessX, sessY
+      expect(Number(first.rows[0].cost_usd)).toBeCloseTo(1.0, 6);
+
+      // Recompute → identical (no doubling).
+      await backfillDailyForDir(clusterDb, mainDb, TZ);
+      const second = await mainDb.query<{ prompt_count: number; session_count: number; cost_usd: string }>(
+        `SELECT SUM(prompt_count)::int AS prompt_count, SUM(session_count)::int AS session_count, SUM(cost_usd) AS cost_usd FROM otel_rollup_daily`,
+      );
+      expect(second.rows[0].prompt_count).toBe(2);
+      expect(second.rows[0].session_count).toBe(2);
+      expect(Number(second.rows[0].cost_usd)).toBeCloseTo(1.0, 6);
+    });
+  });
+
+  describe('backfillTicketsForDir', () => {
+    it('reconstructs per-ticket cost via the time-window path, matching getPerTicketRollup', async () => {
+      await openInterval('HS-100', new Date(2026, 0, 1, 9, 0, 0), new Date(2026, 0, 1, 10, 0, 0));
+      const t1 = new Date(2026, 0, 1, 9, 15, 0);
+      const t2 = new Date(2026, 0, 1, 9, 45, 0);
+      await insertApiRequest(t1, 'pw1', 'sonnet', 0.2, 1000);
+      await insertApiRequest(t2, 'pw1', 'sonnet', 0.3, 500);
+      await insertApiRequest(t2, 'pw2', 'haiku', 0.1, 200);
+
+      const written = await backfillTicketsForDir(tempDir, clusterDb, mainDb, SECRET);
+      expect(written).toBe(1);
+
+      const live = await getPerTicketRollup('HS-100', SECRET);
+      const r = await mainDb.query<{ cost_usd: string; total_tokens: string; prompt_count: number; duration_seconds: string; model_breakdown: Record<string, { cost: number; tokens: number }> }>(
+        `SELECT cost_usd, total_tokens, prompt_count, duration_seconds, model_breakdown FROM otel_rollup_ticket WHERE ticket_number = 'HS-100'`,
+      );
+      expect(r.rows).toHaveLength(1);
+      // Parity with the canonical read.
+      expect(Number(r.rows[0].cost_usd)).toBeCloseTo(live.totalCost, 6);
+      expect(Number(r.rows[0].total_tokens)).toBe(live.totalTokens);
+      expect(r.rows[0].prompt_count).toBe(live.promptCount);
+      expect(Number(r.rows[0].duration_seconds)).toBeCloseTo(live.totalDurationSeconds, 6);
+      // model_breakdown sums to the scalar totals.
+      const mb = r.rows[0].model_breakdown;
+      expect(mb['sonnet'].cost).toBeCloseTo(0.5, 6);
+      expect(mb['sonnet'].tokens).toBe(1500);
+      expect(mb['haiku'].cost).toBeCloseTo(0.1, 6);
+      expect(mb['haiku'].tokens).toBe(200);
+      expect(mb['sonnet'].cost + mb['haiku'].cost).toBeCloseTo(Number(r.rows[0].cost_usd), 6);
+    });
+
+    it('reconstructs per-ticket cost via the marker path (no work interval)', async () => {
+      // A prompt body carrying the marker; its api_request shares prompt_id.
+      await insertUserPrompt(new Date(2026, 0, 2, 9, 0, 0), 'pm1', '<!-- hotsheet:ticket=HS-200 --> please fix');
+      await insertApiRequest(new Date(2026, 0, 2, 9, 1, 0), 'pm1', 'sonnet', 0.7, 300);
+
+      const written = await backfillTicketsForDir(tempDir, clusterDb, mainDb, SECRET);
+      expect(written).toBe(1);
+      const r = await mainDb.query<{ ticket_number: string; cost_usd: string; model_breakdown: Record<string, { cost: number; tokens: number }> }>(
+        `SELECT ticket_number, cost_usd, model_breakdown FROM otel_rollup_ticket`,
+      );
+      expect(r.rows[0].ticket_number).toBe('HS-200');
+      expect(Number(r.rows[0].cost_usd)).toBeCloseTo(0.7, 6);
+      expect(r.rows[0].model_breakdown['sonnet'].tokens).toBe(300);
+    });
+
+    it('is idempotent (recompute → identical, no doubling)', async () => {
+      await openInterval('HS-300', new Date(2026, 0, 3, 9, 0, 0), null);
+      await insertApiRequest(new Date(2026, 0, 3, 9, 5, 0), 'pi1', 'sonnet', 0.9, 400);
+
+      await backfillTicketsForDir(tempDir, clusterDb, mainDb, SECRET);
+      await backfillTicketsForDir(tempDir, clusterDb, mainDb, SECRET);
+      const r = await mainDb.query<{ c: number; cost_usd: string }>(
+        `SELECT COUNT(*)::int AS c, COALESCE(SUM(cost_usd), 0) AS cost_usd FROM otel_rollup_ticket`,
+      );
+      expect(r.rows[0].c).toBe(1);
+      expect(Number(r.rows[0].cost_usd)).toBeCloseTo(0.9, 6);
+    });
+
+    it('skips tickets with no attributed telemetry, and is a no-op for the central store', async () => {
+      // An interval with no api_request inside it → no rollup row.
+      await openInterval('HS-400', new Date(2026, 0, 4, 9, 0, 0), new Date(2026, 0, 4, 9, 1, 0));
+      const written = await backfillTicketsForDir(tempDir, clusterDb, mainDb, SECRET);
+      expect(written).toBe(0);
+      const c = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_rollup_ticket`);
+      expect(c.rows[0].c).toBe(0);
+
+      // Central store (null secret) → skipped entirely.
+      expect(await backfillTicketsForDir(tempDir, clusterDb, mainDb, null)).toBe(0);
+    });
+  });
+});
+
+describe('backfillTelemetryRollups orchestrator (HS-9234)', () => {
+  let homeDir: string;
+  let centralDir: string;
+  let projectDir: string;
+  const SECRET = 'sec-orch';
+
+  beforeAll(() => {
+    // Sandbox the global config + project list (HOTSHEET_HOME) and the central
+    // telemetry store so the run-once flag never touches the real ~/.hotsheet.
+    homeDir = createTempDir();
+    centralDir = createTempDir();
+    process.env.HOTSHEET_HOME = homeDir;
+    process.env.HOTSHEET_TELEMETRY_DIR = centralDir;
+  });
+  afterAll(async () => {
+    await closeDbForDir(centralTelemetryDataDir());
+    delete process.env.HOTSHEET_HOME;
+    delete process.env.HOTSHEET_TELEMETRY_DIR;
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(centralDir, { recursive: true, force: true });
+  });
+
+  beforeEach(async () => {
+    projectDir = await setupTestDb();
+    // The orchestrator reads the project secret from settings.json + the dir from
+    // the project list.
+    writeFileSync(join(projectDir, 'settings.json'), JSON.stringify({ secret: SECRET }), 'utf-8');
+    writeFileSync(join(homeDir, 'projects.json'), JSON.stringify([projectDir]), 'utf-8');
+    // Reset the run-once flags between cases.
+    writeFileSync(join(homeDir, 'config.json'), JSON.stringify({}), 'utf-8');
+  });
+  afterEach(async () => {
+    await closeDbForDir(telemetryClusterDataDir(projectDir));
+    await cleanupTestDb(projectDir);
+  });
+
+  it('backfills the project then self-guards on a second run', async () => {
+    const { backfillTelemetryRollups } = await import('./otelRollupBackfill.js');
+    const cluster = await getDbForDir(telemetryClusterDataDir(projectDir));
+    const ts = new Date(2026, 5, 30, 10, 0, 0);
+    await cluster.query(
+      `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+       VALUES ($1, $2, 's1', 'claude_code.cost.usage', $3::jsonb, $4::jsonb, 'delta', true)`,
+      [ts, SECRET, JSON.stringify({ model: 'sonnet', 'query.source': 'main_agent', 'session.id': 's1' }), JSON.stringify({ asDouble: 0.42 })],
+    );
+    await cluster.query(
+      `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1, 'HS-7', $2, $3)`,
+      [SECRET, new Date(2026, 0, 1, 9, 0, 0), new Date(2026, 0, 1, 10, 0, 0)],
+    );
+    await cluster.query(
+      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+       VALUES ($1, $2, 's1', 'p1', 'claude_code.api_request', $3::jsonb, '{}'::jsonb)`,
+      [new Date(2026, 0, 1, 9, 30, 0), SECRET, JSON.stringify({ model: 'sonnet', cost: 0.5, tokens: 800 })],
+    );
+
+    const result = await backfillTelemetryRollups(projectDir);
+    expect(result.dailyRows).toBeGreaterThanOrEqual(1);
+    expect(result.ticketRows).toBe(1);
+
+    const main = await getDbForDir(projectDir);
+    const daily = await main.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_rollup_daily`);
+    const ticket = await main.query<{ cost_usd: string }>(`SELECT cost_usd FROM otel_rollup_ticket WHERE ticket_number = 'HS-7'`);
+    expect(daily.rows[0].c).toBeGreaterThanOrEqual(1);
+    expect(Number(ticket.rows[0].cost_usd)).toBeCloseTo(0.5, 6);
+
+    // Second run is a no-op (guarded by telemetryRollupBackfilledV1).
+    const second = await backfillTelemetryRollups(projectDir);
+    expect(second).toEqual({ scannedDirs: 0, dailyRows: 0, ticketRows: 0 });
+  });
+});

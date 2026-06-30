@@ -269,6 +269,13 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
       // snapshot / §7 backup stop serializing them (the freeze fix). Crash-safe +
       // self-guarded by `telemetryRelocatedV1`; runs once.
       await relocateTelemetryToSeparateCluster(dataDir);
+      // HS-9234 (epic HS-9226 Phase 2) — one-shot backfill of the compact rollup
+      // tables from the existing raw telemetry, so the §70/§71 dashboards keep
+      // their full history once HS-9235 repoints them at the rollups (and Phase 3
+      // moves raw to disposable JSONL). Recompute-from-scratch + idempotent +
+      // self-guarded by `telemetryRollupBackfilledV1`; takes a backup first.
+      const { backfillTelemetryRollups } = await import('./db/otelRollupBackfill.js');
+      await backfillTelemetryRollups(dataDir);
     } catch (e: unknown) {
       console.warn(`[startup] Per-project telemetry migration failed (non-fatal): ${getErrorMessage(e)}`);
     }

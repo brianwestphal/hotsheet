@@ -360,6 +360,14 @@ export const GlobalConfigSchema = z.object({
   // (same pattern as the HS-8874 migration above), cleared on completion.
   telemetryRelocatedV1: z.boolean().optional(),
   telemetryRelocationV1DoneDirs: z.array(z.string()).optional(),
+  // HS-9234 (epic HS-9226 Phase 2) — one-time backfill of the compact rollup
+  // tables (`otel_rollup_daily` / `otel_rollup_ticket`) from the existing raw
+  // `otel_*` rows so dashboard history survives the Phase 3 move of raw to JSONL.
+  // `telemetryRollupBackfilledV1` is the completion flag;
+  // `telemetryRollupBackfillV1DoneDirs` is the per-project resumability list (same
+  // pattern as the migrations above), cleared on completion.
+  telemetryRollupBackfilledV1: z.boolean().optional(),
+  telemetryRollupBackfillV1DoneDirs: z.array(z.string()).optional(),
   // HS-8877 — retention window (days) for the centralized non-project telemetry
   // store (`~/.hotsheet/telemetry`). Projects have a per-project
   // `telemetry_retention_days`; central isn't a project, so its sweep window
