@@ -165,7 +165,7 @@ describe.skipIf(isInsideHotSheetTerminal())('scheduleSnapshot (debounce trigger)
     expect(existsSync(snapshotPath(dataDir))).toBe(false);
   });
 
-  it('throttles back-to-back debounced snapshots to the min spacing (HS-9226)', async () => {
+  it('throttles back-to-back debounced snapshots to the min spacing (HS-9240)', async () => {
     writeFileSettings(dataDir, { db_snapshot_debounce_ms: 10, db_snapshot_min_spacing_ms: 400 });
     await seedTickets(1);
     // First snapshot has no prior, so it fires after the debounce.

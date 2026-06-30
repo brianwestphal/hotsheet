@@ -130,7 +130,7 @@ export async function getGitStatus(projectRoot: string, invoker: GitInvoker = de
 async function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): Promise<GitStatus | null> {
   const root = getGitRoot(projectRoot) ?? projectRoot;
 
-  // HS-9224 — ONE `git status --porcelain=v2 --branch` spawn replaces the former
+  // HS-9238 — ONE `git status --porcelain=v2 --branch` spawn replaces the former
   // 5-call chain (symbolic-ref + status + rev-parse @{u} + 2× rev-list). The v2
   // branch headers carry branch / detached(oid) / upstream / ahead / behind, so
   // a single process yields everything the chip needs — cutting process-spawn
@@ -261,7 +261,7 @@ export interface StatusV2 {
 }
 
 /**
- * HS-9224 — pure parser for `git status --porcelain=v2 --branch` output.
+ * HS-9238 — pure parser for `git status --porcelain=v2 --branch` output.
  *
  * Branch headers (present with `--branch`):
  *   `# branch.oid <sha|(initial)>` · `# branch.head <name|(detached)>`

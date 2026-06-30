@@ -1,5 +1,5 @@
 /**
- * HS-9225 — name the PGLite event-loop blocks in `freeze.log`.
+ * HS-9239 — name the PGLite event-loop blocks in `freeze.log`.
  *
  * PGLite is WASM and executes `query` / `exec` / `dumpDataDir` **synchronously
  * on the Node event loop**. A slow one IS an event-loop block — but before this

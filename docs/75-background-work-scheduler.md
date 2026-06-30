@@ -42,7 +42,7 @@ Root cause was **not** corruption or a crash. It was **event-loop saturation**: 
 `spawnSync`-based git status, fanned out to every tab on every change — ran on the
 single shared Node event loop and blocked all request handling.
 
-> **HS-9224 / HS-9225 — 2026-06-30 follow-up (disk-pressure recurrence).** A reboot
+> **HS-9238 / HS-9239 — 2026-06-30 follow-up (disk-pressure recurrence).** A reboot
 > + macOS Spotlight reindex saturated the disk and the freeze returned on tab-switch.
 > `freeze.log` again pinned it on the server event loop: the git-status chain
 > (collapsed to a single `git status --porcelain=v2 --branch` + an event-driven
@@ -51,7 +51,7 @@ single shared Node event loop and blocked all request handling.
 > CHECKPOINT + `dumpDataDir` + fsync + manifest right at launch (now delayed to 30 s
 > + 5-min tier backpressure-gated — see [7-backup-restore.md](7-backup-restore.md) §7.1).
 > Crucially, the largest blocks were **uninstrumented** (a ~900 ms `server-heartbeat`
-> gap with no adjacent `server-instrument-*` label). **HS-9225 closes that blind spot:**
+> gap with no adjacent `server-instrument-*` label). **HS-9239 closes that blind spot:**
 > `src/db/queryInstrumentation.ts` wraps every cached PGLite instance in a Proxy that
 > times `query` / `exec` / `dumpDataDir` (WASM, synchronous on the loop) via
 > `instrumentAsync`, so a slow statement now appears in `freeze.log` as

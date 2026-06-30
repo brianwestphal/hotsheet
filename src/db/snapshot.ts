@@ -48,7 +48,7 @@ import { getDbForDir } from './connection.js';
 const DEFAULT_DEBOUNCE_MS = 2000;
 /** Default dirty-gated safety-floor interval. */
 const DEFAULT_SAFETY_INTERVAL_MS = 120_000;
-/** HS-9226 — minimum spacing between two debounce-driven snapshots. The snapshot
+/** HS-9240 — minimum spacing between two debounce-driven snapshots. The snapshot
  *  does `db.dumpDataDir('gzip')`, which serializes the WHOLE PGLite cluster
  *  synchronously on the event loop — O(DB size). On a telemetry-bloated DB
  *  (hundreds of MB) that's multiple SECONDS of frozen UI, and the 2 s debounce
@@ -160,7 +160,7 @@ export function scheduleSnapshot(dataDir?: string): void {
 }
 
 /**
- * HS-9226 — the debounce timer's body, factored out so it can re-arm itself.
+ * HS-9240 — the debounce timer's body, factored out so it can re-arm itself.
  * Enforces `DEFAULT_MIN_SNAPSHOT_SPACING_MS` between debounce-driven snapshots:
  * if the last snapshot was too recent, re-arm for the remaining window instead
  * of firing another multi-second dump. `dirty` stays set, so the deferred fire

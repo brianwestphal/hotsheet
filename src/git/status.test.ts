@@ -169,10 +169,10 @@ describe('untracked-files=all (HS-8895)', () => {
     };
   }
 
-  it('getGitStatus passes --untracked-files=all on its single v2 invocation (HS-9224)', async () => {
+  it('getGitStatus passes --untracked-files=all on its single v2 invocation (HS-9238)', async () => {
     const calls: string[][] = [];
     await getGitStatus(process.cwd(), recordingInvoker(calls));
-    // HS-9224 — the 5-call chain collapsed to ONE `status --porcelain=v2 --branch`.
+    // HS-9238 — the 5-call chain collapsed to ONE `status --porcelain=v2 --branch`.
     const statusCalls = calls.filter(a => a.includes('status'));
     expect(statusCalls).toHaveLength(1);
     const statusCall = statusCalls[0];
@@ -192,7 +192,7 @@ describe('untracked-files=all (HS-8895)', () => {
   });
 });
 
-describe('parseStatusV2 (HS-9224)', () => {
+describe('parseStatusV2 (HS-9238)', () => {
   it('parses a clean tree on a branch with an in-sync upstream', () => {
     const out = [
       '# branch.oid 1111111111111111111111111111111111111111',

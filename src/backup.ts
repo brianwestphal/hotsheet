@@ -43,7 +43,7 @@ interface BackupState {
   /** HS-7929 — daily attachment-blob GC. Independent cadence; runs at
    *  startup once + every 24h while the process is alive. */
   attachmentGcInterval: ReturnType<typeof setInterval> | null;
-  /** HS-9224 — consecutive AUTOMATIC 5-min ticks skipped under backpressure.
+  /** HS-9238 — consecutive AUTOMATIC 5-min ticks skipped under backpressure.
    *  Bounded by `MAX_CONSECUTIVE_FIVE_MIN_SKIPS` so the tier can't be starved. */
   fiveMinConsecutiveSkips: number;
 }
@@ -481,7 +481,7 @@ export function jitteredFirstTickMs(intervalMs: number, rng: () => number = Math
 }
 
 // ---------------------------------------------------------------------------
-// HS-9224 — adaptive gating for the AUTOMATIC 5-min backup tick
+// HS-9238 — adaptive gating for the AUTOMATIC 5-min backup tick
 // ---------------------------------------------------------------------------
 //
 // The 5-min tier is the most frequent and least-urgent backup. Under acute
@@ -549,7 +549,7 @@ function scheduleFiveMinBackup(dataDir: string, options: { jitter?: boolean; rng
     ? jitteredFirstTickMs(TIERS['5min'].intervalMs, options.rng)
     : TIERS['5min'].intervalMs;
   state.fiveMinTimer = setTimeout(() => {
-    // HS-9224 — skip this automatic tick under post-wake / sustained-lag
+    // HS-9238 — skip this automatic tick under post-wake / sustained-lag
     // pressure (unless we've hit the durability cap). A skip just reschedules
     // the next tick; it never enters `createBackup`, so `backupInProgress` and
     // the hourly/daily tiers are untouched.
@@ -580,7 +580,7 @@ export function getBackupTimers(dataDir: string): { fiveMin: ReturnType<typeof s
 export function initBackupScheduler(dataDir: string): void {
   const state = getOrCreateState(dataDir);
 
-  // HS-9224 — open the post-wake cooldown for the 5-min gate on suspend/resume.
+  // HS-9238 — open the post-wake cooldown for the 5-min gate on suspend/resume.
   // Idempotent (registered once per process); safe to call per project.
   ensureBackupWakeListener();
 
@@ -604,7 +604,7 @@ export function initBackupScheduler(dataDir: string): void {
     // via `createBackup(...).then(() => scheduleFiveMinBackup(dataDir))`
     // without jitter — the completion-time offset preserves the spread.
     void triggerMissedBackups(dataDir).then(() => scheduleFiveMinBackup(dataDir, { jitter: true }));
-    // HS-9225 — was 10 s. Pushed to 30 s so the catch-up backup train (a heavy
+    // HS-9239 — was 10 s. Pushed to 30 s so the catch-up backup train (a heavy
     // CHECKPOINT + dumpDataDir + fsync + manifest per overdue tier) lands AFTER
     // the startup rush — PGLite init, first ticket load, a kicked-off resume,
     // the first tab-switch — instead of on top of it. Durability is unaffected:
@@ -698,7 +698,7 @@ export function findOverdueTiers(backups: BackupInfo[], now: number): Tier[] {
 export async function triggerMissedBackups(dataDir: string): Promise<void> {
   const overdue = findOverdueTiers(listBackups(dataDir), Date.now());
   for (const tier of overdue) {
-    // HS-9225 — the startup catch-up runs every overdue tier back-to-back; on a
+    // HS-9239 — the startup catch-up runs every overdue tier back-to-back; on a
     // fresh restart that's 5min + hourly + daily heavy backups (CHECKPOINT +
     // dumpDataDir + fsync + manifest) firing right as the user starts work
     // (the reported "froze within a minute of launch"). Skip the least-valuable

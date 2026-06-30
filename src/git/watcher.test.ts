@@ -56,14 +56,14 @@ vi.mock('../gitignore.js', () => ({
 
 vi.mock('fs', () => ({
   existsSync: (p: string): boolean => mockExistsSync(p),
-  // HS-9224 — `fs.watch` is called two ways now: the `.git` watch as `(path, cb)`
+  // HS-9238 — `fs.watch` is called two ways now: the `.git` watch as `(path, cb)`
   // and the recursive working-tree watch as `(path, { recursive: true }, cb)`.
   // Extract the listener from whichever position it's in.
   watch: (p: string, optsOrCb: unknown, maybeCb?: unknown): { close: () => void; on: () => void } => {
     const cb = (typeof optsOrCb === 'function' ? optsOrCb : maybeCb) as (event: string, filename: string | null) => void;
     return { on: noopOn, ...mockFsWatch(p, cb) };
   },
-  // HS-9224 — `readGitignoreDirs` reads `<gitRoot>/.gitignore`; default to "no
+  // HS-9238 — `readGitignoreDirs` reads `<gitRoot>/.gitignore`; default to "no
   // gitignore" so tests don't depend on a real file.
   readFileSync: (): string => '',
 }));
@@ -72,7 +72,7 @@ beforeEach(() => {
   _resetGitStatusCacheForTests();
   _resetDefaultSchedulerForTests(); // HS-8724 — isolate the global scheduler the watcher's pre-warm submits to
   _resetActiveProjectsForTests(); // HS-8725 — empty ⇒ isProjectActive defaults true, so existing assertions hold
-  // HS-9224 — pin the POLL-fallback path (recursive working-tree watch OFF) for
+  // HS-9238 — pin the POLL-fallback path (recursive working-tree watch OFF) for
   // this suite, so the `.git`-watch + poll assertions are platform-independent
   // (these tests run the single-`fs.watch` design). The recursive path has its
   // own suite below.
@@ -88,7 +88,7 @@ beforeEach(() => {
 afterEach(() => {
   _resetGitStatusCacheForTests();
   disposeAllGitWatchers();
-  _setRecursiveWatchForTests(null); // HS-9224 — restore platform detection
+  _setRecursiveWatchForTests(null); // HS-9238 — restore platform detection
   vi.useRealTimers();
 });
 
@@ -470,11 +470,11 @@ describe('working-tree poll (HS-9111)', () => {
   });
 });
 
-// HS-9224 — the recursive working-tree watch (macOS / Windows). When active it
+// HS-9238 — the recursive working-tree watch (macOS / Windows). When active it
 // replaces the 4s poll: a non-ignored file event runs a signature-gated status
 // check, and the idle case costs zero `git status`. Linux falls back to the
 // poll (the suite above).
-describe('isIgnoredWorkingTreePath (HS-9224)', () => {
+describe('isIgnoredWorkingTreePath (HS-9238)', () => {
   const none = new Set<string>();
   it('ignores .git / .hotsheet / node_modules churn at any depth', () => {
     expect(isIgnoredWorkingTreePath('.git/index', none)).toBe(true);
@@ -494,7 +494,7 @@ describe('isIgnoredWorkingTreePath (HS-9224)', () => {
   });
 });
 
-describe('recursive working-tree watch (HS-9224)', () => {
+describe('recursive working-tree watch (HS-9238)', () => {
   /** Arrange a recursive-enabled watcher and return getters for both callbacks:
    *  the `.git`-dir watch cb and the recursive working-tree watch cb (keyed by
    *  the watched path — `.git` dir vs the repo root). */

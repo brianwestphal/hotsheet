@@ -424,7 +424,7 @@ describe('createBackup global lock (HS-8229)', () => {
   }, 120_000);
 });
 
-describe('shouldDeferFiveMinBackup — automatic-tick gate (HS-9224)', () => {
+describe('shouldDeferFiveMinBackup — automatic-tick gate (HS-9238)', () => {
   afterEach(() => { _setFiveMinBackupGateForTests(); }); // restore real clock + lag provider
 
   it('does NOT defer when the loop is calm and there was no recent wake', () => {

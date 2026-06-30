@@ -121,18 +121,18 @@ interface WatcherEntry {
    *  `/api/poll` wakes per second, causing visible UI thrash (project tabs
    *  + ticket list + detail panel re-render every 100 ms). */
   debounce: NodeJS.Timeout | null;
-  /** HS-9224 — pending debounce timer for the recursive working-tree watch
+  /** HS-9238 — pending debounce timer for the recursive working-tree watch
    *  (a tracked-file edit / new untracked file). Separate from `debounce` so a
    *  `.git` event and a working-tree event don't cancel each other and so each
    *  path keeps its own notify semantics (unconditional vs signature-gated). */
   wtDebounce: NodeJS.Timeout | null;
-  /** HS-9224 — true when a recursive working-tree watch is live for this
+  /** HS-9238 — true when a recursive working-tree watch is live for this
    *  project (macOS / Windows). When true the low-frequency poll SKIPS this
    *  project (the watch covers working-tree edits event-driven, so the common
    *  "nothing changed" case costs zero `git status` runs). Flipped back to
    *  false if the recursive watch later errors, so the poll resumes covering it. */
   recursive: boolean;
-  /** HS-9224 — extra ignored top-level directory names parsed from the repo's
+  /** HS-9238 — extra ignored top-level directory names parsed from the repo's
    *  `.gitignore`, unioned with `ALWAYS_IGNORED_SEGMENTS`. Filters recursive
    *  working-tree events so `node_modules` / build-output / `.hotsheet` churn
    *  doesn't trigger a `git status` run (git ignores them anyway). */
@@ -148,7 +148,7 @@ const watchers = new Map<string, WatcherEntry>();
 const subscribers = new Set<(projectRoot: string) => void>();
 
 // ---------------------------------------------------------------------------
-// HS-9224 — event-driven working-tree watch (replaces the 4s poll where supported)
+// HS-9238 — event-driven working-tree watch (replaces the 4s poll where supported)
 // ---------------------------------------------------------------------------
 //
 // `fs.watch(root, { recursive: true })` is supported natively on macOS
@@ -261,7 +261,7 @@ function gitStatusSignature(status: GitStatus | null): string {
  * refreshes lazily on switch, so it costs no `git status` here. The first
  * observation only establishes the baseline (the chip already shows current
  * state from its own fetch / the project-switch refetch), so we never fire
- * spuriously. Shared by the recursive watch (event-driven, HS-9224) and the
+ * spuriously. Shared by the recursive watch (event-driven, HS-9238) and the
  * poll fallback below.
  */
 async function checkWorkingTreeAndNotify(root: string): Promise<void> {
@@ -286,7 +286,7 @@ async function checkWorkingTreeAndNotify(root: string): Promise<void> {
   }
 }
 
-/** HS-9224 — debounced working-tree check fired by the recursive watch. Mirrors
+/** HS-9238 — debounced working-tree check fired by the recursive watch. Mirrors
  *  the `.git` watch's `WATCHER_DEBOUNCE_MS` coalescing so a burst of file events
  *  (a save touches several paths; a branch checkout rewrites many files)
  *  collapses to one signature-gated status run. */
@@ -424,7 +424,7 @@ export function ensureGitWatcher(projectRoot: string): void {
     // mounts). Degraded mode — focus-refetch on the client still works.
   }
 
-  // HS-9224 — on recursive-capable platforms (macOS / Windows), watch the repo
+  // HS-9238 — on recursive-capable platforms (macOS / Windows), watch the repo
   // working tree so a tracked-file edit / new untracked file refreshes the chip
   // event-driven, and the idle case costs zero `git status`. The events under
   // `.git` are filtered out here (the dedicated `.git` watch above handles
@@ -454,7 +454,7 @@ export function ensureGitWatcher(projectRoot: string): void {
 
   watchers.set(projectRoot, { watchers: handles, version: 0, debounce: null, wtDebounce: null, recursive, extraIgnored });
   // HS-9111 — drive the low-frequency working-tree poll. It skips any project
-  // covered by a live recursive watch (HS-9224) and catches the rest (Linux /
+  // covered by a live recursive watch (HS-9238) and catches the rest (Linux /
   // attach-failure) on its cadence — even if the `.git` fs.watch above failed.
   ensureWorkingTreePoller();
 }
@@ -468,7 +468,7 @@ export function disposeGitWatcher(projectRoot: string): void {
       try { handle.close(); } catch { /* ignore */ }
     }
     if (entry.debounce !== null) clearTimeout(entry.debounce);
-    if (entry.wtDebounce !== null) clearTimeout(entry.wtDebounce); // HS-9224
+    if (entry.wtDebounce !== null) clearTimeout(entry.wtDebounce); // HS-9238
     watchers.delete(projectRoot);
   }
   cache.delete(projectRoot);

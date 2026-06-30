@@ -327,7 +327,7 @@ export async function closeAllDatabases(): Promise<void> {
 
 export function adoptDb(instance: PGlite): void {
   if (defaultDbPath !== null) {
-    // HS-9225 — instrument adopted (recovered/restored) instances too.
+    // HS-9239 — instrument adopted (recovered/restored) instances too.
     databases.set(defaultDbPath, instrumentDbQueries(instance, defaultDbPath));
   }
 }
@@ -438,7 +438,7 @@ async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlit
     try { await db.close(); } catch { /* half-initialized — best effort */ }
     throw err;
   }
-  // HS-9225 — cache (and hand out) the instrumented wrapper so every `getDb`
+  // HS-9239 — cache (and hand out) the instrumented wrapper so every `getDb`
   // caller's queries are timed into freeze.log when they block the loop.
   // `initSchema` ran on the raw `db` above, so one-time startup schema work
   // isn't logged — only live request/sync/backup queries are.

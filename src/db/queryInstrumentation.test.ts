@@ -1,5 +1,5 @@
 /**
- * HS-9225 — the PGLite query-instrumentation Proxy must be transparent: it times
+ * HS-9239 — the PGLite query-instrumentation Proxy must be transparent: it times
  * `query`/`exec`/`dumpDataDir` into freeze.log but must NOT change results or
  * break methods that rely on PGLite's private class fields (the Proxy
  * private-field hazard). These run against a real in-memory PGLite.
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { instrumentDbQueries, isQueryInstrumentationEnabled } from './queryInstrumentation.js';
 
-describe('instrumentDbQueries (HS-9225)', () => {
+describe('instrumentDbQueries (HS-9239)', () => {
   afterEach(() => { delete process.env.HOTSHEET_DISABLE_QUERY_INSTRUMENTATION; });
 
   it('passes query / exec results through unchanged', async () => {
