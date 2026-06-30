@@ -17,7 +17,7 @@ import { instrumentDbQueries } from './queryInstrumentation.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 6; // HS-8874 — telemetry project_secret is now nullable (central non-project store)
+export const SCHEMA_VERSION = 7; // HS-9232 — added otel_rollup_daily + otel_rollup_ticket (epic HS-9226 Phase 2)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1042,6 +1042,57 @@ async function initSchema(db: PGlite): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_otel_events_dedupe ON otel_events(ts, event_name);
     CREATE INDEX IF NOT EXISTS idx_announcer_usage_dedupe ON announcer_usage(ts, model);
     CREATE INDEX IF NOT EXISTS idx_twi_dedupe ON ticket_work_intervals(project_secret, ticket_number, started_at);
+
+    -- HS-9232 (epic HS-9226 Phase 2) — compact telemetry ROLLUP tables. Unlike the
+    -- raw otel_* tables (relocated to <dataDir>/telemetry/db by HS-9230), these live
+    -- in the main SNAPSHOTTED <dataDir>/db so the (small, high-value) per-ticket cost
+    -- history is backed up. The §70/§71 dashboards read only AGGREGATES, so rolling
+    -- up at ingest (HS-9233) collapses ~100k raw metric rows to a few hundred. Empty
+    -- until the HS-9233 ingest + HS-9234 backfill populate them; the HS-9235 read
+    -- repoint then sources the dashboards from here. The central (no-project) store
+    -- uses project_secret = '' here (the raw tables use NULL) so the key columns can
+    -- form a plain NOT NULL primary key for upserts.
+
+    -- Daily time-series rollup (server-local day at ingest). Covers getCostOverTime,
+    -- getCostByModel, getQuerySourceRollup, getCostByProject, getWindowTotals,
+    -- getTodayCost. Token sums are split by type so the headline (input+output)
+    -- excludes cache. prompt_count / session_count are per-day approximations
+    -- (distinct ids don't roll up exactly across buckets — matches the approximation
+    -- the existing cross-DB JS merges already make by summing per-bucket counts).
+    -- The hour-of-week heatmap + tool-latency percentiles + recent-prompts + the §68
+    -- inspectors are NOT covered here — they stay on raw until Phase 3 (JSONL).
+    CREATE TABLE IF NOT EXISTS otel_rollup_daily (
+      project_secret TEXT NOT NULL DEFAULT '',
+      day DATE NOT NULL,
+      model TEXT NOT NULL DEFAULT '(unknown)',
+      query_source TEXT NOT NULL DEFAULT '(unknown)',
+      cost_usd NUMERIC NOT NULL DEFAULT 0,
+      input_tokens BIGINT NOT NULL DEFAULT 0,
+      output_tokens BIGINT NOT NULL DEFAULT 0,
+      cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+      cache_creation_tokens BIGINT NOT NULL DEFAULT 0,
+      prompt_count INTEGER NOT NULL DEFAULT 0,
+      session_count INTEGER NOT NULL DEFAULT 0,
+      datapoint_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (project_secret, day, model, query_source)
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_rollup_daily_day ON otel_rollup_daily(project_secret, day);
+
+    -- Per-ticket cost rollup, kept INDEFINITELY (the user's explicit requirement).
+    -- Maintained at ingest (HS-9233) by attributing each api_request to the OPEN
+    -- ticket_work_intervals row at that instant. Covers getPerTicketRollup.
+    -- model_breakdown is a {model: {cost, tokens}} JSON map for a per-model split.
+    CREATE TABLE IF NOT EXISTS otel_rollup_ticket (
+      project_secret TEXT NOT NULL DEFAULT '',
+      ticket_number TEXT NOT NULL,
+      cost_usd NUMERIC NOT NULL DEFAULT 0,
+      total_tokens BIGINT NOT NULL DEFAULT 0,
+      prompt_count INTEGER NOT NULL DEFAULT 0,
+      duration_seconds NUMERIC NOT NULL DEFAULT 0,
+      model_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (project_secret, ticket_number)
+    );
   `);
 
   // HS-8874 — telemetry is now stored per-project, plus a centralized store

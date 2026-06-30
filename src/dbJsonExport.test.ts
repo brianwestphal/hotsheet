@@ -59,6 +59,8 @@ describe('buildJsonExport (HS-7893)', () => {
       'sync_outbox',
       'note_sync',
       'feedback_drafts',
+      'otel_rollup_daily',   // HS-9232
+      'otel_rollup_ticket',  // HS-9232
     ];
     for (const table of expected) {
       expect(exportData.tables).toHaveProperty(table);

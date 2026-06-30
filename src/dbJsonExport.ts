@@ -19,13 +19,15 @@ export interface JsonDbExport {
 }
 
 /** Hard-coded list of the DURABLE tables to dump (a subset of `initSchema()`
- *  in `src/db/connection.ts`). The three `otel_*` telemetry tables are
+ *  in `src/db/connection.ts`). The raw `otel_*` telemetry tables are
  *  intentionally excluded — telemetry is a separate disposable dataset (see
- *  docs §67 / §72.8), not part of this rescue payload. Hard-coding (instead of
- *  `information_schema`) keeps the export deterministic across PGLite versions
- *  and avoids picking up internal/system tables. When a new DURABLE table is
- *  added in `initSchema`, append it here AND bump `SCHEMA_VERSION` (leave the
- *  `otel_*` tables out). */
+ *  docs §67 / §72.8), and as of HS-9230 it lives in a different cluster anyway.
+ *  The compact `otel_rollup_*` tables (HS-9232) ARE included — they're durable,
+ *  small, and the per-ticket cost rollup is kept indefinitely, so it belongs in
+ *  the rescue payload. Hard-coding (instead of `information_schema`) keeps the
+ *  export deterministic across PGLite versions and avoids picking up
+ *  internal/system tables. When a new DURABLE table is added in `initSchema`,
+ *  append it here AND bump `SCHEMA_VERSION` (leave the raw `otel_*` tables out). */
 const TABLES = [
   'tickets',
   'attachments',
@@ -36,6 +38,8 @@ const TABLES = [
   'sync_outbox',
   'note_sync',
   'feedback_drafts',
+  'otel_rollup_daily',   // HS-9232 — compact daily telemetry rollup (durable, snapshotted)
+  'otel_rollup_ticket',  // HS-9232 — per-ticket cost rollup, kept indefinitely
 ] as const;
 
 /** Read every row of every Hot Sheet table into a serialisable shape.
