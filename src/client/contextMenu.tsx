@@ -8,7 +8,7 @@ import { buildFeedbackNav, getTicketFeedbackState, openFeedbackDialogForNote, su
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_SEND, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
-import { buildCombinedReaderEntries, openReaderOverlay } from './readerOverlay.js';
+import { openLatestNoteReader } from './readLatestNote.js';
 import type { Ticket } from './state.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS, syncedTicketMap, VERIFIED_SVG } from './state.js';
 import { openExternalUrl } from './tauriIntegration.js';
@@ -145,28 +145,10 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
     const readTarget: 'note' | 'details' | null =
       latestNote !== null ? 'note' : (hasDescription ? 'details' : null);
     const label = readTarget === 'details' ? 'Read Description' : 'Read Latest Note';
+    // HS-8830 — the open logic is shared with the spacebar shortcut via
+    // `openLatestNoteReader` so the menu item and the key behave identically.
     addActionItem(menu, label, () => {
-      if (readTarget === null) return;
-      const combined = buildCombinedReaderEntries({
-        ticketNumber: ticket.ticket_number,
-        ticketTitle: ticket.title,
-        detailsMarkdown: ticket.details,
-        notes: parsedNotes,
-      });
-      // Anchor on the latest note, or the Details entry in the fallback case.
-      // `readTarget !== null` guarantees the anchor exists in `combined` (a
-      // non-empty note, or a non-empty Details), so `combined` is non-empty
-      // and `combined[initialIndex]` resolves.
-      const anchorId = latestNote !== null ? (latestNote.id ?? '') : 'details';
-      const initialIndex = Math.max(0, combined.findIndex((e) => e.id === anchorId));
-      const anchor = combined[initialIndex];
-      openReaderOverlay({
-        title: anchor.title,
-        markdown: anchor.markdown,
-        navigation: combined.length > 1
-          ? { entries: combined.map((e) => ({ title: e.title, markdown: e.markdown })), initialIndex }
-          : undefined,
-      });
+      openLatestNoteReader(ticket);
     }, { icon: BOOK_OPEN_TEXT_SVG, disabled: readTarget === null });
   }
 

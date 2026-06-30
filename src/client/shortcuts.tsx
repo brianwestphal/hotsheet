@@ -6,6 +6,7 @@ import { showOpenFolderDialog } from './openFolder.js';
 import { showPrintDialog } from './print.js';
 import { projectsStore } from './projectsStore.js';
 import { closeActiveTab, switchTabByOffset } from './projectTabs.js';
+import { openLatestNoteReader } from './readLatestNote.js';
 import { getActiveProject, state } from './state.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 import { isFindShortcut, isTerminalViewToggleShortcut } from './terminalKeybindings.js';
@@ -235,6 +236,23 @@ const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
       state.lastClickedId = nextId;
       nextCard.scrollIntoView({ block: 'nearest' });
       renderTicketList();
+      return 'handled';
+    },
+  },
+  {
+    // HS-8830 — when exactly one ticket is selected, the space bar opens the
+    // §49 reader on its latest note (Details fallback) — the same action as the
+    // "Read Latest Note" context-menu item (shared `openLatestNoteReader`). Gated
+    // off `<button>`/`<a>`/role-button focus so the key still activates a focused
+    // control natively. A modal open (incl. the reader itself, `.reader-mode-overlay`)
+    // bails earlier in dispatch, so this never re-fires over an open reader.
+    label: 'Space: read the selected ticket’s latest note',
+    match: (e, ctx) => e.key === ' ' && !ctx.isInput && state.selectedIds.size === 1 && !activeElementUsesSpaceKey(),
+    run: (e) => {
+      e.preventDefault();
+      const id = Array.from(state.selectedIds)[0];
+      const ticket = state.tickets.find((t) => t.id === id);
+      if (ticket !== undefined) openLatestNoteReader(ticket);
       return 'handled';
     },
   },
@@ -573,6 +591,20 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
   if (target.isContentEditable) return true;
   return false;
+}
+
+/**
+ * HS-8830 — true when the currently-focused element natively consumes the Space
+ * key (activates on it), so the "Space = read latest note" shortcut leaves it
+ * alone: `<button>` / `<a>` and ARIA widgets that toggle/activate on Space.
+ * Exported for unit testing.
+ */
+export function activeElementUsesSpaceKey(): boolean {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.tagName === 'BUTTON' || el.tagName === 'A') return true;
+  const role = el.getAttribute('role');
+  return role === 'button' || role === 'checkbox' || role === 'switch' || role === 'menuitem' || role === 'tab';
 }
 
 /**

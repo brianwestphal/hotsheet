@@ -81,6 +81,16 @@ fallback rather than disabling outright.
   helper was removed in HS-8598 — the menu now reuses the same
   `buildCombinedReaderEntries` path the per-note book-icon trigger uses
   (see below), so a second bespoke note-list helper is no longer needed.
+  **HS-8830** — both the menu item AND the space-bar shortcut now call one
+  shared `openLatestNoteReader(ticket)` (`src/client/readLatestNote.tsx`),
+  which performs the latest-note / Details-fallback pick + opens the reader
+  and returns the resolved target (`'note'`/`'details'`/`null`).
+- **Space-bar shortcut (HS-8830).** When exactly one ticket is selected,
+  the space bar fires the same action via the `src/client/shortcuts.tsx`
+  shortcut table (entry calls `openLatestNoteReader`). It's gated off
+  `<button>`/`<a>`/role-button focus (`activeElementUsesSpaceKey`) so Space
+  still natively activates a focused control, and the modal bail (incl.
+  `.reader-mode-overlay`) means it never re-fires over an open reader.
 - Menu wiring: inside `showTicketContextMenu` after the Provide
   Feedback block — single-call to `addActionItem(menu, 'Read Latest
   Note', open, { icon, disabled })` with the existing
