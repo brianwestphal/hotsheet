@@ -5611,6 +5611,17 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     border-top: 0;
   }
 
+  // HS-9217 — the Commands panel wraps its first section in a display-toggle
+  // div (`#settings-custom-commands-section`), so the `.settings-tab-panel > &`
+  // first-child suppression above doesn't reach it and a stray rule painted
+  // above the "Custom Commands" heading. It's the first content in the panel —
+  // nothing above it to divide from — so drop the border for the wrapped case.
+  #settings-custom-commands-section > &:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+
   h3 {
     font-size: 14px;
     font-weight: 600;
