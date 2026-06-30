@@ -16,7 +16,7 @@
  * open, and render an origin hint so the user can tell shared from local items.
  */
 import { getLayeredFileSettings, updateFileSettingsLayer } from '../api/index.js';
-import { computeArrayDelta } from '../settingsDelta.js';
+import { type ArrayDelta, computeArrayDelta, isArrayDelta } from '../settingsDelta.js';
 import { toElement } from './dom.js';
 import { getScopeMode } from './settingsScope.js';
 
@@ -54,6 +54,12 @@ export interface ScopedListData<T> {
   shared: T[];
   /** The list the editor should display + edit: the shared array in Shared mode, else the resolved (effective) list. */
   items: T[];
+  /** HS-9212 — the raw local-layer delta (when the local value is an element-level
+   *  delta object), so an editor can reconstruct LOCALLY-HIDDEN shared items
+   *  together with their per-machine `overrides` and round-trip them through a
+   *  hide → un-hide. `undefined` when the local layer holds no delta (absent, a
+   *  legacy whole-replacement array, or Shared mode). */
+  localDelta?: ArrayDelta<T>;
 }
 
 /** Load a complex list key for the active scope mode. */
@@ -62,24 +68,35 @@ export async function loadScopedList<T>(key: string): Promise<ScopedListData<T>>
   const layered = await getLayeredFileSettings();
   const shared = asArray(layered.shared[key]) as T[];
   const resolved = asArray(layered.resolved[key]) as T[];
-  return { mode, shared, items: mode === 'shared' ? shared : resolved };
+  const localRaw: unknown = layered.local[key];
+  const localDelta = isArrayDelta(localRaw) ? (localRaw as ArrayDelta<T>) : undefined;
+  return { mode, shared, items: mode === 'shared' ? shared : resolved, localDelta };
 }
 
 /**
  * Persist an edited complex list per the active scope mode: Shared writes the
  * array to settings.json; Local writes the delta vs `shared` (from
  * {@link loadScopedList}) to settings.local.json.
+ *
+ * HS-9212 — `hidden` carries shared items the local layer hides on this machine,
+ * each holding its (possibly locally-customized) config. They're folded into the
+ * delta computation so their `overrides` survive while they're hidden, then
+ * force-marked `hidden`. Pass `[]` (the default) for editors with no hide concept.
  */
 export async function saveScopedList<T>(
   key: string,
   idOf: (item: T) => string,
   shared: T[],
   edited: T[],
+  hidden: T[] = [],
 ): Promise<void> {
   const mode = getScopeMode();
   if (mode === 'shared') {
+    // Shared mode has no per-machine "hidden" concept — write the visible array.
     await updateFileSettingsLayer('shared', { [key]: edited });
   } else {
-    await updateFileSettingsLayer('local', { [key]: computeArrayDelta(shared, edited, idOf) });
+    const all = [...edited, ...hidden];
+    const delta = computeArrayDelta(shared, all, idOf, hidden.map(idOf));
+    await updateFileSettingsLayer('local', { [key]: delta });
   }
 }

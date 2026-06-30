@@ -29,6 +29,7 @@ const TERMINALS_JSON = JSON.stringify([
 vi.mock('../api/index.js', () => ({
   getLayeredFileSettings: vi.fn(() => Promise.resolve({
     shared: { terminals: TERMINALS_JSON },
+    local: {},
     resolved: { terminals: TERMINALS_JSON },
   })),
   updateFileSettingsLayer: vi.fn(() => Promise.resolve({ shared: {}, resolved: {} })),

@@ -59,6 +59,11 @@ This document lists features that require manual verification before each releas
 - [ ] Drag a command out of a group to the top level
 - [ ] Drag a group header to reorder groups
 
+### Shared/Local scope deltas — empty-delta + hide/override round-trip (HS-9210 / HS-9212, §95.3)
+*(Pure delta logic is unit-tested in `src/settingsDelta.test.ts` + `src/file-settings.test.ts`; the terminals load→hide→re-enable flow in `src/client/terminalsHideOverride.test.ts`. These verify the real Settings-dialog UI + `settings.local.json` on disk.)*
+- [ ] **HS-9210 — empty local delta doesn't hide everything.** In a project with ≥1 **shared** terminal, open Settings → Terminal, switch the scope toggle to **Local**, and (without editing anything) close + reopen the dialog. The shared terminal still shows as a **normal visible row** — NOT a "LOCALLY HIDDEN" row — even though `settings.local.json` now contains `"terminals": {}`. Repeat on Settings → Context (auto-context): switching to Local must not show every category/tag as **LOCALLY DISABLED** when `"auto_context": {}`.
+- [ ] **HS-9212 — a local override survives hide → un-hide.** Settings → Terminal, **Local** mode. Edit a **shared** terminal locally (change its name/command — its row tag flips to `overridden`). **Hide** it (the eye-off button → confirm) → it moves to the hidden section showing your *customized* name. **Re-enable** it (eye button) → it returns as a visible row with your **custom** name/command, NOT the original shared value. Confirm `settings.local.json` `terminals` carries both `hidden` (while hidden) and `overrides` throughout. Repeat the same edit→disable→re-enable cycle on Settings → Context for an auto-context rule (custom text must survive).
+
 ---
 
 ## 2. Platform-Specific (Run on Each Target OS)

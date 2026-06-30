@@ -490,8 +490,37 @@ let autoContextEntries: AutoContextEntry[] = [];
 // (to derive the local delta on save); `autoContextMode` is the active scope view.
 let autoContextShared: AutoContextEntry[] = [];
 let autoContextMode: 'shared' | 'local' = 'local';
+// HS-9212 — shared entries DISABLED (hidden) by the local layer on this machine,
+// each holding its (possibly locally-overridden) text, so a disable → re-enable
+// round-trips the local customization. Empty in Shared mode.
+let autoContextHidden: AutoContextEntry[] = [];
 /** Stable identity for an auto-context entry (per docs/95 §95.3 / file-settings idOf). */
 const acIdOf = (e: AutoContextEntry): string => `${e.type}:${e.key}`;
+
+/**
+ * HS-9212 — the local-layer disabled (hidden) shared auto-context entries, each
+ * merged with its `overrides` text so it carries the user's local customization.
+ * Empty unless in Local mode with a delta. Order follows the delta's `hidden` list.
+ */
+function buildHiddenAutoContext(
+  mode: 'shared' | 'local',
+  shared: AutoContextEntry[],
+  delta: { hidden?: string[]; overrides?: Record<string, unknown> } | undefined,
+): AutoContextEntry[] {
+  if (mode !== 'local' || delta === undefined) return [];
+  const hiddenIds = Array.isArray(delta.hidden) ? delta.hidden : [];
+  const overrides = delta.overrides ?? {};
+  const out: AutoContextEntry[] = [];
+  for (const id of hiddenIds) {
+    const s = shared.find(e => acIdOf(e) === id);
+    if (s === undefined) continue;
+    const ov = overrides[id];
+    const merged: unknown = typeof ov === 'object' && ov !== null ? { ...s, ...ov } : s;
+    const parsed = AutoContextEntrySchema.safeParse(merged);
+    if (parsed.success) out.push(parsed.data);
+  }
+  return out;
+}
 
 function bindAutoContextSettings() {
   const list = byId('auto-context-list');
@@ -505,14 +534,18 @@ function bindAutoContextSettings() {
       autoContextMode = data.mode;
       autoContextShared = AutoContextEntryArraySchema.safeParse(data.shared).data ?? [];
       autoContextEntries = AutoContextEntryArraySchema.safeParse(data.items).data ?? [];
+      // HS-9212 — reconstruct locally-disabled shared entries WITH their per-machine
+      // text override from the raw delta, so re-enable restores the customized text.
+      autoContextHidden = buildHiddenAutoContext(autoContextMode, autoContextShared, data.localDelta);
     } catch { /* ignore */ }
     renderEntries();
   }
 
   async function saveEntries() {
     // HS-9016 — Shared → write the array to settings.json; Local → write the
-    // delta vs shared to settings.local.json.
-    await saveScopedList('auto_context', acIdOf, autoContextShared, autoContextEntries);
+    // delta vs shared to settings.local.json. HS-9212 — pass the locally-disabled
+    // shared entries so their text overrides are retained alongside `hidden`.
+    await saveScopedList('auto_context', acIdOf, autoContextShared, autoContextEntries, autoContextHidden);
   }
 
   const displayKeyOf = (entry: AutoContextEntry): string => entry.type === 'category'
@@ -568,9 +601,9 @@ function bindAutoContextSettings() {
     // HS-9121 — in Local mode, shared entries the local layer hides (deleted
     // locally) still get a disabled row with a Re-enable button so they can be
     // restored. In Resolved/Shared mode there is no "hidden" concept to surface.
-    const hiddenShared = autoContextMode === 'local'
-      ? autoContextShared.filter(s => !autoContextEntries.some(e => acIdOf(e) === acIdOf(s)))
-      : [];
+    // HS-9212 — these come from `autoContextHidden` (which retains each disabled
+    // entry's local text override), not a fresh shared-minus-visible diff.
+    const hiddenShared = autoContextMode === 'local' ? autoContextHidden : [];
 
     if (autoContextEntries.length === 0 && hiddenShared.length === 0) {
       list.appendChild(toElement(<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>));
@@ -615,7 +648,16 @@ function bindAutoContextSettings() {
         }, 500);
       });
       row.querySelector('.category-delete-btn')!.addEventListener('click', () => {
-        autoContextEntries.splice(i, 1);
+        // HS-9165 — resolve by id (a re-render may have reordered/replaced rows).
+        const idx = autoContextEntries.findIndex(e => acIdOf(e) === acIdOf(entry));
+        if (idx === -1) return;
+        const [removed] = autoContextEntries.splice(idx, 1);
+        // HS-9212 — disabling a shared entry moves it (with its current, possibly
+        // locally-overridden text) into `autoContextHidden` so its override
+        // survives and re-enable restores it. A local-only entry is truly removed.
+        if (isSharedHere && !autoContextHidden.some(h => acIdOf(h) === acIdOf(removed))) {
+          autoContextHidden.push({ ...removed });
+        }
         void saveEntries();
         renderEntries();
       });
@@ -634,6 +676,10 @@ function bindAutoContextSettings() {
         </div>
       );
       row.querySelector('[data-scope-action="reenable"]')!.addEventListener('click', () => {
+        // HS-9212 — restore the disabled entry's retained config (carrying any
+        // local text override), and drop it from the hidden set.
+        const hi = autoContextHidden.findIndex(h => acIdOf(h) === acIdOf(s));
+        if (hi >= 0) autoContextHidden.splice(hi, 1);
         autoContextEntries.push({ ...s });
         void saveEntries();
         renderEntries();

@@ -90,16 +90,32 @@ export function resolveDeltaArray<T>(
  * §95.3); `resolveDeltaArray(shared, computeArrayDelta(shared, edited)) `
  * round-trips `edited` modulo shared-item reordering. Empty fields are omitted
  * so a no-change edit yields `{}` (which resolves back to the shared list).
+ *
+ * HS-9212 — `forceHidden` carries ids that must be marked `hidden` even though
+ * they're still present in `edited`. This lets an editor keep a HIDDEN shared
+ * item in `edited` (so its local customization is still captured as an
+ * `overrides[id]` entry) while flagging it hidden — so hide → un-hide round-trips
+ * the customization instead of reverting to the shared value. Without this a
+ * hidden item must be dropped from `edited`, which loses its override.
  */
 export function computeArrayDelta<T>(
   shared: readonly T[],
   edited: readonly T[],
   idOf: (item: T) => string,
+  forceHidden: Iterable<string> = [],
 ): ArrayDelta<T> {
   const sharedById = new Map(shared.map((s) => [idOf(s), s]));
   const editedIds = new Set(edited.map(idOf));
+  // Only shared ids can be hidden (a local-only item is deleted, not hidden).
+  const forced = new Set([...forceHidden].filter((id) => sharedById.has(id)));
 
-  const hidden = shared.map(idOf).filter((id) => !editedIds.has(id));
+  const hidden = [...new Set([
+    ...shared.map(idOf).filter((id) => !editedIds.has(id)),
+    ...forced,
+  ])];
+  // A force-hidden item stays out of `added`/`overrides`-as-addition; it's a
+  // shared item so it's already excluded from `added`, and its override (if any)
+  // is still emitted below since it remains in `edited`.
   const added = edited.filter((e) => !sharedById.has(idOf(e)));
   const overrides: Record<string, T> = {};
   for (const e of edited) {

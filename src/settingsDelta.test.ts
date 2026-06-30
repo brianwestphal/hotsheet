@@ -117,4 +117,34 @@ describe('computeArrayDelta', () => {
     const delta = computeArrayDelta(shared, edited, idOf);
     expect(resolveDeltaArray(shared, delta, idOf)).toEqual(edited);
   });
+
+  // HS-9212 — a force-hidden shared item kept in `edited` is marked hidden AND
+  // keeps its override, so hide → un-hide doesn't lose the local customization.
+  describe('forceHidden (HS-9212)', () => {
+    it('marks a force-hidden id as hidden even though it is still in edited', () => {
+      const delta = computeArrayDelta(shared, [...shared], idOf, ['b']);
+      expect(delta.hidden).toEqual(['b']);
+    });
+
+    it('retains a force-hidden item\'s override (the customization survives hide)', () => {
+      // 'a' was customized locally, then hidden — keep it in `edited` + force-hide.
+      const edited = shared.map(i => i.id === 'a' ? { ...i, name: 'A-custom' } : i);
+      const delta = computeArrayDelta(shared, edited, idOf, ['a']);
+      expect(delta.hidden).toEqual(['a']);
+      expect(delta.overrides).toEqual({ a: { id: 'a', name: 'A-custom' } });
+    });
+
+    it('merges force-hidden ids with naturally-removed ones (no dupes)', () => {
+      // 'b' removed entirely; 'a' kept-but-force-hidden.
+      const edited = shared.filter(i => i.id !== 'b');
+      const delta = computeArrayDelta(shared, edited, idOf, ['a', 'b']);
+      expect(new Set(delta.hidden)).toEqual(new Set(['a', 'b']));
+      expect(delta.hidden?.length).toBe(2); // 'b' not duplicated
+    });
+
+    it('ignores force-hidden ids that are not shared items', () => {
+      const delta = computeArrayDelta(shared, [...shared], idOf, ['nonexistent']);
+      expect(delta.hidden).toBeUndefined();
+    });
+  });
 });

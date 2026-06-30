@@ -53,6 +53,11 @@ let terminals: EditableTerminalConfig[] = [];
 // HS-9015 — scope-aware editing: the committed shared array + the active mode.
 let terminalsShared: EditableTerminalConfig[] = [];
 let terminalsMode: 'shared' | 'local' = 'local';
+// HS-9212 — shared terminals HIDDEN by the local layer on this machine, each
+// holding its (possibly locally-customized) config. Kept separate from
+// `terminals` (the visible list) so a hide → un-hide round-trips the local
+// customization instead of reverting to the shared value. Empty in Shared mode.
+let terminalsHidden: EditableTerminalConfig[] = [];
 /** Stable identity for a terminal config (matches the file-settings idOf). */
 const termIdOf = (t: EditableTerminalConfig): string => (typeof t.id === 'string' ? t.id : '');
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -68,6 +73,7 @@ export function _getTerminalsForTests(): readonly EditableTerminalConfig[] {
 /** Test-only — reset the module-level state so each test starts clean. */
 export function _resetTerminalsForTests(): void {
   terminals = [];
+  terminalsHidden = [];
   if (saveTimeout !== null) clearTimeout(saveTimeout);
   saveTimeout = null;
   dragFromIndex = null;
@@ -130,11 +136,41 @@ export async function loadAndRenderTerminalsSettings(): Promise<void> {
     terminalsMode = data.mode;
     terminalsShared = data.shared.map((item, i) => normalizeEntry(item, i)).filter((t): t is EditableTerminalConfig => t !== null);
     terminals = data.items.map((item, i) => normalizeEntry(item, i)).filter((t): t is EditableTerminalConfig => t !== null);
+    // HS-9212 — reconstruct locally-hidden shared terminals WITH their per-machine
+    // overrides from the raw local delta, so re-enabling restores the customized
+    // config (not the bare shared one).
+    terminalsHidden = buildHiddenTerminals(terminalsMode, terminalsShared, data.localDelta);
   } catch {
     terminals = [];
     terminalsShared = [];
+    terminalsHidden = [];
   }
   renderList();
+}
+
+/**
+ * HS-9212 — the local-layer hidden shared terminals, each merged with its
+ * `overrides` entry so it carries the user's local customization. Empty unless in
+ * Local mode with a delta. Order follows the delta's `hidden` list.
+ */
+function buildHiddenTerminals(
+  mode: 'shared' | 'local',
+  shared: EditableTerminalConfig[],
+  delta: { hidden?: string[]; overrides?: Record<string, unknown> } | undefined,
+): EditableTerminalConfig[] {
+  if (mode !== 'local' || delta === undefined) return [];
+  const hiddenIds = Array.isArray(delta.hidden) ? delta.hidden : [];
+  const overrides = delta.overrides ?? {};
+  const out: EditableTerminalConfig[] = [];
+  for (const id of hiddenIds) {
+    const s = shared.find(t => termIdOf(t) === id);
+    if (s === undefined) continue;
+    const ov = overrides[id];
+    const merged: unknown = typeof ov === 'object' && ov !== null ? { ...s, ...ov } : s;
+    const norm = normalizeEntry(merged, out.length);
+    if (norm !== null) out.push(norm);
+  }
+  return out;
 }
 
 function normalizeEntry(item: unknown, index: number): EditableTerminalConfig | null {
@@ -176,12 +212,16 @@ function resetTerminalToShared(index: number): void {
   document.dispatchEvent(new CustomEvent('hotsheet:terminal-config-changed', { detail: { terminalId: entry.id } }));
 }
 
-/** HS-9125 — re-enable a shared terminal hidden by the local layer. */
+/** HS-9125 — re-enable a shared terminal hidden by the local layer. HS-9212 —
+ *  restore the HIDDEN entry's retained config (which carries any local override),
+ *  not the bare shared value, so a local customization survives hide → un-hide. */
 function reenableTerminal(id: string): void {
   if (terminals.some(t => termIdOf(t) === id)) return;
-  const sharedMatch = terminalsShared.find(s => termIdOf(s) === id);
-  if (sharedMatch === undefined) return;
-  terminals.push({ ...sharedMatch });
+  const hiddenIdx = terminalsHidden.findIndex(t => termIdOf(t) === id);
+  const restored = hiddenIdx >= 0 ? terminalsHidden[hiddenIdx] : terminalsShared.find(s => termIdOf(s) === id);
+  if (restored === undefined) return;
+  if (hiddenIdx >= 0) terminalsHidden.splice(hiddenIdx, 1);
+  terminals.push({ ...restored });
   renderList();
   void scheduleSave();
 }
@@ -225,6 +265,12 @@ async function handleDelete(index: number): Promise<void> {
   } catch { /* if the PTY was never spawned, destroy is a no-op server-side */ }
 
   terminals.splice(index, 1);
+  // HS-9212 — hiding a shared terminal moves it (with its current, possibly
+  // locally-customized config) into `terminalsHidden` so its override survives
+  // and a later re-enable restores it. A local-only terminal is truly deleted.
+  if (hidingShared && !terminalsHidden.some(t => termIdOf(t) === entry.id)) {
+    terminalsHidden.push({ ...entry });
+  }
   renderList();
   void scheduleSave();
 }
@@ -243,10 +289,10 @@ function renderList(): void {
   const addBtn = byIdOrNull('settings-terminals-add-btn');
   if (addBtn !== null) addBtn.style.display = '';
   // HS-9125 — in Local mode, shared terminals the local layer hides still get a
-  // disabled row with a Re-enable button so they can be restored.
-  const hiddenShared = terminalsMode === 'local'
-    ? terminalsShared.filter(s => !terminals.some(t => termIdOf(t) === termIdOf(s)))
-    : [];
+  // disabled row with a Re-enable button so they can be restored. HS-9212 — these
+  // come from `terminalsHidden` (which retains each hidden terminal's local
+  // override), not a fresh shared-minus-visible diff (which would drop overrides).
+  const hiddenShared = terminalsMode === 'local' ? terminalsHidden : [];
   if (terminals.length === 0 && hiddenShared.length === 0) {
     list.replaceChildren(...lead, toElement(<div className="settings-terminals-empty">No terminals configured.</div>));
     return;
@@ -720,7 +766,9 @@ function scheduleSave(): Promise<void> {
     saveTimeout = setTimeout(async () => {
       saveTimeout = null;
       // HS-9015 — Shared → write the array; Local → write the delta vs shared.
-      await saveScopedList('terminals', termIdOf, terminalsShared, terminals);
+      // HS-9212 — pass the locally-hidden shared terminals so their overrides are
+      // retained in the delta alongside their `hidden` flag.
+      await saveScopedList('terminals', termIdOf, terminalsShared, terminals, terminalsHidden);
       try {
         const mod = await import('./terminal.js');
         await mod.refreshTerminalsAfterSettingsChange();
