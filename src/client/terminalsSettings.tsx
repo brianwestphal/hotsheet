@@ -234,30 +234,36 @@ async function handleDelete(index: number): Promise<void> {
   // `hidden` delta), restorable via Re-enable.
   const hidingShared = terminalsMode === 'local' && termOrigin(entry) !== 'local';
 
-  // Reveal the target terminal in the drawer and get the settings dialog out
-  // of the way so the user can see what they're about to remove.
-  const settingsOverlay = byIdOrNull('settings-overlay');
-  const prevOverlayDisplay = settingsOverlay?.style.display ?? '';
-  if (settingsOverlay) settingsOverlay.style.display = 'none';
-  let restoreDrawer: (() => void) | null = null;
-  try {
-    const mod = await import('./commandLog.js');
-    restoreDrawer = mod.previewDrawerTab(`terminal:${entry.id}`);
-  } catch { /* drawer preview is best-effort */ }
+  // HS-9211 — hiding a shared terminal on this machine is non-destructive (a
+  // re-enable row appears immediately in the list right below) and the
+  // maintainer asked to skip the confirmation: "just do it right away, it's
+  // clear enough." Only the irreversible REMOVE of a local terminal still
+  // confirms (and reveals the target in the drawer so the user sees what they're
+  // about to lose).
+  if (!hidingShared) {
+    // Reveal the target terminal in the drawer and get the settings dialog out
+    // of the way so the user can see what they're about to remove.
+    const settingsOverlay = byIdOrNull('settings-overlay');
+    const prevOverlayDisplay = settingsOverlay?.style.display ?? '';
+    if (settingsOverlay) settingsOverlay.style.display = 'none';
+    let restoreDrawer: (() => void) | null = null;
+    try {
+      const mod = await import('./commandLog.js');
+      restoreDrawer = mod.previewDrawerTab(`terminal:${entry.id}`);
+    } catch { /* drawer preview is best-effort */ }
 
-  const confirmed = await confirmDialog({
-    title: hidingShared ? 'Hide Terminal?' : 'Remove Terminal?',
-    message: hidingShared
-      ? `Hide terminal "${displayName}" on this machine? It won't appear here — you can re-enable it later. Its running process (if any) will be stopped.`
-      : `Remove terminal "${displayName}"? Its running process (if any) will be stopped.`,
-    confirmLabel: hidingShared ? 'Hide' : 'Remove',
-    danger: true,
-  });
+    const confirmed = await confirmDialog({
+      title: 'Remove Terminal?',
+      message: `Remove terminal "${displayName}"? Its running process (if any) will be stopped.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
 
-  if (settingsOverlay) settingsOverlay.style.display = prevOverlayDisplay;
-  restoreDrawer?.();
+    if (settingsOverlay) settingsOverlay.style.display = prevOverlayDisplay;
+    restoreDrawer?.();
 
-  if (!confirmed) return;
+    if (!confirmed) return;
+  }
 
   // Stop the PTY cleanly so it doesn't linger as an orphan.
   try {

@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { updateFileSettingsLayer } from '../api/index.js';
+import { confirmDialog } from './confirm.js';
 import {
   _getTerminalsForTests,
   _resetTerminalsForTests,
@@ -88,6 +89,27 @@ describe('terminalsSettings — hide → un-hide preserves a local override (HS-
     // The row moved to the hidden section, still showing the custom name.
     expect(visibleRows().length).toBe(0);
     expect(hiddenRows()[0].querySelector('.cmd-outline-name')?.textContent).toBe('My Custom Name');
+    // HS-9211 — hiding a shared terminal is non-destructive + clearly reflected
+    // by the new hidden row, so it does NOT pop a confirmation dialog.
+    expect(vi.mocked(confirmDialog)).not.toHaveBeenCalled();
+  });
+
+  it('HS-9211 — removing a LOCAL terminal still confirms (irreversible delete)', async () => {
+    // A local-only terminal (no shared origin) — deleting it is a true removal,
+    // which keeps the confirmation prompt.
+    layered = {
+      shared: { terminals: JSON.stringify([]) },
+      local: { terminals: { added: [{ id: 'loc1', command: 'echo', name: 'Local Only' }] } },
+      resolved: { terminals: JSON.stringify([{ id: 'loc1', command: 'echo', name: 'Local Only' }]) },
+    };
+    await loadAndRenderTerminalsSettings();
+    expect(visibleRows().length).toBe(1);
+
+    visibleRows()[0].querySelector<HTMLButtonElement>('.cmd-outline-delete-btn')!.click();
+    await vi.waitFor(() => {
+      expect(vi.mocked(confirmDialog)).toHaveBeenCalled();
+    });
+    expect(vi.mocked(confirmDialog).mock.calls[0][0]).toMatchObject({ title: 'Remove Terminal?' });
   });
 
   it('loading an already hidden+overridden terminal renders the override in the hidden row', async () => {
