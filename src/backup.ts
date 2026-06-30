@@ -14,7 +14,7 @@ import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { fsyncDbDirAsync } from './db/fsyncWrap.js';
 import { createPglite } from './db/pglite.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
-import { instrumentAsync } from './diagnostics/freezeLogger.js';
+import { getRecentEventLoopLagMs, instrumentAsync, onServerWake } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
 import { _resetDefaultSchedulerForTests, getBackgroundScheduler, PRIORITY } from './scheduler/backgroundScheduler.js';
 
@@ -43,6 +43,9 @@ interface BackupState {
   /** HS-7929 — daily attachment-blob GC. Independent cadence; runs at
    *  startup once + every 24h while the process is alive. */
   attachmentGcInterval: ReturnType<typeof setInterval> | null;
+  /** HS-9224 — consecutive AUTOMATIC 5-min ticks skipped under backpressure.
+   *  Bounded by `MAX_CONSECUTIVE_FIVE_MIN_SKIPS` so the tier can't be starved. */
+  fiveMinConsecutiveSkips: number;
 }
 
 /** Per-project backup scheduler state. Each project gets its own timers.
@@ -59,6 +62,7 @@ function getOrCreateState(dataDir: string): BackupState {
       hourlyInterval: null,
       dailyInterval: null,
       attachmentGcInterval: null,
+      fiveMinConsecutiveSkips: 0,
     };
     backupStates.set(dataDir, state);
   }
@@ -476,6 +480,68 @@ export function jitteredFirstTickMs(intervalMs: number, rng: () => number = Math
   return Math.round(intervalMs * (0.5 + rng()));
 }
 
+// ---------------------------------------------------------------------------
+// HS-9224 — adaptive gating for the AUTOMATIC 5-min backup tick
+// ---------------------------------------------------------------------------
+//
+// The 5-min tier is the most frequent and least-urgent backup. Under acute
+// disk/CPU pressure (a post-reboot Spotlight reindex, a Time Machine pass) its
+// CHECKPOINT + fsync + manifest pass piled multi-second event-loop stalls onto
+// an already-saturated machine — the exact window a UI freeze was reported. We
+// SKIP a 5-min tick when the loop is sustained-laggy or we just resumed from a
+// system suspend, and reschedule for the next interval.
+//
+// Durability is preserved: the next tick retries, the un-gated hourly/daily
+// tiers are the backstop, and a hard cap forces a tick through after enough
+// skips so a pathologically-busy loop can't starve the 5-min tier forever. We
+// gate ONLY the automatic timer — manual backups, hourly, daily, and the
+// startup missed-backup catch-up run unconditionally — and we do NOT change the
+// scheduler's `deferUnderLag: false` (HS-8724 durability intent): once a tick is
+// admitted it still runs to completion.
+
+/** Skip a 5-min tick while event-loop lag is at/above this (ms). Set well above
+ *  the scheduler's 200 ms default so only genuinely bad lag skips a backup. */
+const FIVE_MIN_LAG_SKIP_THRESHOLD_MS = 300;
+/** Skip 5-min ticks for this long after a system wake (suspend/resume). Sized to
+ *  the acute post-resume jolt; a longer sustained reindex is covered by the lag
+ *  gate, which resumes the tier as soon as the loop calms. */
+const POST_WAKE_BACKUP_COOLDOWN_MS = 90_000;
+/** Hard cap: admit a 5-min tick after this many consecutive skips regardless of
+ *  pressure (~30 min at the 5-min cadence), so the tier is never starved. */
+const MAX_CONSECUTIVE_FIVE_MIN_SKIPS = 6;
+
+let lastWakeAt = Number.NEGATIVE_INFINITY;
+let backupWakeListenerRegistered = false;
+// Test seams — overridable clock + lag provider (default to the real ones).
+let backupNow: () => number = () => Date.now();
+let backupLagProvider: () => number = getRecentEventLoopLagMs;
+
+/** Register the system-wake listener once per process so a suspend/resume opens
+ *  the post-wake cooldown for every project's 5-min timer. */
+function ensureBackupWakeListener(): void {
+  if (backupWakeListenerRegistered) return;
+  backupWakeListenerRegistered = true;
+  onServerWake(() => { lastWakeAt = backupNow(); });
+}
+
+/** Whether the automatic 5-min tick should skip right now — within the post-wake
+ *  cooldown, or under sustained high event-loop lag. Pure given the injected
+ *  clock + lag provider. */
+export function shouldDeferFiveMinBackup(): boolean {
+  if (backupNow() - lastWakeAt < POST_WAKE_BACKUP_COOLDOWN_MS) return true;
+  if (backupLagProvider() >= FIVE_MIN_LAG_SKIP_THRESHOLD_MS) return true;
+  return false;
+}
+
+/** Test-only — override the clock / lag provider / last-wake time and reset the
+ *  wake-listener guard so each case starts from a clean slate. */
+export function _setFiveMinBackupGateForTests(opts: { now?: () => number; lag?: () => number; lastWakeAt?: number } = {}): void {
+  backupNow = opts.now ?? (() => Date.now());
+  backupLagProvider = opts.lag ?? getRecentEventLoopLagMs;
+  lastWakeAt = opts.lastWakeAt ?? Number.NEGATIVE_INFINITY;
+  backupWakeListenerRegistered = false;
+}
+
 function scheduleFiveMinBackup(dataDir: string, options: { jitter?: boolean; rng?: () => number } = {}): void {
   const state = getOrCreateState(dataDir);
   if (state.fiveMinTimer) clearTimeout(state.fiveMinTimer);
@@ -483,6 +549,16 @@ function scheduleFiveMinBackup(dataDir: string, options: { jitter?: boolean; rng
     ? jitteredFirstTickMs(TIERS['5min'].intervalMs, options.rng)
     : TIERS['5min'].intervalMs;
   state.fiveMinTimer = setTimeout(() => {
+    // HS-9224 — skip this automatic tick under post-wake / sustained-lag
+    // pressure (unless we've hit the durability cap). A skip just reschedules
+    // the next tick; it never enters `createBackup`, so `backupInProgress` and
+    // the hourly/daily tiers are untouched.
+    if (shouldDeferFiveMinBackup() && state.fiveMinConsecutiveSkips < MAX_CONSECUTIVE_FIVE_MIN_SKIPS) {
+      state.fiveMinConsecutiveSkips++;
+      scheduleFiveMinBackup(dataDir);
+      return;
+    }
+    state.fiveMinConsecutiveSkips = 0;
     void createBackup(dataDir, '5min').then(() => scheduleFiveMinBackup(dataDir));
   }, delayMs);
 }
@@ -503,6 +579,10 @@ export function getBackupTimers(dataDir: string): { fiveMin: ReturnType<typeof s
 
 export function initBackupScheduler(dataDir: string): void {
   const state = getOrCreateState(dataDir);
+
+  // HS-9224 — open the post-wake cooldown for the 5-min gate on suspend/resume.
+  // Idempotent (registered once per process); safe to call per project.
+  ensureBackupWakeListener();
 
   // Clean up any leftover preview directory from a crash
   const previewDir = join(backupsDir(dataDir), '_preview');

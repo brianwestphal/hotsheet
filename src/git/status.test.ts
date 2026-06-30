@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, parsePendingCommits } from './status.js';
+import { bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, parsePendingCommits, parseStatusV2 } from './status.js';
 
 const US = '\x1f';
 const RS = '\x1e';
@@ -169,12 +169,18 @@ describe('untracked-files=all (HS-8895)', () => {
     };
   }
 
-  it('getGitStatus passes --untracked-files=all on the dirty-count invocation', async () => {
+  it('getGitStatus passes --untracked-files=all on its single v2 invocation (HS-9224)', async () => {
     const calls: string[][] = [];
     await getGitStatus(process.cwd(), recordingInvoker(calls));
-    const statusCall = calls.find(a => a.includes('status') && a.includes('--porcelain=v1'));
-    expect(statusCall).toBeDefined();
+    // HS-9224 — the 5-call chain collapsed to ONE `status --porcelain=v2 --branch`.
+    const statusCalls = calls.filter(a => a.includes('status'));
+    expect(statusCalls).toHaveLength(1);
+    const statusCall = statusCalls[0];
+    expect(statusCall).toContain('--porcelain=v2');
+    expect(statusCall).toContain('--branch');
     expect(statusCall).toContain('--untracked-files=all');
+    // No more symbolic-ref / rev-parse / rev-list sub-spawns.
+    expect(calls.some(a => a[0] === 'symbolic-ref' || a[0] === 'rev-list' || a[0] === 'rev-parse')).toBe(false);
   });
 
   it('getGitStatusFiles passes --untracked-files=all so new directories expand', async () => {
@@ -183,5 +189,99 @@ describe('untracked-files=all (HS-8895)', () => {
     const statusCall = calls.find(a => a.includes('status') && a.includes('--porcelain=v1'));
     expect(statusCall).toBeDefined();
     expect(statusCall).toContain('--untracked-files=all');
+  });
+});
+
+describe('parseStatusV2 (HS-9224)', () => {
+  it('parses a clean tree on a branch with an in-sync upstream', () => {
+    const out = [
+      '# branch.oid 1111111111111111111111111111111111111111',
+      '# branch.head main',
+      '# branch.upstream origin/main',
+      '# branch.ab +0 -0',
+    ].join('\n') + '\n';
+    expect(parseStatusV2(out)).toEqual({
+      branch: 'main', detached: false, upstream: 'origin/main',
+      ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0,
+    });
+  });
+
+  it('counts staged / unstaged / partially-staged via the v2 XY field (`.` = unchanged)', () => {
+    const out = [
+      '# branch.head main',
+      '1 A. N... 000000 100644 100644 aaa bbb staged.txt',   // X=A staged only
+      '1 .M N... 100644 100644 100644 ccc ccc unstaged.txt', // Y=M unstaged only
+      '1 MM N... 100644 100644 100644 ddd eee both.txt',     // X=M,Y=M both
+    ].join('\n') + '\n';
+    const r = parseStatusV2(out);
+    expect(r.staged).toBe(2);   // staged.txt + both.txt
+    expect(r.unstaged).toBe(2); // unstaged.txt + both.txt
+  });
+
+  it('counts untracked (`?`) and skips ignored (`!`)', () => {
+    const out = ['# branch.head main', '? new.txt', '? other.txt', '! ignored.txt'].join('\n') + '\n';
+    const r = parseStatusV2(out);
+    expect(r.untracked).toBe(2);
+  });
+
+  it('counts unmerged (`u`) lines as conflicted', () => {
+    const out = [
+      '# branch.head main',
+      'u UU N... 100644 100644 100644 100644 a b c d conflict.txt',
+    ].join('\n') + '\n';
+    expect(parseStatusV2(out).conflicted).toBe(1);
+  });
+
+  it('reads ahead / behind from branch.ab', () => {
+    const out = ['# branch.head main', '# branch.upstream origin/main', '# branch.ab +2 -3'].join('\n') + '\n';
+    const r = parseStatusV2(out);
+    expect(r.ahead).toBe(2);
+    expect(r.behind).toBe(3);
+  });
+
+  it('leaves upstream null + ahead/behind 0 when no upstream is configured', () => {
+    const out = ['# branch.oid 2222222222222222222222222222222222222222', '# branch.head feature'].join('\n') + '\n';
+    const r = parseStatusV2(out);
+    expect(r.upstream).toBeNull();
+    expect(r.ahead).toBe(0);
+    expect(r.behind).toBe(0);
+    expect(r.branch).toBe('feature');
+    expect(r.detached).toBe(false);
+  });
+
+  it('reports detached HEAD as the short oid', () => {
+    const out = ['# branch.oid deadbeefcafe0000000000000000000000000000', '# branch.head (detached)'].join('\n') + '\n';
+    const r = parseStatusV2(out);
+    expect(r.detached).toBe(true);
+    expect(r.branch).toBe('deadbee'); // first 7 chars of the oid
+  });
+
+  it('falls back to (detached) when the oid is (initial)', () => {
+    const out = ['# branch.oid (initial)', '# branch.head (detached)'].join('\n') + '\n';
+    expect(parseStatusV2(out).branch).toBe('(detached)');
+  });
+
+  it('handles a real-world mix in one pass', () => {
+    const out = [
+      '# branch.oid 3333333333333333333333333333333333333333',
+      '# branch.head main',
+      '# branch.upstream origin/main',
+      '# branch.ab +1 -0',
+      '1 M. N... 100644 100644 100644 a b indexed.ts',
+      '1 .D N... 100644 100644 000000 c c removed.ts',
+      'u UU N... 100644 100644 100644 100644 a b c d merge.ts',
+      '? scratch.tmp',
+    ].join('\n') + '\n';
+    expect(parseStatusV2(out)).toEqual({
+      branch: 'main', detached: false, upstream: 'origin/main',
+      ahead: 1, behind: 0, staged: 1, unstaged: 1, untracked: 1, conflicted: 1,
+    });
+  });
+
+  it('returns safe defaults for empty output', () => {
+    expect(parseStatusV2('')).toEqual({
+      branch: '', detached: false, upstream: null,
+      ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0,
+    });
   });
 });

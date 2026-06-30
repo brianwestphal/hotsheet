@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { _resetActiveProjectsForTests } from '../activeProjects.js';
 import {
   _resetGitStatusCacheForTests,
+  _setRecursiveWatchForTests,
   disposeAllGitWatchers,
   dropGitStatusCache,
   ensureGitWatcher,
@@ -33,6 +34,10 @@ describe('working-tree poll — real git repo (HS-9111)', () => {
   beforeEach(() => {
     _resetGitStatusCacheForTests();
     _resetActiveProjectsForTests(); // empty ⇒ isProjectActive defaults true (project is "foreground")
+    // HS-9224 — this suite drives the deterministic POLL path; pin the recursive
+    // working-tree watch OFF (its real-FSEvents timing is too flaky to assert on,
+    // and the mocked `watcher.test.ts` suite covers its logic).
+    _setRecursiveWatchForTests(false);
     disposeAllGitWatchers();
     repo = mkdtempSync(join(tmpdir(), 'hs-wtpoll-'));
     git(repo, ['init', '-q']);
@@ -45,6 +50,7 @@ describe('working-tree poll — real git repo (HS-9111)', () => {
 
   afterEach(() => {
     disposeAllGitWatchers();
+    _setRecursiveWatchForTests(null); // HS-9224 — restore platform detection
     rmSync(repo, { recursive: true, force: true });
   });
 

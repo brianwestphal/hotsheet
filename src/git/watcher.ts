@@ -1,4 +1,4 @@
-import { existsSync, type FSWatcher, watch as fsWatch } from 'fs';
+import { existsSync, type FSWatcher, readFileSync, watch as fsWatch } from 'fs';
 import { join } from 'path';
 
 import { isProjectActive } from '../activeProjects.js';
@@ -109,16 +109,34 @@ export function dropGitStatusCache(projectRoot: string): void {
 // ---------------------------------------------------------------------------
 
 interface WatcherEntry {
-  /** The two `fs.watch` handles for `.git/index` and `.git/HEAD`. */
+  /** The `fs.watch` handles: the `.git` directory watch, plus (on
+   *  recursive-capable platforms — see `recursive`) the working-tree watch. */
   watchers: FSWatcher[];
   /** Per-project monotonic counter — bumped on every detected change. */
   version: number;
-  /** HS-7972 — pending debounce timer. macOS `fs.watch` fires multiple times
+  /** HS-7972 — pending debounce timer for the `.git`-directory watch
+   *  (stage / commit / branch-switch). macOS `fs.watch` fires multiple times
    *  for a single git operation (and occasionally spuriously when the
    *  channel server is busy); without this debounce a burst can trigger 10+
    *  `/api/poll` wakes per second, causing visible UI thrash (project tabs
    *  + ticket list + detail panel re-render every 100 ms). */
   debounce: NodeJS.Timeout | null;
+  /** HS-9224 — pending debounce timer for the recursive working-tree watch
+   *  (a tracked-file edit / new untracked file). Separate from `debounce` so a
+   *  `.git` event and a working-tree event don't cancel each other and so each
+   *  path keeps its own notify semantics (unconditional vs signature-gated). */
+  wtDebounce: NodeJS.Timeout | null;
+  /** HS-9224 — true when a recursive working-tree watch is live for this
+   *  project (macOS / Windows). When true the low-frequency poll SKIPS this
+   *  project (the watch covers working-tree edits event-driven, so the common
+   *  "nothing changed" case costs zero `git status` runs). Flipped back to
+   *  false if the recursive watch later errors, so the poll resumes covering it. */
+  recursive: boolean;
+  /** HS-9224 — extra ignored top-level directory names parsed from the repo's
+   *  `.gitignore`, unioned with `ALWAYS_IGNORED_SEGMENTS`. Filters recursive
+   *  working-tree events so `node_modules` / build-output / `.hotsheet` churn
+   *  doesn't trigger a `git status` run (git ignores them anyway). */
+  extraIgnored: Set<string>;
 }
 
 /** HS-7972 — coalesce burst fs.watch events into a single notification.
@@ -128,6 +146,72 @@ const WATCHER_DEBOUNCE_MS = 250;
 
 const watchers = new Map<string, WatcherEntry>();
 const subscribers = new Set<(projectRoot: string) => void>();
+
+// ---------------------------------------------------------------------------
+// HS-9224 — event-driven working-tree watch (replaces the 4s poll where supported)
+// ---------------------------------------------------------------------------
+//
+// `fs.watch(root, { recursive: true })` is supported natively on macOS
+// (FSEvents) and Windows (ReadDirectoryChangesW) but NOT on Linux (throws
+// `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`). Where it's available we watch the
+// repo working tree and run `git status` ONLY when a non-ignored path changes —
+// so an idle repo costs zero status runs, instead of one 5-spawn chain every
+// `WORKING_TREE_POLL_MS`. On Linux (or if the recursive watch fails to attach)
+// we fall back to the low-frequency poll below — unchanged behavior.
+
+/** Top-level directory names whose churn must NEVER trigger a working-tree
+ *  `git status`: `.git` (handled by the dedicated `.git` watcher), `.hotsheet`
+ *  (Hot Sheet's own data dir — constant PGLite WAL writes; self-trigger guard),
+ *  and `node_modules` (huge, gitignored). Project-specific gitignored dirs are
+ *  added per-repo from `.gitignore` (`readGitignoreDirs`). */
+const ALWAYS_IGNORED_SEGMENTS = new Set(['.git', '.hotsheet', 'node_modules']);
+
+/** True when `fs.watch` supports `{ recursive: true }` on this platform. A test
+ *  seam (`_setRecursiveWatchForTests`) overrides this so the pure-state-machine
+ *  unit suite can pin either the recursive path or the poll fallback. */
+function supportsRecursiveWatch(): boolean {
+  return process.platform === 'darwin' || process.platform === 'win32';
+}
+let recursiveWatchOverride: boolean | null = null;
+function recursiveWatchActive(): boolean {
+  return recursiveWatchOverride ?? supportsRecursiveWatch();
+}
+/** Test-only — force the recursive working-tree watch on (`true`) / off
+ *  (`false`), or restore platform detection (`null`). */
+export function _setRecursiveWatchForTests(value: boolean | null): void {
+  recursiveWatchOverride = value;
+}
+
+/** Pure: should a recursive working-tree event for `relPath` (relative to the
+ *  repo root, OS-separated) be ignored? True if ANY path segment is a known
+ *  ignored / gitignored directory. Exported for unit testing. */
+export function isIgnoredWorkingTreePath(relPath: string, extraIgnored: Set<string>): boolean {
+  for (const seg of relPath.split(/[\\/]/)) {
+    if (seg === '' || seg === '.') continue;
+    if (ALWAYS_IGNORED_SEGMENTS.has(seg) || extraIgnored.has(seg)) return true;
+  }
+  return false;
+}
+
+/** Best-effort parse of a repo's top-level `.gitignore` into the set of simple
+ *  directory names to ignore (no nested slash, no glob, negations skipped). An
+ *  imperfect match is safe: an over-broad ignore only risks missing a working-
+ *  tree event git itself would also ignore; anything we let through just costs
+ *  one debounced (and signature-gated) status run. Missing file ⇒ empty set. */
+function readGitignoreDirs(gitRoot: string): Set<string> {
+  const dirs = new Set<string>();
+  try {
+    const content = readFileSync(join(gitRoot, '.gitignore'), 'utf8');
+    for (const raw of content.split('\n')) {
+      const line = raw.trim();
+      if (line === '' || line.startsWith('#') || line.startsWith('!')) continue;
+      const name = line.replace(/\/+$/, ''); // strip a trailing slash
+      if (name === '' || name.includes('/') || /[*?[\]]/.test(name)) continue;
+      dirs.add(name);
+    }
+  } catch { /* no .gitignore — nothing to add */ }
+  return dirs;
+}
 
 // ---------------------------------------------------------------------------
 // HS-9111 — foreground working-tree poll (docs/48 §48.3.3)
@@ -171,34 +255,63 @@ function gitStatusSignature(status: GitStatus | null): string {
 }
 
 /**
- * One working-tree poll pass: for each foreground project, read git status and
- * bump the version + fan out to subscribers when its signature changed since the
- * last observation. The first observation of a project only establishes the
- * baseline (the chip already shows current state from its own fetch / the
- * project-switch refetch), so we never fire spuriously on startup.
+ * Read one project's working-tree git status and, when its signature changed
+ * since the last observation, bump the version + fan out to subscribers.
+ * Foreground-scoped (HS-8725): a background project the user isn't looking at
+ * refreshes lazily on switch, so it costs no `git status` here. The first
+ * observation only establishes the baseline (the chip already shows current
+ * state from its own fetch / the project-switch refetch), so we never fire
+ * spuriously. Shared by the recursive watch (event-driven, HS-9224) and the
+ * poll fallback below.
+ */
+async function checkWorkingTreeAndNotify(root: string): Promise<void> {
+  // Foreground-scoped (HS-8725 parity). Returns BEFORE advancing the baseline
+  // so the first foreground edit after a switch is still detected.
+  if (!isProjectActive(join(root, '.hotsheet'))) return;
+  let status: GitStatus | null;
+  try {
+    status = await getCachedGitStatus(root);
+  } catch {
+    return;
+  }
+  const sig = gitStatusSignature(status);
+  const prev = lastSig.get(root);
+  lastSig.set(root, sig);
+  if (prev === undefined || prev === sig) return; // baseline or unchanged
+  const entry = watchers.get(root);
+  if (entry === undefined) return;
+  entry.version++;
+  for (const sub of subscribers) {
+    try { sub(root); } catch { /* swallow */ }
+  }
+}
+
+/** HS-9224 — debounced working-tree check fired by the recursive watch. Mirrors
+ *  the `.git` watch's `WATCHER_DEBOUNCE_MS` coalescing so a burst of file events
+ *  (a save touches several paths; a branch checkout rewrites many files)
+ *  collapses to one signature-gated status run. */
+function scheduleWorkingTreeCheck(projectRoot: string): void {
+  const entry = watchers.get(projectRoot);
+  if (entry === undefined) return;
+  if (entry.wtDebounce !== null) clearTimeout(entry.wtDebounce);
+  entry.wtDebounce = setTimeout(() => {
+    const e2 = watchers.get(projectRoot);
+    if (e2 === undefined) return;
+    e2.wtDebounce = null;
+    void checkWorkingTreeAndNotify(projectRoot);
+  }, WATCHER_DEBOUNCE_MS);
+}
+
+/**
+ * One working-tree poll pass (the Linux / unsupported-platform fallback for the
+ * recursive watch). Checks every watched project that ISN'T covered by a live
+ * recursive watch — those are event-driven and don't need polling.
  */
 export async function pollWorkingTreesOnce(): Promise<void> {
   for (const root of [...watchers.keys()]) {
-    // Foreground-scoped (HS-8725 parity): a background project the user isn't
-    // looking at refreshes lazily on switch, so N open projects don't fan out
-    // O(N) `git status` runs every tick.
-    if (!isProjectActive(join(root, '.hotsheet'))) continue;
-    let status: GitStatus | null;
-    try {
-      status = await getCachedGitStatus(root);
-    } catch {
-      continue;
-    }
-    const sig = gitStatusSignature(status);
-    const prev = lastSig.get(root);
-    lastSig.set(root, sig);
-    if (prev === undefined || prev === sig) continue; // baseline or unchanged
     const entry = watchers.get(root);
-    if (entry === undefined) continue;
-    entry.version++;
-    for (const sub of subscribers) {
-      try { sub(root); } catch { /* swallow */ }
-    }
+    if (entry !== undefined && entry.recursive) continue; // recursive watch covers it
+    await checkWorkingTreeAndNotify(root);
   }
 }
 
@@ -310,9 +423,39 @@ export function ensureGitWatcher(projectRoot: string): void {
     // fs.watch isn't supported on every filesystem (e.g. some FUSE
     // mounts). Degraded mode — focus-refetch on the client still works.
   }
-  watchers.set(projectRoot, { watchers: handles, version: 0, debounce: null });
-  // HS-9111 — drive the low-frequency working-tree poll (even if fs.watch above
-  // failed, the poll still catches working-tree + index changes on its cadence).
+
+  // HS-9224 — on recursive-capable platforms (macOS / Windows), watch the repo
+  // working tree so a tracked-file edit / new untracked file refreshes the chip
+  // event-driven, and the idle case costs zero `git status`. The events under
+  // `.git` are filtered out here (the dedicated `.git` watch above handles
+  // index / HEAD); `node_modules` / build-output / `.hotsheet` churn is filtered
+  // too. Linux (and any attach failure) falls through to the poll below.
+  const extraIgnored = readGitignoreDirs(gitRoot);
+  let recursive = false;
+  if (recursiveWatchActive()) {
+    try {
+      const wtHandle = fsWatch(gitRoot, { recursive: true }, (_event, filename) => {
+        if (filename !== null && isIgnoredWorkingTreePath(filename, extraIgnored)) return;
+        scheduleWorkingTreeCheck(projectRoot);
+      });
+      // On a recursive-watch error (EMFILE, tree removed), drop back to the poll
+      // for this project so the chip still refreshes on its cadence.
+      wtHandle.on('error', () => {
+        const e = watchers.get(projectRoot);
+        if (e !== undefined) e.recursive = false;
+      });
+      handles.push(wtHandle);
+      recursive = true;
+    } catch {
+      // Recursive watch unsupported here after all — the poll fallback covers it.
+      recursive = false;
+    }
+  }
+
+  watchers.set(projectRoot, { watchers: handles, version: 0, debounce: null, wtDebounce: null, recursive, extraIgnored });
+  // HS-9111 — drive the low-frequency working-tree poll. It skips any project
+  // covered by a live recursive watch (HS-9224) and catches the rest (Linux /
+  // attach-failure) on its cadence — even if the `.git` fs.watch above failed.
   ensureWorkingTreePoller();
 }
 
@@ -325,6 +468,7 @@ export function disposeGitWatcher(projectRoot: string): void {
       try { handle.close(); } catch { /* ignore */ }
     }
     if (entry.debounce !== null) clearTimeout(entry.debounce);
+    if (entry.wtDebounce !== null) clearTimeout(entry.wtDebounce); // HS-9224
     watchers.delete(projectRoot);
   }
   cache.delete(projectRoot);

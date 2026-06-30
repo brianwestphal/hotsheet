@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'zlib';
 
 import {
@@ -10,7 +10,7 @@ import {
   manifestSiblingFilename,
   readManifest,
 } from './attachmentBackup.js';
-import { _resetGlobalBackupLockForTesting, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
+import { _resetGlobalBackupLockForTesting, _setFiveMinBackupGateForTests, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, shouldDeferFiveMinBackup, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
 import { addAttachment } from './db/attachments.js';
 import { getDb, SCHEMA_VERSION } from './db/connection.js';
 import { createPglite } from './db/pglite.js';
@@ -422,4 +422,35 @@ describe('createBackup global lock (HS-8229)', () => {
     // the round-trip + manifest tests above. (HS-8720)
     await a.catch(() => null);
   }, 120_000);
+});
+
+describe('shouldDeferFiveMinBackup — automatic-tick gate (HS-9224)', () => {
+  afterEach(() => { _setFiveMinBackupGateForTests(); }); // restore real clock + lag provider
+
+  it('does NOT defer when the loop is calm and there was no recent wake', () => {
+    _setFiveMinBackupGateForTests({ now: () => 1_000_000, lag: () => 10, lastWakeAt: Number.NEGATIVE_INFINITY });
+    expect(shouldDeferFiveMinBackup()).toBe(false);
+  });
+
+  it('defers while inside the post-wake cooldown window', () => {
+    // Woke 30s ago — inside the 90s cooldown.
+    _setFiveMinBackupGateForTests({ now: () => 1_000_000, lag: () => 0, lastWakeAt: 1_000_000 - 30_000 });
+    expect(shouldDeferFiveMinBackup()).toBe(true);
+  });
+
+  it('stops deferring once the post-wake cooldown has elapsed', () => {
+    // Woke 2 min ago — past the 90s cooldown, and lag is low.
+    _setFiveMinBackupGateForTests({ now: () => 1_000_000, lag: () => 0, lastWakeAt: 1_000_000 - 120_000 });
+    expect(shouldDeferFiveMinBackup()).toBe(false);
+  });
+
+  it('defers under sustained high event-loop lag (≥300ms), independent of wake', () => {
+    _setFiveMinBackupGateForTests({ now: () => 1_000_000, lag: () => 350, lastWakeAt: Number.NEGATIVE_INFINITY });
+    expect(shouldDeferFiveMinBackup()).toBe(true);
+  });
+
+  it('does NOT defer under mild lag below the threshold', () => {
+    _setFiveMinBackupGateForTests({ now: () => 1_000_000, lag: () => 250, lastWakeAt: Number.NEGATIVE_INFINITY });
+    expect(shouldDeferFiveMinBackup()).toBe(false);
+  });
 });

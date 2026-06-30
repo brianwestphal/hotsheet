@@ -16,6 +16,8 @@ The application runs a three-tier automatic backup system:
 - Stored in `.hotsheet/backups/{tier}/` by default, or in a custom directory specified via the `backupDir` file-based setting.
 - Pruning uses both count-based (maxCount) and time-based (maxAge) criteria: backups that exceed the retention count OR are older than the tier's maximum age are deleted.
 
+> **HS-9224 — the automatic 5-minute tier is backpressure-gated (load resilience).** The 5-minute backup is the most frequent and least-urgent tier; its CHECKPOINT + fsync + attachment-manifest pass piles multi-second event-loop work onto the machine each cycle. When the loop is already under acute disk/CPU pressure — within a post-system-wake cooldown (`onServerWake`, e.g. the disk-saturating Spotlight reindex right after a reboot) or under sustained event-loop lag (`getRecentEventLoopLagMs ≥ 300 ms`) — the **automatic** 5-minute tick is **skipped and rescheduled** rather than run (`shouldDeferFiveMinBackup`). Durability is preserved: the next tick retries, the un-gated **hourly/daily** tiers and **manual** "Backup Now" always run, and a hard cap (`MAX_CONSECUTIVE_FIVE_MIN_SKIPS = 6`, ~30 min) forces a tick through so the tier is never starved. This gate does **not** change the scheduler's `deferUnderLag: false` (HS-8724) — once a tick is admitted it still runs to completion.
+
 ### 7.2 Manual Backup
 
 - A "Backup Now" button in the settings dialog triggers an immediate 5-minute tier backup.

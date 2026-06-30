@@ -14,12 +14,14 @@ import { _resetActiveProjectsForTests, markProjectActive } from '../activeProjec
 import { _resetDefaultSchedulerForTests } from '../scheduler/backgroundScheduler.js';
 import {
   _resetGitStatusCacheForTests,
+  _setRecursiveWatchForTests,
   disposeAllGitWatchers,
   disposeGitWatcher,
   dropGitStatusCache,
   ensureGitWatcher,
   getCachedGitStatus,
   getGitChangeVersion,
+  isIgnoredWorkingTreePath,
   pollWorkingTreesOnce,
   subscribeToGitChanges,
 } from './watcher.js';
@@ -54,13 +56,27 @@ vi.mock('../gitignore.js', () => ({
 
 vi.mock('fs', () => ({
   existsSync: (p: string): boolean => mockExistsSync(p),
-  watch: (p: string, cb: (event: string, filename: string | null) => void): { close: () => void; on: () => void } => ({ on: noopOn, ...mockFsWatch(p, cb) }),
+  // HS-9224 — `fs.watch` is called two ways now: the `.git` watch as `(path, cb)`
+  // and the recursive working-tree watch as `(path, { recursive: true }, cb)`.
+  // Extract the listener from whichever position it's in.
+  watch: (p: string, optsOrCb: unknown, maybeCb?: unknown): { close: () => void; on: () => void } => {
+    const cb = (typeof optsOrCb === 'function' ? optsOrCb : maybeCb) as (event: string, filename: string | null) => void;
+    return { on: noopOn, ...mockFsWatch(p, cb) };
+  },
+  // HS-9224 — `readGitignoreDirs` reads `<gitRoot>/.gitignore`; default to "no
+  // gitignore" so tests don't depend on a real file.
+  readFileSync: (): string => '',
 }));
 
 beforeEach(() => {
   _resetGitStatusCacheForTests();
   _resetDefaultSchedulerForTests(); // HS-8724 — isolate the global scheduler the watcher's pre-warm submits to
   _resetActiveProjectsForTests(); // HS-8725 — empty ⇒ isProjectActive defaults true, so existing assertions hold
+  // HS-9224 — pin the POLL-fallback path (recursive working-tree watch OFF) for
+  // this suite, so the `.git`-watch + poll assertions are platform-independent
+  // (these tests run the single-`fs.watch` design). The recursive path has its
+  // own suite below.
+  _setRecursiveWatchForTests(false);
   disposeAllGitWatchers();
   mockGetGitStatus.mockReset();
   mockIsGitRepo.mockReset();
@@ -72,6 +88,7 @@ beforeEach(() => {
 afterEach(() => {
   _resetGitStatusCacheForTests();
   disposeAllGitWatchers();
+  _setRecursiveWatchForTests(null); // HS-9224 — restore platform detection
   vi.useRealTimers();
 });
 
@@ -450,6 +467,117 @@ describe('working-tree poll (HS-9111)', () => {
     mockGetGitStatus.mockResolvedValue(full({ untracked: 1 }));
     await pollWorkingTreesOnce();
     expect(getGitChangeVersion('/tmp/proj')).toBe(1);
+  });
+});
+
+// HS-9224 — the recursive working-tree watch (macOS / Windows). When active it
+// replaces the 4s poll: a non-ignored file event runs a signature-gated status
+// check, and the idle case costs zero `git status`. Linux falls back to the
+// poll (the suite above).
+describe('isIgnoredWorkingTreePath (HS-9224)', () => {
+  const none = new Set<string>();
+  it('ignores .git / .hotsheet / node_modules churn at any depth', () => {
+    expect(isIgnoredWorkingTreePath('.git/index', none)).toBe(true);
+    expect(isIgnoredWorkingTreePath('.hotsheet/freeze.log', none)).toBe(true);
+    expect(isIgnoredWorkingTreePath('node_modules/foo/bar.js', none)).toBe(true);
+    expect(isIgnoredWorkingTreePath('src/node_modules/x', none)).toBe(true); // nested too
+  });
+  it('does NOT ignore an ordinary source edit', () => {
+    expect(isIgnoredWorkingTreePath('src/client/app.tsx', none)).toBe(false);
+    expect(isIgnoredWorkingTreePath('README.md', none)).toBe(false);
+  });
+  it('honors per-repo extra ignored dirs (from .gitignore)', () => {
+    const extra = new Set(['dist', 'coverage']);
+    expect(isIgnoredWorkingTreePath('dist/cli.js', extra)).toBe(true);
+    expect(isIgnoredWorkingTreePath('coverage/lcov.info', extra)).toBe(true);
+    expect(isIgnoredWorkingTreePath('src/index.ts', extra)).toBe(false);
+  });
+});
+
+describe('recursive working-tree watch (HS-9224)', () => {
+  /** Arrange a recursive-enabled watcher and return getters for both callbacks:
+   *  the `.git`-dir watch cb and the recursive working-tree watch cb (keyed by
+   *  the watched path — `.git` dir vs the repo root). */
+  function arrangeRecursive(root = '/tmp/proj') {
+    _setRecursiveWatchForTests(true);
+    mockIsGitRepo.mockReturnValue(true);
+    mockGetGitRoot.mockReturnValue(root);
+    mockExistsSync.mockReturnValue(true);
+    const cbs = new Map<string, (event: string, filename: string | null) => void>();
+    mockFsWatch.mockImplementation((p, cb) => { cbs.set(p, cb); return { close: vi.fn() }; });
+    ensureGitWatcher(root);
+    return {
+      gitCb: () => cbs.get(join(root, '.git'))!,
+      wtCb: () => cbs.get(root)!,
+    };
+  }
+
+  it('attaches BOTH a .git-dir watch and a recursive working-tree watch', () => {
+    arrangeRecursive();
+    expect(mockFsWatch).toHaveBeenCalledTimes(2);
+    const paths = mockFsWatch.mock.calls.map(c => c[0]);
+    expect(paths).toContain(join('/tmp/proj', '.git'));
+    expect(paths).toContain('/tmp/proj');
+  });
+
+  it('a non-ignored working-tree edit runs a signature-gated check + fans out', async () => {
+    vi.useFakeTimers();
+    const { wtCb } = arrangeRecursive();
+    const heard: string[] = [];
+    const unsub = subscribeToGitChanges((root) => { heard.push(root); });
+
+    // Baseline (clean tree).
+    mockGetGitStatus.mockResolvedValue({ branch: 'main', detached: false, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 });
+    wtCb()('change', 'src/app.ts');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0); // first observation = baseline only
+    expect(heard).toEqual([]);
+
+    // A real edit moves the signature → notify.
+    dropGitStatusCache('/tmp/proj');
+    mockGetGitStatus.mockResolvedValue({ branch: 'main', detached: false, ahead: 0, behind: 0, staged: 0, unstaged: 1, untracked: 0, conflicted: 0 });
+    wtCb()('change', 'src/app.ts');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(getGitChangeVersion('/tmp/proj')).toBe(1);
+    expect(heard).toEqual(['/tmp/proj']);
+    unsub();
+  });
+
+  it('ignores node_modules / .git / .hotsheet events (no status run)', async () => {
+    vi.useFakeTimers();
+    const { wtCb } = arrangeRecursive();
+    mockGetGitStatus.mockResolvedValue({ branch: 'main', detached: false, ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0 });
+    wtCb()('change', 'node_modules/foo/index.js');
+    wtCb()('change', '.git/index');
+    wtCb()('change', '.hotsheet/freeze.log');
+    await vi.advanceTimersByTimeAsync(300);
+    // No working-tree check scheduled at all → getGitStatus never called.
+    expect(mockGetGitStatus).not.toHaveBeenCalled();
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0);
+  });
+
+  it('the poll SKIPS a project covered by a live recursive watch', async () => {
+    arrangeRecursive();
+    // Even with a signature change available, the poll must not run a status for
+    // a recursive-covered project (the watch is event-driven).
+    mockGetGitStatus.mockResolvedValue({ branch: 'main', detached: false, ahead: 0, behind: 0, staged: 0, unstaged: 9, untracked: 0, conflicted: 0 });
+    await pollWorkingTreesOnce();
+    expect(mockGetGitStatus).not.toHaveBeenCalled();
+    expect(getGitChangeVersion('/tmp/proj')).toBe(0);
+  });
+
+  it('closes BOTH handles on dispose', () => {
+    _setRecursiveWatchForTests(true);
+    mockIsGitRepo.mockReturnValue(true);
+    mockGetGitRoot.mockReturnValue('/tmp/proj');
+    mockExistsSync.mockReturnValue(true);
+    const closes: ReturnType<typeof vi.fn>[] = [];
+    mockFsWatch.mockImplementation(() => { const close = vi.fn(); closes.push(close); return { close }; });
+    ensureGitWatcher('/tmp/proj');
+    expect(closes).toHaveLength(2);
+    disposeGitWatcher('/tmp/proj');
+    expect(closes[0]).toHaveBeenCalledTimes(1);
+    expect(closes[1]).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -130,61 +130,38 @@ export async function getGitStatus(projectRoot: string, invoker: GitInvoker = de
 async function getGitStatusUnwrapped(projectRoot: string, invoker: GitInvoker): Promise<GitStatus | null> {
   const root = getGitRoot(projectRoot) ?? projectRoot;
 
-  const branchRes = await invoker(['symbolic-ref', '--short', 'HEAD'], root);
-  let branch: string;
-  let detached = false;
-  if (branchRes.status === 0 && branchRes.stdout.trim() !== '') {
-    branch = branchRes.stdout.trim();
-  } else {
-    // Detached HEAD — use the short SHA. If even that fails (corrupt repo),
-    // fall back to a literal '(detached)' so the chip still renders.
-    detached = true;
-    const sha = await invoker(['rev-parse', '--short', 'HEAD'], root);
-    branch = sha.status === 0 && sha.stdout.trim() !== '' ? sha.stdout.trim() : '(detached)';
-  }
+  // HS-9224 — ONE `git status --porcelain=v2 --branch` spawn replaces the former
+  // 5-call chain (symbolic-ref + status + rev-parse @{u} + 2× rev-list). The v2
+  // branch headers carry branch / detached(oid) / upstream / ahead / behind, so
+  // a single process yields everything the chip needs — cutting process-spawn
+  // overhead ~5×. That matters because the HS-9111 working-tree poll runs this
+  // per foreground project on its cadence; the chain was the dominant cost in
+  // freeze.log (`git.getStatus`, the #1 logged context).
+  //
+  // HS-8895 — `--untracked-files=all` so a newly-added directory of N files
+  // counts as N (the default `normal` collapses it to one `? dir/` entry).
+  // `--no-renames` keeps a rename as separate add/delete `1` entries (the v2
+  // `2` rename lines are still parsed defensively).
+  const res = await invoker(
+    ['status', '--porcelain=v2', '--branch', '--no-renames', '--untracked-files=all'],
+    root,
+  );
+  // A non-zero exit here is a genuine git error (timeout, corrupt repo, repo
+  // removed mid-flight) — `git status` exits 0 on any dirty tree. Return null so
+  // the chip hides rather than rendering all-zero/garbage counts.
+  if (res.status !== 0) return null;
 
-  // HS-8895 — `--untracked-files=all` (default is `normal`, which collapses a
-  // newly-added directory to a single `?? dir/` entry). Without it the chip's
-  // dirty/untracked count under-reports: adding a directory of N files shows as
-  // 1, and the popover lists `dir/` instead of its contents. `all` expands
-  // untracked directories to individual files (gitignored files stay excluded).
-  const porcelain = await invoker(['status', '--porcelain=v1', '--no-renames', '--untracked-files=all'], root);
-  const counts = porcelain.status === 0
-    ? bucketPorcelain(porcelain.stdout)
-    : { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 };
-
-  // HS-7955 — upstream + ahead + behind. Silent failure → null / 0 (e.g.
-  // a freshly-created branch with no upstream yet, or detached HEAD).
-  let upstream: string | null = null;
-  let ahead = 0;
-  let behind = 0;
-  if (!detached) {
-    const upRes = await invoker(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], root);
-    if (upRes.status === 0 && upRes.stdout.trim() !== '') {
-      upstream = upRes.stdout.trim();
-      const aheadRes = await invoker(['rev-list', '--count', '@{u}..HEAD'], root);
-      if (aheadRes.status === 0) {
-        const n = Number.parseInt(aheadRes.stdout.trim(), 10);
-        if (Number.isFinite(n)) ahead = n;
-      }
-      const behindRes = await invoker(['rev-list', '--count', 'HEAD..@{u}'], root);
-      if (behindRes.status === 0) {
-        const n = Number.parseInt(behindRes.stdout.trim(), 10);
-        if (Number.isFinite(n)) behind = n;
-      }
-    }
-  }
-
+  const s = parseStatusV2(res.stdout);
   return {
-    branch,
-    detached,
-    upstream,
-    ahead,
-    behind,
-    staged: counts.staged,
-    unstaged: counts.unstaged,
-    untracked: counts.untracked,
-    conflicted: counts.conflicted,
+    branch: s.branch,
+    detached: s.detached,
+    upstream: s.upstream,
+    ahead: s.ahead,
+    behind: s.behind,
+    staged: s.staged,
+    unstaged: s.unstaged,
+    untracked: s.untracked,
+    conflicted: s.conflicted,
     lastFetchedAt: getLastFetchedAt(projectRoot),
   };
 }
@@ -267,6 +244,88 @@ export function bucketPorcelain(output: string): { staged: number; unstaged: num
     if (xy[1] !== ' ') out.unstaged++;
   }
   return out;
+}
+
+/** The branch + bucket fields the chip needs, parsed from a single
+ *  `git status --porcelain=v2 --branch` run. */
+export interface StatusV2 {
+  branch: string;
+  detached: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  conflicted: number;
+}
+
+/**
+ * HS-9224 — pure parser for `git status --porcelain=v2 --branch` output.
+ *
+ * Branch headers (present with `--branch`):
+ *   `# branch.oid <sha|(initial)>` · `# branch.head <name|(detached)>`
+ *   `# branch.upstream <upstream>` and `# branch.ab +<ahead> -<behind>` —
+ *   the latter two only when an upstream is configured.
+ *
+ * Entry lines: `1`/`2` ordinary/renamed-or-copied carry a two-char `<XY>` field
+ * (X = index/staged, Y = worktree/unstaged; `.` = unchanged in v2, unlike v1's
+ * space); `u` = unmerged (conflicted); `?` = untracked; `!` = ignored (skipped —
+ * not requested). Replaces v1's `symbolic-ref` + `bucketPorcelain` +
+ * `rev-list`-pair chain in one pass.
+ */
+export function parseStatusV2(output: string): StatusV2 {
+  let head = '';
+  let oid = '';
+  let upstream: string | null = null;
+  let ahead = 0;
+  let behind = 0;
+  let staged = 0;
+  let unstaged = 0;
+  let untracked = 0;
+  let conflicted = 0;
+
+  for (const line of output.split('\n')) {
+    if (line === '') continue;
+    if (line.startsWith('# branch.head ')) { head = line.slice('# branch.head '.length).trim(); continue; }
+    if (line.startsWith('# branch.oid ')) { oid = line.slice('# branch.oid '.length).trim(); continue; }
+    if (line.startsWith('# branch.upstream ')) { upstream = line.slice('# branch.upstream '.length).trim(); continue; }
+    if (line.startsWith('# branch.ab ')) {
+      // `+<ahead> -<behind>` — counts are non-negative, but parse a sign defensively.
+      const m = line.match(/\+(-?\d+)\s+-(-?\d+)/);
+      if (m !== null) {
+        const a = Number.parseInt(m[1], 10);
+        const b = Number.parseInt(m[2], 10);
+        if (Number.isFinite(a)) ahead = a;
+        if (Number.isFinite(b)) behind = b;
+      }
+      continue;
+    }
+    if (line.startsWith('#')) continue; // any other header
+    const kind = line[0];
+    if (kind === '?') { untracked++; continue; }
+    if (kind === '!') continue; // ignored — not requested, but skip if present
+    if (kind === 'u') { conflicted++; continue; }
+    if (kind === '1' || kind === '2') {
+      // `<kind> <XY> …` — the XY field is at offsets 2–3.
+      const xy = line.slice(2, 4);
+      if (xy.length === 2) {
+        if (xy[0] !== '.') staged++;
+        if (xy[1] !== '.') unstaged++;
+      }
+    }
+  }
+
+  const detached = head === '(detached)';
+  let branch: string;
+  if (detached) {
+    // Short SHA (matches the old `rev-parse --short` fallback); `(initial)`
+    // means an unborn detached state we can't shorten — keep the literal.
+    branch = oid !== '' && oid !== '(initial)' ? oid.slice(0, 7) : '(detached)';
+  } else {
+    branch = head;
+  }
+  return { branch, detached, upstream, ahead, behind, staged, unstaged, untracked, conflicted };
 }
 
 // ---------------------------------------------------------------------------
