@@ -14,12 +14,13 @@ encouraging the coding AI to actually produce the notes. This is the obligation
 the Glassbox spec explicitly delegates in its **§20.7** ("Induce production of
 notes … tracked as a corresponding Hot Sheet ticket").
 
-> **Status: Design only (HS-8838).** No code yet. The Glassbox producer surface
-> it depends on **has landed** — the `glassbox note` CLI and the canonical
-> inbound instruction text via **`glassbox note instructions`** (Glassbox §20.4 /
-> §20.11 "Cross-cutting", shipped). The one open product decision is the **opt-in
-> / gating model** (§110.4); implementation is decomposed in §110.7, gated on the
-> maintainer confirming that model.
+> **Status: Design complete (HS-8838); implementation decomposed in §110.7.** The
+> Glassbox producer surface it depends on **has landed** — the `glassbox note` CLI
+> and the canonical inbound instruction text via **`glassbox note instructions`**
+> (Glassbox §20.4 / §20.11 "Cross-cutting", shipped). The opt-in/gating model is
+> **decided** (§110.4 — maintainer, 2026-06-30): an explicit per-project
+> **`aiReviewNotes`** setting, default off, **Shared** scope; not directory
+> auto-detection. P1 (HS-9221) is now unblocked.
 
 ## 110.1 Why Hot Sheet is the right place
 
@@ -79,40 +80,34 @@ asks the coding agent to, while it works a ticket:
 Hot Sheet does not re-specify any of this text — it comes from
 `glassbox note instructions`.
 
-## 110.4 Opt-in / gating model — **OPEN DECISION**
+## 110.4 Opt-in / gating model — **DECIDED (maintainer, 2026-06-30)**
 
 Injecting the note-emitting instructions into every agent context unconditionally
 would (a) waste context tokens on projects with no Glassbox / no `.pr-notes/`
 consumer, and (b) ask agents to run a CLI that may not be installed. So
-inducement must be **gated**. Candidate models (a recommendation is flagged, but
-this is the decision the maintainer must confirm before §110.7 is scheduled):
+inducement is **gated by an explicit per-project setting** — option **(B)**:
 
-- **(A) Auto-detect only** — induce iff a `.pr-notes/` directory exists at the
-  project root (Glassbox §20.1 — the committed notes directory). Zero config;
-  "the directory's presence is the opt-in." Con: a fresh project that *wants*
-  notes has no `.pr-notes/` yet (chicken-and-egg).
-- **(B) Explicit per-project setting only** — a `aiReviewNotes` boolean
-  (default **off**), §95-classifiable Shared/Local. Explicit, predictable. Con:
-  needs a manual toggle even where `.pr-notes/` already exists.
-- **(C) Both (recommended)** — induce iff the setting is on **OR** a `.pr-notes/`
-  directory is detected; the setting can also force it **off** even when the
-  directory exists (an explicit `false` wins). Auto-on where Glassbox is already
-  in use, with a manual override either way.
+- **`aiReviewNotes`** — a per-project boolean, **default `false`**, **Shared**
+  sharing class (§95: it's a repo/team property, like committing `.pr-notes/`,
+  with the standard per-layer override available). When `true`, Hot Sheet induces
+  note production; when absent/`false`, it does not.
 
-**Recommended: (C).** Secondary decisions that ride on it:
+Options rejected: **(A) auto-detect a `.pr-notes/` directory** and **(C) setting
+OR directory** were both declined — the gate is the setting alone, not the
+directory's presence. (Rationale: keep inducement an explicit, predictable choice;
+a committed `.pr-notes/` directory does not silently turn it on.)
 
-- **Setting sharing class (§95)** — Shared (team-wide "this repo uses review
-  notes") vs Local (per-machine)? Recommendation: **Shared** by default
-  (whether a repo induces notes is a team property, like `.pr-notes/` being
-  committed), with the standard per-layer override.
-- **Should Hot Sheet ever *create* `.pr-notes/`?** Recommendation: **no** —
-  Glassbox/`glassbox note add` owns directory creation (and the LFS
-  `.gitattributes` wiring); Hot Sheet only detects + induces. It may *nudge* the
-  user once if the setting is on but no CLI is found.
+Settled secondary points:
+
+- **Hot Sheet never *creates* `.pr-notes/`.** Glassbox / `glassbox note add` owns
+  directory creation (and the LFS `.gitattributes` wiring); Hot Sheet only
+  detects the CLI + induces. It may *nudge* the user once if the setting is on but
+  no `glassbox` CLI is found.
 - **Glassbox-installed detection** — reuse the existing `isExecutableOnPath`
-  helper to check for the `glassbox` CLI; if the setting/dir says "induce" but
-  the CLI is absent, inject the minimal fallback nudge (§110.2.4) rather than a
-  `glassbox note` command the agent can't run.
+  helper to check for the **`glassbox`** CLI (the bin name; the contract is
+  `glassbox note instructions`). If `aiReviewNotes` is on but the CLI is absent,
+  inject the minimal fallback nudge (§110.2.4) rather than a `glassbox note`
+  command the agent can't run.
 
 ## 110.5 Ticket ↔ notes linkage (Glassbox §20.7)
 
