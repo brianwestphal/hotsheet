@@ -268,8 +268,9 @@ async function deleteSharedViewAction(view: CustomView) {
   await persistViews(deleteSharedView(viewLayers, view.id));
 }
 
-/** One management row in the Views tab. `hidden`/`mode` shape the actions. */
-function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: boolean, mode: 'shared' | 'local'): HTMLElement {
+/** One management row in the Views tab. `hidden`/`mode` shape the actions.
+ *  Exported for the HS-9215/9216 button-order + shared-styling guard test. */
+export function renderViewsTabRow(view: CustomView, layer: 'shared' | 'local', hidden: boolean, mode: 'shared' | 'local'): HTMLElement {
   const row = toElement(
     <div className={`settings-view-row${hidden ? ' settings-view-hidden' : ''}`}>
       <span className={`cv-layer-badge ${layer === 'shared' ? 'cv-layer-shared' : 'cv-layer-local'}`}>{layer === 'shared' ? 'Shared' : 'Local'}</span>

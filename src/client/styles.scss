@@ -2690,26 +2690,6 @@ body.cross-project-stats-active {
     color: var(--text);
   }
 
-  .cmd-outline-edit-btn,
-  .cmd-outline-delete-btn,
-  .cmd-outline-move-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    border-radius: var(--radius);
-    flex-shrink: 0;
-    padding: 0;
-    &:hover { background: var(--bg-hover); color: var(--text); }
-  }
-
-  .cmd-outline-delete-btn:hover { color: var(--danger, #ef4444); }
-
   // HS-9014 — scope origin tag + shared↔local move button on each row in
   // Shared / Local mode. The tag is a compact variant of the `.scope-tag` chip.
   // The `.cmd-outline-name` (flex:1) already pushes the tag + buttons to the
@@ -2719,7 +2699,6 @@ body.cross-project-stats-active {
     font-size: 10px;
     padding: 1px 6px;
   }
-  .cmd-outline-move-btn { font-size: 14px; font-weight: 600; }
 
   // HS-9183 — a shared command hidden on this machine: dimmed, non-draggable,
   // with just its name + a "hidden" tag + the restore (eye) button.
@@ -6078,10 +6057,37 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   margin-bottom: 6px;
 
   .settings-view-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .settings-view-actions { display: inline-flex; gap: 2px; flex-shrink: 0; }
+  // HS-9215 — match the command editor's row-action spacing (was a tight 2px).
+  .settings-view-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
   &.settings-view-hidden { opacity: 0.55; }
 }
 .settings-view-empty { padding: 12px 0; color: var(--text-muted); font-size: 13px; }
+
+// HS-9215 — the row action icon buttons (edit / hide-show / delete / move). A
+// standalone rule (NOT nested under .cmd-outline-row) so they style identically
+// across the command editor (.cmd-outline-row), the Views tab (.settings-view-row),
+// and the terminals list — previously these lived inside .cmd-outline-row, so the
+// Views-tab rows (which reuse the same classes) fell back to the default, darker,
+// tighter button style. Mirrors the .scope-reset-btn extraction below.
+.cmd-outline-edit-btn,
+.cmd-outline-delete-btn,
+.cmd-outline-move-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+  padding: 0;
+  &:hover { background: var(--bg-hover); color: var(--text); }
+}
+.cmd-outline-delete-btn:hover { color: var(--danger, #ef4444); }
+.cmd-outline-move-btn { font-size: 14px; font-weight: 600; }
 
 // HS-9184/9187 — the undo-2 "reset to shared" icon button. A standalone rule (not
 // nested under .cmd-outline-row) so it styles consistently across the command
