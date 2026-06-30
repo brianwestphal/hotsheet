@@ -138,13 +138,20 @@ inducement; it's deferred to a separate phase (§110.7 P3).
 
 Each slice is its own ticket; all are **gated on the §110.4 opt-in decision**.
 
-- **P1 — Inducement injection.** A per-project setting (per the §110.4 decision)
-  + detection (`.pr-notes/` dir and/or setting, `glassbox` on PATH); when on,
-  inject `glassbox note instructions` output (cached at sync/skill-author time)
-  into the worklist header and/or the `/hotsheet` + `/hotsheet-worker` skill
-  bodies, with the ticket-id wrapper (§110.5) and the minimal fallback nudge.
-  `SKILL_VERSION` bump (skill body changes → re-author on boot). Tests: gating
-  on/off, CLI-present vs absent (fallback), ticket-id wrapper present.
+- **P1 — Inducement injection.** *(SHIPPED — HS-9221.)* The `aiReviewNotes`
+  setting (`src/file-settings.ts`, default off, Shared via `defaultScope`) +
+  `src/reviewNotesInducement.ts` (detect `glassbox` on PATH via
+  `isExecutableOnPath`; `getGlassboxNoteInstructions()` runs `glassbox note
+  instructions` once per process and caches; `buildReviewNotesSection(enabled,
+  instructions)` is pure). `syncWorklist` (`src/sync/markdown.ts`) injects the
+  section after the workflow instructions when the setting is on: Hot Sheet's
+  ticket-id wrapper (§110.5) + the verbatim canonical text, or the minimal
+  fallback nudge when the CLI is absent. **Injected into the worklist only** (not
+  the skill bodies, so **no `SKILL_VERSION` bump**): the worklist is the
+  per-run, per-project-settings-aware surface every `/hotsheet` agent reads,
+  whereas skill bodies are seeded globally and can't gate on a per-project
+  setting at author time. Tests: `reviewNotesInducement.test.ts` (pure section +
+  CLI detection/cache) + `markdown.test.ts` (worklist gating on/off).
 - **P2 — Settings UI.** A checkbox in Settings (Experimental / project settings)
   for the `aiReviewNotes` setting, §95 scope-aware (Shared/Local) per the
   decision; copy explaining it requires Glassbox.

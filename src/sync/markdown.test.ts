@@ -81,6 +81,30 @@ describe('worklist sync', () => {
     expect(content).toContain('## Workflow');
   });
 
+  // HS-9221 (docs/110) — the `aiReviewNotes` opt-in injects the AI-review-notes
+  // inducement section; off by default it's absent. Assertions key on the heading
+  // + Hot Sheet's ticket-id wrapper, which are present whether or not the
+  // `glassbox` CLI is installed (the canonical-text vs fallback-nudge branch).
+  it('injects the AI Review Notes section only when aiReviewNotes is enabled', async () => {
+    // Default off → no section.
+    let content = await syncedWorklist();
+    expect(content).not.toContain('## AI Review Notes');
+
+    writeFileSettings(tempDir, { aiReviewNotes: true });
+    scheduleWorklistSync();
+    content = await syncedWorklist();
+    expect(content).toContain('## AI Review Notes (`.pr-notes/`)');
+    expect(content).toContain('--ticket <its HS-NNNN>');
+    // Sits within the protocol, before the ticket list.
+    expect(content.indexOf('## AI Review Notes')).toBeLessThan(content.indexOf('Worklist ticket'));
+
+    // Turning it off removes the section again.
+    writeFileSettings(tempDir, { aiReviewNotes: false });
+    scheduleWorklistSync();
+    content = await syncedWorklist();
+    expect(content).not.toContain('## AI Review Notes');
+  });
+
   it('includes workflow section with curl examples', () => {
     const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
     expect(content).toContain('## Workflow');

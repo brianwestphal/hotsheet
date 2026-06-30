@@ -10,6 +10,7 @@ import { readFileSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
 // to keep the local call sites readable.
 import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_DEBOUNCE_MS as WORKLIST_DEBOUNCE } from '../limits.js';
+import { buildReviewNotesSection, getGlassboxNoteInstructions } from '../reviewNotesInducement.js';
 import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 // HS-8671 — zod-validated DB-JSON parsing (drops the blind `as` casts).
 import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
@@ -384,6 +385,14 @@ async function syncWorklist(state: SyncState): Promise<void> {
     sections.push(...buildPreambleSection(settings.worklist_preamble));
 
     sections.push(...await buildWorkflowInstructions(port, secretHeader));
+
+    // HS-9221 (docs/110) — when this project opts into Glassbox `.pr-notes/`
+    // review notes (`aiReviewNotes`), inject the inducement section: Hot Sheet's
+    // ticket-id wrapper + the verbatim `glassbox note instructions` text (or a
+    // fallback nudge when the `glassbox` CLI isn't on PATH). Off by default →
+    // `buildReviewNotesSection` returns [] and nothing is added.
+    const aiReviewNotes = settings.aiReviewNotes === true;
+    sections.push(...buildReviewNotesSection(aiReviewNotes, aiReviewNotes ? getGlassboxNoteInstructions() : null));
 
     if (tickets.length === 0) {
       sections.push(...await buildAutoPrioritizeSection(port, secretHeader));

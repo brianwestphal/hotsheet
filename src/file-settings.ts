@@ -27,6 +27,12 @@ const FileSettingsSchema = z.object({
   // after node_modules provisioning. §95-classified SHARED (a build contract);
   // the `.hotsheet/worktree-setup.sh` convention is its gitignored-local sibling.
   worktreeSetup: z.string().optional(),
+  // HS-9221 (docs/110 §110.4) — opt into inducing AI-authored review notes
+  // (Glassbox `.pr-notes/`): when true the worklist injects the `glassbox note
+  // instructions` guidance. Default off. §95-classified SHARED (a repo/team
+  // property, like committing `.pr-notes/`) — falls through `defaultScope` to
+  // `shared`.
+  aiReviewNotes: z.boolean().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */
@@ -195,6 +201,8 @@ export interface FileSettings {
   integrationGate?: string;
   /** HS-9089 — optional per-project worktree-setup command (docs/105 §105.3). */
   worktreeSetup?: string;
+  /** HS-9221 — opt into inducing Glassbox `.pr-notes/` review notes (docs/110). */
+  aiReviewNotes?: boolean;
   [key: string]: unknown;
 }
 
