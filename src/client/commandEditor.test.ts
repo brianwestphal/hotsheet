@@ -158,6 +158,43 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
     expect(document.querySelectorAll('#settings-commands-list .cmd-reset-btn').length).toBe(0);
   });
 
+  // HS-9220 — editing a shared command locally must IMMEDIATELY flip its row to
+  // the "overridden" tag + reset-to-shared button (no scope-switch reload needed).
+  // Pre-fix `commandOverriddenIds` was refreshed only by `loadScopedCommands`, so
+  // the row kept its stale "shared" tag with no reset affordance until the user
+  // toggled views and back.
+  it('HS-9220: a local edit immediately marks the command "overridden" (tag + reset button)', async () => {
+    getSettingsMock.mockResolvedValue({ custom_commands: JSON.stringify([
+      { id: 'c1', name: 'Build', prompt: 'npm run build', target: 'shell' },
+    ]) });
+    await reloadCustomCommands();
+    _setCommandSharedForTests([{ id: 'c1', name: 'Build', prompt: 'npm run build', target: 'shell' }]);
+    _setCommandModeForTests('local');
+    _setCommandOverriddenIdsForTests(new Set()); // pristine: nothing overridden yet
+    renderCustomCommandSettings();
+
+    // Pristine shared command → "shared" tag, no reset button.
+    let row = document.querySelector<HTMLElement>('#settings-commands-list .cmd-outline-row')!;
+    expect(row.querySelector('.cmd-scope-tag')!.textContent).toContain('shared');
+    expect(row.querySelector('.cmd-reset-btn')).toBeNull();
+
+    // Edit the prompt locally through the editor modal, then close it.
+    row.querySelector<HTMLButtonElement>('.cmd-outline-edit-btn')!.click();
+    const overlay = document.querySelector('.cmd-editor-overlay')!;
+    const promptArea = overlay.querySelector<HTMLTextAreaElement>('textarea')!;
+    promptArea.value = 'npm run build -- --prod';
+    promptArea.dispatchEvent(new Event('input'));
+    overlay.querySelector<HTMLButtonElement>('.cmd-editor-done-btn')!.click();
+
+    // The row now reads "overridden" (local-styled) and shows the reset button —
+    // without any scope switch.
+    row = document.querySelector<HTMLElement>('#settings-commands-list .cmd-outline-row')!;
+    expect(row.querySelector('.cmd-scope-tag')!.textContent).toContain('overridden');
+    expect(row.querySelector('.cmd-scope-tag.scope-tag-local')).not.toBeNull();
+    expect(row.querySelector('.cmd-scope-tag.scope-tag-shared')).toBeNull();
+    expect(row.querySelector('.cmd-reset-btn')).not.toBeNull();
+  });
+
   // HS-9181 — a command shown in the Shared editor is tagged "shared" immediately,
   // even a just-added one not yet folded into the shared baseline (pre-fix it
   // flashed a "local" tag until the dialog was reopened).

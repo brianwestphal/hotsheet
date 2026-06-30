@@ -438,9 +438,19 @@ export async function saveCommandItems() {
   if (commandMode === 'shared') {
     await updateFileSettingsLayer('shared', { custom_commands: editTree });
     commandShared = backfillCommandIds(editTree).items.map(cloneItem);
+    commandOverriddenIds = new Set<string>(); // HS-9220 — nothing is "overridden" in Shared mode
     await refreshSidebarFromResolved();
   } else {
-    await persistLocalCommandDelta(computeCommandTreeDelta(commandShared, editTree));
+    const delta = computeCommandTreeDelta(commandShared, editTree);
+    // HS-9220 — recompute the overridden-id set from the just-derived delta
+    // SYNCHRONOUSLY (before any await), so a local edit's "overridden" tag +
+    // reset-to-shared (undo-2) affordance surface as soon as the editor next
+    // renders (e.g. when the edit modal closes). Pre-fix this set was refreshed
+    // only by `loadScopedCommands` (scope switch / dialog reopen), so the row
+    // kept its stale "shared" tag with no reset button until the user toggled
+    // views and back.
+    commandOverriddenIds = new Set(Object.keys(delta.overrides ?? {}));
+    await persistLocalCommandDelta(delta);
     await refreshSidebarFromResolved();
   }
 }

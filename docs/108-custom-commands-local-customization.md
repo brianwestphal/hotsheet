@@ -90,8 +90,14 @@ by the server resolve + the client editor, unit-tested in isolation):
   refreshed from the server's resolved view after each save
   (`refreshSidebarFromResolved`) and on dialog close
   (`refreshCommandsAfterDialogClose`).
-- **Editor UI** (`commandEditor.tsx`): per-row origin tags (shared/local) + a
-  scope hint banner; in Local mode a shared item's delete is an **eye-off "Hide
+- **Editor UI** (`commandEditor.tsx`): per-row origin tags (**shared** / **local** /
+  **overridden**) + a scope hint banner. A shared command edited on this machine
+  reads **overridden** (styled like a local tag, matching the terminals editor) and
+  offers an **undo-2 "Reset to shared"** button (`.cmd-reset-btn`) that drops the
+  local override (HS-9184). The overridden-id set is recomputed **synchronously on
+  every local-mode save** (`saveCommandItems`, from the just-derived delta), so the
+  tag flip + reset button surface as soon as the editor re-renders (e.g. on edit-modal
+  close) — no scope switch needed (HS-9220). In Local mode a shared item's delete is an **eye-off "Hide
   on this machine"** button (HS-9183 — not a trash delete; resolves to a `hidden`
   delta entry), and the hidden command then renders as a **dimmed `.cmd-outline-row-hidden`
   row with an eye "restore" button** (`getHiddenSharedCommands` computes the hidden

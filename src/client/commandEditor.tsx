@@ -239,7 +239,14 @@ function isOverriddenItem(item: CommandItem, ctx: ScopeCtx): boolean {
  *  Shared/Local mode, for top-level commands/groups AND group children. */
 function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) {
   const shared = isSharedItem(item, ctx);
-  const tag = <span className={`cmd-scope-tag scope-tag ${shared ? 'scope-tag-shared' : 'scope-tag-local'}`}><span className="scope-tag-dot" />{shared ? 'shared' : 'local'}</span>;
+  const overridden = isOverriddenItem(item, ctx);
+  // HS-9220 \u2014 a shared command edited on this machine reads "overridden" (styled
+  // like a local tag), matching the terminals editor (HS-9128); a pristine shared
+  // item reads "shared", a local-only addition "local". Pre-fix an overridden
+  // command kept the plain "shared" tag, hiding that it carried a local override.
+  const tagLabel = overridden ? 'overridden' : shared ? 'shared' : 'local';
+  const tagClass = overridden || !shared ? 'scope-tag-local' : 'scope-tag-shared';
+  const tag = <span className={`cmd-scope-tag scope-tag ${tagClass}`}><span className="scope-tag-dot" />{tagLabel}</span>;
   // HS-9094 \u2014 a group itself isn't movable as a "child"; a top-level group moves
   // whole (covered by ref.type === 'top'). Skip the move button only for a group
   // row that is a child (groups are never nested, so this never triggers today).
@@ -249,7 +256,7 @@ function renderScopeAffordances(item: CommandItem, ref: ItemRef, ctx: ScopeCtx) 
   const moveBtn = <button className="cmd-outline-move-btn" data-move={direction} title={title}>{shared ? '\u2193' : '\u2191'}</button>;
   // HS-9184 \u2014 a locally-overridden shared command offers an undo-2 "reset to
   // shared" button (discards the local override), mirroring terminals (HS-9128).
-  const resetBtn = isOverriddenItem(item, ctx)
+  const resetBtn = overridden
     ? <button className="scope-reset-btn cmd-reset-btn" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button>
     : null;
   return <>{tag}{resetBtn}{moveBtn}</>;
