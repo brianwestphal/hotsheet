@@ -89,6 +89,8 @@ Reordering works within each layer independently; the local layer **cannot** reo
 - **HS-9010c / HS-9014 — custom_commands**, group-aware: needs a tree-aware delta + element-id backfill (the flat helper doesn't cover nested groups / add-into-shared-group / orphan survival). The biggest of the set.
 
 The in-dialog editors share `settingsScopeList.tsx`: Resolved edits route to the default layer (unchanged); Shared edits the committed array; Local computes the delta vs shared (`computeArrayDelta`) and writes `settings.local.json`. They reload on the `hotsheet:scope-mode-changed` event and show a per-mode hint banner. Each per-editor ticket unlocks its `data-scope-complex` marker once editable.
+
+- **HS-9214 (SHIPPED) — one reset-to-shared affordance everywhere.** The "discard the local override" action is now the lucide **`undo-2` icon button** (`ICON_UNDO_2` + the shared `.scope-reset-btn` 24×24 style) in **every** surface: the custom-commands / custom-views / terminals editors (HS-9184/9187/9128) **and** the auto-context editor + the generic scalar scope control (`settingsScope.tsx`), which previously used a "Reset to shared" **text** link (`.scope-link`). Wiring still keys on `data-scope-action="reset"`. The opposite affordance "+ Override" and the "Re-enable" link stay text (distinct actions, not a reset).
 - **Done (HS-9011):** `appIcon` evaluated + dropped end-to-end (the feature was dormant).
 
 ## 95.6 Standing rule

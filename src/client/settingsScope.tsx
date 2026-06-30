@@ -32,6 +32,7 @@ import {
 } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { ICON_UNDO_2 } from './icons.js';
 import {
   resolveFieldScope,
   type ScopeMode,
@@ -400,9 +401,13 @@ function renderAffordance(host: HTMLElement, field: ScopedField, scope: ReturnTy
       content = toElement(<span className="scope-tag scope-tag-local"><span className="scope-tag-dot" />overridden locally</span>);
     }
   } else {
-    // local mode, standard scoped field
+    // local mode, standard scoped field. HS-9214 — the reset-to-shared affordance
+    // is the lucide undo-2 icon button everywhere now (was a "Reset to shared"
+    // text link), matching the commands / views / terminals editors. The
+    // mutually-exclusive "+ Override" affordance stays a text ghost button (it's
+    // the opposite action — adding an override, not resetting one).
     content = scope.overridden
-      ? toElement(<button type="button" className="scope-link" data-scope-action="reset">Reset to shared</button>)
+      ? toElement(<button type="button" className="scope-reset-btn" data-scope-action="reset" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button>)
       : toElement(<button type="button" className="scope-ghostbtn" data-scope-action="override">+ Override</button>);
   }
 

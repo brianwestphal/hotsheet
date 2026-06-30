@@ -9,6 +9,7 @@ import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
+import { ICON_UNDO_2 } from './icons.js';
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
@@ -579,7 +580,10 @@ function bindAutoContextSettings() {
     const tagClass = origin === 'shared' ? 'scope-tag-shared' : 'scope-tag-local';
     slot.appendChild(toElement(<span className={`scope-tag ${tagClass}`}><span className="scope-tag-dot" />{origin}</span>));
     if (autoContextMode === 'local' && origin === 'overridden') {
-      const resetBtn = toElement(<button type="button" className="scope-link" data-scope-action="reset">Reset to shared</button>);
+      // HS-9214 — the reset-to-shared affordance is the lucide undo-2 icon button
+      // everywhere now (was a "Reset to shared" text link here), matching the
+      // commands / views / terminals editors.
+      const resetBtn = toElement(<button type="button" className="scope-reset-btn" data-scope-action="reset" title="Reset to shared (discard the local override)" aria-label="Reset to shared">{ICON_UNDO_2}</button>);
       resetBtn.addEventListener('click', () => {
         const sharedMatch = autoContextShared.find(s => acIdOf(s) === acIdOf(entry));
         if (sharedMatch === undefined) return;
