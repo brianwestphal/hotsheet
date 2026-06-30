@@ -5599,6 +5599,18 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     border-top: 0;
   }
 
+  // HS-9213 — a panel whose first child is the machine-local `.settings-local-note`
+  // (Announcer, API Keys) put its first `.settings-section` second, so the
+  // `:first-child` suppression above missed it and the section's top border
+  // painted a stray rule directly under the note. Plugins / Permissions have no
+  // `.settings-section` wrapper and thus no rule — match that: drop the border on
+  // the first section right after the local note.
+  .settings-tab-panel > .settings-local-note + & {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+
   h3 {
     font-size: 14px;
     font-weight: 600;
