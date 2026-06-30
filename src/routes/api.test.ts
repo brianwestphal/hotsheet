@@ -2189,7 +2189,7 @@ describe('claim-before-work enforcement (HS-9198)', () => {
 
   it('rejects a worker editing a ticket the owner holds (409 + claimed_by_other)', async () => {
     const id = await mk('owner-held');
-    await app.request(`/api/tickets/${id}`, patch({ details: 'owner edit' })); // owner auto-claims
+    await app.request(`/api/tickets/${id}`, patch({ status: 'started' })); // owner starts → claims
     const res = await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-9' }));
     expect(res.status).toBe(409);
     const body = await res.json() as { code: string; claimed_by: string };
@@ -2197,13 +2197,34 @@ describe('claim-before-work enforcement (HS-9198)', () => {
     expect(body.claimed_by).toBe('owner');
   });
 
-  it('the holding actor keeps editing freely (renew — no conflict, no repeat claim field)', async () => {
+  it('the holding actor keeps editing freely (metadata edit — no conflict, no repeat claim field)', async () => {
     const id = await mk('holder renews');
     const first = await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-9' }));
     expect((await first.json() as { claim?: unknown }).claim).toBeDefined();   // fresh claim surfaced
     const second = await app.request(`/api/tickets/${id}`, patch({ details: 'more' }, { 'X-Hotsheet-Actor': 'worker-9' }));
     expect(second.status).toBe(200);
-    expect((await second.json() as { claim?: unknown }).claim).toBeUndefined(); // renew, not a fresh claim
+    expect((await second.json() as { claim?: unknown }).claim).toBeUndefined(); // HS-9208 — metadata edit doesn't re-claim
+  });
+
+  // HS-9208 — metadata-only edits no longer auto-claim; only status→started does.
+  it('a metadata edit (details) of an unclaimed ticket does NOT auto-claim it', async () => {
+    const id = await mk('meta no-claim');
+    const res = await app.request(`/api/tickets/${id}`, patch({ details: 'just authoring' }));
+    expect(res.status).toBe(200);
+    expect((await res.json() as { claim?: unknown }).claim).toBeUndefined(); // no claim taken
+    // Since nobody claimed it, a DIFFERENT actor can still edit it freely.
+    const other = await app.request(`/api/tickets/${id}`, patch({ tags: '["x"]' }, { 'X-Hotsheet-Actor': 'worker-7' }));
+    expect(other.status).toBe(200);
+  });
+
+  it('status→started auto-claims even when metadata edits before it did not', async () => {
+    const id = await mk('start after meta');
+    await app.request(`/api/tickets/${id}`, patch({ details: 'authoring' })); // no claim
+    const started = await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-3' }));
+    expect(started.status).toBe(200);
+    const body = await started.json() as { claim?: { claimed_by: string; auto_claimed: boolean } };
+    expect(body.claim?.claimed_by).toBe('worker-3'); // worker-3 grabs it on start (owner never held it)
+    expect(body.claim?.auto_claimed).toBe(true);
   });
 
   it('a terminal (completed) ticket needs no claim — any actor can edit it', async () => {

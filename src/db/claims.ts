@@ -196,21 +196,34 @@ export type EnforceWriteResult =
 /**
  * HS-9198 — claim-before-work enforcement for a WRITE to ticket `id` by `actor`.
  * Used by the server-side write chokepoint so the invariant holds for every entry
- * point (REST + MCP-over-REST + UI). Behavior:
+ * point (REST + MCP-over-REST + UI).
  *
+ * The check does two orthogonal jobs (HS-9208):
+ *  - **(A) Conflict guard** — reject a write to a ticket ANOTHER actor actively
+ *    holds. This runs on EVERY write regardless of `takeClaim`; it's the part
+ *    that actually protects distributed work.
+ *  - **(B) Auto-claim** — transparently take/renew the lease for `actor`. This is
+ *    gated on `takeClaim`, which the caller sets true ONLY for a write that
+ *    represents actually picking up the work (a status→`started` transition).
+ *    Metadata-only edits (title/details/tags/notes/attachments/priority/category/
+ *    up_next) pass `takeClaim=false` so they no longer sprout a stray `owner`
+ *    claim + lease on a ticket nobody is working (HS-9208).
+ *
+ * Behavior:
  *  - **Terminal** ticket (completed / verified / archive / deleted) → NO claim
  *    required (editing a finished ticket isn't active "work"): allowed, not
  *    auto-claimed. Same when the ticket doesn't exist (let the write path return
  *    its normal 404).
  *  - **Held by ANOTHER actor with a live lease** → rejected as a conflict
- *    (the caller must wait / pick another ticket).
- *  - **Unclaimed / expired / already-mine** → transparently **auto-claim / renew**
- *    for `actor`, then allow. `claim_count` bumps ONLY on a genuinely fresh claim
- *    (unclaimed/expired/stolen-back), never when renewing the caller's own live
- *    lease — so routine editing can't inflate the poison-retry counter. The
- *    `autoClaimed` flag is true when it was a fresh claim (the caller didn't
- *    already hold a live lease), so the caller can surface a "you now hold a
- *    claim — renew/release it" reminder.
+ *    (the caller must wait / pick another ticket) — even when `takeClaim` is false.
+ *  - **`takeClaim=false`** (not a start-work write) → allowed with NO claim change
+ *    (autoClaimed=false). The lease is left exactly as-is.
+ *  - **`takeClaim=true` + Unclaimed / expired / already-mine** → transparently
+ *    **auto-claim / renew** for `actor`, then allow. `claim_count` bumps ONLY on a
+ *    genuinely fresh claim (unclaimed/expired/stolen-back), never when renewing the
+ *    caller's own live lease. The `autoClaimed` flag is true when it was a fresh
+ *    claim (the caller didn't already hold a live lease), so the caller can surface
+ *    a "you now hold a claim — renew/release it" reminder.
  *
  * Single-connection PGLite makes the SELECT-then-UPDATE effectively atomic (no
  * concurrent writer can interleave), matching the rest of this module.
@@ -220,6 +233,7 @@ export async function enforceClaimForWrite(
   actor: string,
   label: string | null = null,
   ttlSeconds: number = DEFAULT_CLAIM_TTL_SECONDS,
+  takeClaim: boolean = true,
 ): Promise<EnforceWriteResult> {
   const db = await getDb();
   const cur = await db.query<{ status: string; claimed_by: string | null; worker_label: string | null; lease_live: boolean; lease: string | null }>(
@@ -236,9 +250,16 @@ export async function enforceClaimForWrite(
   if (['completed', 'verified', 'deleted', 'archive'].includes(row.status)) {
     return { allowed: true, autoClaimed: false, leaseExpiresAt: row.lease };
   }
-  // Held by someone else with a live lease → reject.
+  // (A) Conflict guard — held by someone else with a live lease → reject. Runs
+  // for every write, including non-claiming ones, so a metadata edit still can't
+  // stomp a ticket another actor is actively working.
   if (row.claimed_by != null && row.claimed_by !== actor && row.lease_live) {
     return { allowed: false, reason: 'conflict', claimedBy: row.claimed_by, workerLabel: row.worker_label, leaseExpiresAt: row.lease ?? '' };
+  }
+  // (B) HS-9208 — not a start-work write → allow WITHOUT taking/renewing a claim.
+  // The lease (if any) is left untouched: editing metadata never auto-claims.
+  if (!takeClaim) {
+    return { allowed: true, autoClaimed: false, leaseExpiresAt: row.lease };
   }
   const wasMineLive = row.claimed_by === actor && row.lease_live;
   // Auto-claim / renew. The CASE reads the row's PRE-update values, so the count

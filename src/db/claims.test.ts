@@ -322,5 +322,42 @@ describe('claim/lease primitive (HS-8862)', () => {
       }
       expect((await getTicket(t.id))!.claim_count).toBe(1); // one claim, then renewals
     });
+
+    // HS-9208 — takeClaim=false: metadata-only edits no longer auto-claim.
+    describe('takeClaim=false — guard-only (HS-9208)', () => {
+      it('does NOT claim an unclaimed actionable ticket (no stray owner claim on metadata edits)', async () => {
+        const t = await upNext('meta-edit');
+        const r = await enforceClaimForWrite(t.id, OWNER_ACTOR, 'Owner', undefined, false);
+        expect(r.allowed).toBe(true);
+        expect(r.allowed && r.autoClaimed).toBe(false);
+        const after = (await getTicket(t.id))!;
+        expect(after.claimed_by).toBeNull();        // nobody claimed it
+        expect(after.claim_count).toBe(0);
+        expect(after.claim_lease_expires_at).toBeNull();
+      });
+
+      it('STILL rejects a metadata edit by another actor while a live foreign lease is held', async () => {
+        const t = await upNext('held-meta');
+        await enforceClaimForWrite(t.id, 'worker-1', 'W1'); // worker starts work (claims)
+        const r = await enforceClaimForWrite(t.id, OWNER_ACTOR, 'Owner', undefined, false);
+        expect(r.allowed).toBe(false);
+        expect(!r.allowed && r.reason).toBe('conflict');
+        expect(!r.allowed && r.claimedBy).toBe('worker-1');
+        expect((await getTicket(t.id))!.claimed_by).toBe('worker-1'); // untouched
+      });
+
+      it('does NOT renew the caller\'s own lease on a metadata edit (lease left as-is)', async () => {
+        const t = await upNext('mine-meta');
+        await enforceClaimForWrite(t.id, 'worker-1', 'W1'); // claim (start work)
+        const leaseBefore = (await getTicket(t.id))!.claim_lease_expires_at;
+        const r = await enforceClaimForWrite(t.id, 'worker-1', 'W1', undefined, false); // metadata edit
+        expect(r.allowed && r.autoClaimed).toBe(false);
+        const after = (await getTicket(t.id))!;
+        expect(after.claimed_by).toBe('worker-1');                  // still mine
+        // NOT extended — compare by value (the column reads back as a Date instance).
+        expect(String(after.claim_lease_expires_at)).toBe(String(leaseBefore));
+        expect(after.claim_count).toBe(1);
+      });
+    });
   });
 });

@@ -366,20 +366,26 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
 
-  // HS-9198 — claim-before-work enforcement. A write that represents actual work
-  // (anything but a read-tracking-only `last_read_at` poke) on an ACTIONABLE
-  // ticket must hold the lease — and transparently auto-claims it for the caller
-  // when it's unclaimed/expired. The actor identity comes from `X-Hotsheet-Actor`
-  // (the channel server injects a worker id for worktree workers; the owner UI +
-  // main agent default to `owner`), so the solo owner + main `/hotsheet` agent
-  // never see friction, while a write to a ticket a DIFFERENT actor actively holds
-  // is rejected 409. Read-tracking-only writes are exempt (marking-read ≠ work).
+  // HS-9198 / HS-9208 — claim-before-work enforcement, split into two jobs:
+  //  - The CONFLICT GUARD runs on every non-read-tracking write to an ACTIONABLE
+  //    ticket: a write to a ticket a DIFFERENT actor actively holds is rejected 409.
+  //  - The AUTO-CLAIM (taking/renewing the lease for the caller) now fires ONLY
+  //    when the write actually picks up the work — a status→`started` transition
+  //    (HS-9208). Metadata-only edits (title/details/tags/notes/attachments/
+  //    priority/category/up_next) no longer sprout a stray `owner` claim on a
+  //    ticket nobody is working. The actor identity comes from `X-Hotsheet-Actor`
+  //    (the channel server injects a worker id for worktree workers; the owner UI +
+  //    main agent default to `owner`). Read-tracking-only writes are exempt.
   const isReadTrackingOnly = Object.keys(parsed.data).length === 1 && parsed.data.last_read_at !== undefined;
+  // HS-9208 — `started` is the sole auto-claim trigger (confirmed by the
+  // maintainer): not_started / backlog / up_next toggles are queuing/triage, not
+  // "working." Terminal statuses never claim (handled in enforceClaimForWrite).
+  const isStartWork = parsed.data.status === 'started';
   let autoClaim: { claimedBy: string; leaseExpiresAt: string | null } | null = null;
   if (!isReadTrackingOnly) {
     const actor = c.req.header('X-Hotsheet-Actor') ?? OWNER_ACTOR;
     const actorLabel = c.req.header('X-Hotsheet-Actor-Label') ?? null;
-    const verdict = await enforceClaimForWrite(id, actor, actorLabel);
+    const verdict = await enforceClaimForWrite(id, actor, actorLabel, undefined, isStartWork);
     if (!verdict.allowed) {
       return c.json({
         error: `Ticket is held by \`${verdict.workerLabel ?? verdict.claimedBy}\` (live claim) — claim it, pick another, or wait for the lease to lapse before editing.`,

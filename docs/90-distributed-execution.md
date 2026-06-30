@@ -121,20 +121,25 @@ and do real work with no claim, defeating the point (two actors could each
 invariant at the write chokepoint so it holds for every entry point (REST + the
 MCP tools, which proxy REST + the UI).
 
-`enforceClaimForWrite(id, actor, label)` (`src/db/claims.ts`) gates a write:
+`enforceClaimForWrite(id, actor, label, ttl, takeClaim)` (`src/db/claims.ts`) gates a
+write. It does **two orthogonal jobs** (HS-9208 split them apart):
 
-- **Auto-claim on write (the key call).** A write to an **unclaimed / lease-expired**
-  actionable ticket **transparently auto-claims it** for the caller, then applies
-  the write — so the solo owner + the main `/hotsheet` agent never see friction and
-  nothing breaks. Renewing the caller's **own** live lease does NOT bump
-  `claim_count` (routine editing can't inflate the HS-8970 poison-retry counter);
-  only a genuinely fresh claim does.
-- **Reject only on a live FOREIGN lease.** A write to a ticket held by a **different**
+- **Conflict guard (every write).** A write to a ticket held by a **different**
   actor with a live lease is rejected **HTTP 409** `{code:'claimed_by_other',
-  claimed_by, worker_label, lease_expires_at}`. The net rule: *"you can't write a
-  ticket another actor is actively holding; touching an unclaimed one claims it for
-  you."* Applies to **workers AND the owner** — no owner exemption (the owner must
-  force-release a worker's ticket to take it).
+  claimed_by, worker_label, lease_expires_at}` — regardless of `takeClaim`. This is
+  the part that actually protects distributed work; a metadata edit still can't
+  stomp a ticket another actor is actively working. Applies to **workers AND the
+  owner** — no owner exemption (the owner must force-release a worker's ticket to take it).
+- **Auto-claim (gated on `takeClaim`).** Taking/renewing the lease for the caller
+  happens **only when the write actually picks up the work** — a status→`started`
+  transition (`takeClaim=true`). **Metadata-only edits** (title / details / tags /
+  notes / attachments / priority / category / `up_next`) pass `takeClaim=false`:
+  they apply with **no claim change** (HS-9208), so authoring a brand-new ticket
+  no longer sprouts a stray `owner` claim + lease on a ticket nobody is working.
+  When it does claim, renewing the caller's **own** live lease does NOT bump
+  `claim_count` (routine editing can't inflate the HS-8970 poison-retry counter);
+  only a genuinely fresh claim does. `started` is the **sole** trigger — `up_next`
+  / backlog / not_started are queuing/triage, not "working" (maintainer-confirmed, HS-9208).
 - **Exemptions:** **terminal** tickets (completed / verified / archive / deleted)
   need no claim — editing a finished ticket isn't active work; and **read-tracking-only**
   writes (`last_read_at` alone) are exempt (marking-read ≠ work).
