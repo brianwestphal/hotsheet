@@ -164,6 +164,28 @@ describe.skipIf(isInsideHotSheetTerminal())('scheduleSnapshot (debounce trigger)
     await new Promise((r) => setTimeout(r, 60));
     expect(existsSync(snapshotPath(dataDir))).toBe(false);
   });
+
+  it('throttles back-to-back debounced snapshots to the min spacing (HS-9226)', async () => {
+    writeFileSettings(dataDir, { db_snapshot_debounce_ms: 10, db_snapshot_min_spacing_ms: 400 });
+    await seedTickets(1);
+    // First snapshot has no prior, so it fires after the debounce.
+    scheduleSnapshot(dataDir);
+    await vi.waitFor(() => expect(getSnapshotStatus(dataDir).lastSnapshotAt).not.toBeNull(), { timeout: 2000 });
+    const first = getSnapshotStatus(dataDir).lastSnapshotAt;
+
+    // Schedule again immediately — within the 400 ms spacing it must NOT re-dump;
+    // the debounce body re-arms instead, so lastSnapshotAt stays put for now.
+    await seedTickets(1);
+    scheduleSnapshot(dataDir);
+    await new Promise((r) => setTimeout(r, 60)); // past the 10 ms debounce, well inside the spacing
+    expect(getSnapshotStatus(dataDir).lastSnapshotAt).toBe(first);
+
+    // Once the spacing window elapses, the re-armed timer fires the deferred snapshot.
+    await vi.waitFor(
+      () => expect(getSnapshotStatus(dataDir).lastSnapshotAt).not.toBe(first),
+      { timeout: 3000 },
+    );
+  });
 });
 
 describe('snapshotAllForShutdown', () => {

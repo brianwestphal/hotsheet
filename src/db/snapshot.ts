@@ -48,6 +48,16 @@ import { getDbForDir } from './connection.js';
 const DEFAULT_DEBOUNCE_MS = 2000;
 /** Default dirty-gated safety-floor interval. */
 const DEFAULT_SAFETY_INTERVAL_MS = 120_000;
+/** HS-9226 — minimum spacing between two debounce-driven snapshots. The snapshot
+ *  does `db.dumpDataDir('gzip')`, which serializes the WHOLE PGLite cluster
+ *  synchronously on the event loop — O(DB size). On a telemetry-bloated DB
+ *  (hundreds of MB) that's multiple SECONDS of frozen UI, and the 2 s debounce
+ *  re-fired it after every burst of activity (a tab-switch / a running resume
+ *  generating telemetry). This floor caps the debounce path to at most one dump
+ *  per minute; the dirty-gated safety interval is the backstop, and graceful
+ *  shutdown still snapshots unconditionally. The real cure is a smaller DB
+ *  (telemetry retention/compaction) and/or moving the dump off the loop. */
+const DEFAULT_MIN_SNAPSHOT_SPACING_MS = 60_000;
 
 /** Result of a successful snapshot write, for callers that want to surface it. */
 export interface SnapshotResult {
@@ -146,10 +156,26 @@ export function scheduleSnapshot(dataDir?: string): void {
   const state = getOrCreateState(dir);
   state.dirty = true;
   if (state.debounceTimer) clearTimeout(state.debounceTimer);
-  state.debounceTimer = setTimeout(() => {
-    state.debounceTimer = null;
-    void submitSnapshotJob(dir);
-  }, numericSetting(dir, 'db_snapshot_debounce_ms', DEFAULT_DEBOUNCE_MS));
+  state.debounceTimer = setTimeout(() => fireDebouncedSnapshot(dir), numericSetting(dir, 'db_snapshot_debounce_ms', DEFAULT_DEBOUNCE_MS));
+}
+
+/**
+ * HS-9226 — the debounce timer's body, factored out so it can re-arm itself.
+ * Enforces `DEFAULT_MIN_SNAPSHOT_SPACING_MS` between debounce-driven snapshots:
+ * if the last snapshot was too recent, re-arm for the remaining window instead
+ * of firing another multi-second dump. `dirty` stays set, so the deferred fire
+ * (or the safety floor) still captures the pending mutations.
+ */
+function fireDebouncedSnapshot(dir: string): void {
+  const state = getOrCreateState(dir);
+  state.debounceTimer = null;
+  const spacing = numericSetting(dir, 'db_snapshot_min_spacing_ms', DEFAULT_MIN_SNAPSHOT_SPACING_MS);
+  const sinceLast = state.lastSnapshotAt === null ? Number.POSITIVE_INFINITY : Date.now() - state.lastSnapshotAt;
+  if (sinceLast < spacing) {
+    state.debounceTimer = setTimeout(() => fireDebouncedSnapshot(dir), spacing - sinceLast);
+    return;
+  }
+  void submitSnapshotJob(dir);
 }
 
 /**
