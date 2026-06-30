@@ -243,7 +243,6 @@ The single source of truth for each endpoint's request / response **wire shapes*
 | `feedbackParser.ts` | Pure heuristic that splits a feedback note into `partitions` |
 | `gitStatusChip.tsx` / `gitStatusPopover.tsx` | §48 sidebar git chip + expanded popover (HS-7954-7956) |
 | `gridNavGeometry.ts` | Pure grid-neighbour math for HS-8028 magnified grid nav |
-| `hiddenTerminalsResetUI.tsx` | "Reset hidden terminals" link in Settings → Terminal |
 | `hideTerminalDialog.tsx` | Show / Hide Terminals dialog with §39 grouping tab bar |
 | `iconPicker.tsx` | App-icon picker for Settings → General |
 | `icons.ts` | Lucide SVG paths used as client-side icons |

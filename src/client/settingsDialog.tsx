@@ -467,11 +467,9 @@ function bindTerminalTab() {
     void import('./quitConfirmSettingsUI.js').then(({ loadAndWireQuitConfirmSettings }) => {
       void loadAndWireQuitConfirmSettings();
     });
-    // HS-7830 — wire the Reset visibility button + live-update its
-    // status text from the dashboardHiddenTerminals subscription.
-    void import('./hiddenTerminalsResetUI.js').then(({ loadAndWireHiddenTerminalsReset }) => {
-      loadAndWireHiddenTerminalsReset();
-    });
+    // HS-9211 — the "Hidden terminals" / Reset Visibility settings section was
+    // removed; hidden terminals are restored per-item via the eye icon (like
+    // custom commands + views), so there's no panel to wire here anymore.
   });
 }
 

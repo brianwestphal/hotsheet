@@ -64,13 +64,9 @@ When the user removes a configured terminal from Settings → Terminal, the dele
 
 The prune fires alongside the existing `eagerSpawnTerminals` call so a single terminals-list save handles both side effects. Dynamic-terminal ids (`dyn-*`) never enter `hidden_terminals` in the first place (the persistence layer filters them on write), so the prune doesn't need a special case.
 
-## 38.8 Reset visibility from Settings (HS-7830)
+## 38.8 Reset visibility from Settings — REMOVED (HS-9211)
 
-A new "Reset visibility" button in Settings → Terminal (below the Default terminals list) clears the project's persisted hidden state without opening the Show / Hide Terminals dialog. The button is disabled when nothing is currently hidden, and a status hint above it reads "No terminals hidden for this project." vs. "{N} terminals are currently hidden for this project." so the user knows what the button would do before clicking.
-
-**Click flow.** Confirms via the in-app `confirmDialog` (so an accidental click doesn't reset hours of curated visibility), then calls `unhideAllInProject(secret)`. The persistence layer (`persistedHiddenTerminals.ts`) already subscribes to the change event and PATCHes `hidden_terminals: []` automatically — no explicit /file-settings call from the Settings UI. The button + status update live via the same `subscribeToHiddenChanges` subscription so toggling visibility in another window or via the dialog updates the status text in real time while Settings is open.
-
-**Implementation.** `src/client/hiddenTerminalsResetUI.tsx` exposes `loadAndWireHiddenTerminalsReset()`, called from `settingsDialog.tsx`'s on-open handler alongside the existing terminals / appearance / quit-confirm wiring. The handler is bound idempotently — each open swaps out the click listener so a project switch between dialog opens doesn't stale-close over an old `secret`.
+Originally (HS-7830) Settings → Terminal carried a "Hidden terminals" section with a "Reset Visibility" button that bulk-cleared the project's persisted hidden state. **HS-9211 removed this section.** The maintainer's call: restoring a hidden terminal should just be clicking its eye icon — the same per-item model as custom commands and custom views — so the standalone status + bulk-reset block was redundant. Hidden terminals are now un-hidden individually via the Show / Hide Terminals dialog (§25.10 / §36.6.5). The store primitive `unhideAllInProject` remains in `dashboardHiddenTerminals.tsx` (tested) but no longer has a UI surface; `src/client/hiddenTerminalsResetUI.tsx` was deleted.
 
 ## 38.9 Out of scope (deferred)
 
@@ -86,8 +82,7 @@ See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the exist
 4. Hide a dynamic terminal (`dyn-*`) → reload → it shows again (session-only behavior preserved).
 5. Multi-project: hide a terminal in project A, switch to project B, reload, switch back to A — A's filter is restored.
 6. (HS-7829) Hide a configured terminal → delete that terminal in Settings → Terminal → save → check `.hotsheet/settings.json`: the deleted id is gone from `hidden_terminals`.
-7. (HS-7830) With at least one terminal hidden, open Settings → Terminal → status reads "{N} terminals are currently hidden..."; click Reset visibility → confirm → all terminals visible, button disables, status reads "No terminals hidden for this project."
-8. (HS-7830) Open Settings with nothing hidden → Reset visibility button is disabled; status reads "No terminals hidden for this project."
+7. (HS-9211) Settings → Terminal no longer has a "Hidden terminals" / "Reset Visibility" section — confirm it's gone; un-hide terminals individually via the Show / Hide Terminals dialog instead.
 
 ## 38.11 Cross-references
 
@@ -95,4 +90,4 @@ See [docs/manual-test-plan.md §13 (Show / Hide Terminals dialog)] for the exist
 - §36.6.5 (Show / Hide Terminals dialog — per-project drawer-grid).
 - §22.10 (per-project terminal config; ids the persistence layer keys against).
 
-**Status:** Shipped (HS-7825 + HS-7829 stale-id cleanup + HS-7830 Reset visibility affordance).
+**Status:** Shipped (HS-7825 + HS-7829 stale-id cleanup; the HS-7830 Settings "Reset visibility" affordance was later removed by HS-9211 in favor of per-item eye-icon restore).

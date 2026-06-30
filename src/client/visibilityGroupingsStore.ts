@@ -5,9 +5,9 @@
  * `() =\> void` callbacks) onto kerf's `defineStore`. The "lift bespoke pub/sub to kerf" pattern
  * §61 was designed for — `setGlobalState(next)` always replaced the
  * whole reference (no in-place mutation), `subscribers.add(handler)`
- * was a hand-rolled reactivity protocol, and the four consumer files
- * (`visibilityGroupingSelect.tsx` / `hiddenTerminalsResetUI.tsx` /
- * `drawerTerminalGrid.tsx` / `terminalDashboard.tsx`) all wire identical
+ * was a hand-rolled reactivity protocol, and the consumer files
+ * (`visibilityGroupingSelect.tsx` / `drawerTerminalGrid.tsx` /
+ * `terminalDashboard.tsx`) all wire identical
  * `subscribeToHiddenChanges(() => repaint())` calls.
  *
  * Per the HS-8319 FEEDBACK NEEDED design call: the other four candidates
