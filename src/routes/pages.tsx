@@ -577,13 +577,6 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
               <span>Terminal</span>
             </button>
-            {/* HS-9024 — Remote Access tab. Enrolled mTLS client devices for
-                serving over `--bind` (docs/94 / docs/97). Mint a .p12 locally,
-                install it on the remote machine, revoke when needed. */}
-            <button className="settings-tab" data-tab="devices" id="settings-tab-devices">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
-              <span>Remote Access</span>
-            </button>
             {/* HS-8146 — Telemetry tab. Master toggle + per-signal sub-toggles + retention picker for the §67 Claude Code telemetry integration. */}
             <button className="settings-tab" data-tab="telemetry" id="settings-tab-telemetry">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
@@ -607,9 +600,19 @@ pageRoutes.get('/', (c) => {
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               <span>Permissions</span>
             </button>
+            {/* HS-9024 — Remote Access tab. Enrolled mTLS client devices for
+                serving over `--bind` (docs/94 / docs/97). Mint a .p12 locally,
+                install it on the remote machine, revoke when needed. HS-9218 —
+                moved here (just before Plugins) + given a machine-local note,
+                grouping it with the other machine-local tabs. */}
+            <button className="settings-tab" data-tab="devices" id="settings-tab-devices">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+              <span>Remote Access</span>
+            </button>
             {/* HS-9124 — Plugins tab moved here, just before API Keys (which
                 HS-9119 moved just before Updates), so the tail reads:
-                …, Plugins, API Keys, Updates. */}
+                …, Remote Access, Plugins, API Keys, Updates (HS-9218 put Remote
+                Access immediately before Plugins). */}
             {PLUGINS_ENABLED ? <button className="settings-tab" data-tab="plugins" id="settings-tab-plugins">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
               <span>Plugins</span>
@@ -909,6 +912,10 @@ pageRoutes.get('/', (c) => {
                 local app. Rows + the pairing QR are rendered by
                 devicesSettings.tsx / devicesPairing.tsx. */}
             <div className="settings-tab-panel" data-panel="devices" id="settings-devices-panel">
+              {/* HS-9218 — machine-local note (matches Permissions / Plugins / API Keys):
+                  the signing CA + enrolled-device registry live under `.hotsheet/`
+                  (gitignored) and are specific to this machine. */}
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> The signing CA and authorized-device list live in <code>.hotsheet/</code> (gitignored) — never committed to git or shared with your team. Devices are minted here and installed on the remote machine.</span></p>
               <div className="settings-section">
                 <div className="settings-section-header">
                   <h3>Remote Access</h3>
