@@ -84,11 +84,12 @@ export async function triggerChannel(message?: string, target?: ChannelTriggerTa
   return apiCall(OkResponseSchema, '/channel/trigger', { method: 'POST', body });
 }
 
-/** `POST /channel/cleanup-connections` → number of duplicate channel servers terminated (HS-8948). */
+/** `POST /channel/cleanup-connections` → number of MAIN channel servers disconnected (HS-8948 / HS-9225). */
 export const CleanupConnectionsRespSchema = z.object({ ok: z.literal(true), killed: z.number() });
 export type CleanupConnectionsResp = z.infer<typeof CleanupConnectionsRespSchema>;
 
-/** POST `/channel/cleanup-connections` → kill duplicate Claude connections (keep the leader). */
+/** POST `/channel/cleanup-connections` → disconnect ALL main Claude connections (HS-9225 — the
+ *  user then reconnects the instance they want via `/mcp`). Workers are spared. */
 export async function cleanupChannelConnections(): Promise<CleanupConnectionsResp> {
   return apiCall(CleanupConnectionsRespSchema, '/channel/cleanup-connections', { method: 'POST' });
 }

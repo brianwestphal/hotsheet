@@ -251,12 +251,18 @@ to fix it. Mitigation:
 - **Diagnostic logging:** when `aliveCount > 1`, the status route logs the roster
   (`multi-connection` event in `mcp.log` — pids / startedAt / leader), deduped
   per dataDir so the polled route logs only a real change.
-- **Cleanup affordance:** the warning has a **"Clean up"** button →
-  `POST /api/channel/cleanup-connections` → `cleanupExtraConnections(dataDir)`
-  terminates every alive channel-server EXCEPT the leader (SIGTERM) + removes
-  their registry entries, so only the connection that actually receives triggers
-  remains. (Root cause is orphaned MCP children outside Hot Sheet's direct
-  lifecycle control; the cleanup is the durable mitigation.)
+- **Cleanup affordance:** the warning has a **"Disconnect all"** button →
+  `POST /api/channel/cleanup-connections` → `disconnectMainConnections(dataDir)`
+  terminates **every** alive MAIN channel-server (including the leader, SIGTERM) +
+  removes their registry entries, then the client tells the user to run `/mcp` in
+  the Claude they want — that reconnect spawns a fresh server as the sole
+  connection. Distributed-worker connections (`worktree` set) are spared.
+  (HS-9225 — previously this kept the leader and killed the rest, but the leader
+  the server picks isn't reliably the connection the user is actually in, so
+  cleanup "didn't always land on the right one." The server can't know which
+  Claude the human is using, so it disconnects all and lets the human re-pick via
+  `/mcp`. Root cause of the duplicates is orphaned MCP children outside Hot
+  Sheet's direct lifecycle control.)
 
 ## 12.12 API Endpoints
 
@@ -264,7 +270,7 @@ to fix it. Mitigation:
 |----------|--------|-------------|
 | `/api/channel/claude-check` | GET | Check if `claude` CLI is installed and meets minimum version (v2.1.80+) |
 | `/api/channel/status` | GET | Returns `{ enabled, alive, port, done, versionMismatch, serverName, aliveCount }` — channel state, completion flag, version check, and the count of alive channel-servers (HS-8460) |
-| `/api/channel/cleanup-connections` | POST | HS-8948 — terminate duplicate channel-servers (keep the leader); returns `{ ok, killed }` |
+| `/api/channel/cleanup-connections` | POST | HS-8948 / HS-9225 — disconnect ALL main channel-servers (incl. the leader; workers spared) so the user reconnects the one they want via `/mcp`; returns `{ ok, killed }` |
 | `/api/channel/trigger` | POST | Send a worklist event to Claude via the channel server |
 | `/api/channel/done` | POST | Called by Claude to signal it has finished processing |
 | `/api/channel/enable` | POST | Enable the channel and register in `.mcp.json` |

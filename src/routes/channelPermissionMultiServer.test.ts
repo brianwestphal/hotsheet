@@ -25,7 +25,7 @@ vi.mock('../channelRegistry.js', () => ({
     { port: 9701, pid: 111, slug: 'p', startedAt: '2026-01-01T00:00:00Z' },
     { port: 9702, pid: 222, slug: 'p', startedAt: '2026-01-01T00:00:01Z' },
   ]),
-  cleanupExtraConnections: vi.fn(),
+  disconnectMainConnections: vi.fn(),
 }));
 
 describe('channel permission — multi-server (HS-9036)', () => {

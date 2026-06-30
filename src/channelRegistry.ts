@@ -147,35 +147,42 @@ export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
 }
 
 /**
- * HS-8948 — terminate every alive channel-server for this dataDir EXCEPT the
- * leader (oldest), and remove their registry entries. Returns the pids it
- * signaled.
+ * HS-8948 / HS-9225 — terminate EVERY alive MAIN channel-server for this
+ * dataDir (including the leader) and remove their registry entries. Returns the
+ * pids it signaled.
  *
- * The "N Claude connections active" warning fires whenever more than one
- * channel-server is alive for the project. Most often the extras are ORPHANS: a Claude Code
- * instance exited but its spawned MCP channel-server child kept running (not
- * reaped), so its pid stays alive, `listAliveEntries` keeps counting it, and the
- * warning never clears. Pre-fix there was no way to clean that up. This signals
- * the duplicate channel-servers (SIGTERM) so only the leader — the one that
- * actually receives triggers — remains.
+ * The "N Claude connections active" warning fires whenever more than one MAIN
+ * channel-server is alive for the project. The extras are usually ORPHANS: a
+ * Claude Code instance exited but its spawned MCP channel-server child kept
+ * running (not reaped), so its pid stays alive and `listAliveEntries` keeps
+ * counting it. Pre-HS-9225 this kept the FIFO leader (oldest) and killed the
+ * rest — but the leader the user wants to keep is NOT necessarily the oldest, so
+ * cleanup "didn't always land on the right one": triggers could keep routing to
+ * a connection the user wasn't looking at. There's no reliable way for the
+ * server to know which Claude the human is actually in. So instead of guessing,
+ * we disconnect ALL of them and the caller tells the user to run `/mcp` in the
+ * Claude instance they want — that reconnect spawns a fresh server that becomes
+ * the sole (correct) connection.
+ *
+ * Distributed-worker connections (`worktree` set) are EXEMPT — they're expected
+ * (one per worktree) and killing one would disrupt in-progress worker work
+ * (mirrors the "never kill a worker mid-ticket" principle). Only MAIN
+ * connections are torn down.
  *
  * `kill` + `isPidAlive` are injectable for tests. Best-effort: a kill that
  * fails (process already gone, permission) is swallowed; the entry is still
  * unlinked so the count drops.
  */
-export function cleanupExtraConnections(
+export function disconnectMainConnections(
   dataDir: string,
   opts: { kill?: (pid: number) => void; isPidAlive?: (pid: number) => boolean } = {},
 ): number[] {
   const kill = opts.kill ?? ((pid: number) => { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } });
   const entries = listAliveEntries(dataDir, opts.isPidAlive);
   const killed: number[] = [];
-  // HS-9038 — terminate only duplicate MAIN connections. Distributed-worker
-  // connections (`worktree` set) are expected (one per worktree) — never kill
-  // them. So: keep every worker, keep the main leader (the oldest non-worktree),
-  // and SIGTERM the remaining main connections (the orphans this is for).
+  // Tear down EVERY main connection (no leader survivor); workers are spared.
   const mains = entries.filter(e => e.worktree == null);
-  for (const entry of mains.slice(1)) {
+  for (const entry of mains) {
     if (entry.pid === null) continue;
     try { kill(entry.pid); } catch { /* process already gone / not killable — entry is still removed below */ }
     try { unlinkSync(entryPath(dataDir, entry.pid)); } catch { /* race with GC / already gone */ }

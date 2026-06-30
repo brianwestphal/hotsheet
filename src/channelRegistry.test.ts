@@ -4,7 +4,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  cleanupExtraConnections,
+  disconnectMainConnections,
   entryPath,
   listAliveEntries,
   pickLeader,
@@ -189,65 +189,72 @@ describe('channelRegistry — failover end-to-end (captures HS-8460 FIFO semanti
   });
 });
 
-describe('cleanupExtraConnections (HS-8948)', () => {
-  it('terminates every alive channel-server except the leader (oldest) + removes their entries', () => {
+describe('disconnectMainConnections (HS-8948 / HS-9225)', () => {
+  it('terminates EVERY alive main channel-server — including the leader — + removes their entries', () => {
     registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' }); // leader (oldest)
     registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });
     registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z' });
 
     const killed: number[] = [];
-    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    const result = disconnectMainConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
 
-    expect(result.sort()).toEqual([2, 3]);   // non-leaders signaled
-    expect(killed.sort()).toEqual([2, 3]);
-    // The leader's entry remains; the duplicates' entries are gone.
-    const remaining = listAliveEntries(dataDir, () => true);
-    expect(remaining.map(e => e.pid)).toEqual([1]);
+    // HS-9225 — all three mains are signaled (the leader is no longer spared).
+    expect(result.sort()).toEqual([1, 2, 3]);
+    expect(killed.sort()).toEqual([1, 2, 3]);
+    // Every main entry is gone — the user reconnects the one they want via /mcp.
+    expect(listAliveEntries(dataDir, () => true)).toEqual([]);
   });
 
-  it('is a no-op when only the leader is alive', () => {
+  it('disconnects the single main connection too (so /mcp gives a clean reconnect)', () => {
     registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });
     const killed: number[] = [];
-    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    const result = disconnectMainConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    expect(result).toEqual([1]);
+    expect(killed).toEqual([1]);
+    expect(listAliveEntries(dataDir, () => true)).toEqual([]);
+  });
+
+  it('is a no-op when no main connections are alive', () => {
+    const killed: number[] = [];
+    const result = disconnectMainConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
     expect(result).toEqual([]);
     expect(killed).toEqual([]);
-    expect(listAliveEntries(dataDir, () => true).map(e => e.pid)).toEqual([1]);
   });
 
   it('does not throw when a kill fails (process already gone)', () => {
     registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });
     registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });
-    const result = cleanupExtraConnections(dataDir, {
+    const result = disconnectMainConnections(dataDir, {
       kill: () => { throw new Error('ESRCH'); },
       isPidAlive: () => true,
     });
-    // The entry is still removed even though the signal threw — count drops.
-    expect(result).toEqual([2]);
-    expect(listAliveEntries(dataDir, () => true).map(e => e.pid)).toEqual([1]);
+    // Both entries are still removed even though the signal threw.
+    expect(result.sort()).toEqual([1, 2]);
+    expect(listAliveEntries(dataDir, () => true)).toEqual([]);
   });
 
-  it('HS-9038 — spares WORKER connections, killing only duplicate MAIN connections', () => {
+  it('HS-9038 — spares WORKER connections, disconnecting only MAIN connections', () => {
     registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });                       // main leader
     registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });                       // duplicate main
     registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z', worktree: '/wt/w1' });   // worker
     registerSelf(dataDir, { port: 400, pid: 4, slug: 'x', startedAt: '2026-06-23T07:00:15.000Z', worktree: '/wt/w2' });   // worker
 
     const killed: number[] = [];
-    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    const result = disconnectMainConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
 
-    expect(killed).toEqual([2]); // only the duplicate main — workers untouched
-    expect(result).toEqual([2]);
-    // The main leader + both workers remain registered.
-    expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([1, 3, 4]);
+    // HS-9225 — both mains (incl. the leader) go; both workers stay.
+    expect(killed.sort()).toEqual([1, 2]);
+    expect(result.sort()).toEqual([1, 2]);
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([3, 4]);
   });
 
-  it('HS-9038 — is a no-op when one main + several workers are alive (the expected steady state)', () => {
+  it('HS-9038 — disconnects the lone main while several workers are alive', () => {
     registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });
     registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z', worktree: '/wt/w1' });
     const killed: number[] = [];
-    const result = cleanupExtraConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
-    expect(result).toEqual([]);
-    expect(killed).toEqual([]);
-    expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([1, 3]);
+    const result = disconnectMainConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    expect(result).toEqual([1]);
+    expect(killed).toEqual([1]);
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([3]);
   });
 });

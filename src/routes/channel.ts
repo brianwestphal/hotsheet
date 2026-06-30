@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
-import { cleanupExtraConnections, listAliveEntries } from '../channelRegistry.js';
+import { disconnectMainConnections, listAliveEntries } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
@@ -147,16 +147,18 @@ channelRoutes.get('/channel/status', async (c) => {
 const lastMultiConnSignature = new Map<string, string>();
 
 /**
- * HS-8948 — clean up duplicate Claude channel connections for the active
- * project. Terminates every alive channel-server EXCEPT the leader (the one
- * receiving triggers) — clearing orphaned MCP children that keep the "N
- * connections active" warning up. Returns the count killed.
+ * HS-8948 / HS-9225 — disconnect Claude channel connections for the active
+ * project. Terminates every alive MAIN channel-server (including the leader) —
+ * clearing the ambiguous "which one is the right one" state. The client then
+ * tells the user to run `/mcp` in the Claude instance they want, which
+ * reconnects a fresh server as the sole connection. Distributed-worker
+ * connections are spared. Returns the count disconnected.
  */
 channelRoutes.post('/channel/cleanup-connections', (c) => {
   const dataDir = c.get('dataDir');
-  const killed = cleanupExtraConnections(dataDir);
+  const killed = disconnectMainConnections(dataDir);
   if (killed.length > 0) {
-    appendMainServerEvent(dataDir, 'multi-connection-cleanup', `terminated ${String(killed.length)} duplicate channel server(s): [${killed.join(',')}]`);
+    appendMainServerEvent(dataDir, 'multi-connection-cleanup', `disconnected ${String(killed.length)} main channel server(s): [${killed.join(',')}]`);
     lastMultiConnSignature.delete(dataDir); // force a fresh roster log next status poll
   }
   return c.json({ ok: true, killed: killed.length });

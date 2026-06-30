@@ -430,17 +430,20 @@ function showNoUpNextAlert() {
   if (playSection) playSection.after(alert);
 }
 
-/** HS-8948 — terminate duplicate channel connections, then refresh the warning. */
+/** HS-8948 / HS-9225 — disconnect ALL main Claude connections, then tell the
+ *  user to reconnect the instance they want via `/mcp`. We disconnect every main
+ *  rather than guessing which one to keep — the kept "leader" wasn't reliably
+ *  the connection the user was actually using. */
 async function handleCleanupConnections(btn: HTMLButtonElement): Promise<void> {
   btn.disabled = true;
   try {
     const { killed } = await cleanupChannelConnections();
     showToast(killed > 0
-      ? `Cleaned up ${String(killed)} duplicate Claude connection${killed === 1 ? '' : 's'}`
-      : 'No duplicate connections to clean up');
-    await initChannel(); // re-fetch status → the warning hides once only the leader remains
+      ? `Disconnected ${String(killed)} Claude connection${killed === 1 ? '' : 's'} — run /mcp in the Claude you want to use to reconnect`
+      : 'No Claude connections to disconnect');
+    await initChannel(); // re-fetch status → the warning hides once the mains are gone
   } catch (e) {
-    showToast(`Cleanup failed: ${getErrorMessage(e)}`);
+    showToast(`Disconnect failed: ${getErrorMessage(e)}`);
     btn.disabled = false;
   }
 }
@@ -521,15 +524,16 @@ export async function initChannel() {
   if (multiWarning) {
     const count = typeof status.aliveCount === 'number' ? status.aliveCount : 0;
     if (count > 1) {
-      // HS-8948 — alongside the warning text, offer a "Clean up" button that
-      // terminates the duplicate (often orphaned) channel servers so the user
-      // can clear the recurring warning instead of being stuck with it.
-      const cleanupBtn = toElement(<button type="button" className="channel-multi-cleanup-btn">Clean up</button>);
+      // HS-8948 / HS-9225 — alongside the warning text, offer a "Disconnect all"
+      // button that tears down every main channel server. The user then runs
+      // `/mcp` in the Claude they want, reconnecting it as the sole connection —
+      // more reliable than the server guessing which one to keep.
+      const cleanupBtn = toElement(<button type="button" className="channel-multi-cleanup-btn">Disconnect all</button>);
       if (cleanupBtn instanceof HTMLButtonElement) {
         cleanupBtn.addEventListener('click', () => { void handleCleanupConnections(cleanupBtn); });
       }
       multiWarning.replaceChildren(
-        toElement(<span>{`${String(count)} Claude connections active — triggers route to the oldest one`}</span>),
+        toElement(<span>{`${String(count)} Claude connections active — triggers route to the oldest one. Disconnect all, then /mcp to reconnect the one you want.`}</span>),
         cleanupBtn,
       );
       multiWarning.style.display = '';
