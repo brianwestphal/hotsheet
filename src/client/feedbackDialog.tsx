@@ -520,6 +520,15 @@ function buildSubmitHandler(ctx: FeedbackDialogCtx): () => Promise<void> {
       ctx.state.draftPersistedToServer = false;
       ctx.close();
       void loadTickets();
+      // HS-9207 — refresh the open detail panel immediately so the just-submitted
+      // response note appears right away. Previously the submit only re-rendered
+      // the LIST (`loadTickets`); the detail panel's notes were re-rendered only
+      // when a `/ws/sync` `detail` push (or the next poll) happened to arrive — so
+      // the user "sometimes" had to switch tickets and back to see their response.
+      // `refreshDetail` re-fetches the active ticket and re-renders its notes; the
+      // last note is now the response (not a FEEDBACK note), so it does NOT
+      // re-trigger the auto-show dialog.
+      void import('./detail.js').then(m => { m.refreshDetail(); });
       void notifyChannel(ctx.ticketNumber);
     } catch {
       submitBtn.textContent = 'Submit';

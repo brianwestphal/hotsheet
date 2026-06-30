@@ -280,6 +280,28 @@ test.describe('Feedback drafts + dont-close-on-clickaway (HS-7599)', () => {
     // A new note appeared with the response text.
     await expect(page.locator('#detail-notes .note-entry').last().locator('.note-text')).toContainText('Leaning towards A');
   });
+
+  test('HS-9207: submitting a response renders the note in the detail panel right away (no ticket-switch)', async ({ page }) => {
+    await createTicket(page, 'Immediate response ticket');
+    await addFeedbackNote(page, 'Immediate response ticket', 'Which approach?');
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openDetail(page, 'Immediate response ticket');
+    const overlay = page.locator('.feedback-dialog-overlay');
+    await expect(overlay).toBeVisible({ timeout: 5000 });
+
+    // Type a response and submit. Crucially we do NOT reload or switch tickets
+    // afterwards — the response note must appear in the still-open detail panel
+    // on its own (pre-HS-9207, the detail only re-rendered on a later WS/poll
+    // refresh, so the note "sometimes" didn't show until the user switched
+    // tickets and back).
+    await overlay.locator('#feedback-catchall-text').fill('Going with approach B');
+    await overlay.locator('#feedback-submit').click();
+    await expect(overlay).toHaveCount(0, { timeout: 5000 });
+
+    await expect(page.locator('#detail-notes .note-entry').last().locator('.note-text'))
+      .toContainText('Going with approach B', { timeout: 5000 });
+  });
 });
 
 test.describe('Feedback dialog prev/next context navigation (HS-8836)', () => {
