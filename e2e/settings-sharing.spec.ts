@@ -41,7 +41,8 @@ test.describe('Settings scope control (Shared | Local)', () => {
   test('HS-8856: Custom Commands has its own settings tab (moved out of Experimental)', async ({ page }) => {
     const tab = page.locator('.settings-tab[data-tab="commands"]');
     await expect(tab).toBeVisible();
-    await expect(tab).toContainText('Custom Commands');
+    // HS-9206 — the tab label was shortened to "Commands".
+    await expect(tab).toContainText('Commands');
     // Clicking it shows the commands editor in its own panel.
     await tab.click();
     await expect(page.locator('.settings-tab-panel[data-panel="commands"]')).toHaveClass(/active/);

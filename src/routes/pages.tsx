@@ -570,7 +570,8 @@ pageRoutes.get('/', (c) => {
                 tab (grouped with the other per-project sidebar editors). */}
             <button className="settings-tab" data-tab="commands" id="settings-tab-commands">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></svg>
-              <span>Custom Commands</span>
+              {/* HS-9206 — tab label shortened to "Commands" ("Custom Commands" was too long for the tab strip). */}
+              <span>Commands</span>
             </button>
             <button className="settings-tab" data-tab="terminal" id="settings-tab-terminal" style="display:none">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
