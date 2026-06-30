@@ -12,7 +12,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { capSpanRows, capTableRows, cleanupTelemetryRows } from './cleanup.js';
-import { getDb } from './db/connection.js';
+import { getTelemetryDb } from './db/connection.js';
 import { cleanupTestDb, setupTestDb } from './test-helpers.js';
 
 const SECRET = 'secret-A';
@@ -24,7 +24,7 @@ function writeSettings(dataDir: string, extra: Record<string, unknown>): void {
 
 let spanSeq = 0;
 async function insertSpan(startTs: Date, secret: string = SECRET): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   spanSeq += 1;
   await db.query(
     `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
@@ -33,7 +33,7 @@ async function insertSpan(startTs: Date, secret: string = SECRET): Promise<void>
   );
 }
 async function insertMetric(ts: Date, secret: string = SECRET): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   await db.query(
     `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
      VALUES ($1, $2, 'sess', 'm', '{}'::jsonb, '{}'::jsonb)`,
@@ -41,17 +41,17 @@ async function insertMetric(ts: Date, secret: string = SECRET): Promise<void> {
   );
 }
 async function countSpans(secret: string = SECRET): Promise<number> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_spans WHERE project_secret = $1`, [secret]);
   return Number(r.rows[0]?.c ?? 0);
 }
 async function countMetrics(secret: string = SECRET): Promise<number> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret = $1`, [secret]);
   return Number(r.rows[0]?.c ?? 0);
 }
 async function insertEvent(ts: Date, eventName: string, secret: string = SECRET): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   await db.query(
     `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
      VALUES ($1, $2, 'sess', 'p', $3, '{}'::jsonb, '{}'::jsonb)`,
@@ -59,7 +59,7 @@ async function insertEvent(ts: Date, eventName: string, secret: string = SECRET)
   );
 }
 async function eventNames(secret: string = SECRET): Promise<string[]> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const r = await db.query<{ event_name: string }>(
     `SELECT event_name FROM otel_events WHERE project_secret = $1 ORDER BY ts ASC`, [secret]);
   return r.rows.map(x => x.event_name);
@@ -110,7 +110,7 @@ describe('span row cap (HS-8890 §85.2.3)', () => {
     for (let i = 5; i >= 1; i--) await insertSpan(new Date(Date.now() - i * DAY_MS));
     expect(await countSpans()).toBe(5);
 
-    const db = await getDb();
+    const db = await getTelemetryDb();
     const deleted = await capSpanRows(db, SECRET, 3);
     expect(deleted).toBe(2);
     expect(await countSpans()).toBe(3);
@@ -124,7 +124,7 @@ describe('span row cap (HS-8890 §85.2.3)', () => {
   it('is a no-op at or under the cap', async () => {
     await insertSpan(new Date());
     await insertSpan(new Date());
-    const db = await getDb();
+    const db = await getTelemetryDb();
     expect(await capSpanRows(db, SECRET, 5)).toBe(0);
     expect(await countSpans()).toBe(2);
   });
@@ -168,7 +168,7 @@ describe('verbose-event window + event/metric caps (HS-9229 §85 gap)', () => {
 
   it('capTableRows trims otel_events to the newest N by ts', async () => {
     for (let i = 5; i >= 1; i--) await insertEvent(new Date(Date.now() - i * DAY_MS), `evt-${String(i)}`);
-    const db = await getDb();
+    const db = await getTelemetryDb();
     const deleted = await capTableRows(db, 'otel_events', 'ts', SECRET, 3);
     expect(deleted).toBe(2);
     // The 3 newest survive (evt-3/evt-2/evt-1 are the most recent by ts).
@@ -177,7 +177,7 @@ describe('verbose-event window + event/metric caps (HS-9229 §85 gap)', () => {
 
   it('capTableRows trims otel_metrics to the newest N by ts', async () => {
     for (let i = 5; i >= 1; i--) await insertMetric(new Date(Date.now() - i * DAY_MS));
-    const db = await getDb();
+    const db = await getTelemetryDb();
     expect(await countMetrics()).toBe(5);
     const deleted = await capTableRows(db, 'otel_metrics', 'ts', SECRET, 2);
     expect(deleted).toBe(3);

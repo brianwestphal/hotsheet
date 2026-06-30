@@ -27,7 +27,7 @@ import { join } from 'path';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
 import { type BackgroundScheduler, getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
 /** Below this the DB is small enough that bloat doesn't matter — skip entirely.
  *  An EMPTY PGLite cluster is already ~38 MB on disk (the Postgres system
@@ -202,9 +202,12 @@ export function decideVacuumMode(
   return 'plain';
 }
 
-/** A telemetry DB's PGLite cluster directory (`<dataDir>/db`). */
+/** A telemetry DB's PGLite cluster directory. HS-9230 — telemetry now lives in the
+ *  relocated `<dataDir>/telemetry/db` cluster (per project; the central store maps
+ *  to `~/.hotsheet/telemetry/db`), so the size gate + throttle key + scheduler key
+ *  all measure/stamp the cluster `getTelemetryDb` actually vacuums. */
 export function telemetryDbDir(dataDir: string): string {
-  return join(dataDir, 'db');
+  return join(telemetryClusterDataDir(dataDir), 'db');
 }
 
 /** Recursive on-disk size (bytes) of a directory. Best-effort: an unreadable

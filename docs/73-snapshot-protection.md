@@ -203,9 +203,13 @@ first snapshot both are null and the line says so rather than rendering a bogus
    lost on auto-restore. The ~2 s debounce + 120 s safety floor bound this to seconds in
    practice; a clean shutdown loses nothing.
 3. **Snapshot write cost grows with DB size.** `dumpDataDir` serializes the whole
-   cluster; for a large §67 telemetry set this is non-trivial. Mitigated by: async on the
-   threadpool (HS-8178 pattern), debounce coalescing, and the dirty-gated safety timer.
-   If it ever dominates, the §72.6 "Option B′" telemetry-split is the escape hatch.
+   cluster synchronously. This bit hard: a project DB that grew to 833 MB (766 MB of it
+   §67 telemetry) made `dumpDataDir` block the event loop ~6.7 s (the HS-9239 freeze).
+   **Resolved by HS-9230 (epic HS-9226 Phase 1):** per-project telemetry was relocated
+   OUT of `<dataDir>/db` into a sibling `<dataDir>/telemetry/db` cluster, which the
+   snapshot does NOT serialize (it dumps only the `<dataDir>/db` cluster), so the project
+   snapshot drops to a few MB. The threadpool-async / debounce / dirty-gate mitigations
+   still apply to whatever remains in `db/`.
 
 ## 73.9 Testing strategy
 

@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import {
   _testing,
   persistLogsPayload,
@@ -147,10 +147,11 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
   beforeEach(async () => {
     tempDir = await setupTestDb();
     // HS-8874 — writers route per-resource via `getProjectBySecret(secret).dataDir`.
-    // Register KNOWN_SECRET against the test's own dataDir so the existing
-    // round-trip assertions (which read `getDb()` = tempDir) keep working.
-    const db = await getDb();
-    registerExistingProject(tempDir, KNOWN_SECRET, db);
+    // Register KNOWN_SECRET against the test's own dataDir. HS-9230 — telemetry is
+    // now written to the relocated `<tempDir>/telemetry/db` cluster, so the
+    // round-trip assertions below read that cluster (not `getDb()` = `<tempDir>/db`).
+    const projectDb = await getDb();
+    registerExistingProject(tempDir, KNOWN_SECRET, projectDb);
   });
 
   afterEach(async () => {
@@ -164,7 +165,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(2);
       expect(result.dropped).toBe(0);
 
-      const db = await getDb();
+      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
       const rows = await db.query<{ metric_name: string; project_secret: string; session_id: string; value_json: { asDouble: number } }>(
         `SELECT metric_name, project_secret, session_id, value_json FROM otel_metrics ORDER BY ts`,
       );
@@ -200,7 +201,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(0);
       expect(result.dropped).toBe(1);
 
-      const db = await getDb();
+      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
       const rows = await db.query(`SELECT COUNT(*) AS c FROM otel_metrics`);
       const c = (rows.rows[0] as { c: bigint | number }).c;
       expect(Number(c)).toBe(0);
@@ -261,7 +262,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       const result = await persistMetricsPayload(payload, isKnownProject);
       expect(result.inserted).toBe(3);
 
-      const db = await getDb();
+      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
       const rows = await db.query<{ metric_name: string; aggregation_temporality: string | null; is_monotonic: boolean | null }>(
         `SELECT metric_name, aggregation_temporality, is_monotonic FROM otel_metrics ORDER BY ts`,
       );
@@ -277,7 +278,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(1);
       expect(result.dropped).toBe(0);
 
-      const db = await getDb();
+      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
       const rows = await db.query<{ event_name: string; prompt_id: string; project_secret: string }>(
         `SELECT event_name, prompt_id, project_secret FROM otel_events`,
       );
@@ -330,7 +331,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       const result = await persistLogsPayload(recordOnlySession, isKnownProject);
       expect(result.inserted).toBe(1);
 
-      const db = await getDb();
+      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
       const rows = await db.query<{ session_id: string | null; event_name: string }>(
         `SELECT session_id, event_name FROM otel_events`,
       );
@@ -346,7 +347,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(2);
       expect(result.dropped).toBe(0);
 
-      const db = await getDb();
+      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
       const rows = await db.query<{ span_id: string; parent_span_id: string | null; span_name: string; trace_id: string }>(
         `SELECT span_id, parent_span_id, span_name, trace_id FROM otel_spans ORDER BY span_name`,
       );
@@ -384,7 +385,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
     it('routes two resources for two known projects to their two separate DBs', async () => {
       const SECRET_2 = 'secret-known-B';
       const dir2 = createTempDir();
-      const db2 = await getDbForDir(dir2);
+      const db2 = await getDbForDir(telemetryClusterDataDir(dir2));
       registerExistingProject(dir2, SECRET_2, db2);
       try {
         const payload = {
@@ -404,7 +405,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         expect(result.dropped).toBe(0);
 
         // Each project's row landed in its OWN DB, not the other's.
-        const a = await (await getDbForDir(tempDir)).query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
+        const a = await (await getDbForDir(telemetryClusterDataDir(tempDir))).query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
         expect(a.rows.map(r => r.project_secret)).toEqual([KNOWN_SECRET]);
         const b = await db2.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
         expect(b.rows.map(r => r.project_secret)).toEqual([SECRET_2]);
@@ -433,7 +434,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         expect(result.dropped).toBe(0);
 
         // Did NOT land in the project DB.
-        const proj = await (await getDbForDir(tempDir)).query(`SELECT COUNT(*) AS c FROM otel_metrics`);
+        const proj = await (await getDbForDir(telemetryClusterDataDir(tempDir))).query(`SELECT COUNT(*) AS c FROM otel_metrics`);
         expect(Number((proj.rows[0] as { c: bigint | number }).c)).toBe(0);
 
         // Landed in central with a NULL project_secret.

@@ -32,13 +32,14 @@
  * `~/.hotsheet/config.json`), sequentially, best-effort: a single unreadable DB
  * is logged and skipped, never aborting the whole pass.
  */
+import type { PGlite } from '@electric-sql/pglite';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
-import { centralTelemetryDataDir, getDbForDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getDbForDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
 const TELEMETRY_TABLES = ['otel_metrics', 'otel_events', 'otel_spans', 'announcer_usage', 'ticket_work_intervals'] as const;
 type TelemetryTable = (typeof TELEMETRY_TABLES)[number];
@@ -141,6 +142,89 @@ export async function migratePerProjectTelemetry(): Promise<MigrationResult> {
 }
 
 /**
+ * HS-9231 (epic HS-9226 Phase 1) — relocate each project's telemetry tables OUT
+ * of its snapshotted `<dataDir>/db` cluster INTO the separate, un-snapshotted
+ * `<dataDir>/telemetry/db` cluster (the HS-9230 routing now reads/writes there).
+ * Without this one-time move, history written before the relocation would be
+ * stranded in `db/` (invisible to dashboards, still bloating the snapshot).
+ *
+ * Per project: COPY every telemetry row from `<dataDir>/db` → `<dataDir>/telemetry/db`
+ * (idempotent `NOT EXISTS` insert — reuses the HS-8885 machinery), and ONLY after
+ * all tables are durably copied, **DROP** the telemetry tables from `<dataDir>/db`.
+ * DROP (not DELETE) returns the relation files to the OS immediately and removes
+ * them from `dumpDataDir`, so the §73 snapshot / §7 backup shrink without a
+ * VACUUM FULL. `initSchema` recreates the (now empty) tables in `db/` on the next
+ * open — harmless, since all telemetry traffic is routed to the telemetry cluster.
+ *
+ * Crash-safe + idempotent: rows are copied before the source DROP, and the
+ * per-project done-marker + the global completion flag are written only AFTER the
+ * DROP. A crash mid-copy re-copies (the `NOT EXISTS` guard makes it a no-op for
+ * rows already moved); a crash after copy but before DROP re-copies (no-op) then
+ * DROPs. The central store (`~/.hotsheet/telemetry`) already has its own cluster
+ * (`telemetryClusterDataDir` maps it to itself), so it's never relocated.
+ *
+ * Gated by `telemetryRelocatedV1` in `~/.hotsheet/config.json`; resumable per
+ * source DB via `telemetryRelocationV1DoneDirs`. Best-effort: an unreadable
+ * project is logged and skipped, never aborting the pass.
+ */
+export async function relocateTelemetryToSeparateCluster(launchedDataDir: string): Promise<{ moved: number; droppedDbs: number }> {
+  if (readGlobalConfig().telemetryRelocatedV1 === true) return { moved: 0, droppedDbs: 0 };
+
+  const dirs = [...new Set<string>([launchedDataDir, ...readProjectList()])];
+  const doneDirs = new Set(readGlobalConfig().telemetryRelocationV1DoneDirs ?? []);
+  const perTable: Record<string, number> = {};
+  let moved = 0;
+  let droppedDbs = 0;
+
+  for (const dataDir of dirs) {
+    if (doneDirs.has(dataDir)) continue;
+    const destDir = telemetryClusterDataDir(dataDir);
+    // Identity (the central store) — nothing to relocate; its `…/db` IS the
+    // telemetry cluster already.
+    if (destDir === dataDir) { doneDirs.add(dataDir); continue; }
+    try {
+      // Source = the project's main `<dataDir>/db` (where telemetry used to live);
+      // dest = the relocated `<dataDir>/telemetry/db` cluster.
+      const sourceDb = await getDbForDir(dataDir);
+      const destDb = await getDbForDir(destDir);
+
+      for (const table of TELEMETRY_TABLES) {
+        let lastId = 0;
+        for (;;) {
+          const res = await sourceDb.query<TelemetryRow>(
+            `SELECT * FROM ${table} WHERE id > $1 ORDER BY id LIMIT $2`, [lastId, BATCH],
+          );
+          const rows = res.rows;
+          if (rows.length === 0) break;
+          lastId = Number(rows[rows.length - 1].id);
+          const inserted = await insertBatchIfAbsent(destDb, table, rows);
+          if (inserted > 0) { moved += inserted; perTable[table] = (perTable[table] ?? 0) + inserted; }
+          if (rows.length < BATCH) break;
+          await yieldToEventLoop();
+        }
+      }
+
+      // Every row is now durable in the telemetry cluster — drop the source
+      // tables so `db/` shrinks (relation files freed) and `dumpDataDir` stops
+      // serializing them. `initSchema` recreates them empty on the next open.
+      for (const table of TELEMETRY_TABLES) {
+        await sourceDb.exec(`DROP TABLE IF EXISTS ${table} CASCADE`);
+      }
+      droppedDbs++;
+      doneDirs.add(dataDir);
+      writeGlobalConfig({ telemetryRelocationV1DoneDirs: [...doneDirs] });
+    } catch (err) {
+      console.error(`[telemetry-relocation] skipping ${dataDir}:`, err);
+    }
+  }
+
+  writeGlobalConfig({ telemetryRelocatedV1: true, telemetryRelocationV1DoneDirs: [] });
+  const summary = Object.entries(perTable).map(([t, n]) => `${t}=${String(n)}`).join(' ');
+  console.log(`  [telemetry-relocation] HS-9231: moved ${String(moved)} row(s) out of ${String(droppedDbs)} project db/ cluster(s) into <dataDir>/telemetry/db${summary === '' ? '' : ` (${summary})`}.`);
+  return { moved, droppedDbs };
+}
+
+/**
  * Scan one source DB for foreign rows (rows whose `project_secret` != the source
  * project's own secret) and copy them into the DB matching each row's secret (or
  * central for a NULL secret). Reads are keyset-paginated and inserts are batched
@@ -192,7 +276,7 @@ async function migrateFromSourceDb(
       }
 
       for (const [destDir, group] of byDest) {
-        const inserted = await runWithTelemetryDb(destDir, () => insertBatchIfAbsent(table, group));
+        const inserted = await runWithTelemetryDb(destDir, async () => insertBatchIfAbsent(await getTelemetryDb(), table, group));
         if (inserted > 0) { moved += inserted; perTable[table] = (perTable[table] ?? 0) + inserted; }
         // HS-8885 — the insert above has resolved, so every row in `group` is now
         // durably present in the destination (the `NOT EXISTS` insert leaves each
@@ -206,7 +290,7 @@ async function migrateFromSourceDb(
           .map(r => Number(r.id))
           .filter(id => Number.isInteger(id));
         if (sourceIds.length > 0) {
-          deletedFromSource += await runWithTelemetryDb(sourceDir, () => deleteRowsByIds(table, sourceIds));
+          deletedFromSource += await runWithTelemetryDb(sourceDir, async () => deleteRowsByIds(await getTelemetryDb(), table, sourceIds));
         }
       }
 
@@ -225,8 +309,7 @@ async function migrateFromSourceDb(
  * (≤ BATCH), comfortably under the bind-parameter ceiling, so a single
  * statement suffices. Returns the number of rows actually removed.
  */
-async function deleteRowsByIds(table: TelemetryTable, ids: number[]): Promise<number> {
-  const db = await getTelemetryDb();
+async function deleteRowsByIds(db: PGlite, table: TelemetryTable, ids: number[]): Promise<number> {
   const placeholders = ids.map((_, i) => `$${String(i + 1)}`).join(', ');
   const res = await db.query(`DELETE FROM ${table} WHERE id IN (${placeholders})`, ids);
   return res.affectedRows ?? 0;
@@ -244,11 +327,10 @@ async function deleteRowsByIds(table: TelemetryTable, ids: number[]): Promise<nu
  *
  * `id` (SERIAL) is intentionally dropped so the destination assigns its own.
  */
-async function insertBatchIfAbsent(table: TelemetryTable, rows: TelemetryRow[]): Promise<number> {
+async function insertBatchIfAbsent(db: PGlite, table: TelemetryTable, rows: TelemetryRow[]): Promise<number> {
   const unique = dedupeWithinBatch(table, rows);
   if (unique.length === 0) return 0;
 
-  const db = await getTelemetryDb();
   const cols = COLUMNS[table];
   // Every cell is explicitly cast to its column type so the VALUES alias has
   // stable column types (timestamptz / jsonb / etc.) — both for the INSERT and

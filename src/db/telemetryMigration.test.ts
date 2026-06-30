@@ -13,7 +13,7 @@ import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTempDir } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDbForDir, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDbForDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
 // HS-8874 — isolate the central store to a temp dir (see otelWriters.test.ts).
 let centralOverrideDir: string;
@@ -29,21 +29,34 @@ afterAll(async () => {
 const mockReadProjectList = vi.fn<() => string[]>();
 let migratedFlag = false;
 let doneDirs: string[] = [];
+// HS-9231 — relocation flags (separate one-shot from the HS-8874 migration).
+let relocatedFlag = false;
+let relocationDoneDirs: string[] = [];
 
 vi.mock('../project-list.js', () => ({
   readProjectList: (): string[] => mockReadProjectList(),
 }));
 
-interface MigrationConfig { telemetryMigratedV1?: boolean; telemetryMigrationV1DoneDirs?: string[]; }
+interface MigrationConfig {
+  telemetryMigratedV1?: boolean;
+  telemetryMigrationV1DoneDirs?: string[];
+  telemetryRelocatedV1?: boolean;
+  telemetryRelocationV1DoneDirs?: string[];
+}
 vi.mock('../global-config.js', () => ({
-  readGlobalConfig: (): MigrationConfig => ({ telemetryMigratedV1: migratedFlag, telemetryMigrationV1DoneDirs: doneDirs }),
+  readGlobalConfig: (): MigrationConfig => ({
+    telemetryMigratedV1: migratedFlag, telemetryMigrationV1DoneDirs: doneDirs,
+    telemetryRelocatedV1: relocatedFlag, telemetryRelocationV1DoneDirs: relocationDoneDirs,
+  }),
   writeGlobalConfig: (updates: MigrationConfig): void => {
     if (updates.telemetryMigratedV1 !== undefined) migratedFlag = updates.telemetryMigratedV1;
     if (updates.telemetryMigrationV1DoneDirs !== undefined) doneDirs = updates.telemetryMigrationV1DoneDirs;
+    if (updates.telemetryRelocatedV1 !== undefined) relocatedFlag = updates.telemetryRelocatedV1;
+    if (updates.telemetryRelocationV1DoneDirs !== undefined) relocationDoneDirs = updates.telemetryRelocationV1DoneDirs;
   },
 }));
 
-const { migratePerProjectTelemetry } = await import('./telemetryMigration.js');
+const { migratePerProjectTelemetry, relocateTelemetryToSeparateCluster } = await import('./telemetryMigration.js');
 
 const SECRET_A = 'secret-A';
 const SECRET_B = 'secret-B';
@@ -57,7 +70,9 @@ function makeProjectDir(secret: string): string {
 
 async function insertCost(dataDir: string, secret: string | null, cost: number, model = 'sonnet', tsIso = '2026-06-01T12:00:00Z'): Promise<void> {
   await runWithTelemetryDb(dataDir, async () => {
-    const db = await getDbForDir(dataDir);
+    // HS-9230 — go through `getTelemetryDb` (the relocated telemetry cluster) so
+    // the seed lands in the SAME cluster the migration reads, not the project `db/`.
+    const db = await getTelemetryDb();
     await db.query(
       `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
@@ -68,7 +83,7 @@ async function insertCost(dataDir: string, secret: string | null, cost: number, 
 
 async function countCost(dataDir: string, secret: string | null): Promise<number> {
   return runWithTelemetryDb(dataDir, async () => {
-    const db = await getDbForDir(dataDir);
+    const db = await getTelemetryDb();
     const res = secret === null
       ? await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret IS NULL`)
       : await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret = $1`, [secret]);
@@ -79,7 +94,7 @@ async function countCost(dataDir: string, secret: string | null): Promise<number
 // HS-8875 — ticket_work_intervals is migrated alongside the otel tables.
 async function insertWorkInterval(dataDir: string, secret: string, ticket: string): Promise<void> {
   await runWithTelemetryDb(dataDir, async () => {
-    const db = await getDbForDir(dataDir);
+    const db = await getTelemetryDb();
     await db.query(
       `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at)
        VALUES ($1, $2, $3, $4)`,
@@ -90,7 +105,7 @@ async function insertWorkInterval(dataDir: string, secret: string, ticket: strin
 
 async function countWorkIntervals(dataDir: string, secret: string): Promise<number> {
   return runWithTelemetryDb(dataDir, async () => {
-    const db = await getDbForDir(dataDir);
+    const db = await getTelemetryDb();
     const res = await db.query<{ c: bigint | number }>(
       `SELECT COUNT(*) AS c FROM ticket_work_intervals WHERE project_secret = $1`, [secret]);
     return Number(res.rows[0]?.c ?? 0);
@@ -119,6 +134,10 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     await central.query(`DELETE FROM otel_metrics WHERE project_secret IS NULL AND (value_json->>'asDouble')::numeric = $1`, [NULL_MARKER]);
     await closeDbForDir(dirA);
     await closeDbForDir(dirB);
+    // HS-9230 — telemetry now lives in the sibling `<dir>/telemetry/db` cluster;
+    // close those handles too so they don't leak across tests.
+    await closeDbForDir(telemetryClusterDataDir(dirA));
+    await closeDbForDir(telemetryClusterDataDir(dirB));
     rmSync(dirA, { recursive: true, force: true });
     rmSync(dirB, { recursive: true, force: true });
   });
@@ -151,7 +170,7 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     // HS-8885 — move, not copy: A's DB now holds ONLY its own SECRET_A row; the
     // migrated foreign rows (B's + the NULL one) are deleted from the source.
     const remainingInA = await runWithTelemetryDb(dirA, async () => {
-      const db = await getDbForDir(dirA);
+      const db = await getTelemetryDb();
       const res = await db.query<{ project_secret: string | null }>(`SELECT project_secret FROM otel_metrics`);
       return res.rows.map(r => r.project_secret);
     });
@@ -198,7 +217,7 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     // 300-row page size, so this exercises keyset pagination + batched inserts.
     const N = 700;
     await runWithTelemetryDb(dirA, async () => {
-      const db = await getDbForDir(dirA);
+      const db = await getTelemetryDb();
       await db.query(
         `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
          SELECT now(), $1, 'sess', 'claude_code.cost.usage', '{"model":"sonnet"}'::jsonb, jsonb_build_object('asDouble', g)
@@ -256,5 +275,92 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     // Completing the pass sets the one-time flag and clears the progress list.
     expect(migratedFlag).toBe(true);
     expect(doneDirs).toEqual([]);
+  });
+});
+
+// HS-9231 (epic HS-9226 Phase 1) — relocate telemetry out of the snapshotted
+// `<dataDir>/db` into the separate `<dataDir>/telemetry/db` cluster, then DROP it
+// from `db/` so the §73 snapshot / §7 backup stop serializing it.
+describe('relocateTelemetryToSeparateCluster (HS-9231)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    relocatedFlag = false;
+    relocationDoneDirs = [];
+    migratedFlag = true; // the HS-8874 migration is irrelevant here — skip it
+    mockReadProjectList.mockReset();
+    dir = makeProjectDir(SECRET_A);
+    mockReadProjectList.mockReturnValue([dir]);
+  });
+
+  afterEach(async () => {
+    await closeDbForDir(dir);
+    await closeDbForDir(telemetryClusterDataDir(dir));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Seed the OLD location: the project's main `<dataDir>/db` cluster directly. */
+  async function seedOldDb(dataDir: string, secret: string, cost: number): Promise<void> {
+    const db = await getDbForDir(dataDir); // <dataDir>/db
+    await db.query(
+      `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
+       VALUES ($1, $2, 'sess', 'claude_code.cost.usage', '{}'::jsonb, $3::jsonb)`,
+      [new Date('2026-06-01T12:00:00Z'), secret, JSON.stringify({ asDouble: cost })],
+    );
+  }
+  /** Count rows in the NEW relocated `<dataDir>/telemetry/db` cluster. */
+  async function countInTelemetryCluster(dataDir: string, secret: string): Promise<number> {
+    const db = await getDbForDir(telemetryClusterDataDir(dataDir));
+    const r = await db.query<{ c: bigint | number }>(
+      `SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret = $1`, [secret]);
+    return Number(r.rows[0]?.c ?? 0);
+  }
+  /** Whether `otel_metrics` still exists in the project's `<dataDir>/db`. */
+  async function otelExistsInOldDb(dataDir: string): Promise<boolean> {
+    const db = await getDbForDir(dataDir);
+    const r = await db.query<{ t: string | null }>(`SELECT to_regclass('otel_metrics') AS t`);
+    return r.rows[0]?.t !== null;
+  }
+
+  it('moves telemetry from <dataDir>/db into <dataDir>/telemetry/db, then drops the source tables', async () => {
+    await seedOldDb(dir, SECRET_A, 1.5);
+    await seedOldDb(dir, SECRET_A, 2.5);
+    expect(await otelExistsInOldDb(dir)).toBe(true);
+
+    const result = await relocateTelemetryToSeparateCluster(dir);
+    expect(result.moved).toBe(2);
+    expect(result.droppedDbs).toBe(1);
+
+    // Rows now live in the relocated telemetry cluster…
+    expect(await countInTelemetryCluster(dir, SECRET_A)).toBe(2);
+    // …and the source tables are DROPPED from `db/` (so dumpDataDir won't see them).
+    expect(await otelExistsInOldDb(dir)).toBe(false);
+    expect(relocatedFlag).toBe(true);
+  });
+
+  it('is idempotent — a re-run after a fresh open (schema recreated, empty) moves nothing', async () => {
+    await seedOldDb(dir, SECRET_A, 1.0);
+    await relocateTelemetryToSeparateCluster(dir);
+    expect(await countInTelemetryCluster(dir, SECRET_A)).toBe(1);
+
+    // Simulate the next launch: closing + reopening `db/` re-runs initSchema, which
+    // recreates the (now empty) telemetry tables the relocation dropped.
+    relocatedFlag = false;
+    relocationDoneDirs = [];
+    await closeDbForDir(dir);
+
+    const second = await relocateTelemetryToSeparateCluster(dir);
+    expect(second.moved).toBe(0);
+    expect(await countInTelemetryCluster(dir, SECRET_A)).toBe(1); // no duplicate
+  });
+
+  it('skips entirely when the relocation flag is already set', async () => {
+    await seedOldDb(dir, SECRET_A, 1.0);
+    relocatedFlag = true;
+    const result = await relocateTelemetryToSeparateCluster(dir);
+    expect(result).toEqual({ moved: 0, droppedDbs: 0 });
+    // Untouched — still in the old db/, not relocated.
+    expect(await otelExistsInOldDb(dir)).toBe(true);
+    expect(await countInTelemetryCluster(dir, SECRET_A)).toBe(0);
   });
 });

@@ -261,8 +261,14 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     // `telemetryMigratedV1` config flag — a failure must never block startup.
     startupMark('post-startup: migrating per-project telemetry');
     try {
-      const { migratePerProjectTelemetry } = await import('./db/telemetryMigration.js');
+      const { migratePerProjectTelemetry, relocateTelemetryToSeparateCluster } = await import('./db/telemetryMigration.js');
       await migratePerProjectTelemetry();
+      // HS-9231 (epic HS-9226 Phase 1) — one-shot relocation of each project's
+      // telemetry tables out of its snapshotted `<dataDir>/db` into the separate
+      // `<dataDir>/telemetry/db` cluster, then DROP them from `db/` so the §73
+      // snapshot / §7 backup stop serializing them (the freeze fix). Crash-safe +
+      // self-guarded by `telemetryRelocatedV1`; runs once.
+      await relocateTelemetryToSeparateCluster(dataDir);
     } catch (e: unknown) {
       console.warn(`[startup] Per-project telemetry migration failed (non-fatal): ${getErrorMessage(e)}`);
     }

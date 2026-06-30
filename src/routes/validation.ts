@@ -353,6 +353,13 @@ export const GlobalConfigSchema = z.object({
   // first incomplete DB instead of restarting from zero (the boot-loop the
   // end-only `telemetryMigratedV1` flag caused). Cleared when migration completes.
   telemetryMigrationV1DoneDirs: z.array(z.string()).optional(),
+  // HS-9231 (epic HS-9226 Phase 1) — one-shot relocation of each project's
+  // telemetry tables out of its snapshotted `<dataDir>/db` into the separate
+  // `<dataDir>/telemetry/db` cluster. `telemetryRelocatedV1` is the completion
+  // flag; `telemetryRelocationV1DoneDirs` is the per-project resumability list
+  // (same pattern as the HS-8874 migration above), cleared on completion.
+  telemetryRelocatedV1: z.boolean().optional(),
+  telemetryRelocationV1DoneDirs: z.array(z.string()).optional(),
   // HS-8877 — retention window (days) for the centralized non-project telemetry
   // store (`~/.hotsheet/telemetry`). Projects have a per-project
   // `telemetry_retention_days`; central isn't a project, so its sweep window

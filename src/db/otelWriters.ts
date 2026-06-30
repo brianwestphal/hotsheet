@@ -1,5 +1,5 @@
 import { getProjectBySecret } from '../projects.js';
-import { centralTelemetryDataDir, getDbForDir } from './connection.js';
+import { centralTelemetryDataDir, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { scheduleSnapshot } from './snapshot.js';
 
 /**
@@ -209,7 +209,9 @@ export async function persistMetricsPayload(
     // its debounced + shutdown snapshot then fires (and `restore.ts` auto-
     // restores it on a corrupt open). No-op for project rows.
     if (resCtx.projectSecret === null) scheduleSnapshot(targetDir);
-    const db = await getDbForDir(targetDir);
+    // HS-9230 — write into the relocated telemetry cluster (`<dataDir>/telemetry/db`
+    // for a project; the central store maps to itself), NOT the snapshotted project db.
+    const db = await getDbForDir(telemetryClusterDataDir(targetDir));
     const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
     for (const sm of scopes) {
       if (typeof sm !== 'object' || sm === null) continue;
@@ -392,7 +394,7 @@ export async function persistLogsPayload(
     }
 
     // HS-8874 — per-resource target DB.
-    const db = await getDbForDir(telemetryDataDirForSecret(resCtx.projectSecret));
+    const db = await getDbForDir(telemetryClusterDataDir(telemetryDataDirForSecret(resCtx.projectSecret))); // HS-9230 — relocated telemetry cluster
     const scopes = Array.isArray(eR.scopeLogs) ? eR.scopeLogs : [];
     for (const sl of scopes) {
       if (typeof sl !== 'object' || sl === null) continue;
@@ -475,7 +477,7 @@ export async function persistTracesPayload(
     }
 
     // HS-8874 — per-resource target DB.
-    const db = await getDbForDir(telemetryDataDirForSecret(resCtx.projectSecret));
+    const db = await getDbForDir(telemetryClusterDataDir(telemetryDataDirForSecret(resCtx.projectSecret))); // HS-9230 — relocated telemetry cluster
     const scopes = Array.isArray(eR.scopeSpans) ? eR.scopeSpans : [];
     for (const ss of scopes) {
       if (typeof ss !== 'object' || ss === null) continue;

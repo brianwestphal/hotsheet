@@ -10,7 +10,7 @@ import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupAllProjectsTelemetry, cleanupTelemetryRows } from './cleanup.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, runWithTelemetryDb } from './db/connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDbForDir, getTelemetryDb, runWithTelemetryDb } from './db/connection.js';
 import type * as GlobalConfigModule from './global-config.js';
 import type * as ProjectListModule from './project-list.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from './test-helpers.js';
@@ -49,7 +49,7 @@ vi.mock('./global-config.js', async (importOriginal) => {
 const KNOWN_SECRET = 'secret-A';
 
 async function insertMetric(ts: Date, secret = KNOWN_SECRET): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   await db.query(
     `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
@@ -58,7 +58,7 @@ async function insertMetric(ts: Date, secret = KNOWN_SECRET): Promise<void> {
 }
 
 async function countMetrics(): Promise<number> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics`);
   return Number(r.rows[0].c);
 }
@@ -151,7 +151,7 @@ describe('cleanupTelemetryRows (HS-8154 / §67.6)', () => {
   it('sweeps otel_events + otel_spans alongside otel_metrics', async () => {
     writeRetentionSetting(tempDir, 7);
     const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const db = await getDb();
+    const db = await getTelemetryDb();
     await insertMetric(old);
     await db.query(
       `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
@@ -190,7 +190,7 @@ describe('cleanupTelemetryRows (HS-8154 / §67.6)', () => {
     const result = await cleanupTelemetryRows(tempDir);
     // Only KNOWN_SECRET's row is pruned.
     expect(result.deleted).toBe(1);
-    const db = await getDb();
+    const db = await getTelemetryDb();
     const remaining = await db.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
     expect(remaining.rows.map(r => r.project_secret)).toEqual([OTHER_SECRET]);
   });
@@ -235,7 +235,7 @@ describe('cleanupAllProjectsTelemetry (HS-8607)', () => {
     const result = await cleanupAllProjectsTelemetry(tempDir);
     expect(result.deleted).toBe(1);
 
-    const db = await getDb();
+    const db = await getTelemetryDb();
     const remaining = await db.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
     expect(remaining.rows.map(r => r.project_secret)).toEqual([SECRET_B]);
   });

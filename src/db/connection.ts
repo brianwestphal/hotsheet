@@ -242,6 +242,28 @@ export function centralTelemetryDataDir(): string {
   return join(globalHotsheetDir(), 'telemetry');
 }
 
+/**
+ * HS-9230 (epic HS-9226 Phase 1) — map a telemetry "dataDir" to the dataDir whose
+ * `…/db` cluster physically holds its telemetry tables.
+ *
+ * Per-project telemetry (`otel_*` / `announcer_usage` / `ticket_work_intervals`)
+ * was relocated OUT of the project's snapshotted `<dataDir>/db` into a SEPARATE
+ * `<dataDir>/telemetry/db` cluster, so the project snapshot (§73) + backup (§7) —
+ * both single-cluster `dumpDataDir('gzip')` over `<dataDir>/db` — no longer
+ * serialize the bulky telemetry (the §73 freeze). A sibling `telemetry/db` cluster
+ * is automatically excluded from those dumps.
+ *
+ * The central store (`centralTelemetryDataDir()` = `~/.hotsheet/telemetry`) is
+ * ALREADY a dedicated telemetry dir whose `…/db` is its cluster, so it maps to
+ * itself; any other (project) dataDir gets a `telemetry` segment appended. The
+ * single chokepoint used by both the routing (`getTelemetryDb`, the `otelWriters`
+ * direct opens) and the vacuum (`telemetryVacuum.telemetryDbDir`), so they always
+ * agree on where a project's telemetry lives.
+ */
+export function telemetryClusterDataDir(dataDir: string): string {
+  return dataDir === centralTelemetryDataDir() ? dataDir : join(dataDir, 'telemetry');
+}
+
 /** Get the current data directory from async context or legacy default.
  *  Returns the `.hotsheet/` data directory path (NOT the db/ subdirectory). */
 export function getDataDir(): string {
@@ -369,13 +391,18 @@ export async function getDb(): Promise<PGlite> {
  * it is safe to open the central dir the same way as any project dir.
  */
 export async function getTelemetryDb(): Promise<PGlite> {
+  // HS-9230 — every branch routes through `telemetryClusterDataDir`, so a
+  // project's telemetry resolves to `<dataDir>/telemetry/db` (the un-snapshotted
+  // sibling cluster), while the central store maps to itself (`~/.hotsheet/telemetry/db`).
   const telemetryDir = telemetryDbDir.getStore();
-  if (telemetryDir !== undefined) return getDbForDir(telemetryDir);
+  if (telemetryDir !== undefined) return getDbForDir(telemetryClusterDataDir(telemetryDir));
   const contextDataDir = requestDataDir.getStore();
-  if (contextDataDir !== undefined) return getDbForDir(contextDataDir);
-  // `defaultDbPath` is the `<dataDir>/db` directory; `getDbByPath` opens it
-  // directly (it already exists with the schema applied).
-  if (defaultDbPath !== null) return getDbByPath(defaultDbPath);
+  if (contextDataDir !== undefined) return getDbForDir(telemetryClusterDataDir(contextDataDir));
+  // `defaultDbPath` is the `<dataDir>/db` directory; strip the `db` segment back
+  // to the dataDir, then resolve its telemetry cluster.
+  if (defaultDbPath !== null) {
+    return getDbForDir(telemetryClusterDataDir(defaultDbPath.replace(/[\\/]db$/, '')));
+  }
   return getDbForDir(centralTelemetryDataDir());
 }
 
