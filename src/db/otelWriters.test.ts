@@ -270,6 +270,36 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(rows.rows[1]).toMatchObject({ metric_name: 'claude_code.token.usage', aggregation_temporality: 'cumulative', is_monotonic: true });
       expect(rows.rows[2]).toMatchObject({ metric_name: 'claude_code.some.gauge', aggregation_temporality: null, is_monotonic: null });
     });
+
+    // HS-9233 — dual-write the compact daily rollup into the SNAPSHOTTED main db
+    // (not the cluster), and strip the redundant nested attributes from value_json.
+    it('rolls up cost into otel_rollup_daily (main db) and strips nested attributes', async () => {
+      const result = await persistMetricsPayload(SAMPLE_METRICS_JSON, isKnownProject);
+      expect(result.inserted).toBe(2);
+
+      // Rollup lives in the main snapshotted db (getDb), NOT the telemetry cluster.
+      const mainDb = await getDb();
+      const roll = await mainDb.query<{ model: string; cost_usd: string; datapoint_count: number }>(
+        `SELECT model, cost_usd, datapoint_count FROM otel_rollup_daily WHERE project_secret = $1 ORDER BY model`,
+        [KNOWN_SECRET],
+      );
+      // Two cost data points: one model='sonnet-4' (0.42), one with no attrs → '(unknown)' (0.18).
+      const total = roll.rows.reduce((s, r) => s + Number(r.cost_usd), 0);
+      expect(total).toBeCloseTo(0.6, 6);
+      expect(roll.rows.reduce((s, r) => s + r.datapoint_count, 0)).toBe(2);
+
+      // The cluster has NO rollup rows (rollups are main-db only).
+      const clusterDb = await getDbForDir(telemetryClusterDataDir(tempDir));
+      const clusterRoll = await clusterDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_rollup_daily`);
+      expect(clusterRoll.rows[0].c).toBe(0);
+
+      // Stored value_json no longer carries the nested attributes array.
+      const raw = await clusterDb.query<{ value_json: Record<string, unknown> }>(
+        `SELECT value_json FROM otel_metrics ORDER BY ts`,
+      );
+      expect('attributes' in raw.rows[0].value_json).toBe(false);
+      expect(raw.rows[0].value_json.asDouble).toBe(0.42); // rest of the point preserved
+    });
   });
 
   describe('persistLogsPayload', () => {
@@ -338,6 +368,57 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(rows.rows[0].session_id).toBe('sess-from-record');
       // Stored bare, exactly as Claude Code sends it.
       expect(rows.rows[0].event_name).toBe('user_prompt');
+    });
+
+    // HS-9233 — ingest-time per-ticket cost attribution (time-window path): an
+    // api_request whose ts falls inside an open ticket_work_intervals window is
+    // attributed to that ticket's rollup in the main db.
+    it('attributes an api_request to the open ticket via ticket_work_intervals', async () => {
+      // The interval lives in the CLUSTER db (alongside the raw events).
+      const clusterDb = await getDbForDir(telemetryClusterDataDir(tempDir));
+      const eventTs = new Date(1700000000000); // == timeUnixNano below (ms)
+      await clusterDb.query(
+        `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1,$2,$3,$4)`,
+        [KNOWN_SECRET, 'HS-1234', new Date(eventTs.getTime() - 60_000), null],
+      );
+
+      const payload = {
+        resourceLogs: [
+          {
+            resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    timeUnixNano: '1700000000000000000',
+                    eventName: 'api_request',
+                    attributes: [
+                      { key: 'cost', value: { doubleValue: 0.25 } },
+                      { key: 'tokens', value: { intValue: '1500' } },
+                      { key: 'model', value: { stringValue: 'sonnet-4' } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await persistLogsPayload(payload, isKnownProject);
+      expect(result.inserted).toBe(1);
+
+      const mainDb = await getDb();
+      const roll = await mainDb.query<{ cost_usd: string; total_tokens: string; model_breakdown: unknown }>(
+        `SELECT cost_usd, total_tokens, model_breakdown FROM otel_rollup_ticket WHERE project_secret=$1 AND ticket_number='HS-1234'`,
+        [KNOWN_SECRET],
+      );
+      expect(roll.rows).toHaveLength(1);
+      expect(Number(roll.rows[0].cost_usd)).toBeCloseTo(0.25, 6);
+      expect(Number(roll.rows[0].total_tokens)).toBe(1500);
+
+      // body_json stored without the nested attributes array.
+      const raw = await clusterDb.query<{ body_json: Record<string, unknown> }>(`SELECT body_json FROM otel_events`);
+      expect('attributes' in raw.rows[0].body_json).toBe(false);
     });
   });
 

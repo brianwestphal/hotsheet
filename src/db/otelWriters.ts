@@ -1,5 +1,13 @@
 import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir, telemetryClusterDataDir } from './connection.js';
+import {
+  attributeApiRequestToTicket,
+  attributeUserPromptToTicket,
+  dataPointValue,
+  eventNameMatches,
+  stripNestedAttributes,
+  updateDailyRollup,
+} from './otelRollupIngest.js';
 import { scheduleSnapshot } from './snapshot.js';
 
 /**
@@ -212,6 +220,10 @@ export async function persistMetricsPayload(
     // HS-9230 — write into the relocated telemetry cluster (`<dataDir>/telemetry/db`
     // for a project; the central store maps to itself), NOT the snapshotted project db.
     const db = await getDbForDir(telemetryClusterDataDir(targetDir));
+    // HS-9233 — the compact rollups live in the SNAPSHOTTED main db (small + the
+    // per-ticket history is kept indefinitely, so it's backed up), so resolve it
+    // separately from the raw cluster.
+    const mainDb = await getDbForDir(targetDir);
     const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
     for (const sm of scopes) {
       if (typeof sm !== 'object' || sm === null) continue;
@@ -244,15 +256,26 @@ export async function persistMetricsPayload(
           const sessionId = resCtx.sessionId ??
             (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
           try {
+            // HS-9233 — strip the redundant nested `attributes` array from the
+            // stored data point; the flattened `attributes_json` already holds it
+            // and is what every stats query reads.
             await db.query(
               `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
                VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
-              [ts, resCtx.projectSecret, sessionId, metricName, JSON.stringify(attrs), JSON.stringify(point), agg.temporality, agg.isMonotonic],
+              [ts, resCtx.projectSecret, sessionId, metricName, JSON.stringify(attrs), JSON.stringify(stripNestedAttributes(point)), agg.temporality, agg.isMonotonic],
             );
             inserted++;
           } catch (err) {
             console.debug('[otel] metrics insert failed:', err);
             dropped++;
+          }
+          // HS-9233 — dual-write the compact daily time-series rollup (cost +
+          // split token sums). Best-effort: a rollup failure must never fail
+          // ingest (OTLP returns 200 regardless).
+          try {
+            await updateDailyRollup(mainDb, resCtx.projectSecret, ts, metricName, dataPointValue(point), attrs, agg);
+          } catch (err) {
+            console.debug('[otel] daily rollup update failed:', err);
           }
         }
       }
@@ -394,7 +417,10 @@ export async function persistLogsPayload(
     }
 
     // HS-8874 — per-resource target DB.
-    const db = await getDbForDir(telemetryClusterDataDir(telemetryDataDirForSecret(resCtx.projectSecret))); // HS-9230 — relocated telemetry cluster
+    const targetDir = telemetryDataDirForSecret(resCtx.projectSecret);
+    const db = await getDbForDir(telemetryClusterDataDir(targetDir)); // HS-9230 — relocated telemetry cluster
+    // HS-9233 — rollups live in the snapshotted main db (see persistMetricsPayload).
+    const mainDb = await getDbForDir(targetDir);
     const scopes = Array.isArray(eR.scopeLogs) ? eR.scopeLogs : [];
     for (const sl of scopes) {
       if (typeof sl !== 'object' || sl === null) continue;
@@ -420,15 +446,32 @@ export async function persistLogsPayload(
         const sessionId = resCtx.sessionId ??
           (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
         try {
+          // HS-9233 — strip the nested `attributes` array (already flattened into
+          // `attributes_json`); the `<!-- hotsheet:ticket=… -->` marker lives in
+          // the record BODY, not attributes, so the per-ticket marker LIKE is
+          // unaffected.
           await db.query(
             `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-            [ts, resCtx.projectSecret, sessionId, promptId, eventName, JSON.stringify(attrs), JSON.stringify(rec)],
+            [ts, resCtx.projectSecret, sessionId, promptId, eventName, JSON.stringify(attrs), JSON.stringify(stripNestedAttributes(rR))],
           );
           inserted++;
         } catch (err) {
           console.debug('[otel] logs insert failed:', err);
           dropped++;
+        }
+        // HS-9233 — ingest-time per-ticket cost attribution (time-window path):
+        // an api_request's cost/tokens go to the ticket whose work window covers
+        // `ts`; a user_prompt bumps that ticket's prompt_count. `ticket_work_intervals`
+        // lives in the cluster db (`db`), the rollup in the main db. Best-effort.
+        try {
+          if (eventNameMatches(eventName, 'api_request')) {
+            await attributeApiRequestToTicket(db, mainDb, resCtx.projectSecret, ts, attrs);
+          } else if (eventNameMatches(eventName, 'user_prompt')) {
+            await attributeUserPromptToTicket(db, mainDb, resCtx.projectSecret, ts);
+          }
+        } catch (err) {
+          console.debug('[otel] per-ticket rollup update failed:', err);
         }
       }
     }
