@@ -195,6 +195,11 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
           n += result.affectedRows ?? 0;
         }
       }
+      // HS-9229 — verbose inspector-only events get a SHORTER window than the
+      // general metrics/events window, since they're the bulk and no stats query
+      // reads them. Independent of `metricsDays` so it bounds even a "forever" (0)
+      // general window.
+      n += await deleteVerboseEventsOlderThan(db, secret);
       // Spans: the shorter `telemetry_span_retention_days` window (`start_ts`).
       if (spanDays > 0) {
         const spansResult = await db.query(
@@ -203,13 +208,16 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
         );
         n += spansResult.affectedRows ?? 0;
       }
-      // HS-8890 — hard span row cap (burst backstop, independent of the window).
+      // HS-8890 / HS-9229 — hard row caps (burst backstops, independent of the
+      // windows) for all three high-volume tables.
       n += await capSpanRows(db, secret);
+      n += await capTableRows(db, 'otel_events', 'ts', secret, EVENT_ROW_CAP);
+      n += await capTableRows(db, 'otel_metrics', 'ts', secret, METRIC_ROW_CAP);
       return n;
     });
 
     if (deleted > 0) {
-      console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(metricsDays)}d, spans > ${String(spanDays)}d, span cap ${String(SPAN_ROW_CAP)}).`);
+      console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(metricsDays)}d, verbose events > ${String(DEFAULT_VERBOSE_EVENT_RETENTION_DAYS)}d, spans > ${String(spanDays)}d; caps span/event/metric ${String(SPAN_ROW_CAP)}/${String(EVENT_ROW_CAP)}/${String(METRIC_ROW_CAP)}).`);
     }
     return { deleted };
   } catch (err) {
@@ -228,40 +236,120 @@ export const DEFAULT_SPAN_RETENTION_DAYS = 7;
  *  than the window's worth). Keep the newest N; trim the rest by `start_ts`. */
 export const SPAN_ROW_CAP = 500_000;
 
+/** HS-9229 (§85.2.3, epic HS-9226 Phase 0) — the same burst backstop for the
+ *  high-frequency `otel_events` / `otel_metrics` tables, which previously had ONLY
+ *  the age window and no row cap (the §85 gap that let them grow to 563 MB / 203 MB
+ *  unbounded). Sized to match spans — a runaway-burst limit, NOT the primary bound
+ *  (that's the age window + the shorter verbose-event window below). */
+export const EVENT_ROW_CAP = 500_000;
+export const METRIC_ROW_CAP = 500_000;
+
+/** HS-9229 — high-frequency, inspector-only event names that no stats query reads
+ *  (the §68 event list / debug views are their only consumers). They're the bulk
+ *  of `otel_events`, so they get a SHORTER age window than human-meaningful events.
+ *  Deliberately EXCLUDES `api_request` (per-ticket cost attribution), `user_prompt`
+ *  / `assistant_response` (human-meaningful, tiny), and the `token.usage` /
+ *  `cost.usage` metrics — all of which keep the full `telemetry_retention_days`
+ *  window. Names are matched in BOTH the bare and `claude_code.`-prefixed forms
+ *  Claude Code emits (mirrors `eventNameMatchSql`). */
+export const VERBOSE_EVENT_BASE_NAMES = [
+  'hook_execution_start',
+  'hook_execution_complete',
+  'tool_result',
+  'tool_decision',
+] as const;
+
+/** HS-9229 — default age window (days) for the verbose inspector-only events
+ *  above. Mirrors the §85 span window (7d) since these are the same kind of
+ *  high-volume, inspector-only telemetry. Independent of `telemetry_retention_days`
+ *  so it bounds the bulk even when the general window is "keep forever" (`0`). */
+export const DEFAULT_VERBOSE_EVENT_RETENTION_DAYS = 7;
+
+/** Expand the verbose base names into the dual (bare + `claude_code.`-prefixed)
+ *  forms Claude Code emits, as an `IN (...)` parameter list. */
+function verboseEventNames(): string[] {
+  return VERBOSE_EVENT_BASE_NAMES.flatMap(n => [n, `claude_code.${n}`]);
+}
+
 /**
- * Trim `otel_spans` for `secret` (pass `null` for the central NULL-secret rows)
- * down to the newest `cap` by `start_ts`, deleting the oldest overflow. Runs in
- * the CURRENT telemetry DB context. Returns the number of rows deleted. A no-op
- * when at/under the cap. Applied unconditionally by the sweep — it's a safety
- * limit, so it bounds even a "keep forever" (`0`-day) span window. `cap` is a
- * parameter (defaulting to `SPAN_ROW_CAP`) so tests can exercise it without
- * inserting half a million rows. Exported for unit testing.
+ * HS-9229 — delete the verbose inspector-only events older than `days` for
+ * `secret` (`null` = central NULL-secret rows). Runs in the CURRENT telemetry DB
+ * context. No-op when `days <= 0`. Returns rows deleted.
+ */
+export async function deleteVerboseEventsOlderThan(
+  db: Awaited<ReturnType<typeof getTelemetryDb>>,
+  secret: string | null,
+  days: number = DEFAULT_VERBOSE_EVENT_RETENTION_DAYS,
+): Promise<number> {
+  if (days <= 0) return 0;
+  const names = verboseEventNames();
+  const secretClause = secret === null ? 'project_secret IS NULL' : 'project_secret = $1';
+  const baseParams = secret === null ? [] : [secret];
+  // Placeholders for the IN list, after the secret param (if any) and the days param.
+  const start = baseParams.length + 2; // $1 (secret?) + $N days, then names
+  const inPlaceholders = names.map((_, i) => `$${String(start + i)}`).join(', ');
+  const daysParam = `$${String(baseParams.length + 1)}`;
+  const res = await db.query(
+    `DELETE FROM otel_events
+       WHERE ${secretClause}
+         AND ts < NOW() - (${daysParam} || ' days')::interval
+         AND event_name IN (${inPlaceholders})`,
+    [...baseParams, String(days), ...names],
+  );
+  return res.affectedRows ?? 0;
+}
+
+/**
+ * Trim a telemetry `table` for `secret` (pass `null` for the central NULL-secret
+ * rows) down to the newest `cap` by its timestamp column, deleting the oldest
+ * overflow. Runs in the CURRENT telemetry DB context. Returns the number of rows
+ * deleted. A no-op when at/under the cap. Applied unconditionally by the sweep —
+ * it's a safety limit, so it bounds even a "keep forever" (`0`-day) window. `cap`
+ * is a parameter so tests can exercise it without inserting half a million rows.
+ * Exported for unit testing.
+ *
+ * `table` + `tsColumn` are caller-supplied literals (never user input) — the only
+ * call sites pass the fixed `otel_*` table names + their `ts`/`start_ts` columns.
+ */
+export async function capTableRows(
+  db: Awaited<ReturnType<typeof getTelemetryDb>>,
+  table: 'otel_spans' | 'otel_events' | 'otel_metrics',
+  tsColumn: 'ts' | 'start_ts',
+  secret: string | null,
+  cap: number,
+): Promise<number> {
+  const secretClause = secret === null ? 'project_secret IS NULL' : 'project_secret = $1';
+  const params = secret === null ? [] : [secret];
+  const countRes = await db.query<{ c: bigint | number }>(
+    `SELECT COUNT(*) AS c FROM ${table} WHERE ${secretClause}`,
+    params,
+  );
+  const count = Number(countRes.rows[0]?.c ?? 0);
+  if (count <= cap) return 0;
+  const overflow = count - cap;
+  // Delete the oldest `overflow` rows by the timestamp column (ties broken by
+  // `id`). PGLite supports a `LIMIT` subquery in the `DELETE ... WHERE id IN (...)` form.
+  const capParam = secret === null ? '$1' : '$2';
+  const delRes = await db.query(
+    `DELETE FROM ${table} WHERE id IN (
+       SELECT id FROM ${table} WHERE ${secretClause}
+       ORDER BY ${tsColumn} ASC, id ASC LIMIT ${capParam}
+     )`,
+    [...params, overflow],
+  );
+  return delRes.affectedRows ?? 0;
+}
+
+/**
+ * Trim `otel_spans` down to `cap` (default `SPAN_ROW_CAP`). Thin wrapper over
+ * {@link capTableRows} kept for its existing callers + tests.
  */
 export async function capSpanRows(
   db: Awaited<ReturnType<typeof getTelemetryDb>>,
   secret: string | null,
   cap: number = SPAN_ROW_CAP,
 ): Promise<number> {
-  const secretClause = secret === null ? 'project_secret IS NULL' : 'project_secret = $1';
-  const params = secret === null ? [] : [secret];
-  const countRes = await db.query<{ c: bigint | number }>(
-    `SELECT COUNT(*) AS c FROM otel_spans WHERE ${secretClause}`,
-    params,
-  );
-  const count = Number(countRes.rows[0]?.c ?? 0);
-  if (count <= cap) return 0;
-  const overflow = count - cap;
-  // Delete the oldest `overflow` rows by `start_ts` (ties broken by `id`). PGLite
-  // supports a `LIMIT` subquery in the `DELETE ... WHERE id IN (...)` form.
-  const capParam = secret === null ? '$1' : '$2';
-  const delRes = await db.query(
-    `DELETE FROM otel_spans WHERE id IN (
-       SELECT id FROM otel_spans WHERE ${secretClause}
-       ORDER BY start_ts ASC, id ASC LIMIT ${capParam}
-     )`,
-    [...params, overflow],
-  );
-  return delRes.affectedRows ?? 0;
+  return capTableRows(db, 'otel_spans', 'start_ts', secret, cap);
 }
 
 /**
@@ -334,6 +422,9 @@ async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
           n += result.affectedRows ?? 0;
         }
       }
+      // HS-9229 — verbose inspector-only events: shorter window on the central
+      // NULL-secret rows too.
+      n += await deleteVerboseEventsOlderThan(db, null);
       // Spans: shorter central span window (HS-8890). `0` = keep forever (skip).
       if (spanDays > 0) {
         const spansResult = await db.query(
@@ -342,12 +433,14 @@ async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
         );
         n += spansResult.affectedRows ?? 0;
       }
-      // HS-8890 — hard span row cap on the central NULL-secret rows too.
+      // HS-8890 / HS-9229 — hard row caps on the central NULL-secret rows too.
       n += await capSpanRows(db, null);
+      n += await capTableRows(db, 'otel_events', 'ts', null, EVENT_ROW_CAP);
+      n += await capTableRows(db, 'otel_metrics', 'ts', null, METRIC_ROW_CAP);
       return n;
     });
     if (deleted > 0) {
-      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(retentionDays)}d, spans > ${String(spanDays)}d, span cap ${String(SPAN_ROW_CAP)}).`);
+      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(retentionDays)}d, verbose events > ${String(DEFAULT_VERBOSE_EVENT_RETENTION_DAYS)}d, spans > ${String(spanDays)}d; caps span/event/metric ${String(SPAN_ROW_CAP)}/${String(EVENT_ROW_CAP)}/${String(METRIC_ROW_CAP)}).`);
     }
     return { deleted };
   } catch (err) {

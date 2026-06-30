@@ -11,7 +11,7 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { capSpanRows, cleanupTelemetryRows } from './cleanup.js';
+import { capSpanRows, capTableRows, cleanupTelemetryRows } from './cleanup.js';
 import { getDb } from './db/connection.js';
 import { cleanupTestDb, setupTestDb } from './test-helpers.js';
 
@@ -49,6 +49,20 @@ async function countMetrics(secret: string = SECRET): Promise<number> {
   const db = await getDb();
   const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret = $1`, [secret]);
   return Number(r.rows[0]?.c ?? 0);
+}
+async function insertEvent(ts: Date, eventName: string, secret: string = SECRET): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+     VALUES ($1, $2, 'sess', 'p', $3, '{}'::jsonb, '{}'::jsonb)`,
+    [ts, secret, eventName],
+  );
+}
+async function eventNames(secret: string = SECRET): Promise<string[]> {
+  const db = await getDb();
+  const r = await db.query<{ event_name: string }>(
+    `SELECT event_name FROM otel_events WHERE project_secret = $1 ORDER BY ts ASC`, [secret]);
+  return r.rows.map(x => x.event_name);
 }
 
 describe('per-table retention windows (HS-8890 §85.2.2)', () => {
@@ -113,5 +127,60 @@ describe('span row cap (HS-8890 §85.2.3)', () => {
     const db = await getDb();
     expect(await capSpanRows(db, SECRET, 5)).toBe(0);
     expect(await countSpans()).toBe(2);
+  });
+});
+
+describe('verbose-event window + event/metric caps (HS-9229 §85 gap)', () => {
+  let tempDir: string;
+  beforeEach(async () => { tempDir = await setupTestDb(); });
+  afterEach(async () => { await cleanupTestDb(tempDir); });
+
+  it('verbose inspector events use the 7-day window while api_request keeps the 30-day window', async () => {
+    writeSettings(tempDir, {}); // defaults: events 30d, verbose events 7d
+    await insertEvent(new Date(Date.now() - 10 * DAY_MS), 'tool_result');   // verbose, past 7d  → deleted
+    await insertEvent(new Date(Date.now() - 3 * DAY_MS), 'tool_decision');  // verbose, within 7d → kept
+    await insertEvent(new Date(Date.now() - 10 * DAY_MS), 'api_request');   // not verbose, within 30d → kept
+    await insertEvent(new Date(Date.now() - 40 * DAY_MS), 'api_request');   // not verbose, past 30d  → deleted (general window)
+
+    await cleanupTelemetryRows(tempDir);
+
+    // Survivors: the 3-day verbose event + the 10-day api_request.
+    expect((await eventNames()).sort()).toEqual(['api_request', 'tool_decision']);
+  });
+
+  it('matches the claude_code.-prefixed verbose name form too', async () => {
+    writeSettings(tempDir, {});
+    await insertEvent(new Date(Date.now() - 10 * DAY_MS), 'claude_code.tool_result'); // verbose (prefixed), past 7d → deleted
+    await insertEvent(new Date(Date.now() - 2 * DAY_MS), 'claude_code.user_prompt');  // not verbose → kept
+
+    await cleanupTelemetryRows(tempDir);
+    expect(await eventNames()).toEqual(['claude_code.user_prompt']);
+  });
+
+  it('trims verbose events at 7d even when the general window is keep-forever (0)', async () => {
+    writeSettings(tempDir, { telemetry_retention_days: 0 }); // general events kept forever
+    await insertEvent(new Date(Date.now() - 30 * DAY_MS), 'tool_result'); // verbose → still trimmed at 7d
+    await insertEvent(new Date(Date.now() - 30 * DAY_MS), 'api_request'); // not verbose → kept forever
+
+    await cleanupTelemetryRows(tempDir);
+    expect(await eventNames()).toEqual(['api_request']);
+  });
+
+  it('capTableRows trims otel_events to the newest N by ts', async () => {
+    for (let i = 5; i >= 1; i--) await insertEvent(new Date(Date.now() - i * DAY_MS), `evt-${String(i)}`);
+    const db = await getDb();
+    const deleted = await capTableRows(db, 'otel_events', 'ts', SECRET, 3);
+    expect(deleted).toBe(2);
+    // The 3 newest survive (evt-3/evt-2/evt-1 are the most recent by ts).
+    expect((await eventNames()).sort()).toEqual(['evt-1', 'evt-2', 'evt-3']);
+  });
+
+  it('capTableRows trims otel_metrics to the newest N by ts', async () => {
+    for (let i = 5; i >= 1; i--) await insertMetric(new Date(Date.now() - i * DAY_MS));
+    const db = await getDb();
+    expect(await countMetrics()).toBe(5);
+    const deleted = await capTableRows(db, 'otel_metrics', 'ts', SECRET, 2);
+    expect(deleted).toBe(3);
+    expect(await countMetrics()).toBe(2);
   });
 });

@@ -1,8 +1,9 @@
 # 85. Telemetry Retention Bounding (periodic sweep + per-table windows + size cap)
 
 **Status: SHIPPED** (HS-8888 diagnostic + HS-8889 periodic sweep + HS-8890
-per-table windows & span cap, 2026-06-19). Filed as HS-8886 from the HS-8882
-telemetry-bloat investigation. The two sibling *disk-reclaim* bugs are also
+per-table windows & span cap, 2026-06-19; **HS-9229** closed the events/metrics
+gap — row caps + a shorter verbose-event window, see §85.2.3). Filed as HS-8886
+from the HS-8882 telemetry-bloat investigation. The two sibling *disk-reclaim* bugs are also
 shipped and bound the on-disk footprint:
 
 - **HS-8884** — `VACUUM` pass (`src/db/telemetryVacuum.ts`): PGLite doesn't return
@@ -70,8 +71,26 @@ metrics/events a user still wants. Implementation: after the time-based delete,
 if `COUNT(*) FROM otel_spans` (scoped to the secret) exceeds the cap, delete the
 oldest `count - cap` rows (`ORDER BY start_ts ASC LIMIT …`, or an `id <` cutoff
 from the keyset). The cap is a constant with room to become a setting later.
-Metrics/events have no row cap initially (their volume is bounded by cadence; the
-time window suffices).
+
+**HS-9229 (epic HS-9226 Phase 0) — closed the events/metrics gap.** The
+"metrics/events have no row cap initially" assumption above proved wrong in
+practice: `otel_events` grew to 563 MB / 219k rows and `otel_metrics` to 203 MB /
+100k rows — the dominant bloat behind the §73 snapshot freeze (epic HS-9226). Two
+additions in `src/cleanup.ts`, applied on both the per-project and central sweep:
+
+- **`EVENT_ROW_CAP` / `METRIC_ROW_CAP` (500k each)** — the same burst backstop
+  spans have, via the generalized `capTableRows(db, table, tsColumn, secret, cap)`
+  (`capSpanRows` is now a thin wrapper). Independent of the window, so it bounds
+  even a "keep forever" (`0`) setting.
+- **A shorter window for verbose, inspector-only events** —
+  `hook_execution_start` / `hook_execution_complete` / `tool_result` /
+  `tool_decision` (the high-frequency bulk no stats query reads) age out on
+  `DEFAULT_VERBOSE_EVENT_RETENTION_DAYS` (**7d**, mirroring spans), matched in both
+  the bare and `claude_code.`-prefixed forms. `api_request` (per-ticket cost),
+  `user_prompt` / `assistant_response` (human-meaningful), and the `token.usage` /
+  `cost.usage` metrics keep the full `telemetry_retention_days` window. This cut is
+  independent of the general window, so it trims the bulk even under keep-forever.
+  (The 7d window is a constant for now — a setting can follow.)
 
 ### 85.2.4 Diagnostic FIRST — confirm the dominant table
 HS-8882 *suspected* spans dominate but couldn't confirm row distribution without
