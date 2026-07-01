@@ -32,6 +32,11 @@ describe('aiInstructions — pure section logic', () => {
     expect(content).toContain('## Ticket-Driven Work');
     expect(content).toContain('## Testing Philosophy');
     expect(content).toContain('## Requirements Documentation');
+    // HS-9250 — the scaffolded Testing Philosophy carries the adversarial /
+    // state-transition clause (coverage-is-a-floor + transition-matrix + adversarial pass).
+    expect(content).toContain('Coverage is a floor, not a ceiling');
+    expect(content).toContain('Transition-matrix testing for stateful modules');
+    expect(content).toContain('Adversarial pass on stateful changes');
   });
 
   it('is idempotent — applying twice changes nothing the second time', () => {
@@ -100,8 +105,8 @@ describe('aiInstructions — pure section logic', () => {
 
     const { content, changed } = applyManagedSections(stale);
     expect(changed).toBe(true);
-    // Prescribed refreshed to the current version + text.
-    expect(content).toContain('<!-- hotsheet:begin section=testing-philosophy v=1 -->');
+    // Prescribed refreshed to the current version + text (HS-9250 bumped it to v=2).
+    expect(content).toContain('<!-- hotsheet:begin section=testing-philosophy v=2 -->');
     expect(content).not.toContain('OLD prescribed text');
     expect(content).toContain('**Double coverage**');
     // Filled specifics retained verbatim (no needs-setup sentinel re-added).

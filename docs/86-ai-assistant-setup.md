@@ -34,9 +34,9 @@ Each section is written between versioned HTML-comment markers so Hot Sheet can
 detect it, update it, and never clobber the user's surrounding file:
 
 ```
-<!-- hotsheet:begin section=testing-philosophy v=1 -->
+<!-- hotsheet:begin section=testing-philosophy v=2 -->
 ## Testing Philosophy
-…prescribed principles…
+…prescribed principles (incl. the HS-9250 coverage-is-a-floor + transition-matrix / adversarial-pass clause)…
 <!-- hotsheet:begin specifics=testing-philosophy v=1 -->
 …self-healing specifics block…
 <!-- hotsheet:end specifics=testing-philosophy -->

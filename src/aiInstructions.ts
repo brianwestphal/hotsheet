@@ -67,6 +67,9 @@ const TESTING_PHILOSOPHY = `## Testing Philosophy
 - **Unit tests**: Mock external deps (filesystem, network), test real logic.
 - **E2E tests**: As much as possible, use test automation tools to run realistic, user-facing flows. Minimize mocks.
 - **Coverage**: Merge all test coverage (e.g. unit, E2E server, E2E browser) into one report. Low-coverage files should get more of both test types. Aim for 100% coverage of code lines, 100% coverage of branches, and 100% of features described in the requirements documentation.
+- **Coverage is a floor, not a ceiling**: 100% line/branch coverage shows every line *ran*, not that every *behavior* — or every *sequence* of behaviors — is *asserted*. It is structurally blind to a **missing state transition**: a bug living in an untested interaction sails through a green 100% report because the individual lines still get hit by isolated, single-operation tests.
+- **Transition-matrix testing for stateful modules**: for anything with modes / multiple code paths / a cache / a state machine, enumerate the states AND the transitions between them, then write tests that walk realistic multi-step sequences crossing state boundaries — not just each operation from a clean initial state.
+- **Adversarial pass on stateful changes**: when adding or altering a stateful code path, deliberately try to break it with out-of-order / interleaved / repeated / empty-then-refill sequences; pin any that would have failed as permanent regression tests.
 - **Manual test plan**: keep a manual test plan doc (e.g. \`docs/manual-test-plan.md\`) for features that can't be reliably automated. **Keep it up to date** — add such features there; when you add automated coverage for a previously-manual item, remove it and note it in an "Automated Coverage Summary".
 - **Always fix lint and type errors before finishing**: Fix as you go, don't batch.`;
 
@@ -109,7 +112,7 @@ ${NEEDS_SETUP_SENTINEL}
 /** The canonical recommended sections, in install order. */
 export const MANAGED_SECTIONS: ManagedSection[] = [
   { id: 'ticket-driven-work', prescribed: TICKET_DRIVEN_WORK, version: 1 },
-  { id: 'testing-philosophy', prescribed: TESTING_PHILOSOPHY, version: 1, specifics: TESTING_SPECIFICS, specificsVersion: 1 },
+  { id: 'testing-philosophy', prescribed: TESTING_PHILOSOPHY, version: 2, specifics: TESTING_SPECIFICS, specificsVersion: 1 },
   { id: 'requirements-documentation', prescribed: REQUIREMENTS_DOCUMENTATION, version: 1, specifics: REQUIREMENTS_SPECIFICS, specificsVersion: 1 },
 ];
 
