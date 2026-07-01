@@ -27,33 +27,31 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * Fetch the per-ticket rollup + render into `#detail-telemetry-stats`.
- * Called from `loadDetail` after the meta-info paint. Idempotent —
- * every call replaces the container's contents.
- *
- * Renders nothing (empty container) when the ticket has zero
- * attributed prompts so we don't take up vertical real estate on
- * tickets nobody's used Claude on.
+ * HS-9249 — per-ticket rollup cache. `loadDetail` re-runs on every background
+ * poll / WebSocket ticket update, and editing the details field auto-saves on a
+ * debounce — so each keystroke's save round-trips into a `loadDetail` and, before
+ * this cache, blanked this block (`clearTicketTelemetryStats`) and re-fetched,
+ * flashing it empty then back. Keyed by ticket number, refreshed on every
+ * successful fetch, so a same-ticket reload re-paints the LAST value immediately
+ * and only updates once the fresh value lands.
  */
-export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promise<void> {
-  const container = byIdOrNull('detail-telemetry-stats');
-  if (container === null) return;
+const rollupCache = new Map<string, TicketRollup>();
 
-  let rollup: TicketRollup;
-  try {
-    rollup = await getPerTicketRollup(ticketNumber);
-  } catch {
-    // Network hiccup / receiver down → leave the container empty.
-    container.replaceChildren();
-    return;
-  }
+/**
+ * The ticket the block currently represents. Lets a switch clear a stale block
+ * only when there's no cached value to show for the new ticket, and lets an
+ * in-flight fetch detect that the user moved to another ticket before it resolved
+ * (so it doesn't clobber the newer ticket's block).
+ */
+let currentTicket: string | null = null;
 
+/** Paint one rollup into the container, or hide the block (empty container) when
+ *  the ticket has zero attributed prompts. `replaceChildren` keeps it idempotent. */
+function renderRollup(container: HTMLElement, rollup: TicketRollup): void {
   if (rollup.promptCount === 0) {
-    // No attributed prompts — hide the block entirely.
     container.replaceChildren();
     return;
   }
-
   container.replaceChildren(toElement(
     <div className="ticket-telemetry-block">
       <h4 className="ticket-telemetry-label">Claude Usage on This Ticket</h4>
@@ -80,18 +78,69 @@ export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promis
 }
 
 /**
- * Clear the stats block. Called on detail-panel close + on ticket
- * switch (before the new ticket's stats land) to avoid showing
- * stale data during the loading window.
+ * Fetch the per-ticket rollup + render into `#detail-telemetry-stats`.
+ * Called from `loadDetail` after the meta-info paint.
+ *
+ * HS-9249 — never flashes empty on a same-ticket reload: if we have a cached
+ * value for this ticket, it's painted synchronously up front (before the async
+ * fetch), so a background poll / auto-save round-trip keeps the last value on
+ * screen and only swaps in the fresh one when it arrives. On a SWITCH to a ticket
+ * we've never loaded, the previous ticket's stats are cleared so they can't
+ * linger during the fetch. Renders nothing (empty container) when the ticket has
+ * zero attributed prompts.
+ */
+export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promise<void> {
+  const container = byIdOrNull('detail-telemetry-stats');
+  if (container === null) return;
+
+  const switching = currentTicket !== ticketNumber;
+  currentTicket = ticketNumber;
+
+  const cached = rollupCache.get(ticketNumber);
+  if (cached !== undefined) {
+    // Same-ticket reload OR a revisit — show the cached value immediately so the
+    // block never blanks while the fresh fetch is in flight.
+    renderRollup(container, cached);
+  } else if (switching) {
+    // First time we've seen this ticket AND we're switching away from another —
+    // clear the previous ticket's stats so they don't show under the new ticket.
+    container.replaceChildren();
+  }
+
+  let rollup: TicketRollup;
+  try {
+    rollup = await getPerTicketRollup(ticketNumber);
+  } catch {
+    // Network hiccup / receiver down: keep whatever's shown (a cached value if we
+    // had one) rather than blanking a good value on a transient failure.
+    return;
+  }
+
+  rollupCache.set(ticketNumber, rollup);
+
+  // The user switched tickets while this fetch was in flight — the block now
+  // belongs to another ticket. Keep the cache warm, but don't repaint over it.
+  if (currentTicket !== ticketNumber) return;
+
+  renderRollup(container, rollup);
+}
+
+/**
+ * Clear the stats block. Called on detail-panel close so a later reopen of a
+ * DIFFERENT ticket can't briefly show this one's stats. The rollup cache is left
+ * intact so revisiting a ticket still re-paints instantly (HS-9249).
  */
 export function clearTicketTelemetryStats(): void {
   const container = byIdOrNull('detail-telemetry-stats');
   if (container !== null) container.replaceChildren();
+  currentTicket = null;
 }
 
-/** HS-8152 — exported for tests. */
+/** HS-8152 — exported for tests. HS-9249 — `resetCache` clears the module-level
+ *  cache + current-ticket tracker so unit tests start from a clean slate. */
 export const _testing = {
   formatCost,
   formatTokens,
   formatDuration,
+  resetCache(): void { rollupCache.clear(); currentTicket = null; },
 };

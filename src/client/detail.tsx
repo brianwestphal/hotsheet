@@ -231,6 +231,12 @@ export function openDetailAndFocusNote(id: number, noteId: string) {
 export function closeDetail() {
   state.selectedIds.clear();
   state.activeTicketId = null;
+  // HS-9249 — clear the per-ticket telemetry block + reset its current-ticket
+  // tracker on close (the cache is kept, so a later reopen still re-paints
+  // instantly). loadDetail no longer clears it, so this is where a close resets it.
+  void import('./ticketTelemetryStats.js').then(({ clearTicketTelemetryStats }) => {
+    clearTicketTelemetryStats();
+  });
   syncDetailPanel();
   // Trigger re-render for selection classes
   const event = new CustomEvent('hotsheet:render');
@@ -588,12 +594,13 @@ async function loadDetail(id: number, forceTextFields = false) {
     </> : null}
   </>).toString());
 
-  // HS-8152 — per-ticket Claude usage stats block (§67.10.7). Clear
-  // the previous ticket's stats immediately + fetch the new ticket's
-  // rollup. The fetch is async; the block renders empty during the
-  // loading window so stale data never shows.
-  void import('./ticketTelemetryStats.js').then(({ clearTicketTelemetryStats, loadAndRenderTicketTelemetry }) => {
-    clearTicketTelemetryStats();
+  // HS-8152 — per-ticket Claude usage stats block (§67.10.7).
+  // HS-9249 — do NOT blank it first: `loadDetail` re-runs on every background
+  // poll / ws update (and the details field auto-saves on a debounce, so each
+  // keystroke round-trips into a reload). `loadAndRenderTicketTelemetry` caches
+  // per ticket and re-paints the last value immediately, so a same-ticket reload
+  // no longer flashes empty; it clears only when switching to an unseen ticket.
+  void import('./ticketTelemetryStats.js').then(({ loadAndRenderTicketTelemetry }) => {
     void loadAndRenderTicketTelemetry(ticket.ticket_number);
   });
 

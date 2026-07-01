@@ -44,6 +44,9 @@ const container = (): HTMLElement => {
 beforeEach(() => {
   document.body.innerHTML = '<div id="detail-telemetry-stats"></div>';
   vi.clearAllMocks();
+  // HS-9249 — the rollup cache is module-level; reset it so tests don't leak a
+  // cached value into each other (e.g. a prior success hiding the reject case).
+  _testing.resetCache();
 });
 
 describe('loadAndRenderTicketTelemetry (HS-8152 / HS-8648)', () => {
@@ -109,6 +112,84 @@ describe('loadAndRenderTicketTelemetry (HS-8152 / HS-8648)', () => {
     expect(container().children.length).toBeGreaterThan(0);
     clearTicketTelemetryStats();
     expect(container().children).toHaveLength(0);
+  });
+});
+
+describe('HS-9249 — cached re-render (no empty flash on reload)', () => {
+  /** Resolve-controllable fetch: returns the promise + its resolver so a test can
+   *  inspect the DOM while the fetch is still in flight. */
+  function deferredRollup(): { resolve: (r: TicketRollup) => void } {
+    // `resolve` is only bound when the mock is CALLED, so return a live box the
+    // executor mutates (returning `{ resolve }` would snapshot the initial value).
+    const box: { resolve: (r: TicketRollup) => void } = { resolve: () => { /* set on call */ } };
+    vi.mocked(getPerTicketRollup).mockImplementationOnce(
+      () => new Promise<TicketRollup>(res => { box.resolve = res; }),
+    );
+    return box;
+  }
+
+  it('keeps the last value on screen during a same-ticket reload instead of blanking', async () => {
+    vi.mocked(getPerTicketRollup).mockResolvedValueOnce(mockRollup({ totalCost: 10.98 }));
+    await loadAndRenderTicketTelemetry('HS-1'); // populates + caches
+    expect(container().querySelectorAll('.ticket-telemetry-block')).toHaveLength(1);
+
+    // Second load (e.g. an auto-save-triggered background reload) with an
+    // in-flight fetch — the block must stay populated, NOT flash empty.
+    const pending = deferredRollup();
+    const reload = loadAndRenderTicketTelemetry('HS-1');
+    expect(container().querySelectorAll('.ticket-telemetry-block')).toHaveLength(1);
+    expect(container().querySelector('.ticket-telemetry-stat-value')?.textContent).toBe('$10.98');
+
+    // When the fresh value lands it swaps in.
+    pending.resolve(mockRollup({ totalCost: 20 }));
+    await reload;
+    expect(container().querySelector('.ticket-telemetry-stat-value')?.textContent).toBe('$20.00');
+  });
+
+  it('clears the previous ticket block when switching to a not-yet-cached ticket', async () => {
+    vi.mocked(getPerTicketRollup).mockResolvedValueOnce(mockRollup({ ticketNumber: 'HS-1' }));
+    await loadAndRenderTicketTelemetry('HS-1');
+    expect(container().querySelectorAll('.ticket-telemetry-block')).toHaveLength(1);
+
+    // Switch to HS-2 (never loaded) with an in-flight fetch — HS-1's stats must
+    // not linger under HS-2.
+    const pending = deferredRollup();
+    const load = loadAndRenderTicketTelemetry('HS-2');
+    expect(container().children).toHaveLength(0);
+
+    pending.resolve(mockRollup({ ticketNumber: 'HS-2', promptCount: 2 }));
+    await load;
+    expect(container().querySelectorAll('.ticket-telemetry-block')).toHaveLength(1);
+  });
+
+  it('does not let a stale in-flight fetch clobber the ticket now on screen', async () => {
+    // Cache HS-2 so switching to it later re-paints instantly.
+    vi.mocked(getPerTicketRollup).mockResolvedValueOnce(mockRollup({ ticketNumber: 'HS-2', totalCost: 5 }));
+    await loadAndRenderTicketTelemetry('HS-2');
+
+    // Start a slow HS-1 load...
+    const stale = deferredRollup();
+    const hs1 = loadAndRenderTicketTelemetry('HS-1');
+
+    // ...then switch back to HS-2 (cached → paints $5 synchronously).
+    vi.mocked(getPerTicketRollup).mockResolvedValueOnce(mockRollup({ ticketNumber: 'HS-2', totalCost: 5 }));
+    await loadAndRenderTicketTelemetry('HS-2');
+    expect(container().querySelector('.ticket-telemetry-stat-value')?.textContent).toBe('$5.00');
+
+    // The stale HS-1 fetch resolving must NOT repaint over HS-2.
+    stale.resolve(mockRollup({ ticketNumber: 'HS-1', totalCost: 99 }));
+    await hs1;
+    expect(container().querySelector('.ticket-telemetry-stat-value')?.textContent).toBe('$5.00');
+  });
+
+  it('keeps the cached value visible when a reload fetch rejects', async () => {
+    vi.mocked(getPerTicketRollup).mockResolvedValueOnce(mockRollup({ totalCost: 10.98 }));
+    await loadAndRenderTicketTelemetry('HS-1');
+
+    vi.mocked(getPerTicketRollup).mockRejectedValueOnce(new Error('network'));
+    await loadAndRenderTicketTelemetry('HS-1');
+    // The transient failure must not blank a good cached value.
+    expect(container().querySelector('.ticket-telemetry-stat-value')?.textContent).toBe('$10.98');
   });
 });
 
