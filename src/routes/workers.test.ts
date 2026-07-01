@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { WorkerLaunchSpec } from '../api/workers.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
+import { workerLaunchCommand } from '../workers/launchWorker.js';
 import { _resetPoolsForTesting, readyCount } from '../workers/poolManager.js';
 import { listWorktrees } from '../worktrees.js';
 import { workerRoutes } from './workers.js';
@@ -64,7 +65,11 @@ describe('POST /api/workers/launch — real git (HS-8969)', () => {
     const spec = await res.json() as WorkerLaunchSpec;
     expect(spec.worker).toBe('feature-x');
     expect(spec.label).toBe('feature-x');
-    expect(spec.command).toBe('claude "/hotsheet-worker"');
+    // HS-9036 — the worker command carries the owner's development-channel flag
+    // (so the worker's permission prompts route to Hot Sheet); assert against the
+    // canonical builder rather than a stale bare `claude "/hotsheet-worker"` literal
+    // (HS-9269). `workerLaunchCommand` keys the channel slug off the owner dataDir.
+    expect(spec.command).toBe(workerLaunchCommand(ownerData));
     expect(spec.worktreeCreated).toBe(true);
     expect(spec.cwd).not.toBe(repoRoot);
 

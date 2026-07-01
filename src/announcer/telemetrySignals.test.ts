@@ -7,7 +7,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb } from '../db/connection.js';
+import { getDb, getTelemetryDb } from '../db/connection.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { collectTelemetrySignals } from './telemetrySignals.js';
@@ -27,17 +27,22 @@ beforeAll(async () => {
   registerExistingProject(tempDir, SECRET, await getDb());
 });
 afterAll(async () => { unregisterProject(SECRET); await cleanupTestDb(tempDir); });
-beforeEach(async () => { await (await getDb()).query('DELETE FROM otel_events'); });
+// HS-9230 (epic HS-9226 Phase 1) — the raw `otel_*` tables were relocated OUT of
+// the project's snapshotted `<dataDir>/db` into the un-snapshotted sibling
+// `<dataDir>/telemetry/db` cluster, which is what `collectTelemetrySignals` reads
+// (via `runWithTelemetryDb` → `getTelemetryDb`). Seed + clear THAT cluster, not
+// the main db, or the reader sees nothing (HS-9269).
+beforeEach(async () => { await (await getTelemetryDb()).query('DELETE FROM otel_events'); });
 
 async function prompt(ts: string, promptId: string, body: unknown, secret = SECRET): Promise<void> {
-  await (await getDb()).query(
+  await (await getTelemetryDb()).query(
     `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
      VALUES ($1, $2, 's1', $3, 'user_prompt', '{}'::jsonb, $4::jsonb)`,
     [ts, secret, promptId, JSON.stringify(body)],
   );
 }
 async function tool(ts: string, promptId: string, toolName: string, secret = SECRET): Promise<void> {
-  await (await getDb()).query(
+  await (await getTelemetryDb()).query(
     `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
      VALUES ($1, $2, 's1', $3, 'tool_result', $4::jsonb, '{}'::jsonb)`,
     [ts, secret, promptId, JSON.stringify({ tool_name: toolName })],

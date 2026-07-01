@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb } from '../db/connection.js';
+import { getDb, getTelemetryDb } from '../db/connection.js';
 import { createTicket } from '../db/tickets.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -142,7 +142,9 @@ describe('collectWorkSignals (HS-8745)', () => {
 
   // HS-8789 — live mode merges the §67 telemetry stream as a mid-task source.
   it('merges telemetry signals only when includeTelemetry + projectSecret are set', async () => {
-    const db = await getDb();
+    // HS-9230/HS-9269 — raw otel_* live in the un-snapshotted `<dataDir>/telemetry/db`
+    // cluster now, which is what the telemetry-signal reader queries. Seed there.
+    const db = await getTelemetryDb();
     await db.query('DELETE FROM otel_events');
     await db.query(
       `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)

@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb } from '../db/connection.js';
+import { getDb, getTelemetryDb } from '../db/connection.js';
 import { persistMetricsPayload } from '../db/otelWriters.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -98,8 +98,9 @@ describe('protobuf → persistence end-to-end (HS-8471)', () => {
   beforeEach(async () => {
     tempDir = await setupTestDb();
     // HS-8874 — the writer routes per-resource via `getProjectBySecret(secret).dataDir`.
-    // Register KNOWN_SECRET against the test DB so the persisted rows land where
-    // the assertion reads them (`getDb()` = tempDir).
+    // Register KNOWN_SECRET against the test DB so the persisted rows land in that
+    // project's telemetry cluster, which the assertion reads via `getTelemetryDb()`
+    // (HS-9230/HS-9269 — raw otel_* moved to `<dataDir>/telemetry/db`).
     registerExistingProject(tempDir, KNOWN_SECRET, await getDb());
   });
 
@@ -135,7 +136,7 @@ describe('protobuf → persistence end-to-end (HS-8471)', () => {
     expect(result.inserted).toBe(2);
     expect(result.dropped).toBe(0);
 
-    const db = await getDb();
+    const db = await getTelemetryDb();
     const rows = await db.query<{ metric_name: string; value_json: { asDouble: number } }>(
       `SELECT metric_name, value_json FROM otel_metrics ORDER BY ts`,
     );

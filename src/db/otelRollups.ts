@@ -1412,11 +1412,21 @@ export async function getCostOverTime(
     dataByKey.set(`${r.date}|${seenKey}`, Number(r.total ?? 0));
   }
 
-  // Resolve the date range.
-  const endDateStr = formatDateInTimezone(now, timezone);
-  const startDateStr = sinceTs !== null
+  // Resolve the requested date range in the viewer's timezone.
+  const windowEnd = formatDateInTimezone(now, timezone);
+  const windowStart = sinceTs !== null
     ? formatDateInTimezone(sinceTs, timezone)
     : result.rows[0].date;
+  // HS-9269 — the rollup `day` grain is SERVER-LOCAL (fixed at ingest), which can
+  // differ from the viewer `timezone` by a calendar day at the day boundary (e.g.
+  // a server ahead of UTC during the UTC-evening window). Never let that skew push
+  // `startDateStr` past `endDateStr` and silently drop actual data: always span at
+  // least every date the query returned (rows are ORDER BY date ASC). In the normal
+  // case (viewer tz == server tz) this is identical to the plain window.
+  const firstDataDate = result.rows[0].date;
+  const lastDataDate = result.rows[result.rows.length - 1].date;
+  const startDateStr = windowStart < firstDataDate ? windowStart : firstDataDate;
+  const endDateStr = windowEnd > lastDataDate ? windowEnd : lastDataDate;
 
   // Generate every date string from start through end, inclusive.
   const dateStrs: string[] = [];

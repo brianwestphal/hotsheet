@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { createBackgroundScheduler } from '../scheduler/backgroundScheduler.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getTelemetryDb } from './connection.js';
 
 let centralOverrideDir: string;
 beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
@@ -28,7 +28,9 @@ const { telemetryTableBreakdown, formatTelemetryBreakdown, scheduleTelemetryBrea
   await import('./telemetryDiagnostics.js');
 
 async function insertSpan(): Promise<void> {
-  const db = await getDb();
+  // HS-9230/HS-9269 — raw otel_* live in the `<dataDir>/telemetry/db` cluster,
+  // which is what `telemetryTableBreakdown` counts. Seed there, not the main db.
+  const db = await getTelemetryDb();
   await db.query(
     `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
      VALUES ($1, $2, NULL, 's', 'sess', 'p', 'turn', NOW(), NOW(), '{}'::jsonb, 'OK')`,
@@ -36,7 +38,7 @@ async function insertSpan(): Promise<void> {
   );
 }
 async function insertMetric(): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   await db.query(
     `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
      VALUES (NOW(), 's', 'sess', 'm', '{}'::jsonb, '{}'::jsonb)`,
