@@ -17,7 +17,7 @@ import { instrumentDbQueries } from './queryInstrumentation.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 7; // HS-9232 — added otel_rollup_daily + otel_rollup_ticket (epic HS-9226 Phase 2)
+export const SCHEMA_VERSION = 8; // HS-9243 — added otel_daily_seen (daily distinct-count dedup set; epic HS-9226 Phase 2)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1093,6 +1093,29 @@ async function initSchema(db: PGlite): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (project_secret, ticket_number)
     );
+
+    -- HS-9243 (epic HS-9226 Phase 2 follow-up) — dedup SET of the distinct
+    -- prompt / session ids seen per (project, server-local day). Distinct counts
+    -- can't be maintained on the otel_rollup_daily (model, query_source) grain
+    -- (a prompt/session spans multiple grain rows), so ingest records each id
+    -- here ON CONFLICT DO NOTHING and the HS-9235 reads derive prompt_count /
+    -- session_count as COUNT(*) over this table for the window — exact, and with
+    -- no dependency on the raw otel_* tables (so Phase 3 can drop them).
+    --   kind = 'prompt'  -> distinct prompt_id over ALL log events
+    --   kind = 'session' -> distinct session.id over the cost/token metrics
+    -- (mirrors the getWindowTotals / getCostByProject distinct-count sources).
+    -- Lives in the SNAPSHOTTED main db alongside the rollups; central rows use
+    -- project_secret = '' (matching the rollup convention).
+    CREATE TABLE IF NOT EXISTS otel_daily_seen (
+      project_secret TEXT NOT NULL DEFAULT '',
+      day DATE NOT NULL,
+      kind TEXT NOT NULL,
+      id TEXT NOT NULL,
+      PRIMARY KEY (project_secret, day, kind, id)
+    );
+    -- Read path is WHERE project_secret = $1 AND kind = $2 AND day >= $since
+    -- COUNT(*), so lead the index with (project_secret, kind, day).
+    CREATE INDEX IF NOT EXISTS idx_otel_daily_seen_lookup ON otel_daily_seen(project_secret, kind, day);
   `);
 
   // HS-8874 — telemetry is now stored per-project, plus a centralized store

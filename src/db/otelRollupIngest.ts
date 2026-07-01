@@ -69,6 +69,31 @@ export function isCumulativeMonotonic(agg: MetricAggregation): boolean {
   return agg.temporality === 'cumulative' && agg.isMonotonic === true;
 }
 
+/**
+ * HS-9243 — record one distinct `prompt_id` / `session.id` in the daily dedup
+ * set (`otel_daily_seen`, main db), so the HS-9235 reads can derive exact daily
+ * `prompt_count` / `session_count` as a `COUNT(*)` without scanning raw. Keyed by
+ * `(project_secret, server-local day, kind, id)` with `ON CONFLICT DO NOTHING`,
+ * so re-seeing the same id that day is a no-op (idempotent). Central rows use
+ * `project_secret = ''` (rollup convention). Best-effort — a no-op for an
+ * empty/absent id; throws only on a real DB error, which the caller swallows.
+ */
+export async function markDailySeen(
+  mainDb: PGlite,
+  secret: string | null,
+  ts: Date,
+  kind: 'prompt' | 'session',
+  id: string | null | undefined,
+): Promise<void> {
+  if (id === null || id === undefined || id === '') return;
+  await mainDb.query(
+    `INSERT INTO otel_daily_seen (project_secret, day, kind, id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (project_secret, day, kind, id) DO NOTHING`,
+    [secret ?? '', serverLocalDay(ts), kind, id],
+  );
+}
+
 /** Server-local `YYYY-MM-DD` for the daily bucket (the maintainer's grain). */
 export function serverLocalDay(ts: Date): string {
   const y = ts.getFullYear();

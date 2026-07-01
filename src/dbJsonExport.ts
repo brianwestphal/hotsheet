@@ -40,6 +40,7 @@ const TABLES = [
   'feedback_drafts',
   'otel_rollup_daily',   // HS-9232 — compact daily telemetry rollup (durable, snapshotted)
   'otel_rollup_ticket',  // HS-9232 — per-ticket cost rollup, kept indefinitely
+  'otel_daily_seen',     // HS-9243 — daily distinct prompt/session dedup set (durable, snapshotted)
 ] as const;
 
 /** Read every row of every Hot Sheet table into a serialisable shape.

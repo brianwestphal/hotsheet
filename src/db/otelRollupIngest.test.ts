@@ -14,6 +14,7 @@ import {
   eventNameMatches,
   isCumulativeMonotonic,
   isRollupMetric,
+  markDailySeen,
   serverLocalDay,
   stripNestedAttributes,
   updateDailyRollup,
@@ -210,5 +211,58 @@ describe('per-ticket attribution (HS-9233)', () => {
     await attributeUserPromptToTicket(db, db, 'sec', ts);
     const r = await db.query<{ prompt_count: number }>(`SELECT prompt_count FROM otel_rollup_ticket WHERE ticket_number='HS-2'`);
     expect(r.rows[0].prompt_count).toBe(2);
+  });
+});
+
+describe('markDailySeen (HS-9243 — daily distinct-count dedup set)', () => {
+  let tempDir: string;
+  beforeEach(async () => { tempDir = await setupTestDb(); });
+  afterEach(async () => { await cleanupTestDb(tempDir); });
+
+  const ts = new Date(2026, 5, 30, 10, 0, 0); // 2026-06-30 local
+
+  const countSeen = async (db: Awaited<ReturnType<typeof getDb>>, secret: string, kind: string): Promise<number> => {
+    const r = await db.query<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM otel_daily_seen WHERE project_secret=$1 AND kind=$2`, [secret, kind]);
+    return r.rows[0].c;
+  };
+
+  it('records a distinct prompt/session id once per (project, day) — dedups repeats', async () => {
+    const db = await getDb();
+    await markDailySeen(db, 'sec', ts, 'prompt', 'p1');
+    await markDailySeen(db, 'sec', ts, 'prompt', 'p1'); // repeat same day → no-op
+    await markDailySeen(db, 'sec', ts, 'prompt', 'p2');
+    await markDailySeen(db, 'sec', ts, 'session', 's1');
+    expect(await countSeen(db, 'sec', 'prompt')).toBe(2);
+    expect(await countSeen(db, 'sec', 'session')).toBe(1);
+  });
+
+  it('counts the same id again on a DIFFERENT day (distinct per day)', async () => {
+    const db = await getDb();
+    await markDailySeen(db, 'sec', new Date(2026, 5, 30, 10, 0, 0), 'prompt', 'p1');
+    await markDailySeen(db, 'sec', new Date(2026, 6, 1, 10, 0, 0), 'prompt', 'p1'); // next day
+    expect(await countSeen(db, 'sec', 'prompt')).toBe(2);
+  });
+
+  it('is a no-op for an empty / null / undefined id', async () => {
+    const db = await getDb();
+    await markDailySeen(db, 'sec', ts, 'prompt', '');
+    await markDailySeen(db, 'sec', ts, 'prompt', null);
+    await markDailySeen(db, 'sec', ts, 'session', undefined);
+    expect(await countSeen(db, 'sec', 'prompt')).toBe(0);
+    expect(await countSeen(db, 'sec', 'session')).toBe(0);
+  });
+
+  it('uses empty-string project_secret for the central (null) store', async () => {
+    const db = await getDb();
+    await markDailySeen(db, null, ts, 'session', 's1');
+    expect(await countSeen(db, '', 'session')).toBe(1);
+  });
+
+  it('buckets by the server-local day', async () => {
+    const db = await getDb();
+    await markDailySeen(db, 'sec', ts, 'prompt', 'p1');
+    const r = await db.query<{ day: string }>(`SELECT day::text AS day FROM otel_daily_seen WHERE project_secret='sec'`);
+    expect(r.rows[0].day).toBe('2026-06-30');
   });
 });

@@ -495,3 +495,109 @@ async function ticketModelBreakdown(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// HS-9243 — backfill the daily distinct-count dedup set (`otel_daily_seen`) from
+// existing raw, so the HS-9235 reads have exact historical prompt/session counts
+// (ongoing days are maintained at ingest via `markDailySeen`). Separate one-shot
+// from the rollup backfill above (that guard may already be spent), with its own
+// `telemetryDailySeenBackfilledV1` flag + per-dir resumability.
+// ---------------------------------------------------------------------------
+
+export interface DailySeenBackfillResult {
+  scannedDirs: number;
+  /** `otel_daily_seen` rows inserted across all dirs. */
+  seenRows: number;
+}
+
+/**
+ * Public entry point. Self-guards via `telemetryDailySeenBackfilledV1`; resumes
+ * per-dir via `telemetryDailySeenBackfillV1DoneDirs`. Best-effort per dir.
+ */
+export async function backfillTelemetryDailySeen(launchedDataDir: string): Promise<DailySeenBackfillResult> {
+  const empty: DailySeenBackfillResult = { scannedDirs: 0, seenRows: 0 };
+  if (readGlobalConfig().telemetryDailySeenBackfilledV1 === true) return empty;
+
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const dirs = [...new Set<string>([launchedDataDir, ...readProjectList(), centralTelemetryDataDir()])];
+  const doneDirs = new Set(readGlobalConfig().telemetryDailySeenBackfillV1DoneDirs ?? []);
+
+  let scannedDirs = 0;
+  let seenRows = 0;
+
+  for (const dataDir of dirs) {
+    if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    try {
+      const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
+      const mainDb = await getDbForDir(dataDir);
+      seenRows += await backfillDailySeenForDir(clusterDb, mainDb, tz);
+      scannedDirs++;
+      doneDirs.add(dataDir);
+      writeGlobalConfig({ telemetryDailySeenBackfillV1DoneDirs: [...doneDirs] });
+    } catch (err) {
+      console.error(`[daily-seen-backfill] skipping ${dataDir}:`, err);
+    }
+    await yieldToEventLoop();
+  }
+
+  writeGlobalConfig({ telemetryDailySeenBackfilledV1: true, telemetryDailySeenBackfillV1DoneDirs: [] });
+  console.log(`  [daily-seen-backfill] HS-9243: inserted ${String(seenRows)} distinct prompt/session row(s) across ${String(scannedDirs)} dir(s).`);
+  return { scannedDirs, seenRows };
+}
+
+/** One (kind, secret, day, id) dedup row to insert. */
+interface SeenRow { secret: string; day: string; kind: 'prompt' | 'session'; id: string }
+
+/**
+ * Derive the distinct prompt / session ids per (project, server-local day) from
+ * one cluster's raw and insert them into that project's main-db dedup set.
+ * `ON CONFLICT DO NOTHING` makes it idempotent (and consistent with the ongoing
+ * ingest path). Returns the number of rows the inserts actually added.
+ */
+export async function backfillDailySeenForDir(clusterDb: PGlite, mainDb: PGlite, tz: string): Promise<number> {
+  const prompts = await clusterDb.query<Record<string, unknown>>(
+    `SELECT DISTINCT COALESCE(project_secret, '') AS secret, (ts AT TIME ZONE $1)::date AS day, prompt_id AS id
+     FROM otel_events
+     WHERE prompt_id IS NOT NULL AND prompt_id <> ''`,
+    [tz],
+  );
+  const sessions = await clusterDb.query<Record<string, unknown>>(
+    `SELECT DISTINCT COALESCE(project_secret, '') AS secret, (ts AT TIME ZONE $1)::date AS day, attributes_json->>'session.id' AS id
+     FROM otel_metrics
+     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')
+       AND attributes_json->>'session.id' IS NOT NULL AND attributes_json->>'session.id' <> ''
+       AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}`,
+    [tz],
+  );
+
+  const rows: SeenRow[] = [
+    ...prompts.rows.map(r => ({ secret: s(r.secret, ''), day: dayString(r.day), kind: 'prompt' as const, id: s(r.id, '') })),
+    ...sessions.rows.map(r => ({ secret: s(r.secret, ''), day: dayString(r.day), kind: 'session' as const, id: s(r.id, '') })),
+  ].filter(r => r.id !== '');
+
+  return insertSeenRows(mainDb, rows);
+}
+
+/** Bulk-insert dedup rows (ON CONFLICT DO NOTHING), batched under the bind cap. */
+async function insertSeenRows(mainDb: PGlite, rows: SeenRow[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  const PER_BATCH = 800; // 800 × 4 cols = 3200 params, well under 65535.
+  let inserted = 0;
+  for (let i = 0; i < rows.length; i += PER_BATCH) {
+    const batch = rows.slice(i, i + PER_BATCH);
+    const params: unknown[] = [];
+    const valueRows = batch.map(r => {
+      const b = params.length;
+      params.push(r.secret, r.day, r.kind, r.id);
+      return `($${String(b + 1)}, $${String(b + 2)}::date, $${String(b + 3)}, $${String(b + 4)})`;
+    });
+    const res = await mainDb.query(
+      `INSERT INTO otel_daily_seen (project_secret, day, kind, id)
+       VALUES ${valueRows.join(', ')}
+       ON CONFLICT (project_secret, day, kind, id) DO NOTHING`,
+      params,
+    );
+    inserted += res.affectedRows ?? 0;
+  }
+  return inserted;
+}

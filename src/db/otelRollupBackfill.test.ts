@@ -18,7 +18,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { getPerTicketRollup } from './otelDashboard.js';
-import { assembleDailyRows, backfillDailyForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
+import { assembleDailyRows, backfillDailyForDir, backfillDailySeenForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
 
 // The machine's local IANA tz — the daily bucket uses it so `(ts AT TIME ZONE TZ)::date`
 // matches the local date the `Date(...)` fixtures are constructed in (mirrors
@@ -271,6 +271,53 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
 
       // Central store (null secret) → skipped entirely.
       expect(await backfillTicketsForDir(tempDir, clusterDb, mainDb, null)).toBe(0);
+    });
+  });
+
+  describe('backfillDailySeenForDir (HS-9243)', () => {
+    it('derives distinct prompts + sessions per day and is idempotent', async () => {
+      const day1 = new Date(2026, 5, 30, 10, 0, 0);
+      const day2 = new Date(2026, 6, 1, 10, 0, 0);
+      // Two prompts on day1 (one repeated across events), one on day2.
+      await insertUserPrompt(day1, 'p1', 'hi');
+      await insertApiRequest(day1, 'p1', 'sonnet', 0.1, 10); // same prompt_id, different event
+      await insertUserPrompt(day1, 'p2', 'yo');
+      await insertUserPrompt(day2, 'p3', 'later');
+      // Two sessions on day1 (repeated across metrics), one on day2.
+      await insertCostMetric(day1, 'sonnet', 'main_agent', 0.5, 'sessA');
+      await insertCostMetric(day1, 'sonnet', 'main_agent', 0.5, 'sessA');
+      await insertCostMetric(day1, 'sonnet', 'main_agent', 0.5, 'sessB');
+      await insertCostMetric(day2, 'sonnet', 'main_agent', 0.5, 'sessC');
+
+      const inserted = await backfillDailySeenForDir(clusterDb, mainDb, TZ);
+      // 3 distinct prompts (p1@d1, p2@d1, p3@d2) + 3 distinct sessions (A@d1, B@d1, C@d2).
+      expect(inserted).toBe(6);
+
+      const prompts = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_daily_seen WHERE kind='prompt'`);
+      const sessions = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_daily_seen WHERE kind='session'`);
+      expect(prompts.rows[0].c).toBe(3);
+      expect(sessions.rows[0].c).toBe(3);
+
+      // p1 appears on day1 only — one row, not one per event.
+      const p1 = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_daily_seen WHERE kind='prompt' AND id='p1'`);
+      expect(p1.rows[0].c).toBe(1);
+
+      // Re-running inserts nothing new (ON CONFLICT DO NOTHING).
+      expect(await backfillDailySeenForDir(clusterDb, mainDb, TZ)).toBe(0);
+      const total = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_daily_seen`);
+      expect(total.rows[0].c).toBe(6);
+    });
+
+    it('excludes cumulative-monotonic metrics from the session set', async () => {
+      const ts = new Date(2026, 5, 30, 10, 0, 0);
+      await clusterDb.query(
+        `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+         VALUES ($1, $2, 'sessCum', 'claude_code.cost.usage', $3::jsonb, $4::jsonb, 'cumulative', true)`,
+        [ts, SECRET, JSON.stringify({ model: 'm', 'query.source': 's', 'session.id': 'sessCum' }), JSON.stringify({ asDouble: 1 })],
+      );
+      await backfillDailySeenForDir(clusterDb, mainDb, TZ);
+      const c = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_daily_seen WHERE kind='session'`);
+      expect(c.rows[0].c).toBe(0);
     });
   });
 });

@@ -300,6 +300,17 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect('attributes' in raw.rows[0].value_json).toBe(false);
       expect(raw.rows[0].value_json.asDouble).toBe(0.42); // rest of the point preserved
     });
+
+    // HS-9243 — the cost/token metrics' session.id lands in the daily dedup set
+    // (main db) so the reads can derive an exact distinct session_count.
+    it('records the metric session.id in otel_daily_seen (main db)', async () => {
+      await persistMetricsPayload(SAMPLE_METRICS_JSON, isKnownProject);
+      const mainDb = await getDb();
+      const seen = await mainDb.query<{ id: string; day: string }>(
+        `SELECT id, day::text AS day FROM otel_daily_seen WHERE project_secret=$1 AND kind='session'`, [KNOWN_SECRET]);
+      expect(seen.rows).toHaveLength(1);
+      expect(seen.rows[0].id).toBe('session-1');
+    });
   });
 
   describe('persistLogsPayload', () => {
@@ -316,6 +327,17 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(rows.rows[0].event_name).toBe('claude_code.user_prompt');
       expect(rows.rows[0].prompt_id).toBe('prompt-xyz');
       expect(rows.rows[0].project_secret).toBe(KNOWN_SECRET);
+    });
+
+    // HS-9243 — an event's prompt_id lands in the daily dedup set (main db) so
+    // the reads can derive an exact distinct prompt_count.
+    it('records the event prompt_id in otel_daily_seen (main db)', async () => {
+      await persistLogsPayload(SAMPLE_LOGS_JSON, isKnownProject);
+      const mainDb = await getDb();
+      const seen = await mainDb.query<{ id: string }>(
+        `SELECT id FROM otel_daily_seen WHERE project_secret=$1 AND kind='prompt'`, [KNOWN_SECRET]);
+      expect(seen.rows).toHaveLength(1);
+      expect(seen.rows[0].id).toBe('prompt-xyz');
     });
 
     it('drops payloads for unknown projects', async () => {

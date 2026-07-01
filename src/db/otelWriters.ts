@@ -5,6 +5,8 @@ import {
   attributeUserPromptToTicket,
   dataPointValue,
   eventNameMatches,
+  isRollupMetric,
+  markDailySeen,
   stripNestedAttributes,
   updateDailyRollup,
 } from './otelRollupIngest.js';
@@ -277,6 +279,16 @@ export async function persistMetricsPayload(
           } catch (err) {
             console.debug('[otel] daily rollup update failed:', err);
           }
+          // HS-9243 — record this session in the daily dedup set so the reads can
+          // derive an exact daily distinct `session_count` without scanning raw.
+          // Only the rollup metrics carry the session proxy the reads count.
+          try {
+            if (isRollupMetric(metricName)) {
+              await markDailySeen(mainDb, resCtx.projectSecret, ts, 'session', sessionId);
+            }
+          } catch (err) {
+            console.debug('[otel] daily-seen session update failed:', err);
+          }
         }
       }
     }
@@ -472,6 +484,15 @@ export async function persistLogsPayload(
           }
         } catch (err) {
           console.debug('[otel] per-ticket rollup update failed:', err);
+        }
+        // HS-9243 — record this prompt in the daily dedup set so the reads can
+        // derive an exact daily distinct `prompt_count` without scanning raw. Any
+        // event carrying a `prompt_id` counts (mirrors getWindowTotals, which
+        // counts distinct prompt_id across ALL event names, not just user_prompt).
+        try {
+          await markDailySeen(mainDb, resCtx.projectSecret, ts, 'prompt', promptId);
+        } catch (err) {
+          console.debug('[otel] daily-seen prompt update failed:', err);
         }
       }
     }
