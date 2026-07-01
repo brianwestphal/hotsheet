@@ -396,7 +396,6 @@ channelRoutes.post('/channel/enable', async (c) => {
   const dataDir = c.get('dataDir');
   writeGlobalConfig({ channelEnabled: true });
   // Register .mcp.json and ensure skills for ALL projects
-  const serverPort = parseInt(new URL(c.req.url).port || '4174', 10);
   try {
     const projects = getAllProjects();
     registerChannelForAll(projects.map(p => p.dataDir));
@@ -406,8 +405,9 @@ channelRoutes.post('/channel/enable', async (c) => {
   } catch {
     registerChannel(dataDir);
   }
-  // Install Claude Code hook for busy state detection
-  installHeartbeatHook(serverPort);
+  // Install Claude Code hook for busy state detection (HS-9263 — the hook is
+  // port-less; it resolves each project's serving port/secret from `.hotsheet`).
+  installHeartbeatHook();
   notifyChange();
   return c.json({ ok: true });
 });
@@ -460,16 +460,38 @@ export function matchProjectDirToProject<T extends { dataDir: string }>(
   return best;
 }
 
+/**
+ * HS-9263 — resolve which registered project a heartbeat belongs to. The hook now
+ * sends the project `secret` (read from the project's own `.hotsheet/secret.json`)
+ * — the exact identity used everywhere else — so an exact secret match wins,
+ * routing correctly even when multiple Hot Sheet instances run (the §87 test
+ * instance, or a second `hotsheet` on another port). We fall back to the
+ * `$CLAUDE_PROJECT_DIR` longest-prefix match for legacy hooks that predate the
+ * secret (until they're rewritten on the next launch). Pure + exported for tests.
+ */
+export function matchHeartbeatProject<T extends { dataDir: string; secret: string }>(
+  projects: readonly T[],
+  secret: string | undefined,
+  projectDir: string | undefined,
+): T | undefined {
+  if (secret !== undefined && secret !== '') {
+    const bySecret = projects.find(p => p.secret === secret);
+    if (bySecret) return bySecret;
+  }
+  if (projectDir !== undefined && projectDir !== '') {
+    return matchProjectDirToProject(projects, projectDir);
+  }
+  return undefined;
+}
+
 channelRoutes.post('/channel/heartbeat', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ChannelHeartbeatSchema, raw);
   if (!parsed.success) return c.json({ ok: false });
-  const projectDir = parsed.data.projectDir;
   const hookState = parsed.data.state ?? 'heartbeat';
-  if (projectDir === undefined || projectDir === '') return c.json({ ok: false });
 
-  // Match projectDir against registered projects (projectDir is the root, dataDir is root/.hotsheet)
-  const match = matchProjectDirToProject(getAllProjects(), projectDir);
+  // Prefer the exact secret (HS-9263); fall back to the projectDir prefix match.
+  const match = matchHeartbeatProject(getAllProjects(), parsed.data.secret, parsed.data.projectDir);
   if (!match) return c.json({ ok: false });
 
   // Store the state change for clients to consume (HS-9261: append to the ring).

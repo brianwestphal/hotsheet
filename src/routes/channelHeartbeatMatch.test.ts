@@ -4,7 +4,7 @@
 // its busy state onto the wrong (outer) project.
 import { describe, expect, it } from 'vitest';
 
-import { heartbeatUpdatesSince, matchProjectDirToProject } from './channel.js';
+import { heartbeatUpdatesSince, matchHeartbeatProject, matchProjectDirToProject } from './channel.js';
 
 const proj = (name: string, root: string) => ({ name, secret: `sec-${name}`, dataDir: `${root}/.hotsheet` });
 
@@ -46,6 +46,31 @@ describe('matchProjectDirToProject (HS-9260)', () => {
     // bug); the `+ '/'` boundary in the matcher prevents it.
     const projects = [proj('a', '/home/me/a')];
     expect(matchProjectDirToProject(projects, '/home/me/apple/src')).toBeUndefined();
+  });
+});
+
+describe('matchHeartbeatProject (HS-9263) — secret-first, projectDir fallback', () => {
+  const projects = [proj('a', '/home/me/a'), proj('b', '/home/me/b')];
+
+  it('an exact secret match wins (multi-instance-safe identity)', () => {
+    expect(matchHeartbeatProject(projects, 'sec-b', undefined)?.name).toBe('b');
+    // Secret wins even if the projectDir would point elsewhere.
+    expect(matchHeartbeatProject(projects, 'sec-a', '/home/me/b')?.name).toBe('a');
+  });
+
+  it('falls back to the projectDir prefix match when no secret is given (legacy hooks)', () => {
+    expect(matchHeartbeatProject(projects, undefined, '/home/me/b/src')?.name).toBe('b');
+    expect(matchHeartbeatProject(projects, '', '/home/me/a')?.name).toBe('a');
+  });
+
+  it('falls back to projectDir when the secret matches no registered project', () => {
+    // The signal reached the wrong instance for the secret, but the dir still owns it.
+    expect(matchHeartbeatProject(projects, 'sec-unknown', '/home/me/a')?.name).toBe('a');
+  });
+
+  it('returns undefined when neither secret nor dir resolves (drop, do not misattribute)', () => {
+    expect(matchHeartbeatProject(projects, 'sec-unknown', '/home/me/other')).toBeUndefined();
+    expect(matchHeartbeatProject(projects, undefined, undefined)).toBeUndefined();
   });
 });
 

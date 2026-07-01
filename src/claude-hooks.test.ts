@@ -36,30 +36,46 @@ describe('isHeartbeatHookInstalled', () => {
 });
 
 describe('installHeartbeatHook', () => {
-  it('installs the four heartbeat hooks at the given port (HS-9262 added PreToolUse)', () => {
-    installHeartbeatHook(4174);
+  it('installs the four port-less, per-project-routing hooks (HS-9262 PreToolUse + HS-9263 routing)', () => {
+    installHeartbeatHook();
     expect(isHeartbeatHookInstalled()).toBe(true);
     const s = readSettings();
     expect(Object.keys(s.hooks!).sort()).toEqual(['PostToolUse', 'PreToolUse', 'Stop', 'UserPromptSubmit']);
     const raw = readFileSync(settingsPath(), 'utf-8');
     expect(raw).toContain('hotsheet-heartbeat');
-    expect(raw).toContain('localhost:4174');
+    // HS-9263 — reads the serving instance's port + secret from the project's own
+    // .hotsheet at runtime; no baked-in port number.
+    expect(raw).toContain('settings.local.json');
+    expect(raw).toContain('secret.json');
+    expect(raw).not.toMatch(/localhost:\d+/); // no hard-coded port
   });
 
-  it('is idempotent: a second install updates the port in place, no duplicates', () => {
-    installHeartbeatHook(4174);
-    installHeartbeatHook(5000);
-    const s = readSettings();
-    // Still exactly one group per event.
-    expect((s.hooks!.PostToolUse).length).toBe(1);
+  it('is idempotent: a second install is a no-op, no duplicates', () => {
+    installHeartbeatHook();
+    const first = readFileSync(settingsPath(), 'utf-8');
+    installHeartbeatHook();
+    const second = readFileSync(settingsPath(), 'utf-8');
+    expect(second).toBe(first); // unchanged
+    expect((readSettings().hooks!.PostToolUse).length).toBe(1); // still one group per event
+  });
+
+  it('HS-9263 — migrates a legacy baked-port curl hook to the port-less node command', () => {
+    // Simulate an old install: a marker hook with a hard-coded port + curl.
+    writeSettings({ hooks: { PostToolUse: [{ hooks: [{ '//': 'Hot Sheet', type: 'command', command: 'curl -s http://localhost:4174/api/channel/heartbeat # hotsheet-heartbeat' }] }] } });
+    installHeartbeatHook();
     const raw = readFileSync(settingsPath(), 'utf-8');
-    expect(raw).toContain('localhost:5000');
-    expect(raw).not.toContain('localhost:4174');
+    expect(raw).not.toContain('curl'); // legacy command replaced
+    expect(raw).not.toMatch(/localhost:\d+/);
+    expect(raw).toContain('settings.local.json');
+    // Exactly one marker hook per event (no stale + new duplication).
+    const s = readSettings() as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    const markers = s.hooks.PostToolUse.flatMap(g => g.hooks.map(h => h.command)).filter(c => c.includes('hotsheet-heartbeat'));
+    expect(markers).toHaveLength(1);
   });
 
   it('preserves unrelated settings + backs up the prior file', () => {
     writeSettings({ model: 'opus', hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'echo keep' }] }] } });
-    installHeartbeatHook(4174);
+    installHeartbeatHook();
     const s = readSettings() as { model?: string; hooks: Record<string, { hooks: { command: string }[] }[]> };
     expect(s.model).toBe('opus');
     // The pre-existing non-marker hook survives alongside the new one.
@@ -73,7 +89,7 @@ describe('installHeartbeatHook', () => {
 describe('removeHeartbeatHook', () => {
   it('removes only the marker hooks, keeping unrelated ones', () => {
     writeSettings({ hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'echo keep' }] }] } });
-    installHeartbeatHook(4174);
+    installHeartbeatHook();
     removeHeartbeatHook();
     expect(isHeartbeatHookInstalled()).toBe(false);
     const s = readSettings() as { hooks: Record<string, { hooks: { command: string }[] }[]> };
@@ -82,7 +98,7 @@ describe('removeHeartbeatHook', () => {
   });
 
   it('drops the whole hooks key when nothing remains', () => {
-    installHeartbeatHook(4174);
+    installHeartbeatHook();
     removeHeartbeatHook();
     expect(readSettings().hooks).toBeUndefined();
   });

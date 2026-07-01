@@ -74,69 +74,96 @@ export function isHeartbeatHookInstalled(): boolean {
   return false;
 }
 
-function makeCommand(port: number, state: 'busy' | 'idle' | 'heartbeat'): string {
-  // $CLAUDE_PROJECT_DIR is expanded by the shell at hook execution time.
-  // Redirect output to /dev/null and background (&) so hooks don't slow Claude down.
-  return `curl -s -X POST http://localhost:${port}/api/channel/heartbeat -H "Content-Type: application/json" -d '{"projectDir":"'$CLAUDE_PROJECT_DIR'","state":"${state}"}' >/dev/null 2>&1 & # ${HOOK_MARKER}`;
+/** The four hook events + the heartbeat state each reports (HS-9262 added PreToolUse). */
+const HOOK_DEFS: { event: string; state: 'busy' | 'idle' | 'heartbeat' }[] = [
+  { event: 'PostToolUse', state: 'heartbeat' },
+  { event: 'PreToolUse', state: 'heartbeat' }, // HS-9262 — heartbeat at tool start
+  { event: 'UserPromptSubmit', state: 'busy' },
+  { event: 'Stop', state: 'idle' },
+];
+
+/**
+ * HS-9263 — build the hook command. A SINGLE global hook that ROUTES per project
+ * across Hot Sheet instances: at execution time it reads the serving instance's
+ * `port` from the project's own `<CLAUDE_PROJECT_DIR>/.hotsheet/settings.local.json`
+ * and the project `secret` from `secret.json`, then POSTs the SECRET (the exact
+ * identity used everywhere else, not a fuzzy `$CLAUDE_PROJECT_DIR` prefix match) to
+ * that instance's heartbeat endpoint. So the §87 test instance (`HOTSHEET_HOME`)
+ * or a second `hotsheet` on another port each receive only their own sessions'
+ * signals, and a port change is picked up automatically (no baked-in port to go
+ * stale — which also hardens the `Stop`→idle signal per HS-9262).
+ *
+ * Uses `node` (guaranteed present wherever Claude Code + Hot Sheet run) so the JSON
+ * reads + the POST are cross-platform; any error (not a Hot Sheet project, an old
+ * node without global `fetch`, or the instance being down) degrades to a silent
+ * no-op. The JS uses only single quotes so the whole script nests inside the
+ * double-quoted `node -e "…"` with no shell-expansion surprises; the POSIX `&` +
+ * redirect keep it off Claude's critical path, matching the prior curl hooks.
+ */
+function makeCommand(state: 'busy' | 'idle' | 'heartbeat'): string {
+  const js =
+    "const fs=require('fs'),d=process.env.CLAUDE_PROJECT_DIR;" +
+    "try{" +
+    "const p=JSON.parse(fs.readFileSync(d+'/.hotsheet/settings.local.json','utf8')).port;" +
+    "const s=JSON.parse(fs.readFileSync(d+'/.hotsheet/secret.json','utf8')).secret;" +
+    "fetch('http://localhost:'+p+'/api/channel/heartbeat',{method:'POST',headers:{'content-type':'application/json'}," +
+    "body:JSON.stringify({secret:s,projectDir:d,state:'" + state + "'})}).then(()=>process.exit(0),()=>process.exit(0));" +
+    "}catch(e){process.exit(0)}";
+  return `node -e "${js}" >/dev/null 2>&1 & # ${HOOK_MARKER}`;
 }
 
-/** Install all three hooks (PostToolUse, UserPromptSubmit, Stop). */
-export function installHeartbeatHook(port: number): void {
-  if (isHeartbeatHookInstalled()) {
-    updateHeartbeatHookPort(port);
-    return;
-  }
-
-  const settings = readClaudeSettings();
-  if (!settings.hooks) settings.hooks = {};
-
-  const hookDefs: { event: string; state: 'busy' | 'idle' | 'heartbeat' }[] = [
-    { event: 'PostToolUse', state: 'heartbeat' },
-    { event: 'PreToolUse', state: 'heartbeat' }, // HS-9262 — heartbeat at tool start
-    { event: 'UserPromptSubmit', state: 'busy' },
-    { event: 'Stop', state: 'idle' },
-  ];
-
-  for (const def of hookDefs) {
-    if (!Array.isArray(settings.hooks[def.event])) settings.hooks[def.event] = [];
-    (settings.hooks[def.event]).push({
-      hooks: [{ '//': 'Hot Sheet', type: 'command', command: makeCommand(port, def.state), timeout: 5 }],
-    });
-  }
-
-  writeClaudeSettings(settings);
-  console.log('[hooks] Installed Claude Code hooks (PostToolUse, PreToolUse, UserPromptSubmit, Stop)');
+/** The marker commands the current version wants installed, keyed by event. */
+function desiredMarkerCommands(): Map<string, string> {
+  return new Map(HOOK_DEFS.map(d => [d.event, makeCommand(d.state)]));
 }
 
-/** Update the port in all existing heartbeat hooks. */
-function updateHeartbeatHookPort(port: number): void {
-  const settings = readClaudeSettings();
-  if (!settings.hooks) return;
-
-  let changed = false;
-  for (const groups of Object.values(settings.hooks)) {
+/** The marker commands currently present (only OUR hooks), keyed by event. */
+function currentMarkerCommands(settings: ClaudeSettings): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!settings.hooks) return out;
+  for (const [event, groups] of Object.entries(settings.hooks)) {
     if (!Array.isArray(groups)) continue;
     for (const group of groups) {
-      for (const hook of group.hooks) {
-        if (hook.command.includes(HOOK_MARKER)) {
-          const updated = hook.command.replace(/localhost:\d+/, `localhost:${port}`);
-          if (updated !== hook.command) {
-            hook.command = updated;
-            changed = true;
-          }
-          if (hook['//'] === undefined) {
-            hook['//'] = 'Hot Sheet';
-            changed = true;
-          }
-        }
+      for (const h of group.hooks) {
+        if (h.command.includes(HOOK_MARKER)) out.set(event, h.command);
       }
     }
   }
+  return out;
+}
 
-  if (changed) {
-    writeClaudeSettings(settings);
-    console.log(`[hooks] Updated heartbeat hook port to ${port}`);
+/**
+ * Install / refresh the heartbeat hooks. Idempotent AND self-migrating: a no-op
+ * when the installed marker hooks already match the current command set (same
+ * events, identical commands); otherwise it strips every marker hook (dropping
+ * legacy baked-port `curl` commands from earlier versions) and re-adds the current
+ * four, preserving all non-marker user hooks. No `port` argument — the command
+ * resolves the serving instance's port from the project's `.hotsheet` at runtime.
+ */
+export function installHeartbeatHook(): void {
+  const settings = readClaudeSettings();
+  const desired = desiredMarkerCommands();
+  const current = currentMarkerCommands(settings);
+  if (current.size === desired.size && [...desired].every(([e, cmd]) => current.get(e) === cmd)) {
+    return; // already up to date
   }
+
+  const hooks = settings.hooks ?? {};
+  // Strip existing marker hooks from every event (migrates legacy commands).
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    const filtered = groups.filter(g => !g.hooks.some(h => h.command.includes(HOOK_MARKER)));
+    if (filtered.length === 0) Reflect.deleteProperty(hooks, event);
+    else hooks[event] = filtered;
+  }
+  // Add the current marker hooks (each event gets a group wrapping one hook).
+  for (const [event, command] of desired) {
+    if (!Array.isArray(hooks[event])) hooks[event] = [];
+    (hooks[event]).push({ hooks: [{ '//': 'Hot Sheet', type: 'command', command, timeout: 5 }] });
+  }
+  settings.hooks = hooks;
+  writeClaudeSettings(settings);
+  console.log('[hooks] Installed Claude Code hooks (UserPromptSubmit, PreToolUse, PostToolUse, Stop) — per-project routing via .hotsheet');
 }
 
 /** Remove all heartbeat hooks. */

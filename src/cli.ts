@@ -356,7 +356,7 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     startupMark('post-startup: cleaning up stale channels');
     await cleanupStaleChannels();
     startupMark('post-startup: setting up skills and channels');
-    await setupSkillsAndChannels(actualPort);
+    await setupSkillsAndChannels();
     startupMark('post-startup: setting up instance lifecycle');
     await setupInstanceLifecycle(actualPort);
     startupMark('post-startup: done');
@@ -491,7 +491,7 @@ async function cleanupStaleChannels(): Promise<void> {
 }
 
 /** Ensure skills and .mcp.json are set up for all projects. */
-async function setupSkillsAndChannels(port: number): Promise<void> {
+async function setupSkillsAndChannels(): Promise<void> {
   const { getAllProjects, ensureSkillsForAllProjects } = await import('./projects.js');
   // HS-8910 — generate each project's skills against its OWN categories, not the
   // process-global (which would leak one project's custom categories everywhere).
@@ -502,19 +502,19 @@ async function setupSkillsAndChannels(port: number): Promise<void> {
     registerChannelForAll(getAllProjects().map(p => p.dataDir));
     // Install/update Claude Code heartbeat hook for busy state detection
     const { installHeartbeatHook } = await import('./claude-hooks.js');
-    installHeartbeatHook(port);
+    installHeartbeatHook(); // HS-9263 — hook resolves each project's port/secret at runtime
   }
 }
 
 /** Ensure Claude Code hooks are installed when joining a running instance.
  *  The full hook installation only runs during primary startup (setupSkillsAndChannels),
  *  so this lightweight check covers the join path. */
-async function ensureHooksForRunningInstance(port: number): Promise<void> {
+async function ensureHooksForRunningInstance(): Promise<void> {
   try {
     const { readGlobalConfig } = await import('./global-config.js');
     if (readGlobalConfig().channelEnabled === true) {
       const { installHeartbeatHook } = await import('./claude-hooks.js');
-      installHeartbeatHook(port);
+      installHeartbeatHook();
     }
   } catch { /* non-critical */ }
 }
@@ -682,7 +682,7 @@ async function handleExistingInstance(
   // Ensure Claude Code hooks are installed even when joining an existing
   // instance, since hook installation normally only happens during primary
   // startup.
-  await ensureHooksForRunningInstance(instance.port);
+  await ensureHooksForRunningInstance();
 
   if (!noOpen) {
     await joinRunningInstance(instance.port, dataDir);

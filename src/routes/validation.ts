@@ -437,6 +437,9 @@ export const PluginGlobalConfigSchema = z.object({
 });
 
 export const ChannelHeartbeatSchema = z.object({
+  // HS-9263 — the hook now sends the project secret (exact identity) as the
+  // primary key; projectDir stays for legacy hooks + as a fallback.
+  secret: z.string().optional(),
   projectDir: z.string().optional(),
   state: z.enum(['busy', 'idle', 'heartbeat']).optional(),
 });
