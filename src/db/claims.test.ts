@@ -5,7 +5,7 @@ import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { claimById, claimNext, enforceClaimForWrite, getClaims, MAX_CLAIM_ATTEMPTS, OWNER_ACTOR, QUARANTINE_TAG, release, renewLease, sweepExpiredClaims } from './claims.js';
 import { getDb } from './connection.js';
 import { parseNotes } from './notes.js';
-import { createTicket, getTicket } from './tickets.js';
+import { createTicket, getTicket, updateTicket } from './tickets.js';
 
 let dataDir: string;
 beforeEach(async () => { dataDir = await setupTestDb(); });
@@ -359,5 +359,67 @@ describe('claim/lease primitive (HS-8862)', () => {
         expect(after.claim_count).toBe(1);
       });
     });
+  });
+});
+
+describe('HS-9254 — a terminal status releases the claim', () => {
+  /** Claim a ticket for a worker, returning it. */
+  async function claimed(title: string) {
+    const t = await upNext(title);
+    const c = await claimById(t.id, 'worker-1', 'Worker 1');
+    expect(c.ok).toBe(true);
+    const row = await getTicket(t.id);
+    expect(row!.claimed_by).toBe('worker-1');
+    return t.id;
+  }
+
+  it('completing a claimed ticket clears claimed_by / lease / worker_label', async () => {
+    const id = await claimed('finish me');
+    await updateTicket(id, { status: 'completed' });
+    const row = await getTicket(id);
+    expect(row!.status).toBe('completed');
+    expect(row!.claimed_by).toBeNull();
+    expect(row!.claim_lease_expires_at).toBeNull();
+    expect(row!.worker_label).toBeNull();
+  });
+
+  it('a completed ticket no longer appears in getClaims()', async () => {
+    const id = await claimed('drop from pool');
+    expect((await getClaims()).some(c => c.ticketId === id)).toBe(true);
+    await updateTicket(id, { status: 'completed' });
+    expect((await getClaims()).some(c => c.ticketId === id)).toBe(false);
+  });
+
+  it('verified / deleted / archive also release the claim', async () => {
+    for (const status of ['verified', 'deleted', 'archive'] as const) {
+      const id = await claimed(`terminal-${status}`);
+      await updateTicket(id, { status });
+      const row = await getTicket(id);
+      expect(row!.claimed_by, `${status} should release`).toBeNull();
+      expect(row!.claim_lease_expires_at).toBeNull();
+      expect(row!.worker_label).toBeNull();
+    }
+  });
+
+  it('backlog does NOT release the claim (it is a claimable triage bucket)', async () => {
+    const id = await claimed('to backlog');
+    await updateTicket(id, { status: 'backlog' });
+    const row = await getTicket(id);
+    expect(row!.claimed_by).toBe('worker-1');
+    expect(row!.claim_lease_expires_at).not.toBeNull();
+  });
+
+  it('reopening a completed ticket (→ started) leaves it unclaimed until re-claimed', async () => {
+    // Sequence: claim → complete (released) → reopen to started (still no claim) →
+    // re-claim works cleanly. Guards against a stale claim surviving the round-trip.
+    const id = await claimed('reopen me');
+    await updateTicket(id, { status: 'completed' });
+    await updateTicket(id, { status: 'started' });
+    let row = await getTicket(id);
+    expect(row!.claimed_by).toBeNull();
+    const re = await claimById(id, 'worker-2', 'Worker 2');
+    expect(re.ok).toBe(true);
+    row = await getTicket(id);
+    expect(row!.claimed_by).toBe('worker-2');
   });
 });

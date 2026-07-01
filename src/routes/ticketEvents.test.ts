@@ -104,6 +104,27 @@ describe('ticket mutation events', () => {
     expect(parsed[0].text).toBe('FEEDBACK NEEDED: which option?');
   });
 
+  it('HS-9254 — PATCH status=completed emits claims-changed (the claim is released)', async () => {
+    const t = await createTicket();
+    events = [];
+    await app.request(`/api/tickets/${t.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'completed' }),
+    });
+    // The terminal transition releases the claim server-side, so the claimed-by
+    // chip / worker pool must be nudged to refresh alongside the row update.
+    expect(typed('ticket-updated')).toHaveLength(1);
+    expect(typed('claims-changed')).toHaveLength(1);
+  });
+
+  it('HS-9254 — PATCH status=started does NOT emit claims-changed', async () => {
+    const t = await createTicket();
+    events = [];
+    await app.request(`/api/tickets/${t.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'started' }),
+    });
+    expect(typed('claims-changed')).toHaveLength(0);
+  });
+
   it('PATCH /tickets/:id with only last_read_at emits nothing (read-tracking)', async () => {
     const t = await createTicket();
     events = [];

@@ -76,6 +76,17 @@ identical to today — the single-local-maintainer default never sees a claim. A
 claim does NOT change `status`/`up_next`; a claimed ticket is still "Up Next,
 started" — it just additionally carries a live lease.
 
+**Terminal statuses release the claim (HS-9254):** the orthogonality is one-way —
+a claim doesn't drive status, but a status transition INTO a terminal state
+(`completed` / `verified` / `deleted` / `archive` — the same set
+`claims.ts::CLAIMABLE_STATUS_EXCLUDE` never claims) clears `claimed_by` /
+`claim_lease_expires_at` / `worker_label` in `buildStatusTransitionSets`
+(`src/db/tickets.ts`). Otherwise a finished ticket kept showing as claimed in the
+claimed-by chip / worker pool until its 30-min lease lapsed. `backlog` is a
+claimable triage bucket, so it does NOT release. The status-change route
+(`routes/tickets.ts`) emits a `claims-changed` sync event alongside the
+`ticket-updated` frame on a terminal transition so the claim UI refreshes live.
+
 ### 90.2.2 Lease semantics
 
 A claim without a lease leaks forever if a worker dies. Each claim carries a TTL:

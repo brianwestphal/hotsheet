@@ -415,6 +415,11 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
       changes.completed_at = ticket.completed_at;
       changes.verified_at = ticket.verified_at;
       changes.deleted_at = ticket.deleted_at;
+      // HS-9254 — a terminal status releases the claim server-side; echo the
+      // cleared claim fields so the in-place WS update drops the claimed-by chip.
+      changes.claimed_by = ticket.claimed_by;
+      changes.claim_lease_expires_at = ticket.claim_lease_expires_at;
+      changes.worker_label = ticket.worker_label;
     }
     // HS-9244 — a `notes` write is an APPEND: `updateTicket` reads the current
     // notes JSON, pushes `{id,text,created_at}`, and writes the full array, but
@@ -427,6 +432,13 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
       changes.notes = ticket.notes;
     }
     emitSync(c, { type: 'ticket-updated', id, changes });
+    // HS-9254 — a terminal status transition releases the ticket's claim in the
+    // DB (`buildStatusTransitionSets`), so nudge the claimed-by chip / worker pool
+    // to refresh (they're driven by `getClaims`, not the ticket row's own fields).
+    if (parsed.data.status === 'completed' || parsed.data.status === 'verified'
+      || parsed.data.status === 'deleted' || parsed.data.status === 'archive') {
+      emitSync(c, { type: 'claims-changed' });
+    }
     // HS-8556 — `parsed.data` is already a typed `UpdateTicket` shape
     // from zod; the previous `as Record<string, unknown>` cast widened
     // to match `onTicketChanged`'s signature without going through any

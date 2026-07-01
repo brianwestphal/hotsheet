@@ -87,16 +87,24 @@ export async function getTicket(id: number): Promise<Ticket | null> {
  * matching the original if/else chain's no-match behavior.
  */
 function buildStatusTransitionSets(status: TicketStatus): string[] {
+  // HS-9254 — a ticket entering a TERMINAL status (completed / verified / deleted
+  // / archive — the same set `claims.ts::CLAIMABLE_STATUS_EXCLUDE` never claims)
+  // no longer needs its claim, so release it here. Otherwise `claimed_by` + the
+  // lease linger (up to the 30-min TTL) and the ticket keeps showing as claimed in
+  // the claimed-by chip / worker pool after it's done. `backlog` is NOT terminal
+  // (it's a claimable triage bucket), so it does not release the claim.
+  const releaseClaim = ['claimed_by = NULL', 'claim_lease_expires_at = NULL', 'worker_label = NULL'];
   switch (status) {
     case 'completed':
-      return ['completed_at = NOW()', 'verified_at = NULL', 'up_next = FALSE'];
+      return ['completed_at = NOW()', 'verified_at = NULL', 'up_next = FALSE', ...releaseClaim];
     case 'verified':
       // If not already completed, also set completed_at.
-      return ['verified_at = NOW()', 'completed_at = COALESCE(completed_at, NOW())', 'up_next = FALSE'];
+      return ['verified_at = NOW()', 'completed_at = COALESCE(completed_at, NOW())', 'up_next = FALSE', ...releaseClaim];
     case 'deleted':
-      return ['deleted_at = NOW()'];
-    case 'backlog':
+      return ['deleted_at = NOW()', ...releaseClaim];
     case 'archive':
+      return ['up_next = FALSE', 'deleted_at = NULL', ...releaseClaim];
+    case 'backlog':
       return ['up_next = FALSE', 'deleted_at = NULL'];
     case 'not_started':
     case 'started':
