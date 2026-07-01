@@ -107,6 +107,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
   const refreshDetail = vi.fn();
   const refreshStats = vi.fn();
   const refreshClaims = vi.fn();
+  const refreshFeedback = vi.fn();
   const removeTicket = vi.fn();
   const optimisticUpdate = vi.fn();
   const showHint = vi.fn();
@@ -120,6 +121,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     refreshDetail,
     refreshStats,
     refreshClaims,
+    refreshFeedback,
     hasTicket: (id) => loaded.has(id),
     removeTicket,
     optimisticUpdate,
@@ -128,7 +130,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, removeTicket, optimisticUpdate, showHint,
+    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -216,6 +218,27 @@ describe('createWsSync flow', () => {
     h.last().push({ type: 'connected', seq: 0 });
     h.last().push({ type: 'ticket-deleted', id: 2, seq: 1 });
     expect(h.refreshStats).toHaveBeenCalledTimes(1);
+  });
+
+  it('HS-9244 — recomputes feedback state after an in-place note append (tab purple dot)', () => {
+    const h = harness('sec', [1]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    // A live FEEDBACK-NEEDED note arrives for a loaded ticket. The server echoes
+    // the full notes JSON array so the in-place patch carries `notes`; that must
+    // trigger a feedback-state recompute or the tab dot stays stale.
+    h.last().push({ type: 'ticket-updated', id: 1, changes: { notes: '[{"id":"n1","text":"FEEDBACK NEEDED: x","created_at":"t"}]' }, seq: 1 });
+    expect(h.optimisticUpdate).toHaveBeenCalledWith(1, { notes: '[{"id":"n1","text":"FEEDBACK NEEDED: x","created_at":"t"}]' });
+    expect(h.refreshFeedback).toHaveBeenCalledTimes(1);
+    expect(h.refreshData).not.toHaveBeenCalled();
+  });
+
+  it('HS-9244 — a non-notes in-place update does NOT recompute feedback state', () => {
+    const h = harness('sec', [1]);
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 0 });
+    h.last().push({ type: 'ticket-updated', id: 1, changes: { title: 'renamed' }, seq: 1 });
+    expect(h.refreshFeedback).not.toHaveBeenCalled();
   });
 
   it('HS-9176 — the refetch path does NOT also fire the in-place stats refresh', () => {

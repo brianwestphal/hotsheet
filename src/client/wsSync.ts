@@ -148,6 +148,11 @@ export interface WsSyncDeps {
   refreshStats: () => void;
   /** Refresh the distributed-execution claim set (claimed-by chip). */
   refreshClaims: () => void;
+  /** HS-9244 — recompute the active project's feedback state (tab purple dot +
+   *  feedback dialog). The refetch path already does this; the in-place apply
+   *  path must call it too when a `notes` change arrives, or a live
+   *  FEEDBACK-NEEDED note leaves the tab dot stale until a project switch. */
+  refreshFeedback: () => void;
   /** HS-8984 — is a ticket currently in the in-memory list? (drives in-place
    *  apply vs refetch). */
   hasTicket: (id: number) => boolean;
@@ -244,6 +249,11 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     if (plan.refetch) { deps.refreshData(); return; }
     for (const id of plan.remove) deps.removeTicket(id);
     for (const p of plan.optimistic) deps.optimisticUpdate(p.id, p.patch);
+    // HS-9244 — a note append (e.g. a live FEEDBACK-NEEDED note) changes whether
+    // the ticket + active-project tab should show the purple dot; the in-place
+    // path otherwise never recomputes feedback state (only the refetch/poll path
+    // does), so the tab dot stays stale until a project switch.
+    if (plan.optimistic.some(p => 'notes' in p.patch)) deps.refreshFeedback();
     deps.refreshDetail(); // keep the open detail panel current
     // HS-9176 — the rows update reactively via the store, but the status-bar
     // counts + sidebar badges are server-fetched and aren't subscribed to it,
@@ -383,6 +393,7 @@ const wsSync = createWsSync({
   refreshDetail: runDetailRefresh,
   refreshStats: scheduleCoalescedStats,
   refreshClaims: runClaimsRefresh,
+  refreshFeedback: () => { void import('./feedbackDialog.js').then(({ checkFeedbackState }) => { void checkFeedbackState(); }); },
   hasTicket: (id) => ticketsStore.state.value.tickets.some(t => t.id === id),
   removeTicket: (id) => { ticketsStore.actions.removeTicket(id); },
   // The patch fields come from the server's validated ticket-update payload —

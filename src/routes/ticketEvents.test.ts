@@ -83,6 +83,27 @@ describe('ticket mutation events', () => {
     expect(changes.completed_at).not.toBeNull();
   });
 
+  it('HS-9244 — PATCH notes echoes the full server-appended notes JSON array (not the raw text)', async () => {
+    const t = await createTicket();
+    events = [];
+    // A `notes` write is an APPEND: the request body carries only the raw text,
+    // but the event must carry the resulting JSON array so the client's in-place
+    // WS update stores parseable notes and the FEEDBACK-NEEDED purple dot appears
+    // live (else `hasPendingFeedback` can't JSON-parse the raw string → no dot).
+    await app.request(`/api/tickets/${t.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: 'FEEDBACK NEEDED: which option?' }),
+    });
+    const upd = typed('ticket-updated');
+    expect(upd).toHaveLength(1);
+    const changes = (upd[0] as { changes: Record<string, unknown> }).changes;
+    // Not the raw request string — a JSON array of note objects.
+    expect(changes.notes).not.toBe('FEEDBACK NEEDED: which option?');
+    const parsed = JSON.parse(changes.notes as string) as Array<{ text: string }>;
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].text).toBe('FEEDBACK NEEDED: which option?');
+  });
+
   it('PATCH /tickets/:id with only last_read_at emits nothing (read-tracking)', async () => {
     const t = await createTicket();
     events = [];

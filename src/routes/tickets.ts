@@ -416,6 +416,16 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
       changes.verified_at = ticket.verified_at;
       changes.deleted_at = ticket.deleted_at;
     }
+    // HS-9244 — a `notes` write is an APPEND: `updateTicket` reads the current
+    // notes JSON, pushes `{id,text,created_at}`, and writes the full array, but
+    // `parsed.data.notes` only carries the raw appended TEXT. If we emit that raw
+    // string, the client's in-place WS update clobbers `notes` with a non-JSON
+    // string, so `hasPendingFeedback` (which JSON-parses `notes`) returns false and
+    // the purple feedback dot doesn't appear until a full reload re-fetches the real
+    // array. Echo the server-derived JSON array so the WS patch matches the DB.
+    if (parsed.data.notes !== undefined) {
+      changes.notes = ticket.notes;
+    }
     emitSync(c, { type: 'ticket-updated', id, changes });
     // HS-8556 — `parsed.data` is already a typed `UpdateTicket` shape
     // from zod; the previous `as Record<string, unknown>` cast widened
