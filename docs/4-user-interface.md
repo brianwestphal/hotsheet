@@ -273,8 +273,11 @@ Each has three options:
   - Each entry shows a badge (Category/Tag + name), an editable textarea for the context text, and a delete button.
   - Changes auto-save with 500ms debounce.
 - **Storage**: JSON array in the `auto_context` settings key. Each entry: `{ type: 'category'|'tag', key: string, text: string }`.
-- **Prepend order**: Category context appears first, then tag context entries sorted alphabetically by tag key.
+- **Prepend order**: Category context appears first, then tag context entries sorted alphabetically by tag key. Empty-text entries are skipped (they prepend nothing).
 - Only one entry per category or tag is allowed.
+- **Built-in defaults (HS-9247)**: the standard categories ship with sensible default auto-context so a fresh project gets useful per-category guidance without any setup. Defaults are provided for the six software built-ins (`issue`, `bug`, `feature`, `requirement_change`, `task`, `investigation`) and the design/creative preset categories (`concept`, `revision`, `feedback`, `asset`, `research`, plus the marketing `design` id); product / marketing / personal-specific categories ship with no default. The constant lives in `src/autoContextDefaults.ts`.
+  - **Read-time fallback, never on disk**: defaults are applied when the worklist is generated (`loadAutoContext` merges the user's saved entries over the defaults per `type:key`, via `resolveAutoContextWithDefaults`) — mirroring how categories fall back to `DEFAULT_CATEGORIES`. A user entry always overrides the default for that category; an explicit **empty-text** entry suppresses the default entirely (turns the context off). Deleting a user entry reverts to the default.
+  - **Settings display**: in the Context tab, a category that has a default but no user entry shows a **placeholder row** — the default text appears grayed as the textarea placeholder, with a "default" tag. Clicking/focusing it **adopts** the default as a real, editable entry pre-filled with the default text (so the user customizes from it rather than retyping); it then gains the normal delete + scope controls.
 
 ### 4.19 Error Handling
 

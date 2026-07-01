@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { applyAiInstructions, getFileSettings, getTags, updateSettings } from '../api/index.js';
+import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
@@ -607,7 +608,19 @@ function bindAutoContextSettings() {
     // entry's local text override), not a fresh shared-minus-visible diff.
     const hiddenShared = autoContextMode === 'local' ? autoContextHidden : [];
 
-    if (autoContextEntries.length === 0 && hiddenShared.length === 0) {
+    // HS-9247 — built-in defaults surface as placeholder rows for any of this
+    // project's categories that ship a default and have no user entry (and
+    // aren't locally disabled). They're read-time fallbacks, never on disk;
+    // clicking one adopts it as an editable entry pre-filled with the default.
+    const shownKeys = new Set(autoContextEntries.map(acIdOf));
+    const hiddenKeys = new Set(hiddenShared.map(acIdOf));
+    const defaultCats = state.categories.filter(cat => {
+      if (defaultAutoContextFor(cat.id) === null) return false;
+      const id = `category:${cat.id}`;
+      return !shownKeys.has(id) && !hiddenKeys.has(id);
+    });
+
+    if (autoContextEntries.length === 0 && hiddenShared.length === 0 && defaultCats.length === 0) {
       list.appendChild(toElement(<div style="padding:12px 0;color:var(--text-muted);font-size:13px">No auto-context entries yet. Click + Add to create one.</div>));
       return;
     }
@@ -685,6 +698,35 @@ function bindAutoContextSettings() {
         autoContextEntries.push({ ...s });
         void saveEntries();
         renderEntries();
+      });
+      list.appendChild(row);
+    }
+
+    // HS-9247 — built-in default placeholder rows. The default shows grayed as
+    // the textarea placeholder; focusing/clicking it adopts the default as a
+    // real, editable entry pre-filled with the default text (so the user
+    // customizes from it), then re-renders it as a normal entry (with delete +
+    // scope controls). Deleting that entry reverts to the default placeholder.
+    for (const cat of defaultCats) {
+      const def = defaultAutoContextFor(cat.id) ?? '';
+      const id = `category:${cat.id}`;
+      const row = toElement(
+        <div className="auto-context-entry auto-context-default">
+          <div className="auto-context-header">
+            <span className="auto-context-badge" data-type="category">Category: {cat.label}</span>
+            <span className="auto-context-default-tag" title="Built-in default — click to customize" style="font-size:11px;color:var(--text-muted);font-style:italic">default</span>
+          </div>
+          <textarea className="auto-context-text" rows={3} placeholder={def}></textarea>
+        </div>
+      );
+      const ta = row.querySelector('.auto-context-text') as HTMLTextAreaElement;
+      ta.addEventListener('focus', () => {
+        if (autoContextEntries.some(e => acIdOf(e) === id)) return;
+        autoContextEntries.push({ type: 'category', key: cat.id, text: def });
+        void saveEntries();
+        renderEntries();
+        const liveTa = list.querySelector<HTMLTextAreaElement>(`[data-ac-id="${CSS.escape(id)}"] .auto-context-text`);
+        if (liveTa) { liveTa.focus(); liveTa.setSelectionRange(liveTa.value.length, liveTa.value.length); }
       });
       list.appendChild(row);
     }

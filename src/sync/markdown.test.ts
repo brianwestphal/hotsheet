@@ -142,6 +142,10 @@ describe('worklist sync', () => {
   });
 
   it('formats multi-line details correctly', async () => {
+    // HS-9247 — suppress the built-in auto-context default (a bare ticket is an
+    // `issue`, which now ships a default preamble) so this test isolates the
+    // multi-line detail indentation, not the injected context.
+    await updateSetting('auto_context', JSON.stringify([{ type: 'category', key: 'issue', text: '' }]));
     await createTicket('Multiline ticket', { up_next: true, details: 'Line one\nLine two\nLine three' });
     scheduleWorklistSync();
     await waitFor(700);
@@ -337,6 +341,42 @@ describe('auto-context in worklist', () => {
     const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
     expect(content).toContain('Non-investigation ticket');
     expect(content).not.toContain('INVESTIGATION_ONLY_CONTEXT');
+  });
+
+  it('HS-9247 — injects the built-in default when no auto_context is set', async () => {
+    // No auto_context written at all — the read-time fallback supplies the
+    // built-in per-category default.
+    await createTicket('Bug without configured context', { category: 'bug', up_next: true });
+    scheduleWorklistSync();
+
+    const content = await syncedWorklist();
+    expect(content).toContain('Reproduce the bug first');
+    expect(content.toLowerCase()).toContain('positive');
+    expect(content.toLowerCase()).toContain('negative');
+  });
+
+  it('HS-9247 — a user override replaces the built-in default for that category', async () => {
+    await updateSetting('auto_context', JSON.stringify([
+      { type: 'category', key: 'bug', text: 'CUSTOM_BUG_ONLY' },
+    ]));
+    await createTicket('Bug with custom context', { category: 'bug', up_next: true });
+    scheduleWorklistSync();
+
+    const content = await syncedWorklist();
+    expect(content).toContain('CUSTOM_BUG_ONLY');
+    expect(content).not.toContain('Reproduce the bug first');
+  });
+
+  it('HS-9247 — an explicit empty-text override suppresses the default entirely', async () => {
+    await updateSetting('auto_context', JSON.stringify([
+      { type: 'category', key: 'bug', text: '' },
+    ]));
+    await createTicket('Bug with suppressed context', { category: 'bug', up_next: true, details: 'Just the details.' });
+    scheduleWorklistSync();
+
+    const content = await syncedWorklist();
+    expect(content).not.toContain('Reproduce the bug first');
+    expect(content).toContain('- Details: Just the details.');
   });
 });
 

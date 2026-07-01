@@ -1,6 +1,7 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
+import { resolveAutoContextWithDefaults } from '../autoContextDefaults.js';
 import { runWithDataDir } from '../db/connection.js';
 import { parseNotes } from '../db/notes.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
@@ -145,14 +146,16 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
     lines.push(`- Tags: ${display.join(', ')}`);
   }
 
-  // Build auto-context: category first, then tags alphabetically
+  // Build auto-context: category first, then tags alphabetically. HS-9247 —
+  // skip empty text so an explicit empty-text override (which suppresses a
+  // built-in default) doesn't prepend blank lines.
   const contextParts: string[] = [];
   const catContext = autoContext.find(ac => ac.type === 'category' && ac.key === ticket.category);
-  if (catContext) contextParts.push(catContext.text);
+  if (catContext && catContext.text.trim()) contextParts.push(catContext.text);
   const tagContexts = autoContext
     .filter(ac => ac.type === 'tag' && ticketTags.some(t => t.toLowerCase() === ac.key.toLowerCase()))
     .sort((a, b) => a.key.localeCompare(b.key));
-  for (const tc of tagContexts) contextParts.push(tc.text);
+  for (const tc of tagContexts) if (tc.text.trim()) contextParts.push(tc.text);
 
   const fullDetails = contextParts.length > 0
     ? (contextParts.join('\n\n') + (ticket.details.trim() ? '\n\n' + ticket.details : ''))
@@ -187,7 +190,11 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
 
 async function loadAutoContext(): Promise<AutoContextEntry[]> {
   const settings = await getSettings();
-  return parseJsonOrNull(AutoContextArraySchema, settings.auto_context) ?? [];
+  const userEntries = parseJsonOrNull(AutoContextArraySchema, settings.auto_context) ?? [];
+  // HS-9247 — layer the user's saved entries over the built-in defaults so a
+  // fresh project gets useful per-category guidance; a user entry (incl. an
+  // explicit empty-text one) overrides the default for that category/tag.
+  return resolveAutoContextWithDefaults(userEntries);
 }
 
 async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<string> {
