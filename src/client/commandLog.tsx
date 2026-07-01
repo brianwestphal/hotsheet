@@ -28,13 +28,20 @@ import {
 } from './commandLogStore.js';
 import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull } from './dom.js';
+import { chooseDrawerActiveTab, claudeTabIdFromConfigs } from './drawerActiveTab.js';
 import { recordInteraction } from './longTaskObserver.js';
 import { delegate } from './reactive.js';
 import { bindList } from './reactive-bind.js';
+import { getActiveProject } from './state.js';
 
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastSeenId = 0;
+
+// HS-9246 — project secrets opened since app launch (in-memory, so it naturally
+// resets on relaunch). Drives the "default to the Claude tab on the first open
+// of a project after an app launch" behavior in `applyPerProjectDrawerState`.
+const projectsOpenedThisLaunch = new Set<string>();
 
 // HS-8443 — drawer-state mutation epoch. `applyPerProjectDrawerState` is
 // called fire-and-forget from `initCommandLog`'s startup IIFE
@@ -338,7 +345,7 @@ export async function applyPerProjectDrawerState(): Promise<void> {
   // guard shape).
   const epochBeforeFetch = drawerStateMutationEpoch;
 
-  const { onProjectSwitch, loadAndRenderTerminalTabs } = await import('./terminal.js');
+  const { onProjectSwitch, loadAndRenderTerminalTabs, getLastKnownTerminalConfigs } = await import('./terminal.js');
   onProjectSwitch();
 
   let fs: FileSettings;
@@ -361,9 +368,16 @@ export async function applyPerProjectDrawerState(): Promise<void> {
     ? true
     : (fs.drawer_open === true || fs.drawer_open === 'true');
   const wantExpanded = fs.drawer_expanded === true || fs.drawer_expanded === 'true';
+  // HS-9246 — null (not 'commands-log') for the never-set case so
+  // `chooseDrawerActiveTab` can distinguish a brand-new project (default to the
+  // Claude tab) from an explicit prior 'commands-log' choice.
   const savedTab = typeof fs.drawer_active_tab === 'string' && fs.drawer_active_tab !== ''
     ? fs.drawer_active_tab
-    : 'commands-log';
+    : null;
+  // HS-9246 — track whether this is the first open of the project since launch
+  // BEFORE the async tab rebuild below, then mark it seen once chosen.
+  const secret = getActiveProject()?.secret ?? null;
+  const firstOpenSinceLaunch = secret !== null && !projectsOpenedThisLaunch.has(secret);
 
   suspendSave = true;
   try {
@@ -378,9 +392,18 @@ export async function applyPerProjectDrawerState(): Promise<void> {
     // can check whether the saved terminal:<id> still exists.
     await loadAndRenderTerminalTabs();
 
-    const exists = savedTab === 'commands-log'
-      || document.querySelector(`.drawer-tab[data-drawer-tab="${CSS.escape(savedTab)}"]`) !== null;
-    activeTab = exists ? savedTab : 'commands-log';
+    // HS-9246 — resolve the Claude tab (if any) from the freshly-rebuilt configs,
+    // and only use it if it actually rendered a drawer tab (e.g. lazy terminals).
+    const claudeTabIdRaw = claudeTabIdFromConfigs(getLastKnownTerminalConfigs());
+    const claudeTabId = claudeTabIdRaw !== null
+      && document.querySelector(`.drawer-tab[data-drawer-tab="${CSS.escape(claudeTabIdRaw)}"]`) !== null
+      ? claudeTabIdRaw
+      : null;
+    const savedTabExists = savedTab === 'commands-log'
+      || (savedTab !== null
+        && document.querySelector(`.drawer-tab[data-drawer-tab="${CSS.escape(savedTab)}"]`) !== null);
+    activeTab = chooseDrawerActiveTab({ savedTab, savedTabExists, claudeTabId, firstOpenSinceLaunch });
+    if (secret !== null) projectsOpenedThisLaunch.add(secret);
 
     if (wantOpen) openPanel(); // this will honor the pre-set activeTab
     if (wantOpen && wantExpanded) setDrawerExpanded(true);
