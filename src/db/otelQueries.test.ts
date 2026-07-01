@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, runWithDataDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, getTelemetryDb, runWithDataDir } from './connection.js';
 import {
   clearProjectTelemetry,
   getCostByModel,
@@ -56,7 +56,7 @@ async function insertCostMetric(opts: {
   temporality?: 'delta' | 'cumulative';
   isMonotonic?: boolean;
 }): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   if (opts.source !== undefined) attrs['query.source'] = opts.source;
@@ -77,7 +77,7 @@ async function insertTokenMetric(opts: {
   temporality?: 'delta' | 'cumulative';
   isMonotonic?: boolean;
 }): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   if (opts.type !== undefined) attrs.type = opts.type;
@@ -94,7 +94,7 @@ async function insertPromptEvent(opts: {
   promptId: string;
   model?: string;
 }): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   await db.query(
@@ -110,7 +110,7 @@ async function insertToolResultEvent(opts: {
   toolName: string;
   durationMs?: number;
 }): Promise<void> {
-  const db = await getDb();
+  const db = await getTelemetryDb();
   const attrs: Record<string, unknown> = { tool_name: opts.toolName };
   if (opts.durationMs !== undefined) attrs.duration_ms = opts.durationMs;
   await db.query(
@@ -224,7 +224,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // stamps `session.id` on each cost.usage data-point's attributes.
     it('falls back to distinct session count when no event has a prompt_id (HS-8639)', async () => {
       const now = new Date();
-      const db = await getDb();
+      const db = await getTelemetryDb();
       for (const sid of ['sess-1', 'sess-1', 'sess-2']) {
         await db.query(
           `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
@@ -264,7 +264,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // event_name, distinct ticket markers, and api_request attribute keys.
     it('surfaces marker presence + api_request attribute keys (HS-8537)', async () => {
       const now = new Date();
-      const db = await getDb();
+      const db = await getTelemetryDb();
       // A user_prompt event whose body carries the ticket marker (the shape the
       // rollup keys on) + an api_request event carrying cost / token attrs.
       await db.query(
@@ -411,7 +411,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // HS-8779 — each prompt is enriched with model / token / cost / duration /
     // tool aggregates joined from its api_request + tool_result events.
     it('enriches a prompt with model, token, cost, duration, and tool aggregates', async () => {
-      const db = await getDb();
+      const db = await getTelemetryDb();
       const insert = (ts: Date, eventName: string, attrs: Record<string, unknown>): Promise<unknown> =>
         db.query(
           `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
@@ -507,7 +507,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       attrs?: Record<string, unknown>;
       body?: Record<string, unknown>;
     }): Promise<void> {
-      const db = await getDb();
+      const db = await getTelemetryDb();
       await db.query(
         `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
@@ -557,7 +557,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         endTs: Date;
         spanName: string;
       }): Promise<void> {
-        const db = await getDb();
+        const db = await getTelemetryDb();
         await db.query(
           `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
@@ -608,7 +608,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       toolName: string;
       durationMs: number;
     }): Promise<void> {
-      const db = await getDb();
+      const db = await getTelemetryDb();
       await db.query(
         `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
@@ -676,7 +676,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         projectSecret: string;
         spanName: string;
       }): Promise<void> {
-        const db = await getDb();
+        const db = await getTelemetryDb();
         await db.query(
           `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
@@ -723,7 +723,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       attrs?: Record<string, unknown>;
       body?: Record<string, unknown>;
     }): Promise<void> {
-      const db = await getDb();
+      const db = await getTelemetryDb();
       await db.query(
         `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
@@ -848,7 +848,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // --- HS-8730: time-window (started→completed interval) attribution ---
 
     async function insertInterval(secret: string, ticketNumber: string, startedAt: Date, endedAt: Date | null): Promise<void> {
-      const db = await getDb();
+      const db = await getTelemetryDb();
       await db.query(
         `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1, $2, $3, $4)`,
         [secret, ticketNumber, startedAt, endedAt],
@@ -1486,7 +1486,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       attrs?: Record<string, unknown>;
       body?: Record<string, unknown>;
     }): Promise<void> {
-      const db = await getDb();
+      const db = await getTelemetryDb();
       await db.query(
         `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
