@@ -403,6 +403,13 @@ On project switch, the client:
 
 Saves happen on `openPanel` / `closePanel` / `switchDrawerTab`. A `suspendSave` latch prevents the restore path from writing back to settings (otherwise the act of restoring would fire a redundant PATCH).
 
+**HS-8443 / HS-9246 — split mid-fetch guard.** `applyPerProjectDrawerState` awaits `/api/file-settings` before running its restore, so a drawer mutation can land during that window. Two independent epochs are captured before the fetch and compared on resume:
+
+- **`drawerStateMutationEpoch`** (bumped by `openPanel` / `closePanel`) — if it moved, the user's OPEN/CLOSE choice is authoritative, so the restore skips its close-then-reopen dance (HS-8443, the original `terminal-search.spec.ts` flake).
+- **`userTabSwitchEpoch`** (bumped only by a real `.drawer-tab` click) — if it moved, the user's tab choice is authoritative and the computed default is not applied.
+
+The pre-fix code bailed the **entire** restore on any `drawerStateMutationEpoch` change. Because a **programmatic** boot-time `openPanel` (from a channel / command-completion / terminal-spawn event) bumps that same epoch, the first-open **Claude default** was silently dropped on the *initially-selected* project — the one whose boot races the most concurrent startup activity (HS-9246). The split lets a boot-time open keep the drawer open **and** still surface the Claude default; only an explicit user tab click suppresses it.
+
 ### 22.17.8 Lazy flag (per-terminal) — eager-spawn (HS-6310)
 
 `TerminalConfig.lazy` is persisted in settings. Terminals with `lazy:true` (the default) spawn only on first WebSocket attach. Terminals with `lazy:false` spawn **eagerly**:

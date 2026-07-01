@@ -100,6 +100,73 @@ describe('applyPerProjectDrawerState — user mid-fetch click wins (HS-8443)', (
 });
 
 /**
+ * HS-9246 — split the HS-8443 drawer-state guard. A user OPEN/CLOSE toggle
+ * mid-fetch stays authoritative for open/close, but the active-tab default must
+ * still apply — UNLESS the user explicitly clicked a tab mid-fetch, which now
+ * wins over the computed default (incl. the first-open Claude default). Pre-fix,
+ * a pure tab switch didn't bump the open/close epoch, so the restore silently
+ * overwrote the user's mid-fetch tab choice.
+ */
+describe('applyPerProjectDrawerState — user mid-fetch tab click wins (HS-9246)', () => {
+  let originalFetch: typeof globalThis.fetch | undefined;
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    document.body.replaceChildren(
+      toElement(<div id="command-log-panel" className="command-log-panel" style="display:none"></div>),
+      toElement(<button id="command-log-btn" type="button"></button>),
+      toElement(<button id="command-log-expand-btn" type="button"></button>),
+      toElement(<div id="drawer-tabs-container"></div>),
+      toElement(<div id="drawer-terminal-tabs-wrap" style="display:none"></div>),
+      toElement(<div id="command-log-entries"></div>),
+    );
+    const { _resetPanelStateForTesting } = await import('./commandLog.js');
+    _resetPanelStateForTesting();
+  });
+
+  afterEach(() => {
+    if (originalFetch !== undefined) globalThis.fetch = originalFetch;
+    document.body.innerHTML = '';
+  });
+
+  it('a user tab click during the fetch is preserved over the saved-tab restore', async () => {
+    let resolveFileSettings!: (response: Response) => void;
+    const fileSettingsPromise = new Promise<Response>((resolve) => { resolveFileSettings = resolve; });
+    globalThis.fetch = ((input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === 'string' ? input : (input instanceof URL ? input.toString() : input.url);
+      if (url.includes('/api/file-settings')) return fileSettingsPromise;
+      if (url.includes('/api/command-log')) {
+        return Promise.resolve(new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/api/shell/running')) {
+        return Promise.resolve(new Response(JSON.stringify({ ids: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    });
+
+    const { applyPerProjectDrawerState, _userSwitchDrawerTabForTesting, getActiveDrawerTab } = await import('./commandLog.js');
+
+    const restorePromise = applyPerProjectDrawerState();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // User clicks a specific tab mid-fetch (bumps ONLY the user-tab-switch epoch,
+    // not the open/close epoch — so the pre-fix bail would NOT have fired).
+    _userSwitchDrawerTabForTesting('terminal:my-choice');
+    expect(getActiveDrawerTab()).toBe('terminal:my-choice');
+
+    // Restore reads a DIFFERENT saved tab.
+    resolveFileSettings(new Response(
+      JSON.stringify({ drawer_open: 'true', drawer_active_tab: 'commands-log', drawer_expanded: 'false' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    await restorePromise;
+
+    // The user's mid-fetch choice wins; it was NOT overwritten by the restore.
+    expect(getActiveDrawerTab()).toBe('terminal:my-choice');
+  });
+});
+
+/**
  * HS-8845 — the drawer defaults to OPEN on a project's FIRST use (no saved
  * `drawer_open` setting yet), for discoverability of the Commands Log /
  * terminal. A prior explicit choice is still honored. Drives the real

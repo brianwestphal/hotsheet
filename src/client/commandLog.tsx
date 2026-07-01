@@ -64,6 +64,18 @@ let drawerStateMutationEpoch = 0;
 function noteDrawerStateMutation(): void {
   drawerStateMutationEpoch++;
 }
+// HS-9246 — a SEPARATE epoch bumped only when the USER explicitly clicks a
+// drawer tab (the `.drawer-tab` click delegate). `drawerStateMutationEpoch`
+// (open/close) is bumped by programmatic boot-time `openPanel`/`closePanel`
+// too (a channel/completion/terminal-spawn event opening the drawer), and the
+// pre-fix hard bail abandoned the WHOLE restore on any such bump — dropping the
+// first-open Claude-tab default on the initially-selected project, whose boot
+// races the most concurrent startup activity. Tracking a user TAB choice apart
+// from open/close lets the tab default still apply when only open/close moved.
+let userTabSwitchEpoch = 0;
+function noteUserTabSwitch(): void {
+  userTabSwitchEpoch++;
+}
 /** HS-8318 — top-level bindList disposer + per-row effect cleanups for
  *  the Commands Log entries container. Mounted once per
  *  `#command-log-entries` lifetime via `mountEntriesBindList()` and torn
@@ -127,6 +139,15 @@ export function _closePanelForTesting(): void { closePanel(); }
 export function _resetPanelStateForTesting(): void {
   panelOpen = false;
   drawerStateMutationEpoch = 0;
+  userTabSwitchEpoch = 0;
+}
+/** **HS-9246 — TEST ONLY.** Simulate a user drawer-tab CLICK landing mid-fetch
+ *  (the `.drawer-tab` click delegate's `noteUserTabSwitch` + `switchDrawerTab`),
+ *  so the regression test can prove a user tab choice still wins over the
+ *  computed default. */
+export function _userSwitchDrawerTabForTesting(tab: string): void {
+  noteUserTabSwitch();
+  switchDrawerTab(tab);
 }
 
 // --- Load entries from API ---
@@ -344,6 +365,8 @@ export async function applyPerProjectDrawerState(): Promise<void> {
   // restore here is the right semantic (matches HS-8440's commandItems
   // guard shape).
   const epochBeforeFetch = drawerStateMutationEpoch;
+  // HS-9246 — capture the user-tab-click epoch too (see below).
+  const tabEpochBeforeFetch = userTabSwitchEpoch;
 
   const { onProjectSwitch, loadAndRenderTerminalTabs, getLastKnownTerminalConfigs } = await import('./terminal.js');
   onProjectSwitch();
@@ -354,11 +377,18 @@ export async function applyPerProjectDrawerState(): Promise<void> {
   } catch {
     fs = {};
   }
-  // HS-8443 — bail if the user did anything drawer-related between
-  // entry and now. The user's action set the authoritative state; the
-  // restore would silently overwrite it (the pre-fix flake mode that
-  // tripped `terminal-search.spec.ts:310` on CI under load).
-  if (drawerStateMutationEpoch !== epochBeforeFetch) return;
+  // HS-8443 — a user open/close toggle during the fetch is authoritative for the
+  // OPEN/CLOSE state; don't run the reset-and-restore dance that would silently
+  // undo it (the pre-fix flake mode that tripped `terminal-search.spec.ts:310`
+  // on CI under load). NOTE: `drawerStateMutationEpoch` is also bumped by
+  // PROGRAMMATIC boot-time `openPanel`/`closePanel` (a channel/completion/
+  // terminal-spawn event), so this alone must NOT abandon the tab default.
+  const userToggledOpenClose = drawerStateMutationEpoch !== epochBeforeFetch;
+  // HS-9246 — a user TAB click during the fetch is authoritative for the active
+  // tab; only then do we skip overriding it with the computed default (incl. the
+  // first-open Claude default). A programmatic open/close does not set this, so
+  // the initially-selected project's Claude default survives a boot-time open.
+  const userSwitchedTab = userTabSwitchEpoch !== tabEpochBeforeFetch;
 
   // HS-8845 — the drawer defaults to OPEN on a project's FIRST use (no saved
   // `drawer_open` yet), for discoverability of the Commands Log / terminal. A
@@ -384,9 +414,12 @@ export async function applyPerProjectDrawerState(): Promise<void> {
     // Close the panel first so the subsequent open (or no-op close) lands in a
     // predictable state regardless of where we came from. Also collapse the
     // expand state before reapplying so we never leave a stale full-height
-    // layout from the previous project.
-    if (panelOpen) closePanel();
-    setDrawerExpanded(false);
+    // layout from the previous project. HS-9246 — skip this when the user
+    // toggled open/close mid-fetch; their choice is authoritative (HS-8443).
+    if (!userToggledOpenClose) {
+      if (panelOpen) closePanel();
+      setDrawerExpanded(false);
+    }
 
     // Rebuild tabs from the new project before choosing the active tab so we
     // can check whether the saved terminal:<id> still exists.
@@ -402,11 +435,23 @@ export async function applyPerProjectDrawerState(): Promise<void> {
     const savedTabExists = savedTab === 'commands-log'
       || (savedTab !== null
         && document.querySelector(`.drawer-tab[data-drawer-tab="${CSS.escape(savedTab)}"]`) !== null);
-    activeTab = chooseDrawerActiveTab({ savedTab, savedTabExists, claudeTabId, firstOpenSinceLaunch });
+    const desiredTab = chooseDrawerActiveTab({ savedTab, savedTabExists, claudeTabId, firstOpenSinceLaunch });
+    // HS-9246 — apply the computed default UNLESS the user explicitly clicked a
+    // tab during the fetch (then their choice already lives in `activeTab`). A
+    // programmatic boot-time open/close does not count, so the first-open Claude
+    // default still wins on the initially-selected project.
+    if (!userSwitchedTab) activeTab = desiredTab;
     if (secret !== null) projectsOpenedThisLaunch.add(secret);
 
-    if (wantOpen) openPanel(); // this will honor the pre-set activeTab
-    if (wantOpen && wantExpanded) setDrawerExpanded(true);
+    if (!userToggledOpenClose) {
+      if (wantOpen) openPanel(); // this will honor the pre-set activeTab
+      if (wantOpen && wantExpanded) setDrawerExpanded(true);
+    } else if (panelOpen && !userSwitchedTab) {
+      // HS-9246 — the user opened the drawer mid-fetch (so we kept it open) but
+      // didn't pick a tab: surface the computed default (e.g. the Claude tab)
+      // in place rather than leaving the stale server-rendered tab showing.
+      switchDrawerTab(activeTab);
+    }
   } finally {
     suspendSave = false;
   }
@@ -593,7 +638,12 @@ export function initCommandLog() {
     void delegate<HTMLElement>(drawerPanel, 'click', '.drawer-tab', (e, tabEl) => {
       if (e.target instanceof Element && e.target.closest('.drawer-tab-close') !== null) return;
       const t = tabEl.dataset.drawerTab;
-      if (typeof t === 'string' && t !== '') switchDrawerTab(t);
+      if (typeof t === 'string' && t !== '') {
+        // HS-9246 — a user tab click is authoritative over any in-flight
+        // `applyPerProjectDrawerState` default (incl. the first-open Claude tab).
+        noteUserTabSwitch();
+        switchDrawerTab(t);
+      }
     });
   }
 
