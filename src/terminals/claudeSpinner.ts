@@ -72,3 +72,34 @@ export function shouldShowDegradedBusy(
   if (lastSpinnerAtMs === null) return true;
   return nowMs - lastSpinnerAtMs >= silenceThresholdMs;
 }
+
+/**
+ * HS-9262 — decide what to do when the per-project heartbeat-stale timer fires
+ * while busy. Today the timer clears busy unconditionally, which produces a
+ * PREMATURE-OFF during a long SINGLE tool call (no intervening `PostToolUse`
+ * heartbeat for 30 s, yet Claude is plainly still working). The PTY spinner is a
+ * POSITIVE liveness signal: if Claude painted its spinner within `spinnerFreshMs`,
+ * it's genuinely mid-work → SUSTAIN busy (re-check later) instead of clearing.
+ *
+ * A hard `maxSustainMs` cap, measured from the LAST real heartbeat, bounds the
+ * sustain so a spinner that somehow keeps painting (or a stale reading) can never
+ * pin busy on forever — past the cap we always clear. This also gives the
+ * STUCK-ON path a deterministic ceiling.
+ *
+ * Pure so the transition matrix (fresh-spinner sustain / stale-spinner clear /
+ * never-seen clear / past-cap clear) is unit-testable without timers.
+ */
+export function busyStaleDecision(args: {
+  lastSpinnerAtMs: number | null;
+  nowMs: number;
+  lastHeartbeatAtMs: number;
+  spinnerFreshMs: number;
+  maxSustainMs: number;
+}): 'sustain' | 'clear' {
+  const { lastSpinnerAtMs, nowMs, lastHeartbeatAtMs, spinnerFreshMs, maxSustainMs } = args;
+  // Safety cap first: never sustain past maxSustainMs since the last heartbeat,
+  // even if the spinner looks fresh (guards a stuck / mis-read spinner).
+  if (nowMs - lastHeartbeatAtMs >= maxSustainMs) return 'clear';
+  const spinnerFresh = lastSpinnerAtMs !== null && nowMs - lastSpinnerAtMs < spinnerFreshMs;
+  return spinnerFresh ? 'sustain' : 'clear';
+}

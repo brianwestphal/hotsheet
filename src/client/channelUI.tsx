@@ -1,6 +1,6 @@
 import { type ChannelTriggerTarget, cleanupChannelConnections, ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
-import { shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
+import { busyStaleDecision, shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
@@ -253,11 +253,16 @@ function clearProjectBusy(secret: string) {
 /** Per-project heartbeat timers. Each heartbeat extends the busy state for 30s.
  *  If no heartbeat arrives within 30s, the project is marked idle. */
 const heartbeatTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** HS-9262 — wall-clock of the last real heartbeat per project, so the spinner
+ *  gate's max-sustain cap is measured from genuine hook activity (not from a
+ *  spinner-sustained re-check). */
+const lastHeartbeatAtBySecret = new Map<string, number>();
 
 /** Called when a heartbeat is received for a project (via PostToolUse hook).
  *  Sets the project as busy and resets the 30s idle timer. */
 export function extendBusyForProject(secret: string) {
   markProjectBusy(secret);
+  lastHeartbeatAtBySecret.set(secret, Date.now());
   // Also set the global busy flag if this is the active project
   const activeSecret = getActiveProject()?.secret;
   if (secret === activeSecret) {
@@ -268,18 +273,49 @@ export function extendBusyForProject(secret: string) {
     startSpinnerPoll();
     updateStatusIndicator();
   }
-  // Reset the 30s idle timer
+  // Reset the stale timer (gated on expiry — see armStaleTimer).
+  armStaleTimer(secret, TIMERS.CHANNEL_HEARTBEAT_STALE_MS);
+}
+
+/**
+ * HS-9262 — (re)arm the per-project stale timer. On expiry, busy is GATED by the
+ * PTY spinner for the ACTIVE project: a long single tool call keeps Claude's
+ * spinner painting with no intervening `PostToolUse` heartbeat, so `busyStaleDecision`
+ * returns `sustain` and we re-check shortly instead of a premature-off. Past the
+ * max-sustain cap (from the last real heartbeat) it clears regardless, giving the
+ * stuck-on path a deterministic ceiling. Non-active projects have no live spinner
+ * reading (the 2s poll follows the active project), so they clear on expiry as
+ * before — a background project's stuck-on still self-heals within the window.
+ */
+function armStaleTimer(secret: string, delayMs: number) {
   const existing = heartbeatTimers.get(secret);
   if (existing) clearTimeout(existing);
   heartbeatTimers.set(secret, setTimeout(() => {
-    clearProjectBusy(secret);
+    const activeSecret = getActiveProject()?.secret;
+    if (secret === activeSecret) {
+      const decision = busyStaleDecision({
+        lastSpinnerAtMs: channelStore.state.value.mostRecentSpinnerAtMs,
+        nowMs: Date.now(),
+        lastHeartbeatAtMs: lastHeartbeatAtBySecret.get(secret) ?? 0,
+        spinnerFreshMs: TIMERS.CHANNEL_BUSY_SPINNER_FRESH_MS,
+        maxSustainMs: TIMERS.CHANNEL_BUSY_MAX_SUSTAIN_MS,
+      });
+      if (decision === 'sustain') {
+        startSpinnerPoll(); // keep the reading fresh while we sustain
+        armStaleTimer(secret, TIMERS.CHANNEL_BUSY_RECHECK_MS);
+        return;
+      }
+    }
+    // Clear: stale heartbeat + no fresh spinner (or a non-active project).
     heartbeatTimers.delete(secret);
-    if (secret === getActiveProject()?.secret) {
+    lastHeartbeatAtBySecret.delete(secret);
+    clearProjectBusy(secret);
+    if (secret === activeSecret) {
       channelStore.actions.setBusy(false);
       stopSpinnerPoll();
       updateStatusIndicator();
     }
-  }, TIMERS.CHANNEL_HEARTBEAT_STALE_MS));
+  }, delayMs));
 }
 
 /** Called when Claude stops processing (via Stop hook). Immediately clears busy. */
@@ -287,6 +323,7 @@ export function clearBusyForProject(secret: string) {
   // Clear the heartbeat timer
   const timer = heartbeatTimers.get(secret);
   if (timer) { clearTimeout(timer); heartbeatTimers.delete(secret); }
+  lastHeartbeatAtBySecret.delete(secret);
   clearProjectBusy(secret);
   const activeSecret = getActiveProject()?.secret;
   if (secret === activeSecret) {

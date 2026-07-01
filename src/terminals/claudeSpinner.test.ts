@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CLAUDE_SPINNER_GLYPHS, containsClaudeSpinner, shouldShowDegradedBusy } from './claudeSpinner.js';
+import { busyStaleDecision, CLAUDE_SPINNER_GLYPHS, containsClaudeSpinner, shouldShowDegradedBusy } from './claudeSpinner.js';
 
 describe('CLAUDE_SPINNER_GLYPHS (HS-6702)', () => {
   it('contains exactly the six glyphs from the user\'s ticket note', () => {
@@ -71,5 +71,48 @@ describe('shouldShowDegradedBusy (HS-6702)', () => {
     expect(shouldShowDegradedBusy(true, 0, 3000, 2000)).toBe(true);
     // Threshold 10s — same elapsed time is still active
     expect(shouldShowDegradedBusy(true, 0, 3000, 10000)).toBe(false);
+  });
+});
+
+describe('busyStaleDecision (HS-9262)', () => {
+  const FRESH = 8000;
+  const CAP = 300000;
+
+  it('SUSTAINS when the spinner is fresh (long single tool call, no heartbeat)', () => {
+    // Heartbeat 30s ago (stale), but spinner painted 2s ago → still working.
+    expect(busyStaleDecision({
+      lastSpinnerAtMs: 98000, nowMs: 100000, lastHeartbeatAtMs: 70000,
+      spinnerFreshMs: FRESH, maxSustainMs: CAP,
+    })).toBe('sustain');
+  });
+
+  it('CLEARS when the spinner has gone quiet past the fresh window', () => {
+    // Spinner 10s ago (> 8s fresh window) → premature-off is now correct-off.
+    expect(busyStaleDecision({
+      lastSpinnerAtMs: 90000, nowMs: 100000, lastHeartbeatAtMs: 70000,
+      spinnerFreshMs: FRESH, maxSustainMs: CAP,
+    })).toBe('clear');
+  });
+
+  it('CLEARS when a spinner was never seen (null)', () => {
+    expect(busyStaleDecision({
+      lastSpinnerAtMs: null, nowMs: 100000, lastHeartbeatAtMs: 99000,
+      spinnerFreshMs: FRESH, maxSustainMs: CAP,
+    })).toBe('clear');
+  });
+
+  it('CLEARS past the max-sustain cap even with a fresh spinner (stuck-spinner backstop)', () => {
+    // Spinner fresh (1s ago) but the last real heartbeat was 6 min ago (> 5 min cap).
+    expect(busyStaleDecision({
+      lastSpinnerAtMs: 99000, nowMs: 100000, lastHeartbeatAtMs: 100000 - 360000,
+      spinnerFreshMs: FRESH, maxSustainMs: CAP,
+    })).toBe('clear');
+  });
+
+  it('the fresh-window boundary is exclusive (exactly freshMs old → clear)', () => {
+    expect(busyStaleDecision({
+      lastSpinnerAtMs: 100000 - FRESH, nowMs: 100000, lastHeartbeatAtMs: 90000,
+      spinnerFreshMs: FRESH, maxSustainMs: CAP,
+    })).toBe('clear');
   });
 });

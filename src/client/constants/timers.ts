@@ -39,8 +39,22 @@ export const TIMERS = {
   CHANNEL_AUTO_VERIFY_MS: 10000,
   /** Heartbeat-stale window. If Claude's heartbeat hooks haven't fired
    *  within this window AND the busy flag is still set, the project's
-   *  busy state is force-cleared (channelUI.tsx). */
+   *  busy state is re-evaluated against the PTY spinner (HS-9262) and
+   *  cleared unless Claude is still actively spinning (channelUI.tsx). */
   CHANNEL_HEARTBEAT_STALE_MS: 30000,
+  /** HS-9262 — spinner-freshness window for the busy liveness gate. On a
+   *  heartbeat-stale expiry, if the active project's most-recent Claude
+   *  spinner is newer than this, sustain busy (a long single tool call
+   *  paints the spinner but emits no PostToolUse heartbeat). Wider than the
+   *  5 s degraded-label threshold so the 2 s spinner poll has headroom. */
+  CHANNEL_BUSY_SPINNER_FRESH_MS: 8000,
+  /** HS-9262 — cadence to re-check the spinner gate while sustaining busy
+   *  past a stale heartbeat. */
+  CHANNEL_BUSY_RECHECK_MS: 5000,
+  /** HS-9262 — hard cap on spinner-sustained busy, measured from the last
+   *  real heartbeat. Past this the busy flag is cleared regardless of the
+   *  spinner, so a stuck/mis-read spinner can never pin busy on forever. */
+  CHANNEL_BUSY_MAX_SUSTAIN_MS: 300000,
   /** Channel busy-state safety timeout. If Claude never calls `/done`
    *  this long after a `/trigger`, clear the busy flag so the play
    *  button doesn't get stuck. Same window applies to the §47

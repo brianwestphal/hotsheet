@@ -1,9 +1,15 @@
 /**
  * Manage Claude Code hooks in ~/.claude/settings.json for busy state detection.
- * Installs three hooks:
- * - PostToolUse: heartbeat indicating Claude is actively using tools
+ * Installs four hooks (all verified against Claude Code 2.1.x):
  * - UserPromptSubmit: Claude started processing (mark busy immediately)
+ * - PreToolUse: a tool call is starting (HS-9262 — extra heartbeat at tool
+ *   start, so busy re-arms the instant work begins even between prompts)
+ * - PostToolUse: heartbeat indicating Claude is actively using tools
  * - Stop: Claude finished processing (mark idle immediately)
+ *
+ * HS-9262 — the client also gates busy on the PTY spinner (`busyStaleDecision`),
+ * so a long single tool call (no intervening PostToolUse) no longer prematurely
+ * clears busy, and a dropped `Stop` self-heals once the spinner goes quiet.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
@@ -86,6 +92,7 @@ export function installHeartbeatHook(port: number): void {
 
   const hookDefs: { event: string; state: 'busy' | 'idle' | 'heartbeat' }[] = [
     { event: 'PostToolUse', state: 'heartbeat' },
+    { event: 'PreToolUse', state: 'heartbeat' }, // HS-9262 — heartbeat at tool start
     { event: 'UserPromptSubmit', state: 'busy' },
     { event: 'Stop', state: 'idle' },
   ];
@@ -98,7 +105,7 @@ export function installHeartbeatHook(port: number): void {
   }
 
   writeClaudeSettings(settings);
-  console.log('[hooks] Installed Claude Code hooks (PostToolUse, UserPromptSubmit, Stop)');
+  console.log('[hooks] Installed Claude Code hooks (PostToolUse, PreToolUse, UserPromptSubmit, Stop)');
 }
 
 /** Update the port in all existing heartbeat hooks. */

@@ -36,11 +36,11 @@ describe('isHeartbeatHookInstalled', () => {
 });
 
 describe('installHeartbeatHook', () => {
-  it('installs the three heartbeat hooks at the given port', () => {
+  it('installs the four heartbeat hooks at the given port (HS-9262 added PreToolUse)', () => {
     installHeartbeatHook(4174);
     expect(isHeartbeatHookInstalled()).toBe(true);
     const s = readSettings();
-    expect(Object.keys(s.hooks!).sort()).toEqual(['PostToolUse', 'Stop', 'UserPromptSubmit']);
+    expect(Object.keys(s.hooks!).sort()).toEqual(['PostToolUse', 'PreToolUse', 'Stop', 'UserPromptSubmit']);
     const raw = readFileSync(settingsPath(), 'utf-8');
     expect(raw).toContain('hotsheet-heartbeat');
     expect(raw).toContain('localhost:4174');
