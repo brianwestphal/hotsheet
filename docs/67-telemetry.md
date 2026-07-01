@@ -424,7 +424,7 @@ Locations:
 - **Ticket row** — optional dollar-amount chip when usage > $0.50 (configurable threshold).
 - **Reader mode** — included in the §49 read-only overlay.
 
-Source: `getPerTicketRollup(ticketNumber, secret)` in `otelDashboard.ts` — the UNION of the marker path and the time-window path (see §67.11), deduped per `otel_events` row, GROUP BY prompt for duration.
+Source: `getPerTicketRollup(ticketNumber, secret)` in `otelDashboard.ts` — the UNION of the marker path and the time-window path (see §67.11), deduped per `otel_events` row, GROUP BY prompt for duration. (HS-9248 retired the client marker *injection*; the marker path here is now historical-only — the parse stays so already-tagged prompts keep attributing, while new work is attributed via the time-window path.)
 
 ## 67.11 Prompt → ticket correlation (HS-8151 investigation → HS-8730 implementation)
 
@@ -432,7 +432,7 @@ Captured separately as HS-8151 (investigation). Five options were evaluated:
 
 1. **`HOTSHEET_ACTIVE_TICKET` env at spawn.** Works only when the active ticket is known at spawn time; doesn't follow within-session ticket switches.
 2. **Live-update via `OTEL_RESOURCE_ATTRIBUTES`.** Env vars can't update for a running shell — collapses to option 1's limitation.
-3. **Tag prompts via the `/hotsheet` skill / channel-trigger flow.** When Hot Sheet triggers Claude with an active ticket, prepend a `<!-- hotsheet:ticket=HS-NNNN -->` marker in the prompt text that we parse out of `claude_code.user_prompt`'s body (`tagMessageWithActiveTicket`). Survives within-session ticket switches.
+3. **Tag prompts via the `/hotsheet` skill / channel-trigger flow.** When Hot Sheet triggers Claude with an active ticket, prepend a `<!-- hotsheet:ticket=HS-NNNN -->` marker in the prompt text that we parse out of `claude_code.user_prompt`'s body (`tagMessageWithActiveTicket`). Survives within-session ticket switches. **RETIRED (HS-9248, 2026-07-01):** this injection was keyed off `state.activeTicketId` = "whatever the detail panel shows" (which merely creating/browsing a ticket sets), so on a no-message play-button trigger the marker became the entire prompt and read like a "work this ticket" directive for an unrelated, not-Up-Next ticket. `triggerChannelAndMarkBusy` no longer injects it; `getPerTicketRollup` still **parses** the marker so historical prompts keep attributing, but no new markers are produced — new-work attribution is time-window-only (below).
 4. **Time-window heuristic.** Attribute api_request cost to whichever ticket was being worked at the event's timestamp.
 5. **Inject via Claude SDK MCP server context.** Highest coupling, highest accuracy.
 

@@ -330,45 +330,26 @@ export function setChannelBusy(busy: boolean) {
 }
 
 /**
- * HS-8152 / HS-8151 Option 3 — prepend a hotsheet-ticket marker to
- * channel-triggered prompts when there's an active ticket. The marker
- * rides into `claude_code.user_prompt`'s body verbatim; the per-ticket
- * rollup query in `src/db/otelQueries.ts::getPerTicketRollup` parses
- * it out to attribute cost/tokens/duration back to a ticket.
+ * HS-9248 — the channel trigger no longer tags the prompt with the
+ * detail-panel's active ticket. That marker (`<!-- hotsheet:ticket=HS-N -->`,
+ * HS-8151/8152) was keyed off `state.activeTicketId`, i.e. "whatever ticket the
+ * detail panel shows" — which everyday actions (creating a ticket auto-opens it;
+ * clicking one to browse) set with no work intent. On a no-message play-button
+ * trigger the marker became the ENTIRE prompt and read like a "work this ticket"
+ * directive, so an unrelated, not-Up-Next ticket could get picked up.
  *
- * Format: `<!-- hotsheet:ticket=HS-NNNN -->\n\n<original message>`.
- * HTML-comment shape so the marker is invisible to Claude's logic but
- * preserved as raw bytes through every prompt rewrite.
- *
- * HS-8537 — even when the caller didn't pass a message (the common
- * play-button flow), inject the marker as a standalone string when
- * there's an active ticket. The channel server appends its default
- * "Process the Hot Sheet worklist..." instructions, so the marker
- * still lands at the head of the prompt body Claude receives.
- *
- * Returns `undefined` only when both the caller's message is empty
- * AND there's no active ticket — the trigger is genuinely contextless.
+ * Per-ticket cost attribution now relies solely on the **time-window path**
+ * (HS-8730): telemetry inside a `ticket_work_intervals` window, opened when the
+ * agent marks a ticket `started`→`completed` — real work, not UI focus.
+ * `getPerTicketRollup` still PARSES the marker so historical prompts that already
+ * carry it keep attributing; we just stop producing new ones.
  */
-function tagMessageWithActiveTicket(message: string | undefined): string | undefined {
-  const activeId = state.activeTicketId;
-  const ticket = activeId === null ? undefined : state.tickets.find(t => t.id === activeId);
-  const marker = ticket === undefined ? null : `<!-- hotsheet:ticket=${ticket.ticket_number} -->`;
-  if (message === undefined || message === '') {
-    return marker === null ? message : marker;
-  }
-  return marker === null ? message : `${marker}\n\n${message}`;
-}
-
 function triggerChannelAndMarkBusy(message?: string, target?: ChannelTriggerTarget) {
   setChannelBusy(true);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void ensureSkills();
-  // HS-8152 — tag the message with the active ticket (when present)
-  // so the per-ticket cost rollup can attribute downstream OTel events
-  // back to the ticket via the marker in `claude_code.user_prompt`.
-  const tagged = tagMessageWithActiveTicket(message);
   // HS-9083 — `target` routes to a worker / all workers (omitted ⇒ main leader).
-  void triggerChannel(tagged, target);
+  void triggerChannel(message, target);
   // Timeout fallback: clear busy after 60s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
   channelBusyTimeout = setTimeout(() => {
@@ -378,9 +359,6 @@ function triggerChannelAndMarkBusy(message?: string, target?: ChannelTriggerTarg
 
 // Exported so experimentalSettings can call it for custom command buttons
 export { triggerChannelAndMarkBusy };
-
-/** HS-8537 — exported for tests of the per-ticket marker injection. */
-export const _testing = { tagMessageWithActiveTicket };
 
 async function checkAndTrigger(btn: HTMLElement) {
   // Check if Claude is connected before triggering

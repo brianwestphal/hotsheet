@@ -251,8 +251,11 @@ export interface TicketRollup {
 export async function getPerTicketRollup(ticketNumber: string, secret?: string): Promise<TicketRollup> {
   const db = await getTelemetryDb();
 
-  // The marker substring we LIKE for. Same format the client injects in
-  // `channelUI.tsx::tagMessageWithActiveTicket`.
+  // The marker substring we LIKE for. HS-9248 retired the client injection
+  // (`channelUI.tsx::tagMessageWithActiveTicket`), so this path now only matches
+  // HISTORICAL prompts that already carry the marker; new-work attribution comes
+  // from the time-window path below. Kept so that older tagged prompts keep
+  // attributing.
   const marker = `hotsheet:ticket=${ticketNumber}`;
   const secretParam = secret !== undefined && secret !== '' ? secret : null;
 
