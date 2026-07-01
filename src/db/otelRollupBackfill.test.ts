@@ -213,6 +213,9 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
 
       const written = await backfillTicketsForDir(tempDir, clusterDb, mainDb, SECRET);
       expect(written).toBe(1);
+      // HS-9257 — getPerTicketRollup now reads duration from the span table, so
+      // populate it too before the parity comparison.
+      await backfillTicketPromptSpansForDir(clusterDb, mainDb, SECRET);
 
       const live = await getPerTicketRollup('HS-100', SECRET);
       const r = await mainDb.query<{ cost_usd: string; total_tokens: string; prompt_count: number; duration_seconds: string; model_breakdown: Record<string, { cost: number; tokens: number }> }>(

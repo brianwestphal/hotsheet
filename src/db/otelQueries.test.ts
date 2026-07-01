@@ -30,6 +30,7 @@ import {
   resolveDashboardWindowSinceTs,
   sanitizePromptSnippet,
 } from './otelQueries.js';
+import { backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
 import { markDailySeen, updateDailyRollup } from './otelRollupIngest.js';
 
 // HS-8874 — isolate the central store to a temp dir so the cross-project
@@ -762,6 +763,18 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       );
     }
 
+    // HS-9257 — getPerTicketRollup now reads otel_rollup_ticket + the duration
+    // spans (main db), not raw. These tests seed raw events + intervals directly,
+    // so recompute the per-ticket rollup + spans from raw (the same path the
+    // production backfill uses) before the read. `secret` = the project the ticket
+    // was worked under (production always passes the request's projectSecret).
+    async function backfillTicketRollup(secret: string): Promise<void> {
+      const clusterDb = await getTelemetryDb();
+      const mainDb = await getRollupDb();
+      await backfillTicketsForDir('', clusterDb, mainDb, secret);
+      await backfillTicketPromptSpansForDir(clusterDb, mainDb, secret);
+    }
+
     it('returns zero rollup for an unattributed ticket', async () => {
       const result = await getPerTicketRollup('HS-9999');
       expect(result.ticketNumber).toBe('HS-9999');
@@ -810,7 +823,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         attrs: { cost: 0.1, tokens: 200 },
       });
 
-      const result = await getPerTicketRollup('HS-1234');
+      await backfillTicketRollup(SECRET_A);
+      const result = await getPerTicketRollup('HS-1234', SECRET_A);
       expect(result.promptCount).toBe(2);
       expect(result.totalCost).toBeCloseTo(0.85, 6);
       expect(result.totalTokens).toBe(1700);
@@ -848,7 +862,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         attrs: { cost: 99.0, tokens: 99999 },
       });
 
-      const result = await getPerTicketRollup('HS-1234');
+      await backfillTicketRollup(SECRET_A);
+      const result = await getPerTicketRollup('HS-1234', SECRET_A);
       expect(result.promptCount).toBe(1);
       expect(result.totalCost).toBe(1.0);
       expect(result.totalTokens).toBe(1000);
@@ -871,7 +886,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         attrs: { cost: 5.0, tokens: 5000 },
       });
 
-      const result = await getPerTicketRollup('HS-1234');
+      await backfillTicketRollup(SECRET_A);
+      const result = await getPerTicketRollup('HS-1234', SECRET_A);
       expect(result.promptCount).toBe(0);
       expect(result.totalCost).toBe(0);
     });
@@ -896,6 +912,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       // One OUTSIDE the window — must be excluded.
       await insertEventWithBody({ ts: new Date(end.getTime() + 60_000), projectSecret: SECRET_A, promptId: 'pw2', eventName: 'claude_code.api_request', attrs: { cost: 9.0, tokens: 9000 } });
 
+      await backfillTicketRollup(SECRET_A);
       const result = await getPerTicketRollup('HS-5000', SECRET_A);
       expect(result.totalCost).toBeCloseTo(0.5, 6);
       expect(result.totalTokens).toBe(1000);
@@ -906,17 +923,25 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       const start = new Date(Date.now() - 60_000);
       await insertInterval(SECRET_A, 'HS-5001', start, null);
       await insertEventWithBody({ ts: new Date(Date.now() - 30_000), projectSecret: SECRET_A, promptId: 'po1', eventName: 'claude_code.api_request', attrs: { cost: 0.2, tokens: 300 } });
+      await backfillTicketRollup(SECRET_A);
       const result = await getPerTicketRollup('HS-5001', SECRET_A);
       expect(result.totalCost).toBeCloseTo(0.2, 6);
     });
 
-    it('time-window attribution is ignored when no secret is passed (marker-only back-compat)', async () => {
+    it('a no-secret read finds nothing — the rollup is keyed by project_secret (HS-9257)', async () => {
+      // The time-window cost IS attributed to SECRET_A's rollup by the backfill,
+      // but reading with no secret looks under project_secret='' (central), which
+      // has nothing. Production always passes the request's projectSecret, so this
+      // is the rollup-model successor to the old marker-only back-compat path.
       const start = new Date('2026-05-21T10:00:00Z');
       await insertInterval(SECRET_A, 'HS-5002', start, new Date(start.getTime() + 1_800_000));
       await insertEventWithBody({ ts: new Date(start.getTime() + 60_000), projectSecret: SECRET_A, promptId: 'pn1', eventName: 'claude_code.api_request', attrs: { cost: 0.4, tokens: 800 } });
-      const result = await getPerTicketRollup('HS-5002'); // no secret → marker-only
+      await backfillTicketRollup(SECRET_A);
+      const result = await getPerTicketRollup('HS-5002'); // no secret → reads project_secret=''
       expect(result.totalCost).toBe(0);
       expect(result.promptCount).toBe(0);
+      // Sanity: it IS attributed under SECRET_A.
+      expect((await getPerTicketRollup('HS-5002', SECRET_A)).totalCost).toBeCloseTo(0.4, 6);
     });
 
     it('time-window attribution is scoped by project_secret', async () => {
@@ -924,6 +949,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertInterval(SECRET_A, 'HS-5003', start, new Date(start.getTime() + 1_800_000));
       // Event belongs to a DIFFERENT project — must not be attributed to SECRET_A's ticket.
       await insertEventWithBody({ ts: new Date(start.getTime() + 60_000), projectSecret: SECRET_B, promptId: 'px1', eventName: 'claude_code.api_request', attrs: { cost: 7.0, tokens: 7000 } });
+      await backfillTicketRollup(SECRET_A);
       const result = await getPerTicketRollup('HS-5003', SECRET_A);
       expect(result.totalCost).toBe(0);
     });
@@ -933,6 +959,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertInterval(SECRET_A, 'HS-5004', new Date(t.getTime() - 1_000), new Date(t.getTime() + 60_000));
       await insertEventWithBody({ ts: t, projectSecret: SECRET_A, promptId: 'pb1', eventName: 'claude_code.user_prompt', body: { body: '<!-- hotsheet:ticket=HS-5004 -->\n\nx' } });
       await insertEventWithBody({ ts: new Date(t.getTime() + 1_000), projectSecret: SECRET_A, promptId: 'pb1', eventName: 'claude_code.api_request', attrs: { cost: 0.3, tokens: 300 } });
+      await backfillTicketRollup(SECRET_A);
       const result = await getPerTicketRollup('HS-5004', SECRET_A);
       expect(result.totalCost).toBeCloseTo(0.3, 6); // counted once, not 0.6
       expect(result.promptCount).toBe(1);
@@ -1593,7 +1620,10 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         eventName: 'api_request',
         attrs: { cost: 0.4, tokens: 1500 },
       });
-      const rollup = await getPerTicketRollup('HS-9001');
+      // HS-9257 — recompute the per-ticket rollup from raw (production backfill
+      // path), then read it under the project's secret.
+      await backfillTicketsForDir('', await getTelemetryDb(), await getRollupDb(), SECRET_A);
+      const rollup = await getPerTicketRollup('HS-9001', SECRET_A);
       expect(rollup.promptCount).toBe(1);
       expect(rollup.totalCost).toBeCloseTo(0.4);
       expect(rollup.totalTokens).toBe(1500);

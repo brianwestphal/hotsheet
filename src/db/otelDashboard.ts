@@ -12,12 +12,14 @@
  * facade preserving the original import surface, mirroring the HS-8189
  * registry split pattern.
  */
+import type { PGlite } from '@electric-sql/pglite';
+
 import { getAllProjects } from '../projects.js';
 import {
   type AnnouncerUsageByProjectRow, type AnnouncerUsageTotals,
   getAnnouncerUsageByProject, getAnnouncerUsageTotals,
 } from './announcerUsage.js';
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getRollupDb, getTelemetryDb, runWithTelemetryDb } from './connection.js';
 import {
   type CostOverTimePoint,
   eventNameMatchSql,
@@ -248,9 +250,53 @@ export interface TicketRollup {
   totalDurationSeconds: number;
 }
 
+/**
+ * HS-9235 part 2 (HS-9257) — read the per-ticket rollup from the compact main-db
+ * tables: cost / tokens / prompt_count from `otel_rollup_ticket`, and duration
+ * from `otel_ticket_prompt_span` (`SUM(last_ts - first_ts)` per prompt). No raw
+ * `otel_*` scan. The rollup is maintained at ingest (`attributeApiRequestToTicket`
+ * / `attributeUserPromptToTicket` / `widenTicketPromptSpan`) + backfilled from
+ * raw (`backfillTicketsForDir`, which uses `computeTicketRollupFromRaw` below).
+ */
 export async function getPerTicketRollup(ticketNumber: string, secret?: string): Promise<TicketRollup> {
-  const db = await getTelemetryDb();
+  const db = await getRollupDb();
+  const secretParam = secret !== undefined && secret !== '' ? secret : '';
 
+  const scalarResult = await db.query<{ cost: string | null; tokens: string | null; prompt_count: number | null }>(
+    `SELECT cost_usd AS cost, total_tokens AS tokens, prompt_count
+       FROM otel_rollup_ticket
+      WHERE project_secret = $1 AND ticket_number = $2`,
+    [secretParam, ticketNumber],
+  );
+  const durationResult = await db.query<{ total_seconds: string | null }>(
+    `SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (last_ts - first_ts))), 0) AS total_seconds
+       FROM otel_ticket_prompt_span
+      WHERE project_secret = $1 AND ticket_number = $2`,
+    [secretParam, ticketNumber],
+  );
+
+  // `.at(0)` (not `[0]`) so the type is `… | undefined` — the scalar query
+  // returns NO row for an unattributed ticket, and the optional chain below is
+  // then legitimate. The duration query is a COALESCE(SUM(...)) aggregate, so it
+  // always returns exactly one row.
+  const row = scalarResult.rows.at(0);
+  return {
+    ticketNumber,
+    promptCount: row?.prompt_count ?? 0,
+    totalCost: Number(row?.cost ?? 0),
+    totalTokens: Number(row?.tokens ?? 0),
+    totalDurationSeconds: Number(durationResult.rows[0].total_seconds ?? '0'),
+  };
+}
+
+/**
+ * HS-9257 — the ORIGINAL raw-scanning per-ticket computation, extracted so the
+ * HS-9234 backfill (`backfillTicketsForDir`) can populate `otel_rollup_ticket`
+ * from the canonical raw source WITHOUT calling the now-rollup-reading
+ * `getPerTicketRollup` (which would be circular — reading the table it fills).
+ * Reads the given CLUSTER db (raw `otel_events` + `ticket_work_intervals`).
+ */
+export async function computeTicketRollupFromRaw(db: PGlite, ticketNumber: string, secret?: string): Promise<TicketRollup> {
   // The marker substring we LIKE for. HS-9248 retired the client injection
   // (`channelUI.tsx::tagMessageWithActiveTicket`), so this path now only matches
   // HISTORICAL prompts that already carry the marker; new-work attribution comes

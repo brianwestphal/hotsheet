@@ -61,8 +61,8 @@ import { z } from 'zod';
 import { createBackup } from '../backup.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
-import { centralTelemetryDataDir, getDbForDir, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
-import { getPerTicketRollup } from './otelDashboard.js';
+import { centralTelemetryDataDir, getDbForDir, telemetryClusterDataDir } from './connection.js';
+import { computeTicketRollupFromRaw } from './otelDashboard.js';
 import { eventNameMatchSql } from './otelRollups.js';
 
 /** Mirrors `getWindowTotals` / ingest: a cumulative monotonic counter carries its
@@ -395,10 +395,10 @@ export async function backfillTicketsForDir(
 
   let written = 0;
   for (const ticket of ticketNumbers) {
-    // Canonical scalars from the live read itself — run against THIS project's
-    // cluster — so the backfilled numbers are byte-for-byte what the dashboard
-    // shows today (HS-9235 then just swaps the source).
-    const scalar = await runWithTelemetryDb(dataDir, () => getPerTicketRollup(ticket, secret));
+    // Canonical scalars from the raw-scanning computation (HS-9257 extracted it
+    // out of getPerTicketRollup, which now READS this rollup — calling it here
+    // would be circular). Runs directly against THIS project's cluster db.
+    const scalar = await computeTicketRollupFromRaw(clusterDb, ticket, secret);
     if (scalar.promptCount === 0 && scalar.totalCost === 0 && scalar.totalTokens === 0 && scalar.totalDurationSeconds === 0) {
       // No attributed api_request events — nothing to record for this ticket.
       continue;
