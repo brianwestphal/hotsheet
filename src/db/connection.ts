@@ -406,6 +406,32 @@ export async function getTelemetryDb(): Promise<PGlite> {
   return getDbForDir(centralTelemetryDataDir());
 }
 
+/**
+ * HS-9235 — resolve the MAIN (snapshotted) database where the telemetry ROLLUP
+ * tables live (`otel_rollup_daily` / `otel_rollup_ticket` / `otel_daily_seen` /
+ * `otel_ticket_prompt_span`). The dashboard read-layer reads rollups from here,
+ * while the raw `otel_metrics` / `otel_events` still live in the un-snapshotted
+ * telemetry cluster (`getTelemetryDb`).
+ *
+ * Mirrors `getTelemetryDb`'s context resolution EXACTLY, but WITHOUT the
+ * `telemetryClusterDataDir()` wrap — each branch resolves to `<dataDir>/db`
+ * (the main cluster). The central store maps to itself under
+ * `telemetryClusterDataDir`, so the central fallback is identical for both.
+ * Used inside the same `runWithTelemetryDb(dataDir)` fan-out contexts as
+ * `getTelemetryDb`, so a per-project read resolves to that project's main db and
+ * the central read to the central db.
+ */
+export async function getRollupDb(): Promise<PGlite> {
+  const telemetryDir = telemetryDbDir.getStore();
+  if (telemetryDir !== undefined) return getDbForDir(telemetryDir);
+  const contextDataDir = requestDataDir.getStore();
+  if (contextDataDir !== undefined) return getDbForDir(contextDataDir);
+  if (defaultDbPath !== null) {
+    return getDbForDir(defaultDbPath.replace(/[\\/]db$/, ''));
+  }
+  return getDbForDir(centralTelemetryDataDir());
+}
+
 /** Get or create a database for a specific dataDir. */
 export async function getDbForDir(dataDir: string): Promise<PGlite> {
   const dbDir = join(dataDir, 'db');

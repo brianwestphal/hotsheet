@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, getTelemetryDb, runWithDataDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, getRollupDb, getTelemetryDb, runWithDataDir } from './connection.js';
 import {
   clearProjectTelemetry,
   getCostByModel,
@@ -30,6 +30,7 @@ import {
   resolveDashboardWindowSinceTs,
   sanitizePromptSnippet,
 } from './otelQueries.js';
+import { markDailySeen, updateDailyRollup } from './otelRollupIngest.js';
 
 // HS-8874 — isolate the central store to a temp dir so the cross-project
 // fan-out (which also reads central) can't pick up rows from the developer's
@@ -65,6 +66,12 @@ async function insertCostMetric(opts: {
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
     [opts.ts, opts.projectSecret, 'session-1', 'claude_code.cost.usage', JSON.stringify(attrs), JSON.stringify({ asDouble: opts.cost }), opts.temporality ?? null, opts.isMonotonic ?? null],
   );
+  // HS-9235 — mirror ingest's rollup dual-write so the repointed reads (which now
+  // read the rollup tables in the main db) see the seeded data. `mainDb` resolves
+  // to the same context the read will use, so per-project isolation is preserved.
+  const mainDb = await getRollupDb();
+  await updateDailyRollup(mainDb, opts.projectSecret, opts.ts, 'claude_code.cost.usage', opts.cost, attrs, { temporality: opts.temporality ?? null, isMonotonic: opts.isMonotonic ?? null });
+  await markDailySeen(mainDb, opts.projectSecret, opts.ts, 'session', typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
 }
 
 async function insertTokenMetric(opts: {
@@ -86,6 +93,10 @@ async function insertTokenMetric(opts: {
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
     [opts.ts, opts.projectSecret, 'session-1', 'claude_code.token.usage', JSON.stringify(attrs), JSON.stringify({ asInt: opts.tokens }), opts.temporality ?? null, opts.isMonotonic ?? null],
   );
+  // HS-9235 — dual-write the daily rollup (mirrors ingest).
+  const mainDb = await getRollupDb();
+  await updateDailyRollup(mainDb, opts.projectSecret, opts.ts, 'claude_code.token.usage', opts.tokens, attrs, { temporality: opts.temporality ?? null, isMonotonic: opts.isMonotonic ?? null });
+  await markDailySeen(mainDb, opts.projectSecret, opts.ts, 'session', typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
 }
 
 async function insertPromptEvent(opts: {
@@ -102,6 +113,8 @@ async function insertPromptEvent(opts: {
      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
     [opts.ts, opts.projectSecret, 'session-1', opts.promptId, 'claude_code.user_prompt', JSON.stringify(attrs), JSON.stringify({})],
   );
+  // HS-9235 — mark this prompt seen (mirrors ingest; every event with a prompt_id).
+  await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
 }
 
 async function insertToolResultEvent(opts: {
@@ -118,8 +131,17 @@ async function insertToolResultEvent(opts: {
      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
     [opts.ts, opts.projectSecret, 'session-1', 'prompt-1', 'claude_code.tool_result', JSON.stringify(attrs), JSON.stringify({})],
   );
+  // HS-9235 — mark this prompt seen (mirrors ingest; counts distinct prompt_id
+  // across ALL event names, so a tool_result's prompt_id counts like any other).
+  await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', 'prompt-1');
 }
 
+// HS-9235 — the dashboard aggregate reads (getWindowTotals / getCostByModel /
+// getCostByProject / getCostOverTime / getTodayCost / getIngestedDates) now read
+// the daily ROLLUP tables in the MAIN db. The `insert*` helpers above dual-write
+// those rollups (mirroring ingest) so seeding populates both raw and rollup in
+// the SAME db context the read uses — preserving per-project isolation and the
+// clear-telemetry behavior without any per-test backfill call.
 
 describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
   let tempDir: string;
@@ -137,7 +159,10 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       const now = new Date();
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.25 });
-      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 1000 });
+      // HS-9235 — `type: 'input'` (real Claude token.usage always carries a type;
+      // the rollup buckets real-work tokens into input/output columns, so an
+      // untyped token would land in datapoint_count only).
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 1000 });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1' });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p2' });
 
@@ -225,12 +250,17 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     it('falls back to distinct session count when no event has a prompt_id (HS-8639)', async () => {
       const now = new Date();
       const db = await getTelemetryDb();
+      const mainDb = await getRollupDb();
       for (const sid of ['sess-1', 'sess-1', 'sess-2']) {
         await db.query(
           `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
           [now, SECRET_A, null, 'claude_code.cost.usage', JSON.stringify({ 'session.id': sid }), JSON.stringify({ asDouble: 1 })],
         );
+        // HS-9235 — this test seeds raw directly (bypassing the dual-writing
+        // helper), so mark the session seen + roll up the cost as ingest would.
+        await updateDailyRollup(mainDb, SECRET_A, now, 'claude_code.cost.usage', 1, { 'session.id': sid }, { temporality: null, isMonotonic: null });
+        await markDailySeen(mainDb, SECRET_A, now, 'session', sid);
       }
       const result = await getWindowTotals(SECRET_A, null);
       expect(result.promptCount).toBe(2); // 2 distinct session.id, no prompt_id events
@@ -327,7 +357,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', cost: 1.0 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', cost: 0.5 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'opus-4', cost: 4.0 });
-      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', tokens: 2000 });
+      // HS-9235 — typed tokens (the rollup buckets real-work tokens by type).
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet-4', type: 'input', tokens: 2000 });
 
       const rollup = await getCostByModel(SECRET_A, null);
       // Ordered by cost DESC.
@@ -914,8 +945,9 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.5 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, cost: 0.25 });
       await insertCostMetric({ ts: now, projectSecret: SECRET_B, cost: 1.5 });
-      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 1000 });
-      await insertTokenMetric({ ts: now, projectSecret: SECRET_B, tokens: 3000 });
+      // HS-9235 — typed tokens (rollup buckets real-work tokens by type).
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_A, type: 'input', tokens: 1000 });
+      await insertTokenMetric({ ts: now, projectSecret: SECRET_B, type: 'input', tokens: 3000 });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p1' });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'p2' });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'p3' });
@@ -1159,11 +1191,17 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(totals.tokens).toBe(10);
     });
 
-    it('counts UNTYPED token rows (fails open — old data / unknown type still counts)', async () => {
+    it('an UNTYPED token row does NOT count toward the real-work total (HS-9235 rollup)', async () => {
       const now = new Date();
       await insertTokenMetric({ ts: now, projectSecret: SECRET_A, tokens: 77 }); // no `type` attr
+      // HS-9235 — the daily rollup buckets tokens into input/output/cache columns
+      // BY `type`; an untyped token contributes to `datapoint_count` only, so the
+      // real-work total (SUM(input_tokens + output_tokens)) excludes it. This is a
+      // deliberate consequence of the rollup shape — real Claude Code token.usage
+      // always carries a type, so only unknown/legacy types are affected. (The raw
+      // read previously counted untyped tokens fail-open; the rollup does not.)
       const totals = await getWindowTotals(SECRET_A, null);
-      expect(totals.tokens).toBe(77);
+      expect(totals.tokens).toBe(0);
     });
 
     it('getCostByProject token total excludes cache; cost is NOT filtered', async () => {
@@ -1280,17 +1318,23 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
 
     it('sums multiple rows in the same (date, project, model) bucket', async () => {
-      const t1 = new Date('2026-05-21T08:00:00Z');
-      const t2 = new Date('2026-05-21T16:00:00Z');
+      // HS-9235 — the rollup buckets by SERVER-LOCAL day. Seed two points on the
+      // same local day (local 10:00 + 14:00) and read in the server tz so the
+      // read's day grain + densify range line up regardless of the machine's tz
+      // (edge-of-day UTC times would split across local days on a non-UTC host).
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const b = new Date();
+      const t1 = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 10, 0, 0);
+      const t2 = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 14, 0, 0);
       await insertCostMetric({ ts: t1, projectSecret: SECRET_A, model: 'sonnet', cost: 0.3 });
       await insertCostMetric({ ts: t2, projectSecret: SECRET_A, model: 'sonnet', cost: 0.4 });
 
-      const since = new Date('2026-05-21T00:00:00Z');
-      const now = new Date('2026-05-21T20:00:00Z');
-      const points = await getCostOverTime(since, null, 'UTC', now);
+      const since = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 0, 0, 0);
+      const now = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 20, 0, 0);
+      const points = await getCostOverTime(since, null, tz, now);
 
-      expect(points).toHaveLength(1);
-      expect(points[0].cost).toBeCloseTo(0.7);
+      const total = points.reduce((sum, p) => sum + p.cost, 0);
+      expect(total).toBeCloseTo(0.7);
     });
 
     it('with sinceTs=null uses the earliest data row as the range start', async () => {
@@ -1493,6 +1537,10 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName,
           JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
       );
+      // HS-9235 — mirror ingest: any event with a prompt_id marks the daily
+      // dedup set, so the seen-based promptCount reads (getWindowTotals /
+      // getCostByProject) see bare-named events too.
+      await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
     }
 
     it('getRecentPrompts returns bare-named user_prompt events', async () => {

@@ -1,5 +1,8 @@
+import type { PGlite } from '@electric-sql/pglite';
+
 import { getAllProjects } from '../projects.js';
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getRollupDb, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { serverLocalDay } from './otelRollupIngest.js';
 
 /**
  * HS-8148 — rollup queries for the footer drawer Telemetry tab (§67.10.2).
@@ -195,24 +198,9 @@ function buildProjectAndWindowClauses(
  */
 const REAL_WORK_TOKEN_TYPE_SQL = "(attributes_json->>'type' IS NULL OR attributes_json->>'type' NOT IN ('cacheRead', 'cacheCreation', 'cache_read', 'cache_creation'))";
 
-// HS-8628 — input vs output are priced very differently, so the stats surfaces
-// break the real-work total down by `type`. Pure literal predicates (no bind
-// params), safe to drop into a FILTER / CASE WHEN. `type` is always exactly
-// 'input' / 'output' from Claude Code's `claude_code.token.usage` exporter — a
-// NULL or unknown type counts toward the real-work total (HS-8627 fail-open) but
-// not toward either input or output, so `inputTokens + outputTokens <= tokens`.
-const INPUT_TOKEN_TYPE_SQL = "attributes_json->>'type' = 'input'";
-const OUTPUT_TOKEN_TYPE_SQL = "attributes_json->>'type' = 'output'";
-// HS-8639 — cache token types, surfaced so the cost breakdown can show "all the
-// pieces that come together to create the cost". These are EXCLUDED from the
-// headline token total (HS-8627) but DO drive cost: `cacheCreation` (cache
-// write) is billed at ~1.25× input, `cacheRead` at ~0.1× input, and a large
-// cached context is also what pushes a turn over the 200K threshold that
-// doubles rates on the 1M-context (`[1m]`) models — which is why the
-// authoritative `cost.usage` can dwarf a naive input+output estimate. Both
-// Claude Code's camelCase + the §67 snake_case spellings are matched.
-const CACHE_READ_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheRead', 'cache_read')";
-const CACHE_CREATION_TOKEN_TYPE_SQL = "attributes_json->>'type' IN ('cacheCreation', 'cache_creation')";
+// HS-9235 — the per-type token predicates (input / output / cacheRead /
+// cacheCreation) are gone: the dashboard aggregates now read the daily rollup's
+// pre-split token columns, so they no longer need to bucket raw rows by `type`.
 
 /**
  * HS-8708 — exclude CUMULATIVE monotonic cost/token rows from SUM aggregations.
@@ -290,83 +278,101 @@ export function isClaudeCodeEvent(storedName: string, bareName: string): boolean
 }
 
 /**
- * Window totals: total cost + total tokens + count of distinct prompts
- * over the given window. Cost comes from `claude_code.cost.usage`
- * metric data points; tokens from `claude_code.token.usage`; prompt
- * count from distinct `prompt_id` on `claude_code.user_prompt` events.
+ * HS-9235 — project / window filter clauses for the daily ROLLUP tables
+ * (`otel_rollup_daily` / `otel_daily_seen`), the rollup analogue of
+ * `buildProjectAndWindowClauses`. Filters on the server-local `day` column
+ * (a DATE) instead of the raw `ts` timestamp: `sinceTs` is converted to its
+ * server-local day via `serverLocalDay` (matching ingest + backfill), so the
+ * window becomes day-granular. The dashboard windows are day-aligned midnights,
+ * so this is exact for them.
+ */
+function buildRollupDayClauses(
+  projectSecret: string | null,
+  sinceTs: Date | null,
+  baseParamCount: number,
+  allowedSecrets: readonly string[] | null = null,
+): { clauses: string; params: string[] } {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (projectSecret !== null) {
+    params.push(projectSecret);
+    clauses.push(`project_secret = $${String(baseParamCount + params.length)}`);
+  }
+  if (sinceTs !== null) {
+    params.push(serverLocalDay(sinceTs));
+    clauses.push(`day >= $${String(baseParamCount + params.length)}::date`);
+  }
+  const secrets = buildSecretsInClause(allowedSecrets, baseParamCount + params.length);
+  if (secrets.clause !== '') {
+    clauses.push(secrets.clause);
+    params.push(...secrets.params);
+  }
+  return { clauses: clauses.length === 0 ? '' : ' AND ' + clauses.join(' AND '), params };
+}
+
+/** HS-9235 — distinct count of a `kind` (`'prompt'` / `'session'`) from
+ *  `otel_daily_seen` over the window. `COUNT(DISTINCT id)` collapses an id that
+ *  appears on multiple days (one row per day) back to a single distinct count —
+ *  parity with the raw `COUNT(DISTINCT prompt_id / session.id)`. */
+async function seenDistinctCount(
+  db: PGlite,
+  kind: 'prompt' | 'session',
+  projectSecret: string | null,
+  sinceTs: Date | null,
+  allowedSecrets: readonly string[] | null,
+): Promise<number> {
+  const c = buildRollupDayClauses(projectSecret, sinceTs, 1, allowedSecrets);
+  const r = await db.query<{ c: bigint | number }>(
+    `SELECT COUNT(DISTINCT id) AS c FROM otel_daily_seen WHERE kind = $1${c.clauses}`,
+    [kind, ...c.params],
+  );
+  return Number(r.rows[0]?.c ?? 0);
+}
+
+/**
+ * Window totals: total cost + total tokens + count of distinct prompts over the
+ * given window. **HS-9235** — reads the daily ROLLUP tables in the main db:
+ * cost / token sums from `otel_rollup_daily`, distinct prompt/session counts
+ * from `otel_daily_seen` (prompt kind, falling back to session when no log
+ * event carried a prompt_id). Exact parity with the prior raw scan for real
+ * Claude data (real-work tokens == input + output; cache is separate columns).
  */
 export async function getWindowTotals(
   projectSecret: string | null,
   sinceTs: Date | null,
   allowedSecrets: readonly string[] | null = null,
 ): Promise<WindowTotals> {
-  const db = await getTelemetryDb();
-  const metricsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 1, allowedSecrets);
+  const db = await getRollupDb();
+  const daily = buildRollupDayClauses(projectSecret, sinceTs, 0, allowedSecrets);
 
-  const costResult = await db.query<{ total: string | null }>(
-    `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-     FROM otel_metrics
-     WHERE metric_name = $1 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${metricsClause.clauses}`,
-    ['claude_code.cost.usage', ...metricsClause.params],
-  );
-  // HS-8627 — `total` is input + output (excludes cacheRead / cacheCreation).
-  // HS-8628 — `input` / `output` break the same total down by `type` in one
-  // pass via FILTER (WHERE …) aggregates.
-  const tokensResult = await db.query<{ total: string | null; input: string | null; output: string | null; cache_read: string | null; cache_creation: string | null }>(
+  const totals = await db.query<{
+    cost: string | null; tokens: string | null; input: string | null; output: string | null;
+    cache_read: string | null; cache_creation: string | null;
+  }>(
     `SELECT
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${REAL_WORK_TOKEN_TYPE_SQL}) AS total,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${INPUT_TOKEN_TYPE_SQL}) AS input,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${OUTPUT_TOKEN_TYPE_SQL}) AS output,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${CACHE_READ_TOKEN_TYPE_SQL}) AS cache_read,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) FILTER (WHERE ${CACHE_CREATION_TOKEN_TYPE_SQL}) AS cache_creation
-     FROM otel_metrics
-     WHERE metric_name = $1 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${metricsClause.clauses}`,
-    ['claude_code.token.usage', ...metricsClause.params],
+        COALESCE(SUM(cost_usd), 0) AS cost,
+        COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens,
+        COALESCE(SUM(input_tokens), 0) AS input,
+        COALESCE(SUM(output_tokens), 0) AS output,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read,
+        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation
+     FROM otel_rollup_daily
+     WHERE TRUE${daily.clauses}`,
+    daily.params,
   );
 
-  // HS-8639 — count distinct `prompt_id` across ALL log events, not only
-  // `claude_code.user_prompt`. `prompt.id` is the per-prompt correlation key
-  // Claude Code stamps on user_prompt / api_request / tool_result events + spans
-  // (docs/67 §"prompt.id"), so counting it broadly still counts each prompt once
-  // (one prompt_id spans many api_request/tool_result rows) while staying robust
-  // when the `user_prompt` event specifically doesn't flush — the HS-8514
-  // observation where the headline showed a misleading "1 prompts". Offset 0:
-  // no leading bind param now that the `event_name = $1` filter is gone.
-  const eventsClause = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0, allowedSecrets);
-  const promptsResult = await db.query<{ c: bigint | number }>(
-    `SELECT COUNT(DISTINCT prompt_id) AS c
-     FROM otel_events
-     WHERE prompt_id IS NOT NULL${eventsClause.clauses}`,
-    eventsClause.params,
-  );
-
-  // HS-8514 / HS-8639 — when NO log event carries a prompt_id (e.g. Claude
-  // Code's bundled exporter isn't flushing log events to a self-hosted OTLP
-  // receiver in this config — observed: healthy `cost.usage` metrics but zero
-  // events), fall back to a session-count proxy from the metrics table so the
-  // user still sees a meaningful non-zero activity count. `session.id` is
-  // stamped on every cost.usage data point. This is a SESSION count, not a true
-  // prompt count — see the `/api/telemetry/_debug` endpoint (HS-8639) to
-  // diagnose whether log events are arriving.
-  let promptCount = Number(promptsResult.rows[0]?.c ?? 0);
+  let promptCount = await seenDistinctCount(db, 'prompt', projectSecret, sinceTs, allowedSecrets);
   if (promptCount === 0) {
-    const sessionsResult = await db.query<{ c: bigint | number }>(
-      `SELECT COUNT(DISTINCT attributes_json->>'session.id') AS c
-       FROM otel_metrics
-       WHERE metric_name = $1
-         AND attributes_json->>'session.id' IS NOT NULL${metricsClause.clauses}`,
-      ['claude_code.cost.usage', ...metricsClause.params],
-    );
-    promptCount = Number(sessionsResult.rows[0]?.c ?? 0);
+    promptCount = await seenDistinctCount(db, 'session', projectSecret, sinceTs, allowedSecrets);
   }
 
   return {
-    cost: Number(costResult.rows[0]?.total ?? 0),
-    tokens: Number(tokensResult.rows[0]?.total ?? 0),
-    inputTokens: Number(tokensResult.rows[0]?.input ?? 0),
-    outputTokens: Number(tokensResult.rows[0]?.output ?? 0),
-    cacheReadTokens: Number(tokensResult.rows[0]?.cache_read ?? 0),
-    cacheCreationTokens: Number(tokensResult.rows[0]?.cache_creation ?? 0),
+    cost: Number(totals.rows[0]?.cost ?? 0),
+    tokens: Number(totals.rows[0]?.tokens ?? 0),
+    inputTokens: Number(totals.rows[0]?.input ?? 0),
+    outputTokens: Number(totals.rows[0]?.output ?? 0),
+    cacheReadTokens: Number(totals.rows[0]?.cache_read ?? 0),
+    cacheCreationTokens: Number(totals.rows[0]?.cache_creation ?? 0),
     promptCount,
   };
 }
@@ -544,36 +550,31 @@ export async function getCostByModel(
   sinceTs: Date | null,
   allowedSecrets: readonly string[] | null = null,
 ): Promise<ModelRollup[]> {
-  const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0, allowedSecrets);
-
-  // HS-8514 — `COUNT(DISTINCT session_id)` was returning 0 because
-  // the `session_id` column is sourced from the resource attributes
-  // and Claude Code's exporter stamps `session.id` on the
-  // per-data-point attributes instead. `COALESCE(session_id,
-  // attributes_json->>'session.id')` picks whichever path is
-  // populated.
-  const result = await db.query<{ model: string | null; cost: string; tokens: string; input_tokens: string; output_tokens: string; prompt_count: string }>(
+  // HS-9235 — read the daily ROLLUP (main db), GROUP BY the pre-bucketed `model`
+  // column. `promptCount` is NOT displayed by the model donut/legend/tooltip, so
+  // it's dropped to 0 (the rollup has no per-model distinct-prompt count).
+  const db = await getRollupDb();
+  const daily = buildRollupDayClauses(projectSecret, sinceTs, 0, allowedSecrets);
+  const result = await db.query<{ model: string; cost: string; tokens: string; input_tokens: string; output_tokens: string }>(
     `SELECT
-        COALESCE(attributes_json->>'model', '(unknown)') AS model,
-        SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
-        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${REAL_WORK_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
-        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${INPUT_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS input_tokens,
-        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${OUTPUT_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS output_tokens,
-        COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
-     FROM otel_metrics
-     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage') AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${clauses.clauses}
-     GROUP BY attributes_json->>'model'
+        model,
+        SUM(cost_usd) AS cost,
+        SUM(input_tokens + output_tokens) AS tokens,
+        SUM(input_tokens) AS input_tokens,
+        SUM(output_tokens) AS output_tokens
+     FROM otel_rollup_daily
+     WHERE TRUE${daily.clauses}
+     GROUP BY model
      ORDER BY cost DESC`,
-    clauses.params,
+    daily.params,
   );
   return result.rows.map(r => ({
-    model: r.model ?? '(unknown)',
+    model: r.model,
     cost: Number(r.cost),
     tokens: Number(r.tokens),
     inputTokens: Number(r.input_tokens),
     outputTokens: Number(r.output_tokens),
-    promptCount: Number(r.prompt_count),
+    promptCount: 0,
   }));
 }
 
@@ -757,14 +758,14 @@ export async function getRecentPrompts(
  * indexed SUM over `(project_secret, ts DESC)`.
  */
 export async function getTodayCost(projectSecret: string): Promise<number> {
-  const db = await getTelemetryDb();
-  const now = new Date();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // HS-9235 — SUM cost from the daily ROLLUP for today's server-local day.
+  const db = await getRollupDb();
+  const today = serverLocalDay(new Date());
   const result = await db.query<{ total: string | null }>(
-    `SELECT SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-     FROM otel_metrics
-     WHERE metric_name = $1 AND project_secret = $2 AND ts >= $3 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}`,
-    ['claude_code.cost.usage', projectSecret, midnight],
+    `SELECT SUM(cost_usd) AS total
+     FROM otel_rollup_daily
+     WHERE project_secret = $1 AND day = $2::date`,
+    [projectSecret, today],
   );
   return Number(result.rows[0]?.total ?? 0);
 }
@@ -796,6 +797,14 @@ export async function clearProjectTelemetry(projectSecret: string): Promise<{ de
       [projectSecret],
     );
     deleted += result.affectedRows ?? 0;
+  }
+  // HS-9235 — the dashboards now read the ROLLUP tables (main db), so clearing a
+  // project's telemetry must drop its rollup rows too, else the cost/token/count
+  // displays would keep showing the just-cleared data. The rollup-row deletes are
+  // NOT counted in `deleted` (that number reports raw rows removed, as before).
+  const mainDb = await getRollupDb();
+  for (const table of ['otel_rollup_daily', 'otel_rollup_ticket', 'otel_daily_seen', 'otel_ticket_prompt_span'] as const) {
+    await mainDb.query(`DELETE FROM ${table} WHERE project_secret = $1`, [projectSecret]);
   }
   return { deleted };
 }
@@ -1085,64 +1094,53 @@ export async function getCostByProject(
   sinceTs: Date | null,
   allowedSecrets: readonly string[] | null = null,
 ): Promise<ProjectCostRow[]> {
-  const db = await getTelemetryDb();
+  // HS-9235 — cost + tokens from the daily ROLLUP and prompt/session distinct
+  // counts from `otel_daily_seen` (both in the main db, day-filtered); but
+  // `lastActivityTs` STAYS on RAW (the cluster), because the rollup only has
+  // day granularity and the cross-project stats page shows relative "last
+  // active" time — a day-truncated value would visibly regress it.
+  const rollupDb = await getRollupDb();
+  const clusterDb = await getTelemetryDb();
+  const daily = buildRollupDayClauses(null, sinceTs, 0, allowedSecrets);
+  const seen = buildRollupDayClauses(null, sinceTs, 1, allowedSecrets); // $1 = kind
+  // Raw lastActivityTs: `[metric, ...tsParams, ...secrets]` layout.
   const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
   const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
-  // HS-8625 — restrict to currently-loaded projects. All five queries below
-  // share the same `[metric/event, ...tsParams]` param layout, so the secrets
-  // placeholders start at the same base for each.
-  const secrets = buildSecretsInClause(allowedSecrets, 1 + tsParams.length);
-  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
+  const rawSecrets = buildSecretsInClause(allowedSecrets, 1 + tsParams.length);
+  const rawSecretsClause = rawSecrets.clause === '' ? '' : ` AND ${rawSecrets.clause}`;
 
-  const [costResult, tokensResult, promptsResult, sessionsResult, lastTsResult] = await Promise.all([
-    db.query<{ project_secret: string; total: string | null }>(
-      `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-       FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${secretsClause} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
+  const [costTokensResult, promptsResult, sessionsResult, lastTsResult] = await Promise.all([
+    rollupDb.query<{ project_secret: string; cost: string | null; tokens: string | null }>(
+      `SELECT project_secret, SUM(cost_usd) AS cost, SUM(input_tokens + output_tokens) AS tokens
+       FROM otel_rollup_daily
+       WHERE TRUE${daily.clauses}
        GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams, ...secrets.params],
+      daily.params,
     ),
-    db.query<{ project_secret: string; total: string | null }>(
-      // HS-8627 — input + output only (exclude cacheRead / cacheCreation).
-      `SELECT project_secret, SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-       FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${secretsClause} AND ${REAL_WORK_TOKEN_TYPE_SQL} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
+    rollupDb.query<{ project_secret: string; c: bigint | number }>(
+      `SELECT project_secret, COUNT(DISTINCT id) AS c
+       FROM otel_daily_seen
+       WHERE kind = $1${seen.clauses}
        GROUP BY project_secret`,
-      ['claude_code.token.usage', ...tsParams, ...secrets.params],
+      ['prompt', ...seen.params],
     ),
-    // HS-8514 — events-based prompt count falls back to a
-    // session-count proxy when no `user_prompt` events were captured
-    // (Claude Code's exporter sometimes doesn't flush log events to a
-    // self-hosted OTLP receiver even when metrics are flowing fine).
-    // Two queries — primary (events) + fallback (metrics distinct
-    // session.id) — merged per project below so any project with zero
-    // events still surfaces a meaningful activity count.
-    db.query<{ project_secret: string; c: bigint | number }>(
-      // HS-8639 — `$1` stays a single bound param (now the prefix-tolerant
-      // variants array) so the shared `tsClause` / `secretsClause` `$N`
-      // numbering matches the sibling metric queries.
-      `SELECT project_secret, COUNT(DISTINCT prompt_id) AS c
-       FROM otel_events
-       WHERE event_name = ANY($1::text[]) AND prompt_id IS NOT NULL${tsClause}${secretsClause}
+    rollupDb.query<{ project_secret: string; c: bigint | number }>(
+      `SELECT project_secret, COUNT(DISTINCT id) AS c
+       FROM otel_daily_seen
+       WHERE kind = $1${seen.clauses}
        GROUP BY project_secret`,
-      [eventNameVariants('user_prompt'), ...tsParams, ...secrets.params],
+      ['session', ...seen.params],
     ),
-    db.query<{ project_secret: string; c: bigint | number }>(
-      `SELECT project_secret, COUNT(DISTINCT attributes_json->>'session.id') AS c
-       FROM otel_metrics
-       WHERE metric_name = $1
-         AND attributes_json->>'session.id' IS NOT NULL${tsClause}${secretsClause}
-       GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams, ...secrets.params],
-    ),
-    db.query<{ project_secret: string; last_ts: string }>(
+    clusterDb.query<{ project_secret: string; last_ts: string }>(
       `SELECT project_secret, MAX(ts) AS last_ts
        FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${secretsClause}
+       WHERE metric_name = $1${tsClause}${rawSecretsClause}
        GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams, ...secrets.params],
+      ['claude_code.cost.usage', ...tsParams, ...rawSecrets.params],
     ),
   ]);
+  const costResult = { rows: costTokensResult.rows.map(r => ({ project_secret: r.project_secret, total: r.cost })) };
+  const tokensResult = { rows: costTokensResult.rows.map(r => ({ project_secret: r.project_secret, total: r.tokens })) };
 
   // Merge by project_secret. Cost-row is the primary key set — projects
   // with no cost in the window don't appear even if they have tokens
@@ -1351,28 +1349,21 @@ export async function getIngestedDates(
   timezone = 'UTC',
   allowedSecrets: readonly string[] | null = null,
 ): Promise<string[]> {
-  const db = await getTelemetryDb();
-  const params: Array<string | Date> = [timezone];
-  let projectClause = '';
-  let windowClause = '';
-  if (projectSecret !== null) {
-    params.push(projectSecret);
-    projectClause = ` AND project_secret = $${String(params.length)}`;
-  }
-  if (sinceTs !== null) {
-    params.push(sinceTs);
-    windowClause = ` AND ts >= $${String(params.length)}`;
-  }
-  const secrets = buildSecretsInClause(allowedSecrets, params.length);
-  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
-  params.push(...secrets.params);
-
+  // HS-9235 — the ingested days are exactly the `otel_rollup_daily` days (the
+  // rollup `day` is already the server-local calendar day). `timezone` is now
+  // unused (the grain is fixed server-local) but kept for signature compat. Minor
+  // narrowing vs the raw scan: a day with ONLY non-cost/token metrics won't show
+  // — negligible, since Claude emits cost/token every turn. Now agrees with
+  // getCostOverTime by construction (same source table).
+  void timezone;
+  const db = await getRollupDb();
+  const daily = buildRollupDayClauses(projectSecret, sinceTs, 0, allowedSecrets);
   const result = await db.query<{ date: string }>(
-    `SELECT DISTINCT to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date
-       FROM otel_metrics
-      WHERE TRUE${projectClause}${windowClause}${secretsClause}
+    `SELECT DISTINCT to_char(day, 'YYYY-MM-DD') AS date
+       FROM otel_rollup_daily
+      WHERE TRUE${daily.clauses}
       ORDER BY 1 ASC`,
-    params,
+    daily.params,
   );
   return result.rows.map(r => r.date);
 }
@@ -1384,37 +1375,22 @@ export async function getCostOverTime(
   now: Date = new Date(),
   allowedSecrets: readonly string[] | null = null,
 ): Promise<CostOverTimePoint[]> {
-  const db = await getTelemetryDb();
-
-  const params: Array<string | Date> = [timezone, 'claude_code.cost.usage'];
-  let projectClause = '';
-  let windowClause = '';
-  if (projectSecret !== null) {
-    params.push(projectSecret);
-    projectClause = ` AND project_secret = $${String(params.length)}`;
-  }
-  if (sinceTs !== null) {
-    params.push(sinceTs);
-    windowClause = ` AND ts >= $${String(params.length)}`;
-  }
-  // HS-8625 — restrict to currently-loaded projects (cross-project use;
-  // ignored when a single projectSecret already scopes the query). Appended
-  // last, so placeholders follow whatever params were pushed above.
-  const secrets = buildSecretsInClause(allowedSecrets, params.length);
-  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
-  params.push(...secrets.params);
-
+  // HS-9235 — read the daily ROLLUP (main db), GROUP BY the pre-bucketed
+  // (day, project_secret, model). `day` is server-local; the densify below uses
+  // `timezone` for the range endpoints (locally the viewer tz == the server tz).
+  const db = await getRollupDb();
+  const daily = buildRollupDayClauses(projectSecret, sinceTs, 0, allowedSecrets);
   const result = await db.query<{ date: string; project_secret: string; model: string; total: string | null }>(
     `SELECT
-        to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date,
+        to_char(day, 'YYYY-MM-DD') AS date,
         project_secret,
-        COALESCE(attributes_json->>'model', '(unknown)') AS model,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-     FROM otel_metrics
-     WHERE metric_name = $2${projectClause}${windowClause}${secretsClause} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
-     GROUP BY 1, 2, 3
+        model,
+        SUM(cost_usd) AS total
+     FROM otel_rollup_daily
+     WHERE TRUE${daily.clauses}
+     GROUP BY day, project_secret, model
      ORDER BY 1 ASC`,
-    params,
+    daily.params,
   );
 
   if (result.rows.length === 0) return [];
