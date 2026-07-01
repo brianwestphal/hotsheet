@@ -79,6 +79,19 @@
  * `delegateCapture` is the explicit capture-phase escape hatch. Both return
  * a disposer — capture it whenever the registration's scope is shorter than
  * the page (kerf hard rule #5). See `docs/60-reactivity-primitive.md` §60.4.
+ *
+ * HS-9255 — bumped kerfjs `^0.14.0` → `^0.16.0` (2026-07-01), plus
+ * `eslint-plugin-kerfjs` to match. The public export surface + the
+ * `@preact/signals-core ^1.14.1` dependency are unchanged, so the Hot Sheet
+ * usage subset (`signal` / `computed` / `effect` / `batch` / `defineStore` /
+ * `delegate*` / `morph` + the `toElement` JSX runtime) is unaffected — the full
+ * client suite, tsc, lint, and the client build all pass. One caveat: the
+ * plugin's 0.16.0 recommended preset added `kerfjs/ai-assistant-configs`, a rule
+ * whose `fix()` WRITES the kerf-app skill file to disk during a plain
+ * `eslint src/` run (ESLint evaluates a reported fix even without `--fix`). That
+ * is inappropriate for a lint gate (and errors here on the write-denied
+ * `.claude/skills`), so it's disabled in `eslint.config.mjs`; the four kerf AST
+ * hard-rules from the preset stay on.
  */
 export type { ReadonlySignal, Signal, Store } from 'kerfjs';
 export { batch, computed, defineStore, delegate, delegateCapture, effect, morph, resetAllStores, signal } from 'kerfjs';
