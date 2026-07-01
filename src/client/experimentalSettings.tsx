@@ -441,6 +441,18 @@ export async function saveCommandItems() {
     commandOverriddenIds = new Set<string>(); // HS-9220 — nothing is "overridden" in Shared mode
     await refreshSidebarFromResolved();
   } else {
+    // HS-9264 — backfill ids on the editor tree BEFORE deriving the delta so a
+    // freshly-added local command (pushed WITHOUT an id by the "Add Command" /
+    // "Add Group" handlers) is stored in `delta.added` with the SAME stable id
+    // the editor will show. Without this, `loadScopedCommands` later backfills a
+    // DIFFERENT random id into the resolved tree while the delta's added item
+    // stays id-less, so `moveTopLevelToShared` (which matches by id) can't find
+    // the most-recently-added — i.e. bottom-most — command and its Move-to-Shared
+    // silently no-ops. Earlier additions escaped this because a subsequent save
+    // re-derived the delta from an already-backfilled tree. In Local mode
+    // `editTree` is its own array (not aliased to the sidebar's `commandItems`),
+    // so reassigning is safe; the freshly-derived delta persists the same ids.
+    editTree = backfillCommandIds(editTree).items;
     const delta = computeCommandTreeDelta(commandShared, editTree);
     // HS-9220 — recompute the overridden-id set from the just-derived delta
     // SYNCHRONOUSLY (before any await), so a local edit's "overridden" tag +
