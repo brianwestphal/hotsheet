@@ -3,12 +3,13 @@
  * for all three signal types + the §67.5.3 drop-on-unknown-project
  * anti-pollution gate + per-row malformed-entry handling.
  */
-import { rmSync } from 'fs';
+import { promises as fsp, rmSync } from 'fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
+import { readOtelJsonlDay } from './otelJsonlStore.js';
 import {
   _testing,
   persistLogsPayload,
@@ -158,6 +159,17 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
     unregisterProject(KNOWN_SECRET);
     await cleanupTestDb(tempDir);
   });
+
+  // HS-9236 — read every row across all day-files for a kind from the cluster
+  // dir (the sample payloads' ts determines the day, so read them all).
+  async function readAllJsonl(kind: 'events' | 'metrics' | 'spans'): Promise<Record<string, unknown>[]> {
+    const dir = telemetryClusterDataDir(tempDir);
+    const prefix = `otel-${kind}-`;
+    const files = (await fsp.readdir(dir)).filter(f => f.startsWith(prefix) && f.endsWith('.jsonl'));
+    const out: Record<string, unknown>[] = [];
+    for (const f of files) out.push(...await readOtelJsonlDay(dir, kind, f.slice(prefix.length, -'.jsonl'.length)));
+    return out;
+  }
 
   describe('persistMetricsPayload', () => {
     it('writes one row per data point for a known project', async () => {
@@ -311,6 +323,15 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(seen.rows).toHaveLength(1);
       expect(seen.rows[0].id).toBe('session-1');
     });
+
+    it('HS-9236 — dual-writes each metric row to the rotating JSONL store', async () => {
+      await persistMetricsPayload(SAMPLE_METRICS_JSON, isKnownProject);
+      const rows = await readAllJsonl('metrics');
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows[0]).toHaveProperty('metric_name');
+      expect(rows[0]).toHaveProperty('value_json');
+      expect(rows[0].project_secret).toBe(KNOWN_SECRET);
+    });
   });
 
   describe('persistLogsPayload', () => {
@@ -327,6 +348,14 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(rows.rows[0].event_name).toBe('claude_code.user_prompt');
       expect(rows.rows[0].prompt_id).toBe('prompt-xyz');
       expect(rows.rows[0].project_secret).toBe(KNOWN_SECRET);
+    });
+
+    it('HS-9236 — dual-writes each event row to the rotating JSONL store', async () => {
+      await persistLogsPayload(SAMPLE_LOGS_JSON, isKnownProject);
+      const rows = await readAllJsonl('events');
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows[0]).toMatchObject({ event_name: 'claude_code.user_prompt', prompt_id: 'prompt-xyz', project_secret: KNOWN_SECRET });
+      expect(rows[0]).toHaveProperty('body_json');
     });
 
     // HS-9243 — an event's prompt_id lands in the daily dedup set (main db) so

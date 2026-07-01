@@ -4,7 +4,8 @@ import { join } from 'path';
 import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from './attachmentBackup.js';
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
 import { deleteAttachmentFile, getAllAttachments } from './db/attachments.js';
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from './db/connection.js';
+import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './db/connection.js';
+import { sweepOtelJsonl } from './db/otelJsonlStore.js';
 import {
   deleteAttachment,
   getAttachments,
@@ -215,6 +216,19 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
       n += await capTableRows(db, 'otel_metrics', 'ts', secret, METRIC_ROW_CAP);
       return n;
     });
+
+    // HS-9236 — age-delete the rotating JSONL raw store alongside the raw-table
+    // sweep, using the SAME windows (events/metrics at `telemetry_retention_days`,
+    // spans at `telemetry_span_retention_days`). The files live in the cluster dir
+    // (outside `db/`); best-effort so a JSONL sweep failure never fails the sweep.
+    try {
+      const jsonlDir = telemetryClusterDataDir(dataDir);
+      const now = new Date();
+      await sweepOtelJsonl(jsonlDir, metricsDays, now, ['events', 'metrics']);
+      await sweepOtelJsonl(jsonlDir, spanDays, now, ['spans']);
+    } catch (err) {
+      console.debug('[otel] jsonl sweep failed:', err);
+    }
 
     if (deleted > 0) {
       console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(metricsDays)}d, verbose events > ${String(DEFAULT_VERBOSE_EVENT_RETENTION_DAYS)}d, spans > ${String(spanDays)}d; caps span/event/metric ${String(SPAN_ROW_CAP)}/${String(EVENT_ROW_CAP)}/${String(METRIC_ROW_CAP)}).`);
