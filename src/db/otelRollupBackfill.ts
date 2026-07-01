@@ -31,7 +31,7 @@
  * re-running reconciles it. A backup of the launched project is taken first.
  *
  * **Parity with the canonical reads.** The per-ticket scalars (cost / tokens /
- * prompt count / duration) come from `getPerTicketRollup` itself (run against the
+ * prompt count / duration) come from `computeTicketRollupFromRaw` (run against the
  * cluster), so the backfilled `otel_rollup_ticket` numbers are byte-for-byte what
  * the dashboard shows today — the HS-9235 repoint is then a pure source swap. The
  * daily aggregate mirrors `getWindowTotals` / `getCostByModel` /
@@ -40,14 +40,13 @@
  * fallbacks) and uses the SERVER-LOCAL day (the maintainer's daily grain, matching
  * `serverLocalDay` at ingest).
  *
- * **Distinct counts (the HS-9243 gap).** `prompt_count` / `session_count` are
- * per-DAY distinct counts that can't be split across the (model, query_source)
- * grain. The backfill computes them exactly per (project, day) via
- * `COUNT(DISTINCT …)` and stamps the whole day's count onto a single
- * representative grain row, so `SUM(prompt_count) … GROUP BY day` returns the
- * exact per-day value (and summing over a window is the documented per-day
- * approximation the schema comment calls out). How ONGOING (post-backfill) days
- * source these is the HS-9243 / HS-9235 decision.
+ * **Distinct counts + per-ticket duration.** These are NOT stored as rollup
+ * columns (HS-9259 dropped them): distinct prompt/session counts live in the
+ * `otel_daily_seen` dedup set and per-ticket duration in
+ * `otel_ticket_prompt_span` (both HS-9243), backfilled by
+ * `backfillTelemetryDailySeen` / `backfillTelemetryTicketSpans`. This module
+ * backfills only the daily cost/token aggregate + the `otel_rollup_ticket`
+ * scalars.
  *
  * Runs once at startup, guarded by `telemetryRollupBackfilledV1`, resumable per
  * project dir via `telemetryRollupBackfillV1DoneDirs`, best-effort: an unreadable
@@ -180,8 +179,6 @@ interface DailyGrainRow {
   cache_read_tokens: number;
   cache_creation_tokens: number;
   datapoint_count: number;
-  prompt_count: number;
-  session_count: number;
 }
 
 /** Coerce a possibly-string numeric (PGlite hands NUMERIC/BIGINT back as strings)
@@ -240,27 +237,11 @@ export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz:
     [tz, COST_METRIC, TOKEN_METRIC],
   );
 
-  // Per (secret, day): exact distinct prompt count from events.
-  const promptCounts = await clusterDb.query<Record<string, unknown>>(
-    `SELECT COALESCE(project_secret, '') AS secret, (ts AT TIME ZONE $1)::date AS day,
-            COUNT(DISTINCT prompt_id) AS prompt_count
-     FROM otel_events WHERE prompt_id IS NOT NULL
-     GROUP BY secret, day`,
-    [tz],
-  );
-
-  // Per (secret, day): exact distinct session count (the read's session proxy is
-  // session.id on cost.usage data points).
-  const sessionCounts = await clusterDb.query<Record<string, unknown>>(
-    `SELECT COALESCE(project_secret, '') AS secret, (ts AT TIME ZONE $1)::date AS day,
-            COUNT(DISTINCT attributes_json->>'session.id') AS session_count
-     FROM otel_metrics
-     WHERE metric_name = $2 AND attributes_json->>'session.id' IS NOT NULL AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
-     GROUP BY secret, day`,
-    [tz, COST_METRIC],
-  );
-
-  const rows = assembleDailyRows(grain.rows, promptCounts.rows, sessionCounts.rows);
+  // HS-9259 — distinct prompt/session counts are no longer stored on
+  // otel_rollup_daily (the reads derive them from otel_daily_seen, backfilled
+  // separately by backfillDailySeenForDir). So the daily rollup is just the
+  // metric grain.
+  const rows = assembleDailyRows(grain.rows);
 
   // Recompute-overwrite: clear this db's daily rollups, then bulk-insert. The db
   // holds only this project's (or central's) rollups, so a full-table clear is
@@ -271,20 +252,15 @@ export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz:
 }
 
 /**
- * Merge the metric grain rows with the per-day distinct prompt/session counts.
- * The day's distinct counts are stamped on ONE representative grain row per
- * (secret, day) — the row with the most datapoints (ties broken deterministically
- * by model, then query_source) — so `SUM(prompt_count) GROUP BY day` is exact. A
- * (secret, day) that has prompt/session counts but no metric grain row (no cost /
- * token datapoints that day — unusual, since Claude Code emits both together) gets
- * a synthesized `(unknown)`/`(unknown)` carrier row so its counts aren't lost.
+ * Map the raw `otel_metrics` grain query rows into `DailyGrainRow`s. HS-9259:
+ * distinct prompt/session counts are no longer part of the daily rollup (they
+ * live in `otel_daily_seen`), so this is a plain 1:1 map (no representative-row
+ * stamping or carrier synthesis).
  */
 export function assembleDailyRows(
   grainRaw: ReadonlyArray<Record<string, unknown>>,
-  promptRaw: ReadonlyArray<Record<string, unknown>>,
-  sessionRaw: ReadonlyArray<Record<string, unknown>>,
 ): DailyGrainRow[] {
-  const rows: DailyGrainRow[] = grainRaw.map(r => ({
+  return grainRaw.map(r => ({
     project_secret: s(r.secret, ''),
     day: dayString(r.day),
     model: s(r.model, '(unknown)'),
@@ -295,60 +271,13 @@ export function assembleDailyRows(
     cache_read_tokens: n(r.cache_read_tokens),
     cache_creation_tokens: n(r.cache_creation_tokens),
     datapoint_count: n(r.datapoint_count),
-    prompt_count: 0,
-    session_count: 0,
   }));
-
-  const dayKey = (secret: string, day: string): string => `${secret} ${day}`;
-
-  // (secret, day) → its distinct counts.
-  const counts = new Map<string, { prompt: number; session: number; secret: string; day: string }>();
-  const ensure = (secret: string, day: string) => {
-    const k = dayKey(secret, day);
-    let c = counts.get(k);
-    if (c === undefined) { c = { prompt: 0, session: 0, secret, day }; counts.set(k, c); }
-    return c;
-  };
-  for (const r of promptRaw) ensure(s(r.secret, ''), dayString(r.day)).prompt = n(r.prompt_count);
-  for (const r of sessionRaw) ensure(s(r.secret, ''), dayString(r.day)).session = n(r.session_count);
-
-  // Group grain rows by (secret, day) and pick a deterministic representative.
-  const byDay = new Map<string, DailyGrainRow[]>();
-  for (const row of rows) {
-    const k = dayKey(row.project_secret, row.day);
-    const bucket = byDay.get(k);
-    if (bucket === undefined) byDay.set(k, [row]);
-    else bucket.push(row);
-  }
-
-  for (const [k, c] of counts) {
-    if (c.prompt === 0 && c.session === 0) continue;
-    const bucket = byDay.get(k);
-    if (bucket === undefined || bucket.length === 0) {
-      // No metric grain row that day — synthesize a carrier so the counts survive.
-      rows.push({
-        project_secret: c.secret, day: c.day, model: '(unknown)', query_source: '(unknown)',
-        cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
-        datapoint_count: 0, prompt_count: c.prompt, session_count: c.session,
-      });
-      continue;
-    }
-    const rep = [...bucket].sort((a, b) =>
-      b.datapoint_count - a.datapoint_count ||
-      a.model.localeCompare(b.model) ||
-      a.query_source.localeCompare(b.query_source),
-    )[0];
-    rep.prompt_count = c.prompt;
-    rep.session_count = c.session;
-  }
-
-  return rows;
 }
 
 /** Bulk-insert daily rollup rows, batched under the bind-param ceiling. */
 async function insertDailyRows(mainDb: PGlite, rows: DailyGrainRow[]): Promise<void> {
   if (rows.length === 0) return;
-  const PER_BATCH = 400; // 400 × 12 cols = 4800 params, well under PostgreSQL's 65535.
+  const PER_BATCH = 400; // 400 rows x 10 cols = 4000 params, well under PostgreSQL's 65535.
   for (let i = 0; i < rows.length; i += PER_BATCH) {
     const batch = rows.slice(i, i + PER_BATCH);
     const params: unknown[] = [];
@@ -357,16 +286,16 @@ async function insertDailyRows(mainDb: PGlite, rows: DailyGrainRow[]): Promise<v
       params.push(
         r.project_secret, r.day, r.model, r.query_source,
         r.cost_usd, r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_creation_tokens,
-        r.prompt_count, r.session_count, r.datapoint_count,
+        r.datapoint_count,
       );
       const p = (k: number) => `$${String(base + k)}`;
-      return `(${p(1)}, ${p(2)}::date, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)}, ${p(12)})`;
+      return `(${p(1)}, ${p(2)}::date, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)})`;
     });
     await mainDb.query(
       `INSERT INTO otel_rollup_daily
          (project_secret, day, model, query_source,
           cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-          prompt_count, session_count, datapoint_count)
+          datapoint_count)
        VALUES ${valueRows.join(', ')}`,
       params,
     );
@@ -404,11 +333,14 @@ export async function backfillTicketsForDir(
       continue;
     }
     const breakdown = await ticketModelBreakdown(clusterDb, ticket, secret);
+    // HS-9259 — duration_seconds column dropped; per-ticket duration is now
+    // recomputed at read time from otel_ticket_prompt_span (populated by
+    // backfillTicketPromptSpansForDir), so the ticket rollup no longer stores it.
     await mainDb.query(
       `INSERT INTO otel_rollup_ticket
-         (project_secret, ticket_number, cost_usd, total_tokens, prompt_count, duration_seconds, model_breakdown, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())`,
-      [secret, ticket, scalar.totalCost, scalar.totalTokens, scalar.promptCount, scalar.totalDurationSeconds, JSON.stringify(breakdown)],
+         (project_secret, ticket_number, cost_usd, total_tokens, prompt_count, model_breakdown, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())`,
+      [secret, ticket, scalar.totalCost, scalar.totalTokens, scalar.promptCount, JSON.stringify(breakdown)],
     );
     written++;
     await yieldToEventLoop();

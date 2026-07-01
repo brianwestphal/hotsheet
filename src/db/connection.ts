@@ -17,7 +17,7 @@ import { instrumentDbQueries } from './queryInstrumentation.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 9; // HS-9243 — added otel_ticket_prompt_span (per-ticket prompt-duration spans; epic HS-9226 Phase 2)
+export const SCHEMA_VERSION = 10; // HS-9259 — dropped vestigial rollup columns (otel_rollup_daily.prompt_count/session_count, otel_rollup_ticket.duration_seconds)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1082,11 +1082,11 @@ async function initSchema(db: PGlite): Promise<void> {
     -- Daily time-series rollup (server-local day at ingest). Covers getCostOverTime,
     -- getCostByModel, getQuerySourceRollup, getCostByProject, getWindowTotals,
     -- getTodayCost. Token sums are split by type so the headline (input+output)
-    -- excludes cache. prompt_count / session_count are per-day approximations
-    -- (distinct ids don't roll up exactly across buckets — matches the approximation
-    -- the existing cross-DB JS merges already make by summing per-bucket counts).
-    -- The hour-of-week heatmap + tool-latency percentiles + recent-prompts + the §68
-    -- inspectors are NOT covered here — they stay on raw until Phase 3 (JSONL).
+    -- excludes cache. HS-9259 — distinct prompt/session counts are NOT stored here
+    -- (they can't roll up exactly on the (model, query_source) grain); the reads
+    -- derive them from the otel_daily_seen dedup set below. The hour-of-week
+    -- heatmap + tool-latency percentiles + recent-prompts + the §68 inspectors are
+    -- NOT covered here — they stay on raw until Phase 3 (JSONL).
     CREATE TABLE IF NOT EXISTS otel_rollup_daily (
       project_secret TEXT NOT NULL DEFAULT '',
       day DATE NOT NULL,
@@ -1097,8 +1097,6 @@ async function initSchema(db: PGlite): Promise<void> {
       output_tokens BIGINT NOT NULL DEFAULT 0,
       cache_read_tokens BIGINT NOT NULL DEFAULT 0,
       cache_creation_tokens BIGINT NOT NULL DEFAULT 0,
-      prompt_count INTEGER NOT NULL DEFAULT 0,
-      session_count INTEGER NOT NULL DEFAULT 0,
       datapoint_count INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (project_secret, day, model, query_source)
     );
@@ -1108,13 +1106,14 @@ async function initSchema(db: PGlite): Promise<void> {
     -- Maintained at ingest (HS-9233) by attributing each api_request to the OPEN
     -- ticket_work_intervals row at that instant. Covers getPerTicketRollup.
     -- model_breakdown is a {model: {cost, tokens}} JSON map for a per-model split.
+    -- HS-9259 — duration_seconds is NOT stored here; per-ticket duration is
+    -- recomputed at read time as SUM(last_ts - first_ts) over otel_ticket_prompt_span.
     CREATE TABLE IF NOT EXISTS otel_rollup_ticket (
       project_secret TEXT NOT NULL DEFAULT '',
       ticket_number TEXT NOT NULL,
       cost_usd NUMERIC NOT NULL DEFAULT 0,
       total_tokens BIGINT NOT NULL DEFAULT 0,
       prompt_count INTEGER NOT NULL DEFAULT 0,
-      duration_seconds NUMERIC NOT NULL DEFAULT 0,
       model_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (project_secret, ticket_number)
@@ -1174,6 +1173,17 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE otel_spans ALTER COLUMN project_secret DROP NOT NULL;
     ALTER TABLE announcer_usage ALTER COLUMN project_secret DROP NOT NULL;
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('does not exist')) console.error('Migration error (telemetry project_secret nullable):', e.message); });
+
+  // HS-9259 — drop the now-vestigial rollup columns on EXISTING dbs (removed from
+  // the CREATE above; `IF EXISTS` makes it a no-op on fresh dbs). Superseded by the
+  // otel_daily_seen dedup set (distinct counts) + otel_ticket_prompt_span (per-ticket
+  // duration); nothing reads them after the HS-9235/9257 read repoint. Kept:
+  // otel_rollup_ticket.prompt_count (still the per-ticket prompt-count source).
+  await db.exec(`
+    ALTER TABLE otel_rollup_daily DROP COLUMN IF EXISTS prompt_count;
+    ALTER TABLE otel_rollup_daily DROP COLUMN IF EXISTS session_count;
+    ALTER TABLE otel_rollup_ticket DROP COLUMN IF EXISTS duration_seconds;
+  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('does not exist')) console.error('Migration error (drop vestigial rollup columns):', e.message); });
 
   // Migration: ensure all existing notes have stable persisted IDs
   await migrateNoteIds(db);

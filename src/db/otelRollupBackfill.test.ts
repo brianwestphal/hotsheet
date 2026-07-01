@@ -2,9 +2,9 @@
  * HS-9234 (epic HS-9226 Phase 2) — backfill tests.
  *
  * Two layers:
- *   1. `assembleDailyRows` — pure merge of metric grain rows with the per-day
- *      distinct prompt/session counts (representative-row placement, synthesized
- *      carrier rows).
+ *   1. `assembleDailyRows` — pure 1:1 map of the metric grain query rows into
+ *      DailyGrainRow (HS-9259: distinct counts no longer live here — they're in
+ *      otel_daily_seen).
  *   2. `backfillDailyForDir` / `backfillTicketsForDir` against a real PGlite: raw
  *      `otel_*` seeded in the telemetry CLUSTER, rollups recomputed into the MAIN
  *      db, asserting parity with `getPerTicketRollup`, model_breakdown, the daily
@@ -25,57 +25,30 @@ import { assembleDailyRows, backfillDailyForDir, backfillDailySeenForDir, backfi
 // production, where `serverLocalDay` and the backfill both use the server-local tz).
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-describe('assembleDailyRows (HS-9234, pure)', () => {
-  it('stamps a day\'s distinct counts onto the highest-datapoint grain row', () => {
+describe('assembleDailyRows (HS-9234 / HS-9259, pure)', () => {
+  it('maps grain rows 1:1, coercing string numerics (PGlite returns NUMERIC/BIGINT as strings)', () => {
     const grain = [
-      { secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent', cost_usd: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 2 },
+      { secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent', cost_usd: '0.5', input_tokens: '100', output_tokens: '50', cache_read_tokens: '9', cache_creation_tokens: '0', datapoint_count: 3 },
       { secret: 'A', day: '2026-06-30', model: 'haiku', query_source: 'subagent', cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 9 },
     ];
-    const prompt = [{ secret: 'A', day: '2026-06-30', prompt_count: 4 }];
-    const session = [{ secret: 'A', day: '2026-06-30', session_count: 2 }];
-
-    const rows = assembleDailyRows(grain, prompt, session);
+    const rows = assembleDailyRows(grain);
     expect(rows).toHaveLength(2);
-    // haiku/subagent has the most datapoints → carries the counts; the other is 0.
-    const haiku = rows.find(r => r.model === 'haiku');
-    const sonnet = rows.find(r => r.model === 'sonnet');
-    expect(haiku?.prompt_count).toBe(4);
-    expect(haiku?.session_count).toBe(2);
-    expect(sonnet?.prompt_count).toBe(0);
-    expect(sonnet?.session_count).toBe(0);
-    // SUM over the day equals the true per-day distinct count.
-    expect(rows.reduce((s, r) => s + r.prompt_count, 0)).toBe(4);
+    expect(rows[0]).toEqual({
+      project_secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent',
+      cost_usd: 0.5, input_tokens: 100, output_tokens: 50, cache_read_tokens: 9, cache_creation_tokens: 0, datapoint_count: 3,
+    });
+    // HS-9259 — no prompt_count / session_count fields anymore (moved to otel_daily_seen).
+    expect(rows[0]).not.toHaveProperty('prompt_count');
+    expect(rows[0]).not.toHaveProperty('session_count');
   });
 
-  it('breaks ties deterministically by (model, query_source)', () => {
-    const grain = [
-      { secret: 'A', day: '2026-06-30', model: 'zeta', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 3 },
-      { secret: 'A', day: '2026-06-30', model: 'alpha', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 3 },
-    ];
-    const rows = assembleDailyRows(grain, [{ secret: 'A', day: '2026-06-30', prompt_count: 7 }], []);
-    expect(rows.find(r => r.model === 'alpha')?.prompt_count).toBe(7);
-    expect(rows.find(r => r.model === 'zeta')?.prompt_count).toBe(0);
+  it('applies (unknown) fallbacks for a missing model / query_source and empty secret', () => {
+    const rows = assembleDailyRows([{ day: '2026-06-30', cost_usd: 1, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 1 }]);
+    expect(rows[0]).toMatchObject({ project_secret: '', model: '(unknown)', query_source: '(unknown)', cost_usd: 1 });
   });
 
-  it('synthesizes an (unknown) carrier row when a day has counts but no metric grain row', () => {
-    const rows = assembleDailyRows([], [{ secret: 'A', day: '2026-06-29', prompt_count: 3 }], [{ secret: 'A', day: '2026-06-29', session_count: 1 }]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ project_secret: 'A', day: '2026-06-29', model: '(unknown)', query_source: '(unknown)', prompt_count: 3, session_count: 1, cost_usd: 0 });
-  });
-
-  it('keeps distinct (secret, day) buckets independent', () => {
-    const grain = [
-      { secret: 'A', day: '2026-06-30', model: 'm', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 1 },
-      { secret: 'B', day: '2026-06-30', model: 'm', query_source: 's', cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 1 },
-    ];
-    const rows = assembleDailyRows(grain, [{ secret: 'A', day: '2026-06-30', prompt_count: 5 }], []);
-    expect(rows.find(r => r.project_secret === 'A')?.prompt_count).toBe(5);
-    expect(rows.find(r => r.project_secret === 'B')?.prompt_count).toBe(0);
-  });
-
-  it('ignores a (secret, day) whose counts are both zero (no carrier row)', () => {
-    const rows = assembleDailyRows([], [{ secret: 'A', day: '2026-06-30', prompt_count: 0 }], [{ secret: 'A', day: '2026-06-30', session_count: 0 }]);
-    expect(rows).toHaveLength(0);
+  it('returns an empty array for no grain rows (no synthesized carriers — distinct counts live in otel_daily_seen)', () => {
+    expect(assembleDailyRows([])).toEqual([]);
   });
 });
 
@@ -175,29 +148,18 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       expect(c.rows[0].c).toBe(0);
     });
 
-    it('attaches per-day distinct prompt + session counts and is idempotent', async () => {
+    it('recomputes cost and is idempotent (HS-9259 — distinct counts now live in otel_daily_seen)', async () => {
       const ts = new Date(2026, 5, 30, 10, 0, 0);
       await insertCostMetric(ts, 'sonnet', 'main_agent', 0.5, 'sessX');
       await insertCostMetric(ts, 'sonnet', 'main_agent', 0.5, 'sessY');
-      await insertUserPrompt(ts, 'p1', 'hi');
-      await insertUserPrompt(ts, 'p2', 'yo');
-      await insertApiRequest(ts, 'p1', 'sonnet', 0.1, 10); // carries prompt_id p1 too
 
       await backfillDailyForDir(clusterDb, mainDb, TZ);
-      const first = await mainDb.query<{ prompt_count: number; session_count: number; cost_usd: string }>(
-        `SELECT SUM(prompt_count)::int AS prompt_count, SUM(session_count)::int AS session_count, SUM(cost_usd) AS cost_usd FROM otel_rollup_daily`,
-      );
-      expect(first.rows[0].prompt_count).toBe(2); // distinct p1, p2
-      expect(first.rows[0].session_count).toBe(2); // distinct sessX, sessY
+      const first = await mainDb.query<{ cost_usd: string }>(`SELECT SUM(cost_usd) AS cost_usd FROM otel_rollup_daily`);
       expect(Number(first.rows[0].cost_usd)).toBeCloseTo(1.0, 6);
 
       // Recompute → identical (no doubling).
       await backfillDailyForDir(clusterDb, mainDb, TZ);
-      const second = await mainDb.query<{ prompt_count: number; session_count: number; cost_usd: string }>(
-        `SELECT SUM(prompt_count)::int AS prompt_count, SUM(session_count)::int AS session_count, SUM(cost_usd) AS cost_usd FROM otel_rollup_daily`,
-      );
-      expect(second.rows[0].prompt_count).toBe(2);
-      expect(second.rows[0].session_count).toBe(2);
+      const second = await mainDb.query<{ cost_usd: string }>(`SELECT SUM(cost_usd) AS cost_usd FROM otel_rollup_daily`);
       expect(Number(second.rows[0].cost_usd)).toBeCloseTo(1.0, 6);
     });
   });
@@ -218,15 +180,17 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       await backfillTicketPromptSpansForDir(clusterDb, mainDb, SECRET);
 
       const live = await getPerTicketRollup('HS-100', SECRET);
-      const r = await mainDb.query<{ cost_usd: string; total_tokens: string; prompt_count: number; duration_seconds: string; model_breakdown: Record<string, { cost: number; tokens: number }> }>(
-        `SELECT cost_usd, total_tokens, prompt_count, duration_seconds, model_breakdown FROM otel_rollup_ticket WHERE ticket_number = 'HS-100'`,
+      const r = await mainDb.query<{ cost_usd: string; total_tokens: string; prompt_count: number; model_breakdown: Record<string, { cost: number; tokens: number }> }>(
+        `SELECT cost_usd, total_tokens, prompt_count, model_breakdown FROM otel_rollup_ticket WHERE ticket_number = 'HS-100'`,
       );
       expect(r.rows).toHaveLength(1);
-      // Parity with the canonical read.
+      // Parity with the canonical read (cost / tokens / prompt from otel_rollup_ticket).
       expect(Number(r.rows[0].cost_usd)).toBeCloseTo(live.totalCost, 6);
       expect(Number(r.rows[0].total_tokens)).toBe(live.totalTokens);
       expect(r.rows[0].prompt_count).toBe(live.promptCount);
-      expect(Number(r.rows[0].duration_seconds)).toBeCloseTo(live.totalDurationSeconds, 6);
+      // HS-9259 — duration is no longer a rollup column; getPerTicketRollup derives
+      // it from otel_ticket_prompt_span (pw1 spans 09:15→09:45 = 1800s; pw2 single).
+      expect(live.totalDurationSeconds).toBeCloseTo(1800, 3);
       // model_breakdown sums to the scalar totals.
       const mb = r.rows[0].model_breakdown;
       expect(mb['sonnet'].cost).toBeCloseTo(0.5, 6);
