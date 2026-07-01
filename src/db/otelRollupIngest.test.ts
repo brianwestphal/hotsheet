@@ -18,6 +18,7 @@ import {
   serverLocalDay,
   stripNestedAttributes,
   updateDailyRollup,
+  widenTicketPromptSpan,
 } from './otelRollupIngest.js';
 import type { MetricAggregation } from './otelWriters.js';
 
@@ -211,6 +212,63 @@ describe('per-ticket attribution (HS-9233)', () => {
     await attributeUserPromptToTicket(db, db, 'sec', ts);
     const r = await db.query<{ prompt_count: number }>(`SELECT prompt_count FROM otel_rollup_ticket WHERE ticket_number='HS-2'`);
     expect(r.rows[0].prompt_count).toBe(2);
+  });
+
+  it('attributeApiRequestToTicket widens the prompt span when a promptId is supplied (HS-9243)', async () => {
+    const db = await getDb();
+    await openInterval(db, 'sec', 'HS-5', new Date(2026, 0, 1, 9, 0, 0), null);
+    const t1 = new Date(2026, 0, 1, 9, 10, 0);
+    const t2 = new Date(2026, 0, 1, 9, 40, 0); // 30 min later, same prompt
+    await attributeApiRequestToTicket(db, db, 'sec', t1, { cost: 0.1, model: 'm' }, 'pA');
+    await attributeApiRequestToTicket(db, db, 'sec', t2, { cost: 0.1, model: 'm' }, 'pA');
+
+    const r = await db.query<{ dur: string }>(
+      `SELECT EXTRACT(EPOCH FROM (last_ts - first_ts)) AS dur
+       FROM otel_ticket_prompt_span WHERE ticket_number='HS-5' AND prompt_id='pA'`);
+    expect(r.rows).toHaveLength(1);
+    expect(Number(r.rows[0].dur)).toBeCloseTo(1800, 3); // 30 min = 1800 s
+  });
+
+  it('attributeApiRequestToTicket records no span when promptId is omitted', async () => {
+    const db = await getDb();
+    await openInterval(db, 'sec', 'HS-6', new Date(2026, 0, 1, 9, 0, 0), null);
+    await attributeApiRequestToTicket(db, db, 'sec', new Date(2026, 0, 1, 9, 5, 0), { cost: 0.1, model: 'm' });
+    const c = await db.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_ticket_prompt_span`);
+    expect(c.rows[0].c).toBe(0);
+  });
+});
+
+describe('widenTicketPromptSpan (HS-9243)', () => {
+  let tempDir: string;
+  beforeEach(async () => { tempDir = await setupTestDb(); });
+  afterEach(async () => { await cleanupTestDb(tempDir); });
+
+  it('shrinks first_ts to the earliest and grows last_ts to the latest', async () => {
+    const db = await getDb();
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', 'p1', new Date(2026, 0, 1, 10, 0, 0));
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', 'p1', new Date(2026, 0, 1, 9, 0, 0));  // earlier
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', 'p1', new Date(2026, 0, 1, 11, 0, 0)); // later
+    const r = await db.query<{ dur: string }>(
+      `SELECT EXTRACT(EPOCH FROM (last_ts - first_ts)) AS dur FROM otel_ticket_prompt_span WHERE ticket_number='HS-1' AND prompt_id='p1'`);
+    expect(Number(r.rows[0].dur)).toBeCloseTo(7200, 3); // 09:00 → 11:00 = 2 h
+  });
+
+  it('keeps separate spans per prompt', async () => {
+    const db = await getDb();
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', 'p1', new Date(2026, 0, 1, 10, 0, 0));
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', 'p2', new Date(2026, 0, 1, 10, 0, 0));
+    const c = await db.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_ticket_prompt_span WHERE ticket_number='HS-1'`);
+    expect(c.rows[0].c).toBe(2);
+  });
+
+  it('is a no-op for a null/empty secret or promptId', async () => {
+    const db = await getDb();
+    await widenTicketPromptSpan(db, null, 'HS-1', 'p1', new Date());
+    await widenTicketPromptSpan(db, '', 'HS-1', 'p1', new Date());
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', '', new Date());
+    await widenTicketPromptSpan(db, 'sec', 'HS-1', null, new Date());
+    const c = await db.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_ticket_prompt_span`);
+    expect(c.rows[0].c).toBe(0);
   });
 });
 

@@ -256,11 +256,41 @@ async function ticketForInstant(clusterDb: PGlite, secret: string, ts: Date): Pr
 }
 
 /**
+ * HS-9243 — widen (or create) the (ticket, prompt) duration span with `ts` in the
+ * main db. `first_ts` shrinks to the earliest seen, `last_ts` grows to the latest,
+ * so per-ticket duration = `SUM(last_ts - first_ts)` over the ticket's prompts can
+ * be recomputed at read time (HS-9235) without scanning raw. No-op without a real
+ * secret + promptId. Best-effort — the caller swallows a DB error.
+ */
+export async function widenTicketPromptSpan(
+  mainDb: PGlite,
+  secret: string | null,
+  ticket: string,
+  promptId: string | null | undefined,
+  ts: Date,
+): Promise<void> {
+  if (secret === null || secret === '') return;
+  if (promptId === null || promptId === undefined || promptId === '') return;
+  await mainDb.query(
+    `INSERT INTO otel_ticket_prompt_span (project_secret, ticket_number, prompt_id, first_ts, last_ts)
+     VALUES ($1, $2, $3, $4, $4)
+     ON CONFLICT (project_secret, ticket_number, prompt_id) DO UPDATE SET
+       first_ts = LEAST(otel_ticket_prompt_span.first_ts, EXCLUDED.first_ts),
+       last_ts  = GREATEST(otel_ticket_prompt_span.last_ts, EXCLUDED.last_ts)`,
+    [secret, ticket, promptId, ts],
+  );
+}
+
+/**
  * Attribute one `api_request` event's cost/tokens to the open ticket at `ts`
  * (HS-9233 — the time-window path). No-op for the central store (it has no
  * tickets) or when no ticket window covers `ts`. The `otel_rollup_ticket` row is
  * read-modify-written (single-process sequential ingest, so no race) so the
  * `model_breakdown` JSON map can be merged. Best-effort.
+ *
+ * HS-9243 — when `promptId` is supplied, also widen that prompt's duration span
+ * for the ticket (`otel_ticket_prompt_span`), so per-ticket duration can be
+ * recomputed at read time without scanning raw.
  */
 export async function attributeApiRequestToTicket(
   clusterDb: PGlite,
@@ -268,6 +298,7 @@ export async function attributeApiRequestToTicket(
   secret: string | null,
   ts: Date,
   attrs: Record<string, unknown>,
+  promptId?: string | null,
 ): Promise<void> {
   if (secret === null || secret === '') return; // central store has no tickets
   const ticket = await ticketForInstant(clusterDb, secret, ts);
@@ -307,6 +338,9 @@ export async function attributeApiRequestToTicket(
        updated_at      = NOW()`,
     [secret, ticket, prevCost + cost, prevTokens + tokens, JSON.stringify(breakdown)],
   );
+
+  // HS-9243 — widen this prompt's duration span for the ticket.
+  await widenTicketPromptSpan(mainDb, secret, ticket, promptId, ts);
 }
 
 /**

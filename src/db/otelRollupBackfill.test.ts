@@ -18,7 +18,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { getPerTicketRollup } from './otelDashboard.js';
-import { assembleDailyRows, backfillDailyForDir, backfillDailySeenForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
+import { assembleDailyRows, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
 
 // The machine's local IANA tz — the daily bucket uses it so `(ts AT TIME ZONE TZ)::date`
 // matches the local date the `Date(...)` fixtures are constructed in (mirrors
@@ -318,6 +318,54 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       await backfillDailySeenForDir(clusterDb, mainDb, TZ);
       const c = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_daily_seen WHERE kind='session'`);
       expect(c.rows[0].c).toBe(0);
+    });
+  });
+
+  describe('backfillTicketPromptSpansForDir (HS-9243 part 2)', () => {
+    async function openInterval(ticket: string, started: Date, ended: Date | null): Promise<void> {
+      await clusterDb.query(
+        `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1, $2, $3, $4)`,
+        [SECRET, ticket, started, ended],
+      );
+    }
+    const durOf = async (ticket: string, promptId: string): Promise<number> => {
+      const r = await mainDb.query<{ dur: string }>(
+        `SELECT EXTRACT(EPOCH FROM (last_ts - first_ts)) AS dur FROM otel_ticket_prompt_span WHERE ticket_number=$1 AND prompt_id=$2`,
+        [ticket, promptId]);
+      return r.rows.length === 0 ? -1 : Number(r.rows[0].dur);
+    };
+
+    it('derives per-prompt spans via the time-window path + is idempotent', async () => {
+      await openInterval('HS-100', new Date(2026, 0, 1, 9, 0, 0), new Date(2026, 0, 1, 10, 0, 0));
+      // Prompt pw1 spans 09:10 → 09:40 (30 min); pw2 is a single event.
+      await insertApiRequest(new Date(2026, 0, 1, 9, 10, 0), 'pw1', 'sonnet', 0.1, 10);
+      await insertApiRequest(new Date(2026, 0, 1, 9, 40, 0), 'pw1', 'sonnet', 0.1, 10);
+      await insertApiRequest(new Date(2026, 0, 1, 9, 20, 0), 'pw2', 'sonnet', 0.1, 10);
+
+      const n1 = await backfillTicketPromptSpansForDir(clusterDb, mainDb, SECRET);
+      expect(n1).toBe(2); // two prompts
+      expect(await durOf('HS-100', 'pw1')).toBeCloseTo(1800, 3);
+      expect(await durOf('HS-100', 'pw2')).toBeCloseTo(0, 3);
+
+      // Re-run: ON CONFLICT LEAST/GREATEST keeps the same spans (no growth).
+      await backfillTicketPromptSpansForDir(clusterDb, mainDb, SECRET);
+      const c = await mainDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_ticket_prompt_span`);
+      expect(c.rows[0].c).toBe(2);
+      expect(await durOf('HS-100', 'pw1')).toBeCloseTo(1800, 3);
+    });
+
+    it('derives spans via the marker path (no work interval)', async () => {
+      await insertUserPrompt(new Date(2026, 0, 2, 9, 0, 0), 'pm1', '<!-- hotsheet:ticket=HS-200 --> fix it');
+      await insertApiRequest(new Date(2026, 0, 2, 9, 5, 0), 'pm1', 'sonnet', 0.2, 20);
+      await insertApiRequest(new Date(2026, 0, 2, 9, 20, 0), 'pm1', 'sonnet', 0.2, 20);
+
+      const n = await backfillTicketPromptSpansForDir(clusterDb, mainDb, SECRET);
+      expect(n).toBe(1);
+      expect(await durOf('HS-200', 'pm1')).toBeCloseTo(900, 3); // 15 min
+    });
+
+    it('is a no-op for the central store (null secret)', async () => {
+      expect(await backfillTicketPromptSpansForDir(clusterDb, mainDb, null)).toBe(0);
     });
   });
 });

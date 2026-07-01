@@ -17,7 +17,7 @@ import { instrumentDbQueries } from './queryInstrumentation.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 8; // HS-9243 — added otel_daily_seen (daily distinct-count dedup set; epic HS-9226 Phase 2)
+export const SCHEMA_VERSION = 9; // HS-9243 — added otel_ticket_prompt_span (per-ticket prompt-duration spans; epic HS-9226 Phase 2)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1116,6 +1116,23 @@ async function initSchema(db: PGlite): Promise<void> {
     -- Read path is WHERE project_secret = $1 AND kind = $2 AND day >= $since
     -- COUNT(*), so lead the index with (project_secret, kind, day).
     CREATE INDEX IF NOT EXISTS idx_otel_daily_seen_lookup ON otel_daily_seen(project_secret, kind, day);
+
+    -- HS-9243 (epic HS-9226 Phase 2 follow-up) — per-(ticket, prompt) span of the
+    -- api_request events attributed to a ticket, so per-ticket DURATION can be
+    -- maintained without scanning raw. Duration is sum-per-prompt of (max-min ts),
+    -- which isn't additive at ingest; storing first/last per prompt lets ingest
+    -- widen the span with LEAST/GREATEST and the HS-9235 read recompute
+    -- SUM(last_ts - first_ts) over the ticket's prompts. Snapshotted main db, kept
+    -- for the life of the ticket (like otel_rollup_ticket).
+    CREATE TABLE IF NOT EXISTS otel_ticket_prompt_span (
+      project_secret TEXT NOT NULL DEFAULT '',
+      ticket_number TEXT NOT NULL,
+      prompt_id TEXT NOT NULL,
+      first_ts TIMESTAMPTZ NOT NULL,
+      last_ts TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (project_secret, ticket_number, prompt_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_ticket_prompt_span_ticket ON otel_ticket_prompt_span(project_secret, ticket_number);
   `);
 
   // HS-8874 — telemetry is now stored per-project, plus a centralized store

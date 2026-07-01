@@ -601,3 +601,123 @@ async function insertSeenRows(mainDb: PGlite, rows: SeenRow[]): Promise<number> 
   }
   return inserted;
 }
+
+// ---------------------------------------------------------------------------
+// HS-9243 (part 2) — backfill per-ticket prompt-duration spans
+// (`otel_ticket_prompt_span`) from existing raw, so the HS-9235 read can
+// recompute per-ticket duration from the span table (ongoing spans are widened
+// at ingest via `widenTicketPromptSpan`). Mirrors getPerTicketRollup's matched
+// set (marker UNION time-window) but grouped per (ticket, prompt) → first/last.
+// Separate guarded one-shot (`telemetryTicketSpanBackfilledV1`).
+// ---------------------------------------------------------------------------
+
+export interface TicketSpanBackfillResult {
+  scannedDirs: number;
+  /** `otel_ticket_prompt_span` rows written across all dirs. */
+  spanRows: number;
+}
+
+export async function backfillTelemetryTicketSpans(launchedDataDir: string): Promise<TicketSpanBackfillResult> {
+  const empty: TicketSpanBackfillResult = { scannedDirs: 0, spanRows: 0 };
+  if (readGlobalConfig().telemetryTicketSpanBackfilledV1 === true) return empty;
+
+  const dirs = [...new Set<string>([launchedDataDir, ...readProjectList(), centralTelemetryDataDir()])];
+  const doneDirs = new Set(readGlobalConfig().telemetryTicketSpanBackfillV1DoneDirs ?? []);
+
+  let scannedDirs = 0;
+  let spanRows = 0;
+
+  for (const dataDir of dirs) {
+    if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    try {
+      const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
+      const mainDb = await getDbForDir(dataDir);
+      const secret = readProjectSecret(dataDir); // null for central → skipped inside
+      spanRows += await backfillTicketPromptSpansForDir(clusterDb, mainDb, secret);
+      scannedDirs++;
+      doneDirs.add(dataDir);
+      writeGlobalConfig({ telemetryTicketSpanBackfillV1DoneDirs: [...doneDirs] });
+    } catch (err) {
+      console.error(`[ticket-span-backfill] skipping ${dataDir}:`, err);
+    }
+    await yieldToEventLoop();
+  }
+
+  writeGlobalConfig({ telemetryTicketSpanBackfilledV1: true, telemetryTicketSpanBackfillV1DoneDirs: [] });
+  console.log(`  [ticket-span-backfill] HS-9243: wrote ${String(spanRows)} ticket-prompt span(s) across ${String(scannedDirs)} dir(s).`);
+  return { scannedDirs, spanRows };
+}
+
+/**
+ * Derive per-(ticket, prompt) first/last ts from one project's raw (the marker
+ * UNION time-window matched set, mirroring getPerTicketRollup) and upsert into the
+ * main-db span table. Idempotent via `ON CONFLICT` LEAST/GREATEST. Central store
+ * (null secret) has no tickets → skipped. Returns the number of rows affected.
+ */
+export async function backfillTicketPromptSpansForDir(
+  clusterDb: PGlite,
+  mainDb: PGlite,
+  secret: string | null,
+): Promise<number> {
+  if (secret === null || secret === '') return 0;
+
+  const res = await clusterDb.query<Record<string, unknown>>(
+    `WITH marker_prompts AS (
+       SELECT DISTINCT prompt_id, substring(body_json::text from 'hotsheet:ticket=([A-Za-z]+-[0-9]+)') AS ticket
+       FROM otel_events
+       WHERE ${eventNameMatchSql('event_name', 'user_prompt')}
+         AND prompt_id IS NOT NULL
+         AND body_json::text LIKE '%hotsheet:ticket=%'
+     ),
+     matched AS (
+       -- time-window path
+       SELECT i.ticket_number AS ticket, e.prompt_id AS prompt_id, e.ts AS ts
+       FROM otel_events e
+       JOIN ticket_work_intervals i
+         ON i.project_secret = $1
+        AND e.ts >= i.started_at AND e.ts <= COALESCE(i.ended_at, NOW())
+       WHERE ${eventNameMatchSql('e.event_name', 'api_request')}
+         AND e.prompt_id IS NOT NULL AND e.project_secret = $1
+       UNION ALL
+       -- marker path
+       SELECT mp.ticket AS ticket, e.prompt_id AS prompt_id, e.ts AS ts
+       FROM otel_events e
+       JOIN marker_prompts mp ON mp.prompt_id = e.prompt_id
+       WHERE ${eventNameMatchSql('e.event_name', 'api_request')}
+         AND e.prompt_id IS NOT NULL
+     )
+     SELECT ticket, prompt_id, MIN(ts) AS first_ts, MAX(ts) AS last_ts
+     FROM matched
+     WHERE ticket IS NOT NULL AND prompt_id IS NOT NULL
+     GROUP BY ticket, prompt_id`,
+    [secret],
+  );
+
+  const rows = res.rows
+    .map(r => ({ ticket: s(r.ticket, ''), promptId: s(r.prompt_id, ''), firstTs: r.first_ts, lastTs: r.last_ts }))
+    .filter(r => r.ticket !== '' && r.promptId !== '' && r.firstTs != null && r.lastTs != null);
+
+  if (rows.length === 0) return 0;
+
+  const PER_BATCH = 300; // 300 × 5 cols = 1500 params, well under 65535.
+  let affected = 0;
+  for (let i = 0; i < rows.length; i += PER_BATCH) {
+    const batch = rows.slice(i, i + PER_BATCH);
+    const params: unknown[] = [];
+    const valueRows = batch.map(r => {
+      const b = params.length;
+      params.push(secret, r.ticket, r.promptId, r.firstTs, r.lastTs);
+      return `($${String(b + 1)}, $${String(b + 2)}, $${String(b + 3)}, $${String(b + 4)}::timestamptz, $${String(b + 5)}::timestamptz)`;
+    });
+    const out = await mainDb.query(
+      `INSERT INTO otel_ticket_prompt_span (project_secret, ticket_number, prompt_id, first_ts, last_ts)
+       VALUES ${valueRows.join(', ')}
+       ON CONFLICT (project_secret, ticket_number, prompt_id) DO UPDATE SET
+         first_ts = LEAST(otel_ticket_prompt_span.first_ts, EXCLUDED.first_ts),
+         last_ts  = GREATEST(otel_ticket_prompt_span.last_ts, EXCLUDED.last_ts)`,
+      params,
+    );
+    affected += out.affectedRows ?? 0;
+  }
+  return affected;
+}

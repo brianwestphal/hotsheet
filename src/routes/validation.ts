@@ -374,6 +374,12 @@ export const GlobalConfigSchema = z.object({
   // + per-dir resumability list (same pattern as the migrations above).
   telemetryDailySeenBackfilledV1: z.boolean().optional(),
   telemetryDailySeenBackfillV1DoneDirs: z.array(z.string()).optional(),
+  // HS-9243 part 2 (epic HS-9226 Phase 2 follow-up) — one-time backfill of the
+  // per-ticket prompt-duration spans (`otel_ticket_prompt_span`) from existing raw
+  // so the read repoint (HS-9235) can recompute per-ticket duration off the span
+  // table. Completion flag + per-dir resumability list.
+  telemetryTicketSpanBackfilledV1: z.boolean().optional(),
+  telemetryTicketSpanBackfillV1DoneDirs: z.array(z.string()).optional(),
   // HS-8877 — retention window (days) for the centralized non-project telemetry
   // store (`~/.hotsheet/telemetry`). Projects have a per-project
   // `telemetry_retention_days`; central isn't a project, so its sweep window
