@@ -30,7 +30,9 @@ describe('channel schemas (HS-8631)', () => {
     expect(ChannelStatusSchema.safeParse({ ...status, port: null }).success).toBe(true); // port may be null
     expect(ClaudeVersionCheckSchema.safeParse(check).success).toBe(true);
     expect(ClaudeVersionCheckSchema.safeParse({ ...check, version: null }).success).toBe(true);
-    expect(HeartbeatStatusSchema.safeParse({ updates: [{ secret: 's', state: 'idle' }] }).success).toBe(true);
+    // HS-9261 — updates now carry a `seq` and the payload a top-level `seq` cursor.
+    expect(HeartbeatStatusSchema.safeParse({ updates: [{ secret: 's', state: 'idle', seq: 3 }], seq: 3 }).success).toBe(true);
+    expect(HeartbeatStatusSchema.safeParse({ updates: [{ secret: 's', state: 'idle' }] }).success).toBe(false); // missing seq
     expect(ChannelStatusSchema.safeParse({ ...status, alive: 'yes' }).success).toBe(false);
     expect(ChannelStatusSchema.safeParse({ ...status, serverName: undefined }).success).toBe(false);
   });
@@ -89,9 +91,15 @@ describe('channel callers route to the right endpoint (HS-8631)', () => {
   });
 
   it('getChannelHeartbeatStatus → GET /channel/heartbeat-status', async () => {
-    stub({ updates: [] });
-    expect(await getChannelHeartbeatStatus()).toEqual({ updates: [] });
-    expect(lastCall?.path).toBe('/channel/heartbeat-status');
+    stub({ updates: [], seq: 0 });
+    expect(await getChannelHeartbeatStatus()).toEqual({ updates: [], seq: 0 });
+    expect(lastCall?.path).toBe('/channel/heartbeat-status'); // no `since` on the first poll
+  });
+
+  it('getChannelHeartbeatStatus(since) → passes the cursor as ?since (HS-9261)', async () => {
+    stub({ updates: [], seq: 7 });
+    await getChannelHeartbeatStatus(7);
+    expect(lastCall?.path).toBe('/channel/heartbeat-status?since=7');
   });
 
   it('rejects a status response that fails schema validation', async () => {

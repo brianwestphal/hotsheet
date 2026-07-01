@@ -472,19 +472,53 @@ channelRoutes.post('/channel/heartbeat', async (c) => {
   const match = matchProjectDirToProject(getAllProjects(), projectDir);
   if (!match) return c.json({ ok: false });
 
-  // Store the state change for the client to consume
-  heartbeatUpdates.push({ secret: match.secret, state: hookState });
+  // Store the state change for clients to consume (HS-9261: append to the ring).
+  pushHeartbeat(match.secret, hookState);
   notifyChange();
   return c.json({ ok: true, project: match.name });
 });
 
-/** Per-project heartbeat updates. Consumed and cleared by the client via /channel/heartbeat-status. */
-const heartbeatUpdates: { secret: string; state: string }[] = [];
+/**
+ * HS-9261 — per-project heartbeat updates as a monotonic-seq RING, not a
+ * destructively-drained queue. Each connected client tracks its own `?since`
+ * cursor, so two tabs/windows both receive every busy/idle update instead of the
+ * first poller draining them (which left the other client stuck "working").
+ */
+interface HeartbeatUpdate { seq: number; secret: string; state: string }
+/** Bounded so the ring can't grow without limit; heartbeats are frequent while
+ *  Claude works, so a live client never falls this far behind between polls. */
+const HEARTBEAT_RING_CAP = 500;
+const heartbeatRing: HeartbeatUpdate[] = [];
+let heartbeatSeq = 0;
+
+function pushHeartbeat(secret: string, state: string): void {
+  heartbeatRing.push({ seq: ++heartbeatSeq, secret, state });
+  if (heartbeatRing.length > HEARTBEAT_RING_CAP) {
+    heartbeatRing.splice(0, heartbeatRing.length - HEARTBEAT_RING_CAP);
+  }
+}
+
+/**
+ * Pure — the updates a client with cursor `since` hasn't seen yet. A fresh
+ * client (`since` undefined) syncs its cursor to the latest seq WITHOUT
+ * replaying history (matches the pre-HS-9261 fresh-client behavior: only future
+ * events; busy state re-establishes on the next heartbeat). Exported for tests.
+ */
+export function heartbeatUpdatesSince(
+  ring: readonly HeartbeatUpdate[],
+  since: number | undefined,
+): HeartbeatUpdate[] {
+  if (since === undefined) return [];
+  return ring.filter(u => u.seq > since);
+}
 
 channelRoutes.get('/channel/heartbeat-status', (c) => {
-  const updates = [...heartbeatUpdates];
-  heartbeatUpdates.length = 0;
-  return c.json({ updates });
+  const sinceRaw = c.req.query('since');
+  const sinceNum = sinceRaw !== undefined && sinceRaw !== '' ? Number(sinceRaw) : undefined;
+  const since = sinceNum !== undefined && Number.isFinite(sinceNum) ? sinceNum : undefined;
+  const updates = heartbeatUpdatesSince(heartbeatRing, since).map(u => ({ secret: u.secret, state: u.state, seq: u.seq }));
+  // `seq` = the latest cursor; the client stores it and passes it back next poll.
+  return c.json({ updates, seq: heartbeatSeq });
 });
 
 /** Called by the channel server process when it starts or stops, to wake the long-poll. */

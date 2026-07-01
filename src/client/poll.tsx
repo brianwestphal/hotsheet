@@ -61,9 +61,16 @@ export function startLongPoll() {
   void poll();
 }
 
+// HS-9261 — per-client cursor into the server's heartbeat ring. Starts
+// undefined so the first poll syncs to the latest seq without replaying history;
+// thereafter we pass it back as `?since` so THIS client drains independently of
+// any other tab/window (the old destructive drain let the first poller consume
+// everyone's updates, leaving other clients stuck "working").
+let lastHeartbeatSeq: number | undefined;
+
 async function checkHeartbeats() {
   try {
-    const data = await getChannelHeartbeatStatus();
+    const data = await getChannelHeartbeatStatus(lastHeartbeatSeq);
     for (const update of data.updates) {
       if (update.state === 'idle') {
         clearBusyForProject(update.secret);
@@ -72,5 +79,6 @@ async function checkHeartbeats() {
         extendBusyForProject(update.secret);
       }
     }
+    lastHeartbeatSeq = data.seq;
   } catch { /* ignore */ }
 }

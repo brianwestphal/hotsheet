@@ -52,9 +52,13 @@ export const ChannelStatusSchema = z.object({
 });
 export type ChannelStatus = z.infer<typeof ChannelStatusSchema>;
 
-/** `GET /channel/heartbeat-status` — drained per-project busy/idle updates. */
+/** `GET /channel/heartbeat-status` — per-project busy/idle updates since the
+ *  client's cursor (HS-9261). `seq` is the latest server cursor; the client
+ *  passes it back as `?since` next poll so each client drains independently
+ *  (non-destructive ring — fixes the multi-tab stuck-on drain race). */
 export const HeartbeatStatusSchema = z.object({
-  updates: z.array(z.object({ secret: z.string(), state: z.string() })),
+  updates: z.array(z.object({ secret: z.string(), state: z.string(), seq: z.number() })),
+  seq: z.number(),
 });
 export type HeartbeatStatus = z.infer<typeof HeartbeatStatusSchema>;
 
@@ -125,7 +129,10 @@ export async function disableChannel(): Promise<OkResponse> {
   return apiCall(OkResponseSchema, '/channel/disable', { method: 'POST' });
 }
 
-/** GET `/channel/heartbeat-status` → drain pending busy/idle updates. */
-export async function getChannelHeartbeatStatus(): Promise<HeartbeatStatus> {
-  return apiCall(HeartbeatStatusSchema, '/channel/heartbeat-status');
+/** GET `/channel/heartbeat-status` → busy/idle updates after the client's `since`
+ *  cursor (HS-9261). Omit `since` on the first poll to sync the cursor without
+ *  replaying history. */
+export async function getChannelHeartbeatStatus(since?: number): Promise<HeartbeatStatus> {
+  const q = since !== undefined ? `?since=${String(since)}` : '';
+  return apiCall(HeartbeatStatusSchema, `/channel/heartbeat-status${q}`);
 }
