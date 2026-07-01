@@ -433,6 +433,33 @@ channelRoutes.post('/channel/disable', async (c) => {
 
 /** Heartbeat from Claude Code hooks — reports busy/idle/heartbeat state for a project.
  *  state: 'busy' (UserPromptSubmit), 'idle' (Stop), 'heartbeat' (PostToolUse) */
+/**
+ * HS-9260 — map a Claude Code hook's `$CLAUDE_PROJECT_DIR` to the registered
+ * project that owns it, choosing the MOST-SPECIFIC (longest `rootDir`) match.
+ * The hook fires from the global `~/.claude/settings.json` for every session on
+ * the machine, so a session running in a SUBDIR of a project, or in a nested /
+ * worktree project, would otherwise be misattributed to whichever project
+ * happened to be first in the list (the old `Array.find` — first prefix wins).
+ * Longest-prefix wins → the innermost owning project gets the busy signal.
+ * Pure + exported for testing. `rootDir` = the project root (dataDir minus the
+ * trailing `.hotsheet`).
+ */
+export function matchProjectDirToProject<T extends { dataDir: string }>(
+  projects: readonly T[],
+  projectDir: string,
+): T | undefined {
+  let best: T | undefined;
+  let bestLen = -1;
+  for (const p of projects) {
+    const rootDir = p.dataDir.replace(/\/.hotsheet\/?$/, '');
+    if ((rootDir === projectDir || projectDir.startsWith(rootDir + '/')) && rootDir.length > bestLen) {
+      best = p;
+      bestLen = rootDir.length;
+    }
+  }
+  return best;
+}
+
 channelRoutes.post('/channel/heartbeat', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ChannelHeartbeatSchema, raw);
@@ -442,11 +469,7 @@ channelRoutes.post('/channel/heartbeat', async (c) => {
   if (projectDir === undefined || projectDir === '') return c.json({ ok: false });
 
   // Match projectDir against registered projects (projectDir is the root, dataDir is root/.hotsheet)
-  const projects = getAllProjects();
-  const match = projects.find(p => {
-    const rootDir = p.dataDir.replace(/\/.hotsheet\/?$/, '');
-    return rootDir === projectDir || projectDir.startsWith(rootDir + '/');
-  });
+  const match = matchProjectDirToProject(getAllProjects(), projectDir);
   if (!match) return c.json({ ok: false });
 
   // Store the state change for the client to consume

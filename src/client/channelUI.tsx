@@ -73,6 +73,33 @@ function stopSpinnerPoll(): void {
   channelStore.actions.setMostRecentSpinnerAt(null);
 }
 
+/**
+ * HS-9260 — re-sync the sidebar indicator + spinner poll + global `busy` slot to
+ * the NEW active project on a project switch. `busySecrets` is per-project (the
+ * source of truth), but the single-instance side state — the global `busy` flag,
+ * the `mostRecentSpinnerAtMs` reading, and the 2s spinner poll (bound to
+ * `getActiveProject()`) — are otherwise left pointing at the PREVIOUS project.
+ * That made the sidebar show a stale label after switching (e.g. "Claude idle
+ * (channel busy)" for a project that's actually working, because the poll never
+ * started for it / carried the old project's spinner value). Called from
+ * `initChannel`, which runs on every switch.
+ */
+function syncActiveBusyIndicator(): void {
+  const busy = isChannelBusy(); // busySecrets.has(activeSecret) — per-project truth
+  channelStore.actions.setBusy(busy);
+  // The previous project's spinner reading is meaningless for the new one.
+  channelStore.actions.setMostRecentSpinnerAt(null);
+  if (busy) {
+    startSpinnerPoll(); // (no-op if already running; kicks an immediate refresh when it starts fresh)
+    // Ensure an immediate refresh for the new project even on a busy→busy switch
+    // (startSpinnerPoll early-returns when the interval is already live).
+    void refreshSpinnerActivity().then(updateStatusIndicator);
+  } else {
+    stopSpinnerPoll();
+  }
+  updateStatusIndicator();
+}
+
 /** Unified status indicator renderer. Resolves channel vs. shell busy states
  *  into a single indicator to avoid conflicting innerHTML writes. */
 function updateStatusIndicator() {
@@ -457,8 +484,10 @@ export async function initChannel() {
       btn.classList.remove('auto-mode');
     }
   }
-  // Re-render the status indicator for the active project's busy state
-  updateStatusIndicator();
+  // HS-9260 — re-sync the indicator + spinner poll + global busy slot to the
+  // NEW active project (not just re-render): the single-instance side state was
+  // otherwise left pointing at the previous project after a switch.
+  syncActiveBusyIndicator();
 
   // Reload custom commands for the active project and render
   const { renderChannelCommands, reloadCustomCommands, setChannelEnabledState } = await import('./experimentalSettings.js');

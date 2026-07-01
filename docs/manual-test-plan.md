@@ -113,6 +113,7 @@ This document lists features that require manual verification before each releas
 - [ ] Backoff works: subsequent auto-triggers use increasing intervals (5s → 10s → 20s → ...)
 - [ ] "Claude working" spinner shows during processing
 - [ ] "✓ Claude idle" status appears on completion, auto-hides after 5 seconds
+- [ ] **HS-9260 — per-project busy indicator on switch (DOM/interval-heavy, manual).** With project A actively working (sidebar shows "Claude working" spinner) and project B idle, switch to B: the sidebar indicator must reflect **B's** state (hidden/idle), NOT keep showing A's "working". Switch back to A: it shows "working" again with the live spinner label (not the degraded "Claude idle (channel busy)"). Also verify the per-project tab dots stay correct for both. (Unit-covered: the server longest-prefix attribution in `channelHeartbeatMatch.test.ts`; this verifies the client `syncActiveBusyIndicator` re-sync + spinner-poll re-point on switch, which is DOM + 2s-interval bound.)
 
 ### Permission Popup
 - [ ] Popup appears anchored to the owning project's tab when Claude requests tool permission (HS-6536 — same popup for active and background tabs; the old full-screen overlay is gone)
