@@ -2,12 +2,12 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { resolveAutoContextWithDefaults } from '../autoContextDefaults.js';
-import { runWithDataDir } from '../db/connection.js';
+import { getDataDir, runWithDataDir } from '../db/connection.js';
 import { parseNotes } from '../db/notes.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
 import { scheduleSnapshot } from '../db/snapshot.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
-import { readFileSettings } from '../file-settings.js';
+import { readFileSettings, readLocalSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
 // to keep the local call sites readable.
 import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_DEBOUNCE_MS as WORKLIST_DEBOUNCE } from '../limits.js';
@@ -16,6 +16,7 @@ import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundSchedul
 // HS-8671 — zod-validated DB-JSON parsing (drops the blind `as` casts).
 import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import { getProjectSecret } from '../secret-file.js';
+import { isArrayDelta } from '../settingsDelta.js';
 import type { Ticket } from '../types.js';
 
 interface SyncState {
@@ -194,7 +195,27 @@ async function loadAutoContext(): Promise<AutoContextEntry[]> {
   // HS-9247 — layer the user's saved entries over the built-in defaults so a
   // fresh project gets useful per-category guidance; a user entry (incl. an
   // explicit empty-text one) overrides the default for that category/tag.
-  return resolveAutoContextWithDefaults(userEntries);
+  // HS-9256 — but a category whose SHARED entry was locally hidden must NOT fall
+  // back to the default (that would defeat the local disable).
+  return resolveAutoContextWithDefaults(userEntries, localHiddenAutoContextIds());
+}
+
+/**
+ * HS-9256 — the `type:key` ids the LOCAL settings layer hides for `auto_context`
+ * (a shared entry deleted on this machine). `getSettings()` returns the RESOLVED
+ * array with those already removed, so the built-in default would re-inject them
+ * unless we suppress it here. Reads the raw local delta's `hidden` list. Best-
+ * effort — any read/shape problem yields an empty set (defaults apply normally).
+ */
+function localHiddenAutoContextIds(): ReadonlySet<string> {
+  try {
+    const localAc = readLocalSettings(getDataDir()).auto_context;
+    if (isArrayDelta(localAc) && Array.isArray(localAc.hidden)) {
+      // Any non-string junk in a malformed file simply never matches a default's id.
+      return new Set(localAc.hidden);
+    }
+  } catch { /* best-effort — fall through to no suppression */ }
+  return new Set();
 }
 
 async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<string> {

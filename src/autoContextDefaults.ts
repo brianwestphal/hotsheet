@@ -101,10 +101,20 @@ export function defaultAutoContextFor(categoryId: string): string | null {
  * intentionally suppresses the default). Returns the effective list used for
  * worklist injection — defaults first (in their declared order), then any
  * user-only entries appended.
+ *
+ * HS-9256 — `suppressedIds` (a set of `type:key`) omits the default for keys the
+ * user explicitly DISABLED via the local layer (a shared entry hidden on this
+ * machine). The resolved `userEntries` no longer contain such a key, so without
+ * this the default would re-inject it and defeat the local disable.
  */
-export function resolveAutoContextWithDefaults(userEntries: AutoContextEntry[]): AutoContextEntry[] {
+export function resolveAutoContextWithDefaults(
+  userEntries: AutoContextEntry[],
+  suppressedIds: ReadonlySet<string> = new Set(),
+): AutoContextEntry[] {
   const byKey = new Map<string, AutoContextEntry>();
-  for (const d of DEFAULT_AUTO_CONTEXT) byKey.set(idOf(d), d);
+  for (const d of DEFAULT_AUTO_CONTEXT) {
+    if (!suppressedIds.has(idOf(d))) byKey.set(idOf(d), d);
+  }
   for (const u of userEntries) byKey.set(idOf(u), u);
   return [...byKey.values()];
 }

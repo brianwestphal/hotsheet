@@ -87,4 +87,20 @@ describe('resolveAutoContextWithDefaults', () => {
     resolveAutoContextWithDefaults(user);
     expect(user).toHaveLength(1);
   });
+
+  it('HS-9256 — a suppressed id omits its default (locally-hidden shared entry)', () => {
+    const resolved = resolveAutoContextWithDefaults([], new Set(['category:bug']));
+    // The bug default is suppressed; other defaults still apply.
+    expect(resolved.find((e) => e.type === 'category' && e.key === 'bug')).toBeUndefined();
+    expect(resolved.find((e) => e.key === 'feature')?.text).toBe(defaultAutoContextFor('feature'));
+  });
+
+  it('HS-9256 — a user entry still wins even if its id is also in the suppressed set', () => {
+    // Suppression only gates the DEFAULT fallback; an explicit user entry for the
+    // key is authoritative (belt-and-suspenders — the caller never passes both,
+    // but the merge order must keep the user entry).
+    const user: AutoContextEntry[] = [{ type: 'category', key: 'bug', text: 'EXPLICIT' }];
+    const resolved = resolveAutoContextWithDefaults(user, new Set(['category:bug']));
+    expect(resolved.find((e) => e.type === 'category' && e.key === 'bug')?.text).toBe('EXPLICIT');
+  });
 });

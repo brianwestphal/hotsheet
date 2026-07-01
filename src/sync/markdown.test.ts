@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getDb } from '../db/connection.js';
 import { addAttachment, createTicket, updateTicket } from '../db/queries.js';
 import { updateSetting } from '../db/settings.js';
-import { writeFileSettings } from '../file-settings.js';
+import { writeFileSettings, writeSettingsLayer } from '../file-settings.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { buildPreambleSection, flushPendingSyncs, initMarkdownSync, scheduleOpenTicketsSync, scheduleWorklistSync } from './markdown.js';
 
@@ -377,6 +377,21 @@ describe('auto-context in worklist', () => {
     const content = await syncedWorklist();
     expect(content).not.toContain('Reproduce the bug first');
     expect(content).toContain('- Details: Just the details.');
+  });
+
+  it('HS-9256 — a locally-hidden shared entry does NOT fall back to the built-in default', async () => {
+    // Shared layer: a custom bug context. Local layer: hide it (a delta). The
+    // resolved auto_context is then empty for `bug`; without the fix the built-in
+    // default would re-inject, defeating the local disable.
+    writeSettingsLayer(tempDir, 'shared', { auto_context: [{ type: 'category', key: 'bug', text: 'SHARED_BUG_CONTEXT' }] });
+    writeSettingsLayer(tempDir, 'local', { auto_context: { hidden: ['category:bug'] } });
+    await createTicket('Bug with locally-hidden context', { category: 'bug', up_next: true, details: 'Body here.' });
+    scheduleWorklistSync();
+
+    const content = await syncedWorklist();
+    expect(content).not.toContain('SHARED_BUG_CONTEXT');   // shared entry is hidden locally
+    expect(content).not.toContain('Reproduce the bug first'); // default is NOT re-injected
+    expect(content).toContain('- Details: Body here.');
   });
 });
 
