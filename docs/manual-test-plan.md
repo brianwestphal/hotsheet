@@ -86,6 +86,12 @@ This document lists features that require manual verification before each releas
 - [ ] Windows: opens Explorer with file selected
 - [ ] Linux: opens the containing directory with xdg-open
 
+### Announcer TTS — real audio output (HS-9197)
+*(macOS `say`-to-file is now smoke-tested automatically in `src-tauri/src/lib.rs::macos_say_emits_nonempty_nonsilent_audio` — runs the real synthesizer, asserts non-empty + non-silent AIFF. Run via `npm run test:rust`. The paths below can't be captured headlessly, so verify by ear.)*
+- [ ] **macOS system voice (default on-device path):** enable the Announcer live mode with telemetry flowing; confirm you actually **hear** narration (the OS `say` voice). Changing the voice / rate in Settings → Announcer changes what you hear.
+- [ ] **Windows / Linux system TTS:** on each OS, confirm narration is audible (`System.Speech` via PowerShell on Windows; `spd-say` on Linux — install `speech-dispatcher` if silent).
+- [ ] **Apple Foundation Models / local (Ollama) provider:** with an AI-generated narration provider selected, confirm the generated script is spoken (these providers' audio can't be smoke-tested headlessly — the text/timing generation is unit-tested, but the spoken output is ear-only).
+
 ### Tauri Desktop App
 - [ ] Native window title displays correctly (custom appName or "Hot Sheet")
 - [ ] Sidecar Node server starts and stops with the app

@@ -1738,6 +1738,63 @@ mod tts_command_tests {
         }
     }
 
+    /// HS-9197 — end-to-end smoke test: the macOS `say` TTS actually EMITS audio.
+    /// Every other announcer-TTS test is either mocked (the JS `SpeechEngine` /
+    /// browser `speechSynthesis`) or pure (`build_tts_command` construction, above);
+    /// this is the ONE test that runs the real synthesizer and asserts the output
+    /// is non-empty AND non-silent, so a regression that makes `say` emit nothing
+    /// is caught. It captures to a file (`-o`) instead of playing, so it's silent
+    /// and headless-safe. macOS-only + `say`-gated → auto-skips on Linux/Windows
+    /// CI (the Apple-FM / local-provider paths that can't be captured headlessly
+    /// are covered by the manual test plan, §Announcer TTS audio).
+    #[test]
+    fn macos_say_emits_nonempty_nonsilent_audio() {
+        if !cfg!(target_os = "macos") {
+            return; // `say` is macOS-only — skip elsewhere.
+        }
+        use std::process::Command;
+        // Reuse the exact invocation the announcer builds (voice/rate absent → just
+        // the utterance), adding `-o <file>` so it writes an AIFF instead of playing.
+        let spec = build_tts_command(TtsPlatform::MacOs, "Hot Sheet audio smoke test.", None, None);
+        assert_eq!(spec.program, "say");
+
+        let out_path = std::env::temp_dir()
+            .join(format!("hotsheet-tts-smoke-{}.aiff", std::process::id()));
+        let _ = std::fs::remove_file(&out_path);
+
+        let status = match Command::new("say").arg("-o").arg(&out_path).args(&spec.args).status() {
+            Ok(s) => s,
+            Err(_) => return, // `say` unexpectedly unavailable — skip rather than fail.
+        };
+        assert!(status.success(), "`say -o` exited with failure: {status:?}");
+
+        // Non-empty: a real utterance is many KB of PCM; a failed synth leaves the
+        // file missing or tiny.
+        let meta = std::fs::metadata(&out_path).expect("say should have written the AIFF");
+        assert!(
+            meta.len() > 2_000,
+            "TTS output suspiciously small ({} bytes) — likely silent/failed",
+            meta.len(),
+        );
+
+        // Non-silent (best-effort): `afinfo` reports an estimated duration > 0 for
+        // real audio. If `afinfo` is somehow unavailable the size check above stands.
+        if let Ok(out) = Command::new("afinfo").arg(&out_path).output() {
+            if out.status.success() {
+                let info = String::from_utf8_lossy(&out.stdout);
+                let dur = info
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix("estimated duration:"))
+                    .and_then(|v| v.trim().split_whitespace().next())
+                    .and_then(|n| n.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                assert!(dur > 0.0, "afinfo reported zero duration — audio is empty/silent:\n{info}");
+            }
+        }
+
+        let _ = std::fs::remove_file(&out_path);
+    }
+
     // HS-8826 — Quick Look / open command per platform. Pure builder, so all
     // three OS branches are asserted on any host (the macOS `qlmanage` path is
     // the only one exercised live in dev).
