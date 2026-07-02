@@ -152,9 +152,19 @@ Each slice is its own ticket; all are **gated on the §110.4 opt-in decision**.
   whereas skill bodies are seeded globally and can't gate on a per-project
   setting at author time. Tests: `reviewNotesInducement.test.ts` (pure section +
   CLI detection/cache) + `markdown.test.ts` (worklist gating on/off).
-- **P2 — Settings UI.** A checkbox in Settings (Experimental / project settings)
-  for the `aiReviewNotes` setting, §95 scope-aware (Shared/Local) per the
-  decision; copy explaining it requires Glassbox.
+- **P2 — Settings UI.** *(SHIPPED — HS-9222.)* An **"Induce AI review notes
+  (`.pr-notes/`)"** checkbox in Settings → Experimental, wired as a §95
+  scope-aware boolean (registered in `settingsScope.tsx`'s `SCOPED_FIELDS` with
+  no `share` restriction → editable in **Shared**, "+ Override" in **Local**,
+  matching the `defaultScope` → shared classification). The markup lives in
+  `pages.tsx`; the change listener in `settingsDialog.tsx` routes writes through
+  `persistScopedSetting('aiReviewNotes', …)`, and `loadAndApplyScope` applies the
+  value + Shared/Local decoration on open. Copy explains it requires Glassbox (the
+  `glassbox` CLI on PATH + a committed `.pr-notes/` directory). Tests: `defaultScope`
+  → shared in `file-settings.test.ts`; e2e `ai-review-notes-setting.spec.ts` toggles
+  it in Shared, asserts persistence to `/api/file-settings` (the key the worklist
+  gating reads) + reload-restore. The file-settings → worklist gating stays
+  unit-tested in `reviewNotesInducement.test.ts` + `sync/markdown.test.ts`.
 - **P3 — Ticket proof-artifact surfacing (read side).** Detect `.pr-notes/`
   notes whose `--ticket` matches a Hot Sheet ticket and surface their artifacts
   in the ticket detail panel. Independent of P1/P2; lower priority.

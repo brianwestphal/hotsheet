@@ -284,7 +284,10 @@ describe('HS-9002 — shared/local settings split', () => {
       // categories is shared-only; the cleanup-days + worklist preamble stay team policy.
       for (const k of ['appName', 'ticketPrefix', 'worklist_preamble', 'categories', 'custom_commands',
         'custom_views', 'terminals', 'auto_context', 'trash_cleanup_days', 'completed_cleanup_days',
-        'verified_cleanup_days', 'channel_enabled']) {
+        'verified_cleanup_days', 'channel_enabled',
+        // HS-9222 — the AI Review Notes inducement is a repo/team property (like
+        // committing `.pr-notes/`), so it defaults to the shared layer.
+        'aiReviewNotes']) {
         expect(defaultScope(k)).toBe('shared');
       }
     });

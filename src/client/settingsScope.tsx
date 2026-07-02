@@ -102,6 +102,11 @@ const SCOPED_FIELDS: ScopedField[] = [
   { controlId: 'settings-telemetry-logs-enabled', key: 'telemetry_logs_enabled', kind: 'boolean' },
   { controlId: 'settings-telemetry-traces-enabled', key: 'telemetry_traces_enabled', kind: 'boolean' },
   { controlId: 'settings-telemetry-retention-days', key: 'telemetry_retention_days', kind: 'number' },
+  // Experimental — AI Review Notes inducement (HS-9222, docs/110 §110.7). A
+  // repo/team property (does this project emit `.pr-notes/` review notes, like
+  // committing the directory), so Shared by default with a per-machine Local
+  // override — the standard scoped field (no `share` restriction).
+  { controlId: 'settings-ai-review-notes', key: 'aiReviewNotes', kind: 'boolean' },
   // Terminal
   { controlId: 'settings-terminal-scrollback', key: 'terminal_scrollback_bytes', kind: 'number' },
   { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only

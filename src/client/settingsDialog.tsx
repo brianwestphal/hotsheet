@@ -146,6 +146,7 @@ function bindGeneralTab() {
   const autoOrderCheckbox = byId<HTMLInputElement>('settings-auto-order');
   const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
   const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
+  const aiReviewNotesCheckbox = byIdOrNull<HTMLInputElement>('settings-ai-review-notes');
   // HS-8446 — global diagnostics opt-in. Single checkbox in Settings →
   // Experimental → Diagnostics that gates BOTH the slow-server banner
   // (HS-8175) AND the HS-8054 UI-hang toast. Stored in
@@ -242,6 +243,14 @@ function bindGeneralTab() {
     state.settings.shell_integration_ui = shellIntegrationCheckbox.checked;
     void persistScopedSetting('shell_integration_ui', shellIntegrationCheckbox.checked); // HS-9173 — JSON boolean
     document.dispatchEvent(new CustomEvent('hotsheet:shell-integration-ui-changed'));
+  });
+
+  // HS-9222 (docs/110 §110.7 P2) — AI Review Notes inducement (`aiReviewNotes`).
+  // A scope-aware boolean registered in SCOPED_FIELDS, so its checked value +
+  // Shared/Local decoration are applied by `loadAndApplyScope` on dialog open;
+  // this listener only persists the change to the active layer.
+  aiReviewNotesCheckbox?.addEventListener('change', () => {
+    void persistScopedSetting('aiReviewNotes', aiReviewNotesCheckbox.checked); // JSON boolean, like telemetry_*
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`

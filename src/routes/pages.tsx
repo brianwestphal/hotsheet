@@ -1100,6 +1100,15 @@ pageRoutes.get('/', (c) => {
                   </div>
                 </div>
               </div>
+              {/* HS-9222 (docs/110 §110.7 P2) — AI Review Notes inducement toggle
+                  (`aiReviewNotes`). Scope-aware Shared/Local (registered in
+                  `settingsScope.tsx` SCOPED_FIELDS); when on, the worklist induces
+                  the coding agent to emit Glassbox `.pr-notes/` review notes,
+                  attributed to the ticket (see `reviewNotesInducement.ts`). */}
+              <div className="settings-field" style="margin-top:16px">
+                <label><input type="checkbox" id="settings-ai-review-notes" /> Induce AI review notes (<code>.pr-notes/</code>)</label>
+                <span className="settings-hint">When on, the worklist tells the coding agents Hot Sheet drives to leave line-anchored review notes under <code>.pr-notes/</code> for non-obvious changes, attributed to the ticket. <strong>Requires Glassbox</strong> — the <code>glassbox</code> CLI on PATH (Hot Sheet injects its canonical instructions) and a committed <code>.pr-notes/</code> directory Glassbox renders. Off by default; shared with your team (a repo property), overridable per-machine under Local.</span>
+              </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the
                   former per-project UI-hang-toast toggle into a single
                   GLOBAL "Enable diagnostic UI surfaces" checkbox that
