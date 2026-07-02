@@ -505,6 +505,9 @@ let autoContextMode: 'shared' | 'local' = 'local';
 // each holding its (possibly locally-overridden) text, so a disable → re-enable
 // round-trips the local customization. Empty in Shared mode.
 let autoContextHidden: AutoContextEntry[] = [];
+// HS-9219 — the `scope-mode-changed` reload handler, stored so a re-bind removes
+// the prior one (idempotent) and tests can detach it via `_resetAutoContextForTests`.
+let acScopeChangeHandler: (() => void) | null = null;
 /** Stable identity for an auto-context entry (per docs/95 §95.3 / file-settings idOf). */
 const acIdOf = (e: AutoContextEntry): string => `${e.type}:${e.key}`;
 
@@ -533,7 +536,11 @@ function buildHiddenAutoContext(
   return out;
 }
 
-function bindAutoContextSettings() {
+// HS-9219 — exported so the hide → un-hide override round-trip has a DOM test
+// (`autoContextHideOverride.test.ts`) without standing up the whole dialog. It's
+// safe to call once per test with fresh DOM; the `scope-mode-changed` reload
+// listener is re-bound idempotently (see below) + detachable via the reset hook.
+export function bindAutoContextSettings() {
   const list = byId('auto-context-list');
   const addBtn = byId('auto-context-add-btn');
 
@@ -854,7 +861,27 @@ function bindAutoContextSettings() {
   // double-render and detach this list's row closures, breaking in-place edits
   // (the HS-9120 edit→override repaint hit a dead element). The repaint also
   // re-queries the LIVE slot by `data-ac-id` as a belt-and-suspenders.
-  document.addEventListener('hotsheet:scope-mode-changed', () => { void loadEntries(); });
+  // HS-9219 — re-bind idempotently: drop any prior handler so re-invoking
+  // `bindAutoContextSettings` (a re-opened dialog, or a test) never stacks reloads.
+  if (acScopeChangeHandler !== null) document.removeEventListener('hotsheet:scope-mode-changed', acScopeChangeHandler);
+  acScopeChangeHandler = () => { void loadEntries(); };
+  document.addEventListener('hotsheet:scope-mode-changed', acScopeChangeHandler);
+}
+
+/** HS-9219 — test hook: detach the `scope-mode-changed` reload listener + clear the
+ *  module-level editor state, so each DOM test starts from a clean slate. */
+export function _resetAutoContextForTests(): void {
+  if (acScopeChangeHandler !== null) document.removeEventListener('hotsheet:scope-mode-changed', acScopeChangeHandler);
+  acScopeChangeHandler = null;
+  autoContextEntries = [];
+  autoContextShared = [];
+  autoContextMode = 'local';
+  autoContextHidden = [];
+}
+
+/** HS-9219 — test hook: the current in-memory visible entries (post-render state). */
+export function _getAutoContextEntriesForTests(): AutoContextEntry[] {
+  return autoContextEntries;
 }
 
 // --- CLI tool install (Tauri only) ---
