@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 
-import { ErrorBodySchema } from '../schemas.js';
+import { type ClaimConflictInfo, showClaimConflictToast } from './claimConflictToast.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { trackServerRequest } from './serverBusyChip.js';
 import { isShuttingDown } from './shutdownState.js';
@@ -18,18 +18,57 @@ import { getActiveProject } from './state.js';
 // call THAT — do not reintroduce inline `api<{ … }>(path)` type literals here.
 //
 
+interface ParsedErrorBody extends ClaimConflictInfo { message: string; code?: string }
+
 /**
- * HS-8567 — extract the error message from a non-OK response body without
- * an `as` cast. Tolerates malformed JSON / missing `error` key by falling
- * back to a generic status-coded message. Centralized so the three
- * api / apiWithSecret / apiUpload helpers share one parse path.
+ * HS-8567 / HS-9287 — parse a non-OK response body once (JSON can only be read
+ * once) into the error message + the optional `code` / claim-conflict fields.
+ * Tolerates malformed JSON / missing keys by falling back to a status-coded
+ * message. Centralized so the three api / apiWithSecret / apiUpload helpers share
+ * one parse path.
  */
-async function extractErrorMessage(res: Response): Promise<string> {
-  let parsed: unknown;
-  try { parsed = await res.json(); } catch { parsed = null; }
-  const result = ErrorBodySchema.safeParse(parsed);
-  const msg = result.success ? result.data.error : undefined;
-  return msg !== undefined && msg !== '' ? msg : `Server returned ${res.status}`;
+function parseErrorBody(raw: unknown, status: number): ParsedErrorBody {
+  const out: ParsedErrorBody = { message: `Server returned ${String(status)}` };
+  if (raw === null || typeof raw !== 'object') return out;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.error === 'string' && o.error !== '') out.message = o.error;
+  if (typeof o.code === 'string') out.code = o.code;
+  if (typeof o.claimed_by === 'string') out.claimedBy = o.claimed_by;
+  out.workerLabel = typeof o.worker_label === 'string' ? o.worker_label : null;
+  if (Array.isArray(o.conflicts)) {
+    out.conflicts = o.conflicts.flatMap((c): { id: number; claimed_by: string; worker_label: string | null }[] => {
+      if (c === null || typeof c !== 'object') return [];
+      const cr = c as Record<string, unknown>;
+      if (typeof cr.id !== 'number' || typeof cr.claimed_by !== 'string') return [];
+      return [{ id: cr.id, claimed_by: cr.claimed_by, worker_label: typeof cr.worker_label === 'string' ? cr.worker_label : null }];
+    });
+  }
+  return out;
+}
+
+/** HS-9287 — the ticket id from a `/tickets/<id>[/...]` path (for the toast's
+ *  force-release affordance); null for non-ticket or `/tickets/batch` paths. */
+export function ticketIdFromPath(path: string): number | null {
+  const m = /^\/tickets\/(\d+)(?:\/|$)/.exec(path);
+  return m === null ? null : Number(m[1]);
+}
+
+/**
+ * Handle a non-OK response: HS-9287 — a **409 `claimed_by_other`** shows the
+ * clean claim-conflict toast (not the generic Connection-Error overlay), a 5xx
+ * shows the Connection-Error popup, and everything else is silent. Always returns
+ * the `Error` for the caller to throw (so an optimistic UI update reverts).
+ */
+async function handleNotOk(res: Response, path: string): Promise<Error> {
+  let raw: unknown;
+  try { raw = await res.json(); } catch { raw = null; }
+  const body = parseErrorBody(raw, res.status);
+  if (res.status === 409 && body.code === 'claimed_by_other') {
+    showClaimConflictToast(body, ticketIdFromPath(path));
+  } else if (res.status >= 500) {
+    showErrorPopup(body.message);
+  }
+  return new Error(body.message);
 }
 
 /**
@@ -140,11 +179,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
-    if (!res.ok) {
-      const message = await extractErrorMessage(res);
-      if (res.status >= 500) showErrorPopup(message);
-      throw new Error(message);
-    }
+    if (!res.ok) throw await handleNotOk(res, path);
     return await parseResponseBody<T>(res, opts.schema, path);
   } catch (err) {
     if (err instanceof TypeError) {
@@ -171,11 +206,7 @@ export async function apiWithSecret<T = any>(path: string, secret: string, opts:
       method: opts.method,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
-    if (!res.ok) {
-      const message = await extractErrorMessage(res);
-      if (res.status >= 500) showErrorPopup(message);
-      throw new Error(message);
-    }
+    if (!res.ok) throw await handleNotOk(res, path);
     return await parseResponseBody<T>(res, opts.schema, path);
   } catch (err) {
     if (err instanceof TypeError) {
@@ -199,11 +230,7 @@ export async function apiUpload<T>(path: string, file: File, opts: { schema?: z.
       headers['X-Hotsheet-Secret'] = proj.secret;
     }
     const res = await fetch(url, { method: 'POST', body: form, headers });
-    if (!res.ok) {
-      const message = await extractErrorMessage(res);
-      if (res.status >= 500) showErrorPopup(message);
-      throw new Error(message);
-    }
+    if (!res.ok) throw await handleNotOk(res, path);
     return await parseResponseBody<T>(res, opts.schema, path);
   } catch (err) {
     if (err instanceof TypeError) {

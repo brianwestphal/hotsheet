@@ -179,9 +179,19 @@ content edits, not start-work transitions, so they never auto-claim):
 under a worker — the owner force-releases first), and `POST /tickets/batch`
 (all-or-nothing: any held target rejects the whole batch, listing the conflicts;
 `mark_read`/`mark_unread` are read-tracking-exempt). Tests: `api.test.ts`
-"HS-9204 — secondary write routes claim-conflict guard" (9). Still a tracked
-follow-up (HS-9204): a clean UI "held by worker-N" conflict toast (§4 remaining),
-the owner-auto-claim TTL review, and the pool-UI owner-filter decision.
+"HS-9204 — secondary write routes claim-conflict guard" (9).
+
+**UI conflict toast (HS-9287).** The client api transport (`src/client/api.tsx`)
+intercepts a **409 `claimed_by_other`** and, instead of the generic Connection-
+Error overlay, shows a clean toast via `claimConflictToast.tsx`: **"Held by
+`<worker>` — force-release to take it"** with a **Force-release** action (calls
+`releaseTicket(id)` with no `worker` → owner override; the release route's
+`claims-changed` sync refreshes the chip/pool). A batch conflict lists how many
+targets are held (resolve in the pool UI — no single force-release). `handleNotOk`
+routes 409-conflict → toast, 5xx → the Connection-Error popup. Tests:
+`claimConflictToast.test.tsx` (5) + `api.test.tsx::ticketIdFromPath` (2). Still a
+tracked follow-up (HS-9204): the owner-auto-claim TTL review + the pool-UI
+owner-filter decision.
 
 ### 90.2.3 Atomic `claim-next` + selection policy
 
