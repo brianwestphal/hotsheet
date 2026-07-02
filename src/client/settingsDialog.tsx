@@ -9,13 +9,12 @@ import { bindViewsTab } from './customViews.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
-import { copyJsonToClipboard, newEntriesById, parsePastedEntries, readClipboardJsonOrPrompt } from './settingsClipboard.js';
-import { showToast } from './toast.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
 import { ICON_UNDO_2 } from './icons.js';
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
+import { copyJsonToClipboard, newEntriesById, parsePastedEntries, readClipboardJsonOrPrompt } from './settingsClipboard.js';
 import { restoreLastSettingsTab, setLastSettingsTab } from './settingsLastTab.js';
 import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
 import { loadScopedList, renderScopeListHint, saveScopedList } from './settingsScopeList.js';
@@ -25,6 +24,7 @@ import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
 import { bindClearTelemetryButton, resetClearTelemetryStatus } from './telemetryClearUI.js';
 import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
 import { isTerminalWebglOptOut, isWebgl2Available, setTerminalWebglOptOut } from './terminalWebgl.js';
+import { showToast } from './toast.js';
 
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindTabSwitching();
