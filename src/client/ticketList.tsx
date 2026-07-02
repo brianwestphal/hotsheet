@@ -5,7 +5,7 @@ import { captureSnapshot, flipAnimate } from './animate.js';
 import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { focusDraftInput as _focusDraftInput, syncNewTicketHost } from './draftRow.js';
+import { focusDraftInput as _focusDraftInput, syncNewTicketHost, updateDraftHero } from './draftRow.js';
 import { effect } from './reactive.js';
 import { bindListVirtualized } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
@@ -308,6 +308,13 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
       } else {
         emptyEl.style.display = 'none';
       }
+    });
+  } else {
+    // HS-9291 (C) — the default list has no empty MESSAGE, but its new-ticket input
+    // becomes the empty-state HERO when the view is empty. Drive it off the same
+    // narrowed `filteredTickets` signal (a view switch remounts + re-runs this).
+    listViewEmptyEffectDispose = effect(() => {
+      updateDraftHero(filteredTickets.value.length === 0);
     });
   }
 

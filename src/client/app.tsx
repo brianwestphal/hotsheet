@@ -23,6 +23,7 @@ import { closeDetail, initResize, refreshDetail, selectAndOpenDetail } from './d
 import { bindDetailPanel } from './detailBindings/panel.js';
 import { bindDetailPositionToggle, updateDetailPositionToggle } from './detailBindings/positionToggle.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
+import { maybePulseDraftInput } from './draftRow.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { hasGlassboxReviewableChanges } from './glassboxReview.js';
@@ -410,6 +411,10 @@ async function init() {
 
     // Auto-focus the draft input on load.
     focusDraftInput();
+    // HS-9291 (D) — one-shot spotlight pulse on the new-ticket input on app launch,
+    // to draw a returning user's eye to the (otherwise subtle) input. No-ops when
+    // the empty-state hero (C) is showing — that's its own, louder attention-draw.
+    maybePulseDraftInput();
   } catch (err) {
     console.error('Hot Sheet init failed:', err);
     const el = byIdOrNull('ticket-list');

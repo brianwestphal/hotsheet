@@ -3884,6 +3884,85 @@ body.cross-project-stats-active {
     color: var(--text-muted);
     font-style: italic;
   }
+
+  // HS-9291 (C) — the hero heading + subtext are hidden in the normal subtle row;
+  // only the empty-state hero (below) reveals them.
+  .draft-hero-heading,
+  .draft-hero-subtext {
+    display: none;
+  }
+
+  // HS-9291 (C) — EMPTY-STATE HERO. On the main views (open / up-next) with no
+  // tickets — the "new user" moment — the input becomes a prominent, accent-tinted
+  // card with a heading + Enter hint, so it's impossible to miss. Relaxes back to
+  // the subtle row above the instant a ticket exists (the `.draft-row-hero` class
+  // is toggled reactively off `filteredTickets`).
+  &.draft-row-hero {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 22px 16px;
+    margin: 4px 0 10px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+    border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+    border-radius: 10px;
+    text-align: center;
+
+    .draft-hero-heading {
+      display: block;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .draft-hero-subtext {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+
+      kbd {
+        font-family: inherit;
+        font-size: 11px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+      }
+    }
+
+    // The input pill: full-width up to a readable max, on a solid fill so it stands
+    // out against the tinted card, with the type badge un-dimmed (it reads as active).
+    .draft-entry {
+      width: 100%;
+      max-width: 440px;
+      padding: 8px 12px;
+      background: var(--bg);
+      border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+
+      &:focus-within {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+      }
+    }
+
+    .draft-badge { opacity: 1; }
+    .draft-input::placeholder { font-style: normal; }
+  }
+
+  // HS-9291 (D) — one-shot spotlight pulse played once per app launch (when the
+  // hero ISN'T showing) to draw a returning user's eye to the subtle input.
+  .draft-entry.draft-pulse {
+    animation: draft-pulse-glow 1.4s ease-in-out;
+  }
+}
+
+@keyframes draft-pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; border-color: var(--border); }
+  30%, 55% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent);
+    border-color: var(--accent);
+  }
 }
 
 .ticket-checkbox-spacer {
