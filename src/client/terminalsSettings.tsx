@@ -3,7 +3,7 @@ import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2 } from './icons.js';
 import { delegate } from './reactive.js';
-import { loadScopedList, saveScopedList, scopeListHintElement } from './settingsScopeList.js';
+import { loadScopedList, moveScopedListItem, saveScopedList, scopeListHintElement } from './settingsScopeList.js';
 import { getActiveProject } from './state.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
@@ -367,6 +367,15 @@ function ensureRowDelegationBound(list: HTMLElement): void {
     const i = rowIndexOf(btn);
     if (i >= 0) resetTerminalToShared(i);
   }));
+  // HS-9209 — shared↔local move.
+  rowDelegateDisposers.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-move-btn', (e, btn) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const i = rowIndexOf(btn);
+    if (i < 0) return;
+    const direction = btn.dataset.move === 'to-shared' ? 'to-shared' : 'to-local';
+    void moveTerminal(i, direction);
+  }));
   // HS-9125 — Re-enable a locally-hidden shared terminal (the hidden row carries
   // its id in `data-term-id`, not a `terminals[]` index).
   rowDelegateDisposers.push(delegate<HTMLElement>(list, 'click', '.term-reenable-btn', (e, btn) => {
@@ -407,6 +416,28 @@ function ensureRowDelegationBound(list: HTMLElement): void {
   }));
 }
 
+/** HS-9209 — the trailing shared↔local move button. A `local` terminal promotes
+ *  to shared (↑); a `shared`/`overridden` terminal demotes to local (↓). `origin`
+ *  is `'shared'` for every row in Shared mode, so that editor offers demote-to-local. */
+function renderMoveBtn(origin: 'local' | 'shared' | 'overridden') {
+  const toShared = origin === 'local';
+  const direction = toShared ? 'to-shared' : 'to-local';
+  const title = toShared ? 'Move to Shared (commit for the team)' : 'Move to Local (make this machine-only)';
+  return <button type="button" className="cmd-outline-move-btn" data-move={direction} title={title} aria-label={title}>{toShared ? '↑' : '↓'}</button>;
+}
+
+/** HS-9209 — move a terminal between the shared + local layers, then reload the
+ *  editor so the origin tag / move direction reflect the new home. */
+async function moveTerminal(index: number, direction: 'to-shared' | 'to-local'): Promise<void> {
+  const id = termIdOf(terminals[index]);
+  if (id === '') return;
+  await moveScopedListItem<EditableTerminalConfig>('terminals', termIdOf, id, direction);
+  await loadAndRenderTerminalsSettings();
+  // Refresh the live drawer terminal strip so a promoted/demoted terminal keeps rendering.
+  const { refreshTerminalsAfterSettingsChange } = await import('./terminal.js');
+  await refreshTerminalsAfterSettingsChange();
+}
+
 function renderRow(index: number): HTMLElement {
   const entry = terminals[index];
   const displayName = entry.name !== undefined && entry.name !== '' ? entry.name : '(unnamed)';
@@ -430,6 +461,10 @@ function renderRow(index: number): HTMLElement {
           mode) keeps the trash delete. Same `.cmd-outline-delete-btn` handler —
           `handleDelete` hides a shared terminal, deletes a local one. */}
       <button type="button" className="cmd-outline-delete-btn" title={isSharedHere ? 'Hide on this machine' : 'Delete'} aria-label={isSharedHere ? 'Hide on this machine' : 'Delete'}>{isSharedHere ? ICON_EYE_OFF : TRASH_ICON}</button>
+      {/* HS-9209 — shared↔local move (mirrors the custom-commands move button):
+          a local-only terminal offers ↑ "Move to Shared"; a shared/overridden one
+          offers ↓ "Move to Local". */}
+      {renderMoveBtn(origin)}
     </div>
   );
 
@@ -443,6 +478,7 @@ function renderRow(index: number): HTMLElement {
   row.querySelector('.cmd-outline-edit-btn')?.addEventListener('mousedown', swallow);
   row.querySelector('.cmd-outline-delete-btn')?.addEventListener('mousedown', swallow);
   row.querySelector('.term-reset-btn')?.addEventListener('mousedown', swallow);
+  row.querySelector('.cmd-outline-move-btn')?.addEventListener('mousedown', swallow);
 
   return row;
 }

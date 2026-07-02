@@ -15,8 +15,8 @@
  * Editors should reload on the `hotsheet:scope-mode-changed` event + on dialog
  * open, and render an origin hint so the user can tell shared from local items.
  */
-import { getLayeredFileSettings, updateFileSettingsLayer } from '../api/index.js';
-import { type ArrayDelta, computeArrayDelta, isArrayDelta } from '../settingsDelta.js';
+import { clearLocalSettingOverride, getLayeredFileSettings, updateFileSettingsLayer } from '../api/index.js';
+import { type ArrayDelta, computeArrayDelta, isArrayDelta, moveArrayItemToLocal, moveArrayItemToShared } from '../settingsDelta.js';
 import { toElement } from './dom.js';
 import { getScopeMode } from './settingsScope.js';
 
@@ -98,5 +98,42 @@ export async function saveScopedList<T>(
     const all = [...edited, ...hidden];
     const delta = computeArrayDelta(shared, all, idOf, hidden.map(idOf));
     await updateFileSettingsLayer('local', { [key]: delta });
+  }
+}
+
+/**
+ * HS-9209 — move ONE item of a scoped list between the shared and local layers,
+ * editing both layer files (mirrors the custom-commands `moveCommandLayer`):
+ *  - `to-shared` promotes a local-only addition into the committed `settings.json`.
+ *  - `to-local` demotes a shared item to machine-only (drops it from `settings.json`,
+ *    adds it as a local addition folding in any local override).
+ *
+ * Reads the layers fresh (so it's independent of the editor's in-memory state),
+ * applies the pure {@link moveArrayItemToShared}/{@link moveArrayItemToLocal}, then
+ * writes the shared array + the local delta (clearing the local key entirely when
+ * the delta empties, so a stray `{}` doesn't linger). The caller reloads + rerenders.
+ *
+ * `T` parameterizes `idOf` so a caller's `(item: SpecificType) => string` type-checks;
+ * the list values themselves cross the wire as `unknown`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- T is for caller idOf ergonomics (see above); `unknown` would break contravariance.
+export async function moveScopedListItem<T>(
+  key: string,
+  idOf: (item: T) => string,
+  id: string,
+  direction: 'to-shared' | 'to-local',
+): Promise<void> {
+  const layered = await getLayeredFileSettings();
+  const shared = asArray(layered.shared[key]) as T[];
+  const localRaw: unknown = layered.local[key];
+  const delta: ArrayDelta<T> = isArrayDelta(localRaw) ? (localRaw as ArrayDelta<T>) : {};
+  const next = direction === 'to-shared'
+    ? moveArrayItemToShared(shared, delta, id, idOf)
+    : moveArrayItemToLocal(shared, delta, id, idOf);
+  await updateFileSettingsLayer('shared', { [key]: next.shared });
+  if (Object.keys(next.delta).length === 0) {
+    await clearLocalSettingOverride([key]);
+  } else {
+    await updateFileSettingsLayer('local', { [key]: next.delta });
   }
 }

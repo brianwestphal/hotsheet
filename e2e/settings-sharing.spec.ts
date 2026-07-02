@@ -484,6 +484,48 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(row.locator('.scope-tag')).toContainText('shared', { timeout: 5000 });
   });
 
+  // HS-9209 — the terminals editor now has the same shared↔local move button as
+  // custom commands: a shared terminal demotes to local, a local one promotes.
+  test('HS-9209: move a terminal between shared and local layers', async ({ page }) => {
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'shared', settings: { terminals: [
+        { id: 'sh-a', name: 'Shell A', command: 'zsh' },
+        { id: 'sh-b', name: 'Shell B', command: 'bash' },
+      ] } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.request.patch('/api/file-settings/layer', {
+      data: { layer: 'local', settings: { terminals: { added: [
+        { id: 'lo-g', name: 'Local G', command: 'fish' },
+      ] } } },
+      headers: { Origin: page.url().replace(/\/[^/]*$/, '') },
+    });
+    await page.locator('#settings-close').click();
+    await page.locator('#settings-btn').click();
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await page.locator('.settings-tab[data-tab="terminal"]').click();
+
+    const list = page.locator('#settings-terminals-list');
+    await expect(list.locator('.settings-terminal-row').filter({ hasText: 'Shell B' })).toBeVisible({ timeout: 5000 });
+
+    // (a) Demote the SHARED "Shell B" to local via its ↓ move button.
+    await list.locator('.settings-terminal-row').filter({ hasText: 'Shell B' }).locator('.cmd-outline-move-btn').click();
+    await page.waitForTimeout(500);
+    let layered = await (await page.request.get('/api/file-settings/layered')).json() as {
+      shared: { terminals?: { id: string }[] };
+      local: { terminals?: { added?: { id: string }[] } };
+    };
+    expect((layered.shared.terminals ?? []).map(t => t.id)).toEqual(['sh-a']);     // B left shared
+    expect((layered.local.terminals?.added ?? []).map(t => t.id)).toContain('sh-b');
+
+    // (b) Promote the LOCAL "Local G" to shared via its ↑ move button.
+    await list.locator('.settings-terminal-row').filter({ hasText: 'Local G' }).locator('.cmd-outline-move-btn').click();
+    await page.waitForTimeout(500);
+    layered = await (await page.request.get('/api/file-settings/layered')).json();
+    expect((layered.shared.terminals ?? []).map(t => t.id)).toContain('lo-g');      // G promoted
+    expect((layered.local.terminals?.added ?? []).map(t => t.id)).not.toContain('lo-g');
+  });
+
   test('HS-9125: hide a shared terminal locally → disabled row + Re-enable', async ({ page }) => {
     await page.request.patch('/api/file-settings/layer', {
       data: { layer: 'shared', settings: { terminals: [

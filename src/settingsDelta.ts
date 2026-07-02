@@ -130,3 +130,77 @@ export function computeArrayDelta<T>(
   if (Object.keys(overrides).length > 0) delta.overrides = overrides;
   return delta;
 }
+
+// --- Shared ↔ Local layer moves (HS-9209 — mirror the custom-commands move in
+// `settingsCommandDelta.ts`, but for the FLAT ArrayDelta lists: terminals /
+// custom_views / auto_context. A move edits BOTH layer files together — the
+// shared array (`settings.json`) and the local delta (`settings.local.json`) —
+// so a local-only item becomes committed for the team, or a shared item becomes
+// machine-only. Pure (no fs/DOM); the client wraps them in `moveScopedListItem`.
+
+function cloneArrayDelta<T>(delta: ArrayDelta<T>): ArrayDelta<T> {
+  const out: ArrayDelta<T> = {};
+  if (delta.hidden !== undefined) out.hidden = [...delta.hidden];
+  if (delta.added !== undefined) out.added = [...delta.added];
+  if (delta.overrides !== undefined) out.overrides = { ...delta.overrides };
+  return out;
+}
+
+/** Drop empty delta fields so a move that empties the delta yields `{}` (which
+ *  the client persists as "clear the local override"). */
+function pruneArrayDelta<T>(delta: ArrayDelta<T>): ArrayDelta<T> {
+  const out: ArrayDelta<T> = {};
+  if (delta.hidden !== undefined && delta.hidden.length > 0) out.hidden = delta.hidden;
+  if (delta.added !== undefined && delta.added.length > 0) out.added = delta.added;
+  if (delta.overrides !== undefined && Object.keys(delta.overrides).length > 0) out.overrides = delta.overrides;
+  return out;
+}
+
+function omitKey<V>(rec: Record<string, V>, key: string): Record<string, V> {
+  const out: Record<string, V> = {};
+  for (const [k, v] of Object.entries(rec)) if (k !== key) out[k] = v;
+  return out;
+}
+
+/**
+ * Promote a LOCAL-only item into the SHARED layer ("commit for the team"):
+ * append it to the shared array and drop it from the local delta's `added`.
+ * No-op (returns clones) if `id` isn't a local-only addition. Pure.
+ */
+export function moveArrayItemToShared<T>(
+  shared: readonly T[],
+  delta: ArrayDelta<T>,
+  id: string,
+  idOf: (item: T) => string,
+): { shared: T[]; delta: ArrayDelta<T> } {
+  const added = delta.added ?? [];
+  const idx = added.findIndex((i) => idOf(i) === id);
+  if (idx < 0) return { shared: [...shared], delta: cloneArrayDelta(delta) };
+  const next = cloneArrayDelta(delta);
+  next.added = added.filter((_, i) => i !== idx);
+  return { shared: [...shared, added[idx]], delta: pruneArrayDelta(next) };
+}
+
+/**
+ * Demote a SHARED item into the LOCAL layer ("machine-only"): remove it from the
+ * shared array (so it leaves `settings.json`) and add it as a local `added` item,
+ * folding in any existing local `overrides[id]` so the machine-local customization
+ * is preserved. Its `hidden`/`overrides` delta entries are dropped (they targeted
+ * the now-removed shared item). No-op if `id` isn't a shared item. Pure.
+ */
+export function moveArrayItemToLocal<T>(
+  shared: readonly T[],
+  delta: ArrayDelta<T>,
+  id: string,
+  idOf: (item: T) => string,
+): { shared: T[]; delta: ArrayDelta<T> } {
+  const idx = shared.findIndex((i) => idOf(i) === id);
+  if (idx < 0) return { shared: [...shared], delta: cloneArrayDelta(delta) };
+  const next = cloneArrayDelta(delta);
+  const override = next.overrides?.[id];
+  const localItem: T = override !== undefined ? { ...shared[idx], ...override } : shared[idx];
+  if (next.hidden !== undefined) next.hidden = next.hidden.filter((h) => h !== id);
+  if (next.overrides !== undefined) next.overrides = omitKey(next.overrides, id);
+  next.added = [...(next.added ?? []), localItem];
+  return { shared: shared.filter((_, i) => i !== idx), delta: pruneArrayDelta(next) };
+}

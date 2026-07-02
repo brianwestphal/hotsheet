@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type ArrayDelta, computeArrayDelta, isArrayDelta, resolveDeltaArray } from './settingsDelta.js';
+import { type ArrayDelta, computeArrayDelta, isArrayDelta, moveArrayItemToLocal, moveArrayItemToShared, resolveDeltaArray } from './settingsDelta.js';
 
 interface Item { id: string; name: string; n?: number }
 const idOf = (i: Item): string => i.id;
@@ -145,6 +145,72 @@ describe('computeArrayDelta', () => {
     it('ignores force-hidden ids that are not shared items', () => {
       const delta = computeArrayDelta(shared, [...shared], idOf, ['nonexistent']);
       expect(delta.hidden).toBeUndefined();
+    });
+  });
+});
+
+describe('moveArrayItemToShared / moveArrayItemToLocal (HS-9209)', () => {
+  describe('moveArrayItemToShared', () => {
+    it('promotes a local-only addition into the shared array + drops it from added', () => {
+      const delta: ArrayDelta<Item> = { added: [{ id: 'x', name: 'Local X' }, { id: 'y', name: 'Local Y' }] };
+      const out = moveArrayItemToShared(shared, delta, 'y', idOf);
+      expect(out.shared.map(i => i.id)).toEqual(['a', 'b', 'c', 'y']); // appended
+      expect(out.delta.added?.map(i => i.id)).toEqual(['x']); // y removed
+    });
+
+    it('empties the delta (prunes `added`) when the last local item is promoted', () => {
+      const delta: ArrayDelta<Item> = { added: [{ id: 'x', name: 'Local X' }] };
+      const out = moveArrayItemToShared(shared, delta, 'x', idOf);
+      expect(out.shared.map(i => i.id)).toEqual(['a', 'b', 'c', 'x']);
+      expect(out.delta).toEqual({}); // pruned → caller clears the local override
+    });
+
+    it('is a no-op when the id is not a local addition (e.g. a shared id)', () => {
+      const delta: ArrayDelta<Item> = { added: [{ id: 'x', name: 'X' }] };
+      const out = moveArrayItemToShared(shared, delta, 'a', idOf);
+      expect(out.shared.map(i => i.id)).toEqual(['a', 'b', 'c']); // unchanged
+      expect(out.delta.added?.map(i => i.id)).toEqual(['x']);
+    });
+  });
+
+  describe('moveArrayItemToLocal', () => {
+    it('demotes a shared item into `added` + removes it from shared', () => {
+      const out = moveArrayItemToLocal(shared, {}, 'b', idOf);
+      expect(out.shared.map(i => i.id)).toEqual(['a', 'c']); // b removed
+      expect(out.delta.added).toEqual([{ id: 'b', name: 'Beta' }]);
+    });
+
+    it('folds a local override into the demoted item + drops its override/hidden entries', () => {
+      const delta: ArrayDelta<Item> = { overrides: { b: { name: 'Beta-custom' } }, hidden: ['b'] };
+      const out = moveArrayItemToLocal(shared, delta, 'b', idOf);
+      expect(out.shared.map(i => i.id)).toEqual(['a', 'c']);
+      // The added item carries the local customization, not the bare shared value.
+      expect(out.delta.added).toEqual([{ id: 'b', name: 'Beta-custom' }]);
+      expect(out.delta.overrides).toBeUndefined();
+      expect(out.delta.hidden).toBeUndefined();
+    });
+
+    it('preserves unrelated delta entries when demoting one shared item', () => {
+      const delta: ArrayDelta<Item> = { overrides: { a: { name: 'A2' } }, hidden: ['c'], added: [{ id: 'z', name: 'Z' }] };
+      const out = moveArrayItemToLocal(shared, delta, 'b', idOf);
+      expect(out.delta.overrides).toEqual({ a: { name: 'A2' } });
+      expect(out.delta.hidden).toEqual(['c']);
+      expect(out.delta.added?.map(i => i.id)).toEqual(['z', 'b']); // b appended after existing adds
+    });
+
+    it('is a no-op when the id is not a shared item', () => {
+      const delta: ArrayDelta<Item> = { added: [{ id: 'z', name: 'Z' }] };
+      const out = moveArrayItemToLocal(shared, delta, 'z', idOf);
+      expect(out.shared.map(i => i.id)).toEqual(['a', 'b', 'c']);
+      expect(out.delta.added?.map(i => i.id)).toEqual(['z']);
+    });
+
+    it('round-trips: demote a shared item then promote it back restores the shared list', () => {
+      const demoted = moveArrayItemToLocal(shared, {}, 'b', idOf);
+      const restored = moveArrayItemToShared(demoted.shared, demoted.delta, 'b', idOf);
+      // 'b' ends up appended (local layer can't reorder shared items — docs/95 §95.3).
+      expect(new Set(restored.shared.map(i => i.id))).toEqual(new Set(['a', 'b', 'c']));
+      expect(restored.delta).toEqual({});
     });
   });
 });
