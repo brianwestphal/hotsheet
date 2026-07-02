@@ -18,10 +18,12 @@
 
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull } from './dom.js';
+import { getActiveProject } from './state.js';
 import type { TerminalInstance } from './terminal.js';
 import { openRenameDialog } from './terminal/renameDialog.js';
 import { showTabContextMenu as showSharedTabContextMenu } from './terminal/tabContextMenu.js';
 import { tabDisplayName, updateTabLabel } from './terminalInstanceLabel.js';
+import { setTransientTerminalName } from './terminalTransientNames.js';
 
 interface TabContextMenuHooks {
   /** Lookup the per-instance state for an id. Returns undefined for ids
@@ -170,6 +172,9 @@ function promptRenameTerminal(inst: TerminalInstance): void {
         inst.config = { ...inst.config, name: next };
       }
       updateTabLabel(inst);
+      // HS-9277 — publish the transient rename so the dashboard tile (which
+      // renders from its own server config fetch, not this instance) reflects it.
+      setTransientTerminalName(getActiveProject()?.secret ?? '', inst.id, next);
     },
   });
 }

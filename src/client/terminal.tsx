@@ -49,6 +49,7 @@ import {
 } from './terminalShellIntegration.js';
 import { initTabContextMenu } from './terminalTabContextMenu.js';
 import { initTabDragDrop } from './terminalTabDragDrop.js';
+import { clearTransientTerminalNames } from './terminalTransientNames.js';
 
 export type { TerminalInstance,TerminalTabConfig } from './terminalInstance.js';
 
@@ -464,6 +465,10 @@ export function onProjectSwitch(): void {
   disposeAllInstances();
   terminalState.currentProjectSecret = null;
   terminalState.lastKnownConfigs = { configured: [], dynamic: [] };
+  // HS-9277 — transient terminal renames are session + project-scoped: a
+  // project-tab switch restores configured names (HS-6668), so clear them here
+  // (both the drawer tab strip and the dashboard read this shared store).
+  clearTransientTerminalNames();
 }
 
 // --- Dynamic terminal lifecycle (HS-6306) ---

@@ -17,6 +17,7 @@ import { openRenameDialog } from './terminal/renameDialog.js';
 import type { TerminalListEntry } from './terminalDashboardState.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { type TileEntry } from './terminalTileGrid.js';
+import { getTransientTerminalName, setTransientTerminalName } from './terminalTransientNames.js';
 
 /**
  * Build a `(terminal: TerminalListEntry) => TileEntry` mapper closed over
@@ -31,7 +32,7 @@ export function toTileEntry(secret: string) {
     return {
       id: terminal.id,
       secret,
-      label: tileLabel(terminal),
+      label: tileLabel(terminal, secret),
       state: terminal.state ?? 'not_spawned',
       exitCode: terminal.exitCode ?? null,
       bellPending: terminal.bellPending,
@@ -45,7 +46,15 @@ export function toTileEntry(secret: string) {
   };
 }
 
-export function tileLabel(terminal: TerminalListEntry): string {
+export function tileLabel(terminal: TerminalListEntry, secret?: string): string {
+  // HS-9277 — a transient rename (from either the drawer or a dashboard tile,
+  // keyed by project secret) wins over the configured/derived name so a rename in
+  // one surface shows in the other. Undefined `secret` (a few label-only callers)
+  // just skips the lookup.
+  if (secret !== undefined) {
+    const transient = getTransientTerminalName(secret, terminal.id);
+    if (transient !== undefined) return transient;
+  }
   if (typeof terminal.name === 'string' && terminal.name !== '') return terminal.name;
   const word = terminal.command.trim().split(/\s+/)[0] ?? '';
   const clean = word.replace(/^{{|}}$/g, '');
@@ -56,8 +65,8 @@ export function tileLabel(terminal: TerminalListEntry): string {
 
 /** HS-7661 — alias used by the hide-dialog opener so the call site reads
  *  clearly. Returns the same display label the tile shows. */
-export function tileEntryLabel(terminal: TerminalListEntry): string {
-  return tileLabel(terminal);
+export function tileEntryLabel(terminal: TerminalListEntry, secret?: string): string {
+  return tileLabel(terminal, secret);
 }
 
 /**
@@ -222,6 +231,10 @@ export function openDashboardTileRename(entry: TileEntry): void {
         else labelEl.textContent = resolved;
         labelEl.setAttribute('title', resolved);
       }
+      // HS-9277 — publish the transient rename (keyed by this tile's project
+      // secret) so it survives a dashboard refresh + shows on the drawer tab.
+      // Empty input clears the override (reverts to the configured name).
+      setTransientTerminalName(entry.secret, entry.id, next);
     },
   });
 }

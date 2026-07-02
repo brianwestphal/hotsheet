@@ -213,7 +213,7 @@ export function initTerminalDashboard(): void {
       groups: dashboardState.lastSectionData.map(s => ({
         secret: s.project.secret,
         name: s.project.name,
-        terminals: s.terminals.map(t => ({ id: t.id, name: tileEntryLabel(t) })),
+        terminals: s.terminals.map(t => ({ id: t.id, name: tileEntryLabel(t, s.project.secret) })),
       })),
     });
   });
