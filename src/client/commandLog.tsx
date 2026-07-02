@@ -73,7 +73,13 @@ function noteDrawerStateMutation(): void {
 // races the most concurrent startup activity. Tracking a user TAB choice apart
 // from open/close lets the tab default still apply when only open/close moved.
 let userTabSwitchEpoch = 0;
-function noteUserTabSwitch(): void {
+/** Bump the user-tab-selection epoch. Exported (HS-9274) so a user-initiated
+ *  drawer-tab activation raised from OUTSIDE the click delegate — creating a
+ *  terminal via the drawer "+" button, or "run in a new terminal" — also counts
+ *  as an authoritative tab choice, so an in-flight `applyPerProjectDrawerState`
+ *  restore doesn't override it back to the saved/default tab (the activation-race
+ *  clobber where a freshly-created terminal loses its active tab). */
+export function noteUserTabSwitch(): void {
   userTabSwitchEpoch++;
 }
 /** HS-8318 — top-level bindList disposer + per-row effect cleanups for

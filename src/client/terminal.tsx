@@ -483,6 +483,11 @@ async function createDynamicTerminal(): Promise<void> {
       hideNewTerminalInNonDefaultGroupings(active.secret, config.id);
     }
     await loadAndRenderTerminalTabs();
+    // HS-9274 — clicking "+" is an authoritative user tab choice: mark it so an
+    // in-flight `applyPerProjectDrawerState` restore (boot / project switch) can't
+    // clobber the new terminal's activation back to the saved/default tab.
+    const { noteUserTabSwitch } = await import('./commandLog.js');
+    noteUserTabSwitch();
     await selectDrawerTab(`terminal:${config.id}`);
   } catch { /* ignore */ }
 }
@@ -507,6 +512,10 @@ export async function openTerminalRunningCommand(command: string, name?: string,
   }
   await loadAndRenderTerminalTabs();
   const mod = await import('./commandLog.js');
+  // HS-9274 — same as the "+" path: launching a command in a new terminal is a
+  // user-initiated tab activation, so mark it authoritative against an in-flight
+  // drawer-state restore.
+  mod.noteUserTabSwitch();
   mod.openDrawerTab(`terminal:${config.id}`);
   // HS-8962 — returns the new terminal id so the worker-pool panel can register +
   // later close it on drain. Existing void-ignoring callers are unaffected.
