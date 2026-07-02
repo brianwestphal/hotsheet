@@ -1,4 +1,4 @@
-import { getReviewProof, launchGlassbox, type ReviewProofAttachment, type ReviewProofNote } from '../api/index.js';
+import { getReviewProof, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 
@@ -121,7 +121,16 @@ function renderNote(note: ReviewProofNote): HTMLElement {
     detail.appendChild(list);
   }
   const openBtn = toElement(<button type="button" className="review-proof-open-glassbox">Open in Glassbox</button>);
-  openBtn.addEventListener('click', () => { void launchGlassbox(); });
+  openBtn.addEventListener('click', () => {
+    // HS-9295 — deep-link: open Glassbox focused on the note's anchored FILE (where
+    // Glassbox renders its `.pr-notes/` note), via the `files`-mode review. Fall
+    // back to the generic open when the note carries no location.
+    if (note.file !== null && note.file !== '') {
+      void reviewInGlassbox({ mode: 'files', patterns: [note.file] });
+    } else {
+      void launchGlassbox();
+    }
+  });
   detail.appendChild(openBtn);
 
   head.addEventListener('click', () => {

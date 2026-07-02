@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReviewProofNote } from '../api/reviewProof.js';
 
 const getReviewProof = vi.fn<(t: string) => Promise<{ notes: ReviewProofNote[] }>>();
-vi.mock('../api/index.js', () => ({ getReviewProof: (t: string) => getReviewProof(t) }));
+const reviewInGlassbox = vi.fn<(req: unknown) => Promise<{ ok: true }>>(() => Promise.resolve({ ok: true as const }));
+const launchGlassbox = vi.fn<() => Promise<{ ok: true }>>(() => Promise.resolve({ ok: true as const }));
+vi.mock('../api/index.js', () => ({
+  getReviewProof: (t: string) => getReviewProof(t),
+  reviewInGlassbox: (req: unknown) => reviewInGlassbox(req),
+  launchGlassbox: () => launchGlassbox(),
+}));
 
 const { loadAndRenderReviewProof, clearReviewProof, _resetReviewProofForTests } = await import('./reviewProofSection.js');
 
@@ -29,6 +35,8 @@ beforeEach(() => {
   _resetReviewProofForTests();
   document.body.innerHTML = '<div id="detail-review-proof"></div>';
   getReviewProof.mockReset();
+  reviewInGlassbox.mockClear();
+  launchGlassbox.mockClear();
 });
 afterEach(() => { document.body.innerHTML = ''; });
 
@@ -88,6 +96,22 @@ describe('reviewProofSection (HS-9293)', () => {
     const detailAfter = container().querySelector<HTMLElement>('.review-proof-note-detail')!;
     expect(detailAfter).toBe(detailBefore); // same node — not repainted
     expect(detailAfter.hasAttribute('hidden')).toBe(false); // still expanded
+  });
+
+  it('Open-in-Glassbox deep-links to the note file via a files-mode review (HS-9295)', async () => {
+    getReviewProof.mockResolvedValue({ notes: [note()] }); // file: 'src/x.ts'
+    await loadAndRenderReviewProof('HS-1234');
+    container().querySelector<HTMLElement>('.review-proof-open-glassbox')!.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'files', patterns: ['src/x.ts'] });
+    expect(launchGlassbox).not.toHaveBeenCalled();
+  });
+
+  it('Open-in-Glassbox falls back to the generic open when the note has no file', async () => {
+    getReviewProof.mockResolvedValue({ notes: [note({ file: null })] });
+    await loadAndRenderReviewProof('HS-1234');
+    container().querySelector<HTMLElement>('.review-proof-open-glassbox')!.click();
+    expect(launchGlassbox).toHaveBeenCalled();
+    expect(reviewInGlassbox).not.toHaveBeenCalled();
   });
 
   it('clearReviewProof empties the section', async () => {

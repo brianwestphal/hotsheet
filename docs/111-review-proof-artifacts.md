@@ -86,9 +86,11 @@ requirement), while a URL ending in the id still matches.
     LFS)" note), text attachments fetched **lazily on first expand** and inlined in a
     scroll-capped `<pre>`, plus a per-note **"Open in Glassbox"** (`launchGlassbox`).
     `reviewProofSection.test.ts` (image render + Open-in-Glassbox; lazy text fetch).
-  - **Open decision (deferred):** the per-note Open-in-Glassbox currently uses the
-    generic `launchGlassbox()` (no-arg open). A `file:line`-anchored deep-link (via
-    the existing `files`-mode `GlassboxReviewReq`) is a small follow-up if wanted.
+  - **Deep-link (HS-9295):** the per-note "Open in Glassbox" opens Glassbox focused
+    on the note's anchored **file** via a `files`-mode `reviewInGlassbox` review
+    (Glassbox renders its `.pr-notes/` note for a file it's showing); it falls back
+    to the generic `launchGlassbox()` when the note carries no location. (Line-level
+    anchoring would need a Glassbox CLI arg it doesn't expose today.)
 
 ## 111.5 Non-goals (inherited from docs/110 §110.6)
 
