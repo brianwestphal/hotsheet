@@ -153,8 +153,20 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
     const rows = list.querySelectorAll('.permission-allow-rule-row');
     expect(rows.length).toBe(2);
     for (const row of rows) {
-      expect(row.querySelector('.permission-allow-edit')).not.toBeNull();
-      expect(row.querySelector('.permission-allow-delete')).not.toBeNull();
+      const editBtn = row.querySelector<HTMLButtonElement>('.cmd-outline-edit-btn')!;
+      const deleteBtn = row.querySelector<HTMLButtonElement>('.cmd-outline-delete-btn')!;
+      expect(editBtn).not.toBeNull();
+      expect(deleteBtn).not.toBeNull();
+      // HS-9284 — the buttons must carry ONLY the shared `cmd-outline-*-btn`
+      // classes. The old `permission-allow-edit` / `permission-allow-delete`
+      // hooks were removed because `permission-allow-delete` still matched a
+      // legacy grid rule (`padding: 2px 8px`) that squeezed the icon inside the
+      // fixed 24×24 border-box button, making the trash icon render much smaller
+      // than the identical buttons in the custom-command / terminal tabs.
+      expect(editBtn.className).toBe('cmd-outline-edit-btn');
+      expect(deleteBtn.className).toBe('cmd-outline-delete-btn');
+      expect(row.querySelector('.permission-allow-edit')).toBeNull();
+      expect(row.querySelector('.permission-allow-delete')).toBeNull();
       // Drop date / overlay columns.
       expect(row.querySelector('.permission-allow-meta')).toBeNull();
     }
@@ -192,7 +204,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
       permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: '^x$', added_at: 'now' }],
     });
     await loadAndRenderAllowList();
-    const editBtn = document.querySelector<HTMLButtonElement>('.permission-allow-edit')!;
+    const editBtn = document.querySelector<HTMLButtonElement>('.permission-allow-rule-row .cmd-outline-edit-btn')!;
     editBtn.click();
     const overlays = document.querySelectorAll('.cmd-editor-overlay.permission-allow-editor');
     expect(overlays.length).toBe(1);
@@ -213,7 +225,7 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
       // (not `undefined`, which would fail the schema in a fire-and-forget call).
       .mockResolvedValueOnce({ permission_allow_rules: [rules[1]] });
     await loadAndRenderAllowList();
-    const trashBtn = document.querySelector<HTMLButtonElement>('.permission-allow-rule-row[data-rule-id="r1"] .permission-allow-delete')!;
+    const trashBtn = document.querySelector<HTMLButtonElement>('.permission-allow-rule-row[data-rule-id="r1"] .cmd-outline-delete-btn')!;
     trashBtn.click();
     // Wait for the confirm + delete + PATCH chain to settle.
     await new Promise<void>(r => setTimeout(r, 0));

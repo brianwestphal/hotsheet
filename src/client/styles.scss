@@ -11368,12 +11368,6 @@ label.detail-details-label {
   white-space: nowrap;
 }
 
-.permission-allow-delete {
-  padding: 2px 8px;
-  font-size: 14px;
-  line-height: 1;
-}
-
 // HS-8026 — channel-permission allow rule row. Combined with `cmd-outline-row`
 // so the visual scale + padding + hover + border match the custom-command +
 // terminal settings rows. The overrides below give the row a click-to-edit
@@ -11830,12 +11824,6 @@ label.detail-details-label {
   font-size: 11px;
   word-break: break-word;
   min-width: 0;
-}
-
-.tpal-rule-row .permission-allow-delete {
-  grid-row: 1 / span 2;
-  grid-column: 3;
-  align-self: center;
 }
 
 // HS-8072 — read-only inspector dialog body (`pre` so newlines in the

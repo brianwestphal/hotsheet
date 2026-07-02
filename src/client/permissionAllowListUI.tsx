@@ -148,13 +148,19 @@ function renderRow(rule: AllowRule): HTMLElement {
     <div className="cmd-outline-row permission-allow-rule-row" data-rule-id={rule.id} role="button" tabIndex={0}>
       <span className="permission-allow-rule-tool">{rule.tool}</span>
       <code className="permission-allow-rule-pattern" title={rule.pattern}>{rule.pattern}</code>
-      <button type="button" className="cmd-outline-edit-btn permission-allow-edit" title="Edit">{PENCIL_ICON}</button>
-      <button type="button" className="cmd-outline-delete-btn permission-allow-delete" title="Delete">{TRASH_ICON}</button>
+      <button type="button" className="cmd-outline-edit-btn" title="Edit">{PENCIL_ICON}</button>
+      <button type="button" className="cmd-outline-delete-btn" title="Delete">{TRASH_ICON}</button>
     </div>
   );
 
-  const editBtn = row.querySelector<HTMLButtonElement>('.permission-allow-edit')!;
-  const deleteBtn = row.querySelector<HTMLButtonElement>('.permission-allow-delete')!;
+  // HS-9284 — the buttons carry ONLY the shared `cmd-outline-*-btn` classes so
+  // they render at the same 24×24 scale as the custom-command / terminal
+  // settings rows. The old `permission-allow-edit` / `permission-allow-delete`
+  // classes were dropped: `permission-allow-delete` still matched a legacy grid
+  // rule (`padding: 2px 8px`) that squeezed the 13px icon inside the fixed-size
+  // border-box button, making the trash icon look tiny next to the other tabs.
+  const editBtn = row.querySelector<HTMLButtonElement>('.cmd-outline-edit-btn')!;
+  const deleteBtn = row.querySelector<HTMLButtonElement>('.cmd-outline-delete-btn')!;
 
   editBtn.addEventListener('click', (e) => {
     e.preventDefault();
