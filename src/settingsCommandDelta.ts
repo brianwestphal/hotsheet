@@ -496,6 +496,18 @@ function genId(): string {
  * backfilled ids into the shared `settings.json` only when needed. Idempotent:
  * a second pass over a fully-id'd tree returns `changed: false` and the same ids.
  */
+/**
+ * HS-8857 — strip the stable ids off a command tree (item + any group children),
+ * so a tree pasted/imported from ANOTHER project can't collide with the current
+ * project's ids. The caller runs {@link backfillCommandIds} afterward to assign
+ * fresh, unique ids. Pure — returns new objects, leaves the input untouched.
+ */
+export function stripCommandTreeIds(items: readonly CommandItem[]): CommandItem[] {
+  return items.map((item): CommandItem => isGroup(item)
+    ? { ...item, id: undefined, children: item.children.map(c => ({ ...c, id: undefined })) }
+    : { ...item, id: undefined });
+}
+
 export function backfillCommandIds(items: readonly CommandItem[]): { items: CommandItem[]; changed: boolean } {
   let changed = false;
   const out = items.map((item): CommandItem => {

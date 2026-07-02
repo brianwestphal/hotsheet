@@ -16,6 +16,7 @@ import {
   moveTopLevelToLocal,
   moveTopLevelToShared,
   resolveCommandTreeDelta,
+  stripCommandTreeIds,
 } from '../settingsCommandDelta.js';
 import { initChannel } from './channelUI.js';
 import { renderCustomCommandSettings } from './commandEditor.js';
@@ -23,8 +24,10 @@ import { renderChannelCommands } from './commandSidebar.js';
 import { byId, byIdOrNull } from './dom.js';
 // All Lucide icons loaded from generated JSON
 import ALL_LUCIDE_ICONS from './lucide-icons.json';
+import { copyJsonToClipboard, newEntriesById, parsePastedEntries, readClipboardJsonOrPrompt } from './settingsClipboard.js';
 import { getScopeMode } from './settingsScope.js';
 import type { ScopeMode } from './settingsSharing.js';
+import { showToast } from './toast.js';
 
 export const CMD_ICONS: { name: string; svg: string }[] = Object.entries(ALL_LUCIDE_ICONS as Record<string, string>).map(([name, svg]) => ({ name, svg }));
 
@@ -465,6 +468,38 @@ export async function saveCommandItems() {
     await persistLocalCommandDelta(delta);
     await refreshSidebarFromResolved();
   }
+}
+
+/** HS-8857 — copy the current custom-command tree to the clipboard as JSON, to
+ *  paste into another project. */
+export function copyCustomCommands(): void {
+  void copyJsonToClipboard(editTree, 'Custom commands');
+}
+
+/**
+ * HS-8857 — paste a custom-command tree from the clipboard and MERGE it into the
+ * current editor: add top-level items whose name isn't already present (dedup by
+ * group/command name so re-pasting doesn't duplicate), keeping existing untouched.
+ * Pasted ids are stripped + re-backfilled so a tree from another project can't
+ * collide with this project's ids. Writes to whichever scope layer is shown.
+ */
+export async function pasteCustomCommands(): Promise<void> {
+  const raw = await readClipboardJsonOrPrompt('Paste custom commands');
+  if (raw === null) return;
+  const incoming = parsePastedEntries(raw, 'custom commands',
+    v => Array.isArray(v) ? asCommandArray(v) : null);
+  if (incoming === null) return;
+  // Dedup by name (group vs command kept distinct); then re-id the additions.
+  const nameKey = (i: CommandItem): string => (isGroup(i) ? `g:${i.name}` : `c:${i.name}`);
+  const toAdd = newEntriesById(editTree, incoming, nameKey);
+  if (toAdd.length === 0) {
+    showToast('No new custom commands to add', { variant: 'info' });
+    return;
+  }
+  editTree.push(...backfillCommandIds(stripCommandTreeIds(toAdd)).items);
+  await saveCommandItems();
+  renderCustomCommandSettings();
+  showToast(`Added ${String(toAdd.length)} custom command${toAdd.length === 1 ? '' : 's'}`, { variant: 'success' });
 }
 
 /** Deep-ish clone of a command item (a fresh object + fresh children array) so

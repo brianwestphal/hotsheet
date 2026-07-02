@@ -5,6 +5,7 @@ import {
   type CommandGroup,
   type CommandItem,
   contrastColor,
+  copyCustomCommands,
   type CustomCommand,
   deleteAtRef,
   getCommandMode,
@@ -17,6 +18,7 @@ import {
   type ItemRef,
   moveCommandLayer,
   noteCommandItemsMutation,
+  pasteCustomCommands,
   resetCommandOverride,
   resolveCommand,
   saveCommandItems,
@@ -605,8 +607,13 @@ export function renderCustomCommandSettings() {
     <div className="cmd-outline-btn-row">
       <button className="btn btn-sm cmd-outline-add-btn">Add Command</button>
       <button className="btn btn-sm cmd-outline-add-group-btn">Add Group</button>
+      {/* HS-8857 — copy/paste the command tree (as JSON) between projects. */}
+      <button className="btn btn-sm cmd-outline-copy-btn" title="Copy these custom commands to the clipboard (JSON)">Copy</button>
+      <button className="btn btn-sm cmd-outline-paste-btn" title="Paste custom commands from the clipboard (merges into this project)">Paste</button>
     </div>
   );
+  btnRow.querySelector('.cmd-outline-copy-btn')!.addEventListener('click', () => { copyCustomCommands(); });
+  btnRow.querySelector('.cmd-outline-paste-btn')!.addEventListener('click', () => { void pasteCustomCommands(); });
 
   const channelCheckbox = byIdOrNull<HTMLInputElement>('settings-channel-enabled');
   btnRow.querySelector('.cmd-outline-add-btn')!.addEventListener('click', () => {

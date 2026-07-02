@@ -77,9 +77,10 @@ A flat list showing all items in order:
 
 All items are drag-reorderable. Dragging a command into or out of a group changes its group membership (moves it between the group's `children` array and the top-level list).
 
-Two buttons at the bottom:
+Buttons at the bottom:
 - **Add Command** — adds a new command and opens the modal editor
 - **Add Group** — adds a new group header named "New Group"
+- **Copy** / **Paste** (HS-8857) — copy the whole command tree to the clipboard as JSON, and paste one in to **merge** it (adds top-level items whose group/command **name** isn't already present, keeps existing untouched, reports how many were added), writing to whichever scope layer is shown. Pasted ids are stripped + re-backfilled (`stripCommandTreeIds` → `backfillCommandIds`) so a tree from another project can't collide with this project's ids. This is how you move a command set **between projects**. Paste uses the shared `settingsClipboard.tsx` helper (one-click `navigator.clipboard.readText` with a Tauri-safe textarea-overlay fallback), the same as auto-context copy/paste (HS-8858).
 
 ### Command Editor Modal
 

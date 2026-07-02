@@ -11,6 +11,7 @@ import {
   moveTopLevelToLocal,
   moveTopLevelToShared,
   resolveCommandTreeDelta,
+  stripCommandTreeIds,
 } from './settingsCommandDelta.js';
 
 /** A shared tree fixture: two top-level commands + one group with two children. */
@@ -266,6 +267,27 @@ describe('moveChildToLocal / moveChildToShared (HS-9094)', () => {
     };
     const moved = moveChildToLocal({ shared: sharedTree(), delta }, 'cmd-c');
     expect(moved.delta.childAdded?.['grp-1']?.children.map(c => c.id)).toEqual(['pre-existing', 'cmd-c']);
+  });
+});
+
+describe('stripCommandTreeIds (HS-8857)', () => {
+  it('clears ids on top-level items and group children (so backfill re-ids them)', () => {
+    const items: CommandItem[] = [
+      { id: 'x1', name: 'A', prompt: 'pa' },
+      { id: 'g1', type: 'group', name: 'G', children: [{ id: 'c1', name: 'C', prompt: 'pc' }] },
+    ];
+    const out = stripCommandTreeIds(items);
+    expect(out[0].id).toBeUndefined();
+    const grp = out[1];
+    expect(grp.id).toBeUndefined();
+    expect('children' in grp ? grp.children[0].id : 'nope').toBeUndefined();
+    // Non-id fields survive; input is left untouched (pure).
+    expect(out[0].name).toBe('A');
+    expect(items[0].id).toBe('x1');
+    // Round-trip: after backfill, all items have fresh ids again.
+    const rebacked = backfillCommandIds(out).items;
+    expect(typeof rebacked[0].id).toBe('string');
+    expect(rebacked[0].id).not.toBe('');
   });
 });
 
