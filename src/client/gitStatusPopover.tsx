@@ -17,8 +17,10 @@ import { openWorktreesPanel } from './worktreesPanel.js';
  *     file list — fetched on demand via `?files=true`)
  *
  * File-row interactions:
- *   - Click → reveal in file manager via `POST /api/git/reveal`
- *   - Right-click → context menu with "Copy path"
+ *   - Click → HS-9205: open the file's diff in Glassbox (`glassbox --files <path>`
+ *     via `POST /api/glassbox/review` mode `files`) when Glassbox is installed;
+ *     otherwise reveal in the file manager via `POST /api/git/reveal`.
+ *   - Right-click → context menu with "Reveal in Finder" + "Copy path"
  *
  * See docs/48-git-status-tracker.md §48.4.2.
  */
@@ -122,6 +124,12 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
   if (titleEl === null || bodyEl === null) return;
   titleEl.textContent = buildBranchLine(data);
 
+  // HS-9205 — a file-row click opens that file's diff in Glassbox when it's
+  // installed, else reveals it in the file manager. Resolve availability once, up
+  // front; the fetch settles well before any click (fall back to reveal until it does).
+  let glassboxAvailable = false;
+  void getGlassboxStatus().then(s => { glassboxAvailable = s.available; }).catch(() => { /* treat as unavailable */ });
+
   const ab = buildAheadBehindLine(data);
 
   // HS-7974 — fetch row removed (last-fetched-at line + "Fetch now" button).
@@ -163,12 +171,18 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
     });
   });
 
-  // Wire file-row clicks (reveal in finder).
+  // Wire file-row clicks — HS-9205: open the file's diff in Glassbox when it's
+  // installed, else reveal in the file manager. Right-click always offers both
+  // "Reveal in Finder" and "Copy Path".
   bodyEl.querySelectorAll<HTMLElement>('.git-popover-file').forEach(row => {
     row.addEventListener('click', () => {
       const path = row.dataset.path;
       if (path === undefined) return;
-      void gitReveal({ path }).catch(() => { /* ignore */ });
+      if (glassboxAvailable) {
+        void launchGlassboxReview({ mode: 'files', patterns: [path] });
+      } else {
+        void gitReveal({ path }).catch(() => { /* ignore */ });
+      }
     });
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -308,9 +322,16 @@ function showFileContextMenu(row: HTMLElement, e: MouseEvent): void {
   const path = row.dataset.path ?? '';
   const menu = toElement(
     <div className="git-popover-file-menu" style={`left:${e.clientX}px;top:${e.clientY}px`}>
+      <button className="git-popover-file-menu-item" type="button" data-action="reveal">Reveal in Finder</button>
       <button className="git-popover-file-menu-item" type="button" data-action="copy">Copy Path</button>
     </div>
   );
+  // HS-9205 — keep Finder-reveal reachable via right-click now that a plain click
+  // opens the Glassbox diff (when Glassbox is installed).
+  menu.querySelector<HTMLButtonElement>('[data-action="reveal"]')!.addEventListener('click', () => {
+    void gitReveal({ path }).catch(() => { /* ignore */ });
+    menu.remove();
+  });
   menu.querySelector<HTMLButtonElement>('[data-action="copy"]')!.addEventListener('click', () => {
     void navigator.clipboard.writeText(path);
     menu.remove();

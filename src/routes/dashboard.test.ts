@@ -392,6 +392,20 @@ describe('buildGlassboxReviewArgs (HS-8472)', () => {
   it('HS-9106: worktree mode carries no diff args (handled via cwd, not here)', () => {
     expect(buildGlassboxReviewArgs({ mode: 'worktree', worktree: '/some/wt' })).toBeNull();
   });
+
+  it('HS-9205: files mode → --files with comma-joined repo-relative paths', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'files', patterns: ['src/a.ts'] })).toEqual(['--files', 'src/a.ts']);
+    expect(buildGlassboxReviewArgs({ mode: 'files', patterns: ['src/a.ts', 'docs/b.md'] }))
+      .toEqual(['--files', 'src/a.ts,docs/b.md']);
+  });
+
+  it('HS-9205: files mode drops empty / dash-leading / comma-bearing paths, null when none remain', () => {
+    // A dash-leading path can't reach Glassbox as a value (would be read as a flag);
+    // a comma-bearing path can't be expressed in the comma-joined --files arg.
+    expect(buildGlassboxReviewArgs({ mode: 'files', patterns: ['-x', 'src/ok.ts', '', 'a,b'] }))
+      .toEqual(['--files', 'src/ok.ts']);
+    expect(buildGlassboxReviewArgs({ mode: 'files', patterns: ['-x', '', 'a,b'] })).toBeNull();
+  });
 });
 
 describe('resolveReviewWorktreeCwd (HS-9106)', () => {

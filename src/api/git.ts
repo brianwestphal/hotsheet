@@ -103,12 +103,17 @@ export type PendingCommitsRes = z.infer<typeof PendingCommitsResSchema>;
 
 // --- /glassbox/review (HS-8472) ---
 /** Open Glassbox focused on a specific commit, on a ref range (all pending
- *  changes), or in a worker's worktree in place (HS-9106). The server maps these
- *  to `glassbox --commit <sha>` / `glassbox --range <from>..<to>` / `glassbox`
- *  launched with `cwd = <worktree>` (no review args — review the working state). */
+ *  changes), on specific working-tree files (HS-9205), or in a worker's worktree
+ *  in place (HS-9106). The server maps these to `glassbox --commit <sha>` /
+ *  `glassbox --range <from>..<to>` / `glassbox --files <patterns>` (cwd = project
+ *  root) / `glassbox` launched with `cwd = <worktree>` (no review args). */
 export const GlassboxReviewReqSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('commit'), sha: z.string() }),
   z.object({ mode: z.literal('range'), from: z.string(), to: z.string() }),
+  // HS-9205 — review specific working-tree files' diffs (the git-status popover's
+  // file-row click). `patterns` are repo-relative paths (glob patterns to Glassbox);
+  // the server maps them to `--files <comma-joined>`, launched at the project root.
+  z.object({ mode: z.literal('files'), patterns: z.array(z.string()).min(1).max(200) }),
   // HS-9106 — review a worker's worktree in place (its uncommitted + committed
   // working state). `worktree` is the absolute worktree path; the server validates
   // it against `listWorktrees(repoRoot)` before spawning (no arbitrary cwd).

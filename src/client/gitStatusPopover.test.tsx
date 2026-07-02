@@ -4,10 +4,22 @@
  * DOM-mounting / fetch-flow paths are exercised at e2e; these tests pin
  * the branch-line + ahead/behind-line formatting math.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getGlassboxStatus, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
 import { buildAheadBehindLine, buildBranchLine, commitBodyPreview, paintPopover } from './gitStatusPopover.js';
+
+// HS-9205 — mock the typed API so the file-row click flow can be exercised in
+// happy-dom (the branch: Glassbox diff when installed, else reveal in Finder).
+// vitest hoists `vi.mock` above the imports, so the modules resolve to these fns.
+vi.mock('../api/index.js', () => ({
+  getGitStatusWithFiles: vi.fn(() => Promise.resolve(null)),
+  getGlassboxStatus: vi.fn(() => Promise.resolve({ available: false })),
+  getPendingCommits: vi.fn(() => Promise.resolve({ commits: [], truncated: false })),
+  gitReveal: vi.fn(() => Promise.resolve({ ok: true })),
+  reviewInGlassbox: vi.fn(() => Promise.resolve({ ok: true })),
+}));
 
 function status(o: Partial<{
   branch: string;
@@ -127,6 +139,46 @@ describe('paintPopover bucket-strip suppression (HS-7975 follow-up)', () => {
     paintPopover(popover, status({ upstream: 'origin/main' }));
     expect(popover.querySelector('.git-popover-buckets')).toBeNull();
     document.body.innerHTML = '';
+  });
+});
+
+describe('file-row click → Glassbox diff / Finder fallback (HS-9205)', () => {
+  const files = { staged: ['src/a.ts'], unstaged: [], untracked: [], conflicted: [], truncated: { staged: false, unstaged: false, untracked: false, conflicted: false } };
+  const withStagedFile = { ...status({ staged: 1 }), files };
+
+  function mount(): HTMLElement {
+    const popover = toElement(
+      <div className="git-popover">
+        <div className="git-popover-header"><div className="git-popover-title"></div></div>
+        <div className="git-popover-body"></div>
+      </div>
+    );
+    document.body.appendChild(popover);
+    return popover;
+  }
+  // Let the up-front getGlassboxStatus().then settle so `glassboxAvailable` is set.
+  const settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+
+  beforeEach(() => { vi.clearAllMocks(); document.body.innerHTML = ''; });
+
+  it('opens the file diff in Glassbox (files mode) when Glassbox is installed', async () => {
+    vi.mocked(getGlassboxStatus).mockResolvedValue({ available: true });
+    const popover = mount();
+    paintPopover(popover, withStagedFile);
+    await settle();
+    popover.querySelector<HTMLElement>('.git-popover-file')!.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'files', patterns: ['src/a.ts'] });
+    expect(gitReveal).not.toHaveBeenCalled();
+  });
+
+  it('falls back to reveal-in-Finder when Glassbox is not installed', async () => {
+    vi.mocked(getGlassboxStatus).mockResolvedValue({ available: false });
+    const popover = mount();
+    paintPopover(popover, withStagedFile);
+    await settle();
+    popover.querySelector<HTMLElement>('.git-popover-file')!.click();
+    expect(gitReveal).toHaveBeenCalledWith({ path: 'src/a.ts' });
+    expect(reviewInGlassbox).not.toHaveBeenCalled();
   });
 });
 

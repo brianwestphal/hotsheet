@@ -249,6 +249,16 @@ export function buildGlassboxReviewArgs(req: GlassboxReviewReq): string[] | null
     if (!/^[0-9a-fA-F]{7,40}$/.test(req.sha)) return null;
     return ['--commit', req.sha];
   }
+  if (req.mode === 'files') {
+    // HS-9205 — repo-relative file paths → `--files <comma-joined>`. Drop empty
+    // paths, paths that would be read as a flag (leading `-`; spawn is arg-array so
+    // there's no shell, but a `-`-leading value could be misparsed by Glassbox), and
+    // paths containing a comma (Glassbox splits `--files` on `,`, so an embedded
+    // comma can't be expressed — extremely rare in git paths).
+    const patterns = req.patterns.filter(p => p !== '' && !p.startsWith('-') && !p.includes(','));
+    if (patterns.length === 0) return null;
+    return ['--files', patterns.join(',')];
+  }
   if (!SAFE_REF.test(req.from) || !SAFE_REF.test(req.to)) return null;
   return ['--range', `${req.from}..${req.to}`];
 }
