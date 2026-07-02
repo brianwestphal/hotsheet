@@ -1,5 +1,6 @@
 import { type PGlite } from '@electric-sql/pglite';
 
+import { latencyBucketIndex } from './otelHistogram.js';
 import type { MetricAggregation } from './otelWriters.js';
 
 /**
@@ -142,6 +143,12 @@ export async function recordToolActivity(
   await updateActivityRollup(mainDb, secret, ts, 'tool', tool, '', {
     count: 1, sumVal: hasDur ? dur : 0, sumN: hasDur ? 1 : 0,
   });
+  // HS-9279 — also bump the tool-latency histogram bucket (kind='tool_latency',
+  // dim2 = bucket index) for events that carry a duration, so getToolLatencyHistogram
+  // reads per-bucket counts from the rollup (count + totalMs reuse the kind='tool' row).
+  if (hasDur) {
+    await updateActivityRollup(mainDb, secret, ts, 'tool_latency', tool, String(latencyBucketIndex(dur)), { count: 1 });
+  }
 }
 
 /** Server-local `YYYY-MM-DD` for the daily bucket (the maintainer's grain). */

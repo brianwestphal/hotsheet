@@ -62,6 +62,7 @@ import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
 import { centralTelemetryDataDir, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { computeTicketRollupFromRaw } from './otelDashboard.js';
+import { latencyBucketIndex } from './otelHistogram.js';
 import { eventNameMatchSql } from './otelRollups.js';
 
 /** Mirrors `getWindowTotals` / ingest: a cumulative monotonic counter carries its
@@ -360,14 +361,45 @@ export async function backfillActivityToolForDir(clusterDb: PGlite, mainDb: PGli
       GROUP BY secret, day, tool`,
     [tz],
   );
+  // HS-9279 — per-(secret, day, tool, bucket) latency histogram counts, from the
+  // duration-carrying tool_result events (buckets computed in JS via latencyBucketIndex
+  // so the boundaries can't drift from ingest/read).
+  const durs = await clusterDb.query<Record<string, unknown>>(
+    `SELECT COALESCE(project_secret, '') AS secret,
+            (ts AT TIME ZONE $1)::date AS day,
+            COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
+            (attributes_json->>'duration_ms')::numeric AS dur
+       FROM otel_events
+      WHERE ${eventNameMatchSql('event_name', 'tool_result')} AND attributes_json->>'duration_ms' IS NOT NULL`,
+    [tz],
+  );
+  const bucketCounts = new Map<string, { secret: string; day: string; tool: string; bucket: number; count: number }>();
+  for (const r of durs.rows) {
+    const secret = s(r.secret, '');
+    const day = dayString(r.day);
+    const tool = s(r.tool, '(unknown)');
+    const bucket = latencyBucketIndex(n(r.dur));
+    const key = `${secret} ${day} ${tool} ${String(bucket)}`;
+    const existing = bucketCounts.get(key);
+    if (existing !== undefined) existing.count++;
+    else bucketCounts.set(key, { secret, day, tool, bucket, count: 1 });
+  }
+
   // Recompute-overwrite: this db holds only its own project's (or central's)
-  // activity rollups, so clearing the kind='tool' rows is the clean reset.
-  await mainDb.query(`DELETE FROM otel_rollup_activity WHERE kind = 'tool'`);
+  // activity rollups, so clearing the kind='tool'/'tool_latency' rows is the clean reset.
+  await mainDb.query(`DELETE FROM otel_rollup_activity WHERE kind IN ('tool', 'tool_latency')`);
   for (const r of grain.rows) {
     await mainDb.query(
       `INSERT INTO otel_rollup_activity (project_secret, day, kind, dim1, dim2, count, sum_val, sum_n)
        VALUES ($1, $2::date, 'tool', $3, '', $4, $5, $6)`,
       [s(r.secret, ''), dayString(r.day), s(r.tool, '(unknown)'), n(r.c), n(r.dur_sum), n(r.dur_n)],
+    );
+  }
+  for (const b of bucketCounts.values()) {
+    await mainDb.query(
+      `INSERT INTO otel_rollup_activity (project_secret, day, kind, dim1, dim2, count, sum_val, sum_n)
+       VALUES ($1, $2::date, 'tool_latency', $3, $4, $5, 0, 0)`,
+      [b.secret, b.day, b.tool, String(b.bucket), b.count],
     );
   }
   return grain.rows.length;

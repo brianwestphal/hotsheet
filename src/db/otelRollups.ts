@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 
 import { getAllProjects } from '../projects.js';
 import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
+import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.js';
 import { readAllOtelJsonl } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
@@ -876,206 +877,61 @@ export interface ToolLatencyHistogram {
   buckets: number[];
 }
 
-const HISTOGRAM_BUCKET_UPPER_MS = [10, 50, 100, 500, 1000, 5000, 10000];
-const HISTOGRAM_BUCKET_LABELS = ['<10ms', '10-50ms', '50-100ms', '100-500ms', '500ms-1s', '1-5s', '5-10s', '10s+'];
-
-/** HS-8673 — generate the histogram-bucket `CASE` SQL from
- *  `HISTOGRAM_BUCKET_UPPER_MS` so the events-sourced and spans-sourced query
- *  bodies can't drift if the thresholds change. `valueExpr` is a SQL fragment
- *  evaluating to the duration in milliseconds (different per source). */
-function buildHistogramBucketCase(valueExpr: string): string {
-  const lines: string[] = ['CASE'];
-  for (let i = 0; i < HISTOGRAM_BUCKET_UPPER_MS.length; i++) {
-    lines.push(`          WHEN ${valueExpr} < ${HISTOGRAM_BUCKET_UPPER_MS[i]} THEN ${i}`);
-  }
-  lines.push(`          ELSE ${HISTOGRAM_BUCKET_UPPER_MS.length}`);
-  lines.push('        END');
-  return lines.join('\n');
-}
-
-/** HS-8673 — local-timezone window boundaries (today / 7-day / 30-day) shared by
- *  `getDashboardPayload` and `getProjectRollupPayload`. The unrounded arithmetic
- *  (24*60*60*1000) is preserved verbatim — `Date.setDate` would silently shift
- *  by DST jumps near the spring/fall transitions. */
-
 export async function getToolLatencyHistogram(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ToolLatencyHistogram[]> {
-  const db = await getTelemetryDb();
+  // HS-9279 — read the daily activity rollup instead of scanning raw otel_events:
+  // count (events WITH a duration) + totalMs from kind='tool' (sum_n / sum_val, the
+  // same duration-carrying subset the old read counted), and the per-bucket counts
+  // from kind='tool_latency'. Percentiles are APPROXIMATED from the bucket histogram
+  // (maintainer-accepted, HS-9279); the beta spans-based higher-fidelity path was
+  // retired with the raw-table reads.
+  const db = await getRollupDb();
+  const day = buildRollupDayClauses(projectSecret, sinceTs, 0);
 
-  // HS-8478 — prefer `otel_spans` when traces are enabled. Probe for
-  // at least one `claude_code.tool.*` span in the project + window; if
-  // present, source the histogram from spans (higher-fidelity duration,
-  // measured by the runtime instead of the tool reporting it). When no
-  // spans exist (the common non-beta case), fall back to the events-
-  // based path which has been the source since HS-8150.
-  const probeClauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'start_ts', 0);
-  const probe = await db.query<{ x: number }>(
-    `SELECT 1 AS x FROM otel_spans
-     WHERE span_name LIKE 'claude_code.tool.%'${probeClauses.clauses}
-     LIMIT 1`,
-    probeClauses.params,
-  );
-  const useSpans = probe.rows.length > 0;
-
-  if (useSpans) {
-    return getToolLatencyHistogramFromSpans(projectSecret, sinceTs);
-  }
-  return getToolLatencyHistogramFromEvents(projectSecret, sinceTs);
-}
-
-async function getToolLatencyHistogramFromEvents(
-  projectSecret: string | null,
-  sinceTs: Date | null,
-): Promise<ToolLatencyHistogram[]> {
-  const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
-
-  // First query: count + total + p50/p90/p99 per tool. PostgreSQL's
-  // `percentile_cont(p) WITHIN GROUP (ORDER BY col)` interpolates;
-  // exact enough for visual percentile markers.
-  const stats = await db.query<{
-    tool: string | null;
-    c: bigint | number;
-    total_ms: string | null;
-    p50: string | null;
-    p90: string | null;
-    p99: string | null;
-  }>(
-    `SELECT
-        COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
-        COUNT(*) AS c,
-        SUM((attributes_json->>'duration_ms')::numeric) AS total_ms,
-        percentile_cont(0.5) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p50,
-        percentile_cont(0.9) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p90,
-        percentile_cont(0.99) WITHIN GROUP (ORDER BY (attributes_json->>'duration_ms')::numeric) AS p99
-     FROM otel_events
-     WHERE ${eventNameMatchSql('event_name', 'tool_result')}
-       AND attributes_json->>'duration_ms' IS NOT NULL${clauses.clauses}
-     GROUP BY tool
-     ORDER BY c DESC`,
-    clauses.params,
+  const toolRows = await db.query<{ tool: string; sum_n: string | number; sum_val: string | null }>(
+    `SELECT dim1 AS tool, SUM(sum_n) AS sum_n, SUM(sum_val) AS sum_val
+     FROM otel_rollup_activity
+     WHERE kind = 'tool'${day.clauses}
+     GROUP BY dim1`,
+    day.params,
   );
 
-  if (stats.rows.length === 0) return [];
-
-  // Second query: bucket counts per tool. Uses a CASE expression to
-  // map each duration into its bucket index. One row per (tool, bucket)
-  // — we densify to fixed-size arrays in JS.
-  const bucketsResult = await db.query<{ tool: string; bucket: number; c: bigint | number }>(
-    `SELECT
-        COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
-        ${buildHistogramBucketCase("(attributes_json->>'duration_ms')::numeric")} AS bucket,
-        COUNT(*) AS c
-     FROM otel_events
-     WHERE ${eventNameMatchSql('event_name', 'tool_result')}
-       AND attributes_json->>'duration_ms' IS NOT NULL${clauses.clauses}
-     GROUP BY tool, bucket
-     ORDER BY tool, bucket`,
-    clauses.params,
+  const bucketRows = await db.query<{ tool: string; bucket: string; c: string | number }>(
+    `SELECT dim1 AS tool, dim2 AS bucket, SUM(count) AS c
+     FROM otel_rollup_activity
+     WHERE kind = 'tool_latency'${day.clauses}
+     GROUP BY dim1, dim2`,
+    day.params,
   );
-
-  // Densify into a per-tool bucket array of fixed length 8.
   const bucketsByTool = new Map<string, number[]>();
-  for (const row of bucketsResult.rows) {
-    let arr = bucketsByTool.get(row.tool);
-    if (arr === undefined) {
-      arr = new Array<number>(8).fill(0);
-      bucketsByTool.set(row.tool, arr);
-    }
-    arr[row.bucket] = Number(row.c);
+  for (const r of bucketRows.rows) {
+    let arr = bucketsByTool.get(r.tool);
+    if (arr === undefined) { arr = new Array<number>(HISTOGRAM_BUCKET_COUNT).fill(0); bucketsByTool.set(r.tool, arr); }
+    const b = Number(r.bucket);
+    if (Number.isInteger(b) && b >= 0 && b < HISTOGRAM_BUCKET_COUNT) arr[b] = Number(r.c);
   }
 
-  return stats.rows.map(r => ({
-    tool: r.tool ?? '(unknown)',
-    count: Number(r.c),
-    totalMs: Number(r.total_ms ?? 0),
-    p50: r.p50 !== null ? Number(r.p50) : null,
-    p90: r.p90 !== null ? Number(r.p90) : null,
-    p99: r.p99 !== null ? Number(r.p99) : null,
-    buckets: bucketsByTool.get(r.tool ?? '(unknown)') ?? new Array<number>(8).fill(0),
-  }));
+  // Only tools with duration-carrying events (sum_n > 0) appear — the old read
+  // filtered `duration_ms IS NOT NULL`. Sorted by count DESC.
+  return toolRows.rows
+    .map(r => {
+      const count = Number(r.sum_n);
+      const buckets = bucketsByTool.get(r.tool) ?? new Array<number>(HISTOGRAM_BUCKET_COUNT).fill(0);
+      return {
+        tool: r.tool !== '' ? r.tool : '(unknown)',
+        count,
+        totalMs: Number(r.sum_val ?? 0),
+        p50: percentileFromBuckets(buckets, 0.5),
+        p90: percentileFromBuckets(buckets, 0.9),
+        p99: percentileFromBuckets(buckets, 0.99),
+        buckets,
+      };
+    })
+    .filter(t => t.count > 0)
+    .sort((a, b) => b.count - a.count);
 }
-
-/**
- * HS-8478 — spans-based variant. Source = `otel_spans` rows whose
- * `span_name` matches `claude_code.tool.%`. Tool name is the suffix
- * after `claude_code.tool.` (e.g. `claude_code.tool.bash` → `bash`).
- * Duration computed as `EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000`
- * — higher fidelity than the event-based `duration_ms` attribute since
- * it's measured at the span boundary by the runtime instead of being
- * self-reported by the tool wrapper.
- */
-async function getToolLatencyHistogramFromSpans(
-  projectSecret: string | null,
-  sinceTs: Date | null,
-): Promise<ToolLatencyHistogram[]> {
-  const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'start_ts', 0);
-
-  const stats = await db.query<{
-    tool: string;
-    c: bigint | number;
-    total_ms: string | null;
-    p50: string | null;
-    p90: string | null;
-    p99: string | null;
-  }>(
-    `SELECT
-        SUBSTRING(span_name FROM 18) AS tool,
-        COUNT(*) AS c,
-        SUM(EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS total_ms,
-        percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS p50,
-        percentile_cont(0.9) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS p90,
-        percentile_cont(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000) AS p99
-     FROM otel_spans
-     WHERE span_name LIKE 'claude_code.tool.%'${clauses.clauses}
-     GROUP BY tool
-     ORDER BY c DESC`,
-    clauses.params,
-  );
-
-  if (stats.rows.length === 0) return [];
-
-  const bucketsResult = await db.query<{ tool: string; bucket: number; c: bigint | number }>(
-    `SELECT
-        SUBSTRING(span_name FROM 18) AS tool,
-        ${buildHistogramBucketCase('EXTRACT(EPOCH FROM (end_ts - start_ts)) * 1000')} AS bucket,
-        COUNT(*) AS c
-     FROM otel_spans
-     WHERE span_name LIKE 'claude_code.tool.%'${clauses.clauses}
-     GROUP BY tool, bucket
-     ORDER BY tool, bucket`,
-    clauses.params,
-  );
-
-  const bucketsByTool = new Map<string, number[]>();
-  for (const row of bucketsResult.rows) {
-    let arr = bucketsByTool.get(row.tool);
-    if (arr === undefined) {
-      arr = new Array<number>(8).fill(0);
-      bucketsByTool.set(row.tool, arr);
-    }
-    arr[row.bucket] = Number(row.c);
-  }
-
-  return stats.rows.map(r => ({
-    tool: r.tool,
-    count: Number(r.c),
-    totalMs: Number(r.total_ms ?? 0),
-    p50: r.p50 !== null ? Number(r.p50) : null,
-    p90: r.p90 !== null ? Number(r.p90) : null,
-    p99: r.p99 !== null ? Number(r.p99) : null,
-    buckets: bucketsByTool.get(r.tool) ?? new Array<number>(8).fill(0),
-  }));
-}
-
-/** HS-8150 — bucket labels for the inline-SVG renderer. Re-exported
- *  for the client so it doesn't have to hard-code the boundary set. */
-export const TOOL_LATENCY_BUCKET_LABELS = HISTOGRAM_BUCKET_LABELS;
-// Re-exported so eslint doesn't strip the const after lint-fix passes.
-export const TOOL_LATENCY_BUCKET_UPPER_MS = HISTOGRAM_BUCKET_UPPER_MS;
 
 /**
  * HS-8147 — bulk variant. Returns `{secret → cost}` for every project
