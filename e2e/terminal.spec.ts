@@ -15,6 +15,15 @@ import { expect, test } from './coverage-fixture.js';
 
 let headers: Record<string, string> = {};
 
+// HS-9276 — headroom for genuinely-async PTY work (spawn → WS connect → xterm
+// mount → alive-status / tab-activation). On the shared single-worker E2E server
+// under full-file load these round-trips can exceed the old 3–5s waits, so the
+// alive-dot / xterm-render / new-tab-active assertions intermittently flaked
+// (they pass in isolation). Generous per-assertion timeouts cut that at the
+// source; CI additionally retries (HS-9141). A genuinely-broken assertion still
+// fails every attempt — this only widens the window for slow-but-correct ones.
+const PTY_READY_MS = 15_000;
+
 // HS-9273 — switch the terminals editor to Shared mode and WAIT for its async
 // reload to settle (the mode-specific hint appears only after the reload's
 // `renderList`). Interacting before the reload finishes races it: the reload
@@ -171,14 +180,14 @@ test.describe('Embedded terminal drawer', () => {
     expect(label.trim().length).toBeGreaterThan(0);
 
     // Tab is selected (active) and its pane is visible.
-    await expect(dynTab).toHaveClass(/active/, { timeout: 3000 });
+    await expect(dynTab).toHaveClass(/active/, { timeout: 5000 });
     const dynId = await dynTab.getAttribute('data-terminal-id');
     expect(dynId).not.toBeNull();
     const pane = page.locator(`.drawer-terminal-pane[data-drawer-panel="terminal:${dynId!}"]`);
     await expect(pane).toBeVisible({ timeout: 3000 });
 
     // Pane must contain a mounted xterm canvas (not just an empty div).
-    await expect(pane.locator('.xterm-screen, .xterm canvas').first()).toBeVisible({ timeout: 5000 });
+    await expect(pane.locator('.xterm-screen, .xterm canvas').first()).toBeVisible({ timeout: PTY_READY_MS });
   });
 
   // HS-6403: deleting a terminal in Settings must remove the row, persist to
@@ -316,7 +325,7 @@ test.describe('Embedded terminal drawer', () => {
     const secondTab = page.locator('.drawer-terminal-tab[data-terminal-id="second"]');
     await expect(secondTab).toBeVisible({ timeout: 5000 });
     await secondTab.click();
-    await expect(page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:second"] .xterm-rows')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:second"] .xterm-rows')).toBeVisible({ timeout: PTY_READY_MS });
 
     // Now close the drawer — the delete flow should re-open it to show the
     // user the target terminal, then close it again on finish.
@@ -454,7 +463,7 @@ test.describe('Embedded terminal drawer', () => {
 
     // Wait for the PTY to reach alive status — the status dot on the active
     // pane transitions to .status-alive once the server confirms the PTY.
-    await expect(page.locator('.drawer-terminal-pane .terminal-status-dot.status-alive').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.drawer-terminal-pane .terminal-status-dot.status-alive').first()).toBeVisible({ timeout: PTY_READY_MS });
 
     // Right-click → Close Tab — confirm should appear and cancel keeps the tab.
     await dyn.click({ button: 'right' });
@@ -688,7 +697,7 @@ test.describe('Embedded terminal drawer', () => {
 
     // Wait for the xterm grid to mount and settle at its initial size.
     const pane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:default"]');
-    await expect(pane.locator('.xterm-rows')).toBeVisible({ timeout: 5000 });
+    await expect(pane.locator('.xterm-rows')).toBeVisible({ timeout: PTY_READY_MS });
 
     // Collapse any prior expanded state first so we always start small.
     const app = page.locator('.app');
@@ -746,7 +755,7 @@ test.describe('Embedded terminal drawer', () => {
 
     // Cmd+Shift+ArrowRight should advance to the next terminal tab.
     await page.keyboard.press('Meta+Shift+ArrowRight');
-    await expect(secondTab).toHaveClass(/active/, { timeout: 3000 });
+    await expect(secondTab).toHaveClass(/active/, { timeout: PTY_READY_MS });
 
     // Cmd+Shift+ArrowLeft wraps back to the first terminal tab.
     const helper2 = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:second"] .xterm-helper-textarea');
@@ -755,7 +764,7 @@ test.describe('Embedded terminal drawer', () => {
     // in case Playwright's synthetic key dispatch bypassed xterm's focus call.
     await helper2.focus();
     await page.keyboard.press('Meta+Shift+ArrowLeft');
-    await expect(firstTab).toHaveClass(/active/, { timeout: 3000 });
+    await expect(firstTab).toHaveClass(/active/, { timeout: PTY_READY_MS });
   });
 
   test('Commands Log divider shows on web sessions now that terminals are cross-platform (HS-8624)', async ({ page }) => {
