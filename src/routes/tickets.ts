@@ -2,6 +2,7 @@
 // in `src/db/attachments.ts`; this file no longer needs a direct `fs`
 // import (the route handlers all routed through that helper).
 import { type Context, Hono } from 'hono';
+import { isAbsolute } from 'path';
 
 import { projectRootFromDataDir } from '../aiInstructions.js';
 // HS-8555 — centralized attachment-blob delete helper.
@@ -35,9 +36,10 @@ import { countSearchMatchesInExcludedStatuses, listKnownTicketPrefixes } from '.
 import { readFileSettings } from '../file-settings.js';
 import { getGitRoot } from '../gitignore.js';
 import { TICKETS_LIST_MAX_LIMIT } from '../limits.js';
+import { getMimeType } from '../mime-types.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
-import { readReviewProofForTicket } from '../reviewNotes/prNotesReader.js';
+import { readReviewProofArtifact, readReviewProofForTicket } from '../reviewNotes/prNotesReader.js';
 import { parseJsonOrNull, type SyncEventInput, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
 import { isQueueOnly, onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
@@ -313,6 +315,25 @@ ticketRoutes.get('/tickets/:number/review-proof', async (c) => {
   const gitRoot = getGitRoot(projectRoot) ?? projectRoot;
   const notes = await readReviewProofForTicket(gitRoot, ticketNumber);
   return c.json({ notes });
+});
+
+// HS-9294 (docs/111 Phase 3) — serve one `.pr-notes/` proof ARTIFACT (a screenshot
+// or text file) for the inline detail-panel render. `path` is repo-relative under
+// `.pr-notes/`; the reader path-guards it. An unpulled Git-LFS pointer stub → 409
+// `{ lfsPointer: true }` so the client shows an "open in Glassbox" fallback instead
+// of a broken image. (Static path — no `:id`/`:number` collision.)
+ticketRoutes.get('/tickets/review-proof/artifact', async (c) => {
+  const rel = c.req.query('path') ?? '';
+  if (rel === '' || rel.includes('..') || isAbsolute(rel)) return c.json({ error: 'Invalid path' }, 400);
+  const projectRoot = projectRootFromDataDir(c.get('dataDir'));
+  const gitRoot = getGitRoot(projectRoot) ?? projectRoot;
+  const res = await readReviewProofArtifact(gitRoot, rel);
+  switch (res.kind) {
+    case 'forbidden': return c.json({ error: 'Invalid path' }, 403);
+    case 'not-found': return c.json({ error: 'Not found' }, 404);
+    case 'lfs-pointer': return c.json({ lfsPointer: true }, 409);
+    case 'file': return new Response(new Uint8Array(res.content), { headers: { 'Content-Type': getMimeType(res.ext) } });
+  }
 });
 
 ticketRoutes.put('/tickets/:id/blocked-by', async (c) => {

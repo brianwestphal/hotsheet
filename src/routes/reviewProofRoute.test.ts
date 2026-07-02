@@ -75,3 +75,36 @@ describe('GET /tickets/:number/review-proof (HS-9293)', () => {
     expect((await res.json() as ProofBody).notes).toEqual([]);
   });
 });
+
+async function writeArtifact(rel: string, content: Buffer | string): Promise<void> {
+  const file = join(root, rel);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, content);
+}
+const artifactUrl = (p: string): string => `/api/tickets/review-proof/artifact?path=${encodeURIComponent(p)}`;
+
+describe('GET /tickets/review-proof/artifact (HS-9294)', () => {
+  it('streams a real artifact with its content-type', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    await writeArtifact('.pr-notes/artifacts/shot.png', png);
+    const res = await app.request(artifactUrl('.pr-notes/artifacts/shot.png'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toContain('image/png');
+    expect(Buffer.from(await res.arrayBuffer()).equals(png)).toBe(true);
+  });
+
+  it('409s an unpulled Git-LFS pointer stub so the client can fall back', async () => {
+    await writeArtifact('.pr-notes/artifacts/big.png', 'version https://git-lfs.github.com/spec/v1\noid sha256:x\n');
+    const res = await app.request(artifactUrl('.pr-notes/artifacts/big.png'));
+    expect(res.status).toBe(409);
+    expect((await res.json() as { lfsPointer: boolean }).lfsPointer).toBe(true);
+  });
+
+  it('404s a missing artifact', async () => {
+    expect((await app.request(artifactUrl('.pr-notes/artifacts/nope.png'))).status).toBe(404);
+  });
+
+  it('400s a traversal path (`..`)', async () => {
+    expect((await app.request(artifactUrl('.pr-notes/../secret.txt'))).status).toBe(400);
+  });
+});

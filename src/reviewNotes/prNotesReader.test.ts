@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { readReviewProofForTicket } from './prNotesReader.js';
+import { readReviewProofArtifact, readReviewProofForTicket } from './prNotesReader.js';
 
 let root: string;
 
@@ -112,5 +112,39 @@ describe('readReviewProofForTicket (HS-9223)', () => {
   it('ignores a result with no workItemUris', async () => {
     await writeShard('a.sarif', [{ message: { text: 'unlinked' } }]);
     expect(await readReviewProofForTicket(root, 'HS-1234')).toEqual([]);
+  });
+});
+
+describe('readReviewProofArtifact (HS-9294)', () => {
+  async function writeArtifact(rel: string, content: Buffer | string): Promise<void> {
+    const file = join(root, rel);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, content);
+  }
+
+  it('returns the raw bytes + extension for a real file under .pr-notes/', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    await writeArtifact('.pr-notes/artifacts/shot.png', png);
+    const res = await readReviewProofArtifact(root, '.pr-notes/artifacts/shot.png');
+    expect(res.kind).toBe('file');
+    if (res.kind === 'file') {
+      expect(res.ext).toBe('.png');
+      expect(Buffer.from(res.content).equals(png)).toBe(true);
+    }
+  });
+
+  it('detects an unpulled Git-LFS pointer stub', async () => {
+    await writeArtifact('.pr-notes/artifacts/big.png',
+      'version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 123\n');
+    expect((await readReviewProofArtifact(root, '.pr-notes/artifacts/big.png')).kind).toBe('lfs-pointer');
+  });
+
+  it('returns not-found for a missing artifact', async () => {
+    expect((await readReviewProofArtifact(root, '.pr-notes/artifacts/nope.png')).kind).toBe('not-found');
+  });
+
+  it('forbids a path that escapes .pr-notes/ (traversal)', async () => {
+    await writeArtifact('secret.txt', 'top secret');
+    expect((await readReviewProofArtifact(root, '.pr-notes/../secret.txt')).kind).toBe('forbidden');
   });
 });
