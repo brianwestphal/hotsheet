@@ -28,6 +28,7 @@ import {
   tickLeftPx,
 } from './terminalDashboardSizing.js';
 import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTileGrid.js';
+import { getTransientTerminalName } from './terminalTransientNames.js';
 
 /**
  * Drawer terminal grid view (HS-6311, docs/36-drawer-terminal-grid.md).
@@ -179,7 +180,7 @@ export function initDrawerTerminalGrid(opts: GridInitOptions): void {
         name: project.name,
         terminals: drawerGridState.lastKnownEntries.map(e => ({
           id: e.id,
-          name: tileLabel(e),
+          name: tileLabel(e, project.secret),
         })),
       }],
       onChange: () => {
@@ -360,7 +361,7 @@ function toTileEntry(secret: string) {
   return (entry: DrawerGridTileEntry): TileEntry => ({
     id: entry.id,
     secret,
-    label: tileLabel(entry),
+    label: tileLabel(entry, secret),
     state: entry.state ?? 'not_spawned',
     exitCode: entry.exitCode ?? null,
     bellPending: entry.bellPending,
@@ -371,7 +372,15 @@ function toTileEntry(secret: string) {
   });
 }
 
-function tileLabel(entry: DrawerGridTileEntry): string {
+export function tileLabel(entry: DrawerGridTileEntry, secret?: string): string {
+  // HS-9277 — a transient rename (keyed by project secret) wins over the
+  // configured/derived name, so a rename made in the drawer tab strip or a
+  // dashboard tile also shows on this drawer-grid tile within the session.
+  // Mirrors `terminalDashboardTiles.tileLabel`. Undefined `secret` skips it.
+  if (secret !== undefined) {
+    const transient = getTransientTerminalName(secret, entry.id);
+    if (transient !== undefined) return transient;
+  }
   if (typeof entry.name === 'string' && entry.name !== '') return entry.name;
   const word = entry.command.trim().split(/\s+/)[0] ?? '';
   const clean = word.replace(/^{{|}}$/g, '');

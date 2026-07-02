@@ -25,8 +25,10 @@ import {
   initDrawerTerminalGrid,
   isDrawerGridActive,
   onTerminalListUpdated,
+  tileLabel,
 } from './drawerTerminalGrid.js';
 import { getProjectGridColumnCount, setActiveProject, setProjectGridActive as realSetProjectGridActive } from './state.js';
+import { _resetTransientTerminalNamesForTests, setTransientTerminalName } from './terminalTransientNames.js';
 
 // Hoisted mocks for the heavy modules. (HS-8624 removed the Tauri-only gate in
 // `initDrawerTerminalGrid`, so the `getTauriInvoke` mock no longer affects
@@ -449,5 +451,32 @@ describe('drawerTerminalGrid — gridHandle persists across rebuilds (HS-8314)',
     // real `visibilityGroupingSelect` runs, then trips on the cleared
     // `groupingSelect`).
     await new Promise(resolve => setTimeout(resolve, 5));
+  });
+});
+
+// HS-9277 — the drawer-grid tile label must consult the shared transient-rename
+// store (keyed by project secret), so a rename made in the drawer tab strip or a
+// dashboard tile also shows on the drawer-grid tile within the session. Pre-fix
+// this label derived purely from `entry.name`/command and ignored the store.
+describe('tileLabel — transient rename (HS-9277)', () => {
+  afterEach(() => { _resetTransientTerminalNamesForTests(); });
+
+  it('returns the transient name over the configured name when the secret matches', () => {
+    setTransientTerminalName('secA', 't1', 'My Rename');
+    expect(tileLabel(makeEntry('t1', 'Shell'), 'secA')).toBe('My Rename');
+  });
+
+  it('does not collide across projects (different secret falls back to configured)', () => {
+    setTransientTerminalName('secA', 't1', 'My Rename');
+    expect(tileLabel(makeEntry('t1', 'Shell'), 'secB')).toBe('Shell');
+  });
+
+  it('ignores the store when no secret is passed', () => {
+    setTransientTerminalName('secA', 't1', 'My Rename');
+    expect(tileLabel(makeEntry('t1', 'Shell'))).toBe('Shell');
+  });
+
+  it('falls back to command-derived label when no name or transient override', () => {
+    expect(tileLabel({ id: 't1', name: '', command: '/usr/bin/fish' }, 'secA')).toBe('fish');
   });
 });

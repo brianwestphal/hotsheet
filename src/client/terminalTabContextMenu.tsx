@@ -172,9 +172,14 @@ function promptRenameTerminal(inst: TerminalInstance): void {
         inst.config = { ...inst.config, name: next };
       }
       updateTabLabel(inst);
-      // HS-9277 — publish the transient rename so the dashboard tile (which
-      // renders from its own server config fetch, not this instance) reflects it.
-      setTransientTerminalName(getActiveProject()?.secret ?? '', inst.id, next);
+      // HS-9277 — publish the transient rename so the other surfaces (dashboard
+      // tile, drawer-grid tile), which render from their own server config fetch
+      // rather than this instance, reflect it within the session. Key by the
+      // terminal's own project secret (`wsSecret`, set at mount), falling back to
+      // the active project. Only publish with a real secret — storing under an
+      // empty key would never match the real-secret reads and just leak an entry.
+      const secret = inst.wsSecret ?? getActiveProject()?.secret ?? '';
+      if (secret !== '') setTransientTerminalName(secret, inst.id, next);
     },
   });
 }
