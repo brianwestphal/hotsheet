@@ -46,15 +46,19 @@ test.describe('Embedded terminal drawer', () => {
       };
     });
 
-    // Dynamic terminals created by earlier tests persist in the server-side
-    // registry (they're not tied to settings.json), so destroy them before
-    // each test to prevent tab-count pollution.
+    // HS-9273/HS-9274 — kill EVERY lingering PTY (dynamic AND configured) from
+    // earlier tests before each run. Dynamic terminals persist in the registry
+    // (not settings.json), and configured terminals leave an alive PTY once
+    // attached; both bleed across tests (stale tab counts, alive-status timing,
+    // resource contention under full-file load). `destroyTerminal` kills the PTY;
+    // for a configured id the persisted config is untouched (only `dynamicConfigs`
+    // is pruned), and the settings re-seed + page reload below respawns it lazily.
     try {
       const list = await (await request.get('/api/terminal/list', { headers })).json() as {
-        dynamic?: { id: string }[];
+        configured?: { id: string }[]; dynamic?: { id: string }[];
       };
-      for (const d of list.dynamic ?? []) {
-        await request.post('/api/terminal/destroy', { headers, data: { terminalId: d.id } });
+      for (const t of [...(list.configured ?? []), ...(list.dynamic ?? [])]) {
+        await request.post('/api/terminal/destroy', { headers, data: { terminalId: t.id } });
       }
     } catch { /* first-time runs won't have the endpoint populated yet */ }
 
