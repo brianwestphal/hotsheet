@@ -19,8 +19,10 @@
  * names + counts. Nothing here is sent unless the live lease is held AND telemetry
  * is enabled for the project (gated by the caller).
  */
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb } from '../db/connection.js';
-import { eventNameMatchSql } from '../db/otelRollups.js';
+import { centralTelemetryDataDir, currentTelemetryClusterDir, runWithTelemetryDb } from '../db/connection.js';
+import { readOtelJsonlRange } from '../db/otelJsonlStore.js';
+import { serverLocalDay } from '../db/otelRollupIngest.js';
+import { isClaudeCodeEvent } from '../db/otelRollups.js';
 import { getProjectBySecret } from '../projects.js';
 
 /** A rendered telemetry signal line + its timestamp (for chronological merge). */
@@ -35,7 +37,6 @@ const NO_CURSOR_LOOKBACK_MS = 30 * 60 * 1000;
 const PROMPT_SNIPPET_LEN = 200;
 
 interface PromptRow { at: string; prompt_id: string | null; body: string | null }
-interface ToolRow { prompt_id: string | null; tool: string | null; n: bigint | number }
 
 /**
  * Collect recent in-progress telemetry signals for a project since `since`
@@ -59,43 +60,44 @@ export async function collectTelemetrySignals(projectSecret: string, since: stri
 }
 
 async function collectTelemetrySignalsFromCurrentDb(projectSecret: string, since: string | null): Promise<TelemetryLine[]> {
-  const db = await getTelemetryDb();
-  const sinceClause = since !== null ? '$2::timestamptz' : `NOW() - INTERVAL '${String(NO_CURSOR_LOOKBACK_MS)} milliseconds'`;
-  const params: string[] = since !== null ? [projectSecret, since] : [projectSecret];
+  // HS-9286 — read recent events from the day-partitioned JSONL store instead of
+  // raw `otel_events` (the same `currentTelemetryClusterDir()` store the §68 detail
+  // reads use since HS-9278), so this survives the HS-9280 raw-table drop. The SQL
+  // WHERE (project + `ts >= since` + event-name match) and the GROUP BY move into
+  // JS over the JSONL rows.
+  const dir = currentTelemetryClusterDir();
+  const sinceMs = since !== null ? Date.parse(since) : Date.now() - NO_CURSOR_LOOKBACK_MS;
+  // Day-range for the JSONL files (server-local day = the partition key). `toDay`
+  // is today; missing/older days contribute nothing.
+  const rows = await readOtelJsonlRange(dir, 'events', serverLocalDay(new Date(sinceMs)), serverLocalDay(new Date()));
 
-  const prompts = await db.query<PromptRow>(
-    `SELECT to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at,
-            prompt_id,
-            COALESCE(body_json->>'prompt', body_json->>'message', body_json->>'body', body_json::text) AS body
-       FROM otel_events
-      WHERE project_secret = $1 AND ts >= ${sinceClause}
-        AND ${eventNameMatchSql('event_name', 'user_prompt')}
-      ORDER BY ts ASC`,
-    params,
-  );
-
-  const tools = await db.query<ToolRow>(
-    `SELECT prompt_id, attributes_json->>'tool_name' AS tool, COUNT(*) AS n
-       FROM otel_events
-      WHERE project_secret = $1 AND ts >= ${sinceClause}
-        AND ${eventNameMatchSql('event_name', 'tool_result')}
-      GROUP BY prompt_id, attributes_json->>'tool_name'`,
-    params,
-  );
-
+  const promptRows: PromptRow[] = [];
   // Tool counts grouped by the prompt turn they belong to.
   const toolsByPrompt = new Map<string, Map<string, number>>();
-  for (const t of tools.rows) {
-    const tool = (t.tool ?? '').trim();
-    if (tool === '') continue;
-    const key = t.prompt_id ?? '(none)';
-    const m = toolsByPrompt.get(key) ?? new Map<string, number>();
-    m.set(tool, (m.get(tool) ?? 0) + Number(t.n));
-    toolsByPrompt.set(key, m);
+  for (const r of rows) {
+    if (r.project_secret !== projectSecret) continue;
+    const at = typeof r.ts === 'string' ? r.ts : null;
+    if (at === null || Date.parse(at) < sinceMs) continue;
+    const eventName = typeof r.event_name === 'string' ? r.event_name : '';
+    const promptId = typeof r.prompt_id === 'string' ? r.prompt_id : null;
+    if (isClaudeCodeEvent(eventName, 'user_prompt')) {
+      promptRows.push({ at, prompt_id: promptId, body: extractPromptBody(r.body_json) });
+    } else if (isClaudeCodeEvent(eventName, 'tool_result')) {
+      const attrs = r.attributes_json;
+      const raw = attrs !== null && typeof attrs === 'object' ? (attrs as Record<string, unknown>).tool_name : null;
+      const tool = typeof raw === 'string' ? raw.trim() : '';
+      if (tool === '') continue;
+      const key = promptId ?? '(none)';
+      const m = toolsByPrompt.get(key) ?? new Map<string, number>();
+      m.set(tool, (m.get(tool) ?? 0) + 1);
+      toolsByPrompt.set(key, m);
+    }
   }
+  // Mirror the old `ORDER BY ts ASC` (JSONL is day-then-append order — sort to be exact).
+  promptRows.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
   const lines: TelemetryLine[] = [];
-  for (const p of prompts.rows) {
+  for (const p of promptRows) {
     const snippet = promptSnippet(p.body);
     if (snippet === '') continue;
     const key = p.prompt_id ?? '(none)';
@@ -109,6 +111,27 @@ async function collectTelemetrySignalsFromCurrentDb(projectSecret: string, since
   // summarizer raw tool churn.
 
   return lines;
+}
+
+/**
+ * JS analogue of the old prompt-body COALESCE (prompt / message / body, then the
+ * whole record as text). Mirrors PostgreSQL's `->>` semantics: a JSON SCALAR
+ * (string / number / boolean) renders to text; an object / array / null value
+ * yields SQL null and falls through to the next key, then to the serialized
+ * record. Returns null when there's nothing.
+ */
+function extractPromptBody(bodyJson: unknown): string | null {
+  if (bodyJson === null || bodyJson === undefined) return null;
+  if (typeof bodyJson === 'string') return bodyJson;
+  if (typeof bodyJson === 'number' || typeof bodyJson === 'boolean') return String(bodyJson);
+  if (typeof bodyJson !== 'object') return null; // symbol / function / bigint — not real JSON
+  const o = bodyJson as Record<string, unknown>;
+  for (const k of ['prompt', 'message', 'body'] as const) {
+    const v = o[k];
+    if (typeof v === 'string') return v;
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  }
+  return JSON.stringify(bodyJson);
 }
 
 /** Trim a prompt body to a single-line snippet, stripping the hotsheet ticket

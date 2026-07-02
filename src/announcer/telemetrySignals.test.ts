@@ -5,9 +5,12 @@
  * activity (no in-window prompt) is dropped, not folded into an "ongoing work"
  * line, since bare tool churn has no cohesive content to narrate.
  */
+import { readdirSync, rmSync } from 'fs';
+import { join } from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb, getTelemetryDb } from '../db/connection.js';
+import { getDataDir, getDb, telemetryClusterDataDir } from '../db/connection.js';
+import { _resetOtelJsonlForTesting, appendOtelJsonl } from '../db/otelJsonlStore.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { collectTelemetrySignals } from './telemetrySignals.js';
@@ -27,26 +30,31 @@ beforeAll(async () => {
   registerExistingProject(tempDir, SECRET, await getDb());
 });
 afterAll(async () => { unregisterProject(SECRET); await cleanupTestDb(tempDir); });
-// HS-9230 (epic HS-9226 Phase 1) — the raw `otel_*` tables were relocated OUT of
-// the project's snapshotted `<dataDir>/db` into the un-snapshotted sibling
-// `<dataDir>/telemetry/db` cluster, which is what `collectTelemetrySignals` reads
-// (via `runWithTelemetryDb` → `getTelemetryDb`). Seed + clear THAT cluster, not
-// the main db, or the reader sees nothing (HS-9269).
-beforeEach(async () => { await (await getTelemetryDb()).query('DELETE FROM otel_events'); });
+// HS-9286 (epic HS-9226 Phase 3) — `collectTelemetrySignals` now reads the recent
+// events from the day-partitioned JSONL store (`<dataDir>/telemetry/otel-events-*.jsonl`)
+// rather than the raw `otel_events` table, so seed + clear THAT store. Clearing =
+// remove the events JSONL files + reset the append-chain map between tests.
+function eventsDir(): string { return telemetryClusterDataDir(getDataDir()); }
+beforeEach(() => {
+  _resetOtelJsonlForTesting();
+  try {
+    for (const f of readdirSync(eventsDir())) {
+      if (f.startsWith('otel-events-')) rmSync(join(eventsDir(), f), { force: true });
+    }
+  } catch { /* dir not created until the first append */ }
+});
 
 async function prompt(ts: string, promptId: string, body: unknown, secret = SECRET): Promise<void> {
-  await (await getTelemetryDb()).query(
-    `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-     VALUES ($1, $2, 's1', $3, 'user_prompt', '{}'::jsonb, $4::jsonb)`,
-    [ts, secret, promptId, JSON.stringify(body)],
-  );
+  await appendOtelJsonl(eventsDir(), 'events', new Date(ts), {
+    ts: new Date(ts).toISOString(), project_secret: secret, session_id: 's1',
+    prompt_id: promptId, event_name: 'user_prompt', attributes_json: {}, body_json: body,
+  });
 }
 async function tool(ts: string, promptId: string, toolName: string, secret = SECRET): Promise<void> {
-  await (await getTelemetryDb()).query(
-    `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-     VALUES ($1, $2, 's1', $3, 'tool_result', $4::jsonb, '{}'::jsonb)`,
-    [ts, secret, promptId, JSON.stringify({ tool_name: toolName })],
-  );
+  await appendOtelJsonl(eventsDir(), 'events', new Date(ts), {
+    ts: new Date(ts).toISOString(), project_secret: secret, session_id: 's1',
+    prompt_id: promptId, event_name: 'tool_result', attributes_json: { tool_name: toolName }, body_json: {},
+  });
 }
 
 describe('collectTelemetrySignals (HS-8789)', () => {

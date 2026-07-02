@@ -21,9 +21,14 @@ events every few seconds *while working* (§67) — this feeds those in.
 ## 82.2 New signal source
 
 `src/announcer/telemetrySignals.ts` → `collectTelemetrySignals(projectSecret,
-since)` reads the shared telemetry DB (`getTelemetryDb`, keyed by
-`project_secret`) and renders a few chronological lines, **grouped by
-user-prompt turn** (a burst of tool calls becomes ONE line, not dozens):
+since)` reads the recent `user_prompt` / `tool_result` events for the project
+(keyed by `project_secret`) and renders a few chronological lines, **grouped by
+user-prompt turn** (a burst of tool calls becomes ONE line, not dozens).
+**HS-9286** — it reads from the day-partitioned events **JSONL store**
+(`readOtelJsonlRange` over `[serverLocalDay(since), today]`, resolved via
+`currentTelemetryClusterDir()`), not the raw `otel_events` table, so it keeps
+working after the epic's Phase 3 drop (HS-9280); the per-project / `ts >= since` /
+event-name filtering + tool grouping happen in JS over the JSONL rows:
 
 - one line per in-window `user_prompt`: `"[in progress] working on: \"<snippet>\"
   (used Bash ×3, Edit ×2)"` — the prompt body trimmed to a 200-char snippet with
