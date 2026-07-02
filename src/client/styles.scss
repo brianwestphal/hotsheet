@@ -4417,6 +4417,110 @@ body.cross-project-stats-active {
   }
 }
 
+// HS-9223 / HS-9293 (docs/111) — the Glassbox `.pr-notes/` review-proof section.
+// Presence-gated: an empty container collapses to zero height.
+.detail-review-proof:empty { display: none; }
+
+.review-proof-block { margin-bottom: 16px; }
+
+.review-proof-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.review-proof-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.review-proof-note {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  overflow: hidden;
+
+  &.is-open { border-color: var(--accent); }
+}
+
+.review-proof-note-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+
+  &:hover { background: var(--bg-hover); }
+}
+
+.review-proof-kind {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.review-proof-loc {
+  flex-shrink: 0;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.review-proof-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-proof-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.review-proof-note-detail {
+  padding: 4px 10px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.review-proof-attachments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.review-proof-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.review-proof-attachment-name { font-family: monospace; }
+.review-proof-attachment-desc { color: var(--text-muted); font-size: 11px; }
+.review-proof-empty-detail { color: var(--text-muted); font-size: 12px; }
+
 .ticket-telemetry-block {
   margin-bottom: 16px;
 }

@@ -237,6 +237,9 @@ export function closeDetail() {
   void import('./ticketTelemetryStats.js').then(({ clearTicketTelemetryStats }) => {
     clearTicketTelemetryStats();
   });
+  void import('./reviewProofSection.js').then(({ clearReviewProof }) => {
+    clearReviewProof();
+  });
   syncDetailPanel();
   // Trigger re-render for selection classes
   const event = new CustomEvent('hotsheet:render');
@@ -602,6 +605,12 @@ async function loadDetail(id: number, forceTextFields = false) {
   // no longer flashes empty; it clears only when switching to an unseen ticket.
   void import('./ticketTelemetryStats.js').then(({ loadAndRenderTicketTelemetry }) => {
     void loadAndRenderTicketTelemetry(ticket.ticket_number);
+  });
+  // HS-9223 / HS-9293 — the Glassbox `.pr-notes/` review-proof section (docs/111).
+  // Same cache-and-diff discipline: presence-gated, never flashes / collapses on a
+  // background reload.
+  void import('./reviewProofSection.js').then(({ loadAndRenderReviewProof }) => {
+    void loadAndRenderReviewProof(ticket.ticket_number);
   });
 
   // Render plugin UI extensions for the detail panel

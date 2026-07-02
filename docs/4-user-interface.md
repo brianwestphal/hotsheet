@@ -71,6 +71,7 @@ The interface is divided into:
 ### 4.6 Detail Panel
 
 - Opens when a ticket is clicked; shows full ticket details.
+- **HS-9223 / HS-9293 (docs/111) — Review Proof section.** Below the per-ticket telemetry block, a presence-gated **"Review Proof (N)"** block surfaces the Glassbox `.pr-notes/` review notes whose `workItemUris` reference the ticket (READ side of §110's inducement). Each note row = kind + `file:line` + summary; clicking a row expands it to the note's attachment chips. Shown only when matching notes exist (no dependency on the `aiReviewNotes` toggle). Inline artifact rendering + Open-in-Glassbox is a follow-up (docs/111 Phase 3).
 - **Position**: Side (default) or bottom, toggled via header button. The segmented control shows bottom first, then side. Preference is persisted. Clicking the already-active position segment hides the panel; clicking a different segment shows it in that position. The `detail_visible` setting is persisted so the panel stays hidden across page reloads.
 - **Resizable**: Drag the resize handle to adjust panel width (side) or height (bottom). Size is persisted.
 - **Editable fields**:

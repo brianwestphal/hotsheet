@@ -60,14 +60,25 @@ requirement), while a URL ending in the id still matches.
   `prNotesReader.test.ts` (match, cross-ticket isolation, HS-12≠HS-123 boundary,
   URL work-item, malformed-shard tolerance, missing-dir, rank sort, bare/attachless
   results).
-- **Phase 2 — API + client (FOLLOW-UP).** A typed endpoint
-  `GET /tickets/:number/review-proof` that resolves the repo root via
-  `getGitRoot(projectRootFromDataDir(dataDir))` and calls the reader; a collapsible
-  detail-panel "Review proof (N)" section (light list → click-to-expand). Rich
-  render needs LFS-aware artifact serving (a route that streams a real image from
-  `.pr-notes/artifacts/`, or falls back to a "not pulled / open in Glassbox" chip
-  when the file is still an LFS pointer stub) + text-artifact inlining. "Open in
-  Glassbox" reuses the existing `launchGlassbox` integration for the full view.
+- **Phase 2 — API + client light list (SHIPPED, HS-9293).**
+  - **Endpoint:** `GET /tickets/:number/review-proof` (`src/routes/tickets.ts`) →
+    `{ notes }`. Resolves the repo root via `getGitRoot(projectRootFromDataDir(dataDir))`
+    (same as `routes/git.ts`) and calls the reader. Wire shape once in
+    `src/api/reviewProof.ts` (`getReviewProof` caller); `reviewProofRoute.test.ts`.
+  - **Detail-panel section:** `src/client/reviewProofSection.tsx` renders the
+    "Review Proof (N)" block into `#detail-review-proof` (added to `pages.tsx`,
+    driven by `loadDetail` in `detail.tsx`, mirroring `ticketTelemetryStats`).
+    Presence-gated (`:empty`-collapses); each note row shows kind + `file:line` +
+    summary and **expands on click** to its attachment chips (name + image/text
+    icon + description). Poll-safe: cached per ticket, repainted only on change, so
+    a background reload never flashes or collapses an expanded row.
+    `reviewProofSection.test.ts`.
+- **Phase 3 — inline rich artifacts + Open-in-Glassbox (FOLLOW-UP).** Swap the
+  attachment CHIPS for the real inline render (Q2 "b"): an LFS-aware artifact-serving
+  route that streams a real image from `.pr-notes/artifacts/` (or a "not pulled /
+  open in Glassbox" chip when the file is still an LFS pointer stub) + text-artifact
+  inlining, plus a per-note "Open in Glassbox" (reusing `launchGlassbox`) that jumps
+  to the anchored `file:line`.
 
 ## 111.5 Non-goals (inherited from docs/110 §110.6)
 
