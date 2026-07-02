@@ -3,6 +3,7 @@
 // import (the route handlers all routed through that helper).
 import { type Context, Hono } from 'hono';
 
+import { projectRootFromDataDir } from '../aiInstructions.js';
 // HS-8555 — centralized attachment-blob delete helper.
 import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
 import { getBlockedBy, isBlocked, setBlockedBy } from '../db/blockedBy.js';
@@ -32,9 +33,11 @@ import {
 } from '../db/queries.js';
 import { countSearchMatchesInExcludedStatuses, listKnownTicketPrefixes } from '../db/tickets.js';
 import { readFileSettings } from '../file-settings.js';
+import { getGitRoot } from '../gitignore.js';
 import { TICKETS_LIST_MAX_LIMIT } from '../limits.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
+import { readReviewProofForTicket } from '../reviewNotes/prNotesReader.js';
 import { parseJsonOrNull, type SyncEventInput, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
 import { isQueueOnly, onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
@@ -296,6 +299,20 @@ ticketRoutes.get('/tickets/:id/blocked-by', async (c) => {
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
   const [blockedBy, blocked] = await Promise.all([getBlockedBy(id), isBlocked(id)]);
   return c.json({ blockedBy, blocked });
+});
+
+// HS-9223 / HS-9293 (docs/111) — READ side of Glassbox `.pr-notes/`: the SARIF
+// review notes whose `workItemUris` reference this ticket, for the detail-panel
+// "Review proof" section. `:number` is the human ticket_number (e.g. `HS-1234`),
+// matched by word-boundary in the reader (no false matches). Presence-gated:
+// empty `notes` when there's no `.pr-notes/` / no match. The repo root is resolved
+// the same way `routes/git.ts` does (peel `.hotsheet`, then `git rev-parse`).
+ticketRoutes.get('/tickets/:number/review-proof', async (c) => {
+  const ticketNumber = c.req.param('number');
+  const projectRoot = projectRootFromDataDir(c.get('dataDir'));
+  const gitRoot = getGitRoot(projectRoot) ?? projectRoot;
+  const notes = await readReviewProofForTicket(gitRoot, ticketNumber);
+  return c.json({ notes });
 });
 
 ticketRoutes.put('/tickets/:id/blocked-by', async (c) => {

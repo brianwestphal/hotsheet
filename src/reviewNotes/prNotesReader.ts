@@ -2,6 +2,13 @@ import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { z } from 'zod';
 
+import type { ReviewProofAttachment, ReviewProofNote } from '../api/reviewProof.js';
+
+// HS-9293 — the wire shape (`ReviewProofNote` / `ReviewProofAttachment`) is the
+// single source of truth in `src/api/reviewProof.ts` (§9); the reader returns it.
+export type { ReviewProofAttachment, ReviewProofNote } from '../api/reviewProof.js';
+type ReviewProofAttachmentKind = ReviewProofAttachment['kind'];
+
 /**
  * HS-9223 (docs/110 §110.7 P3, docs/111) — READ-SIDE reader for Glassbox's
  * `.pr-notes/` review notes. Detects the SARIF `result`s whose `workItemUris`
@@ -19,34 +26,6 @@ import { z } from 'zod';
  * missing `.pr-notes/` dir, a malformed shard, or unexpected SARIF fields (a bad
  * file is skipped; the rest still surface).
  */
-
-/** Attachment kind, inferred from the artifact URI's extension. */
-export type ReviewProofAttachmentKind = 'image' | 'text';
-
-export interface ReviewProofAttachment {
-  /** Artifact URI as written in the SARIF (repo-relative path under `.pr-notes/`). */
-  uri: string;
-  kind: ReviewProofAttachmentKind;
-  description?: string;
-}
-
-export interface ReviewProofNote {
-  /** The note's kind from `result.properties.tags` (rationale / proof / risk / …). */
-  noteKind: string | null;
-  /** Anchored source file (`physicalLocation.artifactLocation.uri`), if present. */
-  file: string | null;
-  startLine: number | null;
-  endLine: number | null;
-  /** First line of `result.message.text` — the one-line summary for the list row. */
-  summary: string;
-  /** SARIF importance (`result.rank`, 0–100) — used to sort most-important first. */
-  rank: number | null;
-  /** `result.level` (`warning` for risk notes, else `none`). */
-  level: string | null;
-  attachments: ReviewProofAttachment[];
-  /** Basename of the SARIF shard this note came from (for stable keys / dedupe). */
-  sourceFile: string;
-}
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
 

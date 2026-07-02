@@ -37,6 +37,7 @@ import * as git from './git.js';
 import * as keys from './keys.js';
 import * as plugins from './plugins.js';
 import * as projects from './projects.js';
+import * as reviewProof from './reviewProof.js';
 import * as settings from './settings.js';
 import * as shell from './shell.js';
 import * as telemetry from './telemetry.js';
@@ -61,6 +62,7 @@ export * from './git.js';
 export * from './keys.js';
 export * from './plugins.js';
 export * from './projects.js';
+export * from './reviewProof.js';
 export * from './settings.js';
 export * from './shell.js';
 export * from './telemetry.js';
@@ -81,6 +83,7 @@ export const apis = {
   ...db,
   ...channel,
   ...projects,
+  ...reviewProof,
   ...plugins,
   ...keys,
   ...attachments,
