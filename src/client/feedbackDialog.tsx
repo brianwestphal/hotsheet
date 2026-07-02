@@ -4,6 +4,7 @@ import {
   uploadDraftAttachment as uploadDraftAttachmentToServer,
 } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
+import { lastMeaningfulNoteIndex } from '../systemNotes.js';
 import { choiceDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import {
@@ -91,10 +92,14 @@ function extractFeedbackPrompt(text: string, from: number): string {
   return text.slice(from).replace(/^:?\s*/, '').trim();
 }
 
-/** Check if the ticket's most recent note is a feedback request. */
+/** Check if the ticket's most recent MEANINGFUL note is a feedback request.
+ *  HS-9289 — trailing system/status notes (e.g. a claim-lease-reclaim note) are
+ *  skipped so one appended after a FEEDBACK NEEDED note doesn't hide the pending
+ *  state (the ticket kept showing "not waiting for feedback"). */
 export function getTicketFeedbackState(notes: NoteEntry[]): { type: 'standard' | 'immediate'; prompt: string; noteId: string } | null {
-  if (notes.length === 0) return null;
-  const last = notes[notes.length - 1];
+  const idx = lastMeaningfulNoteIndex(notes.map(n => n.text));
+  if (idx < 0) return null;
+  const last = notes[idx];
   const parsed = parseFeedbackPrefix(last.text);
   if (!parsed) return null;
   return { ...parsed, noteId: last.id ?? '' };

@@ -2,9 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getFeedbackDrafts } from '../api/index.js';
+import { buildClaimReclaimNote } from '../systemNotes.js';
 import {
   buildFeedbackNav,
   buildOverlay,
+  getTicketFeedbackState,
   openFeedbackDialogForNote,
   parseFeedbackPrefix,
   pickDraftForFeedbackNote,
@@ -13,7 +15,7 @@ import {
   suppressNextAutoShowFeedback,
   toDraftSeed,
 } from './feedbackDialog.js';
-import type { FeedbackDraft } from './noteRenderer.js';
+import type { FeedbackDraft, NoteEntry } from './noteRenderer.js';
 import { _resetPrefixesForTesting } from './ticketRefs.js';
 
 // HS-8603 — `openFeedbackDialogForNote` fetches the ticket's drafts.
@@ -63,6 +65,41 @@ describe('parseFeedbackPrefix (HS-8702)', () => {
 
   it('returns null when the phrase is absent', () => {
     expect(parseFeedbackPrefix('just a normal note')).toBeNull();
+  });
+});
+
+// HS-9289 — a claim-reclaim SYSTEM note appended after a FEEDBACK NEEDED note
+// must NOT make the ticket look resolved. getTicketFeedbackState reads the last
+// MEANINGFUL note (trailing system notes skipped).
+describe('getTicketFeedbackState (HS-9289)', () => {
+  const note = (id: string, text: string): NoteEntry => ({ id, text, created_at: '2026-05-13T11:00:00Z' });
+
+  it('reads feedback state from a trailing FEEDBACK NEEDED note', () => {
+    expect(getTicketFeedbackState([note('n1', 'FEEDBACK NEEDED: which?')]))
+      .toEqual({ type: 'standard', prompt: 'which?', noteId: 'n1' });
+  });
+
+  it('skips claim-reclaim system notes appended AFTER the feedback note', () => {
+    const notes = [
+      note('n1', 'FEEDBACK NEEDED: which option?'),
+      note('sys1', buildClaimReclaimNote('owner')),
+      note('sys2', buildClaimReclaimNote('null')),
+    ];
+    expect(getTicketFeedbackState(notes)).toEqual({ type: 'standard', prompt: 'which option?', noteId: 'n1' });
+  });
+
+  it('returns null when a real (non-system) response follows the feedback note', () => {
+    const notes = [
+      note('n1', 'FEEDBACK NEEDED: which option?'),
+      note('n2', 'Use a Map.'),
+      note('sys1', buildClaimReclaimNote('owner')),
+    ];
+    expect(getTicketFeedbackState(notes)).toBeNull();
+  });
+
+  it('returns null for empty / all-system note lists', () => {
+    expect(getTicketFeedbackState([])).toBeNull();
+    expect(getTicketFeedbackState([note('s', buildClaimReclaimNote('x'))])).toBeNull();
   });
 });
 

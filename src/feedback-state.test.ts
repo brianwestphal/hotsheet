@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { notesEndWithFeedback, projectHasPendingFeedback } from './feedback-state.js';
+import { buildClaimReclaimNote } from './systemNotes.js';
 import { cleanupTestDb, setupTestDb } from './test-helpers.js';
 
 /**
@@ -41,6 +42,27 @@ describe('notesEndWithFeedback (HS-8378)', () => {
     const notes = JSON.stringify([
       { text: 'FEEDBACK NEEDED: Should we use a Map or a Set here?', created_at: '2026-05-13T11:00:00Z' },
       { text: 'Use a Map.', created_at: '2026-05-13T11:05:00Z' },
+    ]);
+    expect(notesEndWithFeedback(notes)).toBe(false);
+  });
+
+  // HS-9289 — a claim-lease-reclaim SYSTEM note appended after the FEEDBACK
+  // NEEDED note must NOT hide the pending state (the reader skips trailing
+  // system notes to find the last MEANINGFUL note).
+  it('stays true when a claim-reclaim system note follows the feedback note', () => {
+    const notes = JSON.stringify([
+      { text: 'FEEDBACK NEEDED: which option?', created_at: '2026-05-13T11:00:00Z' },
+      { text: buildClaimReclaimNote('owner'), created_at: '2026-05-13T11:30:00Z' },
+      { text: buildClaimReclaimNote('null'), created_at: '2026-05-13T12:00:00Z' }, // multiple trailing system notes
+    ]);
+    expect(notesEndWithFeedback(notes)).toBe(true);
+  });
+
+  it('stays false when a real response (not a system note) follows the feedback note', () => {
+    const notes = JSON.stringify([
+      { text: 'FEEDBACK NEEDED: which option?', created_at: '2026-05-13T11:00:00Z' },
+      { text: 'Use a Map.', created_at: '2026-05-13T11:05:00Z' },
+      { text: buildClaimReclaimNote('owner'), created_at: '2026-05-13T11:30:00Z' },
     ]);
     expect(notesEndWithFeedback(notes)).toBe(false);
   });

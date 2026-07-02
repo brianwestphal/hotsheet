@@ -7769,6 +7769,17 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   &:hover { background: var(--bg-hover); }
 
   &.note-empty { border-left-color: var(--border); }
+
+  // HS-9289 — auto-generated status notes (claim-lease reclaim) are churn, not
+  // content: dim them + drop the accent bar so the eye skips past them and a
+  // preceding FEEDBACK NEEDED note stays visually prominent.
+  &.note-system {
+    opacity: 0.55;
+    border-left-color: var(--border);
+    background: transparent;
+    font-size: 0.92em;
+    &:hover { background: var(--bg-secondary); opacity: 0.75; }
+  }
 }
 
 .feedback-link {

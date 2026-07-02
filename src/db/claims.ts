@@ -7,6 +7,7 @@
 // concurrent Postgres; a no-op-but-safe serialization under single-connection
 // PGLite where the single UPDATE … RETURNING already prevents double-claim).
 import { parseJsonOrNull, TagsArraySchema,type Ticket } from '../schemas.js';
+import { buildClaimReclaimNote } from '../systemNotes.js';
 import { BLOCKED_TICKET_IDS_SQL } from './blockedBy.js';
 import { getDb } from './connection.js';
 import { updateTicket } from './tickets.js';
@@ -335,7 +336,9 @@ export async function sweepExpiredClaims(): Promise<number> {
       // Fresh budget for the next attempt once the owner re-queues it.
       await db.query('UPDATE tickets SET claim_count = 0 WHERE id = $1', [row.id]);
     } else {
-      await updateTicket(row.id, { notes: `Claim lease expired — reclaimed from \`${who}\`.` });
+      // HS-9289 — a system/status note (dimmed in the UI; the feedback-state
+      // readers skip it so it can't mask a preceding FEEDBACK NEEDED note).
+      await updateTicket(row.id, { notes: buildClaimReclaimNote(who) });
     }
   }
   return expired.rows.length;

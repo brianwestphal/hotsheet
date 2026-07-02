@@ -1,5 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
+import { isSystemStatusNote } from './systemNotes.js';
+
 /**
  * HS-8378 — server-side mirror of `hasPendingFeedback(ticket)` from
  * `src/client/ticketRow.tsx`. Used by the cross-project feedback-state
@@ -43,7 +45,17 @@ export function notesEndWithFeedback(notes: string | null | undefined): boolean 
     return false;
   }
   if (!Array.isArray(parsed) || parsed.length === 0) return false;
-  const last: unknown = parsed[parsed.length - 1];
+  // HS-9289 — skip trailing SYSTEM/status notes (e.g. a claim-lease-reclaim note)
+  // so one appended AFTER a FEEDBACK NEEDED note doesn't hide the pending state.
+  let idx = parsed.length - 1;
+  while (idx >= 0) {
+    const entry: unknown = parsed[idx];
+    const t = entry !== null && typeof entry === 'object' ? (entry as { text?: unknown }).text : undefined;
+    if (typeof t === 'string' && isSystemStatusNote(t)) { idx--; continue; }
+    break;
+  }
+  if (idx < 0) return false;
+  const last: unknown = parsed[idx];
   if (last === null || typeof last !== 'object') return false;
   const text = (last as { text?: unknown }).text;
   if (typeof text !== 'string') return false;

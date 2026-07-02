@@ -1,8 +1,12 @@
+import { readdirSync, rmSync } from 'fs';
+import { join } from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb, getTelemetryDb } from '../db/connection.js';
+import { getDataDir, getDb, telemetryClusterDataDir } from '../db/connection.js';
+import { appendOtelJsonl } from '../db/otelJsonlStore.js';
 import { createTicket } from '../db/tickets.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
+import { buildClaimReclaimNote } from '../systemNotes.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { capMaterial, collectWorkSignals, MAX_INPUT_TOKENS } from './collectSignals.js';
 
@@ -142,15 +146,20 @@ describe('collectWorkSignals (HS-8745)', () => {
 
   // HS-8789 — live mode merges the §67 telemetry stream as a mid-task source.
   it('merges telemetry signals only when includeTelemetry + projectSecret are set', async () => {
-    // HS-9230/HS-9269 — raw otel_* live in the un-snapshotted `<dataDir>/telemetry/db`
-    // cluster now, which is what the telemetry-signal reader queries. Seed there.
-    const db = await getTelemetryDb();
-    await db.query('DELETE FROM otel_events');
-    await db.query(
-      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-       VALUES ($1, 'sec-x', 's', 'p', 'user_prompt', '{}'::jsonb, $2::jsonb)`,
-      [NEW, JSON.stringify({ prompt: 'wiring the live loop' })],
-    );
+    // HS-9286 — `collectTelemetrySignals` reads the day-partitioned events JSONL
+    // (`<dataDir>/telemetry/otel-events-*.jsonl`) now, not raw `otel_events`; seed
+    // there. `sec-x` is registered against the test dir, so the reader resolves to
+    // `telemetryClusterDataDir(getDataDir())`.
+    const dir = telemetryClusterDataDir(getDataDir());
+    const clearEvents = (): void => {
+      try { for (const f of readdirSync(dir)) if (f.startsWith('otel-events-')) rmSync(join(dir, f), { force: true }); }
+      catch { /* dir not created yet */ }
+    };
+    clearEvents();
+    await appendOtelJsonl(dir, 'events', new Date(NEW), {
+      ts: new Date(NEW).toISOString(), project_secret: 'sec-x', session_id: 's',
+      prompt_id: 'p', event_name: 'user_prompt', attributes_json: {}, body_json: { prompt: 'wiring the live loop' },
+    });
 
     const withTel = await collectWorkSignals(CURSOR, { projectSecret: 'sec-x', includeTelemetry: true });
     expect(withTel.material).toContain('[in progress]');
@@ -159,7 +168,7 @@ describe('collectWorkSignals (HS-8745)', () => {
     // Default (after-the-fact) path does not touch telemetry.
     const without = await collectWorkSignals(CURSOR);
     expect(without.material).not.toContain('[in progress]');
-    await db.query('DELETE FROM otel_events');
+    clearEvents();
   });
 
   it('returns empty material when nothing matches the cursor', async () => {
@@ -167,6 +176,22 @@ describe('collectWorkSignals (HS-8745)', () => {
     const { material, count } = await collectWorkSignals('2027-01-01T00:00:00.000Z');
     expect(material).toBe('');
     expect(count).toBe(0);
+  });
+
+  // HS-9289 — a trailing claim-reclaim system note must not mask WAITING FOR
+  // FEEDBACK, and the system note itself is not narrated (status churn).
+  it('a trailing claim-reclaim note neither masks pending feedback nor is narrated', async () => {
+    const db = await getDb();
+    const t = await createTicket('Paused on a question');
+    const notes = JSON.stringify([
+      { id: 'q', text: 'FEEDBACK NEEDED: which option?', created_at: NEW },
+      { id: 'sys', text: buildClaimReclaimNote('owner'), created_at: '2026-06-05T14:01:00.000Z' },
+    ]);
+    await db.query(`UPDATE tickets SET notes = $1, status = 'started', updated_at = $2 WHERE id = $3`, [notes, '2026-06-05T14:01:00.000Z', t.id]);
+    const { material } = await collectWorkSignals(CURSOR);
+    expect(material).toContain('WAITING FOR FEEDBACK');
+    expect(material).toContain('which option?');
+    expect(material).not.toContain('Claim lease expired'); // system note not narrated
   });
 
   it('bounds the assembled material so a long-history project never blows the token limit (HS-8752)', async () => {

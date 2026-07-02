@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ApiIndex from '../api/index.js';
 import { deleteTicketNote, editTicketNote } from '../api/index.js';
+import { buildClaimReclaimNote } from '../systemNotes.js';
 import type { Ticket } from '../types.js';
 import { _resetNotesDelegationForTests, parseNotesJson, renderNotes } from './noteRenderer.js';
 import { state } from './state.js';
@@ -250,5 +251,33 @@ describe('renderNotes — morph reconciliation (HS-8651)', () => {
     // textarea, the new text rendered in `.note-text`.
     expect(noteEntry('a').querySelector('.note-edit-area')).toBeNull();
     expect(noteEntry('a').querySelector('.note-text')?.textContent).toContain('after');
+  });
+});
+
+// HS-9289 — auto-generated claim-reclaim status notes render dimmed (`note-system`)
+// and, critically, do NOT steal the "Provide Feedback" link from a preceding
+// FEEDBACK NEEDED note (the link tracks the last MEANINGFUL note, not the literal last).
+describe('renderNotes — system status notes (HS-9289)', () => {
+  beforeEach(() => {
+    _resetNotesDelegationForTests();
+    document.body.innerHTML = '<div id="detail-notes"></div>';
+  });
+  afterEach(() => {
+    document.body.innerHTML = '';
+    state.tickets = [];
+    _resetNotesDelegationForTests();
+  });
+
+  it('dims a claim-reclaim note + keeps the feedback link on the preceding feedback note', () => {
+    state.tickets = [ticket(1)];
+    renderNotes(1, [
+      { id: 'fb', text: 'FEEDBACK NEEDED: which option?', created_at: '' },
+      { id: 'sys', text: buildClaimReclaimNote('owner'), created_at: '' },
+    ]);
+    expect(noteEntry('sys').classList.contains('note-system')).toBe(true);
+    expect(noteEntry('fb').classList.contains('note-system')).toBe(false);
+    // The trailing system note must NOT be the one carrying the feedback link.
+    expect(noteEntry('fb').querySelector('.feedback-link')).not.toBeNull();
+    expect(noteEntry('sys').querySelector('.feedback-link')).toBeNull();
   });
 });

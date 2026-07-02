@@ -12,6 +12,7 @@
 import { getLogEntries } from '../db/commandLog.js';
 import { getDb } from '../db/connection.js';
 import { parseNotes } from '../db/notes.js';
+import { isSystemStatusNote, lastMeaningfulNoteIndex } from '../systemNotes.js';
 import { collectTelemetrySignals } from './telemetrySignals.js';
 
 export interface CollectedSignals {
@@ -127,8 +128,12 @@ export async function collectWorkSignals(
     // ("only the most recent note matters") + the actionable-status rule, and the
     // substring covers `IMMEDIATE FEEDBACK NEEDED` (a superset). An older/resolved
     // feedback note narrates as a plain note.
-    const lastNoteId = allNotes.length > 0 ? allNotes[allNotes.length - 1].id : null;
-    const freshNotes = allNotes.filter(n => since === null || n.created_at >= since);
+    // HS-9289 — the "last note" for the pending-feedback check is the last
+    // MEANINGFUL note; a trailing claim-reclaim system note must not mask a
+    // preceding FEEDBACK NEEDED note (nor be narrated as its own line).
+    const lastMeaningfulIdx = lastMeaningfulNoteIndex(allNotes.map(n => n.text));
+    const lastNoteId = lastMeaningfulIdx >= 0 ? allNotes[lastMeaningfulIdx].id : null;
+    const freshNotes = allNotes.filter(n => (since === null || n.created_at >= since) && !isSystemStatusNote(n.text));
     for (const n of freshNotes) {
       const isPendingFeedback = t.status === 'started' && n.id === lastNoteId && n.text.includes('FEEDBACK NEEDED');
       // Label feedback requests distinctly so the summarizer narrates the question
