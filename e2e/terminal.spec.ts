@@ -8,6 +8,17 @@
  *
  * The drawer requires `terminal_enabled: true` in `.hotsheet/settings.json`,
  * so each test seeds that via PATCH /api/file-settings before opening the page.
+ *
+ * FLAKINESS POSTURE (HS-9276). These tests drive REAL PTYs + WebSockets over the
+ * shared single-worker E2E server, so under full-file load an occasional run
+ * flakes on timing/state (every test passes in isolation; the three underlying
+ * product races were fixed in HS-9270/9273/9274). This is mitigated, not fully
+ * eliminated: CI runs the terminal specs in a dedicated job with a 60s timeout +
+ * 2 retries (`playwright.config.ts`, HS-9141), so a flake self-heals there; local
+ * runs keep `retries:0` on purpose so flakes still surface during dev. Per the
+ * HS-9276 decision this posture is ACCEPTED — don't chase the last full-file flake
+ * with more point fixes; a fully-deterministic fix would need per-test project
+ * isolation (a fresh `.hotsheet` per test), which wasn't judged worth the rewrite.
  */
 import type { Page } from '@playwright/test';
 
