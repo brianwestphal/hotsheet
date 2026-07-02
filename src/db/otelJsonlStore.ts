@@ -115,6 +115,47 @@ export function jsonlFileDay(filename: string): string | null {
 }
 
 /**
+ * HS-9237 — the inclusive list of `YYYY-MM-DD` day strings from `fromDay` to
+ * `toDay`. Enumeration only (UTC arithmetic on the labels — no DST drift since
+ * we never localize); returns `[]` when `fromDay > toDay`. Pure, for the deep
+ * inspectors (which scan a retention-bounded day range) + tests.
+ */
+export function dayRange(fromDay: string, toDay: string): string[] {
+  const parse = (s: string): number => {
+    const [y, m, d] = s.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  const out: string[] = [];
+  const end = parse(toDay);
+  for (let cur = parse(fromDay); cur <= end; cur += 86_400_000) {
+    const d = new Date(cur);
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    out.push(`${d.getUTCFullYear()}-${m}-${day}`);
+  }
+  return out;
+}
+
+/**
+ * HS-9237 — read every row across a `[fromDay, toDay]` inclusive day range for one
+ * kind, concatenated in day (≈time) order. Missing days contribute nothing; each
+ * day is crash-tolerant via `readOtelJsonlDay`. The reusable read substrate the
+ * deep §68 inspectors use in place of the raw `otel_*` tables.
+ */
+export async function readOtelJsonlRange(
+  telemetryDir: string,
+  kind: OtelJsonlKind,
+  fromDay: string,
+  toDay: string,
+): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (const day of dayRange(fromDay, toDay)) {
+    out.push(...await readOtelJsonlDay(telemetryDir, kind, day));
+  }
+  return out;
+}
+
+/**
  * Delete `otel-*-<day>.jsonl` files whose day is more than `maxAgeDays` before
  * `now` (server-local). Returns the number of files removed. Best-effort: an
  * unreadable dir or a failed unlink is swallowed. `maxAgeDays <= 0` disables the

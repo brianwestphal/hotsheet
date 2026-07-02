@@ -8,9 +8,11 @@ import { createTempDir } from '../test-helpers.js';
 import {
   _resetOtelJsonlForTesting,
   appendOtelJsonl,
+  dayRange,
   jsonlFileDay,
   otelJsonlPath,
   readOtelJsonlDay,
+  readOtelJsonlRange,
   sweepOtelJsonl,
 } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
@@ -86,6 +88,48 @@ describe('jsonlFileDay', () => {
     expect(jsonlFileDay('otel-events.jsonl')).toBeNull();
     expect(jsonlFileDay('otel-other-2026-06-30.jsonl')).toBeNull();
     expect(jsonlFileDay('otel-events-2026-6-3.jsonl')).toBeNull();
+  });
+});
+
+describe('dayRange (HS-9237)', () => {
+  it('enumerates an inclusive day range', () => {
+    expect(dayRange('2026-06-29', '2026-07-02')).toEqual(['2026-06-29', '2026-06-30', '2026-07-01', '2026-07-02']);
+  });
+  it('crosses a month boundary correctly', () => {
+    expect(dayRange('2026-01-30', '2026-02-02')).toEqual(['2026-01-30', '2026-01-31', '2026-02-01', '2026-02-02']);
+  });
+  it('returns a single day when from === to', () => {
+    expect(dayRange('2026-06-30', '2026-06-30')).toEqual(['2026-06-30']);
+  });
+  it('returns [] when from > to', () => {
+    expect(dayRange('2026-07-02', '2026-06-30')).toEqual([]);
+  });
+});
+
+describe('readOtelJsonlRange (HS-9237)', () => {
+  it('concatenates rows across a day range in day order, skipping missing days', async () => {
+    const d1 = new Date('2026-06-29T10:00:00Z');
+    const d3 = new Date('2026-07-01T10:00:00Z');
+    // Seed day 1 and day 3; day 2 (2026-06-30) is intentionally absent.
+    await appendOtelJsonl(dir, 'events', d1, { prompt_id: 'p1' });
+    await appendOtelJsonl(dir, 'events', d1, { prompt_id: 'p2' });
+    await appendOtelJsonl(dir, 'events', d3, { prompt_id: 'p3' });
+
+    const rows = await readOtelJsonlRange(dir, 'events', serverLocalDay(d1), serverLocalDay(d3));
+    expect(rows.map(r => r.prompt_id)).toEqual(['p1', 'p2', 'p3']);
+  });
+
+  it('returns [] for an empty range with no files', async () => {
+    expect(await readOtelJsonlRange(dir, 'spans', '2026-01-01', '2026-01-03')).toEqual([]);
+  });
+
+  it('does not bleed rows from an adjacent day outside the range', async () => {
+    const inRange = new Date('2026-06-29T10:00:00Z');
+    const after = new Date('2026-07-01T10:00:00Z');
+    await appendOtelJsonl(dir, 'events', inRange, { prompt_id: 'in' });
+    await appendOtelJsonl(dir, 'events', after, { prompt_id: 'out' });
+    const rows = await readOtelJsonlRange(dir, 'events', serverLocalDay(inRange), serverLocalDay(inRange));
+    expect(rows.map(r => r.prompt_id)).toEqual(['in']);
   });
 });
 
