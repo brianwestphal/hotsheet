@@ -5641,6 +5641,21 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   margin-bottom: 12px;
 }
 
+// HS-8858 — right-aligned button group in a section header (Copy / Paste / + Add).
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+// HS-8858 — the paste-fallback overlay textarea (settingsClipboard.tsx).
+.settings-paste-textarea {
+  width: 100%;
+  font-family: var(--mono-font, monospace);
+  font-size: 12px;
+  resize: vertical;
+}
+
 // --- HS-9004 — dialog-wide Shared | Local overrides | Resolved scope control ---
 //
 // A persistent toolbar under the Settings tab strip (settings-scope-bar) +

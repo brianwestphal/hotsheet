@@ -273,6 +273,7 @@ Each has three options:
   - "Add" button opens a dialog with a filterable list of categories and tags (excluding already-configured ones).
   - Each entry shows a badge (Category/Tag + name), an editable textarea for the context text, and a delete button.
   - Changes auto-save with 500ms debounce.
+  - **Copy / Paste (HS-8858)** — a **Copy** button in the section header serializes the current entries to the clipboard as JSON; a **Paste** button reads JSON back and **merges** it in (adds entries not already present by `type:key`, keeps existing untouched — reports how many were added), writing to whichever layer the §4.x scope control is showing. This moves an auto-context config **between projects**. Paste tries the one-click clipboard read (`navigator.clipboard.readText`) and, where that isn't available (Tauri's WKWebView), falls back to an in-app textarea overlay the user pastes into — so it works in both the browser and the desktop app. Shared helpers live in `src/client/settingsClipboard.tsx` (reused by the custom-commands copy/paste, HS-8857).
 - **Storage**: JSON array in the `auto_context` settings key. Each entry: `{ type: 'category'|'tag', key: string, text: string }`.
 - **Prepend order**: Category context appears first, then tag context entries sorted alphabetically by tag key. Empty-text entries are skipped (they prepend nothing).
 - Only one entry per category or tag is allowed.

@@ -795,7 +795,14 @@ pageRoutes.get('/', (c) => {
             <div className="settings-tab-panel" data-panel="context">
               <div className="settings-section-header">
                 <h3>Auto-Context</h3>
-                <button className="btn btn-sm" id="auto-context-add-btn">+ Add</button>
+                {/* HS-8858 — copy/paste the auto-context entries (as JSON) to move
+                    them between projects. Copy serializes the current list; Paste
+                    merges pasted entries in (adds new, keeps existing). */}
+                <div className="settings-header-actions">
+                  <button className="btn btn-sm" id="auto-context-copy-btn" title="Copy these auto-context settings to the clipboard (JSON)">Copy</button>
+                  <button className="btn btn-sm" id="auto-context-paste-btn" title="Paste auto-context settings from the clipboard (merges into this project)">Paste</button>
+                  <button className="btn btn-sm" id="auto-context-add-btn">+ Add</button>
+                </div>
               </div>
               <span className="settings-hint" style="margin-bottom:12px;display:block">Automatically prepend instructions to ticket details in the worklist, based on category or tag. Category context appears first, then tag context in alphabetical order.</span>
               <div id="auto-context-list"></div>

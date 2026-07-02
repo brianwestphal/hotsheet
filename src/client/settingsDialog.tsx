@@ -9,6 +9,8 @@ import { bindViewsTab } from './customViews.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
+import { copyJsonToClipboard, newEntriesById, parsePastedEntries, readClipboardJsonOrPrompt } from './settingsClipboard.js';
+import { showToast } from './toast.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
 import { ICON_UNDO_2 } from './icons.js';
 import { bindKeysSettings } from './keysSettings.js';
@@ -734,6 +736,32 @@ function bindAutoContextSettings() {
 
   addBtn.addEventListener('click', () => {
     showAddAutoContextDialog();
+  });
+
+  // HS-8858 — copy/paste the auto-context entries as JSON (move them between
+  // projects). Copy serializes the current list; Paste merges pasted entries in
+  // (adds entries not already present by `type:key`, keeps existing untouched),
+  // writing to whichever layer the scope control is showing (shared/local).
+  byIdOrNull('auto-context-copy-btn')?.addEventListener('click', () => {
+    void copyJsonToClipboard(autoContextEntries, 'Auto-context settings');
+  });
+  byIdOrNull('auto-context-paste-btn')?.addEventListener('click', () => {
+    void (async () => {
+      const raw = await readClipboardJsonOrPrompt('Paste auto-context settings');
+      if (raw === null) return;
+      const incoming = parsePastedEntries(raw, 'auto-context settings',
+        v => AutoContextEntryArraySchema.safeParse(v).data ?? null);
+      if (incoming === null) return;
+      const toAdd = newEntriesById(autoContextEntries, incoming, acIdOf);
+      if (toAdd.length === 0) {
+        showToast('No new auto-context entries to add', { variant: 'info' });
+        return;
+      }
+      autoContextEntries.push(...toAdd);
+      await saveEntries();
+      renderEntries();
+      showToast(`Added ${String(toAdd.length)} auto-context ${toAdd.length === 1 ? 'entry' : 'entries'}`, { variant: 'success' });
+    })();
   });
 
   function showAddAutoContextDialog() {
