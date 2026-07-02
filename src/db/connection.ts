@@ -17,7 +17,7 @@ import { instrumentDbQueries } from './queryInstrumentation.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 11; // HS-9279 — added otel_rollup_activity (tool/hour/tool_latency daily rollups; epic HS-9226 Phase 3b)
+export const SCHEMA_VERSION = 12; // HS-9279 — added otel_hourly_seen (per-(day,hour) distinct-prompt dedup for the heatmap; epic HS-9226 Phase 3b)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1180,6 +1180,21 @@ async function initSchema(db: PGlite): Promise<void> {
       PRIMARY KEY (project_secret, day, kind, dim1, dim2)
     );
     CREATE INDEX IF NOT EXISTS idx_otel_rollup_activity_lookup ON otel_rollup_activity(project_secret, kind, day);
+
+    -- HS-9279 (epic HS-9226 Phase 3b) — per-(project, server-local day, hour)
+    -- distinct-prompt dedup for the hour-of-week heatmap's prompt-count measure
+    -- (the cost measure is the additive sum in otel_rollup_activity kind='hour').
+    -- Mirrors otel_daily_seen but at hour granularity + user_prompt-only (the
+    -- heatmap counts distinct prompts by the hour they were SUBMITTED). The read
+    -- reconstructs the weekday from the day column. Snapshotted; central secret=''.
+    CREATE TABLE IF NOT EXISTS otel_hourly_seen (
+      project_secret TEXT NOT NULL DEFAULT '',
+      day DATE NOT NULL,
+      hour SMALLINT NOT NULL,
+      prompt_id TEXT NOT NULL,
+      PRIMARY KEY (project_secret, day, hour, prompt_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_hourly_seen_lookup ON otel_hourly_seen(project_secret, day);
 
     -- HS-9243 (epic HS-9226 Phase 2 follow-up) — per-(ticket, prompt) span of the
     -- api_request events attributed to a ticket, so per-ticket DURATION can be

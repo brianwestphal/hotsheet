@@ -43,6 +43,7 @@ const TABLES = [
   'otel_daily_seen',     // HS-9243 — daily distinct prompt/session dedup set (durable, snapshotted)
   'otel_ticket_prompt_span', // HS-9243 — per-ticket prompt-duration spans (durable, snapshotted)
   'otel_rollup_activity', // HS-9279 — daily tool/hour/tool-latency rollups (durable, snapshotted)
+  'otel_hourly_seen', // HS-9279 — per-(day,hour) distinct-prompt dedup for the heatmap (durable, snapshotted)
 ] as const;
 
 /** Read every row of every Hot Sheet table into a serialisable shape.

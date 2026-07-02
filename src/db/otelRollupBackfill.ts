@@ -327,6 +327,7 @@ export async function backfillTelemetryActivityRollups(launchedDataDir: string):
       const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
       const mainDb = await getDbForDir(dataDir);
       toolRows += await backfillActivityToolForDir(clusterDb, mainDb, tz);
+      await backfillActivityHourForDir(clusterDb, mainDb, tz);
       scannedDirs++;
       doneDirs.add(dataDir);
       writeGlobalConfig({ telemetryActivityRollupBackfillV1DoneDirs: [...doneDirs] });
@@ -403,6 +404,53 @@ export async function backfillActivityToolForDir(clusterDb: PGlite, mainDb: PGli
     );
   }
   return grain.rows.length;
+}
+
+/**
+ * HS-9279 — recompute the hour-of-week heatmap's rollups for one cluster: the COST
+ * per (secret, server-local day, hour) into otel_rollup_activity kind='hour'
+ * (sum_val), and the distinct user_prompt (secret, day, hour, prompt_id) rows into
+ * otel_hourly_seen. Server-local bucketing (tz = the server IANA zone) matches
+ * ingest. Recompute-overwrite (idempotent). The read reconstructs the weekday.
+ */
+export async function backfillActivityHourForDir(clusterDb: PGlite, mainDb: PGlite, tz: string): Promise<void> {
+  const cost = await clusterDb.query<Record<string, unknown>>(
+    `SELECT COALESCE(project_secret, '') AS secret,
+            (ts AT TIME ZONE $1)::date AS day,
+            EXTRACT(HOUR FROM ts AT TIME ZONE $1)::int AS hour,
+            SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS cost,
+            COUNT(*) AS c
+       FROM otel_metrics
+      WHERE metric_name = $2 AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
+      GROUP BY secret, day, hour`,
+    [tz, COST_METRIC],
+  );
+  const seen = await clusterDb.query<Record<string, unknown>>(
+    `SELECT DISTINCT COALESCE(project_secret, '') AS secret,
+            (ts AT TIME ZONE $1)::date AS day,
+            EXTRACT(HOUR FROM ts AT TIME ZONE $1)::int AS hour,
+            prompt_id
+       FROM otel_events
+      WHERE ${eventNameMatchSql('event_name', 'user_prompt')} AND prompt_id IS NOT NULL`,
+    [tz],
+  );
+  await mainDb.query(`DELETE FROM otel_rollup_activity WHERE kind = 'hour'`);
+  await mainDb.query('DELETE FROM otel_hourly_seen');
+  for (const r of cost.rows) {
+    await mainDb.query(
+      `INSERT INTO otel_rollup_activity (project_secret, day, kind, dim1, dim2, count, sum_val, sum_n)
+       VALUES ($1, $2::date, 'hour', $3, '', $4, $5, 0)`,
+      [s(r.secret, ''), dayString(r.day), String(n(r.hour)), n(r.c), n(r.cost)],
+    );
+  }
+  for (const r of seen.rows) {
+    await mainDb.query(
+      `INSERT INTO otel_hourly_seen (project_secret, day, hour, prompt_id)
+       VALUES ($1, $2::date, $3, $4)
+       ON CONFLICT (project_secret, day, hour, prompt_id) DO NOTHING`,
+      [s(r.secret, ''), dayString(r.day), n(r.hour), s(r.prompt_id, '')],
+    );
+  }
 }
 
 /**

@@ -18,8 +18,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { getPerTicketRollup } from './otelDashboard.js';
-import { assembleDailyRows, backfillActivityToolForDir, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
-import { getToolRollup } from './otelRollups.js';
+import { assembleDailyRows, backfillActivityHourForDir, backfillActivityToolForDir, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
+import { getHourlyActivityHeatmap, getToolRollup } from './otelRollups.js';
 
 // The machine's local IANA tz — the daily bucket uses it so `(ts AT TIME ZONE TZ)::date`
 // matches the local date the `Date(...)` fixtures are constructed in (mirrors
@@ -157,6 +157,33 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       );
       expect(rows.rows).toHaveLength(1);
       expect(Number(rows.rows[0].count)).toBe(1); // not doubled
+    });
+  });
+
+  describe('backfillActivityHourForDir (HS-9279)', () => {
+    it('recomputes the hour cost rollup + hourly-seen so getHourlyActivityHeatmap matches', async () => {
+      const t = new Date(2026, 5, 30, 14, 0, 0); // local — hour 14, some weekday
+      await insertCostMetric(t, 'sonnet', 'main', 0.5);
+      await insertCostMetric(t, 'sonnet', 'main', 0.25);
+      await insertUserPrompt(t, 'p1', 'hi');
+      await insertUserPrompt(t, 'p2', 'yo');
+
+      await backfillActivityHourForDir(clusterDb, mainDb, TZ);
+
+      const hour = await mainDb.query<{ dim1: string; sum_val: string }>(
+        `SELECT dim1, sum_val FROM otel_rollup_activity WHERE kind='hour'`,
+      );
+      expect(hour.rows).toHaveLength(1);
+      expect(hour.rows[0].dim1).toBe('14');
+      expect(Number(hour.rows[0].sum_val)).toBeCloseTo(0.75);
+      const seen = await mainDb.query<{ c: string }>(`SELECT COUNT(*) AS c FROM otel_hourly_seen`);
+      expect(Number(seen.rows[0].c)).toBe(2);
+
+      // Parity: the heatmap (now reading the rollup) shows the aggregated cell.
+      const cells = await getHourlyActivityHeatmap(null, 'UTC', [SECRET]);
+      const idx = t.getDay() * 24 + 14;
+      expect(cells[idx].cost).toBeCloseTo(0.75);
+      expect(cells[idx].promptCount).toBe(2);
     });
   });
 

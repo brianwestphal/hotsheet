@@ -545,7 +545,7 @@ async function fanOutDailyMetricCountsJsonl(timezone: string): Promise<Telemetry
       const date = dayInTimeZone(ts, timezone);
       const metricName = typeof m.metric_name === 'string' ? m.metric_name : '';
       const secret = typeof m.project_secret === 'string' && m.project_secret !== '' ? m.project_secret : '(central)';
-      const key = `${date} ${metricName} ${secret}`;
+      const key = `${date} ${metricName} ${secret}`;
       const g = counts.get(key);
       if (g !== undefined) g.points++;
       else counts.set(key, { date, metricName, projectSecret: secret, points: 1 });
@@ -1103,38 +1103,31 @@ export async function getHourlyActivityHeatmap(
   timezone = 'UTC',
   allowedSecrets: readonly string[] | null = null,
 ): Promise<HourlyActivityCell[]> {
-  const db = await getTelemetryDb();
-  const tsClause = sinceTs === null ? '' : ' AND ts >= $3';
-  const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
-  // HS-8625 — restrict to currently-loaded projects. Both queries share the
-  // `[metric/event, timezone, ...tsParams]` layout (timezone is $2), so the
-  // secrets placeholders start at 2 + tsParams.length for both.
-  const secrets = buildSecretsInClause(allowedSecrets, 2 + tsParams.length);
-  const secretsClause = secrets.clause === '' ? '' : ` AND ${secrets.clause}`;
+  // HS-9279 — read the daily activity rollup (kind='hour' cost) + the per-(day,hour)
+  // distinct-prompt dedup (otel_hourly_seen) instead of scanning raw. Bucketing is
+  // SERVER-LOCAL (the rollup grain, maintainer-accepted): the weekday is
+  // reconstructed from each rollup row's `day`, so the read-time `timezone` param is
+  // now unused (locally the viewer tz == the server tz). Prompt ids are globally
+  // unique, so summing per-(day,hour) distinct counts up to (dow,hour) can't double-
+  // count. cost accumulates across days that share a weekday.
+  void timezone;
+  const db = await getRollupDb();
+  const costDay = buildRollupDayClauses(null, sinceTs, 0, allowedSecrets);
+  const seenDay = buildRollupDayClauses(null, sinceTs, 0, allowedSecrets);
 
-  // Cost per (dow, hour) bucket.
-  const costResult = await db.query<{ dow: string | number; hour: string | number; total: string | null }>(
-    `SELECT
-        EXTRACT(DOW FROM ts AT TIME ZONE $2)::int AS dow,
-        EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
-        SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS total
-     FROM otel_metrics
-     WHERE metric_name = $1${tsClause}${secretsClause} AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
-     GROUP BY dow, hour`,
-    ['claude_code.cost.usage', timezone, ...tsParams, ...secrets.params],
+  const costResult = await db.query<{ day: string; hour: string; cost: string | null }>(
+    `SELECT to_char(day, 'YYYY-MM-DD') AS day, dim1 AS hour, SUM(sum_val) AS cost
+     FROM otel_rollup_activity
+     WHERE kind = 'hour'${costDay.clauses}
+     GROUP BY day, dim1`,
+    costDay.params,
   );
-
-  // Distinct-prompt count per (dow, hour) bucket.
-  const promptsClause = sinceTs === null ? '' : ' AND ts >= $3';
-  const promptsResult = await db.query<{ dow: string | number; hour: string | number; c: bigint | number }>(
-    `SELECT
-        EXTRACT(DOW FROM ts AT TIME ZONE $2)::int AS dow,
-        EXTRACT(HOUR FROM ts AT TIME ZONE $2)::int AS hour,
-        COUNT(DISTINCT prompt_id) AS c
-     FROM otel_events
-     WHERE event_name = ANY($1::text[]) AND prompt_id IS NOT NULL${promptsClause}${secretsClause}
-     GROUP BY dow, hour`,
-    [eventNameVariants('user_prompt'), timezone, ...tsParams, ...secrets.params],
+  const promptsResult = await db.query<{ day: string; hour: string | number; c: bigint | number }>(
+    `SELECT to_char(day, 'YYYY-MM-DD') AS day, hour, COUNT(DISTINCT prompt_id) AS c
+     FROM otel_hourly_seen
+     WHERE TRUE${seenDay.clauses}
+     GROUP BY day, hour`,
+    seenDay.params,
   );
 
   // Densify to 168 entries — every (dow, hour) combination.
@@ -1144,17 +1137,23 @@ export async function getHourlyActivityHeatmap(
       cells.push({ dow, hour, cost: 0, promptCount: 0 });
     }
   }
+  // Weekday (0=Sun..6=Sat, matching the old EXTRACT(DOW)) of a server-local
+  // YYYY-MM-DD calendar day.
+  const weekday = (dayStr: string): number => {
+    const [y, m, d] = dayStr.split('-').map(Number);
+    return new Date(y, m - 1, d).getDay();
+  };
   for (const r of costResult.rows) {
-    const dow = Number(r.dow);
     const hour = Number(r.hour);
-    const idx = dow * 24 + hour;
-    if (idx >= 0 && idx < 168) cells[idx].cost = Number(r.total ?? 0);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+    const idx = weekday(r.day) * 24 + hour;
+    if (idx >= 0 && idx < 168) cells[idx].cost += Number(r.cost ?? 0);
   }
   for (const r of promptsResult.rows) {
-    const dow = Number(r.dow);
     const hour = Number(r.hour);
-    const idx = dow * 24 + hour;
-    if (idx >= 0 && idx < 168) cells[idx].promptCount = Number(r.c);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+    const idx = weekday(r.day) * 24 + hour;
+    if (idx >= 0 && idx < 168) cells[idx].promptCount += Number(r.c);
   }
   return cells;
 }

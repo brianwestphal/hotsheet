@@ -6,8 +6,11 @@ import {
   attributeUserPromptToTicket,
   dataPointValue,
   eventNameMatches,
+  isCumulativeMonotonic,
   isRollupMetric,
   markDailySeen,
+  markHourlySeenPrompt,
+  recordHourCost,
   recordToolActivity,
   stripNestedAttributes,
   updateDailyRollup,
@@ -291,6 +294,15 @@ export async function persistMetricsPayload(
           } catch (err) {
             console.debug('[otel] daily rollup update failed:', err);
           }
+          // HS-9279 — feed the hour-of-week heatmap's COST measure (otel_rollup_activity
+          // kind='hour'). Same source as the old read: cost.usage, delta only. Best-effort.
+          try {
+            if (metricName === 'claude_code.cost.usage' && !isCumulativeMonotonic(agg)) {
+              await recordHourCost(mainDb, resCtx.projectSecret, ts, dataPointValue(point));
+            }
+          } catch (err) {
+            console.debug('[otel] hour-cost rollup update failed:', err);
+          }
           // HS-9243 — record this session in the daily dedup set so the reads can
           // derive an exact daily distinct `session_count` without scanning raw.
           // Only the rollup metrics carry the session proxy the reads count.
@@ -512,6 +524,15 @@ export async function persistLogsPayload(
             await recordToolActivity(mainDb, resCtx.projectSecret, ts, attrs);
           } catch (err) {
             console.debug('[otel] tool-activity rollup update failed:', err);
+          }
+        }
+        // HS-9279 — record a user_prompt's prompt_id in the per-(day,hour) dedup set
+        // for the heatmap's distinct-prompt-count measure. Best-effort.
+        if (eventNameMatches(eventName, 'user_prompt')) {
+          try {
+            await markHourlySeenPrompt(mainDb, resCtx.projectSecret, ts, promptId);
+          } catch (err) {
+            console.debug('[otel] hourly-seen prompt update failed:', err);
           }
         }
         // HS-9243 — record this prompt in the daily dedup set so the reads can

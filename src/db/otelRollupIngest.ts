@@ -151,6 +151,31 @@ export async function recordToolActivity(
   }
 }
 
+/**
+ * HS-9279 — add a cost data point to the hour-of-day activity grain
+ * (kind='hour', dim1 = server-local hour 0-23, `sum_val` = cost) for the
+ * hour-of-week heatmap. Server-local hour matches the rollup's server-local day.
+ */
+export async function recordHourCost(mainDb: PGlite, secret: string | null, ts: Date, cost: number): Promise<void> {
+  await updateActivityRollup(mainDb, secret, ts, 'hour', String(ts.getHours()), '', { count: 1, sumVal: cost });
+}
+
+/**
+ * HS-9279 — record a user_prompt's `prompt_id` in the per-(project, day, hour)
+ * dedup set so the heatmap's distinct-prompt count is exact without scanning raw.
+ * ON CONFLICT DO NOTHING (idempotent). The hour is the SUBMIT hour (server-local),
+ * matching the old query's distinct-prompt-over-user_prompt-events grain.
+ */
+export async function markHourlySeenPrompt(mainDb: PGlite, secret: string | null, ts: Date, promptId: string | null | undefined): Promise<void> {
+  if (promptId === null || promptId === undefined || promptId === '') return;
+  await mainDb.query(
+    `INSERT INTO otel_hourly_seen (project_secret, day, hour, prompt_id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (project_secret, day, hour, prompt_id) DO NOTHING`,
+    [secret ?? '', serverLocalDay(ts), ts.getHours(), promptId],
+  );
+}
+
 /** Server-local `YYYY-MM-DD` for the daily bucket (the maintainer's grain). */
 export function serverLocalDay(ts: Date): string {
   const y = ts.getFullYear();

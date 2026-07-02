@@ -32,7 +32,7 @@ import {
   sanitizePromptSnippet,
 } from './otelQueries.js';
 import { backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
-import { markDailySeen, recordToolActivity, updateDailyRollup } from './otelRollupIngest.js';
+import { markDailySeen, markHourlySeenPrompt, recordHourCost, recordToolActivity, updateDailyRollup } from './otelRollupIngest.js';
 
 // HS-8874 — isolate the central store to a temp dir so the cross-project
 // fan-out (which also reads central) can't pick up rows from the developer's
@@ -80,6 +80,11 @@ async function insertCostMetric(opts: {
     metric_name: 'claude_code.cost.usage', attributes_json: attrs, value_json: { asDouble: opts.cost },
     aggregation_temporality: opts.temporality ?? null, is_monotonic: opts.isMonotonic ?? null,
   });
+  // HS-9279 — getHourlyActivityHeatmap reads the kind='hour' cost rollup; mirror ingest
+  // (delta cost only, like the writer). Cumulative-monotonic rows are excluded there.
+  if (opts.temporality !== 'cumulative' || opts.isMonotonic !== true) {
+    await recordHourCost(mainDb, opts.projectSecret, opts.ts, opts.cost);
+  }
 }
 
 async function insertTokenMetric(opts: {
@@ -135,6 +140,9 @@ async function insertPromptEvent(opts: {
     ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
     prompt_id: opts.promptId, event_name: 'claude_code.user_prompt', attributes_json: attrs, body_json: {},
   });
+  // HS-9279 — getHourlyActivityHeatmap's distinct-prompt count reads otel_hourly_seen;
+  // a user_prompt marks the (day, hour) dedup (mirrors ingest).
+  await markHourlySeenPrompt(await getRollupDb(), opts.projectSecret, opts.ts, opts.promptId);
 }
 
 async function insertToolResultEvent(opts: {
@@ -1044,10 +1052,12 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
 
     it('aggregates cost + distinct prompts by (dow, hour)', async () => {
-      // Two cost rows at the same UTC hour → cost sums; one at a different hour.
-      const t1 = new Date('2026-05-18T10:30:00Z'); // Monday 10:00 UTC
-      const t2 = new Date('2026-05-18T10:45:00Z'); // Monday 10:00 UTC
-      const t3 = new Date('2026-05-18T14:00:00Z'); // Monday 14:00 UTC
+      // HS-9279 — the rollup buckets SERVER-LOCAL now (was a read-time UTC param),
+      // so compute the expected cell index from each ts in the server's local zone
+      // rather than hard-coding a UTC (dow, hour). t1/t2 share an hour; t3 differs.
+      const t1 = new Date('2026-05-18T10:30:00Z');
+      const t2 = new Date('2026-05-18T10:45:00Z'); // same clock-hour as t1
+      const t3 = new Date('2026-05-18T14:00:00Z'); // a different hour
       await insertCostMetric({ ts: t1, projectSecret: SECRET_A, cost: 0.5 });
       await insertCostMetric({ ts: t2, projectSecret: SECRET_A, cost: 0.25 });
       await insertCostMetric({ ts: t3, projectSecret: SECRET_A, cost: 1.0 });
@@ -1055,12 +1065,12 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertPromptEvent({ ts: t2, projectSecret: SECRET_A, promptId: 'p2' });
 
       const cells = await getHourlyActivityHeatmap(null, 'UTC');
-      // Monday = DOW 1 in PG's EXTRACT (0=Sunday). 1 * 24 + 10 = 34
-      expect(cells[34].cost).toBeCloseTo(0.75);
-      expect(cells[34].promptCount).toBe(2);
-      // 1 * 24 + 14 = 38
-      expect(cells[38].cost).toBeCloseTo(1.0);
-      expect(cells[38].promptCount).toBe(0);
+      const idx = (d: Date): number => d.getDay() * 24 + d.getHours();
+      expect(idx(t1)).toBe(idx(t2)); // same server-local (dow, hour) bucket
+      expect(cells[idx(t1)].cost).toBeCloseTo(0.75);
+      expect(cells[idx(t1)].promptCount).toBe(2);
+      expect(cells[idx(t3)].cost).toBeCloseTo(1.0);
+      expect(cells[idx(t3)].promptCount).toBe(0);
     });
   });
 
@@ -1202,7 +1212,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
 
   describe('cross-project loaded-projects filter (HS-8625, rollup-level)', () => {
     it('getCostByProject + getHourlyActivityHeatmap honor allowedSecrets directly', async () => {
-      const t = new Date('2026-05-18T10:30:00Z'); // Monday 10:00 UTC
+      const t = new Date('2026-05-18T10:30:00Z');
       await insertCostMetric({ ts: t, projectSecret: SECRET_A, cost: 0.5 });
       await insertCostMetric({ ts: t, projectSecret: SECRET_B, cost: 2.0 });
 
@@ -1211,8 +1221,10 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(rows[0].projectSecret).toBe(SECRET_A);
 
       const cells = await getHourlyActivityHeatmap(null, 'UTC', [SECRET_A]);
-      // Monday DOW 1, hour 10 → index 34. Only SECRET_A's $0.50 counted.
-      expect(cells[34].cost).toBeCloseTo(0.5);
+      // HS-9279 — server-local (dow, hour) bucket; only SECRET_A's $0.50 counted
+      // (SECRET_B is filtered out by allowedSecrets).
+      const idx = t.getDay() * 24 + t.getHours();
+      expect(cells[idx].cost).toBeCloseTo(0.5);
     });
   });
 
@@ -1603,6 +1615,10 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       if (opts.eventName === 'tool_result' || opts.eventName === 'claude_code.tool_result') {
         await recordToolActivity(await getRollupDb(), opts.projectSecret, opts.ts, opts.attrs ?? {});
       }
+      // HS-9279 — getHourlyActivityHeatmap's distinct-prompt count reads otel_hourly_seen.
+      if (opts.eventName === 'user_prompt' || opts.eventName === 'claude_code.user_prompt') {
+        await markHourlySeenPrompt(await getRollupDb(), opts.projectSecret, opts.ts, opts.promptId);
+      }
     }
 
     it('getRecentPrompts returns bare-named user_prompt events', async () => {
@@ -1755,8 +1771,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(sonnetTotal).toBeCloseTo(0.5);
 
       const cells = await getHourlyActivityHeatmap(null, 'UTC');
-      // Monday DOW 1, hour 10 → index 34. $0.50 delta, NOT $999.50.
-      expect(cells[34].cost).toBeCloseTo(0.5);
+      // HS-9279 — server-local (dow, hour) bucket; $0.50 delta only, NOT $999.50.
+      expect(cells[t.getDay() * 24 + t.getHours()].cost).toBeCloseTo(0.5);
     });
   });
 });
