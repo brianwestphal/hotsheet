@@ -11139,6 +11139,45 @@ label.detail-details-label {
   }
 }
 
+// HS-8860 — the recent-commits history section (mirrors the pending-commits look)
+// with a "Show more" pager button.
+.git-popover-recent-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  margin-top: 6px;
+}
+
+.git-popover-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.git-popover-recent-more {
+  margin-top: 2px;
+  align-self: stretch;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
 .git-popover-buckets {
   display: flex;
   flex-direction: column;

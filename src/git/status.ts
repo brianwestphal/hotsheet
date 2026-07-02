@@ -430,6 +430,36 @@ export async function getPendingCommits(
   });
 }
 
+/**
+ * HS-8860 — read a page of recent commit history from `HEAD` (newest first),
+ * for the git-status popover's paginated "Recent commits" list. `skip` commits
+ * are skipped and `limit` returned; one extra is fetched to report `hasMore`.
+ * Unlike `getPendingCommits` this is the FULL log (merges included, no upstream
+ * dependency). Returns `null` when not a git repo; `{ commits: [], hasMore: false }`
+ * for an empty repo (no commits yet). `limit`/`skip` are clamped defensively.
+ */
+export async function getRecentCommits(
+  projectRoot: string,
+  limit: number,
+  skip: number,
+  invoker: GitInvoker = defaultInvoker,
+): Promise<{ commits: PendingCommit[]; hasMore: boolean } | null> {
+  if (!isGitRepo(projectRoot)) return null;
+  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+  const safeSkip = Math.max(0, Math.floor(skip));
+  return instrumentAsync(join(projectRoot, '.hotsheet'), 'git.getRecentCommits', async () => {
+    const root = getGitRoot(projectRoot) ?? projectRoot;
+    const res = await invoker(
+      ['log', 'HEAD', `--skip=${String(safeSkip)}`, `--max-count=${String(safeLimit + 1)}`,
+        `--pretty=format:%H${US}%h${US}%s${US}%b${RS}`],
+      root,
+    );
+    if (res.status !== 0) return { commits: [], hasMore: false };
+    const all = parsePendingCommits(res.stdout);
+    return { commits: all.slice(0, safeLimit), hasMore: all.length > safeLimit };
+  });
+}
+
 /** Pure: parse the `git log --pretty=format:%H\x1f%h\x1f%s\x1f%b\x1e` output
  *  into commit records. Tolerant of a trailing RS / blank records. Exported
  *  for tests. */

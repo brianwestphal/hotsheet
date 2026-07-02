@@ -7,7 +7,7 @@ import { markProjectActive } from '../activeProjects.js';
 // path" branch still fires when it's missing.
 import { GitRevealReqSchema } from '../api/git.js';
 import { readFileSettings } from '../file-settings.js';
-import { getGitStatusFiles, getPendingCommits, runGitFetch } from '../git/status.js';
+import { getGitStatusFiles, getPendingCommits, getRecentCommits, runGitFetch } from '../git/status.js';
 import { dropGitStatusCache, ensureGitWatcher, getCachedGitStatus } from '../git/watcher.js';
 import { getGitRoot } from '../gitignore.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
@@ -76,6 +76,25 @@ gitRoutes.get('/git/pending-commits', async (c) => {
   }
   const result = await getPendingCommits(projectRoot);
   return c.json(result ?? { commits: [], truncated: false });
+});
+
+// HS-8860 — a page of recent commit history for the popover's paginated "Recent
+// commits" list. `limit` (default 5) + `skip` (default 0) drive the "Show more"
+// pager; getRecentCommits clamps both. Same tracking opt-out + root resolution.
+gitRoutes.get('/git/recent-commits', async (c) => {
+  const dataDir = c.get('dataDir');
+  const projectRoot = projectRootFromDataDir(dataDir);
+  if (readFileSettings(dataDir).git_tracking_enabled === false) {
+    return c.json({ commits: [], hasMore: false });
+  }
+  const limit = Number.parseInt(c.req.query('limit') ?? '5', 10);
+  const skip = Number.parseInt(c.req.query('skip') ?? '0', 10);
+  const result = await getRecentCommits(
+    projectRoot,
+    Number.isFinite(limit) ? limit : 5,
+    Number.isFinite(skip) ? skip : 0,
+  );
+  return c.json(result ?? { commits: [], hasMore: false });
 });
 
 /** Pure: convert a `<project>/.hotsheet` dataDir to its project root. The

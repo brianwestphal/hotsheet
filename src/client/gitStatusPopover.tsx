@@ -1,5 +1,5 @@
-import type { GitStatusFiles, GitStatusWithFiles, PendingCommit } from '../api/git.js';
-import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
+import type { GitStatusFiles, GitStatusWithFiles, PendingCommit, RecentCommitsRes } from '../api/git.js';
+import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
 import { openWorktreesPanel } from './worktreesPanel.js';
@@ -162,6 +162,12 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
   // conflicted files), which the user flagged as visual noise.
   if (bucketsEl.children.length > 0) bodyEl.appendChild(bucketsEl);
 
+  // HS-8860 — recent commit history at the bottom, paginated 5 at a time with a
+  // "Show more" pager; each row opens that commit in Glassbox when installed.
+  const recentEl = toElement(<div className="git-popover-recent"></div>);
+  bodyEl.appendChild(recentEl);
+  void mountRecentCommits(recentEl);
+
   // Wire bucket-row expand/collapse toggles.
   bodyEl.querySelectorAll<HTMLElement>('.git-popover-bucket-header').forEach(header => {
     header.addEventListener('click', () => {
@@ -274,6 +280,53 @@ function commitRow(c: PendingCommit, glassboxAvailable: boolean): HTMLElement {
     });
   }
   return row;
+}
+
+/** Page size for the HS-8860 recent-commits pager. */
+const RECENT_COMMITS_PAGE = 5;
+
+/**
+ * HS-8860 — fill the recent-commits placeholder: the newest `RECENT_COMMITS_PAGE`
+ * commits from HEAD, with a "Show more" button that pages in the next batch, and a
+ * per-commit "Review" (Glassbox) link when Glassbox is installed. Best-effort:
+ * leaves the section empty on a fetch failure / empty repo.
+ */
+async function mountRecentCommits(container: HTMLElement): Promise<void> {
+  let glassboxAvailable = false;
+  try { glassboxAvailable = (await getGlassboxStatus()).available; } catch { /* treat as unavailable */ }
+  if (!stillMounted(container)) return;
+
+  let firstPage: RecentCommitsRes;
+  try { firstPage = await getRecentCommits(RECENT_COMMITS_PAGE, 0); } catch { return; }
+  if (!stillMounted(container) || firstPage.commits.length === 0) return;
+
+  const section = toElement(
+    <div className="git-popover-recent-inner">
+      <div className="git-popover-commits-header">Recent commits</div>
+      <div className="git-popover-recent-list"></div>
+      <button className="git-popover-recent-more" type="button">Show more</button>
+    </div>
+  );
+  const list = section.querySelector<HTMLElement>('.git-popover-recent-list')!;
+  const moreBtn = section.querySelector<HTMLButtonElement>('.git-popover-recent-more')!;
+  let loaded = 0;
+
+  const appendPage = (page: RecentCommitsRes): void => {
+    for (const c of page.commits) list.appendChild(commitRow(c, glassboxAvailable));
+    loaded += page.commits.length;
+    moreBtn.hidden = !page.hasMore;
+  };
+  appendPage(firstPage);
+
+  moreBtn.addEventListener('click', () => {
+    moreBtn.disabled = true;
+    void getRecentCommits(RECENT_COMMITS_PAGE, loaded)
+      .then(page => { if (stillMounted(container)) appendPage(page); })
+      .catch(() => { /* keep what's shown */ })
+      .finally(() => { moreBtn.disabled = false; });
+  });
+
+  container.replaceChildren(section);
 }
 
 /** Fire a Glassbox review request, surfacing the same friendly failure toast as

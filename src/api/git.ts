@@ -101,6 +101,15 @@ export const PendingCommitsResSchema = z.object({
 });
 export type PendingCommitsRes = z.infer<typeof PendingCommitsResSchema>;
 
+// --- /git/recent-commits (HS-8860) ---
+/** A page of recent commit history (newest first), for the popover's paginated
+ *  "Recent commits" list. Same commit shape as pending; `hasMore` drives "Show more". */
+export const RecentCommitsResSchema = z.object({
+  commits: z.array(PendingCommitSchema),
+  hasMore: z.boolean(),
+});
+export type RecentCommitsRes = z.infer<typeof RecentCommitsResSchema>;
+
 // --- /glassbox/review (HS-8472) ---
 /** Open Glassbox focused on a specific commit, on a ref range (all pending
  *  changes), on specific working-tree files (HS-9205), or in a worker's worktree
@@ -141,6 +150,12 @@ export async function gitFetch(): Promise<FetchResult> {
 /** HS-8472 — the unpushed commits (HEAD not in upstream), newest first. */
 export async function getPendingCommits(): Promise<PendingCommitsRes> {
   return apiCall(PendingCommitsResSchema, '/git/pending-commits');
+}
+
+/** HS-8860 — a page of recent commit history from HEAD (newest first), for the
+ *  popover's paginated "Recent commits" list. `skip` past the newest `skip`. */
+export async function getRecentCommits(limit: number, skip: number): Promise<RecentCommitsRes> {
+  return apiCall(RecentCommitsResSchema, `/git/recent-commits${qs({ limit, skip })}`);
 }
 
 /** Reveal a git-status file (relative path) in the OS file manager. */

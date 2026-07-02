@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, parsePendingCommits, parseStatusV2 } from './status.js';
+import { bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, getRecentCommits, parsePendingCommits, parseStatusV2 } from './status.js';
 
 const US = '\x1f';
 const RS = '\x1e';
@@ -151,6 +151,42 @@ describe('getPendingCommits (HS-8472)', () => {
   it('returns empty (not null) when git fails — e.g. no upstream', async () => {
     const res = await getPendingCommits(process.cwd(), () => Promise.resolve({ stdout: '', status: 128 }));
     expect(res).toEqual({ commits: [], truncated: false });
+  });
+});
+
+describe('getRecentCommits (HS-8860)', () => {
+  it('returns `limit` commits + hasMore=true when an extra row comes back', async () => {
+    let stdout = '';
+    for (let i = 0; i < 6; i++) stdout += rec(String(i).padStart(40, '0'), `h${String(i)}`, `subj ${String(i)}`, '');
+    const res = await getRecentCommits(process.cwd(), 5, 0, () => Promise.resolve({ stdout, status: 0 }));
+    expect(res!.commits).toHaveLength(5);
+    expect(res!.hasMore).toBe(true);
+  });
+
+  it('hasMore=false when fewer than limit+1 rows come back', async () => {
+    const stdout = rec('a'.repeat(40), 'aaaaaaa', 'only one', '');
+    const res = await getRecentCommits(process.cwd(), 5, 0, () => Promise.resolve({ stdout, status: 0 }));
+    expect(res!.commits).toHaveLength(1);
+    expect(res!.hasMore).toBe(false);
+  });
+
+  it('passes --skip + --max-count=(limit+1) and clamps limit to 1..50', async () => {
+    const calls: string[][] = [];
+    const invoker = (args: string[]): Promise<{ stdout: string; status: number }> => { calls.push(args); return Promise.resolve({ stdout: '', status: 0 }); };
+    await getRecentCommits(process.cwd(), 5, 10, invoker);
+    expect(calls[0]).toContain('--skip=10');
+    expect(calls[0]).toContain('--max-count=6'); // limit(5) + 1
+    // limit clamped: 0 → 1 (max-count 2), 999 → 50 (max-count 51); skip floored at 0.
+    await getRecentCommits(process.cwd(), 0, -3, invoker);
+    expect(calls[1]).toContain('--skip=0');
+    expect(calls[1]).toContain('--max-count=2');
+    await getRecentCommits(process.cwd(), 999, 0, invoker);
+    expect(calls[2]).toContain('--max-count=51');
+  });
+
+  it('returns empty (not null) when git fails — e.g. an empty repo with no commits', async () => {
+    const res = await getRecentCommits(process.cwd(), 5, 0, () => Promise.resolve({ stdout: '', status: 128 }));
+    expect(res).toEqual({ commits: [], hasMore: false });
   });
 });
 
