@@ -1125,7 +1125,12 @@ pageRoutes.get('/', (c) => {
                     terminal in this project. Per-terminal overrides (set via
                     the gear popover on the toolbar) win on a field-by-field
                     basis. See docs/35-terminal-themes.md §35.6. */}
-                <div className="settings-terminal-default-appearance" style="margin-top:12px" data-scope-complex>
+                {/* HS-9271 — the project-default terminal appearance is a PER-MACHINE
+                    setting (`terminal_default` is in LOCAL_SCOPE_KEYS): each person's
+                    theme/font/size is their own, not committed for the team. So the
+                    panel is `local-only` (editable in Local, read-only in Shared),
+                    matching where the value already persists. */}
+                <div className="settings-terminal-default-appearance" style="margin-top:12px" data-scope-complex="local-only">
                   <div className="settings-terminal-default-title">Default appearance</div>
                   <div className="settings-terminal-default-row">
                     <label htmlFor="settings-terminal-default-theme">Theme</label>

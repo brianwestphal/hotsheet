@@ -126,13 +126,14 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(page.locator('#category-add-btn')).toBeEnabled();
   });
 
-  // HS-9021 — a default `data-scope-complex` surface (e.g. the terminal default-
-  // appearance block) is a SHARED setting: editable only in Shared, read-only in
-  // Local (the default view; HS-9155). The lock chip points to Shared. (The
-  // custom-commands list is NO LONGER such a surface — HS-9014 made it element-
-  // level scope-aware; see the dedicated test below.)
+  // HS-9021 — a default `data-scope-complex` surface (e.g. the Quit-confirmation
+  // block) is a SHARED setting: editable only in Shared, read-only in Local (the
+  // default view; HS-9155). The lock chip points to Shared. (The custom-commands
+  // list is NO LONGER such a surface — HS-9014 made it element-level scope-aware.
+  // The terminal default-appearance block moved to `local-only` in HS-9271 — see
+  // the dedicated test below.)
   test('HS-9021: default complex panels edit in Shared, read-only in Local (default)', async ({ page }) => {
-    const panel = page.locator('.settings-terminal-default-appearance');
+    const panel = page.locator('.settings-field:has(#settings-quit-confirm-modes)');
     // Default open mode is Local → read-only.
     await expect(panel).toHaveClass(/scope-locked/);
     // Shared → editable.
@@ -141,6 +142,22 @@ test.describe('Settings scope control (Shared | Local)', () => {
     // Local → read-only again.
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await expect(panel).toHaveClass(/scope-locked/);
+  });
+
+  // HS-9271 — the terminal default-appearance block is a PER-MACHINE setting
+  // (`terminal_default` is local-scoped), so it's `local-only`: editable in Local,
+  // read-only in Shared — the inverse of the default `data-scope-complex` variant.
+  test('HS-9271: terminal default-appearance is local-only (editable in Local, locked in Shared)', async ({ page }) => {
+    const panel = page.locator('.settings-terminal-default-appearance');
+    // Default open mode is Local → editable.
+    await expect(panel).not.toHaveClass(/scope-locked/);
+    // Shared → read-only (with the local-only lock chip).
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await expect(panel).toHaveClass(/scope-locked/);
+    await expect(panel).toHaveClass(/scope-locked-local-only/);
+    // Local → editable again.
+    await page.locator('.scope-seg-btn.scope-seg-local').click();
+    await expect(panel).not.toHaveClass(/scope-locked/);
   });
 
   // HS-9014 — the custom-commands editor is now element-level scope-aware (the
