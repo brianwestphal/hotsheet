@@ -48,7 +48,7 @@ describe('reviewProofSection (HS-9293)', () => {
     expect(container().childElementCount).toBe(0);
   });
 
-  it('expands a note on click to show its attachment chips', async () => {
+  it('expands a note on click to render an inline image + Open-in-Glassbox', async () => {
     getReviewProof.mockResolvedValue({ notes: [note()] });
     await loadAndRenderReviewProof('HS-1234');
     const head = container().querySelector<HTMLElement>('.review-proof-note-head')!;
@@ -57,8 +57,25 @@ describe('reviewProofSection (HS-9293)', () => {
     head.click();
     expect(detail.hasAttribute('hidden')).toBe(false);
     expect(head.getAttribute('aria-expanded')).toBe('true');
-    expect(container().querySelector('.review-proof-attachment-name')?.textContent).toBe('shot.png');
+    const img = container().querySelector<HTMLImageElement>('.review-proof-img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toContain('shot.png'); // points at the artifact route
+    expect(img!.getAttribute('src')).toContain('/api/tickets/review-proof/artifact');
     expect(container().querySelector('.review-proof-attachment-desc')?.textContent).toBe('screenshot');
+    expect(container().querySelector('.review-proof-open-glassbox')).not.toBeNull();
+  });
+
+  it('lazily fetches + inlines a text attachment on first expand', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('test output here', { status: 200 })));
+    vi.stubGlobal('fetch', fetchMock);
+    getReviewProof.mockResolvedValue({ notes: [note({ attachments: [{ uri: '.pr-notes/artifacts/out.txt', kind: 'text' }] })] });
+    await loadAndRenderReviewProof('HS-1234');
+    const pre = container().querySelector<HTMLPreElement>('.review-proof-text')!;
+    expect(pre.textContent).toBe('Loading…'); // not fetched until expanded
+    container().querySelector<HTMLElement>('.review-proof-note-head')!.click();
+    await vi.waitFor(() => { expect(pre.textContent).toBe('test output here'); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 
   it('an unchanged reload does not repaint, so an expanded row survives (poll-safe)', async () => {

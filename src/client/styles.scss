@@ -4502,23 +4502,67 @@ body.cross-project-stats-active {
 }
 
 .review-proof-attachments {
-  list-style: none;
-  margin: 0;
+  margin: 0 0 8px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
 }
 
-.review-proof-attachment {
+// HS-9294 — inline artifacts. Screenshots render as a bounded, clickable-to-full
+// image; text output inlines in a scroll-capped block.
+.review-proof-figure {
+  margin: 0;
+
+  .review-proof-img {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    object-fit: contain;
+  }
+}
+
+.review-proof-fallback {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
   font-size: 12px;
 }
 
-.review-proof-attachment-name { font-family: monospace; }
-.review-proof-attachment-desc { color: var(--text-muted); font-size: 11px; }
+.review-proof-fallback-note { color: var(--text-muted); font-size: 11px; font-style: italic; }
+
+.review-proof-text-wrap { font-size: 12px; }
+
+.review-proof-text {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.review-proof-open-glassbox {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover { background: var(--bg-hover); border-color: var(--accent); }
+}
+
+.review-proof-attachment-name { font-family: monospace; font-size: 12px; }
+.review-proof-attachment-desc { display: block; margin-top: 2px; color: var(--text-muted); font-size: 11px; }
 .review-proof-empty-detail { color: var(--text-muted); font-size: 12px; }
 
 .ticket-telemetry-block {

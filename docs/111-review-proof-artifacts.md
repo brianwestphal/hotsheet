@@ -73,12 +73,22 @@ requirement), while a URL ending in the id still matches.
     icon + description). Poll-safe: cached per ticket, repainted only on change, so
     a background reload never flashes or collapses an expanded row.
     `reviewProofSection.test.ts`.
-- **Phase 3 — inline rich artifacts + Open-in-Glassbox (FOLLOW-UP).** Swap the
-  attachment CHIPS for the real inline render (Q2 "b"): an LFS-aware artifact-serving
-  route that streams a real image from `.pr-notes/artifacts/` (or a "not pulled /
-  open in Glassbox" chip when the file is still an LFS pointer stub) + text-artifact
-  inlining, plus a per-note "Open in Glassbox" (reusing `launchGlassbox`) that jumps
-  to the anchored `file:line`.
+- **Phase 3 — inline rich artifacts + Open-in-Glassbox (SHIPPED, HS-9294).**
+  - **Artifact route:** `GET /tickets/review-proof/artifact?path=<repo-relative>`
+    (`routes/tickets.ts`) → `readReviewProofArtifact` (`prNotesReader.ts`) streams a
+    real file from `<repo>/.pr-notes/` with its content-type (`getMimeType`),
+    **path-guarded** under `.pr-notes/` (traversal → 403/400) + size-capped.
+    An unpulled **Git-LFS pointer stub** → **409 `{ lfsPointer: true }`**;
+    missing → 404. `prNotesReader.test.ts` + `reviewProofRoute.test.ts`.
+  - **Client rich render** (`reviewProofSection.tsx`): the expanded row now shows
+    the ACTUAL artifacts — image attachments as inline `<img>` (served by the route;
+    on load failure — an unpulled LFS stub 409s — it swaps to a "not pulled (Git
+    LFS)" note), text attachments fetched **lazily on first expand** and inlined in a
+    scroll-capped `<pre>`, plus a per-note **"Open in Glassbox"** (`launchGlassbox`).
+    `reviewProofSection.test.ts` (image render + Open-in-Glassbox; lazy text fetch).
+  - **Open decision (deferred):** the per-note Open-in-Glassbox currently uses the
+    generic `launchGlassbox()` (no-arg open). A `file:line`-anchored deep-link (via
+    the existing `files`-mode `GlassboxReviewReq`) is a small follow-up if wanted.
 
 ## 111.5 Non-goals (inherited from docs/110 §110.6)
 
