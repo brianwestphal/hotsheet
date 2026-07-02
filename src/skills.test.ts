@@ -179,6 +179,8 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('once per batch');
     expect(content).toContain('isolate large/risky');
     expect(content).toContain('/api/workers/ready');
+    // HS-9288 — the "Mark it started" step notes that `started` auto-affirms the claim.
+    expect(content).toContain('auto-affirms your claim');
   });
 
   it('HS-8936 — ensureSkillsForDir dataDir override points the worktree skill at the OWNER worklist', () => {

@@ -45,7 +45,10 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // HS-9107 — bumped 19 → 20: when a worker marks a ticket `pending_integration: true`,
 // it also passes `integration_branch` (its current branch, e.g. `hotsheet/worker-1`)
 // so the owner's "merge pending" badge can review what the ticket added.
-export const SKILL_VERSION = 20;
+// HS-9288 — bumped 20 → 21: the worker skill's "Mark it started" step notes that
+// `started` auto-affirms the claim under the worker's id (HS-9198/9208 — the sole
+// auto-claim trigger; metadata edits no longer claim), so keep renewing + release.
+export const SKILL_VERSION = 21;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -294,6 +297,7 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     '   - If it returns **no ticket** (nothing claimable), the pool is drained — go to **Finishing** below.',
     '   - If it returns a ticket, you now hold an exclusive, time-limited **lease** on it. Continue.',
     '2. **Mark it started.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "started" }`.',
+    '   - Setting status to `started` also **auto-affirms your claim** under your worker id (HS-9198/9208 — `started` is the *sole* auto-claim trigger; metadata-only edits no longer claim). You already hold the claim from `claim-next`, so this just keeps the ticket attributed to you and write-protected against any *other* actor while you work it. Keep the lease alive by renewing on long work (step 3) and release it when you finish (step 6).',
     '3. **Do the work** described in the ticket details — implement it fully, the same way you would under `/hotsheet`, but for THIS one claimed ticket only.',
     '   - **Heartbeat on long work — don\'t let the lease lapse while you\'re heads-down.** You work in long silent bursts (a single big file read + analysis can run minutes), and nothing renews the lease automatically. So **renew proactively**: call `hotsheet_renew_lease` with `{ "id": <id>, "worker": "<your-id>" }` (optionally a larger `ttlSeconds` up to 3600) **before** starting any step you expect to take several minutes, and again any time you\'ve been working a while without renewing. The 30-minute default gives headroom, but treat renewing as a normal part of long work, not an afterthought. If a renew ever returns `{ "ok": false }`, your lease lapsed and the ticket may have been reclaimed by another worker — **stop working it**, do NOT mark it completed, and go back to step 1.',
     '4. **Commit your work** on your worktree\'s branch with a clear, scoped message referencing the ticket (follow the project\'s git conventions). Commit only what this ticket touched — don\'t sweep in unrelated pending changes. **NEVER `git push`** without the maintainer\'s explicit permission. (You do NOT merge into the target branch yourself — see **Staying in sync** below.)',
