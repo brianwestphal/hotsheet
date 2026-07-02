@@ -117,6 +117,12 @@ async function insertPromptEvent(opts: {
   );
   // HS-9235 — mark this prompt seen (mirrors ingest; every event with a prompt_id).
   await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
+  // HS-9278 — getRecentPrompts now reads the JSONL store, so mirror ingest's
+  // dual-write into the ambient cluster dir.
+  await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
+    ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
+    prompt_id: opts.promptId, event_name: 'claude_code.user_prompt', attributes_json: attrs, body_json: {},
+  });
 }
 
 async function insertToolResultEvent(opts: {
@@ -445,12 +451,18 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // tool aggregates joined from its api_request + tool_result events.
     it('enriches a prompt with model, token, cost, duration, and tool aggregates', async () => {
       const db = await getTelemetryDb();
-      const insert = (ts: Date, eventName: string, attrs: Record<string, unknown>): Promise<unknown> =>
-        db.query(
+      const insert = async (ts: Date, eventName: string, attrs: Record<string, unknown>): Promise<void> => {
+        await db.query(
           `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
           [ts, SECRET_A, 'session-1', 'pA', eventName, JSON.stringify(attrs), JSON.stringify({})],
         );
+        // HS-9278 — getRecentPrompts reads JSONL; dual-write into the ambient cluster.
+        await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', ts, {
+          ts: ts.toISOString(), project_secret: SECRET_A, session_id: 'session-1',
+          prompt_id: 'pA', event_name: eventName, attributes_json: attrs, body_json: {},
+        });
+      };
       const t0 = new Date('2026-05-20T10:00:00Z');
       const t1 = new Date('2026-05-20T10:00:02Z'); // +2s
       const t2 = new Date('2026-05-20T10:00:05Z'); // +5s
@@ -479,6 +491,18 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(row.costUsd).toBeNull();
       expect(row.toolCount).toBeNull();
       expect(row.durationMs).toBe(0); // single event → zero span
+    });
+
+    // HS-9278 — the JSONL read filters by project_secret; a scoped query must not
+    // surface another project's prompts (both live in the same ambient cluster file).
+    it('scopes to the requested project (excludes other projects’ prompts)', async () => {
+      const now = new Date();
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_A, promptId: 'pa', model: 'a' });
+      await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'pb', model: 'b' });
+      const a = await getRecentPrompts(SECRET_A, 10);
+      expect(a.map(r => r.promptId)).toEqual(['pa']);
+      const b = await getRecentPrompts(SECRET_B, 10);
+      expect(b.map(r => r.promptId)).toEqual(['pb']);
     });
   });
 

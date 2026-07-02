@@ -1,7 +1,8 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { getAllProjects } from '../projects.js';
-import { centralTelemetryDataDir, getRollupDb, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { readAllOtelJsonl } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
 /**
@@ -98,12 +99,6 @@ export interface RecentPrompt {
 
 /** HS-8779 — coerce a numeric SQL aggregate (returned as a string, or null when
  *  a LEFT JOIN found no matching rows) to a number or null. */
-function numOrNull(v: string | null): number | null {
-  if (v === null) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 /**
  * HS-8779 — clean a raw `user_prompt` log body into a short, human-readable
  * snippet, or null when there's nothing meaningful to show. Strips the hotsheet
@@ -660,94 +655,114 @@ export async function getRecentPrompts(
   projectSecret: string | null,
   limit: number,
 ): Promise<RecentPrompt[]> {
-  const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, null, 'ts', 0);
-  // Clamp limit to a sane bound — caller validates but defense-in-depth.
+  // HS-9278 — read the day-partitioned JSONL store (Phase 3 (b)) rather than raw
+  // otel_events. All-time window (matching the old no-since query), so scan every
+  // extant events file in the current context's cluster; the per-prompt aggregation
+  // that the SQL CTEs did (cost/token COALESCE variants, tool count, duration) is
+  // ported to JS below. Clamp limit — caller validates, defense-in-depth.
+  const events = await readAllOtelJsonl(currentTelemetryClusterDir(), 'events');
   const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
 
-  const result = await db.query<{
-    prompt_id: string;
-    ts: string;
-    project_secret: string;
-    model: string | null;
-    prompt_text: string | null;
-    total_tokens: string | null;
-    input_tokens: string | null;
-    output_tokens: string | null;
-    cost_usd: string | null;
-    duration_ms: string | null;
-    tool_count: string | null;
-  }>(
-    // `recent` is the newest-N user_prompt events (the only project/window
-    // filter); the aggregate CTEs join back on `prompt_id IN recent` so they
-    // only scan the handful of prompts we're about to render. Cost/token
-    // attribute names vary by Claude Code version, so COALESCE over the common
-    // variants (mirrors `getPerTicketRollup`). LEFT JOINs keep a prompt with no
-    // api_request/tool_result events (→ null aggregates) rather than dropping it.
-    `WITH recent AS (
-       SELECT prompt_id, ts, project_secret,
-              attributes_json->>'model' AS up_model,
-              COALESCE(attributes_json->>'prompt', body_json->'body'->>'stringValue') AS prompt_text
-         FROM otel_events
-        WHERE ${eventNameMatchSql('event_name', 'user_prompt')} AND prompt_id IS NOT NULL${clauses.clauses}
-        ORDER BY ts DESC
-        LIMIT ${String(safeLimit)}
-     ),
-     api AS (
-       SELECT e.prompt_id,
-              SUM(COALESCE((e.attributes_json->>'cost')::numeric, (e.attributes_json->>'cost_usd')::numeric, 0)) AS cost_usd,
-              SUM(COALESCE((e.attributes_json->>'input_tokens')::numeric, 0)) AS input_tokens,
-              SUM(COALESCE((e.attributes_json->>'output_tokens')::numeric, 0)) AS output_tokens,
-              SUM(COALESCE(
-                (e.attributes_json->>'tokens')::numeric,
-                (e.attributes_json->>'total_tokens')::numeric,
-                (e.attributes_json->>'input_tokens')::numeric + (e.attributes_json->>'output_tokens')::numeric,
-                0
-              )) AS total_tokens,
-              MAX(e.attributes_json->>'model') AS api_model
-         FROM otel_events e
-        WHERE ${eventNameMatchSql('e.event_name', 'api_request')}
-          AND e.prompt_id IN (SELECT prompt_id FROM recent)
-        GROUP BY e.prompt_id
-     ),
-     tools AS (
-       SELECT prompt_id, COUNT(*) AS tool_count
-         FROM otel_events
-        WHERE ${eventNameMatchSql('event_name', 'tool_result')}
-          AND prompt_id IN (SELECT prompt_id FROM recent)
-        GROUP BY prompt_id
-     ),
-     dur AS (
-       SELECT prompt_id, EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) * 1000 AS duration_ms
-         FROM otel_events
-        WHERE prompt_id IN (SELECT prompt_id FROM recent)
-        GROUP BY prompt_id
-     )
-     SELECT r.prompt_id, r.ts, r.project_secret,
-            COALESCE(r.up_model, a.api_model) AS model,
-            r.prompt_text,
-            a.total_tokens, a.input_tokens, a.output_tokens, a.cost_usd,
-            d.duration_ms, t.tool_count
-       FROM recent r
-       LEFT JOIN api a ON a.prompt_id = r.prompt_id
-       LEFT JOIN tools t ON t.prompt_id = r.prompt_id
-       LEFT JOIN dur d ON d.prompt_id = r.prompt_id
-      ORDER BY r.ts DESC`,
-    clauses.params,
-  );
-  return result.rows.map(r => ({
-    promptId: r.prompt_id,
-    ts: typeof r.ts === 'string' ? r.ts : new Date(r.ts).toISOString(),
-    projectSecret: r.project_secret,
-    model: r.model,
-    promptText: sanitizePromptSnippet(r.prompt_text),
-    totalTokens: numOrNull(r.total_tokens),
-    inputTokens: numOrNull(r.input_tokens),
-    outputTokens: numOrNull(r.output_tokens),
-    costUsd: numOrNull(r.cost_usd),
-    durationMs: numOrNull(r.duration_ms),
-    toolCount: numOrNull(r.tool_count),
-  }));
+  const scoped = projectSecret === null ? events : events.filter(e => e.project_secret === projectSecret);
+
+  // Newest-N user_prompt events with a prompt_id (ts DESC).
+  const recent = scoped
+    .filter(e => isClaudeCodeEvent(evName(e), 'user_prompt') && evPromptId(e) !== '')
+    .sort((a, b) => evTs(b).localeCompare(evTs(a)))
+    .slice(0, safeLimit);
+  const recentIds = new Set(recent.map(evPromptId));
+
+  // Group every event (any name) for those prompts, for the aggregate pass.
+  const byPrompt = new Map<string, Record<string, unknown>[]>();
+  for (const e of scoped) {
+    const pid = evPromptId(e);
+    if (pid !== '' && recentIds.has(pid)) {
+      const arr = byPrompt.get(pid);
+      if (arr !== undefined) arr.push(e); else byPrompt.set(pid, [e]);
+    }
+  }
+
+  return recent.map(up => {
+    const pid = evPromptId(up);
+    const all = byPrompt.get(pid) ?? [];
+    const apis = all.filter(e => isClaudeCodeEvent(evName(e), 'api_request'));
+    const toolCount = all.filter(e => isClaudeCodeEvent(evName(e), 'tool_result')).length;
+
+    // Per-prompt api aggregates — null (not 0) when the prompt has no api_request
+    // events, matching the old LEFT JOIN (distinguishes "no data" from zero).
+    let costUsd: number | null = null;
+    let inputTokens: number | null = null;
+    let outputTokens: number | null = null;
+    let totalTokens: number | null = null;
+    let apiModel: string | null = null;
+    if (apis.length > 0) {
+      costUsd = 0; inputTokens = 0; outputTokens = 0; totalTokens = 0;
+      for (const e of apis) {
+        const a = evAttrs(e);
+        costUsd += numAttr(a, 'cost') ?? numAttr(a, 'cost_usd') ?? 0;
+        const inT = numAttr(a, 'input_tokens');
+        const outT = numAttr(a, 'output_tokens');
+        inputTokens += inT ?? 0;
+        outputTokens += outT ?? 0;
+        totalTokens += numAttr(a, 'tokens')
+          ?? numAttr(a, 'total_tokens')
+          ?? ((inT !== null && outT !== null) ? inT + outT : null)
+          ?? 0;
+        const m = typeof a.model === 'string' ? a.model : null;
+        if (m !== null && (apiModel === null || m > apiModel)) apiModel = m; // MAX(model)
+      }
+    }
+
+    // Duration over ALL the prompt's events (always ≥1 — the user_prompt itself).
+    const times = all.map(e => new Date(evTs(e)).getTime()).filter(t => Number.isFinite(t));
+    const durationMs = times.length > 0 ? Math.max(...times) - Math.min(...times) : null;
+
+    const upModel = typeof evAttrs(up).model === 'string' ? evAttrs(up).model as string : null;
+    return {
+      promptId: pid,
+      ts: evTs(up),
+      projectSecret: typeof up.project_secret === 'string' ? up.project_secret : '',
+      model: upModel ?? apiModel,
+      promptText: sanitizePromptSnippet(extractPromptText(up)),
+      totalTokens,
+      inputTokens,
+      outputTokens,
+      costUsd,
+      durationMs,
+      toolCount: toolCount > 0 ? toolCount : null,
+    };
+  });
+}
+
+// --- HS-9278 JSONL row accessors (events records are Record<string, unknown>) ---
+function evName(e: Record<string, unknown>): string { return typeof e.event_name === 'string' ? e.event_name : ''; }
+function evPromptId(e: Record<string, unknown>): string { return typeof e.prompt_id === 'string' ? e.prompt_id : ''; }
+function evTs(e: Record<string, unknown>): string { return typeof e.ts === 'string' ? e.ts : ''; }
+function evAttrs(e: Record<string, unknown>): Record<string, unknown> {
+  const a = e.attributes_json;
+  return a !== null && typeof a === 'object' && !Array.isArray(a) ? a as Record<string, unknown> : {};
+}
+/** A finite number from an attribute, coercing a numeric string (mirrors the old
+ *  `(attributes_json->>'x')::numeric`); null when absent/non-numeric. */
+function numAttr(attrs: Record<string, unknown>, key: string): number | null {
+  const v = attrs[key];
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && v !== '') { const n = Number(v); return Number.isFinite(n) ? n : null; }
+  return null;
+}
+/** COALESCE(attributes_json->>'prompt', body_json->'body'->>'stringValue'). */
+function extractPromptText(e: Record<string, unknown>): string | null {
+  const p = evAttrs(e).prompt;
+  if (typeof p === 'string') return p;
+  const body = e.body_json;
+  if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+    const inner = (body as Record<string, unknown>).body;
+    if (inner !== null && typeof inner === 'object' && !Array.isArray(inner)) {
+      const sv = (inner as Record<string, unknown>).stringValue;
+      if (typeof sv === 'string') return sv;
+    }
+  }
+  return null;
 }
 
 /**

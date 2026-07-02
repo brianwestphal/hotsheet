@@ -407,6 +407,21 @@ export async function getTelemetryDb(): Promise<PGlite> {
 }
 
 /**
+ * HS-9278 — the telemetry cluster DIRECTORY the current async context resolves to
+ * (where the HS-9236 day-partitioned JSONL files live). Mirrors `getTelemetryDb`'s
+ * resolution order EXACTLY but returns the dir instead of opening the DB, so the
+ * JSONL-backed §68 detail reads scan the same store `getTelemetryDb` would query.
+ */
+export function currentTelemetryClusterDir(): string {
+  const telemetryDir = telemetryDbDir.getStore();
+  if (telemetryDir !== undefined) return telemetryClusterDataDir(telemetryDir);
+  const contextDataDir = requestDataDir.getStore();
+  if (contextDataDir !== undefined) return telemetryClusterDataDir(contextDataDir);
+  if (defaultDbPath !== null) return telemetryClusterDataDir(defaultDbPath.replace(/[\\/]db$/, ''));
+  return centralTelemetryDataDir();
+}
+
+/**
  * HS-9235 — resolve the MAIN (snapshotted) database where the telemetry ROLLUP
  * tables live (`otel_rollup_daily` / `otel_rollup_ticket` / `otel_daily_seen` /
  * `otel_ticket_prompt_span`). The dashboard read-layer reads rollups from here,
