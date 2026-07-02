@@ -1005,6 +1005,17 @@ function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
     })();
   });
   row.addEventListener('contextmenu', (e) => showTabContextMenu(e as MouseEvent, p));
+  // HS-9265 — middle-click a project tab to close it, with the same guards +
+  // confirmation as the context-menu "Close Tab" (`removeProject` no-ops on the
+  // last remaining project and prompts when the tab has running/non-exempt
+  // terminals). Suppress the browser's middle-click autoscroll on mousedown and
+  // act on `auxclick` (fires on non-primary button release).
+  row.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+  row.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    void removeProject(p);
+  });
   row.addEventListener('dragstart', (e) => handleDragStart(e, p));
   row.addEventListener('dragover', (e) => handleDragOver(e));
   row.addEventListener('dragleave', (e) => handleTicketDragLeave(e));
