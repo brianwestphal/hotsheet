@@ -17,7 +17,7 @@ import { instrumentDbQueries } from './queryInstrumentation.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 10; // HS-9259 — dropped vestigial rollup columns (otel_rollup_daily.prompt_count/session_count, otel_rollup_ticket.duration_seconds)
+export const SCHEMA_VERSION = 11; // HS-9279 — added otel_rollup_activity (tool/hour/tool_latency daily rollups; epic HS-9226 Phase 3b)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1156,6 +1156,30 @@ async function initSchema(db: PGlite): Promise<void> {
     -- Read path is WHERE project_secret = $1 AND kind = $2 AND day >= $since
     -- COUNT(*), so lead the index with (project_secret, kind, day).
     CREATE INDEX IF NOT EXISTS idx_otel_daily_seen_lookup ON otel_daily_seen(project_secret, kind, day);
+
+    -- HS-9279 (epic HS-9226 Phase 3b) — daily rollups for the aggregate dashboard
+    -- reads that still scanned raw otel_events (heatmap / tool usage / tool
+    -- latency), so those tables can be dropped in Phase 3c. One flexible grain
+    -- covers all three via kind + up to two dimension keys:
+    --   kind=tool          dim1=tool_name  dim2=(empty)       -> tool usage
+    --   kind=hour          dim1=hour(0-23) dim2=(empty)       -> hour-of-week heatmap
+    --                      (weekday reconstructed from day client-side)
+    --   kind=tool_latency  dim1=tool_name  dim2=bucketIndex   -> latency histogram
+    -- count for all; sum_val/sum_n carry sum(duration_ms)/number-with-duration so a
+    -- tool average duration reconstructs exactly across days (avg = sum_val/sum_n).
+    -- Snapshotted main db (like the other rollups); central rows use secret = empty.
+    CREATE TABLE IF NOT EXISTS otel_rollup_activity (
+      project_secret TEXT NOT NULL DEFAULT '',
+      day DATE NOT NULL,
+      kind TEXT NOT NULL,
+      dim1 TEXT NOT NULL DEFAULT '',
+      dim2 TEXT NOT NULL DEFAULT '',
+      count BIGINT NOT NULL DEFAULT 0,
+      sum_val NUMERIC NOT NULL DEFAULT 0,
+      sum_n BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (project_secret, day, kind, dim1, dim2)
+    );
+    CREATE INDEX IF NOT EXISTS idx_otel_rollup_activity_lookup ON otel_rollup_activity(project_secret, kind, day);
 
     -- HS-9243 (epic HS-9226 Phase 2 follow-up) — per-(ticket, prompt) span of the
     -- api_request events attributed to a ticket, so per-ticket DURATION can be

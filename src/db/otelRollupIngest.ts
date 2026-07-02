@@ -94,6 +94,56 @@ export async function markDailySeen(
   );
 }
 
+/**
+ * HS-9279 — upsert one increment into the `otel_rollup_activity` daily grain
+ * (project, server-local day, kind, dim1, dim2). `count` accumulates; `sumVal`/
+ * `sumN` accumulate the numeric aggregate (only `kind='tool'` uses them, to
+ * reconstruct average duration). Additive + idempotent-per-increment. Lives in
+ * the snapshotted main db like the other rollups.
+ */
+export async function updateActivityRollup(
+  mainDb: PGlite,
+  secret: string | null,
+  ts: Date,
+  kind: string,
+  dim1: string,
+  dim2: string,
+  opts: { count?: number; sumVal?: number; sumN?: number } = {},
+): Promise<void> {
+  await mainDb.query(
+    `INSERT INTO otel_rollup_activity (project_secret, day, kind, dim1, dim2, count, sum_val, sum_n)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (project_secret, day, kind, dim1, dim2) DO UPDATE SET
+       count = otel_rollup_activity.count + EXCLUDED.count,
+       sum_val = otel_rollup_activity.sum_val + EXCLUDED.sum_val,
+       sum_n = otel_rollup_activity.sum_n + EXCLUDED.sum_n`,
+    [secret ?? '', serverLocalDay(ts), kind, dim1, dim2, opts.count ?? 1, opts.sumVal ?? 0, opts.sumN ?? 0],
+  );
+}
+
+/**
+ * HS-9279 — roll a single `tool_result` event into the `kind='tool'` activity
+ * grain: +1 to the tool's count, and (when `duration_ms` is present) add it to
+ * the sum + bump the with-duration counter so `getToolRollup` can read back
+ * `count` + `avg = sum_val / sum_n` (mirrors the old
+ * `COUNT(*)` + `AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL)`).
+ * Tool name mirrors the read's `COALESCE(tool_name, name, '(unknown)')`.
+ */
+export async function recordToolActivity(
+  mainDb: PGlite,
+  secret: string | null,
+  ts: Date,
+  attrs: Record<string, unknown>,
+): Promise<void> {
+  const tool = strOr(attrs['tool_name'], strOr(attrs['name'], '(unknown)'));
+  const raw = attrs['duration_ms'];
+  const dur = typeof raw === 'number' ? raw : (typeof raw === 'string' && raw !== '' ? Number(raw) : NaN);
+  const hasDur = Number.isFinite(dur);
+  await updateActivityRollup(mainDb, secret, ts, 'tool', tool, '', {
+    count: 1, sumVal: hasDur ? dur : 0, sumN: hasDur ? 1 : 0,
+  });
+}
+
 /** Server-local `YYYY-MM-DD` for the daily bucket (the maintainer's grain). */
 export function serverLocalDay(ts: Date): string {
   const y = ts.getFullYear();

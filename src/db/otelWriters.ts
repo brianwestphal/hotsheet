@@ -8,6 +8,7 @@ import {
   eventNameMatches,
   isRollupMetric,
   markDailySeen,
+  recordToolActivity,
   stripNestedAttributes,
   updateDailyRollup,
 } from './otelRollupIngest.js';
@@ -502,6 +503,16 @@ export async function persistLogsPayload(
           }
         } catch (err) {
           console.debug('[otel] per-ticket rollup update failed:', err);
+        }
+        // HS-9279 — roll tool_result events into the daily tool-usage rollup
+        // (otel_rollup_activity, kind='tool') so getToolRollup can read the
+        // rollup instead of scanning raw otel_events (Phase 3b). Best-effort.
+        if (eventNameMatches(eventName, 'tool_result')) {
+          try {
+            await recordToolActivity(mainDb, resCtx.projectSecret, ts, attrs);
+          } catch (err) {
+            console.debug('[otel] tool-activity rollup update failed:', err);
+          }
         }
         // HS-9243 — record this prompt in the daily dedup set so the reads can
         // derive an exact daily distinct `prompt_count` without scanning raw. Any

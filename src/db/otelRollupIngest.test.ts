@@ -15,8 +15,10 @@ import {
   isCumulativeMonotonic,
   isRollupMetric,
   markDailySeen,
+  recordToolActivity,
   serverLocalDay,
   stripNestedAttributes,
+  updateActivityRollup,
   updateDailyRollup,
   widenTicketPromptSpan,
 } from './otelRollupIngest.js';
@@ -139,6 +141,51 @@ describe('updateDailyRollup (HS-9233)', () => {
     const r = await db.query<{ model: string; query_source: string }>(`SELECT model, query_source FROM otel_rollup_daily`);
     expect(r.rows[0].model).toBe('(unknown)');
     expect(r.rows[0].query_source).toBe('(unknown)');
+  });
+});
+
+describe('activity rollup — recordToolActivity / updateActivityRollup (HS-9279)', () => {
+  let tempDir: string;
+  beforeEach(async () => { tempDir = await setupTestDb(); });
+  afterEach(async () => { await cleanupTestDb(tempDir); });
+
+  const ts = new Date(2026, 5, 30, 10, 0, 0);
+
+  it('accumulates a tool’s count + duration sum/n across events in the same (project, day, tool) bucket', async () => {
+    const db = await getDb();
+    await recordToolActivity(db, 'sec', ts, { tool_name: 'Edit', duration_ms: 42 });
+    await recordToolActivity(db, 'sec', ts, { tool_name: 'Edit', duration_ms: 58 });
+    await recordToolActivity(db, 'sec', ts, { tool_name: 'Edit' }); // no duration → count only
+
+    const rows = await db.query<{ dim1: string; count: string; sum_val: string; sum_n: string }>(
+      `SELECT dim1, count, sum_val, sum_n FROM otel_rollup_activity WHERE project_secret='sec' AND kind='tool'`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].dim1).toBe('Edit');
+    expect(Number(rows.rows[0].count)).toBe(3);          // all three events
+    expect(Number(rows.rows[0].sum_val)).toBe(100);      // 42 + 58
+    expect(Number(rows.rows[0].sum_n)).toBe(2);          // only the two with duration → avg = 50
+  });
+
+  it('falls back tool_name → name → (unknown), and keys separate tools apart', async () => {
+    const db = await getDb();
+    await recordToolActivity(db, 'sec', ts, { name: 'Bash', duration_ms: 10 }); // `name` fallback
+    await recordToolActivity(db, 'sec', ts, {});                                // neither → (unknown)
+    const rows = await db.query<{ dim1: string; count: string }>(
+      `SELECT dim1, count FROM otel_rollup_activity WHERE project_secret='sec' AND kind='tool' ORDER BY dim1`,
+    );
+    expect(rows.rows.map(r => r.dim1)).toEqual(['(unknown)', 'Bash']);
+  });
+
+  it('updateActivityRollup buckets by (project, day, kind, dim1, dim2) and is additive', async () => {
+    const db = await getDb();
+    await updateActivityRollup(db, 'sec', ts, 'tool_latency', 'Edit', '2', { count: 1 });
+    await updateActivityRollup(db, 'sec', ts, 'tool_latency', 'Edit', '2', { count: 1 });
+    await updateActivityRollup(db, 'sec', ts, 'tool_latency', 'Edit', '3', { count: 1 });
+    const rows = await db.query<{ dim2: string; count: string }>(
+      `SELECT dim2, count FROM otel_rollup_activity WHERE kind='tool_latency' AND dim1='Edit' ORDER BY dim2`,
+    );
+    expect(rows.rows.map(r => [r.dim2, Number(r.count)])).toEqual([['2', 2], ['3', 1]]);
   });
 });
 
