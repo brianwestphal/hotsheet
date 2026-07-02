@@ -277,17 +277,7 @@ telemetryRoutes.get('/telemetry/_debug', async (c) => {
   // `projectSecret` in `dailyMetricCounts` is a live project or orphaned data
   // left behind by a since-closed / re-registered project.
   const loadedProjects = getAllProjects().map(p => ({ secret: p.secret, name: p.name }));
-  // HS-8888 (§85.2.4) — per-table row counts + on-disk size for the active
-  // project's telemetry DB, so a reader can confirm which OTLP table dominates
-  // (the §85 span-targeted retention assumes spans). Null when the project isn't
-  // a registered project (no resolvable dataDir, e.g. some tests).
-  const project = projectSecret === '' ? undefined : getProjectBySecret(projectSecret);
-  let tableBreakdown = null;
-  if (project !== undefined) {
-    try {
-      const { telemetryTableBreakdown } = await import('../db/telemetryDiagnostics.js');
-      tableBreakdown = await telemetryTableBreakdown(project.dataDir);
-    } catch { /* diagnostic only — never fail the _debug route */ }
-  }
-  return c.json({ ...info, loadedProjects, tableBreakdown });
+  // HS-9280 — the HS-8888 per-raw-table breakdown field is gone with the raw
+  // otel_* tables (dropped once the rollup + JSONL migration completes).
+  return c.json({ ...info, loadedProjects });
 });

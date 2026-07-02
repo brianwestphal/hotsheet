@@ -386,6 +386,10 @@ export const GlobalConfigSchema = z.object({
   // table. Completion flag + per-dir resumability list.
   telemetryTicketSpanBackfilledV1: z.boolean().optional(),
   telemetryTicketSpanBackfillV1DoneDirs: z.array(z.string()).optional(),
+  // HS-9280 — once-flag for the guarded drop of the raw otel_* tables
+  // (`dropRawTelemetryTables`, gated on the four backfill flags above). Set only
+  // after every cluster + main db succeeded, so a transient failure retries.
+  telemetryRawDroppedV1: z.boolean().optional(),
   // HS-8877 — retention window (days) for the centralized non-project telemetry
   // store (`~/.hotsheet/telemetry`). Projects have a per-project
   // `telemetry_retention_days`; central isn't a project, so its sweep window

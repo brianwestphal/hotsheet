@@ -939,71 +939,13 @@ async function initSchema(db: PGlite): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_feedback_drafts_ticket ON feedback_drafts(ticket_id);
     CREATE INDEX IF NOT EXISTS idx_feedback_drafts_parent_note ON feedback_drafts(parent_note_id);
 
-    -- HS-8144 — Claude Code OpenTelemetry raw-row tables (§67.6).
-    -- Three signal types, each with its own table; JSONB attribute bags
-    -- keep the schema flexible against Claude Code's evolving metric set
-    -- without per-metric hand-mapped columns. Indexes target the three
-    -- rollup patterns the UI surfaces in §67.10 actually run:
-    --   - (project_secret, ts DESC) for per-project today/week rollups
-    --   - (session_id, ts) for per-session drilldown
-    --   - (prompt_id) for the per-prompt timeline modal (events + spans)
-    -- See docs/67-telemetry.md for the full design + rationale.
-    CREATE TABLE IF NOT EXISTS otel_metrics (
-      id SERIAL PRIMARY KEY,
-      ts TIMESTAMPTZ NOT NULL,
-      project_secret TEXT NOT NULL,
-      session_id TEXT,
-      metric_name TEXT NOT NULL,
-      attributes_json JSONB,
-      value_json JSONB NOT NULL,
-      -- HS-8600 — OTLP metric-level aggregation temporality ('delta' /
-      -- 'cumulative' / NULL when unknown or N/A e.g. gauges) + isMonotonic.
-      -- The dashboards SUM rows, which is only correct for DELTA; persisting
-      -- these makes a future cumulative source detectable instead of silently
-      -- re-inflating cost/token totals (the HS-8599 overcount class).
-      aggregation_temporality TEXT,
-      is_monotonic BOOLEAN
-    );
-    CREATE INDEX IF NOT EXISTS idx_otel_metrics_project_ts ON otel_metrics(project_secret, ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_otel_metrics_session_ts ON otel_metrics(session_id, ts);
-    CREATE INDEX IF NOT EXISTS idx_otel_metrics_name ON otel_metrics(metric_name);
-    -- HS-8600 — additive migration for existing clusters (CREATE IF NOT EXISTS
-    -- above no-ops when the table already exists).
-    ALTER TABLE otel_metrics ADD COLUMN IF NOT EXISTS aggregation_temporality TEXT;
-    ALTER TABLE otel_metrics ADD COLUMN IF NOT EXISTS is_monotonic BOOLEAN;
-
-    CREATE TABLE IF NOT EXISTS otel_events (
-      id SERIAL PRIMARY KEY,
-      ts TIMESTAMPTZ NOT NULL,
-      project_secret TEXT NOT NULL,
-      session_id TEXT,
-      prompt_id TEXT,
-      event_name TEXT NOT NULL,
-      attributes_json JSONB,
-      body_json JSONB
-    );
-    CREATE INDEX IF NOT EXISTS idx_otel_events_project_ts ON otel_events(project_secret, ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_otel_events_session_ts ON otel_events(session_id, ts);
-    CREATE INDEX IF NOT EXISTS idx_otel_events_prompt ON otel_events(prompt_id);
-
-    CREATE TABLE IF NOT EXISTS otel_spans (
-      id SERIAL PRIMARY KEY,
-      trace_id TEXT NOT NULL,
-      span_id TEXT NOT NULL,
-      parent_span_id TEXT,
-      project_secret TEXT NOT NULL,
-      session_id TEXT,
-      prompt_id TEXT,
-      span_name TEXT NOT NULL,
-      start_ts TIMESTAMPTZ NOT NULL,
-      end_ts TIMESTAMPTZ NOT NULL,
-      attributes_json JSONB,
-      status_code TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_otel_spans_project_ts ON otel_spans(project_secret, start_ts DESC);
-    CREATE INDEX IF NOT EXISTS idx_otel_spans_session_ts ON otel_spans(session_id, start_ts);
-    CREATE INDEX IF NOT EXISTS idx_otel_spans_prompt ON otel_spans(prompt_id);
-    CREATE INDEX IF NOT EXISTS idx_otel_spans_trace ON otel_spans(trace_id);
+    -- HS-9280 — the raw Claude Code OpenTelemetry tables (otel_metrics /
+    -- otel_events / otel_spans, HS-8144 §67.6) are GONE. The rotating JSONL store
+    -- (the telemetry-cluster otel-*.jsonl files, HS-9236) is the sole raw store and
+    -- the compact rollup tables (below) are the aggregate source. They are NOT
+    -- created here anymore, so a guarded one-shot DROP in cli.ts
+    -- (dropRawTelemetryTables, gated on the four backfill flags) reclaims them from
+    -- existing clusters without re-creation on the next open. See docs/67 Phase 3.
 
     -- HS-8730 (per-ticket cost, time-window correlation) — records when each
     -- ticket was actively being worked (its status was 'started'), so the
@@ -1078,9 +1020,7 @@ async function initSchema(db: PGlite): Promise<void> {
     -- O(n^2) per-row scan was what wedged startup on a large telemetry DB.
     -- Non-unique (existing rows may legitimately collide; a UNIQUE constraint
     -- could fail to create on already-duplicated data).
-    CREATE INDEX IF NOT EXISTS idx_otel_spans_dedupe ON otel_spans(trace_id, span_id);
-    CREATE INDEX IF NOT EXISTS idx_otel_metrics_dedupe ON otel_metrics(ts, metric_name);
-    CREATE INDEX IF NOT EXISTS idx_otel_events_dedupe ON otel_events(ts, event_name);
+    -- HS-9280 — otel_spans/metrics/events dedupe indexes removed with the tables.
     CREATE INDEX IF NOT EXISTS idx_announcer_usage_dedupe ON announcer_usage(ts, model);
     CREATE INDEX IF NOT EXISTS idx_twi_dedupe ON ticket_work_intervals(project_secret, ticket_number, started_at);
 
@@ -1216,15 +1156,12 @@ async function initSchema(db: PGlite): Promise<void> {
 
   // HS-8874 — telemetry is now stored per-project, plus a centralized store
   // (`~/.hotsheet/telemetry`) for rows that carry NO `hotsheet_project` resource
-  // attr. Central rows have a NULL `project_secret`, so the four telemetry
-  // tables' `project_secret` columns must allow NULL. Pre-HS-8874 they were
-  // `NOT NULL` (the single-shared-store design always had a secret). Drop the
-  // constraint additively on existing clusters; new tables created by the DDL
-  // above are still `NOT NULL`, so the ALTER is what makes central writes work.
+  // attr. Central rows have a NULL `project_secret`, so the telemetry tables'
+  // `project_secret` columns must allow NULL. Pre-HS-8874 they were `NOT NULL`
+  // (the single-shared-store design always had a secret). Drop the constraint
+  // additively on existing clusters. HS-9280 — the raw otel_* tables are gone;
+  // only `announcer_usage` still needs this.
   await db.exec(`
-    ALTER TABLE otel_metrics ALTER COLUMN project_secret DROP NOT NULL;
-    ALTER TABLE otel_events ALTER COLUMN project_secret DROP NOT NULL;
-    ALTER TABLE otel_spans ALTER COLUMN project_secret DROP NOT NULL;
     ALTER TABLE announcer_usage ALTER COLUMN project_secret DROP NOT NULL;
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('does not exist')) console.error('Migration error (telemetry project_secret nullable):', e.message); });
 

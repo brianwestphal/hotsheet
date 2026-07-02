@@ -230,6 +230,30 @@ export async function sweepOtelJsonl(
   return removed;
 }
 
+/**
+ * HS-9280 — delete EVERY `otel-*-<day>.jsonl` file in `telemetryDir` (all kinds,
+ * all days), so "Clear telemetry data" (§74) wipes the raw JSONL store — now the
+ * sole raw store — alongside the rollup tables. Returns the number of files
+ * removed. Best-effort: an unreadable dir or a failed unlink is swallowed.
+ */
+export async function clearOtelJsonl(telemetryDir: string): Promise<number> {
+  let names: string[];
+  try {
+    names = await fsp.readdir(telemetryDir);
+  } catch {
+    return 0; // dir doesn't exist yet / unreadable — nothing to clear
+  }
+  let removed = 0;
+  for (const name of names) {
+    if (DAY_RE.exec(name) === null) continue;
+    try {
+      await fsp.unlink(join(telemetryDir, name));
+      removed++;
+    } catch { /* raced deletion / perms — skip */ }
+  }
+  return removed;
+}
+
 /** Test-only — drop the per-file append chains so tests don't bleed. */
 export function _resetOtelJsonlForTesting(): void {
   appendChains.clear();

@@ -288,6 +288,16 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
       // (`otel_ticket_prompt_span`) so the repoint can recompute per-ticket
       // duration; ongoing spans are widened at ingest. Self-guarded + resumable.
       await backfillTelemetryTicketSpans(dataDir);
+      // HS-9280 (epic HS-9226 Phase 3c) — now that every backfill above has
+      // consumed the raw telemetry into the compact rollups + JSONL, DROP the raw
+      // `otel_events`/`otel_spans`/`otel_metrics` tables from every cluster + main
+      // db to reclaim their disk. Guarded on the four backfill flags + a once-flag
+      // (`dropRawTelemetryTables`); `initSchema` no longer re-creates them. Runs
+      // AFTER the awaits above (never in `initSchema`, which would wipe raw before
+      // the backfills read it). Best-effort + non-fatal (inside this try/catch).
+      const { dropRawTelemetryTables } = await import('./db/otelRawDrop.js');
+      const dropResult = await dropRawTelemetryTables(dataDir);
+      if (dropResult !== null) console.log(`  [telemetry] HS-9280: dropped raw otel_* tables from ${String(dropResult.droppedFrom)} db(s).`);
     } catch (e: unknown) {
       console.warn(`[startup] Per-project telemetry migration failed (non-fatal): ${getErrorMessage(e)}`);
     }
@@ -316,17 +326,8 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     } catch (e: unknown) {
       console.warn(`[startup] Scheduling telemetry vacuum failed (non-fatal): ${getErrorMessage(e)}`);
     }
-    // HS-8888 (§85.2.4) — log a per-table row+size breakdown for each telemetry
-    // DB so we can confirm which table dominates (HS-8882 suspected spans). Also
-    // off-loop via the §75 scheduler (the DBs were just opened by the retention
-    // sweep, so the COUNTs are cache-cheap); never blocks startup.
-    startupMark('post-startup: scheduling telemetry breakdown log');
-    try {
-      const { scheduleTelemetryBreakdownLog } = await import('./db/telemetryDiagnostics.js');
-      void scheduleTelemetryBreakdownLog(dataDir);
-    } catch (e: unknown) {
-      console.warn(`[startup] Scheduling telemetry breakdown log failed (non-fatal): ${getErrorMessage(e)}`);
-    }
+    // HS-9280 — the HS-8888 per-raw-table breakdown log is gone with the raw
+    // otel_* tables (the JSONL age-sweep + rollup tables are what remain now).
     // HS-8889 (§85.2.1) — periodic 24h retention sweep so a long-lived session
     // doesn't accumulate telemetry rows unbounded between restarts. Off-loop via
     // the §75 scheduler; the timer is `unref`'d and cleared on shutdown.

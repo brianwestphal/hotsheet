@@ -3,7 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { getAllProjects } from '../projects.js';
 import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.js';
-import { listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
+import { clearOtelJsonl, listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
 /**
@@ -757,13 +757,19 @@ export async function getTodayCost(projectSecret: string): Promise<number> {
 export async function clearProjectTelemetry(projectSecret: string): Promise<{ deleted: number }> {
   const db = await getTelemetryDb();
   let deleted = 0;
-  for (const table of ['otel_metrics', 'otel_events', 'otel_spans', 'announcer_usage'] as const) {
-    const result = await db.query(
-      `DELETE FROM ${table} WHERE project_secret = $1`,
-      [projectSecret],
-    );
-    deleted += result.affectedRows ?? 0;
-  }
+  // HS-9280 — the raw otel_metrics/events/spans tables are gone; only announcer_usage
+  // still lives in the cluster db. The raw rows now live in the JSONL store, cleared below.
+  const result = await db.query(
+    `DELETE FROM announcer_usage WHERE project_secret = $1`,
+    [projectSecret],
+  );
+  deleted += result.affectedRows ?? 0;
+  // HS-9280 — wipe the rotating JSONL raw store (the §68 deep inspectors' source),
+  // else "Clear telemetry data" would leave the raw events/spans/metrics behind.
+  // Best-effort; not counted in `deleted` (that reports DB rows).
+  try {
+    await clearOtelJsonl(currentTelemetryClusterDir());
+  } catch { /* JSONL wipe is best-effort */ }
   // HS-9235 — the dashboards now read the ROLLUP tables (main db), so clearing a
   // project's telemetry must drop its rollup rows too, else the cost/token/count
   // displays would keep showing the just-cleared data. The rollup-row deletes are

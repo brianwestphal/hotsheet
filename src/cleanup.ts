@@ -4,7 +4,7 @@ import { join } from 'path';
 import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from './attachmentBackup.js';
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
 import { deleteAttachmentFile, getAllAttachments } from './db/attachments.js';
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './db/connection.js';
+import { centralTelemetryDataDir, telemetryClusterDataDir } from './db/connection.js';
 import { sweepOtelJsonl } from './db/otelJsonlStore.js';
 import {
   deleteAttachment,
@@ -19,7 +19,6 @@ import { getBackupDir, readFileSettings } from './file-settings.js';
 import { readGlobalConfig } from './global-config.js';
 import { ORPHAN_DRAFT_ATTACHMENT_HORIZON_MS } from './limits.js';
 import { readProjectList } from './project-list.js';
-import { getProjectSecret } from './secret-file.js';
 
 // HS-8558 — the orphan-attachment horizon moved to `src/limits.ts` for
 // cross-file consolidation. See the rationale comment block on the
@@ -177,50 +176,10 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
     const metricsDays = typeof settings.telemetry_retention_days === 'number' ? settings.telemetry_retention_days : 30;
     const spanDays = typeof settings.telemetry_span_retention_days === 'number' ? settings.telemetry_span_retention_days : DEFAULT_SPAN_RETENTION_DAYS;
 
-    // HS-8607 — can't scope a deletion without the project's secret; bail
-    // rather than risk an unscoped DELETE across the project's DB.
-    const secret = getProjectSecret(dataDir) || null; // HS-8999 — sidecar secret
-    if (secret === null) return { deleted: 0 };
-
-    const deleted = await runWithTelemetryDb(dataDir, async () => {
-      const db = await getTelemetryDb();
-      let n = 0;
-      // Metrics + events: the `telemetry_retention_days` window (`ts` column).
-      // `0` (or <= 0) means "keep forever" per §67.6.
-      if (metricsDays > 0) {
-        for (const table of ['otel_metrics', 'otel_events'] as const) {
-          const result = await db.query(
-            `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
-            [String(metricsDays), secret],
-          );
-          n += result.affectedRows ?? 0;
-        }
-      }
-      // HS-9229 — verbose inspector-only events get a SHORTER window than the
-      // general metrics/events window, since they're the bulk and no stats query
-      // reads them. Independent of `metricsDays` so it bounds even a "forever" (0)
-      // general window.
-      n += await deleteVerboseEventsOlderThan(db, secret);
-      // Spans: the shorter `telemetry_span_retention_days` window (`start_ts`).
-      if (spanDays > 0) {
-        const spansResult = await db.query(
-          `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret = $2`,
-          [String(spanDays), secret],
-        );
-        n += spansResult.affectedRows ?? 0;
-      }
-      // HS-8890 / HS-9229 — hard row caps (burst backstops, independent of the
-      // windows) for all three high-volume tables.
-      n += await capSpanRows(db, secret);
-      n += await capTableRows(db, 'otel_events', 'ts', secret, EVENT_ROW_CAP);
-      n += await capTableRows(db, 'otel_metrics', 'ts', secret, METRIC_ROW_CAP);
-      return n;
-    });
-
-    // HS-9236 — age-delete the rotating JSONL raw store alongside the raw-table
-    // sweep, using the SAME windows (events/metrics at `telemetry_retention_days`,
+    // HS-9280 — the raw otel_* tables are gone; retention is now purely the JSONL
+    // age-sweep of the rotating raw store (events/metrics at `telemetry_retention_days`,
     // spans at `telemetry_span_retention_days`). The files live in the cluster dir
-    // (outside `db/`); best-effort so a JSONL sweep failure never fails the sweep.
+    // (outside `db/`); best-effort so a sweep failure never throws out of cleanup.
     try {
       const jsonlDir = telemetryClusterDataDir(dataDir);
       const now = new Date();
@@ -229,11 +188,7 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
     } catch (err) {
       console.debug('[otel] jsonl sweep failed:', err);
     }
-
-    if (deleted > 0) {
-      console.log(`  Telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(metricsDays)}d, verbose events > ${String(DEFAULT_VERBOSE_EVENT_RETENTION_DAYS)}d, spans > ${String(spanDays)}d; caps span/event/metric ${String(SPAN_ROW_CAP)}/${String(EVENT_ROW_CAP)}/${String(METRIC_ROW_CAP)}).`);
-    }
-    return { deleted };
+    return { deleted: 0 };
   } catch (err) {
     console.error('Telemetry retention sweep failed:', err);
     return { deleted: 0 };
@@ -245,126 +200,11 @@ export async function cleanupTelemetryRows(dataDir: string): Promise<{ deleted: 
  *  than the 30-day metrics/events default because §68 spans are high-volume. */
 export const DEFAULT_SPAN_RETENTION_DAYS = 7;
 
-/** HS-8890 (§85.2.3) — hard cap on `otel_spans` row count per project secret, a
- *  burst backstop the time window can't provide (one heavy day can write far more
- *  than the window's worth). Keep the newest N; trim the rest by `start_ts`. */
-export const SPAN_ROW_CAP = 500_000;
-
-/** HS-9229 (§85.2.3, epic HS-9226 Phase 0) — the same burst backstop for the
- *  high-frequency `otel_events` / `otel_metrics` tables, which previously had ONLY
- *  the age window and no row cap (the §85 gap that let them grow to 563 MB / 203 MB
- *  unbounded). Sized to match spans — a runaway-burst limit, NOT the primary bound
- *  (that's the age window + the shorter verbose-event window below). */
-export const EVENT_ROW_CAP = 500_000;
-export const METRIC_ROW_CAP = 500_000;
-
-/** HS-9229 — high-frequency, inspector-only event names that no stats query reads
- *  (the §68 event list / debug views are their only consumers). They're the bulk
- *  of `otel_events`, so they get a SHORTER age window than human-meaningful events.
- *  Deliberately EXCLUDES `api_request` (per-ticket cost attribution), `user_prompt`
- *  / `assistant_response` (human-meaningful, tiny), and the `token.usage` /
- *  `cost.usage` metrics — all of which keep the full `telemetry_retention_days`
- *  window. Names are matched in BOTH the bare and `claude_code.`-prefixed forms
- *  Claude Code emits (mirrors `eventNameMatchSql`). */
-export const VERBOSE_EVENT_BASE_NAMES = [
-  'hook_execution_start',
-  'hook_execution_complete',
-  'tool_result',
-  'tool_decision',
-] as const;
-
-/** HS-9229 — default age window (days) for the verbose inspector-only events
- *  above. Mirrors the §85 span window (7d) since these are the same kind of
- *  high-volume, inspector-only telemetry. Independent of `telemetry_retention_days`
- *  so it bounds the bulk even when the general window is "keep forever" (`0`). */
-export const DEFAULT_VERBOSE_EVENT_RETENTION_DAYS = 7;
-
-/** Expand the verbose base names into the dual (bare + `claude_code.`-prefixed)
- *  forms Claude Code emits, as an `IN (...)` parameter list. */
-function verboseEventNames(): string[] {
-  return VERBOSE_EVENT_BASE_NAMES.flatMap(n => [n, `claude_code.${n}`]);
-}
-
-/**
- * HS-9229 — delete the verbose inspector-only events older than `days` for
- * `secret` (`null` = central NULL-secret rows). Runs in the CURRENT telemetry DB
- * context. No-op when `days <= 0`. Returns rows deleted.
- */
-export async function deleteVerboseEventsOlderThan(
-  db: Awaited<ReturnType<typeof getTelemetryDb>>,
-  secret: string | null,
-  days: number = DEFAULT_VERBOSE_EVENT_RETENTION_DAYS,
-): Promise<number> {
-  if (days <= 0) return 0;
-  const names = verboseEventNames();
-  const secretClause = secret === null ? 'project_secret IS NULL' : 'project_secret = $1';
-  const baseParams = secret === null ? [] : [secret];
-  // Placeholders for the IN list, after the secret param (if any) and the days param.
-  const start = baseParams.length + 2; // $1 (secret?) + $N days, then names
-  const inPlaceholders = names.map((_, i) => `$${String(start + i)}`).join(', ');
-  const daysParam = `$${String(baseParams.length + 1)}`;
-  const res = await db.query(
-    `DELETE FROM otel_events
-       WHERE ${secretClause}
-         AND ts < NOW() - (${daysParam} || ' days')::interval
-         AND event_name IN (${inPlaceholders})`,
-    [...baseParams, String(days), ...names],
-  );
-  return res.affectedRows ?? 0;
-}
-
-/**
- * Trim a telemetry `table` for `secret` (pass `null` for the central NULL-secret
- * rows) down to the newest `cap` by its timestamp column, deleting the oldest
- * overflow. Runs in the CURRENT telemetry DB context. Returns the number of rows
- * deleted. A no-op when at/under the cap. Applied unconditionally by the sweep —
- * it's a safety limit, so it bounds even a "keep forever" (`0`-day) window. `cap`
- * is a parameter so tests can exercise it without inserting half a million rows.
- * Exported for unit testing.
- *
- * `table` + `tsColumn` are caller-supplied literals (never user input) — the only
- * call sites pass the fixed `otel_*` table names + their `ts`/`start_ts` columns.
- */
-export async function capTableRows(
-  db: Awaited<ReturnType<typeof getTelemetryDb>>,
-  table: 'otel_spans' | 'otel_events' | 'otel_metrics',
-  tsColumn: 'ts' | 'start_ts',
-  secret: string | null,
-  cap: number,
-): Promise<number> {
-  const secretClause = secret === null ? 'project_secret IS NULL' : 'project_secret = $1';
-  const params = secret === null ? [] : [secret];
-  const countRes = await db.query<{ c: bigint | number }>(
-    `SELECT COUNT(*) AS c FROM ${table} WHERE ${secretClause}`,
-    params,
-  );
-  const count = Number(countRes.rows[0]?.c ?? 0);
-  if (count <= cap) return 0;
-  const overflow = count - cap;
-  // Delete the oldest `overflow` rows by the timestamp column (ties broken by
-  // `id`). PGLite supports a `LIMIT` subquery in the `DELETE ... WHERE id IN (...)` form.
-  const capParam = secret === null ? '$1' : '$2';
-  const delRes = await db.query(
-    `DELETE FROM ${table} WHERE id IN (
-       SELECT id FROM ${table} WHERE ${secretClause}
-       ORDER BY ${tsColumn} ASC, id ASC LIMIT ${capParam}
-     )`,
-    [...params, overflow],
-  );
-  return delRes.affectedRows ?? 0;
-}
-
-/**
- * Trim `otel_spans` down to `cap` (default `SPAN_ROW_CAP`). Thin wrapper over
- * {@link capTableRows} kept for its existing callers + tests.
- */
-export async function capSpanRows(
-  db: Awaited<ReturnType<typeof getTelemetryDb>>,
-  secret: string | null,
-  cap: number = SPAN_ROW_CAP,
-): Promise<number> {
-  return capTableRows(db, 'otel_spans', 'start_ts', secret, cap);
-}
+// HS-9280 — the raw-table retention machinery (SPAN/EVENT/METRIC_ROW_CAP row caps,
+// the verbose-event short window, `deleteVerboseEventsOlderThan` / `capTableRows` /
+// `capSpanRows`) is GONE with the raw otel_* tables. Retention is now purely the
+// JSONL age-sweep (`sweepOtelJsonl`) in the two functions above. `DEFAULT_SPAN_RETENTION_DAYS`
+// is kept — it's still the default window for the JSONL span sweep.
 
 /**
  * HS-8607 — sweep telemetry retention for EVERY registered project, not
@@ -422,43 +262,15 @@ function centralSpanRetentionDays(): number {
 async function cleanupCentralTelemetry(): Promise<{ deleted: number }> {
   const retentionDays = centralTelemetryRetentionDays();
   const spanDays = centralSpanRetentionDays();
+  // HS-9280 — central retention is now the JSONL age-sweep of the central store's
+  // rotating raw files (the raw otel_* tables are gone). Best-effort.
   try {
-    const deleted = await runWithTelemetryDb(centralTelemetryDataDir(), async () => {
-      const db = await getTelemetryDb();
-      let n = 0;
-      // Metrics + events: central window. `0` = keep forever (skip).
-      if (retentionDays > 0) {
-        for (const table of ['otel_metrics', 'otel_events'] as const) {
-          const result = await db.query(
-            `DELETE FROM ${table} WHERE ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
-            [String(retentionDays)],
-          );
-          n += result.affectedRows ?? 0;
-        }
-      }
-      // HS-9229 — verbose inspector-only events: shorter window on the central
-      // NULL-secret rows too.
-      n += await deleteVerboseEventsOlderThan(db, null);
-      // Spans: shorter central span window (HS-8890). `0` = keep forever (skip).
-      if (spanDays > 0) {
-        const spansResult = await db.query(
-          `DELETE FROM otel_spans WHERE start_ts < NOW() - ($1 || ' days')::interval AND project_secret IS NULL`,
-          [String(spanDays)],
-        );
-        n += spansResult.affectedRows ?? 0;
-      }
-      // HS-8890 / HS-9229 — hard row caps on the central NULL-secret rows too.
-      n += await capSpanRows(db, null);
-      n += await capTableRows(db, 'otel_events', 'ts', null, EVENT_ROW_CAP);
-      n += await capTableRows(db, 'otel_metrics', 'ts', null, METRIC_ROW_CAP);
-      return n;
-    });
-    if (deleted > 0) {
-      console.log(`  Central telemetry retention sweep: deleted ${String(deleted)} row(s) (metrics/events > ${String(retentionDays)}d, verbose events > ${String(DEFAULT_VERBOSE_EVENT_RETENTION_DAYS)}d, spans > ${String(spanDays)}d; caps span/event/metric ${String(SPAN_ROW_CAP)}/${String(EVENT_ROW_CAP)}/${String(METRIC_ROW_CAP)}).`);
-    }
-    return { deleted };
+    const jsonlDir = telemetryClusterDataDir(centralTelemetryDataDir());
+    const now = new Date();
+    await sweepOtelJsonl(jsonlDir, retentionDays, now, ['events', 'metrics']);
+    await sweepOtelJsonl(jsonlDir, spanDays, now, ['spans']);
   } catch (err) {
-    console.error('Central telemetry retention sweep failed:', err);
-    return { deleted: 0 };
+    console.debug('[otel] central jsonl sweep failed:', err);
   }
+  return { deleted: 0 };
 }

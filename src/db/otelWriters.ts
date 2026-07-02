@@ -227,7 +227,6 @@ export async function persistMetricsPayload(
     // HS-9230 — write into the relocated telemetry cluster (`<dataDir>/telemetry/db`
     // for a project; the central store maps to itself), NOT the snapshotted project db.
     const clusterDir = telemetryClusterDataDir(targetDir); // dir holding db/ + the HS-9236 JSONL
-    const db = await getDbForDir(clusterDir);
     // HS-9233 — the compact rollups live in the SNAPSHOTTED main db (small + the
     // per-ticket history is kept indefinitely, so it's backed up), so resolve it
     // separately from the raw cluster.
@@ -267,19 +266,9 @@ export async function persistMetricsPayload(
           // stored data point; the flattened `attributes_json` already holds it
           // and is what every stats query reads.
           const storedPoint = stripNestedAttributes(point);
-          try {
-            await db.query(
-              `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
-               VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
-              [ts, resCtx.projectSecret, sessionId, metricName, JSON.stringify(attrs), JSON.stringify(storedPoint), agg.temporality, agg.isMonotonic],
-            );
-            inserted++;
-          } catch (err) {
-            console.debug('[otel] metrics insert failed:', err);
-            dropped++;
-          }
-          // HS-9236 — dual-write the raw row to the rotating JSONL store (Phase 3).
-          // The deep §68 inspectors read these once HS-9237 drops the raw tables;
+          inserted++;
+          // HS-9280 — the rotating JSONL store is now the SOLE raw store (the
+          // `otel_metrics` table was dropped). The deep §68 inspectors read these;
           // the file lives OUTSIDE db/, so it's never snapshotted/backed up.
           await appendOtelJsonl(clusterDir, 'metrics', ts, {
             ts: ts.toISOString(), project_secret: resCtx.projectSecret, session_id: sessionId,
@@ -487,18 +476,9 @@ export async function persistLogsPayload(
         // the record BODY, not attributes, so the per-ticket marker LIKE is
         // unaffected.
         const storedRecord = stripNestedAttributes(rR);
-        try {
-          await db.query(
-            `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-            [ts, resCtx.projectSecret, sessionId, promptId, eventName, JSON.stringify(attrs), JSON.stringify(storedRecord)],
-          );
-          inserted++;
-        } catch (err) {
-          console.debug('[otel] logs insert failed:', err);
-          dropped++;
-        }
-        // HS-9236 — dual-write the raw event to the rotating JSONL store (Phase 3).
+        inserted++;
+        // HS-9280 — the rotating JSONL store is now the SOLE raw event store
+        // (the `otel_events` table was dropped).
         await appendOtelJsonl(clusterDir, 'events', ts, {
           ts: ts.toISOString(), project_secret: resCtx.projectSecret, session_id: sessionId,
           prompt_id: promptId, event_name: eventName, attributes_json: attrs, body_json: storedRecord,
@@ -592,7 +572,6 @@ export async function persistTracesPayload(
 
     // HS-8874 — per-resource target DB.
     const clusterDir = telemetryClusterDataDir(telemetryDataDirForSecret(resCtx.projectSecret)); // dir holding db/ + the HS-9236 JSONL
-    const db = await getDbForDir(clusterDir); // HS-9230 — relocated telemetry cluster
     const scopes = Array.isArray(eR.scopeSpans) ? eR.scopeSpans : [];
     for (const ss of scopes) {
       if (typeof ss !== 'object' || ss === null) continue;
@@ -622,20 +601,9 @@ export async function persistTracesPayload(
           ? status.code
           : (status !== undefined && typeof status.code === 'number' ? String(status.code) : null);
 
-        try {
-          await db.query(
-            `INSERT INTO otel_spans
-               (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
-            [traceId, spanId, parentSpanId, resCtx.projectSecret, sessionId, promptId, spanName, startTs, endTs, JSON.stringify(attrs), statusCode],
-          );
-          inserted++;
-        } catch (err) {
-          console.debug('[otel] spans insert failed:', err);
-          dropped++;
-        }
-        // HS-9236 — dual-write the raw span to the rotating JSONL store (Phase 3).
-        // Partitioned by START time's server-local day.
+        inserted++;
+        // HS-9280 — the rotating JSONL store is now the SOLE raw span store (the
+        // `otel_spans` table was dropped). Partitioned by START time's server-local day.
         await appendOtelJsonl(clusterDir, 'spans', startTs, {
           trace_id: traceId, span_id: spanId, parent_span_id: parentSpanId,
           project_secret: resCtx.projectSecret, session_id: sessionId, prompt_id: promptId,
