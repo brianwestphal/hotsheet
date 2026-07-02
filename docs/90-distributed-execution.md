@@ -189,9 +189,14 @@ Error overlay, shows a clean toast via `claimConflictToast.tsx`: **"Held by
 `claims-changed` sync refreshes the chip/pool). A batch conflict lists how many
 targets are held (resolve in the pool UI — no single force-release). `handleNotOk`
 routes 409-conflict → toast, 5xx → the Connection-Error popup. Tests:
-`claimConflictToast.test.tsx` (5) + `api.test.tsx::ticketIdFromPath` (2). Still a
-tracked follow-up (HS-9204): the owner-auto-claim TTL review + the pool-UI
-owner-filter decision.
+`claimConflictToast.test.tsx` (7, incl. `ticketIdFromPath`).
+
+**Decisions (HS-9204, maintainer 2026-07-02):** the **owner auto-claim TTL stays
+at the full 30 min** (`DEFAULT_CLAIM_TTL_SECONDS`) — an owner working a `started`
+ticket legitimately blocks workers, and releases when done (no shorter owner-only
+TTL). And **`owner` claims are NOT filtered from any UI** — seeing the owner as
+claimant (pool panel + per-ticket chip) is useful signal, not noise. The
+remaining follow-up is the `/hotsheet-worker` skill reminder line (HS-9288).
 
 ### 90.2.3 Atomic `claim-next` + selection policy
 
