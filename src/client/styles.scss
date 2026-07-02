@@ -2894,6 +2894,30 @@ body.cross-project-stats-active {
     }
   }
 
+  // HS-9272 — the terminal Edit dialog's Default | Custom appearance toggle.
+  // Left-aligned form control (unlike the centered command-target picker).
+  .term-appearance-segmented {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin: 2px 0 6px;
+
+    .seg-btn {
+      padding: 3px 14px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg);
+      cursor: pointer;
+      border: none;
+      border-right: 1px solid var(--border);
+      transition: background 0.15s, color 0.15s;
+      &:last-child { border-right: none; }
+      &:hover { background: var(--bg-hover); }
+      &.active { background: var(--accent); color: white; }
+    }
+  }
+
   // HS-8894 — both shell sub-option checkbox rows share this. Without the
   // `.command-launch-terminal-label` selector here, that label fell through to
   // the generic `.cmd-editor-dialog-body label` rule below (`--text-muted`,

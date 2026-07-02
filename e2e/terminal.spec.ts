@@ -170,6 +170,55 @@ test.describe('Embedded terminal drawer', () => {
     await expect(thirdTab).toContainText('Third');
   });
 
+  // HS-9272 — a terminal's Edit dialog uses a Default | Custom appearance
+  // segmented control (not a disclosure). Default clears any per-terminal
+  // theme/font/size; Custom sets them (and the `default` theme isn't offered).
+  test('HS-9272: terminal appearance is a Default | Custom segmented control', async ({ page, request }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="terminal"]').click();
+    // Edit the SHARED config directly so the round-trip is easy to assert.
+    await switchTerminalsToShared(page);
+    const list = page.locator('#settings-terminals-list');
+    await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
+
+    // Open the Edit dialog for the "Second" terminal.
+    await list.locator('.settings-terminal-row').filter({ hasText: 'Second' }).locator('.cmd-outline-edit-btn').click();
+    const dialog = page.locator('.cmd-editor-overlay');
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+
+    // No custom appearance yet → "Default" segment active, custom fields hidden.
+    await expect(dialog.locator('.term-appearance-seg[data-appearance="default"]')).toHaveClass(/active/);
+    await expect(dialog.locator('.term-appearance-custom-fields')).toBeHidden();
+
+    // Switch to Custom → fields reveal; the `default` theme is NOT an option.
+    await dialog.locator('.term-appearance-seg[data-appearance="custom"]').click();
+    await expect(dialog.locator('.term-appearance-custom-fields')).toBeVisible();
+    await expect(dialog.locator('.term-edit-theme option[value="default"]')).toHaveCount(0);
+
+    // Pick a theme + save.
+    await dialog.locator('.term-edit-theme').selectOption('dracula');
+    await dialog.locator('.cmd-editor-done-btn').click();
+    await page.waitForTimeout(700);
+    let fs = await (await request.get('/api/file-settings', { headers })).json() as { terminals: { id: string; theme?: string }[] };
+    expect(fs.terminals.find(t => t.id === 'second')?.theme).toBe('dracula');
+
+    // Re-open → now "Custom" active + fields visible; switch back to Default + save.
+    await list.locator('.settings-terminal-row').filter({ hasText: 'Second' }).locator('.cmd-outline-edit-btn').click();
+    await expect(dialog).toBeVisible({ timeout: 3000 });
+    await expect(dialog.locator('.term-appearance-seg[data-appearance="custom"]')).toHaveClass(/active/);
+    await expect(dialog.locator('.term-appearance-custom-fields')).toBeVisible();
+    await dialog.locator('.term-appearance-seg[data-appearance="default"]').click();
+    await dialog.locator('.cmd-editor-done-btn').click();
+    await page.waitForTimeout(700);
+    fs = await (await request.get('/api/file-settings', { headers })).json() as { terminals: { id: string; theme?: string; fontFamily?: string; fontSize?: number }[] };
+    const second = fs.terminals.find(t => t.id === 'second');
+    expect(second?.theme).toBeUndefined();
+    expect(second?.fontFamily).toBeUndefined();
+    expect(second?.fontSize).toBeUndefined();
+  });
+
   // HS-6341: clicking + creates a dynamic terminal that has a visible tab label
   // and a visible content pane (not a blank drawer).
   test('+ button creates a dynamic terminal tab with a label and a visible pane (HS-6341)', async ({ page }) => {

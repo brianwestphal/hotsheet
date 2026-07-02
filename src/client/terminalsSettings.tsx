@@ -526,11 +526,17 @@ function openEditor(
   const initialTheme = entry.theme ?? projectDefault.theme ?? DEFAULT_THEME_ID;
   const initialFontFamily = entry.fontFamily ?? projectDefault.fontFamily ?? 'system';
   const initialFontSize = clampFontSize(entry.fontSize ?? projectDefault.fontSize ?? DEFAULT_FONT_SIZE);
-  const appearanceOpenByDefault = entry.theme !== undefined
+  // HS-9272 — appearance is all-or-nothing: "Custom" iff the entry already sets
+  // ANY of theme/fontFamily/fontSize; otherwise "Default" (inherits the user's
+  // Default appearance, HS-9271).
+  const hasCustomAppearance = entry.theme !== undefined
     || entry.fontFamily !== undefined
     || entry.fontSize !== undefined;
 
-  const themeOptions = TERMINAL_THEMES.map(t => (
+  // HS-9272 — in Custom mode the segmented "Default" option covers inheriting the
+  // user's default appearance, so the `default` (app-chrome) theme is NOT offered
+  // in the theme dropdown (picking it would be redundant with choosing "Default").
+  const themeOptions = TERMINAL_THEMES.filter(t => t.id !== DEFAULT_THEME_ID).map(t => (
     <option value={t.id} selected={t.id === initialTheme}>{t.name}</option>
   ));
   const fontOptions = TERMINAL_FONTS.map(f => (
@@ -590,33 +596,40 @@ function openEditor(
             </label>
             <span className="settings-hint">Uncheck to spawn the PTY as soon as the project has loaded.</span>
           </div>
-          {/* HS-7562 — Appearance overrides per terminal. Collapsed by default
-              unless the entry already has any of theme/fontFamily/fontSize set,
-              in which case it auto-opens so the user sees the live values. */}
-          <details className="term-edit-appearance" open={appearanceOpenByDefault}>
-            <summary>Appearance</summary>
-            <div className="settings-field">
-              <label htmlFor={`term-edit-theme-${fieldIdSuffix}`}>Theme</label>
-              <select id={`term-edit-theme-${fieldIdSuffix}`} className="term-edit-theme">{themeOptions}</select>
-              <span className="settings-hint">Default selected = current project default. Pick a different theme to override for this terminal only.</span>
+          {/* HS-9272 — Appearance is a `Default | Custom` segmented control (was a
+              disclosure). Default inherits the user's Default appearance (HS-9271);
+              Custom sets an explicit theme/font/size for this terminal only. The
+              custom fields show only in Custom mode. */}
+          <div className="settings-field term-edit-appearance">
+            <label>Appearance</label>
+            <div className="term-appearance-segmented" role="group" aria-label="Terminal appearance">
+              <button type="button" className={`seg-btn term-appearance-seg${hasCustomAppearance ? '' : ' active'}`} data-appearance="default">Default</button>
+              <button type="button" className={`seg-btn term-appearance-seg${hasCustomAppearance ? ' active' : ''}`} data-appearance="custom">Custom</button>
             </div>
-            <div className="settings-field">
-              <label htmlFor={`term-edit-font-${fieldIdSuffix}`}>Font</label>
-              <select id={`term-edit-font-${fieldIdSuffix}`} className="term-edit-font">{fontOptions}</select>
+            <span className="settings-hint">Default uses your Default appearance (Settings → Terminal → Default appearance). Custom overrides the theme, font, and size for this terminal only.</span>
+            <div className="term-appearance-custom-fields" hidden={!hasCustomAppearance}>
+              <div className="settings-field">
+                <label htmlFor={`term-edit-theme-${fieldIdSuffix}`}>Theme</label>
+                <select id={`term-edit-theme-${fieldIdSuffix}`} className="term-edit-theme">{themeOptions}</select>
+              </div>
+              <div className="settings-field">
+                <label htmlFor={`term-edit-font-${fieldIdSuffix}`}>Font</label>
+                <select id={`term-edit-font-${fieldIdSuffix}`} className="term-edit-font">{fontOptions}</select>
+              </div>
+              <div className="settings-field">
+                <label htmlFor={`term-edit-font-size-${fieldIdSuffix}`}>Font size</label>
+                <input
+                  type="number"
+                  id={`term-edit-font-size-${fieldIdSuffix}`}
+                  className="term-edit-font-size"
+                  min={String(MIN_FONT_SIZE)}
+                  max={String(MAX_FONT_SIZE)}
+                  step="1"
+                  value={String(initialFontSize)}
+                />
+              </div>
             </div>
-            <div className="settings-field">
-              <label htmlFor={`term-edit-font-size-${fieldIdSuffix}`}>Font size</label>
-              <input
-                type="number"
-                id={`term-edit-font-size-${fieldIdSuffix}`}
-                className="term-edit-font-size"
-                min={String(MIN_FONT_SIZE)}
-                max={String(MAX_FONT_SIZE)}
-                step="1"
-                value={String(initialFontSize)}
-              />
-            </div>
-          </details>
+          </div>
         </div>
         <div className="cmd-editor-dialog-footer">
           <button className="btn btn-sm cmd-editor-done-btn">{isAdd ? 'Add Terminal' : 'Done'}</button>
@@ -640,20 +653,24 @@ function openEditor(
     const updated: EditableTerminalConfig = { ...entry, command: command !== '' ? command : '{{claudeCommand}}', lazy };
     if (name !== '') updated.name = name; else delete updated.name;
     if (cwd !== '') updated.cwd = cwd; else delete updated.cwd;
-    // HS-7562 — save the explicit theme / font / size verbatim. The pre-
-    // selected value reflected the project default at dialog-open time, so a
-    // user who didn't touch the controls still ends up with their per-terminal
-    // value matching the project default's CURRENT value (decoupling future
-    // project-default changes from this terminal). If the user wants the
-    // terminal to track the project default, they can clear the override
-    // by deleting the entry's theme/fontFamily/fontSize keys directly in
-    // settings.json — adding an explicit "Reset" affordance is a deliberate
-    // future enhancement.
-    if (themeSel !== null) updated.theme = themeSel.value;
-    if (fontSel !== null) updated.fontFamily = fontSel.value;
-    if (sizeInput !== null) {
-      const parsed = Number.parseFloat(sizeInput.value);
-      if (Number.isFinite(parsed)) updated.fontSize = clampFontSize(parsed);
+    // HS-9272 — appearance is all-or-nothing via the segmented control. In
+    // "Custom" mode write the explicit theme/font/size for this terminal; in
+    // "Default" mode CLEAR them so the terminal inherits the user's Default
+    // appearance (HS-9271) and tracks it going forward. (Replaces HS-7562's
+    // always-write-verbatim behavior, which baked the project default in as a
+    // per-terminal override the user couldn't clear from the UI.)
+    const isCustom = overlay.querySelector('.term-appearance-seg[data-appearance="custom"].active') !== null;
+    if (isCustom) {
+      if (themeSel !== null) updated.theme = themeSel.value;
+      if (fontSel !== null) updated.fontFamily = fontSel.value;
+      if (sizeInput !== null) {
+        const parsed = Number.parseFloat(sizeInput.value);
+        if (Number.isFinite(parsed)) updated.fontSize = clampFontSize(parsed);
+      }
+    } else {
+      delete updated.theme;
+      delete updated.fontFamily;
+      delete updated.fontSize;
     }
     return updated;
   };
@@ -725,6 +742,18 @@ function openEditor(
         const derived = deriveNameFromCommand(value);
         if (derived !== '') nameInput.value = derived;
       }
+    });
+  }
+
+  // HS-9272 — the Default | Custom appearance segmented control. Clicking a
+  // segment activates it and shows the theme/font/size fields only in Custom.
+  const segBtns = overlay.querySelectorAll<HTMLButtonElement>('.term-appearance-seg');
+  const customFields = overlay.querySelector<HTMLElement>('.term-appearance-custom-fields');
+  for (const seg of segBtns) {
+    seg.addEventListener('click', () => {
+      const custom = seg.dataset.appearance === 'custom';
+      for (const b of segBtns) b.classList.toggle('active', b === seg);
+      if (customFields !== null) customFields.hidden = !custom;
     });
   }
 }
