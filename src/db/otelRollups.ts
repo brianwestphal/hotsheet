@@ -3,7 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { getAllProjects } from '../projects.js';
 import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.js';
-import { readAllOtelJsonl } from './otelJsonlStore.js';
+import { listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
 /**
@@ -146,91 +146,13 @@ function buildSecretsInClause(
   return { clause: `project_secret IN (${placeholders.join(', ')})`, params: [...allowedSecrets] };
 }
 
-function buildProjectAndWindowClauses(
-  projectSecret: string | null,
-  sinceTs: Date | null,
-  tsColumn: string,
-  baseParamCount: number,
-  allowedSecrets: readonly string[] | null = null,
-): { clauses: string; params: Array<string | Date> } {
-  const clauses: string[] = [];
-  const params: Array<string | Date> = [];
-  if (projectSecret !== null) {
-    params.push(projectSecret);
-    clauses.push(`project_secret = $${String(baseParamCount + params.length)}`);
-  }
-  if (sinceTs !== null) {
-    params.push(sinceTs);
-    clauses.push(`${tsColumn} >= $${String(baseParamCount + params.length)}`);
-  }
-  // HS-8625 — cross-project rollups (projectSecret === null) restrict to the
-  // currently-loaded project secrets when `allowedSecrets` is supplied.
-  const secrets = buildSecretsInClause(allowedSecrets, baseParamCount + params.length);
-  if (secrets.clause !== '') {
-    clauses.push(secrets.clause);
-    params.push(...secrets.params);
-  }
-  return { clauses: clauses.length === 0 ? '' : ' AND ' + clauses.join(' AND '), params };
-}
-
-/**
- * HS-8627 — headline token totals count only the "real work" tokens
- * (input + output), EXCLUDING the cache types. `claude_code.token.usage` is
- * tagged with a `type` dimension (input / output / cacheRead / cacheCreation);
- * `cacheRead` re-counts the ENTIRE cached prompt on every turn, so summing all
- * types inflated the token count far beyond the actual work — the over-count
- * the user kept seeing even after the HS-8599 delta fix (which only addressed
- * the cumulative-counter axis). Cost is deliberately NOT filtered: the
- * `claude_code.cost.usage` metric is already-priced USD that accounts for the
- * cache-read discount, so cache does not inflate it.
- *
- * Exclusion (not `type IN ('input','output')` inclusion) is chosen so an absent
- * or unknown `type` still counts — it fails OPEN to the old "include it"
- * behavior rather than silently zeroing the token count if the attribute shape
- * differs. Both Claude Code's camelCase values (`cacheRead` / `cacheCreation`)
- * and the snake_case spelling documented in §67 (`cache_read` / `cache_creation`)
- * are excluded. This is a pure literal predicate (no bind params), safe to
- * append to any token.usage WHERE / CASE without disturbing `$N` indices.
- */
-const REAL_WORK_TOKEN_TYPE_SQL = "(attributes_json->>'type' IS NULL OR attributes_json->>'type' NOT IN ('cacheRead', 'cacheCreation', 'cache_read', 'cache_creation'))";
-
-// HS-9235 — the per-type token predicates (input / output / cacheRead /
-// cacheCreation) are gone: the dashboard aggregates now read the daily rollup's
-// pre-split token columns, so they no longer need to bucket raw rows by `type`.
-
-/**
- * HS-8708 — exclude CUMULATIVE monotonic cost/token rows from SUM aggregations.
- * The dashboards SUM `claude_code.cost.usage` / `claude_code.token.usage`
- * data-point values, which is only correct for DELTA temporality (each row is
- * the increment since the last export). A CUMULATIVE monotonic counter reports
- * the running total on every export, so summing those rows re-inflates totals
- * 18-60× (the HS-8599 overcount). HS-8600 added the `aggregation_temporality` +
- * `is_monotonic` columns and a stderr warning when such a row arrives; this
- * predicate is what actually keeps those rows OUT of the totals so the dashboards
- * self-heal instead of needing a manual `DELETE`.
- *
- * Hot Sheet's own spawn env forces delta
- * (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`, HS-8599), so this
- * is a no-op on Hot-Sheet-spawned data; it only drops rows from a FOREIGN
- * telemetry source (an externally-launched `claude`, a different version/config)
- * that landed as `aggregation_temporality='cumulative' AND is_monotonic=true`.
- *
- * Null-safe via `IS DISTINCT FROM` / `IS NOT TRUE` so every row we MUST keep
- * passes:
- *   - delta counters (`temporality='delta'`),
- *   - non-monotonic points (gauges, `is_monotonic=false`),
- *   - legacy pre-HS-8600 rows (both columns NULL — already correct, since the
- *     delta-forcing spawn env predates the columns; existing seeded test rows
- *     hit this branch).
- *
- * Pure literal predicate (no bind params), safe to append with ` AND ${...}` to
- * any `otel_metrics` WHERE clause without disturbing `$N` indices — same
- * contract as `REAL_WORK_TOKEN_TYPE_SQL`. Only valid against `otel_metrics` (the
- * columns don't exist on `otel_events` / `otel_spans`), so it is appended per
- * metric query rather than inside the shared `buildProjectAndWindowClauses`
- * helper, which also serves event/span queries.
- */
-const EXCLUDE_CUMULATIVE_MONOTONIC_SQL = "(aggregation_temporality IS DISTINCT FROM 'cumulative' OR is_monotonic IS NOT TRUE)";
+// HS-9285 — `REAL_WORK_TOKEN_TYPE_SQL` + `EXCLUDE_CUMULATIVE_MONOTONIC_SQL` (and
+// the raw-metric `buildProjectAndWindowClauses` helper) were removed here: the
+// last raw `otel_metrics` reads in this module (`getQuerySourceRollup` +
+// `getCostByProject.lastActivityTs`) now read the daily rollup / JSONL instead,
+// so the per-type cache exclusion + cumulative-monotonic filter (which only made
+// sense against raw metric rows) have no remaining callers. The ingest path still
+// applies the delta/cumulative distinction when it builds the rollup.
 
 /**
  * HS-8639 — Claude Code's OTLP log records carry event names WITHOUT a
@@ -638,28 +560,32 @@ export async function getQuerySourceRollup(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<QuerySourceRollup[]> {
-  const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
-
-  // HS-8514 — same `session_id` issue as `getCostByModel`; fall back
-  // to `attributes_json->>'session.id'` when the column is null.
-  const result = await db.query<{ source: string | null; cost: string; tokens: string; prompt_count: string }>(
+  // HS-9285 — read the daily ROLLUP (main db), GROUP BY the pre-bucketed
+  // `query_source` column, instead of scanning raw `otel_metrics` (the last raw
+  // read this §71 card had; the rollup schema already carries the column). Mirrors
+  // `getCostByModel`: `tokens` is the real-work headline (input + output; cache is
+  // its own columns and excluded), and `promptCount` is 0 because the daily rollup
+  // has no per-`query_source` distinct-session count (HS-9259 moved distinct counts
+  // to `otel_daily_seen`, which isn't keyed by source) — the same concession the
+  // per-model rollup makes.
+  const db = await getRollupDb();
+  const daily = buildRollupDayClauses(projectSecret, sinceTs, 0);
+  const result = await db.query<{ source: string; cost: string; tokens: string }>(
     `SELECT
-        COALESCE(attributes_json->>'query.source', '(unknown)') AS source,
-        SUM(CASE WHEN metric_name = 'claude_code.cost.usage' THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS cost,
-        SUM(CASE WHEN metric_name = 'claude_code.token.usage' AND ${REAL_WORK_TOKEN_TYPE_SQL} THEN COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) ELSE 0 END) AS tokens,
-        COUNT(DISTINCT COALESCE(session_id, attributes_json->>'session.id')) AS prompt_count
-     FROM otel_metrics
-     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage') AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}${clauses.clauses}
-     GROUP BY attributes_json->>'query.source'
+        query_source AS source,
+        SUM(cost_usd) AS cost,
+        SUM(input_tokens + output_tokens) AS tokens
+     FROM otel_rollup_daily
+     WHERE TRUE${daily.clauses}
+     GROUP BY query_source
      ORDER BY cost DESC`,
-    clauses.params,
+    daily.params,
   );
   return result.rows.map(r => ({
-    source: r.source ?? '(unknown)',
+    source: r.source !== '' ? r.source : '(unknown)',
     cost: Number(r.cost),
     tokens: Number(r.tokens),
-    promptCount: Number(r.prompt_count),
+    promptCount: 0,
   }));
 }
 
@@ -974,37 +900,74 @@ export interface ProjectCostRow {
 }
 
 /**
- * Cost-by-project: one row per project that has any cost-bearing
- * `claude_code.cost.usage` data points in the window. Tokens come
- * from `claude_code.token.usage` over the same per-project group;
- * promptCount is distinct `prompt_id` count over `user_prompt` events.
- * `lastActivityTs` is the latest metric ts in the window.
+ * HS-9285 — exact per-project "last activity" ts from the day-partitioned JSONL
+ * store (`currentTelemetryClusterDir()` — the same context path the §68 detail
+ * reads resolve since HS-9278), replacing the old `MAX(ts) FROM otel_metrics`
+ * raw scan. Returns a `Map<project_secret, ISO ts>` (central rows key on `''` to
+ * match the rollup's central `project_secret`).
  *
- * Three subqueries grouped by project_secret + a single client-side
- * merge so the SQL stays straightforward — at single-user scale the
- * three indexed scans each return in well under 10 ms per §67.6's
- * "no precomputed rollup tables" decision.
+ * "Last activity" = the max `claude_code.cost.usage` ts within the window. Since
+ * a newer day's rows are always later than an older day's, we scan day-files
+ * newest→oldest and take the first (newest) match per secret; the file read stops
+ * once every requested secret has a value (the common per-project fan-out has a
+ * single secret, so it stops after one day-file). `allowedSecrets === null`
+ * (the ambient back-compat path) scans the whole windowed range.
+ */
+async function latestActivityByProjectFromJsonl(
+  sinceTs: Date | null,
+  allowedSecrets: readonly string[] | null,
+): Promise<Map<string, string>> {
+  const dir = currentTelemetryClusterDir();
+  const sinceDay = sinceTs !== null ? serverLocalDay(sinceTs) : null;
+  const sinceMs = sinceTs !== null ? sinceTs.getTime() : null;
+  const out = new Map<string, string>();
+  const days = await listOtelJsonlDays(dir, 'metrics'); // ascending
+  for (let i = days.length - 1; i >= 0; i--) {
+    const day = days[i];
+    if (sinceDay !== null && day < sinceDay) break; // older than the window
+    const rows = await readOtelJsonlDay(dir, 'metrics', day);
+    for (const r of rows) {
+      if (r.metric_name !== 'claude_code.cost.usage') continue;
+      const ts = typeof r.ts === 'string' ? r.ts : null;
+      if (ts === null) continue;
+      if (sinceMs !== null && Date.parse(ts) < sinceMs) continue; // within-day window edge
+      const secret = typeof r.project_secret === 'string' ? r.project_secret : '';
+      if (allowedSecrets !== null && !allowedSecrets.includes(secret)) continue;
+      const cur = out.get(secret);
+      // ISO-8601 UTC strings compare lexicographically = chronologically.
+      if (cur === undefined || ts > cur) out.set(secret, ts);
+    }
+    // Every requested secret found → older days can't beat these (earlier ts).
+    if (allowedSecrets !== null && out.size >= allowedSecrets.length) break;
+  }
+  return out;
+}
+
+/**
+ * Cost-by-project: one row per project that has any cost-bearing
+ * `claude_code.cost.usage` data points in the window. All figures read the
+ * compact rollup / JSONL (no raw `otel_*`): cost + tokens from `otel_rollup_daily`,
+ * distinct prompt/session counts from `otel_daily_seen`, and `lastActivityTs` (the
+ * latest cost ts in the window) from the JSONL store via
+ * `latestActivityByProjectFromJsonl`. A single client-side merge by project_secret.
  */
 export async function getCostByProject(
   sinceTs: Date | null,
   allowedSecrets: readonly string[] | null = null,
 ): Promise<ProjectCostRow[]> {
   // HS-9235 — cost + tokens from the daily ROLLUP and prompt/session distinct
-  // counts from `otel_daily_seen` (both in the main db, day-filtered); but
-  // `lastActivityTs` STAYS on RAW (the cluster), because the rollup only has
-  // day granularity and the cross-project stats page shows relative "last
-  // active" time — a day-truncated value would visibly regress it.
+  // counts from `otel_daily_seen` (both in the main db, day-filtered).
+  // HS-9285 — `lastActivityTs` used to stay on RAW `otel_metrics` (`MAX(ts)`) for
+  // sub-day precision that the day-grained rollup can't give. It now reads the
+  // exact last `claude_code.cost.usage` ts from the day-partitioned JSONL store
+  // (`latestActivityByProjectFromJsonl`, same `currentTelemetryClusterDir()` path
+  // the §68 detail reads use since HS-9278) — exact precision, no raw table, so
+  // this is off raw ahead of the HS-9280 drop.
   const rollupDb = await getRollupDb();
-  const clusterDb = await getTelemetryDb();
   const daily = buildRollupDayClauses(null, sinceTs, 0, allowedSecrets);
   const seen = buildRollupDayClauses(null, sinceTs, 1, allowedSecrets); // $1 = kind
-  // Raw lastActivityTs: `[metric, ...tsParams, ...secrets]` layout.
-  const tsClause = sinceTs === null ? '' : ' AND ts >= $2';
-  const tsParams: Array<string | Date> = sinceTs === null ? [] : [sinceTs];
-  const rawSecrets = buildSecretsInClause(allowedSecrets, 1 + tsParams.length);
-  const rawSecretsClause = rawSecrets.clause === '' ? '' : ` AND ${rawSecrets.clause}`;
 
-  const [costTokensResult, promptsResult, sessionsResult, lastTsResult] = await Promise.all([
+  const [costTokensResult, promptsResult, sessionsResult, lastActivityBySecret] = await Promise.all([
     rollupDb.query<{ project_secret: string; cost: string | null; tokens: string | null }>(
       `SELECT project_secret, SUM(cost_usd) AS cost, SUM(input_tokens + output_tokens) AS tokens
        FROM otel_rollup_daily
@@ -1026,13 +989,7 @@ export async function getCostByProject(
        GROUP BY project_secret`,
       ['session', ...seen.params],
     ),
-    clusterDb.query<{ project_secret: string; last_ts: string }>(
-      `SELECT project_secret, MAX(ts) AS last_ts
-       FROM otel_metrics
-       WHERE metric_name = $1${tsClause}${rawSecretsClause}
-       GROUP BY project_secret`,
-      ['claude_code.cost.usage', ...tsParams, ...rawSecrets.params],
-    ),
+    latestActivityByProjectFromJsonl(sinceTs, allowedSecrets),
   ]);
   const costResult = { rows: costTokensResult.rows.map(r => ({ project_secret: r.project_secret, total: r.cost })) };
   const tokensResult = { rows: costTokensResult.rows.map(r => ({ project_secret: r.project_secret, total: r.tokens })) };
@@ -1066,11 +1023,9 @@ export async function getCostByProject(
     const row = byProject.get(r.project_secret);
     if (row !== undefined && row.promptCount === 0) row.promptCount = Number(r.c);
   }
-  for (const r of lastTsResult.rows) {
-    const row = byProject.get(r.project_secret);
-    if (row !== undefined) {
-      row.lastActivityTs = typeof r.last_ts === 'string' ? r.last_ts : new Date(r.last_ts).toISOString();
-    }
+  for (const [secret, ts] of lastActivityBySecret) {
+    const row = byProject.get(secret);
+    if (row !== undefined) row.lastActivityTs = ts;
   }
   return Array.from(byProject.values()).sort((a, b) => b.cost - a.cost);
 }

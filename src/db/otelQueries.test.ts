@@ -1041,6 +1041,68 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     });
   });
 
+  // HS-9285 — these two reads were the last raw `otel_metrics` scans in the
+  // cross-project stats. They now read the daily rollup (`getQuerySourceRollup`)
+  // and the JSONL store (`getCostByProject.lastActivityTs`). These tests seed
+  // ONLY the rollup + JSONL (NO raw `otel_metrics` INSERT), so they FAIL if the
+  // read ever regresses back onto raw — the gate for the HS-9280 drop.
+  describe('HS-9285 — cross-project reads off raw otel_metrics', () => {
+    const NO_AGG = { temporality: null, isMonotonic: null };
+
+    it('getQuerySourceRollup reads the daily rollup (no raw rows seeded)', async () => {
+      const now = new Date();
+      const mainDb = await getRollupDb();
+      await updateDailyRollup(mainDb, SECRET_A, now, 'claude_code.cost.usage', 0.8, { 'query.source': 'main_agent' }, NO_AGG);
+      await updateDailyRollup(mainDb, SECRET_A, now, 'claude_code.cost.usage', 0.2, { 'query.source': 'subagent' }, NO_AGG);
+
+      const rollup = await getQuerySourceRollup(SECRET_A, null);
+      expect(rollup).toHaveLength(2);
+      expect(rollup[0]).toMatchObject({ source: 'main_agent', cost: 0.8, promptCount: 0 });
+      expect(rollup[1]).toMatchObject({ source: 'subagent', cost: 0.2, promptCount: 0 });
+    });
+
+    it('getCostByProject.lastActivityTs reads the exact ts from JSONL (no raw rows seeded)', async () => {
+      const t1 = new Date('2026-05-20T10:00:00.000Z');
+      const t2 = new Date('2026-05-20T12:30:00.000Z'); // later ⇒ the "last activity"
+      const mainDb = await getRollupDb();
+      // Rollup so the project surfaces in the cost list (byProject key set).
+      await updateDailyRollup(mainDb, SECRET_A, t2, 'claude_code.cost.usage', 1.0, {}, NO_AGG);
+      // JSONL cost rows are the lastActivityTs source — NO otel_metrics INSERT.
+      const dir = telemetryClusterDataDir(getDataDir());
+      for (const ts of [t1, t2]) {
+        await appendOtelJsonl(dir, 'metrics', ts, {
+          ts: ts.toISOString(), project_secret: SECRET_A, session_id: 's1',
+          metric_name: 'claude_code.cost.usage', attributes_json: {}, value_json: { asDouble: 1.0 },
+        });
+      }
+
+      const rows = await getCostByProject(null);
+      const a = rows.find(r => r.projectSecret === SECRET_A);
+      expect(a).toBeDefined();
+      // Sub-day precision preserved (the whole point of staying off the day-grained rollup).
+      expect(a!.lastActivityTs).toBe(t2.toISOString());
+    });
+
+    it('getCostByProject.lastActivityTs honors the window (pre-window JSONL rows excluded)', async () => {
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      const mainDb = await getRollupDb();
+      await updateDailyRollup(mainDb, SECRET_A, now, 'claude_code.cost.usage', 1.0, {}, NO_AGG);
+      const dir = telemetryClusterDataDir(getDataDir());
+      for (const ts of [fiveDaysAgo, now]) {
+        await appendOtelJsonl(dir, 'metrics', ts, {
+          ts: ts.toISOString(), project_secret: SECRET_A, session_id: 's1',
+          metric_name: 'claude_code.cost.usage', attributes_json: {}, value_json: { asDouble: 1.0 },
+        });
+      }
+
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const rows = await getCostByProject(oneDayAgo);
+      const a = rows.find(r => r.projectSecret === SECRET_A);
+      expect(a?.lastActivityTs).toBe(now.toISOString()); // the pre-window row is not the max
+    });
+  });
+
   describe('getHourlyActivityHeatmap (HS-8480 / §69.3.4)', () => {
     it('densifies to 168 cells with zero defaults', async () => {
       const cells = await getHourlyActivityHeatmap(null);
