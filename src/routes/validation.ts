@@ -368,6 +368,12 @@ export const GlobalConfigSchema = z.object({
   // pattern as the migrations above), cleared on completion.
   telemetryRollupBackfilledV1: z.boolean().optional(),
   telemetryRollupBackfillV1DoneDirs: z.array(z.string()).optional(),
+  // HS-9279 (epic HS-9226 Phase 3b) — one-time backfill of the tool-usage activity
+  // rollup (`otel_rollup_activity` kind='tool') from existing raw, so getToolRollup
+  // repoints off raw without losing history. Own flag (the HS-9234 one above may
+  // already be marked done); same completion-flag + resumability-list pattern.
+  telemetryActivityRollupBackfilledV1: z.boolean().optional(),
+  telemetryActivityRollupBackfillV1DoneDirs: z.array(z.string()).optional(),
   // HS-9243 (epic HS-9226 Phase 2 follow-up) — one-time backfill of the daily
   // distinct-count dedup set (`otel_daily_seen`) from existing raw so the read
   // repoint (HS-9235) has exact historical prompt/session counts. Completion flag

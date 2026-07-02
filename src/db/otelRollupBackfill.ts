@@ -303,6 +303,77 @@ async function insertDailyRows(mainDb: PGlite, rows: DailyGrainRow[]): Promise<v
 }
 
 /**
+ * HS-9279 (epic HS-9226 Phase 3b) — one-time BACKFILL of the `kind='tool'`
+ * `otel_rollup_activity` rows from the EXISTING raw `otel_events`, so `getToolRollup`
+ * can repoint off raw without losing history (the ingest dual-write only covers
+ * events that arrive after HS-9279 shipped). Own done-flag (separate from the
+ * HS-9234 daily/ticket backfill, which may already be marked done on this machine).
+ * Idempotent recompute-overwrite. Runs from `cli.ts` after `backfillTelemetryRollups`.
+ */
+export async function backfillTelemetryActivityRollups(launchedDataDir: string): Promise<{ scannedDirs: number; toolRows: number }> {
+  const empty = { scannedDirs: 0, toolRows: 0 };
+  if (readGlobalConfig().telemetryActivityRollupBackfilledV1 === true) return empty;
+
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const dirs = [...new Set<string>([launchedDataDir, ...readProjectList(), centralTelemetryDataDir()])];
+  const doneDirs = new Set(readGlobalConfig().telemetryActivityRollupBackfillV1DoneDirs ?? []);
+
+  let scannedDirs = 0;
+  let toolRows = 0;
+  for (const dataDir of dirs) {
+    if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    try {
+      const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
+      const mainDb = await getDbForDir(dataDir);
+      toolRows += await backfillActivityToolForDir(clusterDb, mainDb, tz);
+      scannedDirs++;
+      doneDirs.add(dataDir);
+      writeGlobalConfig({ telemetryActivityRollupBackfillV1DoneDirs: [...doneDirs] });
+    } catch (err) {
+      console.error(`[activity-rollup-backfill] skipping ${dataDir}:`, err);
+    }
+    await yieldToEventLoop();
+  }
+
+  writeGlobalConfig({ telemetryActivityRollupBackfilledV1: true, telemetryActivityRollupBackfillV1DoneDirs: [] });
+  console.log(`  [activity-rollup-backfill] HS-9279: backfilled ${String(toolRows)} tool rollup row(s) across ${String(scannedDirs)} dir(s).`);
+  return { scannedDirs, toolRows };
+}
+
+/**
+ * Recompute the `kind='tool'` activity rollup for one telemetry cluster and
+ * overwrite the main db's tool rows. Groups raw `tool_result` events by
+ * (secret, server-local day, tool) into count + duration sum / with-duration
+ * count — the exact grain `getToolRollup` reads back (avg = sum_val / sum_n),
+ * mirroring the old `COUNT(*)` + `AVG(duration_ms) FILTER (…)`. Returns rows written.
+ */
+export async function backfillActivityToolForDir(clusterDb: PGlite, mainDb: PGlite, tz: string): Promise<number> {
+  const grain = await clusterDb.query<Record<string, unknown>>(
+    `SELECT COALESCE(project_secret, '') AS secret,
+            (ts AT TIME ZONE $1)::date AS day,
+            COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
+            COUNT(*) AS c,
+            COALESCE(SUM((attributes_json->>'duration_ms')::numeric) FILTER (WHERE attributes_json->>'duration_ms' IS NOT NULL), 0) AS dur_sum,
+            COUNT(*) FILTER (WHERE attributes_json->>'duration_ms' IS NOT NULL) AS dur_n
+       FROM otel_events
+      WHERE ${eventNameMatchSql('event_name', 'tool_result')}
+      GROUP BY secret, day, tool`,
+    [tz],
+  );
+  // Recompute-overwrite: this db holds only its own project's (or central's)
+  // activity rollups, so clearing the kind='tool' rows is the clean reset.
+  await mainDb.query(`DELETE FROM otel_rollup_activity WHERE kind = 'tool'`);
+  for (const r of grain.rows) {
+    await mainDb.query(
+      `INSERT INTO otel_rollup_activity (project_secret, day, kind, dim1, dim2, count, sum_val, sum_n)
+       VALUES ($1, $2::date, 'tool', $3, '', $4, $5, $6)`,
+      [s(r.secret, ''), dayString(r.day), s(r.tool, '(unknown)'), n(r.c), n(r.dur_sum), n(r.dur_n)],
+    );
+  }
+  return grain.rows.length;
+}
+
+/**
  * Recompute `otel_rollup_ticket` for one project and overwrite its main db's
  * ticket rollups. The central store (`secret === null`) has no tickets, so it's
  * skipped. Returns the number of ticket rows written.

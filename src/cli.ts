@@ -274,8 +274,12 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
       // their full history once HS-9235 repoints them at the rollups (and Phase 3
       // moves raw to disposable JSONL). Recompute-from-scratch + idempotent +
       // self-guarded by `telemetryRollupBackfilledV1`; takes a backup first.
-      const { backfillTelemetryRollups, backfillTelemetryDailySeen, backfillTelemetryTicketSpans } = await import('./db/otelRollupBackfill.js');
+      const { backfillTelemetryRollups, backfillTelemetryDailySeen, backfillTelemetryTicketSpans, backfillTelemetryActivityRollups } = await import('./db/otelRollupBackfill.js');
       await backfillTelemetryRollups(dataDir);
+      // HS-9279 (epic HS-9226 Phase 3b) — backfill the tool-usage activity rollup
+      // (`otel_rollup_activity` kind='tool') from existing raw so getToolRollup
+      // repoints off raw without losing history. Self-guarded + resumable.
+      await backfillTelemetryActivityRollups(dataDir);
       // HS-9243 — backfill the daily distinct-count dedup set (`otel_daily_seen`)
       // so the HS-9235 read repoint has exact historical prompt/session counts;
       // ongoing days are maintained at ingest. Self-guarded + resumable.

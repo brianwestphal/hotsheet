@@ -603,25 +603,29 @@ export async function getToolRollup(
   projectSecret: string | null,
   sinceTs: Date | null,
 ): Promise<ToolRollup[]> {
-  const db = await getTelemetryDb();
-  const clauses = buildProjectAndWindowClauses(projectSecret, sinceTs, 'ts', 0);
-
-  const result = await db.query<{ tool: string | null; c: bigint | number; avg_ms: string | null }>(
-    `SELECT
-        COALESCE(attributes_json->>'tool_name', attributes_json->>'name', '(unknown)') AS tool,
-        COUNT(*) AS c,
-        AVG((attributes_json->>'duration_ms')::numeric) FILTER (WHERE attributes_json->>'duration_ms' IS NOT NULL) AS avg_ms
-     FROM otel_events
-     WHERE ${eventNameMatchSql('event_name', 'tool_result')}${clauses.clauses}
-     GROUP BY tool
+  // HS-9279 — read the daily tool-usage rollup (otel_rollup_activity kind='tool')
+  // in the snapshotted main db instead of scanning raw otel_events (Phase 3b). The
+  // window filters by day (server-local grain); count sums across days and the
+  // average duration reconstructs as SUM(sum_val) / SUM(sum_n) — exactly the old
+  // COUNT(*) + AVG(duration_ms) FILTER (WHERE duration_ms IS NOT NULL).
+  const db = await getRollupDb();
+  const day = buildRollupDayClauses(projectSecret, sinceTs, 0);
+  const result = await db.query<{ tool: string; c: string | number; sum_val: string | null; sum_n: string | number }>(
+    `SELECT dim1 AS tool, SUM(count) AS c, SUM(sum_val) AS sum_val, SUM(sum_n) AS sum_n
+     FROM otel_rollup_activity
+     WHERE kind = 'tool'${day.clauses}
+     GROUP BY dim1
      ORDER BY c DESC`,
-    clauses.params,
+    day.params,
   );
-  return result.rows.map(r => ({
-    tool: r.tool ?? '(unknown)',
-    count: Number(r.c),
-    avgDurationMs: r.avg_ms !== null ? Number(r.avg_ms) : null,
-  }));
+  return result.rows.map(r => {
+    const n = Number(r.sum_n);
+    return {
+      tool: r.tool !== '' ? r.tool : '(unknown)',
+      count: Number(r.c),
+      avgDurationMs: n > 0 ? Number(r.sum_val ?? 0) / n : null,
+    };
+  });
 }
 
 /**

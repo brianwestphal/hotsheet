@@ -32,7 +32,7 @@ import {
   sanitizePromptSnippet,
 } from './otelQueries.js';
 import { backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
-import { markDailySeen, updateDailyRollup } from './otelRollupIngest.js';
+import { markDailySeen, recordToolActivity, updateDailyRollup } from './otelRollupIngest.js';
 
 // HS-8874 — isolate the central store to a temp dir so the cross-project
 // fan-out (which also reads central) can't pick up rows from the developer's
@@ -159,6 +159,8 @@ async function insertToolResultEvent(opts: {
     ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
     prompt_id: 'prompt-1', event_name: 'claude_code.tool_result', attributes_json: attrs, body_json: {},
   });
+  // HS-9279 — getToolRollup now reads the otel_rollup_activity rollup; mirror ingest.
+  await recordToolActivity(await getRollupDb(), opts.projectSecret, opts.ts, attrs);
 }
 
 // HS-9235 — the dashboard aggregate reads (getWindowTotals / getCostByModel /
@@ -1634,12 +1636,17 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       // dedup set, so the seen-based promptCount reads (getWindowTotals /
       // getCostByProject) see bare-named events too.
       await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
-      // HS-9278 — getPromptTimeline reads the JSONL store now (the raw insert above
-      // still feeds getRecentPrompts / getToolRollup, which stay on raw until P3b).
+      // HS-9278 — getPromptTimeline / getRecentPrompts / getTelemetryDebugInfo read
+      // the JSONL store now (the raw insert above still feeds getToolLatencyHistogram).
       await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
         ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
         prompt_id: opts.promptId, event_name: opts.eventName, attributes_json: opts.attrs ?? {}, body_json: opts.body ?? {},
       });
+      // HS-9279 — getToolRollup reads the otel_rollup_activity rollup; roll bare/dotted
+      // tool_result events into it (mirrors ingest).
+      if (opts.eventName === 'tool_result' || opts.eventName === 'claude_code.tool_result') {
+        await recordToolActivity(await getRollupDb(), opts.projectSecret, opts.ts, opts.attrs ?? {});
+      }
     }
 
     it('getRecentPrompts returns bare-named user_prompt events', async () => {

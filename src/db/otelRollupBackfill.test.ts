@@ -18,7 +18,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { getPerTicketRollup } from './otelDashboard.js';
-import { assembleDailyRows, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
+import { assembleDailyRows, backfillActivityToolForDir, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
+import { getToolRollup } from './otelRollups.js';
 
 // The machine's local IANA tz — the daily bucket uses it so `(ts AT TIME ZONE TZ)::date`
 // matches the local date the `Date(...)` fixtures are constructed in (mirrors
@@ -111,6 +112,53 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       [SECRET, ticket, started, ended],
     );
   }
+
+  async function insertToolResult(ts: Date, tool: string, durationMs?: number): Promise<void> {
+    const attrs: Record<string, unknown> = { tool_name: tool };
+    if (durationMs !== undefined) attrs.duration_ms = durationMs;
+    await clusterDb.query(
+      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+       VALUES ($1, $2, 'session-1', 'p1', 'claude_code.tool_result', $3::jsonb, '{}'::jsonb)`,
+      [ts, SECRET, JSON.stringify(attrs)],
+    );
+  }
+
+  describe('backfillActivityToolForDir (HS-9279)', () => {
+    it('recomputes the tool rollup from raw so getToolRollup matches (count + avg duration)', async () => {
+      const ts = new Date(2026, 5, 30, 10, 0, 0);
+      await insertToolResult(ts, 'Edit', 100);
+      await insertToolResult(ts, 'Edit', 200);
+      await insertToolResult(ts, 'Read', 50);
+      await insertToolResult(ts, 'Read');            // no duration → count only
+
+      const written = await backfillActivityToolForDir(clusterDb, mainDb, TZ);
+      expect(written).toBe(2); // two tools
+
+      const rows = await mainDb.query<{ dim1: string; count: string; sum_val: string; sum_n: string }>(
+        `SELECT dim1, count, sum_val, sum_n FROM otel_rollup_activity WHERE kind='tool' ORDER BY dim1`,
+      );
+      expect(rows.rows.map(r => [r.dim1, Number(r.count), Number(r.sum_val), Number(r.sum_n)]))
+        .toEqual([['Edit', 2, 300, 2], ['Read', 2, 50, 1]]);
+
+      // Parity: getToolRollup (now reading the rollup) matches the raw aggregate.
+      const rollup = await getToolRollup(SECRET, null);
+      const byTool = Object.fromEntries(rollup.map(r => [r.tool, r]));
+      expect(byTool['Edit']).toMatchObject({ count: 2, avgDurationMs: 150 });
+      expect(byTool['Read']).toMatchObject({ count: 2, avgDurationMs: 50 }); // avg over the ONE with duration
+    });
+
+    it('is idempotent — a second run yields the same rollup (recompute-overwrite)', async () => {
+      const ts = new Date(2026, 5, 30, 10, 0, 0);
+      await insertToolResult(ts, 'Edit', 100);
+      await backfillActivityToolForDir(clusterDb, mainDb, TZ);
+      await backfillActivityToolForDir(clusterDb, mainDb, TZ);
+      const rows = await mainDb.query<{ count: string }>(
+        `SELECT count FROM otel_rollup_activity WHERE kind='tool' AND dim1='Edit'`,
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(Number(rows.rows[0].count)).toBe(1); // not doubled
+    });
+  });
 
   describe('backfillDailyForDir', () => {
     it('recomputes cost / split tokens / datapoint_count per (day, model, source)', async () => {
