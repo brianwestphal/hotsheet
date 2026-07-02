@@ -221,11 +221,15 @@ test.describe('Embedded terminal drawer', () => {
     await page.locator('.settings-tab[data-tab="terminal"]').click();
     await page.locator('.scope-seg-btn.scope-seg-shared').click(); // HS-9127 — Resolved is read-only; edit terminals in Shared
     const list = page.locator('#settings-terminals-list');
+    // HS-9270 — the scope switch reloads the list ASYNC; wait for the Shared render
+    // to settle (its hint) so the delete click doesn't land on a row mid-re-render.
+    await expect(list.locator('.scope-list-hint-shared')).toBeVisible({ timeout: 5000 });
     await expect(list.locator('.settings-terminal-row')).toHaveCount(2, { timeout: 5000 });
 
     // Target the SVG path inside the button — what the user actually clicks.
     const secondRow = list.locator('.settings-terminal-row').nth(1);
     await secondRow.locator('.cmd-outline-delete-btn svg').click();
+    await expect(page.locator('.confirm-dialog-overlay')).toBeVisible({ timeout: 3000 });
     await page.locator('.confirm-dialog-overlay .confirm-dialog-confirm').click();
 
     await expect(list.locator('.settings-terminal-row')).toHaveCount(1, { timeout: 5000 });

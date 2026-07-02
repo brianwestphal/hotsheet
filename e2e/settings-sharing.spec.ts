@@ -538,13 +538,16 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await page.locator('.scope-seg-btn.scope-seg-local').click();
     await page.locator('.settings-tab[data-tab="terminal"]').click();
 
+    // HS-9270 — wait for the Local render to settle so the delete lands on a
+    // stable row (the tab switch reloads the list async).
+    const list = page.locator('#settings-terminals-list');
+    await expect(list.locator('.scope-list-hint-local')).toBeVisible({ timeout: 5000 });
     const row = page.locator('.settings-terminal-row', { hasText: 'Shared Term' }).first();
     await expect(row).toBeVisible({ timeout: 5000 });
-    // Delete it (= hide locally in Local mode) → confirm in the in-app dialog.
+    // HS-9211 — hiding a shared terminal in Local mode is non-destructive and
+    // skips the confirmation ("just do it right away"); only removing a LOCAL
+    // terminal still confirms. So the delete/hide takes effect immediately.
     await row.locator('.cmd-outline-delete-btn').click();
-    const confirmBtn = page.locator('.confirm-dialog-confirm');
-    await expect(confirmBtn).toBeVisible({ timeout: 3000 });
-    await confirmBtn.click();
 
     const hidden = page.locator('.settings-terminal-row-hidden', { hasText: 'Shared Term' });
     await expect(hidden).toBeVisible({ timeout: 5000 });

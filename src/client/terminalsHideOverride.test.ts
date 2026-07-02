@@ -38,7 +38,9 @@ vi.mock('../api/index.js', () => ({
 vi.mock('./confirm.js', () => ({ confirmDialog: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('./commandLog.js', () => ({ previewDrawerTab: vi.fn(() => () => { /* restore no-op */ }) }));
 vi.mock('./terminal.js', () => ({ refreshTerminalsAfterSettingsChange: vi.fn(() => Promise.resolve()) }));
-vi.mock('./settingsScope.js', () => ({ getScopeMode: () => 'local' }));
+// HS-9270 — mutable so a test can flip the scope mode + dispatch the change event.
+const scopeMode = vi.hoisted((): { value: 'shared' | 'local' } => ({ value: 'local' }));
+vi.mock('./settingsScope.js', () => ({ getScopeMode: () => scopeMode.value }));
 
 const OVERRIDE = { id: 't0', command: 'custom-cmd', name: 'My Custom Name' };
 
@@ -52,6 +54,7 @@ function hiddenRows(): HTMLElement[] {
 describe('terminalsSettings — hide → un-hide preserves a local override (HS-9212)', () => {
   beforeEach(async () => {
     _resetTerminalsForTests();
+    scopeMode.value = 'local';
     layered = {
       shared: { terminals: JSON.stringify(SHARED) },
       // Visible, overridden (no hidden yet).
@@ -109,6 +112,24 @@ describe('terminalsSettings — hide → un-hide preserves a local override (HS-
     await vi.waitFor(() => {
       expect(vi.mocked(confirmDialog)).toHaveBeenCalled();
     });
+    expect(vi.mocked(confirmDialog).mock.calls[0][0]).toMatchObject({ title: 'Remove Terminal?' });
+  });
+
+  // HS-9270 — switching the scope to Shared reloads the list ASYNC. Deleting a
+  // terminal in the window BEFORE the reload finishes must use the NEW (Shared)
+  // mode's DELETE-with-confirm path, not the stale Local-mode silent-hide path.
+  // The fix syncs `terminalsMode` synchronously off the scope-change event.
+  it('HS-9270 — a scope switch to Shared applies to a delete fired before the async reload', async () => {
+    // Currently Local mode with the shared terminal visible (from beforeEach).
+    // Flip to Shared + dispatch the change event (as the scope bar does) …
+    scopeMode.value = 'shared';
+    document.dispatchEvent(new CustomEvent('hotsheet:scope-mode-changed', { detail: { mode: 'shared' } }));
+    // …then IMMEDIATELY (synchronously, before the async reload's microtask runs)
+    // delete the terminal. In Shared mode this is a real removal → confirm dialog.
+    // Pre-fix, `terminalsMode` still read 'local' at this instant → silent hide,
+    // the confirm below is never reached, and this `waitFor` times out.
+    visibleRows()[0].querySelector<HTMLButtonElement>('.cmd-outline-delete-btn')!.click();
+    await vi.waitFor(() => { expect(vi.mocked(confirmDialog)).toHaveBeenCalled(); });
     expect(vi.mocked(confirmDialog).mock.calls[0][0]).toMatchObject({ title: 'Remove Terminal?' });
   });
 

@@ -124,7 +124,16 @@ let scopeListenerBound = false;
 function ensureScopeListener(): void {
   if (scopeListenerBound) return;
   scopeListenerBound = true;
-  document.addEventListener('hotsheet:scope-mode-changed', () => { void loadAndRenderTerminalsSettings(); });
+  document.addEventListener('hotsheet:scope-mode-changed', (e) => {
+    // HS-9270 — sync `terminalsMode` SYNCHRONOUSLY from the event so any
+    // mode-dependent action (e.g. `handleDelete`'s hide-vs-delete branch) taken
+    // before the async reload finishes reads the NEW mode, not the stale one. The
+    // reload below refreshes the layer data + re-renders; this just closes the
+    // window where the scope bar shows "Shared" but the editor still behaves Local.
+    const next = e instanceof CustomEvent ? (e.detail as { mode?: unknown } | null)?.mode : undefined;
+    if (next === 'shared' || next === 'local') terminalsMode = next;
+    void loadAndRenderTerminalsSettings();
+  });
 }
 
 export async function loadAndRenderTerminalsSettings(): Promise<void> {
