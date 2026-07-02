@@ -1,7 +1,7 @@
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`
 // in `src/db/attachments.ts`; this file no longer needs a direct `fs`
 // import (the route handlers all routed through that helper).
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 
 // HS-8555 — centralized attachment-blob delete helper.
 import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
@@ -58,6 +58,55 @@ const VALID_STATUS_FILTERS = new Set<string>([
 ]);
 
 export const ticketRoutes = new Hono<AppEnv>();
+
+/**
+ * HS-9204 — the shared claim-CONFLICT guard for the secondary ticket-write routes
+ * (blocked-by / note edit / note delete / notes-bulk / delete). Mirrors the
+ * `PATCH /tickets/:id` chokepoint (HS-9198) but runs `enforceClaimForWrite` with
+ * `takeClaim=false`: these are content edits, not start-work transitions, so they
+ * NEVER auto-claim — they only REJECT a write to a ticket a DIFFERENT actor
+ * actively holds (409 `claimed_by_other`). Actor identity comes from
+ * `X-Hotsheet-Actor` (a worker id for worktree workers; the owner UI / main agent
+ * default to `owner`). Returns the 409 `Response` to return early, or `null` to
+ * proceed. Terminal tickets + unclaimed/self-held tickets pass through.
+ */
+async function gateTicketWrite(c: Context<AppEnv>, id: number): Promise<Response | null> {
+  const actor = c.req.header('X-Hotsheet-Actor') ?? OWNER_ACTOR;
+  const actorLabel = c.req.header('X-Hotsheet-Actor-Label') ?? null;
+  const verdict = await enforceClaimForWrite(id, actor, actorLabel, undefined, false);
+  if (verdict.allowed) return null;
+  return c.json({
+    error: `Ticket is held by \`${verdict.workerLabel ?? verdict.claimedBy}\` (live claim) — claim it, pick another, or wait for the lease to lapse before editing.`,
+    code: 'claimed_by_other',
+    claimed_by: verdict.claimedBy,
+    worker_label: verdict.workerLabel,
+    lease_expires_at: verdict.leaseExpiresAt,
+  }, 409);
+}
+
+/**
+ * HS-9204 — the batch variant of {@link gateTicketWrite}. Rejects the WHOLE batch
+ * (409) if ANY target ticket is held by a DIFFERENT actor, listing the conflicts;
+ * all-or-nothing keeps the batch's sync events + response shape simple (no
+ * partial-success bookkeeping). Read-tracking batches (`mark_read` / `mark_unread`)
+ * are exempt — the caller skips this — mirroring the single-PATCH read-tracking skip.
+ */
+async function gateBatchTicketWrite(c: Context<AppEnv>, ids: number[]): Promise<Response | null> {
+  const actor = c.req.header('X-Hotsheet-Actor') ?? OWNER_ACTOR;
+  const actorLabel = c.req.header('X-Hotsheet-Actor-Label') ?? null;
+  const conflicts: { id: number; claimed_by: string; worker_label: string | null }[] = [];
+  for (const id of ids) {
+    const verdict = await enforceClaimForWrite(id, actor, actorLabel, undefined, false);
+    if (!verdict.allowed) conflicts.push({ id, claimed_by: verdict.claimedBy, worker_label: verdict.workerLabel });
+  }
+  if (conflicts.length === 0) return null;
+  const held = [...new Set(conflicts.map(x => x.worker_label ?? x.claimed_by))];
+  return c.json({
+    error: `${String(conflicts.length)} ticket(s) in this batch are held by another actor (${held.join(', ')}) — claim, release, or exclude them before the bulk action.`,
+    code: 'claimed_by_other',
+    conflicts,
+  }, 409);
+}
 
 // --- Tickets ---
 
@@ -252,6 +301,8 @@ ticketRoutes.get('/tickets/:id/blocked-by', async (c) => {
 ticketRoutes.put('/tickets/:id/blocked-by', async (c) => {
   const id = parseIntParam(c, 'id');
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const conflict = await gateTicketWrite(c, id); // HS-9204
+  if (conflict) return conflict;
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(BlockedBySchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
@@ -466,6 +517,10 @@ ticketRoutes.patch('/tickets/:id', async (c) => {
 ticketRoutes.delete('/tickets/:id', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  // HS-9204 — don't let a delete yank a ticket out from under a worker that
+  // actively holds it. The owner force-releases (or the lease lapses) first.
+  const conflict = await gateTicketWrite(c, id);
+  if (conflict) return conflict;
   await deleteTicket(id);
   notifyMutation(c.get('dataDir'));
   emitSync(c, { type: 'ticket-deleted', id });
@@ -478,6 +533,8 @@ ticketRoutes.delete('/tickets/:id', async (c) => {
 ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const conflict = await gateTicketWrite(c, id); // HS-9204
+  if (conflict) return conflict;
   const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesBulkSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
@@ -495,6 +552,8 @@ ticketRoutes.put('/tickets/:id/notes-bulk', async (c) => {
 ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const conflict = await gateTicketWrite(c, id); // HS-9204
+  if (conflict) return conflict;
   const noteId = c.req.param('noteId');
   const raw: unknown = await c.req.json();
   const parsed = parseBody(NotesEditSchema, raw);
@@ -509,6 +568,8 @@ ticketRoutes.patch('/tickets/:id/notes/:noteId', async (c) => {
 ticketRoutes.delete('/tickets/:id/notes/:noteId', async (c) => {
   const id = parseIntParam(c);
   if (id === null) return c.json({ error: 'Invalid ticket ID' }, 400);
+  const conflict = await gateTicketWrite(c, id); // HS-9204
+  if (conflict) return conflict;
   const noteId = c.req.param('noteId');
   const notes = await deleteNote(id, noteId);
   if (!notes) return c.json({ error: 'Not found' }, 404);
@@ -613,6 +674,13 @@ ticketRoutes.post('/tickets/batch', async (c) => {
   const parsed = parseBody(BatchActionSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { ids, action, value } = parsed.data;
+  // HS-9204 — conflict-guard the bulk mutation (all-or-nothing) unless it's a
+  // read-tracking action (mark_read / mark_unread are exempt, like the single
+  // PATCH). Held-by-another-actor tickets reject the whole batch 409.
+  if (action !== 'mark_read' && action !== 'mark_unread') {
+    const conflict = await gateBatchTicketWrite(c, ids);
+    if (conflict) return conflict;
+  }
   const keepRead = c.req.header('X-Hotsheet-User-Action') === 'true';
   // HS-8980 — a uniform field-flip becomes one typed event; everything else a
   // generic batch-operation. Read-tracking-only batches (mark_read/unread) emit

@@ -167,11 +167,21 @@ uses for `claim_next`, so a worker's auto-claim-on-write matches its explicit cl
 (renew, never self-conflict). The owner UI + main agent send no header → the server
 defaults the actor to **`owner`**.
 
-**Chokepoint scope (HS-9198 first increment):** the primary `PATCH /api/tickets/:id`
-route — which is what `hotsheet_update_ticket` proxies AND the UI's main edit path
-(status, details, notes-append, up_next, tags, completion). The secondary write
-routes (`PUT …/blocked-by`, `PATCH …/notes/:noteId`, `PUT …/notes-bulk`, `DELETE`,
-batch) + a clean UI "held by worker-N" conflict toast are a tracked follow-up.
+**Chokepoint scope.** The primary `PATCH /api/tickets/:id` route (HS-9198) —
+what `hotsheet_update_ticket` proxies AND the UI's main edit path (status,
+details, notes-append, up_next, tags, completion). **HS-9204** extended the guard
+to the secondary content-write routes via the shared `gateTicketWrite(c, id)` /
+`gateBatchTicketWrite(c, ids)` helpers (`src/routes/tickets.ts`), which run
+`enforceClaimForWrite` with `takeClaim=false` (conflict-guard only — these are
+content edits, not start-work transitions, so they never auto-claim):
+`PUT …/blocked-by`, `PATCH …/notes/:noteId`, `DELETE …/notes/:noteId`,
+`PUT …/notes-bulk`, `DELETE /tickets/:id` (a delete can't yank a ticket out from
+under a worker — the owner force-releases first), and `POST /tickets/batch`
+(all-or-nothing: any held target rejects the whole batch, listing the conflicts;
+`mark_read`/`mark_unread` are read-tracking-exempt). Tests: `api.test.ts`
+"HS-9204 — secondary write routes claim-conflict guard" (9). Still a tracked
+follow-up (HS-9204): a clean UI "held by worker-N" conflict toast (§4 remaining),
+the owner-auto-claim TTL review, and the pool-UI owner-filter decision.
 
 ### 90.2.3 Atomic `claim-next` + selection policy
 

@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { join } from 'path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PtyFactory } from '../terminals/registry.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -1453,6 +1453,80 @@ describe('notes CRUD', () => {
       body: JSON.stringify({ notes: '[]' }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+// HS-9204 — the secondary content-write routes run the same claim-conflict guard
+// as the primary PATCH chokepoint (HS-9198): a write to a ticket ANOTHER actor
+// actively holds is rejected 409. Set up "held by worker-1" by having worker-1
+// start work on it (the sole auto-claim trigger), then write as the owner.
+describe('HS-9204 — secondary write routes claim-conflict guard', () => {
+  const asWorker = { 'X-Hotsheet-Actor': 'worker-1' };
+  const jsonHeaders = { 'Content-Type': 'application/json' };
+  let heldId: number;
+
+  async function createHeld(): Promise<number> {
+    const t = await (await app.request('/api/tickets', post({ title: 'Held by worker' }))).json() as TicketResponse;
+    const claim = await app.request(`/api/tickets/${t.id}`, patch({ status: 'started' }, asWorker));
+    expect(claim.status).toBe(200);
+    return t.id;
+  }
+
+  async function expectHeld(res: Response): Promise<void> {
+    expect(res.status).toBe(409);
+    const body = await res.json() as { code?: string; claimed_by?: string };
+    expect(body.code).toBe('claimed_by_other');
+    expect(body.claimed_by).toBe('worker-1');
+  }
+
+  beforeEach(async () => { heldId = await createHeld(); });
+
+  it('PUT blocked-by is rejected for another actor', async () => {
+    await expectHeld(await app.request(`/api/tickets/${heldId}/blocked-by`,
+      { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ blockerIds: [] }) }));
+  });
+
+  it('PATCH notes/:noteId is rejected (before the note lookup)', async () => {
+    await expectHeld(await app.request(`/api/tickets/${heldId}/notes/whatever`, patch({ text: 'x' })));
+  });
+
+  it('DELETE notes/:noteId is rejected', async () => {
+    await expectHeld(await app.request(`/api/tickets/${heldId}/notes/whatever`, { method: 'DELETE' }));
+  });
+
+  it('PUT notes-bulk is rejected', async () => {
+    await expectHeld(await app.request(`/api/tickets/${heldId}/notes-bulk`,
+      { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ notes: '[]' }) }));
+  });
+
+  it('DELETE ticket is rejected (no yanking a ticket a worker holds)', async () => {
+    await expectHeld(await app.request(`/api/tickets/${heldId}`, { method: 'DELETE' }));
+  });
+
+  it('batch action including a held ticket rejects the WHOLE batch, listing conflicts', async () => {
+    const res = await app.request('/api/tickets/batch', post({ ids: [heldId], action: 'status', value: 'not_started' }));
+    expect(res.status).toBe(409);
+    const body = await res.json() as { code?: string; conflicts?: { id: number; claimed_by: string }[] };
+    expect(body.code).toBe('claimed_by_other');
+    expect(body.conflicts?.some(x => x.id === heldId && x.claimed_by === 'worker-1')).toBe(true);
+  });
+
+  it('the SAME actor (worker-1) can still write the ticket it holds', async () => {
+    const res = await app.request(`/api/tickets/${heldId}/blocked-by`,
+      { method: 'PUT', headers: { ...jsonHeaders, ...asWorker }, body: JSON.stringify({ blockerIds: [] }) });
+    expect(res.status).toBe(200);
+  });
+
+  it('an UNCLAIMED ticket is writable by the owner (guard is a no-op)', async () => {
+    const t = await (await app.request('/api/tickets', post({ title: 'Free' }))).json() as TicketResponse;
+    const res = await app.request(`/api/tickets/${t.id}/blocked-by`,
+      { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ blockerIds: [] }) });
+    expect(res.status).toBe(200);
+  });
+
+  it('read-tracking batch (mark_read) is EXEMPT even for a held ticket', async () => {
+    const res = await app.request('/api/tickets/batch', post({ ids: [heldId], action: 'mark_read' }));
+    expect(res.status).toBe(200);
   });
 });
 
