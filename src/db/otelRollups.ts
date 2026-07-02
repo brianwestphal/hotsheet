@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { getAllProjects } from '../projects.js';
-import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 import { readAllOtelJsonl } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
@@ -416,121 +416,141 @@ export interface TelemetryDebugInfo {
 export const DEBUG_DAILY_WINDOW_DAYS = 14;
 
 export async function getTelemetryDebugInfo(projectSecret: string | null, timezone = 'UTC'): Promise<TelemetryDebugInfo> {
-  const db = await getTelemetryDb();
-  const ev = buildProjectAndWindowClauses(projectSecret, null, 'ts', 0);
-  const events = await db.query<{ event_name: string; c: bigint | number; with_pid: bigint | number }>(
-    `SELECT event_name, COUNT(*) AS c, COUNT(prompt_id) AS with_pid
-     FROM otel_events
-     WHERE 1=1${ev.clauses}
-     GROUP BY event_name ORDER BY c DESC`,
-    ev.params,
-  );
-  const totals = await db.query<{ total: bigint | number; pids: bigint | number; sessions: bigint | number }>(
-    `SELECT COUNT(*) AS total, COUNT(DISTINCT prompt_id) AS pids, COUNT(DISTINCT session_id) AS sessions
-     FROM otel_events
-     WHERE 1=1${ev.clauses}`,
-    ev.params,
-  );
-  const mt = buildProjectAndWindowClauses(projectSecret, null, 'ts', 1);
-  // HS-8708 — this diagnostic deliberately does NOT apply
-  // `EXCLUDE_CUMULATIVE_MONOTONIC_SQL`: `_debug` exists to show what is ACTUALLY
-  // in the table (including any cumulative-temporality rows from a foreign
-  // source), which is exactly what you want to see when diagnosing why a total
-  // looks inflated. The dashboard rollups exclude those rows; this view doesn't.
-  const tokenTypes = await db.query<{ typ: string | null; points: bigint | number; toks: string | null }>(
-    `SELECT COALESCE(attributes_json->>'type', '(none)') AS typ, COUNT(*) AS points,
-            SUM(COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0)) AS toks
-     FROM otel_metrics
-     WHERE metric_name = $1${mt.clauses}
-     GROUP BY attributes_json->>'type' ORDER BY points DESC`,
-    ['claude_code.token.usage', ...mt.params],
-  );
-  // HS-8537 — marker presence by event_name. The per-ticket rollup keys on
-  // `user_prompt` bodies containing `hotsheet:ticket=…`; if this comes back
-  // empty (or only on a non-user_prompt event), the marker isn't landing where
-  // the rollup looks.
-  const markerByName = await db.query<{ event_name: string; c: bigint | number }>(
-    `SELECT event_name, COUNT(*) AS c
-     FROM otel_events
-     WHERE body_json::text LIKE '%hotsheet:ticket=%'${ev.clauses}
-     GROUP BY event_name ORDER BY c DESC`,
-    ev.params,
-  );
-  // Distinct ticket numbers found in any event body (capped).
-  const markers = await db.query<{ ticket: string | null }>(
-    `SELECT DISTINCT substring(body_json::text from 'hotsheet:ticket=([A-Za-z]+-[0-9]+)') AS ticket
-     FROM otel_events
-     WHERE body_json::text LIKE '%hotsheet:ticket=%'${ev.clauses}
-     LIMIT 50`,
-    ev.params,
-  );
-  // HS-8537 — attribute-key universe on api_request events: reveals whether
-  // `cost` / `cost_usd` / `tokens` are present (the rollup's cost/token source).
-  const apiKeys = await db.query<{ k: string }>(
-    `SELECT DISTINCT k FROM otel_events, jsonb_object_keys(attributes_json) AS k
-     WHERE ${eventNameMatchSql('event_name', 'api_request')}${ev.clauses}
-     ORDER BY k`,
-    ev.params,
-  );
-  // HS-8793 / HS-8874 — GLOBAL per-day metric-row counts. Telemetry is now
-  // per-project (each project's own DB) + a central store, so the GLOBAL daily
-  // section must fan out across EVERY known project DB + central and concat —
-  // a single-DB query would only see the active project. Project-scoped
-  // sections above stay on the active project's DB (the ambient context).
-  const dailyMetricCounts = await fanOutDailyMetricCounts(timezone);
+  // HS-9278 — read the JSONL store (Phase 3 (b)) instead of raw otel_events /
+  // otel_metrics. All the project-scoped sections read the current context's
+  // cluster; `dailyMetricCounts` stays GLOBAL (fans out across every project).
+  const clusterDir = currentTelemetryClusterDir();
+  const allEvents = await readAllOtelJsonl(clusterDir, 'events');
+  const events = projectSecret === null ? allEvents : allEvents.filter(e => e.project_secret === projectSecret);
+
+  // eventNames — count + non-null prompt_id count per event_name, count DESC.
+  const byName = new Map<string, { count: number; withPromptId: number }>();
+  for (const e of events) {
+    const g = byName.get(evName(e)) ?? { count: 0, withPromptId: 0 };
+    g.count++;
+    if (typeof e.prompt_id === 'string') g.withPromptId++;
+    byName.set(evName(e), g);
+  }
+  const eventNames = [...byName.entries()]
+    .map(([eventName, g]) => ({ eventName, count: g.count, withPromptId: g.withPromptId }))
+    .sort((a, b) => b.count - a.count);
+
+  // totals — total rows + distinct (non-null) prompt / session ids.
+  const totalEvents = events.length;
+  const distinctPromptIds = new Set(events.map(e => e.prompt_id).filter((p): p is string => typeof p === 'string')).size;
+  const distinctSessions = new Set(events.map(e => e.session_id).filter((s): s is string => typeof s === 'string')).size;
+
+  // marker presence (HS-8537) — events whose body carries `hotsheet:ticket=…`,
+  // by event_name, plus the distinct ticket numbers (capped at 50).
+  const markerRe = /hotsheet:ticket=([A-Za-z]+-[0-9]+)/;
+  const markerByName = new Map<string, number>();
+  const tickets = new Set<string>();
+  for (const e of events) {
+    const bodyText = JSON.stringify(e.body_json ?? {});
+    if (!bodyText.includes('hotsheet:ticket=')) continue;
+    markerByName.set(evName(e), (markerByName.get(evName(e)) ?? 0) + 1);
+    const m = markerRe.exec(bodyText);
+    if (m !== null && tickets.size < 50) tickets.add(m[1]);
+  }
+  const markerEventsByName = [...markerByName.entries()]
+    .map(([eventName, count]) => ({ eventName, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // api_request attribute-key universe (HS-8537), sorted.
+  const apiKeys = new Set<string>();
+  for (const e of events) {
+    if (isClaudeCodeEvent(evName(e), 'api_request')) for (const k of Object.keys(evAttrs(e))) apiKeys.add(k);
+  }
+
+  // tokenTypes — token.usage metric points grouped by `type` (NULL → '(none)'),
+  // summing asDouble ?? asInt ?? 0; points DESC. Deliberately NOT excluding
+  // cumulative-monotonic rows — _debug shows what's actually stored.
+  const allMetrics = await readAllOtelJsonl(clusterDir, 'metrics');
+  const tokenMetrics = (projectSecret === null ? allMetrics : allMetrics.filter(m => m.project_secret === projectSecret))
+    .filter(m => m.metric_name === 'claude_code.token.usage');
+  const byType = new Map<string, { points: number; tokens: number }>();
+  for (const m of tokenMetrics) {
+    const t = typeof evAttrs(m).type === 'string' ? evAttrs(m).type as string : '(none)';
+    const g = byType.get(t) ?? { points: 0, tokens: 0 };
+    g.points++;
+    g.tokens += metricValue(m);
+    byType.set(t, g);
+  }
+  const tokenTypes = [...byType.entries()]
+    .map(([type, g]) => ({ type, points: g.points, tokens: g.tokens }))
+    .sort((a, b) => b.points - a.points);
+
+  const dailyMetricCounts = await fanOutDailyMetricCountsJsonl(timezone);
+
   return {
-    eventNames: events.rows.map(r => ({ eventName: r.event_name, count: Number(r.c), withPromptId: Number(r.with_pid) })),
-    tokenTypes: tokenTypes.rows.map(r => ({ type: r.typ ?? '(none)', points: Number(r.points), tokens: Number(r.toks ?? 0) })),
-    totalEvents: Number(totals.rows[0]?.total ?? 0),
-    distinctPromptIds: Number(totals.rows[0]?.pids ?? 0),
-    distinctSessions: Number(totals.rows[0]?.sessions ?? 0),
-    markerEventsByName: markerByName.rows.map(r => ({ eventName: r.event_name, count: Number(r.c) })),
-    distinctTicketMarkers: markers.rows.map(r => r.ticket).filter((t): t is string => t !== null),
-    apiRequestAttrKeys: apiKeys.rows.map(r => r.k),
+    eventNames,
+    tokenTypes,
+    totalEvents,
+    distinctPromptIds,
+    distinctSessions,
+    markerEventsByName,
+    distinctTicketMarkers: [...tickets],
+    apiRequestAttrKeys: [...apiKeys].sort(),
     dailyMetricCounts,
   };
 }
 
-/** HS-8874 — per-DB raw daily metric-row counts. Run once per DB context. NULL
- *  `project_secret` (central rows) surfaces as the literal `(central)` so the
- *  diagnostic still shows a label. */
-async function queryDailyMetricCounts(
-  timezone: string,
-): Promise<TelemetryDebugInfo['dailyMetricCounts']> {
-  const db = await getTelemetryDb();
-  const daily = await db.query<{ date: string; metric_name: string; project_secret: string | null; points: bigint | number }>(
-    `SELECT to_char(DATE_TRUNC('day', ts AT TIME ZONE $1), 'YYYY-MM-DD') AS date,
-            metric_name,
-            project_secret,
-            COUNT(*) AS points
-     FROM otel_metrics
-     WHERE ts >= NOW() - ($2 || ' days')::interval
-     GROUP BY 1, 2, 3
-     ORDER BY 1 DESC, 2 ASC, 3 ASC`,
-    [timezone, String(DEBUG_DAILY_WINDOW_DAYS)],
-  );
-  return daily.rows.map(r => ({
-    date: r.date, metricName: r.metric_name, projectSecret: r.project_secret ?? '(central)', points: Number(r.points),
-  }));
+/** HS-9278 — `asDouble ?? asInt ?? 0` from a metric point's `value_json`. */
+function metricValue(m: Record<string, unknown>): number {
+  const v = m.value_json;
+  if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    const vj = v as Record<string, unknown>;
+    const d = numAttr(vj, 'asDouble');
+    if (d !== null) return d;
+    const i = numAttr(vj, 'asInt');
+    if (i !== null) return i;
+  }
+  return 0;
 }
 
-/** HS-8874 — fan the daily-metric-count diagnostic across every known project
- *  DB + the central store, concat the per-DB rows, and re-sort to the original
- *  (date DESC, metric ASC, secret ASC) order so the view is stable. */
-async function fanOutDailyMetricCounts(
-  timezone: string,
-): Promise<TelemetryDebugInfo['dailyMetricCounts']> {
-  const dirs = [...getAllProjects().map(p => p.dataDir), centralTelemetryDataDir()];
-  const all: TelemetryDebugInfo['dailyMetricCounts'] = [];
+/** HS-9278 — the `YYYY-MM-DD` calendar day of an ISO timestamp in `timeZone`
+ *  (mirrors SQL's `ts AT TIME ZONE tz`; `en-CA` renders ISO-ordered dates). */
+function dayInTimeZone(iso: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  } catch {
+    return iso.slice(0, 10); // invalid tz → fall back to the UTC calendar day
+  }
+}
+
+/** HS-9278 — GLOBAL per-day metric-row counts across every project cluster +
+ *  central (over the last DEBUG_DAILY_WINDOW_DAYS), grouped by (tz-day,
+ *  metric_name, project_secret); a null/empty secret (central) → '(central)'.
+ *  Sorted date DESC, metric ASC, secret ASC (matching the old SQL). Replaces the
+ *  per-DB `queryDailyMetricCounts` + `fanOutDailyMetricCounts` SQL pair. */
+async function fanOutDailyMetricCountsJsonl(timezone: string): Promise<TelemetryDebugInfo['dailyMetricCounts']> {
+  const dirs = [
+    ...getAllProjects().map(p => telemetryClusterDataDir(p.dataDir)),
+    telemetryClusterDataDir(centralTelemetryDataDir()),
+  ];
+  const cutoffMs = Date.now() - DEBUG_DAILY_WINDOW_DAYS * 86_400_000;
+  const counts = new Map<string, { date: string; metricName: string; projectSecret: string; points: number }>();
   for (const dir of dirs) {
+    let rows: Record<string, unknown>[];
     try {
-      const rows = await runWithTelemetryDb(dir, () => queryDailyMetricCounts(timezone));
-      all.push(...rows);
+      rows = await readAllOtelJsonl(dir, 'metrics');
     } catch (err) {
       console.error('[telemetry] _debug daily-count fan-out failed for', dir, err);
+      continue;
+    }
+    for (const m of rows) {
+      const ts = typeof m.ts === 'string' ? m.ts : '';
+      if (ts === '' || new Date(ts).getTime() < cutoffMs) continue;
+      const date = dayInTimeZone(ts, timezone);
+      const metricName = typeof m.metric_name === 'string' ? m.metric_name : '';
+      const secret = typeof m.project_secret === 'string' && m.project_secret !== '' ? m.project_secret : '(central)';
+      const key = `${date} ${metricName} ${secret}`;
+      const g = counts.get(key);
+      if (g !== undefined) g.points++;
+      else counts.set(key, { date, metricName, projectSecret: secret, points: 1 });
     }
   }
-  return all.sort((a, b) =>
+  return [...counts.values()].sort((a, b) =>
     a.date < b.date ? 1 : a.date > b.date ? -1
       : a.metricName < b.metricName ? -1 : a.metricName > b.metricName ? 1
         : a.projectSecret < b.projectSecret ? -1 : a.projectSecret > b.projectSecret ? 1 : 0);

@@ -74,6 +74,12 @@ async function insertCostMetric(opts: {
   const mainDb = await getRollupDb();
   await updateDailyRollup(mainDb, opts.projectSecret, opts.ts, 'claude_code.cost.usage', opts.cost, attrs, { temporality: opts.temporality ?? null, isMonotonic: opts.isMonotonic ?? null });
   await markDailySeen(mainDb, opts.projectSecret, opts.ts, 'session', typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
+  // HS-9278 — getTelemetryDebugInfo reads metrics from the JSONL store; mirror ingest.
+  await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'metrics', opts.ts, {
+    ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
+    metric_name: 'claude_code.cost.usage', attributes_json: attrs, value_json: { asDouble: opts.cost },
+    aggregation_temporality: opts.temporality ?? null, is_monotonic: opts.isMonotonic ?? null,
+  });
 }
 
 async function insertTokenMetric(opts: {
@@ -99,6 +105,12 @@ async function insertTokenMetric(opts: {
   const mainDb = await getRollupDb();
   await updateDailyRollup(mainDb, opts.projectSecret, opts.ts, 'claude_code.token.usage', opts.tokens, attrs, { temporality: opts.temporality ?? null, isMonotonic: opts.isMonotonic ?? null });
   await markDailySeen(mainDb, opts.projectSecret, opts.ts, 'session', typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
+  // HS-9278 — getTelemetryDebugInfo reads metrics from the JSONL store; mirror ingest.
+  await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'metrics', opts.ts, {
+    ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
+    metric_name: 'claude_code.token.usage', attributes_json: attrs, value_json: { asInt: opts.tokens },
+    aggregation_temporality: opts.temporality ?? null, is_monotonic: opts.isMonotonic ?? null,
+  });
 }
 
 async function insertPromptEvent(opts: {
@@ -142,6 +154,11 @@ async function insertToolResultEvent(opts: {
   // HS-9235 — mark this prompt seen (mirrors ingest; counts distinct prompt_id
   // across ALL event names, so a tool_result's prompt_id counts like any other).
   await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', 'prompt-1');
+  // HS-9278 — getTelemetryDebugInfo / getRecentPrompts read events from JSONL.
+  await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
+    ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
+    prompt_id: 'prompt-1', event_name: 'claude_code.tool_result', attributes_json: attrs, body_json: {},
+  });
 }
 
 // HS-9235 — the dashboard aggregate reads (getWindowTotals / getCostByModel /
@@ -315,6 +332,16 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
         [now, SECRET_A, 'session-1', 'pm', 'api_request', JSON.stringify({ cost: 0.5, tokens: 100, model: 'opus' }), '{}'],
       );
+      // HS-9278 — getTelemetryDebugInfo reads events from the JSONL store.
+      const clusterDir = telemetryClusterDataDir(getDataDir());
+      await appendOtelJsonl(clusterDir, 'events', now, {
+        ts: now.toISOString(), project_secret: SECRET_A, session_id: 'session-1',
+        prompt_id: 'pm', event_name: 'user_prompt', attributes_json: {}, body_json: { body: '<!-- hotsheet:ticket=HS-42 --> do it' },
+      });
+      await appendOtelJsonl(clusterDir, 'events', now, {
+        ts: now.toISOString(), project_secret: SECRET_A, session_id: 'session-1',
+        prompt_id: 'pm', event_name: 'api_request', attributes_json: { cost: 0.5, tokens: 100, model: 'opus' }, body_json: {},
+      });
 
       const info = await getTelemetryDebugInfo(SECRET_A);
       const markerByName = Object.fromEntries(info.markerEventsByName.map(m => [m.eventName, m.count]));
