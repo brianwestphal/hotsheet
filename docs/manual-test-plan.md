@@ -64,6 +64,12 @@ This document lists features that require manual verification before each releas
 - [ ] **HS-9210 — empty local delta doesn't hide everything.** In a project with ≥1 **shared** terminal, open Settings → Terminal, switch the scope toggle to **Local**, and (without editing anything) close + reopen the dialog. The shared terminal still shows as a **normal visible row** — NOT a "LOCALLY HIDDEN" row — even though `settings.local.json` now contains `"terminals": {}`. Repeat on Settings → Context (auto-context): switching to Local must not show every category/tag as **LOCALLY DISABLED** when `"auto_context": {}`.
 - [ ] **HS-9212 — a local override survives hide → un-hide.** Settings → Terminal, **Local** mode. Edit a **shared** terminal locally (change its name/command — its row tag flips to `overridden`). **Hide** it (the eye-off button → confirm) → it moves to the hidden section showing your *customized* name. **Re-enable** it (eye button) → it returns as a visible row with your **custom** name/command, NOT the original shared value. Confirm `settings.local.json` `terminals` carries both `hidden` (while hidden) and `overrides` throughout. Repeat the same edit→disable→re-enable cycle on Settings → Context for an auto-context rule (custom text must survive).
 
+### Search — exact ticket-id mentions + auto-scroll (HS-9241, §40.9)
+*(The match logic is unit-tested server-side in `src/db/queries.test.ts` + client-side in `src/client/ticketsStore.test.ts`. Manual verification is for the visual auto-scroll only.)*
+- [ ] Pick a ticket `HS-N` that another ticket references (or add "see HS-N" to a second ticket's details). Search `HS-N`: the result shows **both** `HS-N` itself **and** the ticket(s) mentioning it. In column view `HS-N` lands in the **Not Started** column even if it's archived/backlog.
+- [ ] **Auto-scroll:** with enough tickets that the exact match would render off-screen (e.g. many mentions above it, or it's archived and sits low), search `HS-N` → the view **scrolls so `HS-N` is visible**. Searching a ticket that's already on screen does not jump the scroll.
+- [ ] **Boundary:** searching `HS-5` does NOT surface a ticket whose text mentions `HS-50` (only a real `HS-5` reference counts).
+
 ---
 
 ## 2. Platform-Specific (Run on Each Target OS)

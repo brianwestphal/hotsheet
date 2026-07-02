@@ -2,7 +2,7 @@ import { updateSettings } from '../api/index.js';
 import { suppressAnimation } from './animate.js';
 import { byId, byIdOrNull } from './dom.js';
 import { state } from './state.js';
-import { draggedTicketIds, loadTickets } from './ticketList.js';
+import { draggedTicketIds, loadTickets, scrollSearchMatchIntoView } from './ticketList.js';
 import { trackedBatch } from './undo/actions.js';
 
 /** Sync the sidebar highlight to match state.view. Called after project switch. */
@@ -126,7 +126,9 @@ export function bindSearchInput() {
     searchTimeout = setTimeout(() => {
       state.search = input.value;
       suppressAnimation();
-      void loadTickets();
+      // HS-9241 — after the search renders, scroll the exact-match ticket into
+      // view (no-op for non-exact searches / when already visible).
+      void loadTickets().then(() => { scrollSearchMatchIntoView(); });
     }, 200);
   });
 

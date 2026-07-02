@@ -1,5 +1,6 @@
 import { batchTickets, emptyTrash, getSyncedTickets, getTicketSearchCounts, listTickets, queryTickets } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
+import { isExactTicketIdSearch } from '../ticketNumber.js';
 import { captureSnapshot, flipAnimate } from './animate.js';
 import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';
 import { syncDetailPanel, updateStats } from './detail.js';
@@ -867,6 +868,29 @@ export async function loadTickets() {
   renderTicketList();
 
   refreshSearchExtraCounts();
+}
+
+/**
+ * HS-9241 — after an exact ticket-id search, scroll the exact-match ticket into
+ * view (`block: 'nearest'`, so it's a no-op when already on screen). The exact
+ * match is `filteredTickets`'s first entry (force-included at the front); it may
+ * sit far down — e.g. in the "Not Started" column (column view absorbs its
+ * archive/backlog status into the first column) or mixed into a long list.
+ * Called by the search-input handler after the debounced reload renders; a rAF
+ * lets the reactive list/column bindList paint the row first. Non-exact searches
+ * (and no-match ids) no-op.
+ */
+export function scrollSearchMatchIntoView(): void {
+  if (!isExactTicketIdSearch(state.search)) return;
+  const target = state.search.trim().toLowerCase();
+  const match = filteredTickets.value.find(t => t.ticket_number.toLowerCase() === target);
+  if (match === undefined) return;
+  requestAnimationFrame(() => {
+    const el = document.querySelector<HTMLElement>(
+      `.ticket-row[data-id="${String(match.id)}"], .column-card[data-id="${String(match.id)}"]`,
+    );
+    el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
 }
 
 /**

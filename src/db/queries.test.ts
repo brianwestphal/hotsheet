@@ -604,6 +604,70 @@ describe('filtering', () => {
     });
   });
 
+  // HS-9241 — an exact ticket-id search ALSO returns tickets that MENTION the id
+  // (as a boundary-delimited token in title / details / tags / notes), not just
+  // the exact ticket. The exact ticket stays visible regardless of status;
+  // mentions follow the normal active gate + the §40 include-rows.
+  describe('exact ticket-id search ALSO returns mentions (HS-9241)', () => {
+    it('returns tickets that mention the id in details, alongside the exact ticket', async () => {
+      const target = await createTicket('The referenced ticket');
+      const mentioner = await createTicket('Mentioner', { details: `blocked by ${target.ticket_number} until resolved` });
+      const ids = (await getTickets({ search: target.ticket_number })).map(x => x.id);
+      expect(ids).toContain(target.id);    // THE exact ticket
+      expect(ids).toContain(mentioner.id); // a ticket mentioning it
+    });
+
+    it('returns a ticket that mentions the id in a note', async () => {
+      const target = await createTicket('Ref target for notes');
+      const mentioner = await createTicket('Note mentioner');
+      await updateTicket(mentioner.id, { notes: `see ${target.ticket_number} for context` });
+      const ids = (await getTickets({ search: target.ticket_number })).map(x => x.id);
+      expect(ids).toContain(mentioner.id);
+    });
+
+    it('mention match is boundary-delimited: searching HS-<n> does NOT match HS-<n>0 in prose', async () => {
+      const target = await createTicket('Boundary target');            // e.g. HS-5
+      const longerId = `${target.ticket_number}0`;                     // e.g. HS-50 (different ticket)
+      const decoy = await createTicket('Decoy', { details: `see ${longerId} for the other thing` });
+      const ids = (await getTickets({ search: target.ticket_number })).map(x => x.id);
+      expect(ids).toContain(target.id);
+      expect(ids).not.toContain(decoy.id); // an HS-50 mention must NOT match an HS-5 search
+    });
+
+    it('exact ticket shows regardless of status; a mention follows the active gate', async () => {
+      const target = await createTicket('Archived exact target');
+      await updateTicket(target.id, { status: 'archive' });            // exact: archived, still shown
+      const activeMention = await createTicket('Active mention', { details: `depends on ${target.ticket_number}` });
+      const archivedMention = await createTicket('Archived mention', { details: `also refs ${target.ticket_number}` });
+      await updateTicket(archivedMention.id, { status: 'archive' });   // mention in archive: hidden inline
+      const ids = (await getTickets({ search: target.ticket_number })).map(x => x.id);
+      expect(ids).toContain(target.id);              // exact (archive) shown
+      expect(ids).toContain(activeMention.id);       // active mention shown
+      expect(ids).not.toContain(archivedMention.id); // archived mention hidden (behind the include row)
+    });
+
+    it('include_archive surfaces an archived mention', async () => {
+      const target = await createTicket('Target for include');
+      const archivedMention = await createTicket('Archived mention 2', { details: `blocks ${target.ticket_number}` });
+      await updateTicket(archivedMention.id, { status: 'archive' });
+      const ids = (await getTickets({ search: target.ticket_number, include_archive: true })).map(x => x.id);
+      expect(ids).toContain(archivedMention.id);
+    });
+
+    it('countSearchMatchesInExcludedStatuses counts mentions in backlog/archive, excluding the exact ticket', async () => {
+      const { countSearchMatchesInExcludedStatuses } = await import('./tickets.js');
+      const target = await createTicket('Count target');
+      await updateTicket(target.id, { status: 'archive' });            // exact in archive — must NOT be counted
+      const archMention = await createTicket('Counted archive mention', { details: `refs ${target.ticket_number}` });
+      await updateTicket(archMention.id, { status: 'archive' });
+      const backMention = await createTicket('Counted backlog mention', { details: `refs ${target.ticket_number}` });
+      await updateTicket(backMention.id, { status: 'backlog' });
+      const counts = await countSearchMatchesInExcludedStatuses(target.ticket_number);
+      expect(counts.archive).toBe(1); // the archived MENTION, not the exact archived ticket
+      expect(counts.backlog).toBe(1);
+    });
+  });
+
   // HS-8337 — list-mode pagination. `getTickets` accepts optional `limit`
   // and `offset` that translate directly to `LIMIT $N OFFSET $M` on the
   // SELECT. Both default to "no clause" so the column-view + custom-view

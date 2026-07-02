@@ -114,6 +114,24 @@ When the user types an exact ticket-number reference in the search box (e.g. `HS
 
 **Tests:** 8 in `src/db/queries.test.ts`'s `exact ticket-id search bypasses status filter (HS-8100)` describe block (server: backlog / archive / trash hits, case insensitivity, no-substring-drift, suppressed include counts, regex shape) + 8 in `src/client/ticketsStore.test.ts`'s `filteredTickets exact ticket-id search (HS-8653)` block (client: archive / trash / backlog surfacing, case insensitivity, archive-view override, no-dup, non-exact-respects-exclusion, no-match-fallthrough).
 
+## 40.9 Exact ticket-id search ALSO surfaces mentions (HS-9241)
+
+Searching a complete ticket id (e.g. `HS-8838`) returns **the ticket AND every OTHER ticket that mentions it** — a blocked-by note, a "see HS-8838", a cross-reference in another ticket's details. Extends §40.8 (which returned only the exact ticket).
+
+**What counts as a "mention"** — the id appearing as a **boundary-delimited token** in `title` / `details` / `tags` / `notes` (the ticket's own `ticket_number` is the exact match, handled separately). Boundary-delimited so `HS-8838` matches a reference to it but NOT `HS-88380` — the same definition as the §55 cross-reference linkifier (`ticketRefs.ts::buildTicketRefRegex`'s `\b(PREFIX)-(\d+)\b`), so "mentions" == "would linkify as a ref to this ticket".
+
+**Visibility rules (the key nuance):**
+- **The exact ticket** stays visible **regardless of status** (archive / backlog / trash), in the "Not Started" column in column view (unchanged from §40.8).
+- **Mentions** follow the **normal active gate** — active tickets show inline; mentions hidden in backlog / archive surface via the §40.2 **"Include {N}"** rows (which now count *mentions* in those buckets, **excluding** the always-shown exact ticket — reversing §40.8's `{0,0}` short-circuit for exact-id searches).
+
+**Server** (`src/db/tickets.ts::buildTicketWhereClause`): for an exact-id search the search predicate becomes `(LOWER(ticket_number) = LOWER($q) OR title ~* $m OR details ~* $m OR tags ~* $m OR notes ~* $m)` where `$m` = `\y<id>\y` (Postgres word-boundary regex, via `ticketIdMentionPattern`), and the status clause becomes `(<active-gate + include-flags> OR LOWER(ticket_number) = LOWER($q))` so the exact ticket bypasses the gate while mentions respect it. `countSearchMatchesInExcludedStatuses` counts `\y<id>\y` mentions in backlog / archive, excluding the exact ticket.
+
+**Client** (`src/client/ticketsStore.ts::filteredTickets`): the exact-id branch force-includes the exact ticket at the front (as before) and now ALSO appends `viewFiltered.filter(t => ticketMentionsId(t, target))` — `ticketMentionsId` is the JS mirror (`\b<id>\b`, case-insensitive, over title/details/tags/notes). It falls through to the substring filter only when neither an exact match nor a mention resolves (so a partial number like `HS-12` still finds `HS-1234`, while a real `HS-1` hit never drifts into `HS-100`).
+
+**Auto-scroll (HS-9241):** after a search renders, `ticketList.tsx::scrollSearchMatchIntoView()` scrolls the exact-match ticket into view (`block: 'nearest'`, a no-op when already on screen) — the match is `filteredTickets`'s first entry and may sit far down (e.g. absorbed into the "Not Started" column, or below a run of mentions). Wired into the search-input handler (`sidebar.tsx`) after the debounced reload; a `requestAnimationFrame` lets the reactive list / column bindList paint the row first. Non-exact searches (and ids that match nothing) no-op.
+
+**Tests:** 6 in `src/db/queries.test.ts`'s `exact ticket-id search ALSO returns mentions (HS-9241)` block (server: mention in details / in a note, boundary rejects `HS-<n>0`, exact-shows-regardless-of-status-while-mentions-gated, `include_archive` surfaces an archived mention, count-helper counts backlog/archive mentions excluding the exact ticket) + 5 in `src/client/ticketsStore.test.ts`'s `filteredTickets exact-id mentions (HS-9241)` block (client: mention-in-details with exact-first ordering, mention-in-notes, boundary `HS-5`≠`HS-50`, exact-regardless-of-status vs gated mention, `includeArchiveInSearch` surfacing).
+
 ## 40.5 Client-side filter parity (HS-8380)
 
 The server's `getTickets` WHERE clause matches against five columns: `title`, `details`, `ticket_number`, `tags`, `notes`. `countSearchMatchesInExcludedStatuses` uses the same five-column ILIKE union so its `{backlog, archive}` counts agree with what `getTickets` would return for the same search.
@@ -124,4 +142,4 @@ Post-fix, `ticketMatchesSearch` checks all five columns the server does, so the 
 
 **Tests:** 2 new in `src/client/ticketsStore.test.ts`'s `filteredTickets derived signal` describe block — covers a notes-only match and a tags-only match against a query that doesn't appear in title / details / ticket_number.
 
-**Status:** Shipped (HS-7756) + extended (HS-8100, HS-8380, HS-8653).
+**Status:** Shipped (HS-7756) + extended (HS-8100, HS-8380, HS-8653, HS-9241 — exact-id search also surfaces mentions + auto-scrolls to the exact match).

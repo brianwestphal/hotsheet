@@ -12,6 +12,26 @@ function escapeIlike(value: string): string {
   return value.replace(/[%_\\]/g, '\\$&');
 }
 
+/**
+ * HS-9241 — escape POSIX-ERE metacharacters so a value can be embedded literally
+ * inside a Postgres `~*` regex. A validated ticket id (`[A-Za-z][A-Za-z0-9_]*-\d+`)
+ * contains none of these, so this is defensive.
+ */
+function escapePgRegex(value: string): string {
+  return value.replace(/[.\\+*?()|[\]{}^$]/g, '\\$&');
+}
+
+/**
+ * HS-9241 — a Postgres `~*` pattern that matches `id` as a whole, boundary-
+ * delimited token (`\y…\y`), so a search for `HS-8838` finds a *mention* of it
+ * in prose but NOT `HS-88380`. Mirrors the client `buildTicketRefRegex`'s
+ * `\b(PREFIX)-(\d+)\b` reference-detection so "mentions" == "would linkify as a
+ * ref to this ticket".
+ */
+function ticketIdMentionPattern(id: string): string {
+  return `\\y${escapePgRegex(id.trim())}\\y`;
+}
+
 // --- Ticket number ---
 
 export async function nextTicketNumber(prefix = 'HS'): Promise<string> {
@@ -286,9 +306,27 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
     return `(${statusCondition} OR status IN (${extras}))`;
   };
 
+  // HS-9241 — an exact ticket-id search returns THE ticket (regardless of status)
+  // PLUS any ticket that MENTIONS the id in its prose. Allocate the two shared
+  // params up front so both the status clause (exact bypasses the gate) and the
+  // search clause (exact OR mention) reference the same `$N`:
+  //   - `exactEqSql` = `LOWER(ticket_number) = LOWER($a)` — THE ticket.
+  //   - `mentionParam` = `$b` bound to `\y<id>\y` — a boundary-delimited mention.
+  let exactEqSql = '';
+  let mentionParam = '';
   if (exactIdSearch) {
-    // No status condition — the search-text filter below will scope by
-    // ticket_number so the result is unambiguous.
+    values.push((filters.search ?? '').trim());
+    exactEqSql = `LOWER(ticket_number) = LOWER($${paramIdx})`;
+    paramIdx++;
+    values.push(ticketIdMentionPattern(filters.search ?? ''));
+    mentionParam = `$${paramIdx}`;
+    paramIdx++;
+  }
+
+  if (exactIdSearch) {
+    // THE exact ticket bypasses the status gate (shown from any bucket incl.
+    // trash); MENTIONS follow the normal active gate + the §40 include-rows.
+    conditions.push(`(${wrapWithExtras(`status NOT IN ('deleted', 'backlog', 'archive')`)} OR ${exactEqSql})`);
   } else if (filters.status === 'open') {
     conditions.push(wrapWithExtras(`status IN ('not_started', 'started')`));
   } else if (filters.status === 'non_verified') {
@@ -328,13 +366,16 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
 
   if (filters.search !== undefined && filters.search !== '') {
     if (exactIdSearch) {
-      // HS-8100 — exact ticket-number reference (e.g. `HS-100`). Use
-      // strict equality on ticket_number so `HS-100` matches THE ticket
-      // HS-100, not also `HS-1000` / `HS-1001` (which a substring ILIKE
-      // would have pulled in). Case-insensitive so `hs-100` works too.
-      conditions.push(`LOWER(ticket_number) = LOWER($${paramIdx})`);
-      values.push(filters.search.trim());
-      paramIdx++;
+      // HS-8100 / HS-9241 — an exact ticket-number reference (e.g. `HS-100`).
+      // Match THE ticket by strict `ticket_number` equality (so `HS-100` isn't
+      // `HS-1000`/`HS-1001` via a substring ILIKE) OR any ticket that MENTIONS
+      // the id as a boundary-delimited token in its prose (title / details /
+      // tags / notes) — so searching `HS-8838` also surfaces tickets referring
+      // to it. The `\y…\y` boundary keeps `HS-8838` from matching `HS-88380`.
+      // `exactEqSql` + `mentionParam` were allocated with the status clause above.
+      conditions.push(
+        `(${exactEqSql} OR title ~* ${mentionParam} OR details ~* ${mentionParam} OR tags ~* ${mentionParam} OR notes ~* ${mentionParam})`,
+      );
     } else {
       // HS-7364 — also search the notes (comments) column. Notes are stored as
       // a JSON-serialized array of `{id, text, created_at}`, so ILIKE on the
@@ -421,11 +462,28 @@ export async function countSearchMatchesInExcludedStatuses(
   search: string,
 ): Promise<{ backlog: number; archive: number }> {
   if (search === '') return { backlog: 0, archive: 0 };
-  // HS-8100 — exact-id searches already pull from every bucket (incl.
-  // trash) in the main query via the status-gate bypass, so the
-  // "Include {N} backlog/archive" rows are redundant. Return zeroes so
-  // they don't render alongside the matched ticket.
-  if (isExactTicketIdSearch(search)) return { backlog: 0, archive: 0 };
+  // HS-8100 / HS-9241 — for an exact-id search, THE matched ticket already comes
+  // back from any bucket via the status-gate bypass, so it's never an "include"
+  // candidate. But HS-9241 also surfaces tickets that MENTION the id, and those
+  // follow the normal active gate — so the "Include {N} backlog/archive" rows
+  // must count MENTIONS hidden in those buckets (excluding the exact ticket).
+  if (isExactTicketIdSearch(search)) {
+    const db = await getDb();
+    const q = search.trim();
+    const mentionClause =
+      `(title ~* $1 OR details ~* $1 OR tags ~* $1 OR notes ~* $1) AND LOWER(ticket_number) <> LOWER($2)`;
+    const vals = [ticketIdMentionPattern(q), q];
+    const [backlogRes, archiveRes] = await Promise.all([
+      db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM tickets WHERE status = 'backlog' AND ${mentionClause}`, vals),
+      db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM tickets WHERE status = 'archive' AND ${mentionClause}`, vals),
+    ]);
+    return {
+      backlog: Number.parseInt(backlogRes.rows[0]?.count ?? '0', 10) || 0,
+      archive: Number.parseInt(archiveRes.rows[0]?.count ?? '0', 10) || 0,
+    };
+  }
   // HS-8646 — mirror `buildTicketWhereClause`'s union-of-words semantics so the
   // "Include {N} backlog/archive" counts stay in sync with the list the toggle
   // reveals (a phrase-vs-union mismatch would re-introduce the HS-8380 desync).

@@ -368,13 +368,73 @@ describe('ticketsStore — filteredTickets exact ticket-id search (HS-8653)', ()
     expect(filteredTickets.value.map(t => t.id)).toEqual([]);
   });
 
-  it('an exact-id-shaped search with no matching loaded ticket falls through to the substring filter', () => {
-    // `HS-99` has the exact-id shape but no loaded ticket carries that number;
-    // it must not falsely surface the archived HS-1234, and the substring
-    // 'HS-99' doesn't match it either → empty.
+  it('an exact-id-shaped search with no matching loaded ticket returns nothing (no substring over-match)', () => {
+    // `HS-99` has the exact-id shape but no loaded ticket carries that number
+    // and none mentions it; it must not falsely surface the archived HS-1234
+    // (the substring `HS-99` would have — the exact-id path never substring-matches).
     ticketsStore.actions.setTickets([makeTicket(1234, { status: 'archive' })]);
     ticketsStore.actions.patchFilter({ search: 'HS-99' });
     expect(filteredTickets.value.map(t => t.id)).toEqual([]);
+  });
+});
+
+/**
+ * HS-9241 — an exact ticket-id search ALSO surfaces tickets that MENTION the id
+ * (a boundary-delimited token in title / details / tags / notes), with THE exact
+ * ticket force-included at the front regardless of view / status and mentions
+ * following the active-scope gate + §40 include flags.
+ */
+describe('ticketsStore — filteredTickets exact-id mentions (HS-9241)', () => {
+  it('surfaces a ticket that mentions the id in details, exact ticket first', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(100),                                  // THE exact ticket (active)
+      makeTicket(5, { details: 'blocked by HS-100 until resolved' }), // mentions it
+      makeTicket(6, { details: 'unrelated work' }),     // no mention
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    const ids = filteredTickets.value.map(t => t.id);
+    expect(ids[0]).toBe(100);       // exact match force-included at the front
+    expect(ids).toContain(5);       // the mention
+    expect(ids).not.toContain(6);   // non-mention excluded
+  });
+
+  it('surfaces a ticket that mentions the id in a note', () => {
+    ticketsStore.actions.setTickets([makeTicket(100), makeTicket(7, { notes: 'see HS-100 here' })]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    expect(filteredTickets.value.map(t => t.id)).toContain(7);
+  });
+
+  it('mention match is boundary-delimited: HS-5 does NOT match an HS-50 mention', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(5),                                        // exact HS-5
+      makeTicket(9, { details: 'see HS-50 elsewhere' }),    // mentions a DIFFERENT id
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'HS-5' });
+    const ids = filteredTickets.value.map(t => t.id);
+    expect(ids).toContain(5);
+    expect(ids).not.toContain(9); // an HS-50 mention must not match an HS-5 search
+  });
+
+  it('exact ticket shows regardless of status; a mention follows the active gate', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(100, { status: 'archive' }),                              // exact, archived
+      makeTicket(5, { details: 'depends on HS-100' }),                     // active mention
+      makeTicket(6, { status: 'archive', details: 'also refs HS-100' }),   // archived mention
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100' });
+    const ids = filteredTickets.value.map(t => t.id);
+    expect(ids).toContain(100);     // exact (archive) force-included
+    expect(ids).toContain(5);       // active mention
+    expect(ids).not.toContain(6);   // archived mention hidden until the §40 include row
+  });
+
+  it('includeArchiveInSearch surfaces an archived mention', () => {
+    ticketsStore.actions.setTickets([
+      makeTicket(100),
+      makeTicket(6, { status: 'archive', details: 'refs HS-100' }),
+    ]);
+    ticketsStore.actions.patchFilter({ search: 'HS-100', includeArchiveInSearch: true });
+    expect(filteredTickets.value.map(t => t.id)).toContain(6);
   });
 });
 

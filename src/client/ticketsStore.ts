@@ -258,10 +258,20 @@ export const filteredTickets: ReadonlySignal<readonly Ticket[]> = computed(() =>
   if (isExactTicketIdSearch(filter.search)) {
     const target = filter.search.trim().toLowerCase();
     const exact = tickets.filter(t => t.ticket_number.toLowerCase() === target);
-    if (exact.length > 0) {
-      const exactIds = new Set(exact.map(t => t.id));
-      return [...exact, ...viewFiltered.filter(t => !exactIds.has(t.id))];
-    }
+    // HS-9241 — ALSO surface tickets that MENTION the id (a boundary-delimited
+    // token in title / details / tags / notes), narrowed by the active view
+    // like a normal search. THE exact ticket is force-included at the front
+    // regardless of view / status (it may live in archive / backlog / trash).
+    // Mirrors the server: exact-equality OR `\y<id>\y` mention.
+    const mentions = viewFiltered.filter(t => ticketMentionsId(t, target));
+    const exactIds = new Set(exact.map(t => t.id));
+    const combined = [...exact, ...mentions.filter(t => !exactIds.has(t.id))];
+    // HS-8653 — only when the exact id resolves to NOTHING (no such ticket + no
+    // mention) do we fall through to the substring filter (so a partial number
+    // like `HS-12` still finds `HS-1234` by ticket_number). When there IS an
+    // exact / mention hit we return it as-is — no substring drift (`HS-1` won't
+    // pull `HS-100`).
+    if (combined.length > 0) return combined;
   }
   const lc = filter.search.toLowerCase();
   return viewFiltered.filter(t => ticketMatchesSearch(t, lc));
@@ -340,6 +350,20 @@ export const ticketsByStatusSignal: ReadonlySignal<Partial<Record<string, readon
   }
   return grouped;
 });
+
+/**
+ * HS-9241 — does ticket `t` MENTION the ticket id `targetLower` (already
+ * lower-cased) as a boundary-delimited token in its prose? `\b<id>\b` mirrors
+ * the server's `\y<id>\y` and the client `buildTicketRefRegex`'s `\b(PREFIX)-(\d+)\b`,
+ * so `HS-8838` matches a reference to it but NOT `HS-88380`. `ticket_number` is
+ * excluded — the exact ticket is handled by strict equality, and another ticket's
+ * (unique) number can't contain this id.
+ */
+function ticketMentionsId(t: Ticket, targetLower: string): boolean {
+  const escaped = targetLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`\\b${escaped}\\b`, 'i');
+  return [t.title, t.details, t.tags, t.notes].some(s => re.test(s));
+}
 
 function ticketMatchesSearch(t: Ticket, lcSearch: string): boolean {
   // HS-8380 — mirror the server's `getTickets` ILIKE clause exactly. Pre-fix
