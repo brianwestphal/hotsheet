@@ -8,7 +8,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, getRollupDb, getTelemetryDb, runWithDataDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDataDir, getDb, getDbForDir, getRollupDb, getTelemetryDb, runWithDataDir, telemetryClusterDataDir } from './connection.js';
+import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
   clearProjectTelemetry,
   getCostByModel,
@@ -545,6 +546,13 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
         [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName, JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
       );
+      // HS-9278 — getPromptTimeline now reads the JSONL store, not otel_events.
+      // Mirror ingest's dual-write into the ambient cluster dir (getDataDir()),
+      // matching where the test's `getTelemetryDb()` inserts resolve.
+      await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
+        ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
+        prompt_id: opts.promptId, event_name: opts.eventName, attributes_json: opts.attrs ?? {}, body_json: opts.body ?? {},
+      });
     }
 
     it('returns every event for the prompt id, ordered by ts ASC', async () => {
@@ -595,6 +603,13 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
           [opts.traceId, opts.spanId, opts.parentSpanId, SECRET_A, 'session-1', opts.promptId, opts.spanName, opts.startTs, opts.endTs, JSON.stringify({}), 'OK'],
         );
+        // HS-9278 — getPromptTimeline reads spans from the JSONL store now.
+        await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'spans', opts.startTs, {
+          trace_id: opts.traceId, span_id: opts.spanId, parent_span_id: opts.parentSpanId,
+          project_secret: SECRET_A, session_id: 'session-1', prompt_id: opts.promptId,
+          span_name: opts.spanName, start_ts: opts.startTs.toISOString(), end_ts: opts.endTs.toISOString(),
+          attributes_json: {}, status_code: 'OK',
+        });
       }
 
       // Seed an event so the timeline has at least one entry.
@@ -1568,6 +1583,12 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       // dedup set, so the seen-based promptCount reads (getWindowTotals /
       // getCostByProject) see bare-named events too.
       await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
+      // HS-9278 — getPromptTimeline reads the JSONL store now (the raw insert above
+      // still feeds getRecentPrompts / getToolRollup, which stay on raw until P3b).
+      await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
+        ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
+        prompt_id: opts.promptId, event_name: opts.eventName, attributes_json: opts.attrs ?? {}, body_json: opts.body ?? {},
+      });
     }
 
     it('getRecentPrompts returns bare-named user_prompt events', async () => {

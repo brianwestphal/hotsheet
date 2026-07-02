@@ -10,7 +10,9 @@ import {
   appendOtelJsonl,
   dayRange,
   jsonlFileDay,
+  listOtelJsonlDays,
   otelJsonlPath,
+  readAllOtelJsonl,
   readOtelJsonlDay,
   readOtelJsonlRange,
   sweepOtelJsonl,
@@ -130,6 +132,33 @@ describe('readOtelJsonlRange (HS-9237)', () => {
     await appendOtelJsonl(dir, 'events', after, { prompt_id: 'out' });
     const rows = await readOtelJsonlRange(dir, 'events', serverLocalDay(inRange), serverLocalDay(inRange));
     expect(rows.map(r => r.prompt_id)).toEqual(['in']);
+  });
+});
+
+describe('listOtelJsonlDays / readAllOtelJsonl (HS-9278)', () => {
+  it('lists only the requested kind’s days, sorted ascending', async () => {
+    await appendOtelJsonl(dir, 'events', new Date('2026-07-02T10:00:00Z'), { a: 2 });
+    await appendOtelJsonl(dir, 'events', new Date('2026-06-30T10:00:00Z'), { a: 1 });
+    await appendOtelJsonl(dir, 'spans', new Date('2026-06-30T10:00:00Z'), { s: 1 });
+    const eventDays = await listOtelJsonlDays(dir, 'events');
+    // events on two days, ascending; the spans file must not leak in. (Assert
+    // length + sortedness rather than exact labels — server-local day may shift.)
+    expect(eventDays).toHaveLength(2);
+    expect([...eventDays]).toEqual([...eventDays].sort());
+    expect(await listOtelJsonlDays(dir, 'spans')).toHaveLength(1);
+    expect(await listOtelJsonlDays(dir, 'metrics')).toEqual([]);
+  });
+
+  it('reads every extant row for a kind across all day files in day order', async () => {
+    await appendOtelJsonl(dir, 'events', new Date('2026-07-02T10:00:00Z'), { n: 2 });
+    await appendOtelJsonl(dir, 'events', new Date('2026-06-30T10:00:00Z'), { n: 1 });
+    const rows = await readAllOtelJsonl(dir, 'events');
+    expect(rows.map(r => r.n)).toEqual([1, 2]); // day-sorted: 06-30 before 07-02
+  });
+
+  it('returns [] for a missing dir / absent kind', async () => {
+    expect(await readAllOtelJsonl(dir, 'metrics')).toEqual([]);
+    expect(await listOtelJsonlDays(`${dir}/nope`, 'events')).toEqual([]);
   });
 });
 

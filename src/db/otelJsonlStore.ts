@@ -156,6 +156,42 @@ export async function readOtelJsonlRange(
 }
 
 /**
+ * HS-9237 — the `YYYY-MM-DD` days that currently have a file for `kind` in
+ * `telemetryDir`, sorted ascending. Directory-driven (not date-math), so it's
+ * retention-agnostic: the extant files ARE the retention window (the sweeper
+ * age-deletes the rest). Missing dir → `[]`.
+ */
+export async function listOtelJsonlDays(telemetryDir: string, kind: OtelJsonlKind): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await fsp.readdir(telemetryDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  const prefix = `otel-${kind}-`;
+  return names
+    .filter(n => n.startsWith(prefix) && jsonlFileDay(n) !== null)
+    .map(n => jsonlFileDay(n) as string)
+    .sort();
+}
+
+/**
+ * HS-9237 — read EVERY extant row for `kind` in `telemetryDir` (all day files),
+ * in day (≈time) order. For a targeted, rarely-used lookup (e.g. a prompt-timeline
+ * by `prompt_id`, whose day isn't known up front) — scanning all extant files
+ * guarantees a hit regardless of the configured retention window ("not indexed is
+ * OK", ticket). Each day is crash-tolerant via `readOtelJsonlDay`.
+ */
+export async function readAllOtelJsonl(telemetryDir: string, kind: OtelJsonlKind): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (const day of await listOtelJsonlDays(telemetryDir, kind)) {
+    out.push(...await readOtelJsonlDay(telemetryDir, kind, day));
+  }
+  return out;
+}
+
+/**
  * Delete `otel-*-<day>.jsonl` files whose day is more than `maxAgeDays` before
  * `now` (server-local). Returns the number of files removed. Best-effort: an
  * unreadable dir or a failed unlink is swallowed. `maxAgeDays <= 0` disables the

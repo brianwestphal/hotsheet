@@ -19,7 +19,8 @@ import {
   type AnnouncerUsageByProjectRow, type AnnouncerUsageTotals,
   getAnnouncerUsageByProject, getAnnouncerUsageTotals,
 } from './announcerUsage.js';
-import { centralTelemetryDataDir, getRollupDb, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, getDataDir, getRollupDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
+import { readAllOtelJsonl } from './otelJsonlStore.js';
 import {
   type CostOverTimePoint,
   eventNameMatchSql,
@@ -123,81 +124,89 @@ export interface SpanRow {
 }
 
 /**
- * HS-8874 — a prompt lives in exactly one project's DB (or central). Fan out
- * across every known project dataDir + the central store, running the timeline
- * query in each DB's context, and return the first DB that has any events for
- * the prompt. Falls back to the empty shape (read in the ambient context) when
- * nothing matches.
+ * HS-8874 / HS-9278 — a prompt lives in exactly one project's telemetry store (or
+ * central). Fan out across every known project cluster dir + the central store,
+ * scanning the day-partitioned JSONL (HS-9236) instead of the raw `otel_*` tables
+ * (Phase 3 (b) — raw is JSONL-only), and return the first store that has any events
+ * for the prompt. If none has events, return orphan spans from the first store that
+ * has any; else the empty shape.
  */
 export async function getPromptTimeline(promptId: string): Promise<PromptTimeline> {
-  const dirs = [...getAllProjects().map(p => p.dataDir), centralTelemetryDataDir()];
-  for (const dir of dirs) {
-    const timeline = await runWithTelemetryDb(dir, () => getPromptTimelineFromCurrentDb(promptId));
+  // getAllProjects() + central covers every store in production; getDataDir() adds
+  // the ambient/default context (the old code's fallback, and the seam the tests
+  // seed through). Dedup so an overlapping dir isn't scanned twice.
+  const clusterDirs = [...new Set([
+    ...getAllProjects().map(p => telemetryClusterDataDir(p.dataDir)),
+    telemetryClusterDataDir(centralTelemetryDataDir()),
+    telemetryClusterDataDir(getDataDir()),
+  ])];
+  let orphanSpans: PromptTimeline | null = null;
+  for (const clusterDir of clusterDirs) {
+    const timeline = await getPromptTimelineFromJsonl(clusterDir, promptId);
     if (timeline.entries.length > 0) return timeline;
+    if (orphanSpans === null && timeline.spans.length > 0) orphanSpans = timeline;
   }
-  // No DB had events for this prompt — return the empty shape (also checks for
-  // orphan spans in the ambient context, matching the prior single-DB behavior).
-  return getPromptTimelineFromCurrentDb(promptId);
+  return orphanSpans ?? { promptId, projectSecret: null, firstTs: null, lastTs: null, model: null, entries: [], spans: [] };
 }
 
-async function getPromptTimelineFromCurrentDb(promptId: string): Promise<PromptTimeline> {
-  const db = await getTelemetryDb();
-  const [eventsResult, spansResult] = await Promise.all([
-    db.query<{
-      id: number;
-      ts: string;
-      project_secret: string;
-      event_name: string;
-      attributes_json: Record<string, unknown> | null;
-      body_json: Record<string, unknown> | null;
-    }>(
-      `SELECT id, ts, project_secret, event_name, attributes_json, body_json
-       FROM otel_events
-       WHERE prompt_id = $1
-       ORDER BY ts ASC, id ASC`,
-      [promptId],
-    ),
-    db.query<{
-      id: number;
-      trace_id: string;
-      span_id: string;
-      parent_span_id: string | null;
-      span_name: string;
-      start_ts: string;
-      end_ts: string;
-      attributes_json: Record<string, unknown> | null;
-      status_code: string | null;
-    }>(
-      `SELECT id, trace_id, span_id, parent_span_id, span_name, start_ts, end_ts, attributes_json, status_code
-       FROM otel_spans
-       WHERE prompt_id = $1
-       ORDER BY start_ts ASC, id ASC`,
-      [promptId],
-    ),
+/** String field or `''`; used for the JSONL record's stringy columns. */
+function jstr(r: Record<string, unknown>, key: string): string {
+  const v = r[key];
+  return typeof v === 'string' ? v : '';
+}
+
+/** Object field or `{}`; JSONL stores `attributes_json` as a nested object. */
+function jobj(r: Record<string, unknown>, key: string): Record<string, unknown> {
+  const v = r[key];
+  return v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
+}
+
+/**
+ * HS-9278 — build a prompt's timeline by scanning ONE telemetry store's JSONL.
+ * Reads every extant events + spans day file (retention-agnostic; the sweeper
+ * bounds them), filters by `prompt_id`, and stably sorts by ts / start_ts. The
+ * synthetic `id` is the sorted index — the DB serial the raw shape carried was a
+ * vestigial ordering/key field the client never renders. Exported for unit tests.
+ */
+export async function getPromptTimelineFromJsonl(clusterDir: string, promptId: string): Promise<PromptTimeline> {
+  const [eventRows, spanRows] = await Promise.all([
+    readAllOtelJsonl(clusterDir, 'events'),
+    readAllOtelJsonl(clusterDir, 'spans'),
   ]);
 
-  const spans: SpanRow[] = spansResult.rows.map(r => ({
-    id: r.id,
-    traceId: r.trace_id,
-    spanId: r.span_id,
-    parentSpanId: r.parent_span_id,
-    spanName: r.span_name,
-    startTs: typeof r.start_ts === 'string' ? r.start_ts : new Date(r.start_ts).toISOString(),
-    endTs: typeof r.end_ts === 'string' ? r.end_ts : new Date(r.end_ts).toISOString(),
-    attributesJson: r.attributes_json ?? {},
-    statusCode: r.status_code,
-  }));
+  // Stable sort preserves file (≈ insertion / serial) order for equal timestamps,
+  // matching the old `ORDER BY ts ASC, id ASC`.
+  const spans: SpanRow[] = spanRows
+    .filter(r => r.prompt_id === promptId)
+    .sort((a, b) => jstr(a, 'start_ts').localeCompare(jstr(b, 'start_ts')))
+    .map((r, i) => ({
+      id: i,
+      traceId: jstr(r, 'trace_id'),
+      spanId: jstr(r, 'span_id'),
+      parentSpanId: typeof r.parent_span_id === 'string' ? r.parent_span_id : null,
+      spanName: jstr(r, 'span_name'),
+      startTs: jstr(r, 'start_ts'),
+      endTs: jstr(r, 'end_ts'),
+      attributesJson: jobj(r, 'attributes_json'),
+      statusCode: typeof r.status_code === 'string' ? r.status_code : null,
+    }));
 
-  if (eventsResult.rows.length === 0) {
+  const eventMatches = eventRows
+    .filter(r => r.prompt_id === promptId)
+    .sort((a, b) => jstr(a, 'ts').localeCompare(jstr(b, 'ts')));
+
+  if (eventMatches.length === 0) {
     return { promptId, projectSecret: null, firstTs: null, lastTs: null, model: null, entries: [], spans };
   }
 
-  const entries: PromptTimelineEntry[] = eventsResult.rows.map(r => ({
-    id: r.id,
-    ts: typeof r.ts === 'string' ? r.ts : new Date(r.ts).toISOString(),
-    eventName: r.event_name,
-    attributesJson: r.attributes_json ?? {},
-    bodyJson: r.body_json,
+  const entries: PromptTimelineEntry[] = eventMatches.map((r, i) => ({
+    id: i,
+    ts: jstr(r, 'ts'),
+    eventName: jstr(r, 'event_name'),
+    attributesJson: jobj(r, 'attributes_json'),
+    bodyJson: (r.body_json !== null && typeof r.body_json === 'object' && !Array.isArray(r.body_json))
+      ? r.body_json as Record<string, unknown>
+      : null,
   }));
 
   // Pull model from the first user_prompt event's attributes when present.
@@ -208,7 +217,7 @@ async function getPromptTimelineFromCurrentDb(promptId: string): Promise<PromptT
 
   return {
     promptId,
-    projectSecret: eventsResult.rows[0].project_secret,
+    projectSecret: typeof eventMatches[0].project_secret === 'string' ? eventMatches[0].project_secret : null,
     firstTs: entries[0].ts,
     lastTs: entries[entries.length - 1].ts,
     model,
