@@ -100,16 +100,35 @@ live-demo script (the narrative the screenshots support).
    - **Drop** — a scenario/screenshot that's redundant, off-message, or shows a
      de-emphasized feature. Fewer, stronger shots beat more, weaker ones.
 
-3. **Make the code/doc changes needed for capture.** If you propose new or changed
+3. **Upgrade `domotion-svg` first if it's behind (HS-9281).** The demos are
+   captured *through* `domotion-svg` — `scripts/capture-demos.ts` imports
+   `captureElementTree` / `elementTreeToSvg` / `embedRemoteImages` from it to render
+   each `docs/demo-N.svg` (and drive the PNG). A stale renderer can produce wrong or
+   dated output, so bring it current **before** the capture:
+   - Compare the installed version against the registry: `npm view domotion-svg version`
+     vs the `devDependencies` pin in `package.json` (or `npm outdated domotion-svg`).
+   - If it's behind, upgrade to latest: `npm install domotion-svg@latest --save-dev`.
+     (If npm errors with an `EPERM` on the cache, retry with
+     `--cache "$TMPDIR/npm-cache-hs"`.) Commit the `package.json` + `package-lock.json`
+     bump on its own, then re-run the gates below.
+   - Skim `domotion-svg`'s changelog / release notes for the bump range and note any
+     capture-affecting change (e.g. an `elementTreeToSvg` output-shape change like the
+     HS-8687 / 0.6.0 one already handled in `capture-demos.ts`); adjust
+     `capture-demos.ts` if the new version changed its API, and call it out in the
+     hand-off so the maintainer knows to recapture through the newer renderer.
+   - If it's already current, say so in the report and move on.
+
+4. **Make the code/doc changes needed for capture.** If you propose new or changed
    scenarios, implement the `src/demo.ts` seeding + `scripts/capture-demos.ts`
    navigation + `docs/8-cli-server.md §8.8` table updates **now**, so that when the
    maintainer runs the capture the new shots come out right. Run the gates after
-   touching code: `npx tsc --noEmit`, `npm run lint`, and
-   `npx vitest run src/demo.test.ts` (the demo seeding has unit coverage — keep it
-   green; update it for new scenarios). Do **not** run `scripts/capture-demos.ts`
-   yourself to overwrite the PNGs — capture is the maintainer's step.
+   touching code (or after the `domotion-svg` bump above): `npx tsc --noEmit`,
+   `npm run lint`, and `npx vitest run src/demo.test.ts` (the demo seeding has unit
+   coverage — keep it green; update it for new scenarios). Do **not** run
+   `scripts/capture-demos.ts` yourself to overwrite the PNGs — capture is the
+   maintainer's step.
 
-4. **Produce the capture plan** (the hand-off). A per-scenario table:
+5. **Produce the capture plan** (the hand-off). A per-scenario table:
 
    | # | Feature | Verdict | Why | Capture command |
    |---|---------|---------|-----|-----------------|
@@ -127,7 +146,8 @@ End with a concise report:
 - **README** — sections rewritten/added/pruned, the new features now advertised,
   and any stale claims removed (with the requirements-summary status that justified
   each).
-- **Demos** — the capture-plan table (keep/recapture/drop/add), the `src/demo.ts` /
+- **Demos** — whether `domotion-svg` was already current or upgraded (and to what
+  version), the capture-plan table (keep/recapture/drop/add), the `src/demo.ts` /
   `scripts/capture-demos.ts` / `docs/8-cli-server.md` changes made, and the gate
   results.
 - **Hand-off** — the single command list the maintainer runs to capture the
