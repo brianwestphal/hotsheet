@@ -20,14 +20,17 @@
 // unvalidated against a real server (maintainer-accepted, 2026-07-03).
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::extract::{Request, State};
-use axum::response::Response;
+use axum::extract::ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{FromRequestParts, Request, State};
+use axum::response::{IntoResponse, Response};
 use axum::Router;
+use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
+use tokio_tungstenite::tungstenite::Message as TungMessage;
 
 /// The per-device client identity + the server's trust root, all PEM. The client
 /// cert/key are what the WebView can't present; the CA is the per-project
@@ -65,6 +68,40 @@ pub fn build_client(identity: &MtlsIdentity) -> Result<reqwest::Client, String> 
         .map_err(|e| format!("build client: {e}"))
 }
 
+/// Build a `rustls::ClientConfig` presenting the device client cert + trusting
+/// ONLY the per-project CA — the shared config for the WS-proxy leg (HS-9309).
+/// `tokio-tungstenite` consumes it via `Connector::Rustls`; it also unifies with
+/// the HTTP leg (reqwest can take it via `use_preconfigured_tls`). Pure over PEM.
+pub fn build_rustls_config(identity: &MtlsIdentity) -> Result<rustls::ClientConfig, String> {
+    // rustls 0.23 needs a process CryptoProvider; install aws-lc-rs once (idempotent).
+    static PROVIDER: std::sync::Once = std::sync::Once::new();
+    PROVIDER.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_pemfile::certs(&mut identity.ca_pem.as_bytes()) {
+        roots
+            .add(cert.map_err(|e| format!("CA parse: {e}"))?)
+            .map_err(|e| format!("CA add: {e}"))?;
+    }
+    if roots.is_empty() {
+        return Err("no CA certificate in ca_pem".into());
+    }
+
+    let certs = rustls_pemfile::certs(&mut identity.cert_pem.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("client cert parse: {e}"))?;
+    let key = rustls_pemfile::private_key(&mut identity.key_pem.as_bytes())
+        .map_err(|e| format!("client key parse: {e}"))?
+        .ok_or_else(|| "no client private key in key_pem".to_string())?;
+
+    rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(certs, key)
+        .map_err(|e| format!("client auth config: {e}"))
+}
+
 /// A running loopback proxy: its port + a shutdown trigger.
 pub struct ProxyHandle {
     port: u16,
@@ -90,17 +127,20 @@ struct ProxyState {
     client: reqwest::Client,
     /// The remote origin (`https://host:port`) requests are forwarded to.
     remote_origin: String,
+    /// Shared rustls config for the WS leg (client-auth cert + project CA root).
+    ws_config: Arc<rustls::ClientConfig>,
 }
 
 /// Start a loopback (127.0.0.1, ephemeral port) HTTP proxy that forwards every
 /// request to `remote_origin` over the mTLS client. Returns a handle carrying the
 /// port + a shutdown trigger. Async — runs on Tauri's tokio runtime.
 ///
-/// NOTE (scaffold): WebSocket upgrades are NOT yet proxied (the `/ws/sync` +
-/// terminal WS legs are the follow-up). HTTP is forwarded with a buffered body.
+/// Both HTTP (buffered body) and WebSocket upgrades (`/ws/sync` + terminal WS)
+/// are proxied over mTLS. A streaming-body pass is a follow-up.
 pub async fn start_proxy(identity: MtlsIdentity, remote_origin: String) -> Result<ProxyHandle, String> {
     let client = build_client(&identity)?;
-    let state = ProxyState { client, remote_origin };
+    let ws_config = Arc::new(build_rustls_config(&identity)?);
+    let state = ProxyState { client, remote_origin, ws_config };
     let app: Router = Router::new().fallback(forward).with_state(state);
 
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -127,12 +167,29 @@ pub async fn start_proxy(identity: MtlsIdentity, remote_origin: String) -> Resul
 /// response. Buffers the body (fine for the API surface; a streaming pass is a
 /// follow-up). Failures become a 502 so the WebView sees a clean error.
 async fn forward(State(state): State<ProxyState>, req: Request) -> Response {
-    let (parts, body) = req.into_parts();
-    let path_and_query = parts
-        .uri
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
+    // A `Connection: Upgrade` / `Upgrade: websocket` request → proxy the socket to
+    // the remote `wss://` over mTLS. (`Option<WebSocketUpgrade>` isn't a valid axum
+    // 0.8 extractor, so detect the header + run the extractor by hand.)
+    let is_ws = req
+        .headers()
+        .get(axum::http::header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+
+    let (mut parts, body) = req.into_parts();
+    let path_and_query = parts.uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/").to_string();
+
+    if is_ws {
+        return match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+            Ok(ws) => {
+                let target = format!("{}{}", https_to_wss(&state.remote_origin), path_and_query);
+                let config = state.ws_config.clone();
+                ws.on_upgrade(move |socket| proxy_ws(socket, target, config))
+            }
+            Err(rej) => rej.into_response(),
+        };
+    }
+
     let url = format!("{}{}", state.remote_origin, path_and_query);
 
     let body_bytes = match axum::body::to_bytes(body, usize::MAX).await {
@@ -164,10 +221,98 @@ async fn forward(State(state): State<ProxyState>, req: Request) -> Response {
     let mut resp = Response::builder().status(status);
     if let Some(h) = resp.headers_mut() {
         for (name, value) in headers.iter() {
-            h.insert(name, value.clone());
+            // Drop hop-by-hop + framing headers: we re-frame the body ourselves, so
+            // relaying the upstream's `transfer-encoding`/`content-length` produces a
+            // malformed response (hyper `IncompleteMessage`). `append` preserves
+            // multi-value headers (e.g. `set-cookie`).
+            if is_hop_by_hop(name) {
+                continue;
+            }
+            h.append(name, value.clone());
         }
     }
     resp.body(Body::from(bytes)).unwrap_or_else(|e| bad_gateway(format!("build response: {e}")))
+}
+
+/// Hop-by-hop / framing headers a proxy must not relay verbatim (RFC 9110 §7.6.1
+/// + the framing headers we set ourselves). `HeaderName::as_str` is lowercase.
+fn is_hop_by_hop(name: &axum::http::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "connection" | "keep-alive" | "proxy-authenticate" | "proxy-authorization"
+            | "te" | "trailer" | "transfer-encoding" | "upgrade" | "content-length"
+    )
+}
+
+/// `https://host:port` → `wss://host:port` (and `http`→`ws`) for the WS dial.
+fn https_to_wss(origin: &str) -> String {
+    if let Some(rest) = origin.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = origin.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        origin.to_string()
+    }
+}
+
+/// Proxy a loopback WebSocket to the remote `wss://` over mTLS, piping frames
+/// bidirectionally until either side closes. Best-effort — a failed remote dial
+/// just drops the loopback socket (the client sees a closed connection).
+async fn proxy_ws(client_ws: WebSocket, target: String, config: Arc<rustls::ClientConfig>) {
+    let connector = tokio_tungstenite::Connector::Rustls(config);
+    let remote = match tokio_tungstenite::connect_async_tls_with_config(&target, None, false, Some(connector)).await {
+        Ok((stream, _resp)) => stream,
+        Err(_) => return, // dial/handshake failed → drop; the loopback socket closes
+    };
+
+    let (mut client_tx, mut client_rx) = client_ws.split();
+    let (mut remote_tx, mut remote_rx) = remote.split();
+
+    // loopback (browser) → remote
+    let c2r = async {
+        while let Some(Ok(msg)) = client_rx.next().await {
+            if remote_tx.send(axum_to_tung(msg)).await.is_err() {
+                break;
+            }
+        }
+    };
+    // remote → loopback (browser)
+    let r2c = async {
+        while let Some(Ok(msg)) = remote_rx.next().await {
+            if client_tx.send(tung_to_axum(msg)).await.is_err() {
+                break;
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = c2r => {}
+        _ = r2c => {}
+    }
+}
+
+/// axum → tungstenite frame. Close-frame details are dropped (a bare Close both
+/// sides understand is enough for a proxy).
+fn axum_to_tung(m: AxumMessage) -> TungMessage {
+    match m {
+        AxumMessage::Text(t) => TungMessage::Text(t.as_str().into()),
+        AxumMessage::Binary(b) => TungMessage::Binary(b),
+        AxumMessage::Ping(b) => TungMessage::Ping(b),
+        AxumMessage::Pong(b) => TungMessage::Pong(b),
+        AxumMessage::Close(_) => TungMessage::Close(None),
+    }
+}
+
+/// tungstenite → axum frame (the reverse of `axum_to_tung`).
+fn tung_to_axum(m: TungMessage) -> AxumMessage {
+    match m {
+        TungMessage::Text(t) => AxumMessage::Text(t.as_str().into()),
+        TungMessage::Binary(b) => AxumMessage::Binary(b),
+        TungMessage::Ping(b) => AxumMessage::Ping(b),
+        TungMessage::Pong(b) => AxumMessage::Pong(b),
+        TungMessage::Close(_) => AxumMessage::Close(None),
+        TungMessage::Frame(_) => AxumMessage::Close(None), // raw frames aren't surfaced by the reader
+    }
 }
 
 fn bad_gateway(msg: String) -> Response {
@@ -214,5 +359,117 @@ mod tests {
     fn loopback_url_formats_the_port() {
         let h = ProxyHandle { port: 51234, shutdown: None };
         assert_eq!(h.loopback_url(), "http://127.0.0.1:51234");
+    }
+
+    // HS-9309 Phase-A — the LIVE mTLS handshake against a real server. `#[ignore]`
+    // so `cargo test` skips it by default; the `validate-mtls` harness starts the
+    // shipped Node mTLS listener (real CA + `.p12`→PEM client material) and runs
+    // this with `-- --ignored` + `HS_MTLS_PORT`/`HS_MTLS_CERT_DIR` set. Validates
+    // the interop that matters: Node-minted PKCS#1 client key → reqwest/rustls
+    // `Identity` → Node `requestCert`+`rejectUnauthorized` acceptance.
+    #[tokio::test]
+    #[ignore]
+    async fn live_mtls_handshake_against_real_server() {
+        let dir = std::env::var("HS_MTLS_CERT_DIR").expect("HS_MTLS_CERT_DIR unset");
+        let port = std::env::var("HS_MTLS_PORT").expect("HS_MTLS_PORT unset");
+        let read = |f: &str| std::fs::read_to_string(format!("{dir}/{f}")).expect(f);
+        let identity = MtlsIdentity {
+            cert_pem: read("client.crt"),
+            key_pem: read("client.key"),
+            ca_pem: read("ca.crt"),
+        };
+        let url = format!("https://127.0.0.1:{port}/api/projects");
+
+        // Positive: the enrolled client cert completes the mTLS handshake.
+        let client = build_client(&identity).expect("build_client");
+        let resp = client.get(&url).send().await.expect("mTLS request should succeed");
+        assert!(resp.status().is_success(), "unexpected status {}", resp.status());
+        let body = resp.text().await.expect("body");
+        assert!(body.contains("\"ok\":true"), "unexpected body: {body}");
+
+        // Negative: trusting the CA but presenting NO client cert must be rejected
+        // by the server's requestCert + rejectUnauthorized.
+        let ca = reqwest::Certificate::from_pem(identity.ca_pem.as_bytes()).unwrap();
+        let no_cert = reqwest::Client::builder()
+            .use_rustls_tls()
+            .tls_built_in_root_certs(false)
+            .add_root_certificate(ca)
+            .build()
+            .unwrap();
+        assert!(
+            no_cert.get(&url).send().await.is_err(),
+            "a request WITHOUT a client cert must fail the mTLS handshake",
+        );
+    }
+
+    // HS-9309 Phase-A — the LIVE `wss://` client-auth handshake (the WS-proxy leg).
+    // Validates that `build_rustls_config` + tokio-tungstenite completes the mTLS
+    // WebSocket upgrade against the harness's `/ws/echo` endpoint (client cert
+    // required for the upgrade), and that frames round-trip. `#[ignore]` like the
+    // HTTP test; run via `npm run validate:mtls`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_wss_mtls_handshake_against_real_server() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let dir = std::env::var("HS_MTLS_CERT_DIR").expect("HS_MTLS_CERT_DIR unset");
+        let port = std::env::var("HS_MTLS_PORT").expect("HS_MTLS_PORT unset");
+        let read = |f: &str| std::fs::read_to_string(format!("{dir}/{f}")).expect(f);
+        let identity = MtlsIdentity {
+            cert_pem: read("client.crt"),
+            key_pem: read("client.key"),
+            ca_pem: read("ca.crt"),
+        };
+
+        let config = build_rustls_config(&identity).expect("build_rustls_config");
+        let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config));
+        let url = format!("wss://127.0.0.1:{port}/ws/echo");
+
+        let (mut ws, _resp) =
+            tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
+                .await
+                .expect("wss mTLS handshake should succeed");
+
+        ws.send(Message::text("ping")).await.expect("send");
+        let reply = ws.next().await.expect("a reply").expect("ok");
+        assert_eq!(reply.into_text().expect("text").as_str(), "ping");
+    }
+
+    // HS-9309 Phase-A — end-to-end through the actual loopback proxy: a PLAIN
+    // client hits `http://127.0.0.1:<loopback>` (no cert) and the proxy adds the
+    // mTLS on the way to the harness. Validates the real forwarding path, not just
+    // `build_client`/`build_rustls_config` in isolation. `#[ignore]`d.
+    fn test_identity() -> MtlsIdentity {
+        let dir = std::env::var("HS_MTLS_CERT_DIR").expect("HS_MTLS_CERT_DIR unset");
+        let read = |f: &str| std::fs::read_to_string(format!("{dir}/{f}")).expect(f);
+        MtlsIdentity { cert_pem: read("client.crt"), key_pem: read("client.key"), ca_pem: read("ca.crt") }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_http_proxy_end_to_end() {
+        let port = std::env::var("HS_MTLS_PORT").expect("HS_MTLS_PORT unset");
+        let handle = start_proxy(test_identity(), format!("https://127.0.0.1:{port}")).await.expect("start_proxy");
+        let url = format!("{}/api/projects", handle.loopback_url());
+        let resp = reqwest::get(&url).await.expect("loopback GET");
+        assert!(resp.status().is_success());
+        assert!(resp.text().await.unwrap().contains("\"ok\":true"));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn live_ws_proxy_end_to_end() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let port = std::env::var("HS_MTLS_PORT").expect("HS_MTLS_PORT unset");
+        let handle = start_proxy(test_identity(), format!("https://127.0.0.1:{port}")).await.expect("start_proxy");
+        // Plain ws:// to the loopback proxy — no client cert; the proxy adds mTLS.
+        let url = format!("ws://127.0.0.1:{}/ws/echo", handle.port);
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(&url).await.expect("loopback ws connect");
+        ws.send(Message::text("via-proxy")).await.expect("send");
+        let reply = ws.next().await.expect("a reply").expect("ok");
+        assert_eq!(reply.into_text().expect("text").as_str(), "via-proxy");
     }
 }

@@ -28,7 +28,14 @@ tauri-plugin-notification = "2"
 # WebSocket-proxy leg (tokio-tungstenite + a shared rustls config) is a follow-up.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+# HS-9309 — the WS-proxy leg. tokio-tungstenite dials the remote `wss://` with a
+# shared rustls 0.23 ClientConfig (client-auth cert + project CA root); axum's `ws`
+# feature accepts the loopback upgrade. All three pin rustls 0.23 for interop.
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+rustls = "0.23"
+rustls-pemfile = "2"
+futures-util = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

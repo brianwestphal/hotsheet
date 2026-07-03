@@ -43,6 +43,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:docker": "bash scripts/test-e2e-docker.sh",
     "test:rust": "node scripts/ensure-sidecar-placeholder.mjs && cargo test --manifest-path src-tauri/Cargo.toml",
+    "validate:mtls": "bash scripts/validate-mtls.sh",
     "lint": "eslint src/",
     "capture-demos": "tsx scripts/capture-demos.ts",
     "clean": "rm -rf dist node_modules/.cache",
