@@ -11155,6 +11155,28 @@ label.detail-details-label {
 }
 .add-remote-cert-note { margin-top: 6px; font-size: 11px; line-height: 1.4; }
 
+// HS-9304 — the enumerated-projects multi-select in the Add-remote dialog.
+.add-remote-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.add-remote-project-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  font-size: 13px;
+  border-radius: 5px;
+  cursor: pointer;
+  &:hover { background: var(--bg-hover); }
+  .add-remote-project-name { color: var(--text); }
+}
+.add-remote-enum-fail { margin: 4px 0; }
+
 .worker-pool-empty, .worker-pool-error {
   color: var(--text-muted);
   padding: 16px 0;

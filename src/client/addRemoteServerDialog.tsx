@@ -1,13 +1,16 @@
-// HS-9303 (docs/112 §112.6) — the "Add remote server" connection-entry modal.
-// Web-first cut: enter/normalize a server URL and save it to the remotes store
-// (`~/.hotsheet/remotes.json`); enumerating + mounting its projects is HS-9304.
-// The client cert is presented by the BROWSER's native store on the mTLS
-// handshake (§97.3) — no cert handling in the app for the web path; the Tauri
-// path is HS-9307. The QR-scan + in-app cert enrollment richness is a follow-up.
+// HS-9303 / HS-9304 (docs/112 §112.6/§112.7) — the "Add remote server" modal.
+// Web-first: enter/normalize a server URL, ENUMERATE the server's projects
+// (`GET <origin>/api/projects`, the browser presenting the client cert on the mTLS
+// handshake), MULTI-SELECT which to mount, and persist them to the remotes store
+// (`~/.hotsheet/remotes.json`) as tabs. If enumeration fails (cert not installed,
+// server unreachable), the user can still add the server with no projects and
+// enumerate later. The client cert is the browser's native store (§97.3) for web;
+// the Tauri path is HS-9307; QR-scan + in-app enrollment is HS-9308.
 
+import type { RemoteProject } from '../api/index.js';
 import { toElement } from './dom.js';
 import { refreshProjectTabs } from './projectTabs.js';
-import { addRemoteServer } from './remoteServers.js';
+import { addRemoteServer, fetchRemoteProjects, mountRemoteProjects } from './remoteServers.js';
 import { isLoopbackOrigin, normalizeServerUrl } from './remoteUrl.js';
 import { showToast } from './toast.js';
 
@@ -15,10 +18,7 @@ let activeOverlay: HTMLElement | null = null;
 
 /** Close the dialog if open. */
 export function closeAddRemoteServerDialog(): void {
-  if (activeOverlay !== null) {
-    activeOverlay.remove();
-    activeOverlay = null;
-  }
+  if (activeOverlay !== null) { activeOverlay.remove(); activeOverlay = null; }
 }
 
 /** A friendly default label for a server origin (its host). */
@@ -41,6 +41,7 @@ export function openAddRemoteServerDialog(): void {
           <label className="add-remote-label" htmlFor="add-remote-url">Server URL</label>
           <input type="text" id="add-remote-url" className="add-remote-url" placeholder="https://host:4174" autocomplete="off" spellcheck={false} />
           <div className="add-remote-hint" aria-live="polite"></div>
+          <div className="add-remote-projects"></div>
           <div className="add-remote-cert-note settings-hint">
             The client certificate installed in your browser is presented on the secure connection.
             {' '}Don’t have one yet? Enroll a device on the server under Settings → Remote Access.
@@ -48,7 +49,7 @@ export function openAddRemoteServerDialog(): void {
         </div>
         <div className="worker-pool-controls">
           <button type="button" className="btn btn-sm add-remote-cancel">Cancel</button>
-          <button type="button" className="btn btn-sm add-remote-connect" disabled>Add server</button>
+          <button type="button" className="btn btn-sm add-remote-primary" disabled>Connect</button>
         </div>
       </div>
     </div>,
@@ -56,49 +57,142 @@ export function openAddRemoteServerDialog(): void {
 
   const input = overlay.querySelector('.add-remote-url');
   const hint = overlay.querySelector('.add-remote-hint');
-  const connectBtn = overlay.querySelector('.add-remote-connect');
-  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement) || !(connectBtn instanceof HTMLButtonElement)) return;
+  const projectsEl = overlay.querySelector('.add-remote-projects');
+  const primaryBtn = overlay.querySelector('.add-remote-primary');
+  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement) || !(projectsEl instanceof HTMLElement) || !(primaryBtn instanceof HTMLButtonElement)) return;
 
-  /** Validate the current input; returns the normalized origin when valid. */
+  // 'url' = entering/validating a URL (primary = Connect); 'projects' = a project
+  // list is shown (primary = Mount selected).
+  let phase: 'url' | 'projects' = 'url';
+  let currentOrigin = '';
+
+  const setHint = (text: string, warn = false): void => {
+    hint.textContent = text;
+    hint.classList.toggle('add-remote-hint-warn', warn);
+  };
+
+  /** Validate the URL input (phase 'url'); returns the normalized origin or null. */
   const validate = (): string | null => {
     const result = normalizeServerUrl(input.value);
     if (!result.ok) {
-      hint.textContent = input.value.trim() === '' ? '' : result.error;
-      hint.classList.remove('add-remote-hint-warn');
-      connectBtn.disabled = true;
+      setHint(input.value.trim() === '' ? '' : result.error);
+      primaryBtn.disabled = true;
       return null;
     }
-    // A non-loopback http:// origin is a likely mistake (a remote server is mTLS).
     if (result.origin.startsWith('http://') && !isLoopbackOrigin(result.origin)) {
-      hint.textContent = `A remote server should be https. Using ${result.origin}?`;
-      hint.classList.add('add-remote-hint-warn');
+      setHint(`A remote server should be https. Using ${result.origin}?`, true);
     } else {
-      hint.textContent = result.origin;
-      hint.classList.remove('add-remote-hint-warn');
+      setHint(result.origin);
     }
-    connectBtn.disabled = false;
+    primaryBtn.disabled = false;
     return result.origin;
   };
 
-  const submit = async (): Promise<void> => {
+  const backToUrlPhase = (): void => {
+    phase = 'url';
+    projectsEl.replaceChildren();
+    primaryBtn.textContent = 'Connect';
+    input.disabled = false;
+    validate();
+  };
+
+  /** Enumerate the server's projects and switch to the multi-select phase. */
+  const connect = async (): Promise<void> => {
     const origin = validate();
     if (origin === null) return;
-    connectBtn.disabled = true;
+    currentOrigin = origin;
+    primaryBtn.disabled = true;
+    setHint(`Connecting to ${origin}…`);
+    let projects: RemoteProject[];
     try {
-      await addRemoteServer(origin, labelForOrigin(origin));
-      await refreshProjectTabs();
-      closeAddRemoteServerDialog();
-      showToast(`Added remote server ${labelForOrigin(origin)}. Select its projects to mount.`, { variant: 'success' });
+      projects = await fetchRemoteProjects(origin);
     } catch (e) {
-      hint.textContent = `Couldn’t save: ${e instanceof Error ? e.message : String(e)}`;
-      hint.classList.add('add-remote-hint-warn');
-      connectBtn.disabled = false;
+      // Enumeration failed — let the user add the server anyway (enumerate later).
+      setHint(`Couldn’t list projects: ${e instanceof Error ? e.message : String(e)}`, true);
+      projectsEl.replaceChildren(toElement(
+        <div className="add-remote-enum-fail settings-hint">
+          Make sure the server is reachable and your client certificate is installed. You can add the server now and mount its projects later.
+        </div>,
+      ));
+      primaryBtn.textContent = 'Add server anyway';
+      primaryBtn.disabled = false;
+      phase = 'url'; // primary now just persists the server (no projects)
+      return;
+    }
+    if (projects.length === 0) {
+      setHint('The server has no projects to mount.', true);
+      primaryBtn.textContent = 'Add server anyway';
+      primaryBtn.disabled = false;
+      phase = 'url';
+      return;
+    }
+    // Render the multi-select list (all checked by default).
+    setHint(`${String(projects.length)} project${projects.length === 1 ? '' : 's'} available:`);
+    projectsEl.replaceChildren(toElement(
+      <div className="add-remote-project-list">
+        {projects.map(p => (
+          <label className="add-remote-project-row">
+            <input type="checkbox" className="add-remote-project-cb" data-secret={p.secret} data-name={p.name} checked />
+            <span className="add-remote-project-name">{p.name}</span>
+          </label>
+        ))}
+      </div>,
+    ));
+    phase = 'projects';
+    input.disabled = true;
+    primaryBtn.textContent = 'Mount selected';
+    primaryBtn.disabled = false;
+  };
+
+  const selectedProjects = (): RemoteProject[] => {
+    const out: RemoteProject[] = [];
+    for (const cb of projectsEl.querySelectorAll('.add-remote-project-cb')) {
+      if (cb instanceof HTMLInputElement && cb.checked) {
+        out.push({ secret: cb.dataset.secret ?? '', name: cb.dataset.name ?? '' });
+      }
+    }
+    return out;
+  };
+
+  const finish = async (msg: string): Promise<void> => {
+    await refreshProjectTabs();
+    closeAddRemoteServerDialog();
+    showToast(msg, { variant: 'success' });
+  };
+
+  /** Primary-button action, dispatched by phase. */
+  const onPrimary = async (): Promise<void> => {
+    if (phase === 'url') {
+      // Either "Connect" (enumerate) or, after an enum failure, "Add server anyway".
+      if (primaryBtn.textContent === 'Connect') { await connect(); return; }
+      const origin = validate();
+      if (origin === null) return;
+      primaryBtn.disabled = true;
+      try {
+        await addRemoteServer(origin, labelForOrigin(origin));
+        await finish(`Added ${labelForOrigin(origin)}. Mount its projects from the tab menu.`);
+      } catch (e) {
+        setHint(`Couldn’t save: ${e instanceof Error ? e.message : String(e)}`, true);
+        primaryBtn.disabled = false;
+      }
+      return;
+    }
+    // phase === 'projects' — mount the selected projects.
+    const selected = selectedProjects();
+    if (selected.length === 0) { setHint('Select at least one project to mount.', true); return; }
+    primaryBtn.disabled = true;
+    try {
+      await mountRemoteProjects(currentOrigin, labelForOrigin(currentOrigin), selected);
+      await finish(`Mounted ${String(selected.length)} project${selected.length === 1 ? '' : 's'} from ${labelForOrigin(currentOrigin)}.`);
+    } catch (e) {
+      setHint(`Couldn’t mount: ${e instanceof Error ? e.message : String(e)}`, true);
+      primaryBtn.disabled = false;
     }
   };
 
-  input.addEventListener('input', () => validate());
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') void submit(); });
-  connectBtn.addEventListener('click', () => void submit());
+  input.addEventListener('input', () => { if (phase === 'projects') backToUrlPhase(); else validate(); });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') void onPrimary(); });
+  primaryBtn.addEventListener('click', () => void onPrimary());
   overlay.querySelector('.add-remote-cancel')?.addEventListener('click', closeAddRemoteServerDialog);
   overlay.querySelector('.worker-pool-close')?.addEventListener('click', closeAddRemoteServerDialog);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAddRemoteServerDialog(); });
