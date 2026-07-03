@@ -11126,6 +11126,35 @@ label.detail-details-label {
 
 .worker-pool-body { padding: 8px 16px; overflow-y: auto; flex: 1; }
 
+// HS-9303 — "Add remote server" dialog (reuses the worker-pool overlay chrome).
+.add-remote-dialog { width: min(480px, 92vw); }
+.add-remote-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+}
+.add-remote-label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.add-remote-url {
+  width: 100%;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  &:focus { outline: none; border-color: var(--accent-color); }
+}
+.add-remote-hint {
+  min-height: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+  &.add-remote-hint-warn { color: var(--priority-high, #d08770); }
+}
+.add-remote-cert-note { margin-top: 6px; font-size: 11px; line-height: 1.4; }
+
 .worker-pool-empty, .worker-pool-error {
   color: var(--text-muted);
   padding: 16px 0;

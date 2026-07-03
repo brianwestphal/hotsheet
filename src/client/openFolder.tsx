@@ -168,12 +168,18 @@ export function bindOpenFolder() {
 
     const menu = toElement(
       <div className="tab-context-menu" id="toolbar-context-menu">
-        <div className="tab-context-item">{ICON_FOLDER_OPEN} Open Folder</div>
+        <div className="tab-context-item" data-action="open-folder">{ICON_FOLDER_OPEN} Open Folder</div>
+        {/* HS-9303 — add a remote Hot Sheet server (docs/112 §112.6). */}
+        <div className="tab-context-item" data-action="add-remote">{ICON_FOLDER_OPEN} Add Remote Server…</div>
       </div>
     );
-      menu.querySelector('.tab-context-item')!.addEventListener('click', () => {
+      menu.querySelector('[data-action="open-folder"]')!.addEventListener('click', () => {
         menu.remove();
         showOpenFolderDialog();
+      });
+      menu.querySelector('[data-action="add-remote"]')!.addEventListener('click', () => {
+        menu.remove();
+        void import('./addRemoteServerDialog.js').then(m => m.openAddRemoteServerDialog());
       });
       menu.style.left = `${(e as MouseEvent).clientX}px`;
       menu.style.top = `${(e as MouseEvent).clientY}px`;
