@@ -15,6 +15,7 @@ import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
 import { copyJsonToClipboard, newEntriesById, parsePastedEntries, readClipboardJsonOrPrompt } from './settingsClipboard.js';
+import { applySelectionClick, copyButtonLabel, emptySelection, idsToCopy, pruneSelection, type SelectionState } from './settingsCopySelection.js';
 import { restoreLastSettingsTab, setLastSettingsTab } from './settingsLastTab.js';
 import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
 import { loadScopedList, renderScopeListHint, saveScopedList } from './settingsScopeList.js';
@@ -529,6 +530,8 @@ let autoContextHidden: AutoContextEntry[] = [];
 let acScopeChangeHandler: (() => void) | null = null;
 /** Stable identity for an auto-context entry (per docs/95 §95.3 / file-settings idOf). */
 const acIdOf = (e: AutoContextEntry): string => `${e.type}:${e.key}`;
+// HS-9323 — which entries are selected for a "Copy Selected" (empty → Copy All).
+let autoContextSelection: SelectionState = emptySelection();
 
 /**
  * HS-9212 — the local-layer disabled (hidden) shared auto-context entries, each
@@ -633,6 +636,21 @@ export function bindAutoContextSettings() {
     }
   }
 
+  function autoContextOrderedIds(): string[] { return autoContextEntries.map(acIdOf); }
+
+  // HS-9323 — reflect the copy-selection: `.selected` on each real entry row +
+  // the Copy button label ("Copy All"/"Copy Selected"). Prunes ids that vanished
+  // (an entry deleted, or a scope switch changing the visible list).
+  function refreshAutoContextCopyUI(): void {
+    autoContextSelection = pruneSelection(autoContextSelection, autoContextOrderedIds());
+    for (const rowEl of list.querySelectorAll<HTMLElement>('.auto-context-entry[data-ac-id]')) {
+      const id = rowEl.getAttribute('data-ac-id');
+      rowEl.classList.toggle('selected', id !== null && autoContextSelection.selected.has(id));
+    }
+    const copyBtn = byIdOrNull('auto-context-copy-btn');
+    if (copyBtn !== null) copyBtn.textContent = copyButtonLabel(autoContextSelection);
+  }
+
   function renderEntries() {
     list.innerHTML = '';
     renderScopeListHint(list, autoContextMode);
@@ -679,6 +697,18 @@ export function bindAutoContextSettings() {
         </div>
       );
       paintRowScope(row.querySelector('.auto-context-scope-slot') as HTMLElement, entry);
+      // HS-9323 — click the header (not the textarea / delete / scope controls) to
+      // (multi-)select this entry for Copy. Cmd/Ctrl toggles, Shift ranges.
+      const acHeader = row.querySelector('.auto-context-header') as HTMLElement;
+      acHeader.classList.add('ac-selectable');
+      acHeader.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('button, a, input, textarea, .auto-context-scope-slot') !== null) return;
+        autoContextSelection = applySelectionClick(
+          autoContextSelection, autoContextOrderedIds(), acIdOf(entry),
+          { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey },
+        );
+        refreshAutoContextCopyUI();
+      });
       const textarea = row.querySelector('.auto-context-text') as HTMLTextAreaElement;
       let saveTimeout: ReturnType<typeof setTimeout> | null = null;
       textarea.addEventListener('input', () => {
@@ -767,6 +797,8 @@ export function bindAutoContextSettings() {
       });
       list.appendChild(row);
     }
+
+    refreshAutoContextCopyUI(); // HS-9323 — re-apply selection classes + Copy label
   }
 
   addBtn.addEventListener('click', () => {
@@ -778,7 +810,11 @@ export function bindAutoContextSettings() {
   // (adds entries not already present by `type:key`, keeps existing untouched),
   // writing to whichever layer the scope control is showing (shared/local).
   byIdOrNull('auto-context-copy-btn')?.addEventListener('click', () => {
-    void copyJsonToClipboard(autoContextEntries, 'Auto-context settings');
+    // HS-9323 — copy the SELECTED entries, or all when none are selected.
+    const wanted = new Set(idsToCopy(autoContextSelection, autoContextOrderedIds()));
+    const toCopy = autoContextEntries.filter(e => wanted.has(acIdOf(e)));
+    const label = autoContextSelection.selected.size === 0 ? 'Auto-context settings' : `${String(toCopy.length)} selected auto-context ${toCopy.length === 1 ? 'entry' : 'entries'}`;
+    void copyJsonToClipboard(toCopy, label);
   });
   byIdOrNull('auto-context-paste-btn')?.addEventListener('click', () => {
     void (async () => {
