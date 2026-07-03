@@ -19,23 +19,23 @@ const REPO_ROOT = join(import.meta.dirname, '..');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 /**
- * HS-8202 — restricted sandboxes block tsx's IPC unix-socket `listen`
- * (EPERM on `/tmp/.../tsx-501/<n>.pipe`), so spawning a tsx child EPERMs and
- * the readiness probe times out (30 s of red per case). Probe once and let
- * suites `describe.skipIf(!canSpawnTsxChild)` cleanly.
+ * HS-9315 — probe whether `node --import tsx <file>` can run a real `.ts` child
+ * here. `spawnHotSheet` uses the in-process `--import tsx` launcher (NOT the
+ * `.bin/tsx` / `npx tsx` launcher, which spawns the target as a grandchild and
+ * needs a tsx IPC unix-socket that restricted sandboxes deny — HS-8202 — AND
+ * eats signals: a SIGINT to the tracked PID hits the tsx parent, which exits 130
+ * instead of running cli.ts's clean-exit handler). `--import tsx` registers the
+ * loader in the SAME process, so there is no grandchild and no IPC socket — it
+ * works in the partial sandbox where the old `npx tsx` child-spawn EPERM'd.
  *
- * The probe must EXECUTE a real `.ts` file, not run `npx tsx --help`: tsx
- * prints its help text and exits WITHOUT ever creating the IPC server, so a
- * `--help` probe succeeds in exactly the partial sandbox that denies the
- * socket — a false positive that lets the guarded suites run and fail with
- * empty output / exit 130 / 15 s hangs. Running a throwaway file exercises
- * the same child-spawn + IPC machinery the real `tsx src/cli.ts` spawns use.
+ * The probe must EXECUTE a real `.ts` file (not `--help`): that exercises the
+ * exact loader-registration + module-execution path the real spawn uses.
  */
 export function probeCanSpawnTsxChild(): boolean {
   const probeFile = join(tmpdir(), `hotsheet-tsx-probe-${process.pid}.ts`);
   try {
     writeFileSync(probeFile, 'process.stdout.write("tsx-probe-ok");\n');
-    const out = execFileSync('npx', ['tsx', probeFile], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
+    const out = execFileSync(process.execPath, ['--import', 'tsx', probeFile], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
     return out.includes('tsx-probe-ok');
   } catch {
     return false;
@@ -94,16 +94,20 @@ export interface SpawnHotSheetOptions {
 }
 
 /**
- * Spawn `tsx src/cli.ts` as an isolated child. The local `node_modules/.bin/tsx`
- * binary is used directly (not `npx`) so the CLI is the child PID — `npx`
- * inserts a signal-proxying parent that makes back-to-back signals unreliable.
+ * Spawn `cli.ts` as an isolated child, IN-PROCESS via `node --import tsx` — NOT
+ * the `.bin/tsx` / `npx tsx` launcher. `tsx <file>` spawns the target as a
+ * grandchild, so a SIGINT sent to the tracked PID hits the tsx parent (which
+ * exits 130) instead of cli.ts's in-process signal handler — the clean-exit path
+ * and the "gracefulShutdown starting" stdout marker never happen (HS-9315).
+ * `--import tsx` registers the loader in THIS node process, so the tracked PID IS
+ * the cli.ts server (matches dev-mode `node --import tsx`), and signals + stdout
+ * flow directly.
  */
 export function spawnHotSheet(options: SpawnHotSheetOptions = {}): SpawnedHotSheet {
   const port = options.port ?? pickRandomPort();
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), 'hs-e2e-data-'));
   const homeDir = options.homeDir ?? mkdtempSync(join(tmpdir(), 'hs-e2e-home-'));
-  const tsxBin = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
-  const proc = spawn(tsxBin, [CLI_ENTRY, '--data-dir', dataDir, '--no-open', '--port', String(port)], {
+  const proc = spawn(process.execPath, ['--import', 'tsx', CLI_ENTRY, '--data-dir', dataDir, '--no-open', '--port', String(port)], {
     cwd: REPO_ROOT,
     env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false', ...options.extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],

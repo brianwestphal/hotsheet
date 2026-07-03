@@ -115,7 +115,12 @@ async function createTickets(port: number, secret: string, titles: string[]): Pr
 }
 
 async function setDebounce(port: number, secret: string, ms: number): Promise<void> {
-  const res = await patchJson(`http://localhost:${port}/api/file-settings`, { db_snapshot_debounce_ms: ms }, secret);
+  // Also drop the HS-9240 min-spacing throttle (default 60s between two
+  // debounce-driven snapshots) to a tiny value: these tests deliberately drive
+  // rapid successive snapshots to prove restore-source freshness, and the
+  // production throttle would block the SECOND snapshot for a full minute
+  // (HS-9315). Must be > 0 — `numericSetting` rejects 0 as unset.
+  const res = await patchJson(`http://localhost:${port}/api/file-settings`, { db_snapshot_debounce_ms: ms, db_snapshot_min_spacing_ms: 100 }, secret);
   if (!res.ok) throw new Error(`PATCH debounce failed: ${res.status}`);
 }
 
