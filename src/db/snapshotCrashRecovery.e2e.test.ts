@@ -200,11 +200,23 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
     await createTickets(child.port, secret, ['Old-1', 'Old-2']);
     await waitForSnapshotAfter(child.port, Date.now(), undefined, 12_000);
 
-    // Force a §7 backup tarball capturing the {Old-1, Old-2} state.
-    const backupRes = await postJson(`http://localhost:${child.port}/api/backups/now`, {}, secret);
-    expect(backupRes.ok).toBe(true);
-    const backupList = await (await fetch(`http://localhost:${child.port}/api/backups?project=${secret}`)).json() as { backups: unknown[] };
-    expect(backupList.backups.length).toBeGreaterThan(0); // a competing restore source exists
+    // Force a §7 backup tarball capturing the {Old-1, Old-2} state. HS-9315 — a
+    // concurrent auto-backup can be mid-flight (`createBackup` bails with
+    // `backupInProgress → null`, i.e. ok:false), so don't require THIS POST to
+    // win; retry until a backup tarball actually exists. The test only needs a
+    // competing, older restore source to be present — which one created it, or
+    // whether it captured this exact state, doesn't matter (the snapshot is
+    // strictly fresher regardless, which is the whole point of the assertion).
+    let backupCount = 0;
+    const backupDeadline = Date.now() + 15_000;
+    while (Date.now() < backupDeadline) {
+      await postJson(`http://localhost:${child.port}/api/backups/now`, {}, secret);
+      const list = await (await fetch(`http://localhost:${child.port}/api/backups?project=${secret}`)).json() as { backups: unknown[] };
+      backupCount = list.backups.length;
+      if (backupCount > 0) break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    expect(backupCount).toBeGreaterThan(0); // a competing restore source exists
 
     // Now write one MORE ticket + let the canonical snapshot capture it. The
     // snapshot is now strictly fresher than the backup tarball.
