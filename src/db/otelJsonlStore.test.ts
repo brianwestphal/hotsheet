@@ -8,6 +8,7 @@ import { createTempDir } from '../test-helpers.js';
 import {
   _resetOtelJsonlForTesting,
   appendOtelJsonl,
+  clearOtelJsonl,
   dayRange,
   jsonlFileDay,
   listOtelJsonlDays,
@@ -193,5 +194,23 @@ describe('sweepOtelJsonl', () => {
 
   it('is a no-op on a missing directory', async () => {
     expect(await sweepOtelJsonl(join0(dir, 'nope'), 7)).toBe(0);
+  });
+});
+
+describe('clearOtelJsonl (HS-9280)', () => {
+  it('deletes every otel-*-<day>.jsonl (all kinds/days), leaves other files, returns the count', async () => {
+    await fsp.mkdir(dir, { recursive: true });
+    for (const [kind, day] of [['events', '2026-07-10'], ['metrics', '2026-07-01'], ['spans', '2026-05-01']] as const) {
+      await fsp.writeFile(`${dir}/otel-${kind}-${day}.jsonl`, '{"x":1}\n', 'utf8');
+    }
+    await fsp.writeFile(`${dir}/freeze.log`, 'x', 'utf8'); // unrelated — must survive
+
+    const removed = await clearOtelJsonl(dir);
+    expect(removed).toBe(3);
+    expect(await fsp.readdir(dir)).toEqual(['freeze.log']);
+  });
+
+  it('is a no-op on a missing directory', async () => {
+    expect(await clearOtelJsonl(`${dir}/nope`)).toBe(0);
   });
 });

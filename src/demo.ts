@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { getDb } from './db/connection.js';
+import { markDailySeen, markHourlySeenPrompt, recordHourCost, updateDailyRollup } from './db/otelRollupIngest.js';
 import { getProjectSecret } from './secret-file.js';
 
 // --- Scenario definitions ---
@@ -772,14 +773,14 @@ const SCENARIO_12_PRIMARY_TERMINALS = [
 // --- Telemetry seeding (scenario 13, HS-8682) ---
 
 /**
- * HS-8682 — seed `otel_metrics` cost.usage rows for the §70 cross-project
- * stats demo. Inserts deterministic-but-varied cost rows into the shared
- * telemetry DB (per §67.6 the otel tables live in the default project's DB
- * keyed by `project_secret`). Targets ~30 days of trailing data per project
- * spread across 2-3 models and working-hour timestamps so the cost-over-time
- * chart + cost-by-project table + model donut + hourly heatmap all render
- * with meaningful data. Determinism is keyed off the project secret so the
- * same demo launch produces the same screenshot.
+ * HS-8682 / HS-9280 — seed the cost/token daily ROLLUPS for the §70 cross-project
+ * stats demo. The raw otel_* tables are gone, so this drives the same rollup-ingest
+ * path the live writers take (`updateDailyRollup` / `markDailySeen` / `recordHourCost`
+ * / `markHourlySeenPrompt`) with deterministic-but-varied cost rows, keyed by
+ * `project_secret`. Targets ~30 days of trailing data per project spread across 2-3
+ * models and working-hour timestamps so the cost-over-time chart + cost-by-project
+ * table + model donut + hourly heatmap all render with meaningful data. Determinism
+ * is keyed off the project secret so the same demo launch produces the same screenshot.
  *
  * `projectIndex` is a 0-based ordering hint that drives a per-project
  * intensity multiplier — index 0 is the busiest project in the rollup, so
@@ -852,38 +853,18 @@ async function seedDemoTelemetryRows(
       const inputTokens = Math.round(1500 + rand(counter * 29) * 18_500); // ~1.5k–20k
       const outputTokens = Math.round(300 + rand(counter * 31) * 4_700); // ~0.3k–5k
 
-      await db.query(
-        `INSERT INTO otel_metrics
-           (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
-         VALUES ($1::timestamptz, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
-        [
-          ts.toISOString(),
-          projectSecret,
-          sessionId,
-          'claude_code.cost.usage',
-          JSON.stringify({ model, 'query.source': querySource, 'session.id': sessionId }),
-          JSON.stringify({ asDouble: cost }),
-          'delta',
-          true,
-        ],
-      );
+      // HS-9280 — the raw otel_metrics table is gone; seed the daily/activity ROLLUP
+      // tables the §70/§71 dashboards read (same path ingest takes), so `--demo:13`
+      // populates without any raw rows.
+      const opts = { temporality: 'delta' as const, isMonotonic: true };
+      const costAttrs = { model, 'query.source': querySource, 'session.id': sessionId };
+      await updateDailyRollup(db, projectSecret, ts, 'claude_code.cost.usage', cost, costAttrs, opts);
+      await markDailySeen(db, projectSecret, ts, 'session', sessionId);
+      await recordHourCost(db, projectSecret, ts, cost); // heatmap cost band
+      await markHourlySeenPrompt(db, projectSecret, ts, sessionId); // heatmap prompt count
 
       for (const [type, count] of [['input', inputTokens], ['output', outputTokens]] as const) {
-        await db.query(
-          `INSERT INTO otel_metrics
-             (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
-           VALUES ($1::timestamptz, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
-          [
-            ts.toISOString(),
-            projectSecret,
-            sessionId,
-            'claude_code.token.usage',
-            JSON.stringify({ model, 'query.source': querySource, 'session.id': sessionId, type }),
-            JSON.stringify({ asInt: count }),
-            'delta',
-            true,
-          ],
-        );
+        await updateDailyRollup(db, projectSecret, ts, 'claude_code.token.usage', count, { ...costAttrs, type }, opts);
       }
     }
   }
@@ -1180,10 +1161,10 @@ export async function seedDemoExtraProjects(scenario: number, primaryDataDir: st
     }
   }
 
-  // HS-8682 — seed `otel_metrics` cost.usage rows once all 3 projects are
-  // registered + their telemetry flags set. All rows go into the primary's
-  // shared telemetry DB (per §67.6); each row carries its owning project's
-  // `project_secret` so the cross-project page's per-project aggregates work.
+  // HS-8682 / HS-9280 — seed the cost/token daily ROLLUPS once all 3 projects are
+  // registered + their telemetry flags set. All rows go into the primary's shared
+  // main DB (the rollup store); each carries its owning project's `project_secret`
+  // so the cross-project page's per-project aggregates work.
   if (scenario === 13) {
     const primarySecret = getProjectSecret(primaryDataDir); // HS-8999 — sidecar secret
     if (primarySecret !== '') {
