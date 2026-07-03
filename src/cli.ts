@@ -1,3 +1,5 @@
+import { takeCoverage } from 'node:v8';
+
 import type { PGlite } from '@electric-sql/pglite';
 import { execFile } from 'child_process';
 import { existsSync, mkdirSync, realpathSync } from 'fs';
@@ -592,6 +594,7 @@ function registerSignalHandlersEarly(): void {
       console.error(`[cli] graceful shutdown finished in ${String(Date.now() - startedAt)}ms — scheduling exit(0)`);
     },
     exit: (code) => {
+      flushV8CoverageIfEnabled(); // HS-9315 — deterministic e2e-coverage flush
       console.error(`[cli] process.exit(${String(code)})`);
       process.exit(code);
     },
@@ -600,6 +603,25 @@ function registerSignalHandlersEarly(): void {
   });
   process.on('SIGINT', () => { void handler('SIGINT'); });
   process.on('SIGTERM', () => { void handler('SIGTERM'); });
+}
+
+/**
+ * HS-9315 — force-flush V8 coverage to the `NODE_V8_COVERAGE` directory right
+ * before the process exits. `process.exit()`'s implicit flush is unreliable under
+ * a SIGTERM-driven shutdown in CI: the e2e half of the merged coverage report
+ * (`scripts/test-all.sh` reads the V8 profiles this server writes on exit)
+ * intermittently produced NO coverage, collapsing the merged number to unit-only
+ * and tripping the HS-9139 gate. An explicit `takeCoverage()` writes the profile
+ * deterministically. No-op unless coverage collection is enabled.
+ */
+export function flushV8CoverageIfEnabled(): void {
+  const dir = process.env.NODE_V8_COVERAGE;
+  if (dir === undefined || dir === '') return;
+  try {
+    takeCoverage();
+  } catch {
+    /* coverage not started / already written — best effort */
+  }
 }
 
 /** HS-8828 — swallow EPIPE on a writable std stream (broken pipe when the
