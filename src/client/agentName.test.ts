@@ -7,6 +7,7 @@ describe('agentDisplayName', () => {
   it('maps known CLI agents to their display name', () => {
     expect(agentDisplayName('codex')).toBe('Codex');
     expect(agentDisplayName('gemini')).toBe('Gemini');
+    expect(agentDisplayName('antigravity')).toBe('Antigravity'); // HS-9319
     expect(agentDisplayName('opencode')).toBe('OpenCode');
     expect(agentDisplayName('goose')).toBe('Goose');
   });

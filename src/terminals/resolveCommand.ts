@@ -18,11 +18,16 @@ const AI_TOKEN = '{{aiCommand}}';
 const PROJECT_DIR_TOKEN = '{{projectDir}}';
 const CLAUDE_BASE = 'claude';
 
-// HS-8009 (docs/113 §113.3) — the non-Claude CLI agents whose bare binary a
-// terminal launches when `ai_tool` selects them (the binary name == the tool id).
-// The channel/play loop for these is the ACP work (HS-9310); until then the
-// terminal just runs the tool's REPL.
-const CLI_AGENTS: ReadonlySet<string> = new Set(['codex', 'gemini', 'opencode', 'goose']);
+// HS-8009 (docs/113 §113.3) — the non-Claude CLI agents whose binary a terminal
+// launches when `ai_tool` selects them. For most the binary name == the tool id;
+// `AGENT_BINARIES` overrides that where they differ. The channel/play loop for
+// these is the drive work (HS-9310 spike proved Antigravity rides MCP like
+// Claude); until that lands the terminal just runs the tool's REPL.
+const CLI_AGENTS: ReadonlySet<string> = new Set(['codex', 'gemini', 'opencode', 'goose', 'antigravity']);
+
+// HS-9319 — tool id → executable name, for agents whose binary differs from the
+// `ai_tool` id. Antigravity's CLI is `agy`. Others fall through to id == binary.
+const AGENT_BINARIES: Readonly<Record<string, string>> = { antigravity: 'agy' };
 
 /** HS-8349 — build the development-channel command for a given project.
  *  The MCP server name is now per-project (`hotsheet-channel-<slug>`), so
@@ -117,8 +122,9 @@ function lookupConfig(options: ResolveOptions): TerminalConfig {
 function pickAiCommand(options: ResolveOptions): string {
   const tool = (options.aiToolOverride ?? readAiTool(options.dataDir)).trim().toLowerCase();
   if (!CLI_AGENTS.has(tool)) return pickClaudeCommand(options); // auto / claude / editor tools
+  const bin = AGENT_BINARIES[tool] ?? tool; // e.g. antigravity → agy; else id == binary
   const onPath = options.isAiToolOnPath ?? isExecutableOnPath;
-  if (onPath(tool)) return tool; // the binary name == the tool id
+  if (onPath(bin)) return bin;
   return (options.defaultShellOverride ?? defaultShell)();
 }
 

@@ -8,6 +8,7 @@ const DISPLAY_NAMES: Readonly<Record<string, string>> = {
   claude: 'Claude',
   codex: 'Codex',
   gemini: 'Gemini',
+  antigravity: 'Antigravity',
   opencode: 'OpenCode',
   goose: 'Goose',
   cursor: 'Cursor',

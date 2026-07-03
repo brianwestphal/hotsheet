@@ -724,6 +724,7 @@ pageRoutes.get('/', (c) => {
                   <option value="auto">Auto-detect (default)</option>
                   <option value="claude">Claude Code</option>
                   <option value="codex">Codex</option>
+                  <option value="antigravity">Antigravity</option>
                   <option value="gemini">Gemini CLI</option>
                   <option value="opencode">OpenCode</option>
                   <option value="goose">Goose</option>
@@ -731,7 +732,7 @@ pageRoutes.get('/', (c) => {
                   <option value="copilot">GitHub Copilot</option>
                   <option value="windsurf">Windsurf</option>
                 </select>
-                <span className="settings-hint">Which AI tool this project uses. <strong>Auto-detect</strong> keeps today's behavior (seed skills/instructions for every detected tool). Choosing a CLI agent (Claude / Codex / Gemini / OpenCode / Goose) makes a <code>{'{{aiCommand}}'}</code> terminal launch that tool. Editor tools (Cursor / Copilot / Windsurf) get rules + instructions only. Driving non-Claude agents through the play button / permission popup is coming (ACP — docs/113).</span>
+                <span className="settings-hint">Which AI tool this project uses. <strong>Auto-detect</strong> keeps today's behavior (seed skills/instructions for every detected tool). Choosing a CLI agent (Claude / Codex / Antigravity / Gemini / OpenCode / Goose) makes a <code>{'{{aiCommand}}'}</code> terminal launch that tool's binary (Antigravity → <code>agy</code>). Editor tools (Cursor / Copilot / Windsurf) get rules + instructions only. Driving non-Claude agents through the play button / permission popup is in progress — Antigravity rides the same MCP tools as Claude (HS-9310 spike proven; docs/113).</span>
               </div>
               {/* HS-8913 — install / update Hot Sheet's recommended AI-assistant
                   instruction sections in this project's CLAUDE.md. */}

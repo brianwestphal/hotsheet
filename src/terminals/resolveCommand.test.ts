@@ -74,6 +74,33 @@ describe('resolveTerminalCommand', () => {
     expect(command).toBe('/bin/fake-shell');
   });
 
+  // HS-9319 — Antigravity's binary is `agy`, not `antigravity`, so it exercises
+  // the tool-id → binary map (unlike codex/gemini where id == binary).
+  it('ai_tool=antigravity → launches the `agy` binary (tool id ≠ binary name)', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'antigravity' }),
+      isAiToolOnPath: (b) => b === 'agy',
+    });
+    expect(command).toBe('agy');
+  });
+
+  it('ai_tool=antigravity probes the `agy` binary on PATH, not the `antigravity` id', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'antigravity' }),
+      isAiToolOnPath: (b) => b === 'antigravity', // the id itself is NOT the binary
+      defaultShellOverride: () => '/bin/fake-shell',
+    });
+    expect(command).toBe('/bin/fake-shell');
+  });
+
+  it('ai_tool=antigravity resolves the {{aiCommand}} alias to `agy` too', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ terminal_command: '{{aiCommand}} --print', ai_tool: 'antigravity' }),
+      isAiToolOnPath: (b) => b === 'agy',
+    });
+    expect(command).toBe('agy --print');
+  });
+
   it('ai_tool=auto keeps today\'s Claude channel behavior', () => {
     const dataDir = dir({ ai_tool: 'auto' });
     const { command } = resolveTerminalCommand({
