@@ -97,6 +97,11 @@ console.log('  Total:', Object.keys(combined).length, 'files');
 
 echo ""
 echo "=== Coverage report ==="
+# HS-9149 — the excludes below are files that hold NO executable code and so
+# dilute the branch/function denominator with a meaningless 0%:
+#   - `*.test.*` / `test-helpers.ts` — test scaffolding, not product code.
+#   - the `types.ts` modules — pure `type`/`interface` declarations (erased at
+#     compile time; zero branches). `src/types.ts` + the three type-only siblings.
 npx nyc report \
   --temp-dir .nyc_output \
   --reporter text \
@@ -105,7 +110,10 @@ npx nyc report \
   --include 'src/**' \
   --exclude 'src/**/*.test.*' \
   --exclude 'src/test-helpers.ts' \
-  --exclude 'src/types.ts'
+  --exclude 'src/types.ts' \
+  --exclude 'src/plugins/types.ts' \
+  --exclude 'src/terminals/registry/types.ts' \
+  --exclude 'src/client/undo/types.ts'
 
 echo ""
 echo "HTML report: coverage/index.html"
@@ -127,6 +135,9 @@ if [ "${COVERAGE_GATE:-on}" != "off" ]; then
     --exclude 'src/**/*.test.*' \
     --exclude 'src/test-helpers.ts' \
     --exclude 'src/types.ts' \
+    --exclude 'src/plugins/types.ts' \
+    --exclude 'src/terminals/registry/types.ts' \
+    --exclude 'src/client/undo/types.ts' \
     --lines "${COVERAGE_MIN_LINES:-45}" \
     --statements "${COVERAGE_MIN_STATEMENTS:-45}" \
     --functions "${COVERAGE_MIN_FUNCTIONS:-45}" \
