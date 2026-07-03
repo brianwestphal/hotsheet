@@ -7,7 +7,7 @@ import { rmSync } from 'fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
-import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
+import { cleanupTestDb, createRawOtelTables, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDataDir, getDb, getDbForDir, getRollupDb, getTelemetryDb, runWithDataDir, telemetryClusterDataDir } from './connection.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
@@ -59,15 +59,11 @@ async function insertCostMetric(opts: {
   temporality?: 'delta' | 'cumulative';
   isMonotonic?: boolean;
 }): Promise<void> {
-  const db = await getTelemetryDb();
+  // HS-9280 — raw otel_metrics is gone; seed the rollup + JSONL sources the reads
+  // now consume (this helper already mirrored ingest into them).
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   if (opts.source !== undefined) attrs['query.source'] = opts.source;
-  await db.query(
-    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
-    [opts.ts, opts.projectSecret, 'session-1', 'claude_code.cost.usage', JSON.stringify(attrs), JSON.stringify({ asDouble: opts.cost }), opts.temporality ?? null, opts.isMonotonic ?? null],
-  );
   // HS-9235 — mirror ingest's rollup dual-write so the repointed reads (which now
   // read the rollup tables in the main db) see the seeded data. `mainDb` resolves
   // to the same context the read will use, so per-project isolation is preserved.
@@ -97,15 +93,10 @@ async function insertTokenMetric(opts: {
   temporality?: 'delta' | 'cumulative';
   isMonotonic?: boolean;
 }): Promise<void> {
-  const db = await getTelemetryDb();
+  // HS-9280 — raw gone; seed the rollup + JSONL sources only.
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
   if (opts.type !== undefined) attrs.type = opts.type;
-  await db.query(
-    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)`,
-    [opts.ts, opts.projectSecret, 'session-1', 'claude_code.token.usage', JSON.stringify(attrs), JSON.stringify({ asInt: opts.tokens }), opts.temporality ?? null, opts.isMonotonic ?? null],
-  );
   // HS-9235 — dual-write the daily rollup (mirrors ingest).
   const mainDb = await getRollupDb();
   await updateDailyRollup(mainDb, opts.projectSecret, opts.ts, 'claude_code.token.usage', opts.tokens, attrs, { temporality: opts.temporality ?? null, isMonotonic: opts.isMonotonic ?? null });
@@ -124,14 +115,9 @@ async function insertPromptEvent(opts: {
   promptId: string;
   model?: string;
 }): Promise<void> {
-  const db = await getTelemetryDb();
+  // HS-9280 — raw otel_events is gone; seed JSONL + the dedup rollups only.
   const attrs: Record<string, unknown> = {};
   if (opts.model !== undefined) attrs.model = opts.model;
-  await db.query(
-    `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-    [opts.ts, opts.projectSecret, 'session-1', opts.promptId, 'claude_code.user_prompt', JSON.stringify(attrs), JSON.stringify({})],
-  );
   // HS-9235 — mark this prompt seen (mirrors ingest; every event with a prompt_id).
   await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
   // HS-9278 — getRecentPrompts now reads the JSONL store, so mirror ingest's
@@ -151,14 +137,9 @@ async function insertToolResultEvent(opts: {
   toolName: string;
   durationMs?: number;
 }): Promise<void> {
-  const db = await getTelemetryDb();
+  // HS-9280 — raw otel_events is gone; seed JSONL + the activity rollup only.
   const attrs: Record<string, unknown> = { tool_name: opts.toolName };
   if (opts.durationMs !== undefined) attrs.duration_ms = opts.durationMs;
-  await db.query(
-    `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-    [opts.ts, opts.projectSecret, 'session-1', 'prompt-1', 'claude_code.tool_result', JSON.stringify(attrs), JSON.stringify({})],
-  );
   // HS-9235 — mark this prompt seen (mirrors ingest; counts distinct prompt_id
   // across ALL event names, so a tool_result's prompt_id counts like any other).
   await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', 'prompt-1');
@@ -284,16 +265,9 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // stamps `session.id` on each cost.usage data-point's attributes.
     it('falls back to distinct session count when no event has a prompt_id (HS-8639)', async () => {
       const now = new Date();
-      const db = await getTelemetryDb();
       const mainDb = await getRollupDb();
       for (const sid of ['sess-1', 'sess-1', 'sess-2']) {
-        await db.query(
-          `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-          [now, SECRET_A, null, 'claude_code.cost.usage', JSON.stringify({ 'session.id': sid }), JSON.stringify({ asDouble: 1 })],
-        );
-        // HS-9235 — this test seeds raw directly (bypassing the dual-writing
-        // helper), so mark the session seen + roll up the cost as ingest would.
+        // HS-9280 — raw gone; roll up the cost + mark the session seen as ingest would.
         await updateDailyRollup(mainDb, SECRET_A, now, 'claude_code.cost.usage', 1, { 'session.id': sid }, { temporality: null, isMonotonic: null });
         await markDailySeen(mainDb, SECRET_A, now, 'session', sid);
       }
@@ -329,20 +303,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // event_name, distinct ticket markers, and api_request attribute keys.
     it('surfaces marker presence + api_request attribute keys (HS-8537)', async () => {
       const now = new Date();
-      const db = await getTelemetryDb();
-      // A user_prompt event whose body carries the ticket marker (the shape the
-      // rollup keys on) + an api_request event carrying cost / token attrs.
-      await db.query(
-        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-        [now, SECRET_A, 'session-1', 'pm', 'user_prompt', '{}', JSON.stringify({ body: '<!-- hotsheet:ticket=HS-42 --> do it' })],
-      );
-      await db.query(
-        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-        [now, SECRET_A, 'session-1', 'pm', 'api_request', JSON.stringify({ cost: 0.5, tokens: 100, model: 'opus' }), '{}'],
-      );
-      // HS-9278 — getTelemetryDebugInfo reads events from the JSONL store.
+      // HS-9280 — raw gone; seed the JSONL store the reads now consume: a user_prompt
+      // whose body carries the ticket marker + an api_request with cost/token attrs.
       const clusterDir = telemetryClusterDataDir(getDataDir());
       await appendOtelJsonl(clusterDir, 'events', now, {
         ts: now.toISOString(), project_secret: SECRET_A, session_id: 'session-1',
@@ -487,14 +449,8 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
     // HS-8779 — each prompt is enriched with model / token / cost / duration /
     // tool aggregates joined from its api_request + tool_result events.
     it('enriches a prompt with model, token, cost, duration, and tool aggregates', async () => {
-      const db = await getTelemetryDb();
       const insert = async (ts: Date, eventName: string, attrs: Record<string, unknown>): Promise<void> => {
-        await db.query(
-          `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
-          [ts, SECRET_A, 'session-1', 'pA', eventName, JSON.stringify(attrs), JSON.stringify({})],
-        );
-        // HS-9278 — getRecentPrompts reads JSONL; dual-write into the ambient cluster.
+        // HS-9280 — raw gone; getRecentPrompts reads the JSONL store.
         await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', ts, {
           ts: ts.toISOString(), project_secret: SECRET_A, session_id: 'session-1',
           prompt_id: 'pA', event_name: eventName, attributes_json: attrs, body_json: {},
@@ -601,15 +557,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       attrs?: Record<string, unknown>;
       body?: Record<string, unknown>;
     }): Promise<void> {
-      const db = await getTelemetryDb();
-      await db.query(
-        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName, JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
-      );
-      // HS-9278 — getPromptTimeline now reads the JSONL store, not otel_events.
-      // Mirror ingest's dual-write into the ambient cluster dir (getDataDir()),
-      // matching where the test's `getTelemetryDb()` inserts resolve.
+      // HS-9280 — raw gone; getPromptTimeline reads the JSONL store.
       await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
         ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
         prompt_id: opts.promptId, event_name: opts.eventName, attributes_json: opts.attrs ?? {}, body_json: opts.body ?? {},
@@ -658,13 +606,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
         endTs: Date;
         spanName: string;
       }): Promise<void> {
-        const db = await getTelemetryDb();
-        await db.query(
-          `INSERT INTO otel_spans (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)`,
-          [opts.traceId, opts.spanId, opts.parentSpanId, SECRET_A, 'session-1', opts.promptId, opts.spanName, opts.startTs, opts.endTs, JSON.stringify({}), 'OK'],
-        );
-        // HS-9278 — getPromptTimeline reads spans from the JSONL store now.
+        // HS-9280 — raw gone; getPromptTimeline reads spans from the JSONL store.
         await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'spans', opts.startTs, {
           trace_id: opts.traceId, span_id: opts.spanId, parent_span_id: opts.parentSpanId,
           project_secret: SECRET_A, session_id: 'session-1', prompt_id: opts.promptId,
@@ -788,6 +730,10 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       body?: Record<string, unknown>;
     }): Promise<void> {
       const db = await getTelemetryDb();
+      // HS-9280 — these getPerTicketRollup tests seed raw events + run the raw-reading
+      // backfill (the migration path). `initSchema` no longer creates the raw table, so
+      // create it here for the backfill to read.
+      await createRawOtelTables(db);
       await db.query(
         `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
@@ -1599,7 +1545,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
   // project's secret across all three otel tables, leaving other projects'
   // rows intact. Scoped delete on the single shared store.
   describe('clearProjectTelemetry (HS-8606)', () => {
-    it('deletes only the given project\'s rows across metrics + events + spans', async () => {
+    it('clears only the given project\'s telemetry (rollups + JSONL), leaving others intact', async () => {
       const now = new Date();
       // SECRET_A: one of each row type.
       await insertCostMetric({ ts: now, projectSecret: SECRET_A, model: 'sonnet', cost: 0.5 });
@@ -1609,9 +1555,12 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertCostMetric({ ts: now, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'pB' });
 
+      // HS-9280 — the raw otel_* tables are gone; `clearProjectTelemetry` now clears
+      // the rollup tables + the JSONL store (+ announcer_usage). `deleted` counts the
+      // remaining DB rows (announcer_usage) — 0 here — so verify the clear FUNCTIONALLY
+      // via the reads (which come off the now-cleared rollups).
       const result = await clearProjectTelemetry(SECRET_A);
-      // 1 metric + 2 events (prompt + tool_result) for A.
-      expect(result.deleted).toBe(3);
+      expect(result.deleted).toBe(0);
 
       // A is gone; B is untouched.
       const aTotals = await getWindowTotals(SECRET_A, null);
@@ -1655,19 +1604,12 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       attrs?: Record<string, unknown>;
       body?: Record<string, unknown>;
     }): Promise<void> {
-      const db = await getTelemetryDb();
-      await db.query(
-        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-        [opts.ts, opts.projectSecret, 'session-1', opts.promptId, opts.eventName,
-          JSON.stringify(opts.attrs ?? {}), JSON.stringify(opts.body ?? {})],
-      );
+      // HS-9280 — raw gone; seed the JSONL + rollup sources every read now consumes.
       // HS-9235 — mirror ingest: any event with a prompt_id marks the daily
       // dedup set, so the seen-based promptCount reads (getWindowTotals /
       // getCostByProject) see bare-named events too.
       await markDailySeen(await getRollupDb(), opts.projectSecret, opts.ts, 'prompt', opts.promptId);
-      // HS-9278 — getPromptTimeline / getRecentPrompts / getTelemetryDebugInfo read
-      // the JSONL store now (the raw insert above still feeds getToolLatencyHistogram).
+      // HS-9278 — getPromptTimeline / getRecentPrompts / getTelemetryDebugInfo read the JSONL store.
       await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', opts.ts, {
         ts: opts.ts.toISOString(), project_secret: opts.projectSecret, session_id: 'session-1',
         prompt_id: opts.promptId, event_name: opts.eventName, attributes_json: opts.attrs ?? {}, body_json: opts.body ?? {},
@@ -1719,23 +1661,25 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
 
     it('getPerTicketRollup attributes bare-named user_prompt + api_request events', async () => {
       const now = new Date();
-      await insertRawEvent({
-        ts: now,
-        projectSecret: SECRET_A,
-        promptId: 'p-ticket',
-        eventName: 'user_prompt',
-        body: { body: '<!-- hotsheet:ticket=HS-9001 --> do the thing' },
-      });
-      await insertRawEvent({
-        ts: new Date(now.getTime() + 1000),
-        projectSecret: SECRET_A,
-        promptId: 'p-ticket',
-        eventName: 'api_request',
-        attrs: { cost: 0.4, tokens: 1500 },
-      });
+      // HS-9280 — this exercises the raw-reading per-ticket BACKFILL (the migration
+      // path), so seed raw directly (initSchema no longer creates the table) then run
+      // the backfill. (The other bare-name tests read rollups/JSONL, which
+      // `insertRawEvent` seeds.)
+      const db = await getTelemetryDb();
+      await createRawOtelTables(db);
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [now, SECRET_A, 'session-1', 'p-ticket', 'user_prompt', '{}', JSON.stringify({ body: '<!-- hotsheet:ticket=HS-9001 --> do the thing' })],
+      );
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [new Date(now.getTime() + 1000), SECRET_A, 'session-1', 'p-ticket', 'api_request', JSON.stringify({ cost: 0.4, tokens: 1500 }), '{}'],
+      );
       // HS-9257 — recompute the per-ticket rollup from raw (production backfill
       // path), then read it under the project's secret.
-      await backfillTicketsForDir('', await getTelemetryDb(), await getRollupDb(), SECRET_A);
+      await backfillTicketsForDir('', db, await getRollupDb(), SECRET_A);
       const rollup = await getPerTicketRollup('HS-9001', SECRET_A);
       expect(rollup.promptCount).toBe(1);
       expect(rollup.totalCost).toBeCloseTo(0.4);
