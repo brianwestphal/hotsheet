@@ -1,5 +1,10 @@
+import './markdownSetup.js'; // side-effecting: switches `marked` into escape-raw-HTML mode
+
+import { marked } from 'marked';
+
 import type { GitStatusFiles, GitStatusWithFiles, PendingCommit, RecentCommitsRes } from '../api/git.js';
 import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
+import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
 import { openWorktreesPanel } from './worktreesPanel.js';
@@ -207,13 +212,6 @@ function stillMounted(el: HTMLElement): boolean {
   return el.isConnected;
 }
 
-/** Pure: the first up-to-3 non-blank lines of a commit body, joined with `\n`.
- *  Empty string when the body has no content beyond the subject. Exported for
- *  tests (HS-8472). */
-export function commitBodyPreview(body: string): string {
-  return body.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '').slice(0, 3).join('\n');
-}
-
 /**
  * HS-8472 — fill the pending-commits placeholder: list each unpushed commit
  * (short hash + subject + up to 3 body lines) and, when Glassbox is installed,
@@ -260,10 +258,13 @@ async function mountPendingCommits(container: HTMLElement, upstream: string): Pr
   container.replaceChildren(section);
 }
 
-function commitRow(c: PendingCommit, glassboxAvailable: boolean): HTMLElement {
-  const bodyPreview = commitBodyPreview(c.body);
+/** One commit row: hash + subject + (when Glassbox is installed) a Review link, and
+ *  a click-to-expand body — collapsed to 2 lines, expanded to the full body as
+ *  markdown (HS-9296). Exported for tests. */
+export function commitRow(c: PendingCommit, glassboxAvailable: boolean): HTMLElement {
+  const hasBody = c.body.trim() !== '';
   const row = toElement(
-    <div className="git-popover-commit">
+    <div className={`git-popover-commit${hasBody ? ' git-popover-commit-expandable' : ''}`}>
       <div className="git-popover-commit-main">
         <code className="git-popover-commit-hash" title={c.hash}>{c.shortHash}</code>
         <span className="git-popover-commit-subject" title={c.subject}>{c.subject}</span>
@@ -271,12 +272,41 @@ function commitRow(c: PendingCommit, glassboxAvailable: boolean): HTMLElement {
           ? <button className="git-popover-commit-review" type="button" title="Review this commit in Glassbox">Review</button>
           : null}
       </div>
-      {bodyPreview !== '' ? <div className="git-popover-commit-body">{bodyPreview}</div> : null}
+      {/* HS-9296 — collapsed body clamps to 2 lines (CSS); click the commit to expand
+          it to the full body rendered as markdown. */}
+      {hasBody ? <div className="git-popover-commit-body is-clamped">{c.body}</div> : null}
     </div>
   );
   if (glassboxAvailable) {
-    row.querySelector<HTMLButtonElement>('.git-popover-commit-review')!.addEventListener('click', () => {
+    row.querySelector<HTMLButtonElement>('.git-popover-commit-review')!.addEventListener('click', (e) => {
+      e.stopPropagation(); // reviewing must not toggle the body expansion
       void launchGlassboxReview({ mode: 'commit', sha: c.hash });
+    });
+  }
+  if (hasBody) {
+    const bodyEl = row.querySelector<HTMLElement>('.git-popover-commit-body')!;
+    let expanded = false;
+    let renderedMd: HTMLElement | null = null; // parse markdown lazily, once
+    row.addEventListener('click', () => {
+      expanded = !expanded;
+      row.classList.toggle('is-expanded', expanded);
+      bodyEl.classList.toggle('is-clamped', !expanded);
+      if (expanded) {
+        if (renderedMd === null) {
+          const html = marked.parse(c.body, { async: false });
+          renderedMd = toElement(
+            <div className="git-popover-commit-body-md">
+              {
+                // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from marked.parse (markdownSetup escapes raw HTML)
+                raw(html)
+              }
+            </div>
+          );
+        }
+        bodyEl.replaceChildren(renderedMd);
+      } else {
+        bodyEl.replaceChildren(c.body); // plain text, re-clamped
+      }
     });
   }
   return row;

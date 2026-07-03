@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getGlassboxStatus, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
-import { buildAheadBehindLine, buildBranchLine, commitBodyPreview, paintPopover } from './gitStatusPopover.js';
+import { buildAheadBehindLine, buildBranchLine, commitRow, paintPopover } from './gitStatusPopover.js';
 
 // HS-9205 / HS-8860 — mock the typed API so the file-row click flow and the
 // recent-commits pager can be exercised in happy-dom. vitest hoists `vi.mock`
@@ -232,17 +232,48 @@ describe('recent commits section + "Show more" pager (HS-8860)', () => {
   });
 });
 
-describe('commitBodyPreview (HS-8472)', () => {
-  it('keeps up to the first 3 non-blank lines', () => {
-    expect(commitBodyPreview('line1\nline2\nline3\nline4')).toBe('line1\nline2\nline3');
+describe('commitRow — click-to-expand body (HS-9296)', () => {
+  const commit = (body: string) => ({ hash: 'abc123def', shortHash: 'abc123d', subject: 'Do the thing', body });
+
+  it('collapses the body to 2 lines by default (is-clamped), and shows plain text', () => {
+    const row = commitRow(commit('first body line\nsecond line\nthird line'), false);
+    const bodyEl = row.querySelector('.git-popover-commit-body')!;
+    expect(bodyEl.classList.contains('is-clamped')).toBe(true);
+    expect(row.classList.contains('git-popover-commit-expandable')).toBe(true);
+    expect(bodyEl.textContent).toBe('first body line\nsecond line\nthird line'); // full text present, CSS clamps
+    expect(bodyEl.querySelector('.git-popover-commit-body-md')).toBeNull();
   });
 
-  it('drops blank lines before capping', () => {
-    expect(commitBodyPreview('a\n\n\nb\n\nc\nd')).toBe('a\nb\nc');
+  it('clicking expands to the full body rendered as markdown, then collapses again', () => {
+    const row = commitRow(commit('# Heading\n\n- bullet one\n- bullet two'), false);
+    const bodyEl = row.querySelector<HTMLElement>('.git-popover-commit-body')!;
+
+    row.dispatchEvent(new Event('click', { bubbles: true }));
+    expect(row.classList.contains('is-expanded')).toBe(true);
+    expect(bodyEl.classList.contains('is-clamped')).toBe(false);
+    const md = bodyEl.querySelector('.git-popover-commit-body-md')!;
+    expect(md.querySelector('h1')?.textContent).toBe('Heading');
+    expect(md.querySelectorAll('li')).toHaveLength(2);
+
+    row.dispatchEvent(new Event('click', { bubbles: true }));
+    expect(row.classList.contains('is-expanded')).toBe(false);
+    expect(bodyEl.classList.contains('is-clamped')).toBe(true);
+    expect(bodyEl.querySelector('.git-popover-commit-body-md')).toBeNull(); // back to plain text
+    expect(bodyEl.textContent).toBe('# Heading\n\n- bullet one\n- bullet two');
   });
 
-  it('returns an empty string for an empty / whitespace-only body', () => {
-    expect(commitBodyPreview('')).toBe('');
-    expect(commitBodyPreview('   \n  \n')).toBe('');
+  it('a bodyless commit is not expandable', () => {
+    const row = commitRow(commit('   \n  '), false);
+    expect(row.classList.contains('git-popover-commit-expandable')).toBe(false);
+    expect(row.querySelector('.git-popover-commit-body')).toBeNull();
+    expect(() => row.dispatchEvent(new Event('click', { bubbles: true }))).not.toThrow();
+  });
+
+  it('clicking the Glassbox Review link does not toggle the body', () => {
+    const row = commitRow(commit('some body'), true);
+    const bodyEl = row.querySelector<HTMLElement>('.git-popover-commit-body')!;
+    row.querySelector<HTMLButtonElement>('.git-popover-commit-review')!.dispatchEvent(new Event('click', { bubbles: true }));
+    expect(row.classList.contains('is-expanded')).toBe(false);
+    expect(bodyEl.classList.contains('is-clamped')).toBe(true);
   });
 });

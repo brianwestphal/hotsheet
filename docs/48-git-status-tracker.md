@@ -149,13 +149,13 @@ The popover is non-modal (per the §12.10 popup pattern). The popover is read-on
 
 ### 48.4.3 Pending (unpushed) commits + Glassbox links (HS-8472)
 
-When the branch is **ahead** of its upstream, the popover renders a **Pending commits** section between the ahead/behind line and the working-tree buckets, listing each unpushed commit (`<upstream>..HEAD`, newest first) — short hash + subject, with up to the first 3 non-blank body lines beneath. Backed by `GET /api/git/pending-commits` → `{ commits: {hash, shortHash, subject, body}[], truncated }` (`getPendingCommits` + pure `parsePendingCommits` over `git log @{u}..HEAD --no-merges --pretty=format:%H\x1f%h\x1f%s\x1f%b\x1e`, capped at 50). Fetched on popover-open only (one extra shell-out per click), gated on `ahead > 0` + an upstream.
+When the branch is **ahead** of its upstream, the popover renders a **Pending commits** section between the ahead/behind line and the working-tree buckets, listing each unpushed commit (`<upstream>..HEAD`, newest first) — short hash + subject, with the commit body beneath. **HS-9296 — the body is collapsed to 2 lines by default (CSS `-webkit-line-clamp`); clicking the commit toggles it open to the FULL body rendered as Markdown** (via `marked`, sharing the notes' escape-raw-HTML `markdownSetup`), and clicking again re-collapses. A commit with no body isn't expandable; the Glassbox **Review** link `stopPropagation`s so reviewing never toggles the body. Backed by `GET /api/git/pending-commits` → `{ commits: {hash, shortHash, subject, body}[], truncated }` (`getPendingCommits` + pure `parsePendingCommits` over `git log @{u}..HEAD --no-merges --pretty=format:%H\x1f%h\x1f%s\x1f%b\x1e`, capped at 50). Fetched on popover-open only (one extra shell-out per click), gated on `ahead > 0` + an upstream.
 
 When the **Glassbox** CLI is installed (`getGlassboxStatus`), each commit row gets a **Review** button and the section ends with an **"Open all pending changes in Glassbox"** button:
 - per-commit → `POST /api/glassbox/review { mode: 'commit', sha }` → `glassbox --commit <sha>`;
 - review-all → `POST /api/glassbox/review { mode: 'range', from: <upstream>, to: 'HEAD' }` → `glassbox --range <upstream>..HEAD`.
 
-The server maps these via the pure, validated `buildGlassboxReviewArgs` (sha must be 7–40 hex; refs must start with a word char so a flag-like value can't reach `git` as an option) before spawning the resolved `glassbox` binary detached in the project root (same resolve/PATH path as the toolbar Glassbox button). The pure body-preview helper is `gitStatusPopover.tsx::commitBodyPreview`.
+The server maps these via the pure, validated `buildGlassboxReviewArgs` (sha must be 7–40 hex; refs must start with a word char so a flag-like value can't reach `git` as an option) before spawning the resolved `glassbox` binary detached in the project root (same resolve/PATH path as the toolbar Glassbox button). The per-commit renderer is `gitStatusPopover.tsx::commitRow` (shared by the Pending + Recent sections; HS-9296 added the 2-line-collapse + click-to-expand-Markdown body).
 
 ### 48.4.3 Polling
 

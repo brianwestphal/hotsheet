@@ -11364,6 +11364,37 @@ label.detail-details-label {
   font-size: 11px;
   color: var(--text-muted);
   padding-left: 2px;
+
+  // HS-9296 — collapsed default: clamp the body to 2 lines. Removed on expand.
+  &.is-clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+// HS-9296 — the whole commit row is a click target when it has an expandable body.
+.git-popover-commit-expandable {
+  cursor: pointer;
+}
+
+// HS-9296 — the expanded, markdown-rendered body. Reset the pre-line whitespace the
+// collapsed plain-text view uses, and tighten default markdown margins for the popover.
+.git-popover-commit-body-md {
+  white-space: normal;
+
+  > :first-child { margin-top: 0; }
+  > :last-child { margin-bottom: 0; }
+  p, ul, ol, pre, blockquote, h1, h2, h3, h4, h5, h6 { margin: 3px 0; }
+  ul, ol { padding-left: 16px; }
+  code { font-size: 10px; }
+  pre {
+    overflow-x: auto;
+    padding: 4px 6px;
+    background: var(--bg-subtle, rgba(127, 127, 127, 0.1));
+    border-radius: 4px;
+  }
 }
 
 .git-popover-commits-more {
