@@ -189,6 +189,11 @@ export async function relocateTelemetryToSeparateCluster(launchedDataDir: string
       const destDb = await getDbForDir(destDir);
 
       for (const table of TELEMETRY_TABLES) {
+        // HS-9280 — a dropped raw table isn't in the source; skip it (don't abort the
+        // whole DB). Ensure the dest has any table we DO move (raw isn't in a fresh
+        // cluster's schema anymore).
+        if (!await telemetryTableExists(sourceDb, table)) continue;
+        await ensureTelemetryTable(destDb, table);
         let lastId = 0;
         for (;;) {
           const res = await sourceDb.query<TelemetryRow>(
@@ -242,6 +247,10 @@ async function migrateFromSourceDb(
   let deletedFromSource = 0;
 
   for (const table of TELEMETRY_TABLES) {
+    // HS-9280 — skip a table the source doesn't hold (raw otel_* was dropped, or a
+    // fresh cluster never had it) so its absence doesn't abort the whole source DB.
+    const sourceHasTable = await runWithTelemetryDb(sourceDir, async () => telemetryTableExists(await getTelemetryDb(), table));
+    if (!sourceHasTable) continue;
     let lastId = 0;
     for (;;) {
       // Keyset page of foreign rows from the source, ordered by the SERIAL `id`.
@@ -276,7 +285,11 @@ async function migrateFromSourceDb(
       }
 
       for (const [destDir, group] of byDest) {
-        const inserted = await runWithTelemetryDb(destDir, async () => insertBatchIfAbsent(await getTelemetryDb(), table, group));
+        const inserted = await runWithTelemetryDb(destDir, async () => {
+          const db = await getTelemetryDb();
+          await ensureTelemetryTable(db, table); // HS-9280 — dest may lack the raw table
+          return insertBatchIfAbsent(db, table, group);
+        });
         if (inserted > 0) { moved += inserted; perTable[table] = (perTable[table] ?? 0) + inserted; }
         // HS-8885 — the insert above has resolved, so every row in `group` is now
         // durably present in the destination (the `NOT EXISTS` insert leaves each
@@ -313,6 +326,31 @@ async function deleteRowsByIds(db: PGlite, table: TelemetryTable, ids: number[])
   const placeholders = ids.map((_, i) => `$${String(i + 1)}`).join(', ');
   const res = await db.query(`DELETE FROM ${table} WHERE id IN (${placeholders})`, ids);
   return res.affectedRows ?? 0;
+}
+
+/**
+ * HS-9280 — a telemetry table may be absent: the raw `otel_metrics`/`otel_events`/
+ * `otel_spans` tables are dropped (and `initSchema` no longer recreates them), and
+ * a fresh cluster never had them. `to_regclass` is NULL for a missing table.
+ */
+async function telemetryTableExists(db: PGlite, table: TelemetryTable): Promise<boolean> {
+  const res = await db.query<{ reg: string | null }>(`SELECT to_regclass($1) AS reg`, [table]);
+  return res.rows[0]?.reg != null;
+}
+
+/**
+ * HS-9280 — ensure a DESTINATION has `table` before copying into it. On a machine
+ * that still holds legacy raw (upgrading straight to the drop build), the dest
+ * cluster's `initSchema` no longer creates the raw tables, so the copy would INSERT
+ * into a missing relation and abort the whole source DB — stranding the still-live
+ * `announcer_usage` / `ticket_work_intervals` too. Built from the migration's own
+ * column-type map (SERIAL id + typed columns); the `NOT EXISTS` dedupe still works
+ * without the extra `*_dedupe` indexes.
+ */
+async function ensureTelemetryTable(db: PGlite, table: TelemetryTable): Promise<void> {
+  if (await telemetryTableExists(db, table)) return;
+  const cols = Object.entries(COLUMN_TYPES[table]).map(([c, t]) => `${c} ${t}`).join(', ');
+  await db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id SERIAL PRIMARY KEY, ${cols})`);
 }
 
 /**

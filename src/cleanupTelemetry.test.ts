@@ -1,23 +1,24 @@
 /**
- * HS-8154 — telemetry retention sweep tests. Per the ticket:
- *   1. Rows older than retention are deleted.
- *   2. Rows newer than retention are kept.
- *   3. Retention = 0 (or unset = keep-forever via default 30 OR explicit
- *      `0` = forever) keeps everything when explicitly 0.
+ * HS-8154 / HS-9280 — telemetry retention sweep tests. The raw otel_* tables are
+ * gone; retention is now the JSONL age-sweep (`sweepOtelJsonl`, exercised directly
+ * in `db/otelJsonlStore.test.ts`). These pin the CLEANUP INTEGRATION: that
+ * `cleanupTelemetryRows` reads the per-project window settings and sweeps the right
+ * JSONL kinds, and that `cleanupAllProjectsTelemetry` fans that across every
+ * registered project + the central store.
  */
-import { rmSync, writeFileSync } from 'fs';
+import { readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupAllProjectsTelemetry, cleanupTelemetryRows } from './cleanup.js';
-import { centralTelemetryDataDir, closeDbForDir, getDbForDir, getTelemetryDb, runWithTelemetryDb } from './db/connection.js';
+import { centralTelemetryDataDir, closeDbForDir, telemetryClusterDataDir } from './db/connection.js';
+import { appendOtelJsonl, type OtelJsonlKind } from './db/otelJsonlStore.js';
 import type * as GlobalConfigModule from './global-config.js';
 import type * as ProjectListModule from './project-list.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from './test-helpers.js';
 
-// HS-8874 — `cleanupAllProjectsTelemetry` also sweeps the central store; isolate
-// it to a temp dir so the sweep never instantiates a PGlite cluster in the
-// developer's real `~/.hotsheet/telemetry`.
+// Isolate the central store to a temp dir so the sweep never touches the real
+// `~/.hotsheet/telemetry`.
 let centralOverrideDir: string;
 beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
 afterAll(async () => {
@@ -26,254 +27,111 @@ afterAll(async () => {
   rmSync(centralOverrideDir, { recursive: true, force: true });
 });
 
-// HS-8607 — `cleanupAllProjectsTelemetry` reads the persisted project list
-// from `~/.hotsheet/projects.json`. Mock it so the test never touches the
-// real user file and can control which dataDirs get swept.
+// HS-8607 — control which dataDirs `cleanupAllProjectsTelemetry` sweeps.
 const { mockReadProjectList } = vi.hoisted(() => ({ mockReadProjectList: vi.fn<() => string[]>(() => []) }));
 vi.mock('./project-list.js', async (importOriginal) => {
   const actual = await importOriginal<typeof ProjectListModule>();
   return { ...actual, readProjectList: mockReadProjectList };
 });
 
-// HS-8877 — control the central retention window without touching the real
-// `~/.hotsheet/config.json`. `undefined` → the cleanup default (30 days).
+// HS-8877 — control the central retention window without touching the real config.
 const { mockCentralRetention } = vi.hoisted(() => ({ mockCentralRetention: { value: undefined as number | undefined } }));
 vi.mock('./global-config.js', async (importOriginal) => {
   const actual = await importOriginal<typeof GlobalConfigModule>();
-  return {
-    ...actual,
-    readGlobalConfig: () => ({ ...actual.readGlobalConfig(), centralTelemetryRetentionDays: mockCentralRetention.value }),
-  };
+  return { ...actual, readGlobalConfig: () => ({ ...actual.readGlobalConfig(), centralTelemetryRetentionDays: mockCentralRetention.value }) };
 });
 
 const KNOWN_SECRET = 'secret-A';
+const DAY_MS = 86_400_000;
 
-async function insertMetric(ts: Date, secret = KNOWN_SECRET): Promise<void> {
-  const db = await getTelemetryDb();
-  await db.query(
-    `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
-    [ts, secret, 'session-1', 'claude_code.cost.usage', JSON.stringify({}), JSON.stringify({ value: 0.5 })],
-  );
+/** Append one JSONL row for `kind` at `ageDays` before now (lands in that day's
+ *  file). Uses noon UTC so the server-local day is stable across zones. */
+async function seedJsonl(dataDir: string, kind: OtelJsonlKind, ageDays: number): Promise<void> {
+  const ts = new Date(Date.now() - ageDays * DAY_MS);
+  ts.setUTCHours(12, 0, 0, 0);
+  const base = kind === 'spans'
+    ? { trace_id: 't', span_id: 's', start_ts: ts.toISOString(), end_ts: ts.toISOString() }
+    : { ts: ts.toISOString(), project_secret: KNOWN_SECRET };
+  await appendOtelJsonl(telemetryClusterDataDir(dataDir), kind, ts, base);
 }
 
-async function countMetrics(): Promise<number> {
-  const db = await getTelemetryDb();
-  const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics`);
-  return Number(r.rows[0].c);
+/** Count the `otel-<kind>-*.jsonl` day files present in a cluster dir. */
+function dayFileCount(dataDir: string, kind: OtelJsonlKind): number {
+  try {
+    return readdirSync(telemetryClusterDataDir(dataDir)).filter(f => f.startsWith(`otel-${kind}-`) && f.endsWith('.jsonl')).length;
+  } catch { return 0; }
 }
 
-// HS-8877 — central-store (NULL project_secret) helpers, scoped to the temp
-// central dir (HOTSHEET_TELEMETRY_DIR override set in beforeAll).
-async function insertCentralMetric(ts: Date): Promise<void> {
-  await runWithTelemetryDb(centralTelemetryDataDir(), async () => {
-    const db = await getDbForDir(centralTelemetryDataDir());
-    await db.query(
-      `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
-       VALUES ($1, NULL, $2, $3, $4::jsonb, $5::jsonb)`,
-      [ts, 'session-c', 'claude_code.cost.usage', JSON.stringify({}), JSON.stringify({ value: 0.5 })],
-    );
-  });
-}
-
-async function countCentralMetrics(): Promise<number> {
-  return runWithTelemetryDb(centralTelemetryDataDir(), async () => {
-    const db = await getDbForDir(centralTelemetryDataDir());
-    const r = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret IS NULL`);
-    return Number(r.rows[0].c);
-  });
-}
-
-function writeRetentionSetting(dataDir: string, days: number | null): void {
+function writeRetentionSetting(dataDir: string, opts: { days?: number; spanDays?: number }): void {
   const obj: Record<string, unknown> = { secret: KNOWN_SECRET, port: 4174 };
-  if (days !== null) obj.telemetry_retention_days = days;
+  if (opts.days !== undefined) obj.telemetry_retention_days = opts.days;
+  if (opts.spanDays !== undefined) obj.telemetry_span_retention_days = opts.spanDays;
   writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(obj));
 }
 
-describe('cleanupTelemetryRows (HS-8154 / §67.6)', () => {
+describe('cleanupTelemetryRows — JSONL age-sweep (HS-9280)', () => {
   let tempDir: string;
+  beforeEach(async () => { tempDir = await setupTestDb(); });
+  afterEach(async () => { await cleanupTestDb(tempDir); });
 
-  beforeEach(async () => {
-    tempDir = await setupTestDb();
+  it('sweeps metric/event day-files older than telemetry_retention_days, keeps recent', async () => {
+    writeRetentionSetting(tempDir, { days: 30 });
+    await seedJsonl(tempDir, 'metrics', 40); // older than the window
+    await seedJsonl(tempDir, 'events', 40);
+    await seedJsonl(tempDir, 'metrics', 1); // recent — kept
+    expect(dayFileCount(tempDir, 'metrics')).toBe(2);
+
+    await cleanupTelemetryRows(tempDir);
+
+    expect(dayFileCount(tempDir, 'metrics')).toBe(1); // the 40-day file swept
+    expect(dayFileCount(tempDir, 'events')).toBe(0);
   });
 
-  afterEach(async () => {
-    await cleanupTestDb(tempDir);
+  it('retention 0 keeps everything (no sweep)', async () => {
+    writeRetentionSetting(tempDir, { days: 0, spanDays: 0 });
+    await seedJsonl(tempDir, 'metrics', 400);
+    await cleanupTelemetryRows(tempDir);
+    expect(dayFileCount(tempDir, 'metrics')).toBe(1);
   });
 
-  it('deletes rows older than telemetry_retention_days', async () => {
-    writeRetentionSetting(tempDir, 7);
-    // 10 days old — should be deleted.
-    await insertMetric(new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
-    // 30 days old — should also be deleted.
-    await insertMetric(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-    expect(await countMetrics()).toBe(2);
-
-    const result = await cleanupTelemetryRows(tempDir);
-    expect(result.deleted).toBe(2);
-    expect(await countMetrics()).toBe(0);
-  });
-
-  it('keeps rows newer than telemetry_retention_days', async () => {
-    writeRetentionSetting(tempDir, 7);
-    // 1 day old — well within the 7-day window.
-    await insertMetric(new Date(Date.now() - 24 * 60 * 60 * 1000));
-    // 5 days old — also within window.
-    await insertMetric(new Date(Date.now() - 5 * 24 * 60 * 60 * 1000));
-
-    const result = await cleanupTelemetryRows(tempDir);
-    expect(result.deleted).toBe(0);
-    expect(await countMetrics()).toBe(2);
-  });
-
-  it('retention=0 keeps everything (forever)', async () => {
-    writeRetentionSetting(tempDir, 0);
-    // 999 days old — would normally be way past any reasonable retention.
-    await insertMetric(new Date(Date.now() - 999 * 24 * 60 * 60 * 1000));
-
-    const result = await cleanupTelemetryRows(tempDir);
-    expect(result.deleted).toBe(0);
-    expect(await countMetrics()).toBe(1);
-  });
-
-  it('default retention is 30 days when telemetry_retention_days is unset', async () => {
-    writeRetentionSetting(tempDir, null);
-    // 31 days old — past the 30-day default.
-    await insertMetric(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000));
-    // 29 days old — within default.
-    await insertMetric(new Date(Date.now() - 29 * 24 * 60 * 60 * 1000));
-
-    const result = await cleanupTelemetryRows(tempDir);
-    expect(result.deleted).toBe(1);
-    expect(await countMetrics()).toBe(1);
-  });
-
-  it('sweeps otel_events + otel_spans alongside otel_metrics', async () => {
-    writeRetentionSetting(tempDir, 7);
-    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const db = await getTelemetryDb();
-    await insertMetric(old);
-    await db.query(
-      `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-      [old, KNOWN_SECRET, 'session-1', 'prompt-x', 'claude_code.user_prompt', JSON.stringify({}), JSON.stringify({})],
-    );
-    await db.query(
-      `INSERT INTO otel_spans
-         (trace_id, span_id, parent_span_id, project_secret, session_id, prompt_id, span_name, start_ts, end_ts, attributes_json, status_code)
-       VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
-      ['trace-x', 'span-x', KNOWN_SECRET, 'session-1', 'prompt-x', 'turn', old, old, JSON.stringify({}), 'OK'],
-    );
-
-    const result = await cleanupTelemetryRows(tempDir);
-    expect(result.deleted).toBe(3);
-    expect(await countMetrics()).toBe(0);
-    const events = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_events`);
-    const spans = await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_spans`);
-    expect(Number(events.rows[0].c)).toBe(0);
-    expect(Number(spans.rows[0].c)).toBe(0);
-  });
-
-  // HS-8607 — the otel tables are a single shared store keyed by
-  // `project_secret`. The sweep must prune ONLY the calling project's rows,
-  // not every project's. Pre-fix the DELETE had no `project_secret` filter,
-  // so one project's sweep wiped every project's old rows.
-  it('scopes deletion to the project\'s own secret, leaving other projects\' rows untouched (HS-8607)', async () => {
-    const OTHER_SECRET = 'secret-B';
-    writeRetentionSetting(tempDir, 7); // settings.secret === KNOWN_SECRET
-    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    // Old rows for BOTH projects in the shared DB.
-    await insertMetric(old, KNOWN_SECRET);
-    await insertMetric(old, OTHER_SECRET);
-    expect(await countMetrics()).toBe(2);
-
-    const result = await cleanupTelemetryRows(tempDir);
-    // Only KNOWN_SECRET's row is pruned.
-    expect(result.deleted).toBe(1);
-    const db = await getTelemetryDb();
-    const remaining = await db.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
-    expect(remaining.rows.map(r => r.project_secret)).toEqual([OTHER_SECRET]);
+  it('spans use the shorter telemetry_span_retention_days window', async () => {
+    writeRetentionSetting(tempDir, { days: 30, spanDays: 7 });
+    await seedJsonl(tempDir, 'spans', 10); // > 7d span window → swept
+    await seedJsonl(tempDir, 'metrics', 10); // < 30d metrics window → kept
+    await cleanupTelemetryRows(tempDir);
+    expect(dayFileCount(tempDir, 'spans')).toBe(0);
+    expect(dayFileCount(tempDir, 'metrics')).toBe(1);
   });
 });
 
-describe('cleanupAllProjectsTelemetry (HS-8607)', () => {
-  let tempDir: string;
-
+describe('cleanupAllProjectsTelemetry — fan-out (HS-8607 / HS-9280)', () => {
+  let launched: string;
+  let other: string;
   beforeEach(async () => {
-    tempDir = await setupTestDb();
-    mockReadProjectList.mockReset();
-    mockReadProjectList.mockReturnValue([]);
-    mockCentralRetention.value = undefined;
-  });
-
-  afterEach(async () => {
-    await cleanupTestDb(tempDir);
-  });
-
-  function writeSettings(dataDir: string, secret: string, days: number): void {
-    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ secret, port: 4174, telemetry_retention_days: days }));
-  }
-
-  it('sweeps every registered project by its OWN secret + retention window', async () => {
-    // Launched project (the default/shared DB lives here): 7-day retention.
-    const SECRET_A = 'secret-A';
-    writeSettings(tempDir, SECRET_A, 7);
-
-    // A second registered project with a LONGER 60-day retention. Its
-    // settings live in a separate dir; its rows live in the shared DB.
-    const SECRET_B = 'secret-B';
-    const dirB = createTempDir();
-    writeSettings(dirB, SECRET_B, 60);
-    mockReadProjectList.mockReturnValue([dirB]);
-
-    const days20 = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
-    // Project A, 20 days old → past A's 7-day window → deleted.
-    await insertMetric(days20, SECRET_A);
-    // Project B, 20 days old → within B's 60-day window → kept.
-    await insertMetric(days20, SECRET_B);
-
-    const result = await cleanupAllProjectsTelemetry(tempDir);
-    expect(result.deleted).toBe(1);
-
-    const db = await getTelemetryDb();
-    const remaining = await db.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
-    expect(remaining.rows.map(r => r.project_secret)).toEqual([SECRET_B]);
-  });
-
-  it('still sweeps the launched project even when it is not in the persisted list', async () => {
-    writeSettings(tempDir, KNOWN_SECRET, 7);
-    mockReadProjectList.mockReturnValue([]); // launched dir absent from the list
-    await insertMetric(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), KNOWN_SECRET);
-
-    const result = await cleanupAllProjectsTelemetry(tempDir);
-    expect(result.deleted).toBe(1);
-    expect(await countMetrics()).toBe(0);
-  });
-
-  it('does not double-count when the launched dir is also in the persisted list', async () => {
-    writeSettings(tempDir, KNOWN_SECRET, 7);
-    mockReadProjectList.mockReturnValue([tempDir]); // duplicate of launchedDataDir
-    await insertMetric(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), KNOWN_SECRET);
-
-    const result = await cleanupAllProjectsTelemetry(tempDir);
-    // Deduped via the Set — the single old row is counted once, not twice.
-    expect(result.deleted).toBe(1);
-    expect(await countMetrics()).toBe(0);
-  });
-
-  it('central retention honors centralTelemetryRetentionDays; 0 = keep forever (HS-8877)', async () => {
-    writeSettings(tempDir, KNOWN_SECRET, 30);
-    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
-    await insertCentralMetric(old);
-
-    // 0 = keep forever → the 40-day-old central row survives.
-    mockCentralRetention.value = 0;
-    await cleanupAllProjectsTelemetry(tempDir);
-    expect(await countCentralMetrics()).toBe(1);
-
-    // A finite window (30 days) sweeps it.
+    launched = await setupTestDb();
+    other = createTempDir();
+    writeRetentionSetting(launched, { days: 30 });
+    writeRetentionSetting(other, { days: 30 });
+    mockReadProjectList.mockReturnValue([other]);
     mockCentralRetention.value = 30;
-    await cleanupAllProjectsTelemetry(tempDir);
-    expect(await countCentralMetrics()).toBe(0);
+  });
+  afterEach(async () => {
+    mockReadProjectList.mockReturnValue([]);
+    await cleanupTestDb(launched);
+    rmSync(other, { recursive: true, force: true });
+  });
+
+  it('sweeps old JSONL across the launched project, every registered project, and central', async () => {
+    await seedJsonl(launched, 'metrics', 40);
+    await seedJsonl(other, 'metrics', 40);
+    await seedJsonl(centralTelemetryDataDir(), 'metrics', 40);
+    // A recent file in each survives.
+    await seedJsonl(launched, 'metrics', 1);
+
+    await cleanupAllProjectsTelemetry(launched);
+
+    expect(dayFileCount(launched, 'metrics')).toBe(1); // old swept, recent kept
+    expect(dayFileCount(other, 'metrics')).toBe(0);
+    expect(dayFileCount(centralTelemetryDataDir(), 'metrics')).toBe(0);
   });
 });

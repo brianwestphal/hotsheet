@@ -12,7 +12,7 @@ import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createTempDir } from '../test-helpers.js';
+import { createRawOtelTables, createTempDir } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDbForDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
 // HS-8874 — isolate the central store to a temp dir (see otelWriters.test.ts).
@@ -73,6 +73,9 @@ async function insertCost(dataDir: string, secret: string | null, cost: number, 
     // HS-9230 — go through `getTelemetryDb` (the relocated telemetry cluster) so
     // the seed lands in the SAME cluster the migration reads, not the project `db/`.
     const db = await getTelemetryDb();
+    // HS-9280 — initSchema no longer creates the raw tables; the migration moves raw
+    // between clusters, so create the source raw table to seed it.
+    await createRawOtelTables(db);
     await db.query(
       `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
@@ -84,6 +87,7 @@ async function insertCost(dataDir: string, secret: string | null, cost: number, 
 async function countCost(dataDir: string, secret: string | null): Promise<number> {
   return runWithTelemetryDb(dataDir, async () => {
     const db = await getTelemetryDb();
+    await createRawOtelTables(db); // HS-9280 — ensure the table exists (empty ⇒ count 0)
     const res = secret === null
       ? await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret IS NULL`)
       : await db.query<{ c: bigint | number }>(`SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret = $1`, [secret]);
@@ -218,6 +222,7 @@ describe('migratePerProjectTelemetry (HS-8874)', () => {
     const N = 700;
     await runWithTelemetryDb(dirA, async () => {
       const db = await getTelemetryDb();
+      await createRawOtelTables(db); // HS-9280 — source raw table isn't in the schema anymore
       await db.query(
         `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
          SELECT now(), $1, 'sess', 'claude_code.cost.usage', '{"model":"sonnet"}'::jsonb, jsonb_build_object('asDouble', g)
@@ -302,6 +307,9 @@ describe('relocateTelemetryToSeparateCluster (HS-9231)', () => {
   /** Seed the OLD location: the project's main `<dataDir>/db` cluster directly. */
   async function seedOldDb(dataDir: string, secret: string, cost: number): Promise<void> {
     const db = await getDbForDir(dataDir); // <dataDir>/db
+    // HS-9280 — the OLD location's raw table isn't created by initSchema anymore;
+    // create it to reproduce a pre-relocation install the relocation must drain.
+    await createRawOtelTables(db);
     await db.query(
       `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json)
        VALUES ($1, $2, 'sess', 'claude_code.cost.usage', '{}'::jsonb, $3::jsonb)`,
@@ -311,6 +319,7 @@ describe('relocateTelemetryToSeparateCluster (HS-9231)', () => {
   /** Count rows in the NEW relocated `<dataDir>/telemetry/db` cluster. */
   async function countInTelemetryCluster(dataDir: string, secret: string): Promise<number> {
     const db = await getDbForDir(telemetryClusterDataDir(dataDir));
+    await createRawOtelTables(db); // HS-9280 — cluster has no raw table when nothing relocated (empty ⇒ 0)
     const r = await db.query<{ c: bigint | number }>(
       `SELECT COUNT(*) AS c FROM otel_metrics WHERE project_secret = $1`, [secret]);
     return Number(r.rows[0]?.c ?? 0);
@@ -343,8 +352,9 @@ describe('relocateTelemetryToSeparateCluster (HS-9231)', () => {
     await relocateTelemetryToSeparateCluster(dir);
     expect(await countInTelemetryCluster(dir, SECRET_A)).toBe(1);
 
-    // Simulate the next launch: closing + reopening `db/` re-runs initSchema, which
-    // recreates the (now empty) telemetry tables the relocation dropped.
+    // Simulate the next launch: closing + reopening `db/` re-runs initSchema. Post
+    // HS-9280 it no longer recreates the raw tables the relocation dropped, so the
+    // re-run finds no source raw table and correctly moves nothing.
     relocatedFlag = false;
     relocationDoneDirs = [];
     await closeDbForDir(dir);
