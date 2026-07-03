@@ -908,3 +908,60 @@ describe('ensureSkillsForDir — PATH-based detection (HS-8486)', () => {
     expect(platforms).not.toContain('GitHub Copilot');
   });
 });
+
+// HS-9311 — `ai_tool`-selective seeding. All four tool folders present + the
+// gate short-circuits BEFORE the PATH probe, so these are deterministic on any host.
+describe('ensureSkillsForDir honors the ai_tool setting (HS-9311)', () => {
+  let root: string;
+  beforeEach(() => {
+    _resetSkillsStateForTesting();
+    root = join(tmpdir(), `hs-skills-aitool-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(root, '.hotsheet'), { recursive: true });
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    mkdirSync(join(root, '.cursor'), { recursive: true });
+    mkdirSync(join(root, '.windsurf'), { recursive: true });
+    mkdirSync(join(root, '.github'), { recursive: true });
+    writeFileSync(join(root, '.github', 'copilot-instructions.md'), '# hi\n');
+  });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  const setAiTool = (v: string | undefined): void => {
+    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({ secret: 's', port: 4174, ...(v ? { ai_tool: v } : {}) }));
+  };
+
+  it('auto (default) seeds every detected tool', () => {
+    setAiTool('auto');
+    const platforms = ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
+    for (const p of ['Claude Code', 'Cursor', 'GitHub Copilot', 'Windsurf']) expect(platforms).toContain(p);
+  });
+
+  it('an absent ai_tool behaves like auto', () => {
+    setAiTool(undefined);
+    const platforms = ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
+    for (const p of ['Claude Code', 'Cursor', 'GitHub Copilot', 'Windsurf']) expect(platforms).toContain(p);
+  });
+
+  it('an explicit tool seeds ONLY that tool (Cursor)', () => {
+    setAiTool('cursor');
+    const platforms = ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
+    expect(platforms).toEqual(['Cursor']);
+  });
+
+  it('an explicit CLI agent with no skill generator seeds nothing (codex)', () => {
+    setAiTool('codex');
+    const platforms = ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
+    expect(platforms).toEqual([]);
+  });
+
+  it('does NOT delete a tool\'s already-seeded files when the selection narrows', () => {
+    // Seed everything under auto, then narrow to cursor — the .claude skill survives.
+    setAiTool('auto');
+    ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
+    const claudeSkill = join(root, '.claude', 'skills', 'hotsheet', 'SKILL.md');
+    expect(existsSync(claudeSkill)).toBe(true);
+    _resetSkillsStateForTesting();
+    setAiTool('cursor');
+    ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
+    expect(existsSync(claudeSkill)).toBe(true); // narrowing never deletes
+  });
+});

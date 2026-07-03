@@ -662,19 +662,27 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   if (categories !== undefined) skillsState.categories = categories;
   const platforms: string[] = [];
 
-  if (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude'))) {
+  // HS-9311 (docs/113 §113.3) — when the project's `ai_tool` is an explicit choice
+  // (not `auto`), seed ONLY that tool's skill/rule files instead of every detected
+  // tool — so a machine with several tool folders doesn't get noise from the ones
+  // this project doesn't use. `auto` (default) keeps the detect-and-seed-everything
+  // behavior. `wants` never DELETES already-seeded files for a now-unselected tool
+  // (they just stop being refreshed) — a non-destructive narrowing.
+  const wants = wantsTool(dataDir);
+
+  if (wants('claude') && (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude')))) {
     // HS-8936 — `dataDir` defaults to `projectRoot/.hotsheet`; a worktree follower
     // passes the OWNER's `.hotsheet` so `/hotsheet` + the curl skills target the
     // shared instance's worklist + port/secret (docs/89 §89.2 Phase C).
     if (ensureClaudeSkills(projectRoot, dataDir)) platforms.push('Claude Code');
   }
-  if (isExecutableOnPath('cursor') || existsSync(join(projectRoot, '.cursor'))) {
+  if (wants('cursor') && (isExecutableOnPath('cursor') || existsSync(join(projectRoot, '.cursor')))) {
     if (ensureCursorRules(projectRoot)) platforms.push('Cursor');
   }
-  if (existsSync(join(projectRoot, '.github', 'prompts')) || existsSync(join(projectRoot, '.github', 'copilot-instructions.md'))) {
+  if (wants('copilot') && (existsSync(join(projectRoot, '.github', 'prompts')) || existsSync(join(projectRoot, '.github', 'copilot-instructions.md')))) {
     if (ensureCopilotPrompts(projectRoot)) platforms.push('GitHub Copilot');
   }
-  if (isExecutableOnPath('windsurf') || existsSync(join(projectRoot, '.windsurf'))) {
+  if (wants('windsurf') && (isExecutableOnPath('windsurf') || existsSync(join(projectRoot, '.windsurf')))) {
     if (ensureWindsurfRules(projectRoot)) platforms.push('Windsurf');
   }
 
@@ -682,6 +690,19 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
     skillsState.pendingCreatedFlag = true;
   }
   return platforms;
+}
+
+/**
+ * HS-9311 — a predicate: should this tool's skills be seeded for the project?
+ * Reads the `ai_tool` file-setting (default `auto`). `auto` → every tool (today's
+ * behavior); an explicit tool → only that one. An explicit CLI agent with no skill
+ * generator here (codex/gemini/opencode/goose) matches none of the four, so nothing
+ * is seeded — correct, there's no skill format for them yet.
+ */
+export function wantsTool(dataDir: string): (tool: string) => boolean {
+  const raw = readFileSettings(dataDir).ai_tool;
+  const aiTool = typeof raw === 'string' && raw.trim() !== '' ? raw.trim().toLowerCase() : 'auto';
+  return (tool: string) => aiTool === 'auto' || aiTool === tool;
 }
 
 /** Ensure skills for the current working directory (backward compat). */
