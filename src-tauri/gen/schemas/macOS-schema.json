@@ -651,6 +651,18 @@
           "markdownDescription": "Enables the show_native_notification command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_mtls_proxy command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-mtls-proxy",
+          "markdownDescription": "Enables the start_mtls_proxy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_mtls_proxy command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-mtls-proxy",
+          "markdownDescription": "Enables the stop_mtls_proxy command without any pre-configured scope."
+        },
+        {
           "description": "Enables the tts_speak command without any pre-configured scope.",
           "type": "string",
           "const": "allow-tts-speak",
@@ -757,6 +769,18 @@
           "type": "string",
           "const": "deny-show-native-notification",
           "markdownDescription": "Denies the show_native_notification command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_mtls_proxy command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-mtls-proxy",
+          "markdownDescription": "Denies the start_mtls_proxy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_mtls_proxy command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-mtls-proxy",
+          "markdownDescription": "Denies the stop_mtls_proxy command without any pre-configured scope."
         },
         {
           "description": "Denies the tts_speak command without any pre-configured scope.",

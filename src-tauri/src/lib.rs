@@ -16,6 +16,9 @@ use tauri_plugin_shell::process::CommandEvent;
 #[cfg(not(debug_assertions))]
 use tauri_plugin_updater::UpdaterExt;
 
+// HS-9307 — desktop loopback mTLS proxy (docs/112 §112.5.1).
+mod mtls_proxy;
+
 /// Holds the sidecar PID so it can be killed on app exit.
 struct SidecarPid(Mutex<Option<u32>>);
 
@@ -1019,6 +1022,43 @@ async fn open_project(app: tauri::AppHandle, data_dir: String) -> Result<(), Str
     spawn_sidecar_and_navigate(&app, &data_dir, Vec::new()).await
 }
 
+// HS-9307 (docs/112 §112.5.1) — desktop loopback mTLS proxy commands. The client
+// (HS-9302 origin-aware transport) calls `start_mtls_proxy` for a remote origin
+// with the device cert/key + the project CA (PEM), then points that remote
+// project at the returned `http://127.0.0.1:<port>` loopback URL; the Rust proxy
+// does the outbound mTLS the WebView can't. See `mtls_proxy.rs` (scaffold — HTTP
+// only; WS + real-server validation are follow-ups).
+#[tauri::command]
+async fn start_mtls_proxy(
+    state: tauri::State<'_, mtls_proxy::MtlsProxies>,
+    origin: String,
+    cert_pem: String,
+    key_pem: String,
+    ca_pem: String,
+) -> Result<String, String> {
+    let identity = mtls_proxy::MtlsIdentity { cert_pem, key_pem, ca_pem };
+    let handle = mtls_proxy::start_proxy(identity, origin.clone()).await?;
+    let url = handle.loopback_url();
+    // Replace any prior proxy for this origin (stopping it first).
+    let mut map = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(mut old) = map.insert(origin, handle) {
+        old.stop();
+    }
+    Ok(url)
+}
+
+#[tauri::command]
+fn stop_mtls_proxy(
+    state: tauri::State<'_, mtls_proxy::MtlsProxies>,
+    origin: String,
+) -> Result<(), String> {
+    let mut map = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(mut handle) = map.remove(&origin) {
+        handle.stop();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1032,6 +1072,7 @@ pub fn run() {
         .manage(TtsChild(Mutex::new(None)))
         .manage(QuitConfirmed(AtomicBool::new(false)))
         .manage(ShuttingDown(AtomicBool::new(false)))
+        .manage(mtls_proxy::MtlsProxies::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // HS-7596 / §37 — quit-confirm gate. The first time the user
@@ -1205,7 +1246,9 @@ pub fn run() {
             tts_speak,
             tts_stop,
             #[cfg(not(debug_assertions))]
-            open_project
+            open_project,
+            start_mtls_proxy,
+            stop_mtls_proxy
         ])
         .setup(|_app| {
             #[allow(unused_variables)]

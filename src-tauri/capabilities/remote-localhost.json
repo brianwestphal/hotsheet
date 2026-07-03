@@ -24,6 +24,8 @@
     "allow-confirm-quit",
     "allow-tts-speak",
     "allow-tts-stop",
-    "allow-open-project"
+    "allow-open-project",
+    "allow-start-mtls-proxy",
+    "allow-stop-mtls-proxy"
   ]
 }

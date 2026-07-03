@@ -36,6 +36,8 @@ fn main() {
                 "tts_speak",
                 "tts_stop",
                 "open_project",
+                "start_mtls_proxy",
+                "stop_mtls_proxy",
             ]),
         ),
     )

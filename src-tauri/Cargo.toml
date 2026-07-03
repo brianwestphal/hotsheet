@@ -21,6 +21,14 @@ serde_json = "1"
 rfd = "0.17"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-notification = "2"
+# HS-9307 (docs/112 §112.5.1) — the loopback mTLS proxy for the desktop remote
+# client. `reqwest` (rustls, no OpenSSL → cross-platform) presents the client-auth
+# cert + trusts the per-project CA on the outbound handshake the WebView can't do;
+# `axum` runs the loopback (127.0.0.1) plain-HTTP server the WebView hits. The
+# WebSocket-proxy leg (tokio-tungstenite + a shared rustls config) is a follow-up.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+axum = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
