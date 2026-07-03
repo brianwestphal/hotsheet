@@ -18,6 +18,9 @@ use tauri_plugin_updater::UpdaterExt;
 
 // HS-9307 — desktop loopback mTLS proxy (docs/112 §112.5.1).
 mod mtls_proxy;
+// HS-9312 — read the mTLS device identity from the OS keychain (the private key
+// never crosses into JS).
+mod mtls_keychain;
 
 /// Holds the sidecar PID so it can be killed on app exit.
 struct SidecarPid(Mutex<Option<u32>>);
@@ -1022,21 +1025,18 @@ async fn open_project(app: tauri::AppHandle, data_dir: String) -> Result<(), Str
     spawn_sidecar_and_navigate(&app, &data_dir, Vec::new()).await
 }
 
-// HS-9307 (docs/112 §112.5.1) — desktop loopback mTLS proxy commands. The client
-// (HS-9302 origin-aware transport) calls `start_mtls_proxy` for a remote origin
-// with the device cert/key + the project CA (PEM), then points that remote
-// project at the returned `http://127.0.0.1:<port>` loopback URL; the Rust proxy
-// does the outbound mTLS the WebView can't. See `mtls_proxy.rs` (scaffold — HTTP
-// only; WS + real-server validation are follow-ups).
+// HS-9307/HS-9312 (docs/112 §112.5.1) — desktop loopback mTLS proxy commands. The
+// client (HS-9302 origin-aware transport) calls `start_mtls_proxy` with just the
+// remote `origin`; the Rust side reads the device cert/key + project CA from the
+// OS keychain (`mtls_keychain`, so the private key never touches JS), does the
+// outbound mTLS the WebView can't, and returns the `http://127.0.0.1:<port>`
+// loopback URL the client points that remote project at.
 #[tauri::command]
 async fn start_mtls_proxy(
     state: tauri::State<'_, mtls_proxy::MtlsProxies>,
     origin: String,
-    cert_pem: String,
-    key_pem: String,
-    ca_pem: String,
 ) -> Result<String, String> {
-    let identity = mtls_proxy::MtlsIdentity { cert_pem, key_pem, ca_pem };
+    let identity = mtls_keychain::read_identity(&origin)?;
     let handle = mtls_proxy::start_proxy(identity, origin.clone()).await?;
     let url = handle.loopback_url();
     // Replace any prior proxy for this origin (stopping it first).

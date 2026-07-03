@@ -26,7 +26,19 @@ fi
 READY="$(grep READY "$OUT" | head -1)"
 export HS_MTLS_PORT="$(echo "$READY" | awk '{print $2}')"
 export HS_MTLS_CERT_DIR="$(echo "$READY" | awk '{print $3}')"
+export HS_MTLS_ORIGIN="https://127.0.0.1:$HS_MTLS_PORT"
 echo "mTLS harness up on 127.0.0.1:$HS_MTLS_PORT (certs: $HS_MTLS_CERT_DIR)"
+
+# HS-9312 — stage the device identity in the OS keychain under the SAME
+# (service, account) the Rust reader uses, so the keychain-path test can read it
+# back (the "(b)" flow). macOS `security` only for now; skipped elsewhere. Cleaned
+# up on exit. The JSON blob mirrors the enrollment writer's format.
+MTLS_SERVICE="com.hotsheet.plugin.mtls"
+if [ "$(uname)" = "Darwin" ]; then
+  BLOB="$(CERT="$HS_MTLS_CERT_DIR" node -e 'const fs=require("fs"),d=process.env.CERT;process.stdout.write(JSON.stringify({cert:fs.readFileSync(d+"/client.crt","utf8"),key:fs.readFileSync(d+"/client.key","utf8"),ca:fs.readFileSync(d+"/ca.crt","utf8")}))')"
+  security add-generic-password -U -s "$MTLS_SERVICE" -a "$HS_MTLS_ORIGIN" -w "$BLOB" >/dev/null 2>&1 || true
+  trap 'security delete-generic-password -s "$MTLS_SERVICE" -a "$HS_MTLS_ORIGIN" >/dev/null 2>&1 || true; kill "$HPID" 2>/dev/null || true; rm -f "$OUT"' EXIT
+fi
 
 # Run every `#[ignore]`d live handshake test in the proxy module.
 cargo test --manifest-path src-tauri/Cargo.toml --lib mtls_proxy::tests -- --ignored --nocapture

@@ -472,4 +472,21 @@ mod tests {
         let reply = ws.next().await.expect("a reply").expect("ok");
         assert_eq!(reply.into_text().expect("text").as_str(), "via-proxy");
     }
+
+    // HS-9312 Phase-A — the full "(b)" path: read the device identity from the OS
+    // keychain (no PEM through JS) → handshake. The `validate-mtls` harness writes
+    // the `{cert,key,ca}` JSON blob into the keychain under
+    // (com.hotsheet.plugin.mtls, <origin>) + sets HS_MTLS_ORIGIN before this runs,
+    // and deletes it after. `#[ignore]`d + macOS/Linux only (Windows has no
+    // keychain path). Skips cleanly when HS_MTLS_ORIGIN is unset.
+    #[tokio::test]
+    #[ignore]
+    async fn live_keychain_identity_handshake() {
+        let Ok(origin) = std::env::var("HS_MTLS_ORIGIN") else { return };
+        let identity = crate::mtls_keychain::read_identity(&origin).expect("read identity from keychain");
+        let client = build_client(&identity).expect("build_client");
+        let resp = client.get(format!("{origin}/api/projects")).send().await.expect("keychain-identity mTLS GET");
+        assert!(resp.status().is_success(), "status {}", resp.status());
+        assert!(resp.text().await.unwrap().contains("\"ok\":true"));
+    }
 }

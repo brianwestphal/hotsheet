@@ -12,6 +12,8 @@ import {
   fireNativeNotification,
   isAppBackgrounded,
   requestNativeNotificationPermission,
+  startMtlsProxy,
+  stopMtlsProxy,
 } from './tauriIntegration.js';
 
 interface WindowStub {
@@ -138,6 +140,45 @@ describe('fireNativeNotification (HS-7272)', () => {
     );
 
     await expect(fireNativeNotification('X', 'y')).resolves.toBe(false);
+  });
+});
+
+describe('startMtlsProxy / stopMtlsProxy (HS-9312)', () => {
+  it('startMtlsProxy returns null in a browser context (no Tauri invoke)', async () => {
+    installGlobals({}, { hidden: false, hasFocus: () => true });
+    await expect(startMtlsProxy('https://host:4174')).resolves.toBeNull();
+  });
+
+  it('startMtlsProxy invokes start_mtls_proxy with just the origin + returns the loopback URL', async () => {
+    const invoke = vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>()
+      .mockResolvedValue('http://127.0.0.1:51234');
+    installGlobals({ __TAURI__: { core: { invoke } } }, { hidden: false, hasFocus: () => true });
+
+    const url = await startMtlsProxy('https://host:4174');
+
+    expect(url).toBe('http://127.0.0.1:51234');
+    // The cert is NOT passed — the Rust side reads it from the keychain ("b").
+    expect(invoke).toHaveBeenCalledWith('start_mtls_proxy', { origin: 'https://host:4174' });
+  });
+
+  it('startMtlsProxy returns null when the command yields a non-string', async () => {
+    const invoke = vi.fn<(cmd: string) => Promise<unknown>>().mockResolvedValue(undefined);
+    installGlobals({ __TAURI__: { core: { invoke } } }, { hidden: false, hasFocus: () => true });
+    await expect(startMtlsProxy('https://host:4174')).resolves.toBeNull();
+  });
+
+  it('stopMtlsProxy invokes stop_mtls_proxy and swallows errors', async () => {
+    const invoke = vi.fn<(cmd: string, args?: Record<string, unknown>) => Promise<unknown>>()
+      .mockRejectedValue(new Error('already gone'));
+    installGlobals({ __TAURI__: { core: { invoke } } }, { hidden: false, hasFocus: () => true });
+
+    await expect(stopMtlsProxy('https://host:4174')).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith('stop_mtls_proxy', { origin: 'https://host:4174' });
+  });
+
+  it('stopMtlsProxy is a no-op in a browser context', async () => {
+    installGlobals({}, { hidden: false, hasFocus: () => true });
+    await expect(stopMtlsProxy('https://host:4174')).resolves.toBeUndefined();
   });
 });
 

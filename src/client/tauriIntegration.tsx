@@ -241,6 +241,35 @@ export async function saveBytes(defaultName: string, bytes: Uint8Array, mimeType
   return true;
 }
 
+/**
+ * HS-9312 (docs/112 §112.5.1) — start the desktop loopback mTLS proxy for a remote
+ * `origin`. The Rust side reads the device cert from the OS keychain itself (the
+ * private key never crosses into JS — the maintainer's "(b)" choice), does the
+ * outbound mTLS the WebView can't, and returns the `http://127.0.0.1:<port>`
+ * loopback URL the caller points that remote project's transport at.
+ *
+ * Returns `null` when NOT under Tauri (the web build — the browser presents the
+ * client cert from its own store, so no proxy is needed).
+ */
+export async function startMtlsProxy(origin: string): Promise<string | null> {
+  const invoke = getTauriInvoke();
+  if (invoke === null) return null; // web: browser handles the cert natively
+  const url = await invoke('start_mtls_proxy', { origin });
+  return typeof url === 'string' ? url : null;
+}
+
+/** HS-9312 — stop the loopback mTLS proxy for `origin` (on unmount / quit). No-op
+ *  outside Tauri. Best-effort. */
+export async function stopMtlsProxy(origin: string): Promise<void> {
+  const invoke = getTauriInvoke();
+  if (invoke === null) return;
+  try {
+    await invoke('stop_mtls_proxy', { origin });
+  } catch {
+    /* proxy already gone / command unavailable — nothing to clean up */
+  }
+}
+
 /** Intercept external link clicks and open them via Tauri shell or window.open. */
 export function bindExternalLinkHandler() {
   document.addEventListener('click', (e) => {
