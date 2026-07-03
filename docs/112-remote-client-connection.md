@@ -48,7 +48,27 @@ The typed runner `src/api/_runner.ts` is already origin-agnostic (it calls the i
 ## 112.5 Client-cert presentation
 
 - **Browser (web) client:** the `.p12` lives in the OS/browser cert store; the browser presents it natively on the mTLS handshake for the remote origin. No app code. This is the §97.3 path and works today.
-- **Desktop (Tauri) client — OPEN (§112.9 O2).** The app runs in a platform WebView (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux). Whether — and how — each presents an OS-store client cert on an outbound `wss://` / `https://` from within the WebView is **unverified** and platform-specific. This is the single biggest technical unknown and is scoped as an **investigation follow-up** (§112.10): options include relying on the OS keychain/cert-store the WebView already trusts, a Tauri-side mTLS proxy (the Rust side holds the cert + terminates the outbound TLS, exposing a loopback endpoint the WebView hits), or a cert picker. The self-hosted, single-user scope (§94.4) keeps the blast radius small, but this must be resolved before the desktop remote client is real.
+- **Desktop (Tauri) client — investigated (HS-9306, see §112.5.1).** The app runs in a platform WebView (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux). **Finding: none present a client cert "for free" from within Tauri**, and WKWebView — the primary macOS target — is specifically broken for the *subresource/WebSocket* requests Hot Sheet's remote transport uses. **Recommendation: a Rust-side mTLS proxy** (Option 2). The self-hosted, single-user scope (§94.4) keeps the blast radius small.
+
+### 112.5.1 WebView client-cert feasibility (HS-9306)
+
+Hot Sheet's remote transport is entirely **`fetch` + WebSocket** (subresources), NOT a top-level page navigation — this distinction is what breaks the "just let the WebView present the cert" hope on macOS.
+
+| WebView (platform) | Client-cert on outbound mTLS? | Mechanism | Verdict |
+|---|---|---|---|
+| **WKWebView (macOS)** | Main navigation: yes via `webView(_:didReceive:completionHandler:)` (`NSURLAuthenticationMethodClientCertificate`). **Subresources (fetch/XHR/WebSocket): broken** — reported 403s; cert also gets cached; the documented workaround is intercepting via `NSURLProtocol`/a custom `URLSession`. | Requires a `WKNavigationDelegate` the app owns — **Tauri does not expose it**, and even with it, subresource requests don't reliably surface the challenge. | ❌ Not viable for our fetch/WS transport without native interception. |
+| **WebView2 (Windows)** | Yes — `CoreWebView2.ClientCertificateRequested` pulls from the Windows cert store; host can auto-select or fall back to a dialog. Works for subresources (Chromium). | Requires host-side COM handling of the event — **not exposed by Tauri today**; known cert-selection bugs (esp. smartcards). | ⚠️ Possible with a WebView2-specific integration; not free. |
+| **WebKitGTK (Linux)** | Yes — `WEBKIT_AUTHENTICATION_SCHEME_CLIENT_CERTIFICATE_REQUESTED` via the `authenticate` signal + `webkit_authentication_request_authenticate()`. | Requires host-side signal handling — **not exposed by Tauri**; relatively recent support. | ⚠️ Possible with a WebKitGTK-specific handler; not free. |
+
+**Common thread:** every platform needs bespoke, per-WebView host wiring Tauri doesn't surface, the three mechanisms are entirely different, and the primary target (WKWebView) fails for exactly our request shape. So Option 1 (native store as-is) and Option 3 (per-WebView picker/hook) are each a **three-platform native-integration project** with a broken macOS leg.
+
+**Recommendation — Option 2, a Rust-side loopback mTLS proxy** (portable, one implementation, sidesteps every WebView's cert handling):
+- The Rust side holds the client cert/key (loaded from the OS keychain — §20 secure storage — or an imported `.p12`) and makes the **outbound** mTLS calls: `reqwest` with a `rustls` client-auth config for `https://`, and a rustls-backed WebSocket client (e.g. `tokio-tungstenite`) for `wss://`.
+- It exposes a **loopback plain-HTTP/WS endpoint** (127.0.0.1, ephemeral port, per-remote-origin) that the WebView hits; the client's origin-aware transport (HS-9302) points a remote project at that loopback endpoint instead of the remote origin directly when running under Tauri.
+- **Security:** the proxy binds loopback-only (same trust boundary as the Tier-0 local server); the mTLS handshake + cert validation still happen in-process on the Rust side against the remote's per-project CA. No plaintext leaves the machine.
+- **Cost:** new Rust deps (`reqwest` + `rustls` + `tokio` + a WS client — none present today; `src-tauri/Cargo.toml` currently has only tauri plugins + `rfd`/`serde`), a small proxy module in `src-tauri/`, and a Tauri command to start/stop a proxy for a given remote origin + return its loopback URL. The **web** client is unaffected (browser presents the cert natively, §97.3) — the proxy is a Tauri-only path.
+
+**Validation spike still needed** before committing: stand up an exposed `--server remote-access` Hot Sheet, mint a `.p12`, and prove a `reqwest`+`rustls` client-auth `GET /api/projects` **and** a `tokio-tungstenite` `wss://.../ws/sync` both complete the handshake against the per-project CA. Tracked as a follow-up.
 
 ## 112.6 Connection entry (UX)
 
@@ -71,7 +91,7 @@ Surface **connected / reconnecting / unreachable** per remote project. This ride
 ## 112.9 Open decisions (maintainer)
 
 - **O1 — remote registry storage.** Recommend a machine-global `~/.hotsheet/remotes.json` (a remote isn't tied to a local project's `.hotsheet/`). Confirm vs. an alternative (e.g. folding into `~/.hotsheet/config.json`, or a per-local-project association).
-- **O2 — Tauri client-cert presentation** (§112.5). The hard technical unknown. Preferred direction to validate first: does the platform WebView present an OS-store client cert on outbound mTLS as-is? If not, a Tauri-side loopback mTLS proxy (Rust holds the cert). Scoped as an investigation (§112.10); the *decision* (which mechanism) is the maintainer's once the investigation reports feasibility.
+- **O2 — Tauri client-cert presentation** (§112.5). **Investigated (HS-9306) — recommendation: the Rust-side loopback mTLS proxy** (§112.5.1). The WebViews can't do it portably (WKWebView is broken for our fetch/WS subresource requests; WebView2/WebKitGTK each need bespoke native wiring Tauri doesn't expose). The maintainer's remaining call: **accept the Rust-proxy direction** (then the validation spike + implementation follow-up runs), or fund the three-platform native-integration path instead.
 - **O3 — first-cut scope.** Recommend the **web** remote client first (native cert store, lowest new surface), with the Tauri path gated on O2. Confirm whether the desktop path must land in the same pass.
 - **O4 — terminal WS over a remote origin.** Mounting a remote project's *terminals* (per-project PTYs, §22) over `wss://` is heavier than data sync. Recommend Phase-2: land remote **data** (tickets + `/ws/sync`) first, remote **terminals** second. Confirm.
 
