@@ -398,14 +398,17 @@ function bindGeneralTab() {
     aiInstrBtn.disabled = true;
     aiInstrBtn.textContent = 'Updating…';
     try {
-      const { written } = await applyAiInstructions();
-      aiInstrStatus.textContent = written
-        ? "Updated this project's CLAUDE.md with Hot Sheet's recommended sections."
+      // HS-8916 — writes CLAUDE.md + every other detected AI tool's instruction file.
+      const resp = await applyAiInstructions();
+      const detected = (resp.state.tools ?? []).filter(t => t.detected).map(t => t.label);
+      const where = detected.length > 1 ? detected.join(', ') : "this project's CLAUDE.md";
+      aiInstrStatus.textContent = resp.written || detected.length > 1
+        ? `Updated Hot Sheet's recommended sections for ${where}.`
         : 'Already up to date — no changes needed.';
     } catch {
-      aiInstrStatus.textContent = 'Could not update CLAUDE.md. Check file permissions and try again.';
+      aiInstrStatus.textContent = 'Could not update the AI instruction files. Check file permissions and try again.';
     }
-    aiInstrBtn.textContent = 'Update CLAUDE.md';
+    aiInstrBtn.textContent = 'Update AI instructions';
     aiInstrBtn.disabled = false;
   });
 }

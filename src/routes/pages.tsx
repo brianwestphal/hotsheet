@@ -721,8 +721,8 @@ pageRoutes.get('/', (c) => {
               <div className="settings-divider"></div>
               <div className="settings-field">
                 <label>AI assistant instructions</label>
-                <button className="btn btn-sm" id="ai-instructions-update-btn">Update CLAUDE.md</button>
-                <span className="settings-hint" id="ai-instructions-status">Adds (or updates) Hot Sheet's recommended sections — ticket-driven work, double test coverage, requirements docs — to this project's <code>CLAUDE.md</code>, preserving everything else.</span>
+                <button className="btn btn-sm" id="ai-instructions-update-btn">Update AI instructions</button>
+                <span className="settings-hint" id="ai-instructions-status">Adds (or updates) Hot Sheet's recommended sections — ticket-driven work, double test coverage, requirements docs — to this project's <code>CLAUDE.md</code> and any other detected AI tools (Cursor <code>.cursor/rules</code>, Windsurf <code>.windsurf/rules</code>, Copilot <code>.github/copilot-instructions.md</code>), preserving everything else.</span>
               </div>
               {/* HS-8917 — per-project worklist preamble injected near the top of
                   worklist.md (above the protocol sections). */}

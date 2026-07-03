@@ -126,9 +126,19 @@ Three ways the sections get into `CLAUDE.md`:
 
 ## 86.6 Scope + follow-ups
 
-- v1 is **Claude Code / `CLAUDE.md` only**. Cursor (`.cursor/rules/*.mdc`),
-  Windsurf (`.windsurf/rules/`), and Copilot (`.github/copilot-instructions.md`)
-  variants reuse the same section content + marker logic — **HS-8916**.
+- v1 was **Claude Code / `CLAUDE.md` only**. **SHIPPED (HS-8916):** the same
+  managed sections now also write to **Cursor** (`.cursor/rules/hotsheet-instructions.mdc`,
+  with `description` + `alwaysApply: false` frontmatter), **Windsurf**
+  (`.windsurf/rules/hotsheet-instructions.md`, `trigger: manual` frontmatter), and
+  **Copilot** (`.github/copilot-instructions.md`, plain markdown). `src/aiInstructionsTools.ts`
+  reuses the pure `applyManagedSections`/`getInstructionsStatus` core; the only
+  per-tool differences are the target path, the frontmatter (preserved on update
+  via `splitFrontmatter`), and the detection predicate (mirrors
+  `skills.ts::ensureSkillsForDir`). `POST /api/ai-instructions/apply` writes CLAUDE.md
+  + every OTHER detected tool; the Settings button is relabeled "Update AI
+  instructions"; the once-per-project nudge (`decideNudgeAction`) gates on ANY
+  detected tool (falls back to the Claude fields when the server sends no `tools`).
+  Tests: `aiInstructionsTools.test.ts` + new multi-tool `decideNudgeAction` cases.
 - Hot Sheet does **not** ship per-language tooling auto-detection; the
   self-healing specifics block delegates that to the reading agent (§86.3).
 

@@ -39,11 +39,25 @@ export type NudgeAction = 'silent-update' | 'prompt' | 'none';
 
 /** Pure decision — exported for unit testing. */
 export function decideNudgeAction(state: AiInstructionsStateResp, dismissed: boolean): NudgeAction {
-  const anyPresent = state.sections.some(s => s.present);
+  // HS-8916 — gate on ANY detected AI tool (Claude/Cursor/Windsurf/Copilot), not
+  // just Claude. When the server sent per-tool `tools`, aggregate across them;
+  // otherwise fall back to the top-level (Claude) fields — so pre-HS-8916 behavior
+  // is preserved exactly (and its tests still pass). Presence is checked FIRST
+  // (an already-installed file is kept current regardless of current detection);
+  // only the create-new PROMPT is gated on a tool being detected.
+  const tools = state.tools ?? [];
+  const useTools = tools.length > 0;
+
+  const anyPresent = useTools
+    ? tools.some(t => t.sections.some(s => s.present))
+    : state.sections.some(s => s.present);
   if (anyPresent) {
-    return state.setupNeeded ? 'silent-update' : 'none';
+    const setupNeeded = useTools ? tools.some(t => t.setupNeeded) : state.setupNeeded;
+    return setupNeeded ? 'silent-update' : 'none';
   }
-  if (state.detected && !dismissed) return 'prompt';
+
+  const anyDetected = useTools ? tools.some(t => t.detected) : state.detected;
+  if (anyDetected && !dismissed) return 'prompt';
   return 'none';
 }
 

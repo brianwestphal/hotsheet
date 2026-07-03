@@ -20,6 +20,21 @@ function makeState(partial: Partial<AiInstructionsStateResp> & { present?: boole
     sections: partial.sections ?? [
       { id: 'ticket-driven-work', present, version: present ? 1 : null, outdated: false, needsSetup: false },
     ],
+    tools: partial.tools,
+  };
+}
+
+// HS-8916 — build one per-tool state for the `tools` array.
+function tool(name: 'claude' | 'cursor' | 'windsurf' | 'copilot', opts: { detected: boolean; present: boolean; setupNeeded?: boolean }): NonNullable<AiInstructionsStateResp['tools']>[number] {
+  return {
+    tool: name,
+    label: name,
+    detected: opts.detected,
+    fileExists: opts.present,
+    missing: !opts.present,
+    outdated: false,
+    setupNeeded: opts.setupNeeded ?? false,
+    sections: [{ id: 'ticket-driven-work', present: opts.present, version: opts.present ? 1 : null, outdated: false, needsSetup: opts.setupNeeded ?? false }],
   };
 }
 
@@ -30,6 +45,16 @@ describe('decideNudgeAction', () => {
     ['none present + detected + not dismissed → prompt', makeState({ present: false, detected: true }), false, 'prompt'],
     ['none present + detected + dismissed → none', makeState({ present: false, detected: true }), true, 'none'],
     ['none present + not detected → none', makeState({ present: false, detected: false }), false, 'none'],
+    // HS-8916 — when the server sends per-tool `tools`, aggregate across them
+    // (Claude top-level fields are ignored).
+    ['tools: a detected tool with no sections → prompt (even if Claude undetected)',
+      makeState({ detected: false, tools: [tool('cursor', { detected: true, present: false })] }), false, 'prompt'],
+    ['tools: detected tool present + needs setup → silent-update',
+      makeState({ detected: false, tools: [tool('cursor', { detected: true, present: true, setupNeeded: true })] }), false, 'silent-update'],
+    ['tools: present in ONE tool, none need setup → none',
+      makeState({ tools: [tool('cursor', { detected: true, present: true }), tool('windsurf', { detected: false, present: false })] }), false, 'none'],
+    ['tools: none detected + none present → none',
+      makeState({ tools: [tool('cursor', { detected: false, present: false })] }), false, 'none'],
   ];
   for (const [name, state, dismissed, expected] of cases) {
     it(name, () => {

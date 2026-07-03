@@ -20,6 +20,21 @@ export const SectionStatusSchema = z.object({
   needsSetup: z.boolean(),
 });
 
+// HS-8916 — per-tool managed-instructions state (Claude / Cursor / Windsurf /
+// Copilot). Added to the status + apply responses so the UI can show which tools
+// got their instruction files written.
+export const ToolInstructionsStateSchema = z.object({
+  tool: z.enum(['claude', 'cursor', 'windsurf', 'copilot']),
+  label: z.string(),
+  detected: z.boolean(),
+  fileExists: z.boolean(),
+  missing: z.boolean(),
+  outdated: z.boolean(),
+  setupNeeded: z.boolean(),
+  sections: z.array(SectionStatusSchema),
+});
+export type ToolInstructionsStateResp = z.infer<typeof ToolInstructionsStateSchema>;
+
 export const AiInstructionsStateSchema = z.object({
   detected: z.boolean(),
   fileExists: z.boolean(),
@@ -27,6 +42,8 @@ export const AiInstructionsStateSchema = z.object({
   outdated: z.boolean(),
   setupNeeded: z.boolean(),
   sections: z.array(SectionStatusSchema),
+  // HS-8916 — per-tool states (optional; the status/apply routes populate it).
+  tools: z.array(ToolInstructionsStateSchema).optional(),
 });
 export type AiInstructionsStateResp = z.infer<typeof AiInstructionsStateSchema>;
 
