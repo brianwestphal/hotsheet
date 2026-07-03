@@ -58,7 +58,7 @@ Driven by the per-project **`ai_tool` setting** (docs/113 §113.3, shipped):
 ## 114.8 Rollout (decomposition — all gated on the HS-8008 spike)
 
 1. **Spike (HS-8008, done as design):** drive Gemini CLI end-to-end via the SDK — validate the connection + the five seams against a real agent.
-2. **Core client** (`src/acp/client.ts`): connection + lifecycle + the `session/update`→busy and `stopReason`→done mapping.
+2. **Core client** (`src/acp/client.ts`): connection + lifecycle + the `session/update`→busy and `stopReason`→done mapping. **Pure-mapping subset SHIPPED (HS-9310):** `src/acp/acpMapping.ts` — `classifyUpdate` (update→busy), `turnEndOutcome` (stopReason→completed/stopped/error, never leaves the channel stuck busy on a new reason), `pickAllowOptionId`/`pickRejectOptionId` (the §114.5 auto-allow/deny → `optionId` by `kind`). No SDK / no agent (ACP-v1-shape logic only), fully unit-tested; the connection/spawn/overlay-wiring remains spike-gated.
 3. **Option-driven permission overlay** (§114.5): the §47 overlay accepts an ACP option list + returns an `optionId`; the auto-allow gate picks by `kind`.
 4. **Agent-backend picker + per-agent templates** (§114.7).
 5. **Per-tool enablement** — one ticket per Tier-A agent (Gemini first — reference impl; then Codex + OpenCode; then Goose; Copilot CLI last — public-preview ACP): command template + ACP wiring + skills + smoke test.
