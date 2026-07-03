@@ -40,6 +40,13 @@ const FileSettingsSchema = z.object({
   // single machine may opt in) — not in `LOCAL_SCOPE_KEYS`, so `defaultScope` →
   // `shared`.
   alwaysPreviewAgentPlans: z.boolean().optional(),
+  // HS-8009 (docs/113 §113.3) — the project's preferred AI tool. `auto` (default,
+  // absent) preserves today's detect-everything behavior. When an explicit CLI
+  // agent (`claude`/`codex`/`gemini`/`opencode`/`goose`) is set, terminal command
+  // resolution (`{{aiCommand}}`/`{{claudeCommand}}`) launches THAT tool. Editor
+  // tools (`cursor`/`copilot`/`windsurf`) are context-only (skills/instructions).
+  // A project-level choice → §95 SHARED (not in `LOCAL_SCOPE_KEYS`).
+  ai_tool: z.string().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */

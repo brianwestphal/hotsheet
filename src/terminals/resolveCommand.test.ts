@@ -48,6 +48,49 @@ describe('resolveTerminalCommand', () => {
     expect(command.startsWith('claude --dangerously-load-development-channels server:hotsheet-channel-')).toBe(true);
   });
 
+  // HS-8009 — `ai_tool`-aware resolution (docs/113 §113.3).
+  it('ai_tool=gemini + gemini on PATH → launches the gemini binary', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'gemini' }),
+      isAiToolOnPath: (b) => b === 'gemini',
+    });
+    expect(command).toBe('gemini');
+  });
+
+  it('ai_tool=codex resolves via the {{aiCommand}} alias too', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ terminal_command: 'env X=1 {{aiCommand}} --acp', ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+    });
+    expect(command).toBe('env X=1 codex --acp');
+  });
+
+  it('ai_tool=gemini but NOT on PATH → falls back to the default shell', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'gemini' }),
+      isAiToolOnPath: () => false,
+      defaultShellOverride: () => '/bin/fake-shell',
+    });
+    expect(command).toBe('/bin/fake-shell');
+  });
+
+  it('ai_tool=auto keeps today\'s Claude channel behavior', () => {
+    const dataDir = dir({ ai_tool: 'auto' });
+    const { command } = resolveTerminalCommand({
+      dataDir, isClaudeOnPath: () => true, channelEnabledOverride: true,
+    });
+    expect(command).toBe(claudeWithChannelCommand(dataDir));
+  });
+
+  it('ai_tool=cursor (an editor tool, not a terminal agent) falls back to Claude behavior', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'cursor' }),
+      isClaudeOnPath: () => true,
+      channelEnabledOverride: false,
+    });
+    expect(command).toBe('claude');
+  });
+
   it('produces distinct channel commands for distinct project dataDirs (HS-8349)', () => {
     const dataDirA = dir();
     const dataDirB = dir();

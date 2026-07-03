@@ -12,8 +12,17 @@ export interface ResolvedCommand {
 }
 
 const CLAUDE_TOKEN = '{{claudeCommand}}';
+// HS-8009 — alias for `{{claudeCommand}}`; both resolve via the `ai_tool`-aware
+// `pickAiCommand`. The `claudeCommand` name stays for back-compat.
+const AI_TOKEN = '{{aiCommand}}';
 const PROJECT_DIR_TOKEN = '{{projectDir}}';
 const CLAUDE_BASE = 'claude';
+
+// HS-8009 (docs/113 §113.3) — the non-Claude CLI agents whose bare binary a
+// terminal launches when `ai_tool` selects them (the binary name == the tool id).
+// The channel/play loop for these is the ACP work (HS-9310); until then the
+// terminal just runs the tool's REPL.
+const CLI_AGENTS: ReadonlySet<string> = new Set(['codex', 'gemini', 'opencode', 'goose']);
 
 /** HS-8349 — build the development-channel command for a given project.
  *  The MCP server name is now per-project (`hotsheet-channel-<slug>`), so
@@ -65,6 +74,10 @@ export interface ResolveOptions {
   channelEnabledOverride?: boolean;
   /** Override for default shell resolution. Injected in tests. */
   defaultShellOverride?: () => string;
+  /** Override for the `ai_tool` setting. Injected in tests. */
+  aiToolOverride?: string;
+  /** Override for CLI-agent-on-PATH detection. Injected in tests. */
+  isAiToolOnPath?: (bin: string) => boolean;
 }
 
 /**
@@ -78,9 +91,11 @@ export function resolveTerminalCommand(options: ResolveOptions): ResolvedCommand
   const projectDir = dirname(options.dataDir);
   const cwd = resolveTerminalCwd(config.cwd, projectDir);
 
-  const command = template.includes(CLAUDE_TOKEN)
-    ? template.split(CLAUDE_TOKEN).join(pickClaudeCommand(options))
-    : template;
+  let command = template;
+  if (command.includes(CLAUDE_TOKEN) || command.includes(AI_TOKEN)) {
+    const resolved = pickAiCommand(options);
+    command = command.split(CLAUDE_TOKEN).join(resolved).split(AI_TOKEN).join(resolved);
+  }
 
   return { command, cwd };
 }
@@ -91,6 +106,26 @@ function lookupConfig(options: ResolveOptions): TerminalConfig {
   if (found) return found;
   // Unknown id — fall back to the first configured entry so launch still works.
   return { id, command: CLAUDE_TOKEN };
+}
+
+/**
+ * HS-8009 — resolve the terminal command for the project's `ai_tool` (docs/113).
+ * `auto`/`claude`/unset (and the editor-only tools, which aren't terminal agents)
+ * keep today's Claude behavior via `pickClaudeCommand`. An explicit non-Claude CLI
+ * agent launches that tool's bare binary when present, else the default shell.
+ */
+function pickAiCommand(options: ResolveOptions): string {
+  const tool = (options.aiToolOverride ?? readAiTool(options.dataDir)).trim().toLowerCase();
+  if (!CLI_AGENTS.has(tool)) return pickClaudeCommand(options); // auto / claude / editor tools
+  const onPath = options.isAiToolOnPath ?? isExecutableOnPath;
+  if (onPath(tool)) return tool; // the binary name == the tool id
+  return (options.defaultShellOverride ?? defaultShell)();
+}
+
+/** Read the project's `ai_tool` setting (default `auto` when absent). */
+function readAiTool(dataDir: string): string {
+  const value = readFileSettings(dataDir).ai_tool;
+  return typeof value === 'string' && value.trim() !== '' ? value : 'auto';
 }
 
 function pickClaudeCommand(options: ResolveOptions): string {

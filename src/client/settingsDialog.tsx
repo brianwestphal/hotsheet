@@ -164,6 +164,7 @@ function bindGeneralTab() {
   const prefixInput = byId<HTMLInputElement>('settings-ticket-prefix');
   const worklistPreambleInput = byId<HTMLTextAreaElement>('settings-worklist-preamble');
   const integrationGateInput = byId<HTMLInputElement>('settings-integration-gate');
+  const aiToolSelect = byIdOrNull<HTMLSelectElement>('ai-tool-select'); // HS-8009
 
   // Populate values + load file-settings fields when dialog opens.
   settingsBtn.addEventListener('click', () => {
@@ -189,6 +190,7 @@ function bindGeneralTab() {
       prefixInput.value = fs.ticketPrefix ?? '';
       worklistPreambleInput.value = fs.worklist_preamble ?? '';
       integrationGateInput.value = fs.integrationGate ?? '';
+      if (aiToolSelect !== null) aiToolSelect.value = typeof fs.ai_tool === 'string' && fs.ai_tool !== '' ? fs.ai_tool : 'auto';
     });
   });
 
@@ -279,6 +281,12 @@ function bindGeneralTab() {
       void setTerminalWebglOptOut(webglOptOutCheckbox.checked);
     });
   }
+
+  // HS-8009 — the project's preferred AI tool (docs/113 §113.3). A shared, scoped
+  // string setting; `persistScopedSetting` writes it to the active layer.
+  aiToolSelect?.addEventListener('change', () => {
+    void persistScopedSetting('ai_tool', aiToolSelect.value);
+  });
 
   // Notification dropdowns
   notifyPermSelect.addEventListener('change', () => {

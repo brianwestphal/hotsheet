@@ -716,6 +716,23 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward. Demo mode always uses CPU rendering regardless of this setting.</span>
                 </div>
               </div>
+              {/* HS-8009 — the project's preferred AI tool (docs/113 §113.3). */}
+              <div className="settings-divider"></div>
+              <div className="settings-field">
+                <label htmlFor="ai-tool-select">AI tool</label>
+                <select id="ai-tool-select" className="settings-select">
+                  <option value="auto">Auto-detect (default)</option>
+                  <option value="claude">Claude Code</option>
+                  <option value="codex">Codex</option>
+                  <option value="gemini">Gemini CLI</option>
+                  <option value="opencode">OpenCode</option>
+                  <option value="goose">Goose</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="copilot">GitHub Copilot</option>
+                  <option value="windsurf">Windsurf</option>
+                </select>
+                <span className="settings-hint">Which AI tool this project uses. <strong>Auto-detect</strong> keeps today's behavior (seed skills/instructions for every detected tool). Choosing a CLI agent (Claude / Codex / Gemini / OpenCode / Goose) makes a <code>{'{{aiCommand}}'}</code> terminal launch that tool. Editor tools (Cursor / Copilot / Windsurf) get rules + instructions only. Driving non-Claude agents through the play button / permission popup is coming (ACP — docs/113).</span>
+              </div>
               {/* HS-8913 — install / update Hot Sheet's recommended AI-assistant
                   instruction sections in this project's CLAUDE.md. */}
               <div className="settings-divider"></div>
