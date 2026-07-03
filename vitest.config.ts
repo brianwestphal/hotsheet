@@ -46,6 +46,12 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'json'],
       reportsDirectory: './coverage',
+      // HS-9149 — write `coverage-final.json` EVEN when tests fail. Default is
+      // false, which silently dropped the whole unit-coverage half out of the
+      // merged report (`scripts/test-all.sh`) whenever a single unit test failed
+      // in CI — collapsing the merged number from ~93% to the e2e-only ~75% and
+      // failing the HS-9139 gate for an unrelated test flake, not a real regression.
+      reportOnFailure: true,
       all: true,
       include: ['src/**/*.{ts,tsx}'],
       exclude: [

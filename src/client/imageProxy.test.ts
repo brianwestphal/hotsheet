@@ -101,14 +101,24 @@ describe('appendImageDownloadLinks', () => {
   });
 
   it('clicking a link in the browser fetches the blob and triggers a download', async () => {
-    mockInvoke.mockReturnValue(null); // web context
-    const blob = new Blob(['x'], { type: 'image/png' });
-    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, blob: () => Promise.resolve(blob) } as unknown as Response));
-    vi.stubGlobal('fetch', fetchMock);
-    const entry = noteEntry('<img src="https://cdn.example/pic.png" alt="pic" />');
-    appendImageDownloadLinks(entry);
-    (entry.querySelector('.note-image-link') as HTMLElement).click();
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('https://cdn.example/pic.png'));
+    // Fake timers so the deferred `URL.revokeObjectURL` cleanup setTimeout in
+    // `downloadImage` runs WITHIN the test — a real timer firing after happy-dom
+    // tears the env down threw an unhandled "document is not defined" in CI.
+    vi.useFakeTimers();
+    try {
+      mockInvoke.mockReturnValue(null); // web context
+      const blob = new Blob(['x'], { type: 'image/png' });
+      const fetchMock = vi.fn(() => Promise.resolve({ ok: true, blob: () => Promise.resolve(blob) } as unknown as Response));
+      vi.stubGlobal('fetch', fetchMock);
+      const entry = noteEntry('<img src="https://cdn.example/pic.png" alt="pic" />');
+      appendImageDownloadLinks(entry);
+      (entry.querySelector('.note-image-link') as HTMLElement).click();
+      // Flush the fetch→blob microtasks AND the cleanup timer (no dangling timer left).
+      await vi.runAllTimersAsync();
+      expect(fetchMock).toHaveBeenCalledWith('https://cdn.example/pic.png');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('falls back to openExternalUrl when the browser fetch fails', async () => {
