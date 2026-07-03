@@ -62,6 +62,7 @@ export * from './git.js';
 export * from './keys.js';
 export * from './plugins.js';
 export * from './projects.js';
+export * from './remotes.js';
 export * from './reviewProof.js';
 export * from './settings.js';
 export * from './shell.js';

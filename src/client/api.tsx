@@ -2,6 +2,7 @@ import type { z } from 'zod';
 
 import { type ClaimConflictInfo, showClaimConflictToast } from './claimConflictToast.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { apiBaseOrigin } from './remoteOrigin.js';
 import { trackServerRequest } from './serverBusyChip.js';
 import { isShuttingDown } from './shutdownState.js';
 import { getActiveProject } from './state.js';
@@ -123,7 +124,12 @@ export function showErrorPopup(message: string) {
  *  stats page so the read query lands in the same DB the writes did. */
 function buildUrl(path: string, method?: string, skipProjectScope?: boolean): string {
   assertApiPathShape(path);
-  let url = '/api' + path;
+  // HS-9302 (docs/112 §112.4) — when the active project is REMOTE, data-plane
+  // calls target its origin (`https://host:port/api/...`); control-plane paths
+  // (the local registry / remotes store / machine config) + all local projects
+  // stay same-origin. `apiBaseOrigin` returns '' for the local case, so the URL
+  // is byte-for-byte unchanged for today's single-machine usage.
+  let url = apiBaseOrigin(getActiveProject()?.origin, path) + '/api' + path;
   if (skipProjectScope === true) return url;
   const ap = getActiveProject();
   if (ap !== null && (method === undefined || method === 'GET')) {

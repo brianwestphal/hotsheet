@@ -7,6 +7,12 @@ export interface ProjectInfo {
   name: string;
   dataDir: string;
   secret: string;
+  // HS-9302 (docs/112 §112.3) — a REMOTE project's origin (`https://host:port`).
+  // Present ⇒ the project lives on a remote Hot Sheet server: its data/WS calls
+  // target this origin (see `remoteOrigin.ts` + the four URL builders) and its
+  // `secret` is the remote server's per-project secret; `dataDir` is empty (no
+  // local filesystem dir). Absent ⇒ a local project, exactly as today.
+  origin?: string;
   // HS-9056 — populated by `listProjects()` (GET /api/projects); absent on
   // `ProjectInfo`s built elsewhere (e.g. `setActiveProject` in tests). The
   // terminal dashboard tile reads these via `projectsByIdSignal[secret]`.

@@ -50,7 +50,9 @@ import { z } from 'zod';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { getOrCreateDeviceId } from './deviceId.js';
 import { toElement } from './dom.js';
+import { httpOriginToWs } from './remoteOrigin.js';
 import { trackPersistentSlowEvent } from './serverBusyChip.js';
+import { getActiveProject } from './state.js';
 import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
 import { shouldUseWebglRenderer, webglWantedForConsumer } from './terminalWebgl.js';
 
@@ -640,7 +642,14 @@ function attachWebSocketToEntry(entry: StackEntry): void {
     return;
   }
 
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  // HS-9302 (docs/112 §112.4) — a REMOTE project's terminal WS targets its origin
+  // (`wss://host`); a local project stays same-origin. Resolve the entry's origin
+  // from the active project (terminals are per active project).
+  const ap = getActiveProject();
+  const origin = ap?.secret === entry.secret ? ap.origin : undefined;
+  const base = origin !== undefined && origin !== ''
+    ? httpOriginToWs(origin)
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
   // HS-8218 — append `&noSpawn=1` when the entry was created with
   // `noSpawn: true` (e.g. the §47 popup's defensive checkout). Server
   // responds with `history` frame `noSession: true` + close-1000 if no
@@ -650,7 +659,7 @@ function attachWebSocketToEntry(entry: StackEntry): void {
   // server-side resize gate (HS-9190) can tell whose socket a resize came from.
   // On Tier-1 (mTLS) the server ignores this and uses the cert `clientId`.
   const deviceQuery = `&device=${encodeURIComponent(getOrCreateDeviceId())}`;
-  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}${noSpawnQuery}${deviceQuery}`;
+  const url = `${base}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}${noSpawnQuery}${deviceQuery}`;
 
   let ws: WebSocket;
   try {

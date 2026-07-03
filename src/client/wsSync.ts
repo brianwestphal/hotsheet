@@ -15,6 +15,7 @@
 // unavailable" hint and let the long-poll carry data until the WS recovers.
 
 import type { PartitionAssignment } from '../api/workers.js';
+import { httpOriginToWs } from './remoteOrigin.js';
 import { getActiveProject, shouldResetStatusOnUpNext } from './state.js';
 import { ticketsStore } from './ticketsStore.js';
 
@@ -369,9 +370,16 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
 // --- Production instance ----------------------------------------------------
 
 function buildWsUrl(secret: string, since: number | undefined): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  // HS-9302 (docs/112 §112.4) — a REMOTE project's `/ws/sync` targets its origin
+  // (`wss://host`); a local project stays same-origin as today. `secret` is the
+  // active project's, so resolve its origin from the active project.
+  const ap = getActiveProject();
+  const origin = ap?.secret === secret ? ap.origin : undefined;
+  const base = origin !== undefined && origin !== ''
+    ? httpOriginToWs(origin)
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
   const sinceQuery = since !== undefined ? `&since=${String(since)}` : '';
-  return `${protocol}//${window.location.host}/ws/sync?project=${encodeURIComponent(secret)}${sinceQuery}`;
+  return `${base}/ws/sync?project=${encodeURIComponent(secret)}${sinceQuery}`;
 }
 
 function toggleHintBanner(show: boolean): void {

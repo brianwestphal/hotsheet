@@ -24,12 +24,15 @@ export function proxyGitHubImages(container: HTMLElement) {
     'private-user-images.githubusercontent.com',
     'objects.githubusercontent.com',
   ]);
-  const projectParam = getActiveProject()?.secret;
+  const activeProject = getActiveProject();
+  const projectParam = activeProject?.secret;
+  // HS-9302 (docs/112 §112.4) — a remote project's image proxy lives on its origin.
+  const originPrefix = activeProject?.origin ?? '';
   for (const img of container.querySelectorAll('img')) {
     try {
       const url = new URL(img.src);
       if (!GITHUB_HOSTS.has(url.hostname)) continue;
-      let proxyUrl = `/api/plugins/github-issues/image-proxy?url=${encodeURIComponent(img.src)}`;
+      let proxyUrl = `${originPrefix}/api/plugins/github-issues/image-proxy?url=${encodeURIComponent(img.src)}`;
       if (projectParam != null && projectParam !== '') proxyUrl += `&project=${encodeURIComponent(projectParam)}`;
       img.src = proxyUrl;
     } catch { /* ignore invalid URLs */ }
@@ -78,7 +81,9 @@ async function downloadImage(src: string, name: string) {
   if (invoke) {
     // Tauri: WKWebView doesn't support <a download>. Open the image in the
     // system browser where the user can save-as.
-    const fullUrl = src.startsWith('/') ? window.location.origin + src : src;
+    // HS-9302 — a remote project's relative image src resolves against its origin.
+    const base = getActiveProject()?.origin ?? window.location.origin;
+    const fullUrl = src.startsWith('/') ? base + src : src;
     try { await invoke('open_url', { url: fullUrl }); } catch { /* ignore */ }
     return;
   }

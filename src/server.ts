@@ -26,6 +26,7 @@ import { keysRoutes } from './routes/keys.js';
 import { otelRoutes } from './routes/otel.js';
 import { pageRoutes } from './routes/pages.js';
 import { projectRoutes } from './routes/projects.js';
+import { remotesRoutes } from './routes/remotes.js';
 import { createRequestGuards } from './routes/requestGuards.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { workerRoutes } from './routes/workers.js';
@@ -175,6 +176,8 @@ export async function startServer(
   app.route('/api', worktreeRoutes);
   // HS-8863 — distributed worker launch (docs/90 §90.5 / §90.7).
   app.route('/api', workerRoutes);
+  // HS-9302 — the machine-global remotes store (docs/112 §112.3).
+  app.route('/api', remotesRoutes);
 
   // §78 Announcer (HS-8745) — `/api/announcer/*`: opt-in toggle, key selection,
   // derived-summary generation, entries, and the listen cursor.

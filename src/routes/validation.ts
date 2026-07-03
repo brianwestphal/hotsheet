@@ -217,6 +217,31 @@ export const ReorderProjectsSchema = z.object({
   secrets: z.array(z.string()),
 });
 
+// --- Remote servers (HS-9302, docs/112 §112.3) — the machine-global
+// ~/.hotsheet/remotes.json store of remote Hot Sheet servers + the projects
+// mounted from each. Shared SSOT (client typed caller + server fs module).
+
+/** One project mounted from a remote server: its per-project secret + display name. */
+export const RemoteProjectSchema = z.object({
+  secret: z.string().min(1),
+  name: z.string(),
+});
+export const RemoteServerSchema = z.object({
+  /** `https://host:port` — the remote server's origin. */
+  origin: z.string().min(1),
+  /** Human-friendly label for the server (defaults to the host). */
+  label: z.string().default(''),
+  /** The client-cert device id enrolled for this server, when known (docs/94). */
+  deviceClientId: z.string().optional(),
+  projects: z.array(RemoteProjectSchema).default([]),
+});
+export const RemotesFileSchema = z.object({
+  servers: z.array(RemoteServerSchema).default([]),
+});
+export type RemoteProject = z.infer<typeof RemoteProjectSchema>;
+export type RemoteServer = z.infer<typeof RemoteServerSchema>;
+export type RemotesFile = z.infer<typeof RemotesFileSchema>;
+
 // --- Categories ---
 
 export const CategoryDefSchema = z.object({

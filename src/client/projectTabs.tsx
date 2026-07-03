@@ -1,4 +1,4 @@
-import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, listProjects, reorderProjects, revealProject } from '../api/index.js';
+import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, getRemotes, listProjects, reorderProjects, revealProject } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
@@ -122,7 +122,7 @@ export async function initProjectTabs(): Promise<void> {
     // HS-8085 — first call before `setActiveProject`, so the api helper
     // emits a plain GET with no `?project=` query (no active project to
     // auth against yet). That matches the pre-fix raw-fetch behavior.
-    projectsStore.actions.setProjects(await listProjects());
+    projectsStore.actions.setProjects([...await listProjects(), ...await remoteProjectInfos()]);
   } catch {
     projectsStore.actions.setProjects([]);
   }
@@ -186,6 +186,25 @@ export async function switchProject(project: ProjectInfo): Promise<void> {
 let pendingReorderSecrets: readonly string[] | null = null;
 
 /** Re-fetch and re-render tabs (e.g., after adding/removing a project). */
+/**
+ * HS-9302 (docs/112 §112.3) — the mounted remote projects (from
+ * `~/.hotsheet/remotes.json` via `GET /api/remotes`) as `ProjectInfo`s, so the tab
+ * strip shows them alongside local projects. Each carries the server's `origin`
+ * (⇒ its data/WS calls target that origin) + the remote project's secret; `dataDir`
+ * is empty (no local dir). Failure-open — a remotes read error just yields no
+ * remote tabs, never breaks the local tab strip.
+ */
+async function remoteProjectInfos(): Promise<ProjectInfo[]> {
+  try {
+    const { servers } = await getRemotes();
+    return servers.flatMap(s => s.projects.map(p => ({
+      name: p.name, secret: p.secret, dataDir: '', origin: s.origin,
+    })));
+  } catch {
+    return [];
+  }
+}
+
 export async function refreshProjectTabs(): Promise<void> {
   try {
     let list: ProjectInfo[] = await listProjects();
@@ -222,7 +241,9 @@ export async function refreshProjectTabs(): Promise<void> {
         list = sorted;
       }
     }
-    projectsStore.actions.setProjects(list);
+    // HS-9302 — append the mounted remote projects (reorder above applies to the
+    // local projects; remotes tab after them).
+    projectsStore.actions.setProjects([...list, ...await remoteProjectInfos()]);
   } catch {
     projectsStore.actions.setProjects([]);
   }
