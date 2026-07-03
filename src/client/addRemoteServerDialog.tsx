@@ -12,12 +12,15 @@ import { toElement } from './dom.js';
 import { refreshProjectTabs } from './projectTabs.js';
 import { addRemoteServer, fetchRemoteProjects, mountRemoteProjects } from './remoteServers.js';
 import { isLoopbackOrigin, normalizeServerUrl } from './remoteUrl.js';
+import { canScanQr, type ScanHandle, startPairingQrScan } from './scanQr.js';
 import { showToast } from './toast.js';
 
 let activeOverlay: HTMLElement | null = null;
+let activeScan: ScanHandle | null = null;
 
-/** Close the dialog if open. */
+/** Close the dialog if open (stopping any running QR scan / camera). */
 export function closeAddRemoteServerDialog(): void {
+  if (activeScan !== null) { activeScan.stop(); activeScan = null; }
   if (activeOverlay !== null) { activeOverlay.remove(); activeOverlay = null; }
 }
 
@@ -39,7 +42,11 @@ export function openAddRemoteServerDialog(): void {
         </div>
         <div className="worker-pool-body add-remote-body">
           <label className="add-remote-label" htmlFor="add-remote-url">Server URL</label>
-          <input type="text" id="add-remote-url" className="add-remote-url" placeholder="https://host:4174" autocomplete="off" spellcheck={false} />
+          <div className="add-remote-url-row">
+            <input type="text" id="add-remote-url" className="add-remote-url" placeholder="https://host:4174" autocomplete="off" spellcheck={false} />
+            {canScanQr() ? <button type="button" className="btn btn-sm add-remote-scan" title="Scan a pairing QR code">Scan QR</button> : ''}
+          </div>
+          <div className="add-remote-scan-area" style="display:none"></div>
           <div className="add-remote-hint" aria-live="polite"></div>
           <div className="add-remote-projects"></div>
           <div className="add-remote-cert-note settings-hint">
@@ -193,6 +200,38 @@ export function openAddRemoteServerDialog(): void {
   input.addEventListener('input', () => { if (phase === 'projects') backToUrlPhase(); else validate(); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') void onPrimary(); });
   primaryBtn.addEventListener('click', () => void onPrimary());
+
+  // HS-9308 — "Scan QR": decode a Hot Sheet pairing QR (`{token, url}`) via the
+  // shared camera scanner, fill the URL, and stash the pairing token (consumed by
+  // the in-app enrollment flow — HS-9309 for the Tauri cert path). The scanned URL
+  // is validated the same as a typed one.
+  const scanArea = overlay.querySelector('.add-remote-scan-area');
+  overlay.querySelector('.add-remote-scan')?.addEventListener('click', () => {
+    if (!(scanArea instanceof HTMLElement)) return;
+    if (activeScan !== null) { activeScan.stop(); activeScan = null; scanArea.style.display = 'none'; scanArea.replaceChildren(); return; }
+    scanArea.style.display = '';
+    setHint('Point the camera at the pairing QR code…');
+    if (phase === 'projects') backToUrlPhase();
+    activeScan = startPairingQrScan(
+      scanArea,
+      (payload) => {
+        if (activeScan !== null) { activeScan.stop(); activeScan = null; }
+        scanArea.style.display = 'none';
+        scanArea.replaceChildren();
+        // The QR fills the server URL. Its pairing `token` drives in-app cert
+        // enrollment (HS-9309, Tauri) — for the web path the cert is installed in
+        // the browser store out-of-band, so the token isn't consumed here yet.
+        input.value = payload.url;
+        validate();
+      },
+      (message) => {
+        if (activeScan !== null) { activeScan.stop(); activeScan = null; }
+        scanArea.style.display = 'none';
+        scanArea.replaceChildren();
+        setHint(`${message} Enter the URL manually.`, true);
+      },
+    );
+  });
   overlay.querySelector('.add-remote-cancel')?.addEventListener('click', closeAddRemoteServerDialog);
   overlay.querySelector('.worker-pool-close')?.addEventListener('click', closeAddRemoteServerDialog);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeAddRemoteServerDialog(); });

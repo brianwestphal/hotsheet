@@ -11177,6 +11177,21 @@ label.detail-details-label {
 }
 .add-remote-enum-fail { margin: 4px 0; }
 
+// HS-9308 — the "Scan QR" affordance in the Add-remote dialog.
+.add-remote-url-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  .add-remote-url { flex: 1; }
+}
+.add-remote-scan-area {
+  margin: 6px 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  .qr-scan-video { display: block; width: 100%; max-height: 240px; object-fit: cover; }
+}
+
 .worker-pool-empty, .worker-pool-error {
   color: var(--text-muted);
   padding: 16px 0;

@@ -18,14 +18,13 @@
  * manually (docs/manual-test-plan.md §7) — this surface gets the bytes onto the
  * device and explains the per-OS steps; the OS keychain import is the user's.
  */
-import type { IScannerControls } from '@zxing/browser';
-import { BrowserQRCodeReader } from '@zxing/browser';
 import type { z } from 'zod';
 
 import { PairCompleteResSchema } from '../api/enrollment.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { buildClientP12, generateDeviceCsr } from './pairing/devicePairing.js';
 import { type PairingPayload, parsePairingPayload } from './pairingPayload.js';
+import { startPairingQrScan } from './scanQr.js';
 
 /** The mount the server page renders (`#pair-root`). */
 function root(): HTMLElement | null {
@@ -78,7 +77,7 @@ function renderStart(message?: { text: string; kind: 'error' | 'info' }): void {
   if (!canScan) requireChild<HTMLDetailsElement>(el, '#pair-paste-details').open = true;
 
   if (canScan) {
-    requireChild<HTMLButtonElement>(el, '#pair-scan-btn').addEventListener('click', () => { void startCameraScan(); });
+    requireChild<HTMLButtonElement>(el, '#pair-scan-btn').addEventListener('click', () => startCameraScan());
   }
   requireChild<HTMLButtonElement>(el, '#pair-paste-btn').addEventListener('click', () => {
     const text = requireChild<HTMLTextAreaElement>(el, '#pair-paste-input').value;
@@ -95,39 +94,17 @@ function renderStart(message?: { text: string; kind: 'error' | 'info' }): void {
  *  stopping only on the first valid payload. Best-effort: any failure (permission
  *  denied, no camera) falls back to the paste flow. Exposed for the e2e fake-
  *  camera test, which feeds a Y4M QR through Chromium's fake capture device. */
-async function startCameraScan(): Promise<void> {
+function startCameraScan(): void {
   const area = byIdOrNull('pair-scan-area');
   if (area === null) return;
-
-  const video = toElement(<video className="pair-video"></video>) as unknown as HTMLVideoElement;
-  video.playsInline = true; // inline playback on iOS (attribute casing varies; set the prop)
-  video.muted = true;
-  area.replaceChildren(video);
   area.style.display = '';
-
-  const reader = new BrowserQRCodeReader();
-  // A holder object (not a bare `let`) so the post-stop guard isn't narrowed to a
-  // constant — `done` is mutated across async decode callbacks.
-  const scan: { done: boolean; controls: IScannerControls | null } = { done: false, controls: null };
-  const stop = (): void => { scan.done = true; scan.controls?.stop(); };
-
-  try {
-    scan.controls = await reader.decodeFromConstraints(
-      { video: { facingMode: 'environment' } },
-      video,
-      (result) => {
-        if (scan.done || result === undefined) return; // most frames report no code — keep scanning
-        const payload = parsePairingPayload(result.getText());
-        if (payload !== null) { stop(); renderEnroll(payload); }
-        // A non-Hot-Sheet QR (a Wi-Fi/URL code) parses to null — ignore and keep scanning.
-      },
-    );
-    // The decoder may have stopped synchronously (payload found before this
-    // resolves); honor that so we don't leave the camera running.
-    if (scan.done) scan.controls.stop();
-  } catch {
-    renderStart({ text: 'Camera unavailable or permission denied. Enter the code manually below.', kind: 'error' });
-  }
+  // HS-9308 — the decode loop is the shared `startPairingQrScan` (also used by
+  // the "Add remote server" dialog); this page owns the surrounding UI.
+  startPairingQrScan(
+    area,
+    (payload) => renderEnroll(payload),
+    (message) => renderStart({ text: `${message} Enter the code manually below.`, kind: 'error' }),
+  );
 }
 
 // --- Step 2: collect label + password, then enroll -------------------------
