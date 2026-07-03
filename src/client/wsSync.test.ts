@@ -111,6 +111,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
   const removeTicket = vi.fn();
   const optimisticUpdate = vi.fn();
   const showHint = vi.fn();
+  const onActiveDeviceChanged = vi.fn();
   const loaded = new Set<number>(loadedIds);
   const ws = createWsSync({
     createSocket: (url) => { urls.push(url); const s = new FakeSocket(); sockets.push(s); return s; },
@@ -128,9 +129,10 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     showHint,
     getSecret: () => secret,
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
+    onActiveDeviceChanged,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint,
+    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -290,6 +292,24 @@ describe('createWsSync flow', () => {
     h.ws.start();
     h.last().push({ type: 'resync' });
     expect(h.refreshData).toHaveBeenCalledTimes(1);
+  });
+
+  // HS-9191 — the active-device lease event routes to onActiveDeviceChanged with
+  // the holder id (or null when the slot is freed), not to a data/detail refresh.
+  it('routes an active-device-changed event to onActiveDeviceChanged (HS-9191)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'active-device-changed', deviceId: 'device-x', expiresAt: 123, seq: 1 });
+    expect(h.onActiveDeviceChanged).toHaveBeenCalledExactlyOnceWith('device-x');
+    expect(h.refreshData).not.toHaveBeenCalled();
+    expect(h.refreshDetail).not.toHaveBeenCalled();
+  });
+
+  it('passes null when the active-device slot is freed (HS-9191)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'active-device-changed', deviceId: null, expiresAt: null, seq: 1 });
+    expect(h.onActiveDeviceChanged).toHaveBeenCalledExactlyOnceWith(null);
   });
 
   it('reconnects with ?since after a drop and shows the hint on a double-drop', () => {

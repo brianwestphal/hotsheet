@@ -25,7 +25,10 @@ import {
   applyHistoryReplay,
   checkout,
   entryCount,
+  isDeviceActive,
   parseControlMessage,
+  setDeviceActive,
+  setTakeControlHandler,
 } from './terminalCheckout.js';
 
 beforeEach(() => {
@@ -369,6 +372,80 @@ describe('placeholder background (HS-8295)', () => {
     expect(placeholder?.style.backgroundColor).toBe('');
     handleB.release();
     handleA.release();
+  });
+});
+
+// HS-9191 — the active-device gate (docs/109 §109.6): when this device is not
+// the active device, every mounted terminal flips to the "take control"
+// placeholder instead of the live xterm; flipping back restores it live.
+describe('active-device gate (HS-9191)', () => {
+  it('defaults to active (live xterm) with no controller wired', () => {
+    expect(isDeviceActive()).toBe(true);
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    expect(handle.term.element?.parentElement).toBe(m); // live xterm mounted
+    expect(m.querySelector('.terminal-checkout-placeholder-inactive')).toBeNull();
+    handle.release();
+  });
+
+  it('setDeviceActive(false) flips a mounted terminal to the take-control placeholder', () => {
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    expect(handle.term.element?.parentElement).toBe(m);
+
+    setDeviceActive(false);
+    expect(isDeviceActive()).toBe(false);
+    // The live xterm was parked away (no longer inside the visible mountInto).
+    expect(handle.term.element?.parentElement).not.toBe(m);
+    const ph = m.querySelector<HTMLElement>('.terminal-checkout-placeholder-inactive');
+    expect(ph).not.toBeNull();
+    expect(m.querySelector('.terminal-checkout-placeholder-text')?.textContent).toBe('Active on another device');
+    expect(m.querySelector('.terminal-checkout-take-control')).not.toBeNull();
+
+    setDeviceActive(true); // flip back → live xterm restored
+    expect(handle.term.element?.parentElement).toBe(m);
+    expect(m.querySelector('.terminal-checkout-placeholder-inactive')).toBeNull();
+    handle.release();
+  });
+
+  it('a checkout while non-active renders the placeholder, not the live xterm', () => {
+    setDeviceActive(false);
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    expect(m.querySelector('.terminal-checkout-placeholder-inactive')).not.toBeNull();
+    expect(handle.term.element?.parentElement).not.toBe(m);
+    handle.release();
+  });
+
+  it('the take-control button fires the registered handler', () => {
+    const onTakeControl = vi.fn();
+    setTakeControlHandler(onTakeControl);
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    setDeviceActive(false);
+    const btn = m.querySelector<HTMLButtonElement>('.terminal-checkout-take-control');
+    expect(btn).not.toBeNull();
+    btn?.click();
+    expect(onTakeControl).toHaveBeenCalledTimes(1);
+    handle.release();
+  });
+
+  it('gates handle.resize() while non-active (the PTY is sized by the active device)', () => {
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('secret-A', 'default');
+    expect(entry?.lastAppliedCols).toBe(80);
+
+    setDeviceActive(false);
+    handle.resize(120, 40);
+    expect(entry?.lastAppliedCols).toBe(80); // gated — unchanged
+    expect(entry?.lastAppliedRows).toBe(24);
+
+    setDeviceActive(true);
+    handle.resize(120, 40);
+    expect(entry?.lastAppliedCols).toBe(120); // active — applied
+    expect(entry?.lastAppliedRows).toBe(40);
+    handle.release();
   });
 });
 

@@ -12309,6 +12309,30 @@ label.detail-details-label {
   line-height: 1.3;
 }
 
+// HS-9191 — the non-active-device placeholder (docs/109 §109.6): terminals are
+// live on another device; this offers a button to claim control here. Unlike
+// the base placeholder it must be interactive, so re-enable pointer events.
+.terminal-checkout-placeholder-inactive {
+  pointer-events: auto;
+}
+
+.terminal-checkout-take-control {
+  margin-top: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+  }
+}
+
 // HS-8036 — ticket-reference auto-link + stacking dialog. Inline anchors
 // inside any rendered markdown (notes, details, reader-mode body, the
 // stacking dialog itself) get the `.ticket-ref` class via the post-

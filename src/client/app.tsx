@@ -1,6 +1,7 @@
 import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
 import { createTicket, getGitStatus, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { resyncActiveDevice, startActiveDevice } from './activeDevice.js';
 import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
 import { flashAnchoredHint } from './anchoredHint.js';
 import { suppressAnimation } from './animate.js';
@@ -395,7 +396,11 @@ async function init() {
     // runs once immediately (a no-op while already connected to the same secret)
     // and again on every project switch.
     startWsSync();
-    effect(() => { void activeProjectSignal.value; reconnectWsForActiveProject(); });
+    // HS-9191 — the active-device controller (multi-client terminals): claims
+    // active on sustained interaction, renders live↔placeholder off the
+    // `active-device-changed` push, and re-reads the holder on a project switch.
+    startActiveDevice();
+    effect(() => { void activeProjectSignal.value; reconnectWsForActiveProject(); resyncActiveDevice(); });
     void checkForUpdate();
     bindAppLevelDocumentListeners();
 

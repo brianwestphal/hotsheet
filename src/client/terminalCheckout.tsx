@@ -48,6 +48,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { z } from 'zod';
 
 import type { SafeHtml } from '../jsx-runtime.js';
+import { getOrCreateDeviceId } from './deviceId.js';
 import { toElement } from './dom.js';
 import { trackPersistentSlowEvent } from './serverBusyChip.js';
 import { shouldShowStallIndicator } from './terminal/stallIndicator.js';
@@ -352,6 +353,94 @@ function writePlaceholderInto(mountInto: HTMLElement, background?: string): void
   mountInto.replaceChildren(buildPlaceholder(background));
 }
 
+// --- HS-9191 active-device gating (docs/109 §109.6) -------------------------
+//
+// While THIS device is not the active device, every terminal on every surface
+// renders a "take control" placeholder instead of the live xterm — so there's
+// only ever one live renderer per PTY across all devices (→ one size → no
+// resize thrash). The default is `true` (act as active until an
+// `active-device-changed` event says another device holds the lease), so a
+// single-device user is unaffected and the module stays inert until the
+// controller (`activeDevice.ts`) wires it up.
+
+let deviceActive = true;
+let takeControlHandler: (() => void) | null = null;
+
+/** Register the callback the "take control" placeholder button fires (the
+ *  `activeDevice.ts` controller's claim). */
+export function setTakeControlHandler(fn: (() => void) | null): void {
+  takeControlHandler = fn;
+}
+
+/** The non-active-device placeholder: identifies that the terminal is live on
+ *  another device and offers a button to claim control here (immediate handoff,
+ *  last-claim-wins). Distinct from the §54 same-device bump-down placeholder. */
+function buildInactiveDevicePlaceholder(background?: string): HTMLElement {
+  const el = toElement(
+    <div className="terminal-checkout-placeholder terminal-checkout-placeholder-inactive">
+      <div className="terminal-checkout-placeholder-icon">{TERMINAL_SQUARE_ICON}</div>
+      <div className="terminal-checkout-placeholder-text">Active on another device</div>
+      <button type="button" className="terminal-checkout-take-control">View here</button>
+    </div>,
+  );
+  if (background !== undefined && background !== '') el.style.backgroundColor = background;
+  const btn = el.querySelector('.terminal-checkout-take-control');
+  if (btn instanceof HTMLButtonElement) {
+    btn.addEventListener('click', () => { takeControlHandler?.(); });
+  }
+  return el;
+}
+
+function writeInactivePlaceholderInto(mountInto: HTMLElement, background?: string): void {
+  mountInto.replaceChildren(buildInactiveDevicePlaceholder(background));
+}
+
+/**
+ * Render the entry's top-of-stack consumer into `mountInto` — the LIVE xterm
+ * when this device is active, or the "take control" placeholder when it isn't.
+ * The single choke both `checkout()` and the release-restore path go through so
+ * the active↔placeholder decision is made in exactly one place.
+ */
+function renderEntryTopInto(entry: StackEntry, opts: CheckoutOptions, cols: number, rows: number): void {
+  if (deviceActive) {
+    reparentXtermInto(entry, opts.mountInto);
+    applyResizeIfChanged(entry, cols, rows);
+    applyTopReadOnly(entry, opts.readOnly === true);
+    reconcileRenderer(entry, opts.scaled === true);
+  } else {
+    // Park the live xterm back offscreen so it isn't left inside a mountInto
+    // we're about to fill with the placeholder (mirrors disposeEntry's parking).
+    try {
+      const el = entry.term.element;
+      if (el !== undefined) getOrCreateParkingSink().appendChild(el);
+    } catch { /* ignore */ }
+    writeInactivePlaceholderInto(opts.mountInto, opts.placeholderBackground);
+  }
+}
+
+/**
+ * HS-9191 — flip every mounted terminal between the live xterm and the
+ * "take control" placeholder when this device's active status changes (fed by
+ * the `active-device-changed` /ws/sync event via `activeDevice.ts`). Re-renders
+ * each entry's top consumer through the single `renderEntryTopInto` choke.
+ */
+export function setDeviceActive(active: boolean): void {
+  if (active === deviceActive) return;
+  deviceActive = active;
+  for (const entry of entries.values()) {
+    if (entry.stack.length === 0) continue;
+    const top = entry.stack[entry.stack.length - 1];
+    if (!top._options.mountInto.isConnected) continue; // stale container — leave it
+    renderEntryTopInto(entry, top._options, entry.lastAppliedCols, entry.lastAppliedRows);
+  }
+}
+
+/** Whether this device currently renders terminals live (exported for consumers
+ *  that want to reflect the state; also the test-observable flag). */
+export function isDeviceActive(): boolean {
+  return deviceActive;
+}
+
 /** Construct the xterm + open the WebSocket. The xterm is `term.open()`'d
  *  into the offscreen parking sink so the caller can immediately
  *  reparent its DOM node into `mountInto` via `appendChild`. */
@@ -519,7 +608,11 @@ function attachWebSocketToEntry(entry: StackEntry): void {
   // responds with `history` frame `noSession: true` + close-1000 if no
   // live session exists, so no fresh PTY is spawned.
   const noSpawnQuery = entry.noSpawn ? '&noSpawn=1' : '';
-  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}${noSpawnQuery}`;
+  // HS-9191 — carry this browser/Tauri instance's synthetic device id so the
+  // server-side resize gate (HS-9190) can tell whose socket a resize came from.
+  // On Tier-1 (mTLS) the server ignores this and uses the cert `clientId`.
+  const deviceQuery = `&device=${encodeURIComponent(getOrCreateDeviceId())}`;
+  const url = `${protocol}//${window.location.host}/api/terminal/ws?project=${encodeURIComponent(entry.secret)}&terminal=${encodeURIComponent(entry.terminalId)}&cols=${entry.lastAppliedCols}&rows=${entry.lastAppliedRows}${noSpawnQuery}${deviceQuery}`;
 
   let ws: WebSocket;
   try {
@@ -877,15 +970,11 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
     }
   }
 
-  reparentXtermInto(entry, opts.mountInto);
-  applyResizeIfChanged(entry, opts.cols, opts.rows);
-  // HS-8301 — apply this consumer's readOnly flag now that the term is
-  // mounted into their `mountInto`. The flag follows the top-of-stack:
-  // bumping down / releasing re-runs this against the new top's options.
-  applyTopReadOnly(entry, opts.readOnly === true);
-  // HS-8619 — sync the renderer to this consumer's `scaled` flag (DOM for
-  // CSS-scaled tiles, WebGL for full-size). Follows the top-of-stack too.
-  reconcileRenderer(entry, opts.scaled === true);
+  // HS-9191 — render the live xterm (when this device is active) or the "take
+  // control" placeholder (when it isn't) into the caller's mountInto. This
+  // choke also applies the resize-if-changed gate + the consumer's readOnly /
+  // renderer (scaled) flags, which follow the top-of-stack.
+  renderEntryTopInto(entry, opts, opts.cols, opts.rows);
 
   const stableEntry = entry;
   const handle: InternalCheckoutHandle = {
@@ -907,6 +996,10 @@ export function checkout(opts: CheckoutOptions): CheckoutHandle {
       // that runs a FitAddon must ALSO gate its own `fit()` calls on
       // `isTopOfStack()` (the drawer + dashboard tile both do).
       if (!handle.isTopOfStack()) return;
+      // HS-9191 — a non-active device must not size the shared PTY (the server
+      // gate, HS-9190, also drops it, but skipping the send avoids wasted frames
+      // and keeps the PTY sized by whoever is active).
+      if (!deviceActive) return;
       // HS-8042 — same skip-on-same-size rule as swap-time resize so
       // TUI programs don't see SIGWINCH on idempotent fit() calls.
       applyResizeIfChanged(stableEntry, cols, rows);
@@ -956,16 +1049,9 @@ function releaseInternal(handle: InternalCheckoutHandle): void {
   // Released the top — restore the next-most-recent caller. Stack length
   // is non-zero (we returned above when it hit zero) so the top is defined.
   const newTop = entry.stack[entry.stack.length - 1];
-  reparentXtermInto(entry, newTop._options.mountInto);
-  applyResizeIfChanged(entry, newTop._options.cols, newTop._options.rows);
-  // HS-8301 — re-apply the new top's readOnly flag. A read-only popup
-  // releasing must hand typing back to a non-readOnly underlying
-  // consumer (drawer pane / dashboard tile).
-  applyTopReadOnly(entry, newTop._options.readOnly === true);
-  // HS-8619 — re-sync the renderer to the new top. E.g. closing the dashboard
-  // restores the drawer pane (non-scaled) → WebGL reloads; bumping a drawer
-  // down under a grid tile (scaled) → WebGL disposes for DOM.
-  reconcileRenderer(entry, newTop._options.scaled === true);
+  // HS-9191 — restore the new top through the same active-vs-placeholder choke
+  // (re-applies resize / readOnly / renderer for the active case, HS-8301/8619).
+  renderEntryTopInto(entry, newTop._options, newTop._options.cols, newTop._options.rows);
   try { newTop._options.onRestoredToTop?.(); } catch { /* consumer error doesn't break the restore */ }
 }
 
@@ -1151,4 +1237,8 @@ export function _resetForTesting(): void {
     try { xtermParkingSink.remove(); } catch { /* ignore */ }
     xtermParkingSink = null;
   }
+  // HS-9191 — reset the active-device gate so a test that flipped it doesn't
+  // bleed into the next.
+  deviceActive = true;
+  takeControlHandler = null;
 }

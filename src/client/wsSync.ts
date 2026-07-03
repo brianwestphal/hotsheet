@@ -32,7 +32,7 @@ export function shouldFallback(dropTimestamps: readonly number[], now: number): 
   return recent.length >= FALLBACK_DROP_THRESHOLD;
 }
 
-export type FrameAction = 'data' | 'detail' | 'claims' | 'pong' | 'connected' | 'resync' | 'ignore';
+export type FrameAction = 'data' | 'detail' | 'claims' | 'active-device' | 'pong' | 'connected' | 'resync' | 'ignore';
 
 /** Classify an inbound frame `type` into the action the client takes.
  *  Mutation events → a full data refresh; attachment events → a detail-panel
@@ -45,6 +45,9 @@ export function frameAction(type: unknown): FrameAction {
     case 'connected': return 'connected';
     case 'resync': return 'resync';
     case 'claims-changed': return 'claims';
+    // HS-9191 — the active-device lease changed (docs/109 §109.5); the client
+    // flips its terminals live↔placeholder based on whether it's the holder.
+    case 'active-device-changed': return 'active-device';
     case 'attachment-added':
     case 'attachment-deleted': return 'detail';
     case 'ticket-created':
@@ -73,6 +76,11 @@ function toIdList(v: unknown): number[] {
 }
 function toRecord(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+}
+
+/** HS-9191 — the holder id off an `active-device-changed` frame (null = freed). */
+function activeDeviceIdOf(frame: Record<string, unknown>): string | null {
+  return typeof frame.deviceId === 'string' && frame.deviceId !== '' ? frame.deviceId : null;
 }
 
 /**
@@ -166,6 +174,10 @@ export interface WsSyncDeps {
   getSecret: () => string | null;
   /** Build the `/ws/sync` URL for a secret + optional `?since`. */
   buildUrl: (secret: string, since: number | undefined) => string;
+  /** HS-9191 — an `active-device-changed` event arrived: the current holder's
+   *  device id, or null when the slot is now free. Drives the terminal
+   *  live↔placeholder flip. */
+  onActiveDeviceChanged: (deviceId: string | null) => void;
 }
 
 export interface WsSync {
@@ -240,6 +252,7 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     }
     if (action === 'detail') deps.refreshDetail();
     else if (action === 'claims') deps.refreshClaims();
+    else if (action === 'active-device') deps.onActiveDeviceChanged(activeDeviceIdOf(f));
     else applyMutation(f);
   }
 
@@ -402,6 +415,9 @@ const wsSync = createWsSync({
   showHint: toggleHintBanner,
   getSecret: () => getActiveProject()?.secret ?? null,
   buildUrl: buildWsUrl,
+  onActiveDeviceChanged: (deviceId) => {
+    void import('./activeDevice.js').then(({ onActiveDeviceChangedEvent }) => onActiveDeviceChangedEvent(deviceId));
+  },
 });
 
 export function startWsSync(): void { wsSync.start(); }
