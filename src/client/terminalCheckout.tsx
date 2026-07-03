@@ -273,6 +273,14 @@ interface StackEntry {
    *  this guard, an explicit final-release would race the reconnect
    *  loop and re-spawn a WS we just intentionally tore down. */
   intentionallyClosing: boolean;
+  /** HS-9300 — true while THIS device is not the active device (docs/109 §109.4).
+   *  Suppresses opening the terminal WS (a non-active device renders a
+   *  placeholder, so it doesn't need the server streaming it PTY bytes) and its
+   *  auto-reconnect. `setDeviceActive(false)` closes the WS + sets this; a fresh
+   *  checkout while inactive starts with it set; reactivating clears it +
+   *  re-attaches (history-replay repaints). Distinct from `intentionallyClosing`
+   *  (the dispose/final-release path). */
+  deviceInactive: boolean;
   /** HS-8218 — true when the entry was created with `noSpawn: true`.
    *  Carried through to `attachWebSocketToEntry` so the WS query string
    *  includes `noSpawn=1`. Also gates the `onNoLiveSession` dispatch
@@ -419,19 +427,37 @@ function renderEntryTopInto(entry: StackEntry, opts: CheckoutOptions, cols: numb
 }
 
 /**
- * HS-9191 — flip every mounted terminal between the live xterm and the
+ * HS-9191 / HS-9300 — flip every mounted terminal between the live xterm and the
  * "take control" placeholder when this device's active status changes (fed by
  * the `active-device-changed` /ws/sync event via `activeDevice.ts`). Re-renders
- * each entry's top consumer through the single `renderEntryTopInto` choke.
+ * each entry's top consumer through the single `renderEntryTopInto` choke, AND
+ * (HS-9300, docs/109 §109.4) closes each entry's terminal WS while non-active so
+ * the server stops streaming PTY bytes to a hidden placeholder; reactivating
+ * re-attaches (history-replay repaints).
  */
 export function setDeviceActive(active: boolean): void {
   if (active === deviceActive) return;
   deviceActive = active;
   for (const entry of entries.values()) {
-    if (entry.stack.length === 0) continue;
-    const top = entry.stack[entry.stack.length - 1];
-    if (!top._options.mountInto.isConnected) continue; // stale container — leave it
-    renderEntryTopInto(entry, top._options, entry.lastAppliedCols, entry.lastAppliedRows);
+    entry.deviceInactive = !active;
+    // HS-9300 — going non-active: close the WS + null it first so the close
+    // handler's `entry.ws !== ws` guard (and the deviceInactive guard in
+    // attachWebSocketToEntry) skip the auto-reconnect.
+    if (!active && entry.ws !== null) {
+      const ws = entry.ws;
+      entry.ws = null;
+      try { ws.close(); } catch { /* already closed */ }
+    }
+    // Re-render the top consumer (live xterm when active, placeholder when not).
+    if (entry.stack.length > 0 && entry.stack[entry.stack.length - 1]._options.mountInto.isConnected) {
+      const top = entry.stack[entry.stack.length - 1];
+      renderEntryTopInto(entry, top._options, entry.lastAppliedCols, entry.lastAppliedRows);
+    }
+    // HS-9300 — going active: re-attach the WS (after the xterm is back in the
+    // DOM above) so the history replay paints into the visible term.
+    if (active && entry.ws === null && entry.stack.length > 0) {
+      attachWebSocketToEntry(entry);
+    }
   }
 }
 
@@ -469,6 +495,9 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
     lastAppliedRows: rows,
     stack: [],
     intentionallyClosing: false,
+    // HS-9300 — a fresh entry created while this device isn't active starts with
+    // its WS suppressed (attachWebSocketToEntry no-ops); reactivating attaches it.
+    deviceInactive: !deviceActive,
     replaying: false,
     noSpawn,
     // HS-8488 / HS-8619 — `shouldUseWebglRenderer()` is false when the user
@@ -580,6 +609,15 @@ function createEntry(secret: string, terminalId: string, cols: number, rows: num
  * reconnect-on-close path entirely.
  */
 function attachWebSocketToEntry(entry: StackEntry): void {
+  // HS-9300 — a non-active device doesn't open the terminal WS (docs/109 §109.4):
+  // it renders a placeholder, so streaming it PTY bytes is wasted bandwidth. The
+  // resize gate (HS-9190) already guarantees correctness; this stops the traffic.
+  // Reactivating (setDeviceActive(true)) clears the flag + re-attaches. Also
+  // no-ops the close-handler's reconnect microtask while inactive.
+  if (entry.deviceInactive) {
+    entry.ws = null;
+    return;
+  }
   // happy-dom in unit tests doesn't have WebSocket — bail with null so the
   // module is testable without a real socket.
   if (typeof WebSocket === 'undefined') {

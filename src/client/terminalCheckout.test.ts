@@ -449,6 +449,39 @@ describe('active-device gate (HS-9191)', () => {
   });
 });
 
+// HS-9300 — a non-active device closes/suppresses its terminal WS (docs/109
+// §109.4) so the server stops streaming PTY bytes to a hidden placeholder. (The
+// socket itself is unobservable under happy-dom — WebSocket is undefined there,
+// so attach always sets ws=null — but the `deviceInactive` suppression flag that
+// drives it is fully assertable.)
+describe('non-active device suppresses the terminal WS (HS-9300)', () => {
+  it('flips the entry.deviceInactive flag with setDeviceActive', () => {
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('secret-A', 'default');
+    expect(entry?.deviceInactive).toBe(false); // active by default
+
+    setDeviceActive(false);
+    expect(entry?.deviceInactive).toBe(true);   // WS suppressed
+    expect(entry?.ws).toBeNull();
+
+    setDeviceActive(true);
+    expect(entry?.deviceInactive).toBe(false);  // re-attached (ws still null under happy-dom)
+    handle.release();
+  });
+
+  it('a fresh checkout while non-active starts with the WS suppressed', () => {
+    setDeviceActive(false);
+    const m = makeMount('m1');
+    const handle = checkout({ projectSecret: 'secret-A', terminalId: 'default', cols: 80, rows: 24, mountInto: m });
+    const entry = _getEntryForTesting('secret-A', 'default');
+    // createEntry seeds deviceInactive from the module state, so attach no-ops.
+    expect(entry?.deviceInactive).toBe(true);
+    expect(entry?.ws).toBeNull();
+    handle.release();
+  });
+});
+
 describe('checkout — resize policy (HS-8031 §54.3.1)', () => {
   it('updates lastApplied dims when the new top requests a different size', () => {
     const mA = makeMount('mA');
