@@ -7,7 +7,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDb, getTelemetryDb } from '../db/connection.js';
+import { getDataDir, getDb, telemetryClusterDataDir } from '../db/connection.js';
+import { readAllOtelJsonl } from '../db/otelJsonlStore.js';
 import { persistMetricsPayload } from '../db/otelWriters.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -136,14 +137,13 @@ describe('protobuf → persistence end-to-end (HS-8471)', () => {
     expect(result.inserted).toBe(2);
     expect(result.dropped).toBe(0);
 
-    const db = await getTelemetryDb();
-    const rows = await db.query<{ metric_name: string; value_json: { asDouble: number } }>(
-      `SELECT metric_name, value_json FROM otel_metrics ORDER BY ts`,
-    );
-    expect(rows.rows).toHaveLength(2);
-    expect(rows.rows[0].metric_name).toBe('claude_code.cost.usage');
-    expect(rows.rows[0].value_json.asDouble).toBe(0.5);
-    expect(rows.rows[1].value_json.asDouble).toBe(0.25);
+    // HS-9280 — the writer's raw store is JSONL now.
+    const rows = (await readAllOtelJsonl(telemetryClusterDataDir(getDataDir()), 'metrics'))
+      .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].metric_name).toBe('claude_code.cost.usage');
+    expect((rows[0].value_json as { asDouble: number }).asDouble).toBe(0.5);
+    expect((rows[1].value_json as { asDouble: number }).asDouble).toBe(0.25);
   });
 });
 
