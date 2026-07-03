@@ -1,4 +1,5 @@
 import { getChannelHeartbeatStatus, pollVersion as pollVersionApi } from '../api/index.js';
+import { resyncActiveDevice } from './activeDevice.js';
 import { checkChannelDone, clearBusyForProject, extendBusyForProject } from './channelUI.js';
 import { TIMERS } from './constants/timers.js';
 import { refreshDetail } from './detail.js';
@@ -11,6 +12,23 @@ import { isWsActive } from './wsSync.js';
 
 let pollVersion = 0;
 let pollDataVersion = 0;
+
+// HS-9301 (docs/109 §109.5) — the `/api/poll` long-poll carries only version
+// numbers, not bus events, so a client on the poll fallback (WS unavailable)
+// wouldn't otherwise learn about `active-device-changed`. Rather than change the
+// poll protocol to carry events, re-read the (small, idempotent) active-device
+// holder periodically while the WS is down, so the multi-client terminal
+// rendering (live↔placeholder, docs/109) stays correct off the poll path.
+export const ACTIVE_DEVICE_POLL_THROTTLE_MS = 3000;
+let lastActiveDeviceResyncAt = 0;
+
+/** Pure gate: re-read the active-device holder only when the WS is NOT the live
+ *  transport AND at most once per throttle window (the poll loop runs ~10×/s, but
+ *  the active-device state changes rarely and its TTL is 15 s). */
+export function shouldResyncActiveDeviceOnPoll(wsActive: boolean, now: number, lastAt: number, throttleMs = ACTIVE_DEVICE_POLL_THROTTLE_MS): boolean {
+  if (wsActive) return false; // the WS delivers `active-device-changed` live
+  return now - lastAt >= throttleMs;
+}
 
 export function startLongPoll() {
   async function poll() {
@@ -52,6 +70,15 @@ export function startLongPoll() {
         refreshGitStatusChip();
         // Check for heartbeats from Claude Code hooks
         void checkHeartbeats();
+      }
+      // HS-9301 — active-device changes don't bump the poll version, so this runs
+      // OUTSIDE the version gate (throttled) whenever the WS isn't the live
+      // transport, keeping the multi-client terminal rendering correct off the
+      // poll fallback.
+      const now = Date.now();
+      if (shouldResyncActiveDeviceOnPoll(isWsActive(), now, lastActiveDeviceResyncAt)) {
+        lastActiveDeviceResyncAt = now;
+        resyncActiveDevice();
       }
     } catch {
       await new Promise(r => setTimeout(r, TIMERS.POLL_RETRY_MS));
