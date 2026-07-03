@@ -71,6 +71,10 @@ vi.mock('./state.js', () => ({
   state: {
     settings: { notify_permission: 'none' },
   },
+  // HS-9315 — the live-terminal ResizeObserver path reaches `terminalCheckout.tsx`,
+  // which calls `getActiveProject()` (HS-9302 remote-origin WS). Provide it (null =
+  // no remote project → same-origin, which is all these tests need).
+  getActiveProject: () => null,
 }));
 
 // Tauri attention is a Tauri-only invoke wrapped in a falsy guard for the

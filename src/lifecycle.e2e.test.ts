@@ -120,9 +120,11 @@ describe.skipIf(!canRunServerSpawnTests)('graceful shutdown e2e (HS-7934) (skipp
     const elapsed = Date.now() - t0;
 
     expect(exit.code).toBe(0);
-    // Allow generous slack — CI machines + tsx startup add jitter. The
-    // contract is "doesn't hang", not "always under 3s".
-    expect(elapsed).toBeLessThan(10_000);
+    // Allow generous slack — CI machines + tsx startup add jitter. The contract is
+    // "doesn't hang", not "always under 3s". HS-9315: a real CI run measured
+    // 13.4s (cold tsx + slow runner + a checkpoint snapshot), so the 10s ceiling
+    // flaked; 20s still catches the HS-9114 ~90s hang regression it guards.
+    expect(elapsed).toBeLessThan(20_000);
   }, 60_000);
 
   // HS-9114 — the reported bug: shutdown "always uses the full 90s" even right
