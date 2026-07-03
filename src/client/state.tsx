@@ -241,6 +241,10 @@ export interface AppSettings {
    *  does not render. The server-side parser still runs and markers are
    *  tracked, so toggling back on reveals the UI without losing history. */
   shell_integration_ui: boolean;
+  /** HS-9313 (docs/113 §113.3) — the project's preferred AI tool (`auto` /
+   *  `claude` / `codex` / `gemini` / …). Drives the channel busy-indicator label
+   *  ("Codex working" vs "Claude working"). `auto`/`claude` → "Claude". */
+  ai_tool: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -255,6 +259,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   auto_order: true,
   hide_verified_column: false,
   shell_integration_ui: false, // HS-9188 — experimental, OFF by default (opt-in)
+  ai_tool: 'auto', // HS-9313 — default preserves today's Claude labelling
 };
 
 export interface AppState {

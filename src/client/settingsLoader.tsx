@@ -22,6 +22,11 @@ export async function loadSettings() {
         if (typeof v === 'string') settings[k] = v;
         else if (typeof v === 'boolean' || typeof v === 'number') settings[k] = String(v);
       }
+      // HS-9313 — `ai_tool` is a shared file setting; hydrate it for the channel
+      // busy-indicator label (agentDisplayName). Default stays 'auto' when absent.
+      if (typeof fileResolved.ai_tool === 'string' && fileResolved.ai_tool !== '') {
+        state.settings.ai_tool = fileResolved.ai_tool;
+      }
     } catch { /* file-settings fetch failed — keep DB values */ }
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;

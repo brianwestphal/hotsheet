@@ -2,6 +2,7 @@ import { type ChannelTriggerTarget, cleanupChannelConnections, ensureSkills, get
 import type { SafeHtml } from '../jsx-runtime.js';
 import { busyStaleDecision, shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { agentDisplayName } from './agentName.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
 import { isDemoMode } from './demoMode.js';
@@ -116,12 +117,13 @@ function updateStatusIndicator() {
     // spinner has been seen in the last 5 s. Different label + class so
     // the user knows the channel might be stuck.
     const degraded = shouldShowDegradedBusy(true, channelStore.state.value.mostRecentSpinnerAtMs, Date.now());
+    const agent = agentDisplayName(state.settings.ai_tool); // HS-9313
     if (degraded) {
       indicator.className = 'channel-status-indicator busy degraded';
-      indicator.replaceChildren(toElement(SPINNER_12), ' Claude idle (channel busy)');
+      indicator.replaceChildren(toElement(SPINNER_12), ` ${agent} idle (channel busy)`);
     } else {
       indicator.className = 'channel-status-indicator busy';
-      indicator.replaceChildren(toElement(SPINNER_12), ' Claude working');
+      indicator.replaceChildren(toElement(SPINNER_12), ` ${agent} working`);
     }
   } else if (channelStore.state.value.shellBusy) {
     indicator.style.display = '';
@@ -375,7 +377,7 @@ export function setChannelBusy(busy: boolean) {
       indicator.style.display = '';
       indicator.className = 'channel-status-indicator';
       // HS-8554 \u2014 see the parallel `textContent` swap above.
-      indicator.textContent = '\u2713 Claude idle';
+      indicator.textContent = `\u2713 ${agentDisplayName(state.settings.ai_tool)} idle`; // HS-9313
       // Auto-hide after 5 seconds
       setTimeout(() => {
         if (!isChannelBusy() && !channelStore.state.value.shellBusy) indicator.style.display = 'none';
