@@ -926,7 +926,7 @@ describe('ensureSkillsForDir honors the ai_tool setting (HS-9311)', () => {
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
   const setAiTool = (v: string | undefined): void => {
-    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({ secret: 's', port: 4174, ...(v ? { ai_tool: v } : {}) }));
+    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({ secret: 's', port: 4174, ...(v !== undefined ? { ai_tool: v } : {}) }));
   };
 
   it('auto (default) seeds every detected tool', () => {
