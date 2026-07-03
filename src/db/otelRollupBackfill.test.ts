@@ -15,7 +15,7 @@ import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
+import { cleanupTestDb, createRawOtelTables, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { getPerTicketRollup } from './otelDashboard.js';
 import { assembleDailyRows, backfillActivityHourForDir, backfillActivityToolForDir, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
@@ -71,6 +71,9 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
     tempDir = await setupTestDb();
     // Raw telemetry lives in the relocated cluster; rollups in the main db.
     clusterDb = await getDbForDir(telemetryClusterDataDir(tempDir));
+    // HS-9280 — the backfills read the raw otel_* tables (the one-shot migration
+    // path); `initSchema` no longer creates them, so the tests create them to seed.
+    await createRawOtelTables(clusterDb);
     mainDb = await getDb();
   });
   afterEach(async () => {
@@ -442,6 +445,9 @@ describe('backfillTelemetryRollups orchestrator (HS-9234)', () => {
     writeFileSync(join(homeDir, 'projects.json'), JSON.stringify([projectDir]), 'utf-8');
     // Reset the run-once flags between cases.
     writeFileSync(join(homeDir, 'config.json'), JSON.stringify({}), 'utf-8');
+    // HS-9280 — the backfill reads raw otel_* (the migration path); create them in
+    // the project cluster so the tests can seed raw for it to read.
+    await createRawOtelTables(await getDbForDir(telemetryClusterDataDir(projectDir)));
   });
   afterEach(async () => {
     await closeDbForDir(telemetryClusterDataDir(projectDir));

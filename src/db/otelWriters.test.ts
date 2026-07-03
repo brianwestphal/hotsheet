@@ -162,12 +162,19 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
 
   // HS-9236 — read every row across all day-files for a kind from the cluster
   // dir (the sample payloads' ts determines the day, so read them all).
-  async function readAllJsonl(kind: 'events' | 'metrics' | 'spans'): Promise<Record<string, unknown>[]> {
-    const dir = telemetryClusterDataDir(tempDir);
+  // HS-9280 — raw otel_* tables are gone; the writers' raw store is JSONL. Read all
+  // rows for a kind from a cluster dir (default `tempDir`), sorted by `ts` /
+  // `start_ts` so assertions that used `ORDER BY ts` still line up.
+  async function readAllJsonl(kind: 'events' | 'metrics' | 'spans', clusterBase: string = tempDir): Promise<Record<string, unknown>[]> {
+    const dir = telemetryClusterDataDir(clusterBase);
     const prefix = `otel-${kind}-`;
-    const files = (await fsp.readdir(dir)).filter(f => f.startsWith(prefix) && f.endsWith('.jsonl'));
+    let files: string[];
+    try { files = (await fsp.readdir(dir)).filter(f => f.startsWith(prefix) && f.endsWith('.jsonl')); }
+    catch { return []; }
     const out: Record<string, unknown>[] = [];
     for (const f of files) out.push(...await readOtelJsonlDay(dir, kind, f.slice(prefix.length, -'.jsonl'.length)));
+    const tsKey = kind === 'spans' ? 'start_ts' : 'ts';
+    out.sort((a, b) => String(a[tsKey]).localeCompare(String(b[tsKey])));
     return out;
   }
 
@@ -177,16 +184,13 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(2);
       expect(result.dropped).toBe(0);
 
-      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
-      const rows = await db.query<{ metric_name: string; project_secret: string; session_id: string; value_json: { asDouble: number } }>(
-        `SELECT metric_name, project_secret, session_id, value_json FROM otel_metrics ORDER BY ts`,
-      );
-      expect(rows.rows).toHaveLength(2);
-      expect(rows.rows[0].metric_name).toBe('claude_code.cost.usage');
-      expect(rows.rows[0].project_secret).toBe(KNOWN_SECRET);
-      expect(rows.rows[0].session_id).toBe('session-1');
-      expect(rows.rows[0].value_json.asDouble).toBe(0.42);
-      expect(rows.rows[1].value_json.asDouble).toBe(0.18);
+      const rows = await readAllJsonl('metrics');
+      expect(rows).toHaveLength(2);
+      expect(rows[0].metric_name).toBe('claude_code.cost.usage');
+      expect(rows[0].project_secret).toBe(KNOWN_SECRET);
+      expect(rows[0].session_id).toBe('session-1');
+      expect((rows[0].value_json as { asDouble: number }).asDouble).toBe(0.42);
+      expect((rows[1].value_json as { asDouble: number }).asDouble).toBe(0.18);
     });
 
     it('drops every row when the resource is for an unknown project', async () => {
@@ -213,10 +217,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(0);
       expect(result.dropped).toBe(1);
 
-      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
-      const rows = await db.query(`SELECT COUNT(*) AS c FROM otel_metrics`);
-      const c = (rows.rows[0] as { c: bigint | number }).c;
-      expect(Number(c)).toBe(0);
+      expect(await readAllJsonl('metrics')).toHaveLength(0);
     });
 
     it('drops data points with missing timeUnixNano per-row, keeps the rest', async () => {
@@ -274,13 +275,10 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       const result = await persistMetricsPayload(payload, isKnownProject);
       expect(result.inserted).toBe(3);
 
-      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
-      const rows = await db.query<{ metric_name: string; aggregation_temporality: string | null; is_monotonic: boolean | null }>(
-        `SELECT metric_name, aggregation_temporality, is_monotonic FROM otel_metrics ORDER BY ts`,
-      );
-      expect(rows.rows[0]).toMatchObject({ metric_name: 'claude_code.cost.usage', aggregation_temporality: 'delta', is_monotonic: true });
-      expect(rows.rows[1]).toMatchObject({ metric_name: 'claude_code.token.usage', aggregation_temporality: 'cumulative', is_monotonic: true });
-      expect(rows.rows[2]).toMatchObject({ metric_name: 'claude_code.some.gauge', aggregation_temporality: null, is_monotonic: null });
+      const rows = await readAllJsonl('metrics');
+      expect(rows[0]).toMatchObject({ metric_name: 'claude_code.cost.usage', aggregation_temporality: 'delta', is_monotonic: true });
+      expect(rows[1]).toMatchObject({ metric_name: 'claude_code.token.usage', aggregation_temporality: 'cumulative', is_monotonic: true });
+      expect(rows[2]).toMatchObject({ metric_name: 'claude_code.some.gauge', aggregation_temporality: null, is_monotonic: null });
     });
 
     // HS-9233 — dual-write the compact daily rollup into the SNAPSHOTTED main db
@@ -305,12 +303,10 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       const clusterRoll = await clusterDb.query<{ c: number }>(`SELECT COUNT(*)::int AS c FROM otel_rollup_daily`);
       expect(clusterRoll.rows[0].c).toBe(0);
 
-      // Stored value_json no longer carries the nested attributes array.
-      const raw = await clusterDb.query<{ value_json: Record<string, unknown> }>(
-        `SELECT value_json FROM otel_metrics ORDER BY ts`,
-      );
-      expect('attributes' in raw.rows[0].value_json).toBe(false);
-      expect(raw.rows[0].value_json.asDouble).toBe(0.42); // rest of the point preserved
+      // Stored value_json (in the JSONL store) no longer carries the nested attributes array.
+      const raw = await readAllJsonl('metrics');
+      expect('attributes' in (raw[0].value_json as Record<string, unknown>)).toBe(false);
+      expect((raw[0].value_json as { asDouble: number }).asDouble).toBe(0.42); // rest of the point preserved
     });
 
     // HS-9243 — the cost/token metrics' session.id lands in the daily dedup set
@@ -340,14 +336,11 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(1);
       expect(result.dropped).toBe(0);
 
-      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
-      const rows = await db.query<{ event_name: string; prompt_id: string; project_secret: string }>(
-        `SELECT event_name, prompt_id, project_secret FROM otel_events`,
-      );
-      expect(rows.rows).toHaveLength(1);
-      expect(rows.rows[0].event_name).toBe('claude_code.user_prompt');
-      expect(rows.rows[0].prompt_id).toBe('prompt-xyz');
-      expect(rows.rows[0].project_secret).toBe(KNOWN_SECRET);
+      const rows = await readAllJsonl('events');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].event_name).toBe('claude_code.user_prompt');
+      expect(rows[0].prompt_id).toBe('prompt-xyz');
+      expect(rows[0].project_secret).toBe(KNOWN_SECRET);
     });
 
     it('HS-9236 — dual-writes each event row to the rotating JSONL store', async () => {
@@ -412,13 +405,10 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       const result = await persistLogsPayload(recordOnlySession, isKnownProject);
       expect(result.inserted).toBe(1);
 
-      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
-      const rows = await db.query<{ session_id: string | null; event_name: string }>(
-        `SELECT session_id, event_name FROM otel_events`,
-      );
-      expect(rows.rows[0].session_id).toBe('sess-from-record');
+      const rows = await readAllJsonl('events');
+      expect(rows[0].session_id).toBe('sess-from-record');
       // Stored bare, exactly as Claude Code sends it.
-      expect(rows.rows[0].event_name).toBe('user_prompt');
+      expect(rows[0].event_name).toBe('user_prompt');
     });
 
     // HS-9233 — ingest-time per-ticket cost attribution (time-window path): an
@@ -467,9 +457,9 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(Number(roll.rows[0].cost_usd)).toBeCloseTo(0.25, 6);
       expect(Number(roll.rows[0].total_tokens)).toBe(1500);
 
-      // body_json stored without the nested attributes array.
-      const raw = await clusterDb.query<{ body_json: Record<string, unknown> }>(`SELECT body_json FROM otel_events`);
-      expect('attributes' in raw.rows[0].body_json).toBe(false);
+      // body_json (JSONL) stored without the nested attributes array.
+      const raw = await readAllJsonl('events');
+      expect('attributes' in (raw[0].body_json as Record<string, unknown>)).toBe(false);
     });
   });
 
@@ -479,15 +469,12 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(result.inserted).toBe(2);
       expect(result.dropped).toBe(0);
 
-      const db = await getDbForDir(telemetryClusterDataDir(tempDir));
-      const rows = await db.query<{ span_id: string; parent_span_id: string | null; span_name: string; trace_id: string }>(
-        `SELECT span_id, parent_span_id, span_name, trace_id FROM otel_spans ORDER BY span_name`,
-      );
-      expect(rows.rows).toHaveLength(2);
-      expect(rows.rows[0].span_id).toBe('span-child');
-      expect(rows.rows[0].parent_span_id).toBe('span-root');
-      expect(rows.rows[1].span_id).toBe('span-root');
-      expect(rows.rows[1].parent_span_id).toBeNull();
+      const rows = (await readAllJsonl('spans')).sort((a, b) => String(a.span_name).localeCompare(String(b.span_name)));
+      expect(rows).toHaveLength(2);
+      expect(rows[0].span_id).toBe('span-child');
+      expect(rows[0].parent_span_id).toBe('span-root');
+      expect(rows[1].span_id).toBe('span-root');
+      expect(rows[1].parent_span_id).toBeNull();
     });
 
     it('drops spans with missing trace_id', async () => {
@@ -536,11 +523,9 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         expect(result.inserted).toBe(2);
         expect(result.dropped).toBe(0);
 
-        // Each project's row landed in its OWN DB, not the other's.
-        const a = await (await getDbForDir(telemetryClusterDataDir(tempDir))).query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
-        expect(a.rows.map(r => r.project_secret)).toEqual([KNOWN_SECRET]);
-        const b = await db2.query<{ project_secret: string }>(`SELECT project_secret FROM otel_metrics`);
-        expect(b.rows.map(r => r.project_secret)).toEqual([SECRET_2]);
+        // Each project's row landed in its OWN cluster's JSONL, not the other's.
+        expect((await readAllJsonl('metrics', tempDir)).map(r => r.project_secret)).toEqual([KNOWN_SECRET]);
+        expect((await readAllJsonl('metrics', dir2)).map(r => r.project_secret)).toEqual([SECRET_2]);
       } finally {
         unregisterProject(SECRET_2);
         await closeDbForDir(dir2);
@@ -565,22 +550,18 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         expect(result.inserted).toBe(1);
         expect(result.dropped).toBe(0);
 
-        // Did NOT land in the project DB.
-        const proj = await (await getDbForDir(telemetryClusterDataDir(tempDir))).query(`SELECT COUNT(*) AS c FROM otel_metrics`);
-        expect(Number((proj.rows[0] as { c: bigint | number }).c)).toBe(0);
+        // Did NOT land in the project's JSONL.
+        expect(await readAllJsonl('metrics', tempDir)).toHaveLength(0);
 
-        // Landed in central with a NULL project_secret.
-        const central = await (await getDbForDir(centralTelemetryDataDir())).query<{ project_secret: string | null }>(
-          `SELECT project_secret FROM otel_metrics WHERE project_secret IS NULL AND (value_json->>'asDouble')::numeric = $1`,
-          [MARKER],
-        );
-        expect(central.rows.length).toBe(1);
+        // Landed in the central store's JSONL with a NULL project_secret.
+        const central = (await readAllJsonl('metrics', centralTelemetryDataDir()))
+          .filter(r => r.project_secret === null && (r.value_json as { asDouble: number }).asDouble === MARKER);
+        expect(central).toHaveLength(1);
         // HS-8877 — the central write marks the central store dirty for a snapshot.
         expect(snapshotSpy).toHaveBeenCalledWith(centralTelemetryDataDir());
       } finally {
-        // Don't leave a marker row behind in the user's real central store.
-        const c = await getDbForDir(centralTelemetryDataDir());
-        await c.query(`DELETE FROM otel_metrics WHERE project_secret IS NULL AND (value_json->>'asDouble')::numeric = $1`, [MARKER]);
+        // HS-9280 — the central store is a temp override (afterAll cleans it), so no
+        // per-row cleanup is needed (the JSONL raw store can't line-delete anyway).
       }
     });
 
