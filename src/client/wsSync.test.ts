@@ -113,6 +113,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
   const showHint = vi.fn();
   const onActiveDeviceChanged = vi.fn();
   const onWorkerPartitionProposed = vi.fn();
+  const setConnectivity = vi.fn();
   const loaded = new Set<number>(loadedIds);
   const ws = createWsSync({
     createSocket: (url) => { urls.push(url); const s = new FakeSocket(); sockets.push(s); return s; },
@@ -132,9 +133,10 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
     onActiveDeviceChanged,
     onWorkerPartitionProposed,
+    setConnectivity,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged, onWorkerPartitionProposed,
+    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged, onWorkerPartitionProposed, setConnectivity,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -358,6 +360,28 @@ describe('createWsSync flow', () => {
     h.last().push({ type: 'connected', seq: 20 });
     expect(h.ws.isActive()).toBe(true);
     expect(h.showHint).toHaveBeenLastCalledWith(false);
+  });
+
+  // HS-9305 — per-project connectivity transitions (docs/112 §112.8).
+  it('reports connected → reconnecting → unreachable → connected per project (HS-9305)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 9 });
+    expect(h.setConnectivity).toHaveBeenLastCalledWith('sec', 'connected');
+
+    // First drop — transient → 'reconnecting'.
+    h.last().onclose?.();
+    expect(h.setConnectivity).toHaveBeenLastCalledWith('sec', 'reconnecting');
+    h.runTimers();
+
+    // Second drop within the window — fell back → 'unreachable'.
+    h.last().onclose?.();
+    expect(h.setConnectivity).toHaveBeenLastCalledWith('sec', 'unreachable');
+
+    // Reconnect succeeds → back to 'connected'.
+    h.runTimers();
+    h.last().push({ type: 'connected', seq: 20 });
+    expect(h.setConnectivity).toHaveBeenLastCalledWith('sec', 'connected');
   });
 
   it('reconnectForActiveProject is a no-op when the secret is unchanged', () => {

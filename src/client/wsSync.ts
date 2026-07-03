@@ -208,6 +208,9 @@ export interface WsSyncDeps {
   /** HS-9112 — a `worker-partition-proposed` event arrived: the agent's proposed
    *  assignment. Opens the partition editor for owner review. */
   onWorkerPartitionProposed: (assignments: PartitionAssignment[]) => void;
+  /** HS-9305 — report the connection state for a project's `/ws/sync` (docs/112
+   *  §112.8) so a remote project's tab can show connected/reconnecting/unreachable. */
+  setConnectivity: (secret: string, state: 'connected' | 'reconnecting' | 'unreachable') => void;
 }
 
 export interface WsSync {
@@ -316,6 +319,9 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     active = true;
     reconnectAttempt = 0;
     if (fallback) { fallback = false; deps.showHint(false); }
+    // HS-9305 — per-project connectivity (docs/112 §112.8): this project's socket
+    // is live → 'connected'.
+    if (connectedSecret !== null) deps.setConnectivity(connectedSecret, 'connected');
   }
 
   function onDisconnect(): void {
@@ -326,6 +332,9 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
       fallback = true;
       deps.showHint(true);
     }
+    // HS-9305 — repeated drops within the window ⇒ 'unreachable'; a first/transient
+    // drop while the backoff retries ⇒ 'reconnecting'.
+    if (connectedSecret !== null) deps.setConnectivity(connectedSecret, fallback ? 'unreachable' : 'reconnecting');
     scheduleReconnect();
   }
 
@@ -458,6 +467,9 @@ const wsSync = createWsSync({
   },
   onWorkerPartitionProposed: (assignments) => {
     void import('./agentPartitionProposal.js').then(({ onWorkerPartitionProposed }) => onWorkerPartitionProposed(assignments));
+  },
+  setConnectivity: (secret, state) => {
+    void import('./remoteConnectivity.js').then(({ setConnectivity }) => setConnectivity(secret, state));
   },
 });
 
