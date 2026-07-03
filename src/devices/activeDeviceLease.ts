@@ -148,6 +148,38 @@ export function getActiveDevice(secret: string, nowMs: number = Date.now()): Act
   return activeDeviceLeases.getActive(secret, nowMs);
 }
 
+// --- Resize gate (Phase 2, HS-9190, docs/109 §109.4) ------------------------
+
+/**
+ * The terminal PTY resize gate — defense in depth against a stale/racing socket
+ * sizing the PTY during an active-device handoff (docs/109 §109.4). It answers:
+ * given the project's current active-device id and the id carried by the socket
+ * that sent a resize frame, may that resize hit the PTY?
+ *
+ * Rule: **reject IFF there is a live active holder AND the socket carries a
+ * deviceId AND that id differs from the holder.** In every other case the resize
+ * passes through, so the gate never regresses a client that hasn't adopted the
+ * active-device model:
+ *  - `activeDeviceId === null` — the slot is free (single-device / pre-model
+ *    deployment): nobody has claimed active, so there's nothing to protect.
+ *  - `socketDeviceId` absent/empty — a pre-active-model socket (no synthetic id,
+ *    no cert clientId): treat as the sole renderer and let it size the PTY.
+ *
+ * The one blocked case is precisely the handoff race: the just-superseded device
+ * still has its terminal socket open and sends a resize carrying its *own* (now
+ * non-active) id — that id differs from the new holder, so it's dropped. Only the
+ * active device's viewport sizes the PTY.
+ *
+ * Pure + parameterized so the Phase 2 tests can drive the full transition matrix
+ * (no holder → allow, matching holder → allow, superseded → reject, handoff →
+ * control moves) without a live PTY or lease singleton.
+ */
+export function mayResizePty(activeDeviceId: string | null, socketDeviceId: string | undefined): boolean {
+  if (activeDeviceId === null) return true;                               // no active holder — nothing to gate
+  if (socketDeviceId === undefined || socketDeviceId === '') return true; // pre-model socket — sole renderer
+  return socketDeviceId === activeDeviceId;                              // active mode — only the holder sizes the PTY
+}
+
 /** Sweep expired leases once and broadcast each freed slot (`deviceId: null`). */
 export function sweepActiveDeviceLeasesOnce(nowMs: number = Date.now()): string[] {
   const freed = activeDeviceLeases.sweepExpired(nowMs);

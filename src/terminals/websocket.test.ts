@@ -13,10 +13,11 @@ vi.mock('../projects.js', () => ({
     : undefined,
 }));
 
-// eslint-disable-next-line import/first
+/* eslint-disable import/first */
+import { claimActiveDevice, releaseActiveDevice } from '../devices/activeDeviceLease.js';
 import { destroyAllTerminals, type PtyFactory, type PtyLike, setPtyFactory, type SpawnArgs } from './registry.js';
-// eslint-disable-next-line import/first
 import { authenticate, wireTerminalWebSocket } from './websocket.js';
+/* eslint-enable import/first */
 
 class FakePty implements PtyLike {
   static last: FakePty | null = null;
@@ -110,6 +111,20 @@ describe('authenticate', () => {
       const res = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}&noSpawn=${v}`, headers: {} } as never);
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.noSpawn).toBe(false);
+    }
+  });
+
+  // HS-9190 — the Tier-0 synthetic device id rides the handshake for the
+  // active-device resize gate (docs/109 §109.4).
+  it('parses ?device= into AuthOk.deviceId, undefined when absent/empty (HS-9190)', () => {
+    const withDevice = authenticate({ url: `/api/terminal/ws?project=${FAKE_SECRET}&device=dev-abc`, headers: {} } as never);
+    expect(withDevice.ok).toBe(true);
+    if (withDevice.ok) expect(withDevice.deviceId).toBe('dev-abc');
+
+    for (const q of [`?project=${FAKE_SECRET}`, `?project=${FAKE_SECRET}&device=`]) {
+      const res = authenticate({ url: `/api/terminal/ws${q}`, headers: {} } as never);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.deviceId).toBeUndefined();
     }
   });
 });
@@ -252,6 +267,63 @@ describe('WebSocket roundtrip (real http.Server)', () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     expect(FakePty.last!.resizes).toEqual([[120, 40]]);
     ws.close();
+  });
+
+  // HS-9190 (docs/109 §109.4) — the resize gate. When another device holds the
+  // active-device lease, a resize frame from a NON-active socket is dropped so a
+  // stale/racing device can't size the PTY mid-handoff.
+  it('rejects a resize frame from a non-active device (HS-9190)', async () => {
+    // Claim with real Date.now() so the lease is live when the server-side gate
+    // reads it (the gate calls getActiveDevice() with real time).
+    claimActiveDevice(FAKE_SECRET, 'device-A'); // A is the active device
+    try {
+      // Connect as a DIFFERENT device (B) and try to size the PTY.
+      const { ws, next } = openWs(`?project=${FAKE_SECRET}&device=device-B`);
+      await next((_d, isBinary) => !isBinary);
+      await new Promise<void>((resolve) => { if (ws.readyState === WebSocket.OPEN) resolve(); else ws.on('open', () => resolve()); });
+      ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(FakePty.last!.resizes).toEqual([]); // gated out — PTY dims unchanged
+      ws.close();
+    } finally {
+      releaseActiveDevice(FAKE_SECRET, 'device-A');
+    }
+  });
+
+  // HS-9190 — a device switch hands off resize control: the new active device
+  // sizes the PTY; the just-superseded device's still-open socket is ignored.
+  it('hands off resize control on a device switch (HS-9190)', async () => {
+    claimActiveDevice(FAKE_SECRET, 'device-A'); // real-time lease (see note above)
+    try {
+      // Socket A (active) sizes the PTY.
+      const a = openWs(`?project=${FAKE_SECRET}&device=device-A`);
+      await a.next((_d, isBinary) => !isBinary);
+      await new Promise<void>((resolve) => { if (a.ws.readyState === WebSocket.OPEN) resolve(); else a.ws.on('open', () => resolve()); });
+      a.ws.send(JSON.stringify({ type: 'resize', cols: 100, rows: 30 }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(FakePty.last!.resizes).toEqual([[100, 30]]);
+
+      // B supersedes A as the active device (last-claim-wins).
+      claimActiveDevice(FAKE_SECRET, 'device-B');
+
+      // A's stale socket can no longer size the PTY.
+      a.ws.send(JSON.stringify({ type: 'resize', cols: 111, rows: 31 }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(FakePty.last!.resizes).toEqual([[100, 30]]); // unchanged — A gated out
+
+      // A new socket for B (the now-active device) sizes the PTY again.
+      const b = openWs(`?project=${FAKE_SECRET}&device=device-B`);
+      await b.next((_d, isBinary) => !isBinary);
+      await new Promise<void>((resolve) => { if (b.ws.readyState === WebSocket.OPEN) resolve(); else b.ws.on('open', () => resolve()); });
+      b.ws.send(JSON.stringify({ type: 'resize', cols: 122, rows: 32 }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(FakePty.last!.resizes).toEqual([[100, 30], [122, 32]]);
+
+      a.ws.close();
+      b.ws.close();
+    } finally {
+      releaseActiveDevice(FAKE_SECRET, 'device-B');
+    }
   });
 
   // HS-8192 — schema validation rejects malformed control messages before

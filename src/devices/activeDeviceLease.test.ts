@@ -11,6 +11,7 @@ import {
   claimActiveDevice,
   createActiveDeviceLeases,
   getActiveDevice,
+  mayResizePty,
   releaseActiveDevice,
   sweepActiveDeviceLeasesOnce,
 } from './activeDeviceLease.js';
@@ -111,6 +112,44 @@ describe('createActiveDeviceLeases — pure state machine', () => {
     expect(freed).toEqual(['old']);
     expect(l.getActive('old', 1000 + TTL)).toBeNull();
     expect(l.getActive('fresh', 1000 + TTL)?.deviceId).toBe('dev-fresh');
+  });
+});
+
+describe('mayResizePty — resize gate (HS-9190, docs/109 §109.4)', () => {
+  // Backward-compat arm: nothing to gate when no device has claimed active.
+  it('allows any socket when there is no active holder (single-device / pre-model)', () => {
+    expect(mayResizePty(null, undefined)).toBe(true);
+    expect(mayResizePty(null, 'dev-a')).toBe(true);
+    expect(mayResizePty(null, '')).toBe(true);
+  });
+
+  // Backward-compat arm: a socket that carries no id is the sole renderer.
+  it('allows a socket that carries no deviceId even when a holder exists', () => {
+    expect(mayResizePty('dev-a', undefined)).toBe(true);
+    expect(mayResizePty('dev-a', '')).toBe(true);
+  });
+
+  it('allows the active holder to size the PTY', () => {
+    expect(mayResizePty('dev-a', 'dev-a')).toBe(true);
+  });
+
+  // The one blocked case — the handoff race: a just-superseded device's still-open
+  // socket sends a resize carrying its own (now non-active) id.
+  it('rejects a socket whose deviceId differs from the active holder', () => {
+    expect(mayResizePty('dev-a', 'dev-b')).toBe(false);
+  });
+
+  // Transition matrix: control follows the active lease through a handoff.
+  it('moves resize control from the old to the new device across a handoff', () => {
+    // Device A active — A sizes, B blocked.
+    expect(mayResizePty('dev-a', 'dev-a')).toBe(true);
+    expect(mayResizePty('dev-a', 'dev-b')).toBe(false);
+    // B claims active (supersede) — now B sizes, A (the stale socket) blocked.
+    expect(mayResizePty('dev-b', 'dev-b')).toBe(true);
+    expect(mayResizePty('dev-b', 'dev-a')).toBe(false);
+    // Slot released — both pass again (back to the ungated single-device case).
+    expect(mayResizePty(null, 'dev-a')).toBe(true);
+    expect(mayResizePty(null, 'dev-b')).toBe(true);
   });
 });
 

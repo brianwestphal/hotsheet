@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { peerCertInfoFromRequest } from '../auth/tlsListener.js';
 import { trackAuthenticatedSocket } from '../auth/wsRevocationSweep.js';
+import { getActiveDevice, mayResizePty } from '../devices/activeDeviceLease.js';
 import { instrumentSync } from '../diagnostics/freezeLogger.js';
 import { getProjectBySecret } from '../projects.js';
 import { getDynamicTerminalConfig } from '../routes/terminal.js';
@@ -65,21 +66,23 @@ export function wireTerminalWebSocket(httpServer: HttpServer, options?: { expose
       // HS-9114 — track for proactive close on graceful shutdown.
       openTerminalSockets.add(ws);
       ws.on('close', () => openTerminalSockets.delete(ws));
-      handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows, authResult.noSpawn);
-      // HS-9025 — on the exposed (Tier-1) mTLS listener, track the socket so the
-      // revocation sweep closes it if the device is revoked / the cert expires
-      // mid-connection. Tier-0 (loopback) has no client cert → no-op.
-      if (exposed) {
-        const peer = peerCertInfoFromRequest(req);
-        if (peer !== null) {
-          trackAuthenticatedSocket(ws, { dataDir: authResult.dataDir, clientId: peer.clientId, notAfterMs: peer.notAfterMs });
-        }
+      // HS-9025 / HS-9190 — on the exposed (Tier-1) mTLS listener the cert's
+      // `clientId` is the authoritative device id (can't be spoofed by the query
+      // param), so it overrides the client-supplied `?device=`. Tier-0 (loopback)
+      // has no cert → the synthetic query id stands.
+      const peer = exposed ? peerCertInfoFromRequest(req) : null;
+      const deviceId = peer?.clientId ?? authResult.deviceId;
+      handleConnection(ws, authResult.secret, authResult.dataDir, authResult.terminalId, authResult.cols, authResult.rows, authResult.noSpawn, deviceId);
+      // HS-9025 — track the socket so the revocation sweep closes it if the
+      // device is revoked / the cert expires mid-connection. Tier-0 is a no-op.
+      if (exposed && peer !== null) {
+        trackAuthenticatedSocket(ws, { dataDir: authResult.dataDir, clientId: peer.clientId, notAfterMs: peer.notAfterMs });
       }
     });
   });
 }
 
-export interface AuthOk { ok: true; secret: string; dataDir: string; terminalId: string; cols: number | undefined; rows: number | undefined; noSpawn: boolean }
+export interface AuthOk { ok: true; secret: string; dataDir: string; terminalId: string; cols: number | undefined; rows: number | undefined; noSpawn: boolean; deviceId: string | undefined }
 export interface AuthFail { ok: false; status: number; reason: string }
 
 export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
@@ -117,6 +120,11 @@ export function authenticate(req: IncomingMessage): AuthOk | AuthFail {
     // HS-8218 — `noSpawn=1` tells `attach` to skip the create-session +
     // spawn-PTY path when no live session exists, returning `noSession: true`.
     noSpawn: url.query.noSpawn === '1',
+    // HS-9190 — the Tier-0 synthetic device id (a localStorage UUID) the client
+    // supplies on the handshake for the active-device resize gate (docs/109
+    // §109.4). On Tier-1 (mTLS) the cert `clientId` is authoritative and
+    // overrides this in the upgrade handler. Absent on pre-active-model clients.
+    deviceId: typeof url.query.device === 'string' && url.query.device !== '' ? url.query.device : undefined,
   };
 }
 
@@ -138,7 +146,7 @@ function reject(socket: Duplex, status: number, reason: string): void {
   socket.destroy();
 }
 
-function handleConnection(ws: WebSocket, secret: string, dataDir: string, terminalId: string, cols: number | undefined, rows: number | undefined, noSpawn: boolean): void {
+function handleConnection(ws: WebSocket, secret: string, dataDir: string, terminalId: string, cols: number | undefined, rows: number | undefined, noSpawn: boolean, deviceId: string | undefined): void {
   const subscriber: TerminalSubscriber = {
     onData(chunk) {
       if (ws.readyState === ws.OPEN) {
@@ -214,7 +222,7 @@ function handleConnection(ws: WebSocket, secret: string, dataDir: string, termin
     // call into node-pty's resize which can block while the kernel
     // services SIGWINCH; long handlers tag freeze.log.
     instrumentSync(dataDir, `ws.message:control:${msg.type}:${terminalId}`, () => {
-      handleControl(ws, secret, msg, terminalId);
+      handleControl(ws, secret, msg, terminalId, deviceId);
     });
   });
 
@@ -229,9 +237,14 @@ function normalizeMessage(data: Buffer | ArrayBuffer | Buffer[]): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-function handleControl(ws: WebSocket, secret: string, msg: ControlMessage, terminalId: string): void {
+function handleControl(ws: WebSocket, secret: string, msg: ControlMessage, terminalId: string, deviceId: string | undefined): void {
   switch (msg.type) {
     case 'resize':
+      // HS-9190 (docs/109 §109.4) — resize gate: while another device holds the
+      // active-device lease, drop resize frames from this (non-active) socket so
+      // a stale/racing device can't size the PTY mid-handoff. Free slot / sole
+      // pre-model client passes through (see `mayResizePty`).
+      if (!mayResizePty(getActiveDevice(secret)?.deviceId ?? null, deviceId)) break;
       if (Number.isFinite(msg.cols) && Number.isFinite(msg.rows) && msg.cols > 0 && msg.rows > 0) {
         resizeTerminal(secret, Math.floor(msg.cols), Math.floor(msg.rows), terminalId);
       }
