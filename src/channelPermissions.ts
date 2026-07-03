@@ -29,10 +29,20 @@ export interface PendingPermission {
   timestamp: number;
 }
 
-/** Two-minute auto-expire window. Mirrors the pre-HS-8047 single-slot
- *  TTL — Claude may abandon a request without notifying the channel
- *  server, and we don't want stale entries blocking newer ones forever. */
+/** Two-minute auto-expire window for a stale head that is BLOCKING a newer
+ *  request — cleared quickly so the newer request can surface (the single-slot
+ *  wire returns only the head). See `peekPending`. */
 export const PERMISSION_TTL_MS = 120_000;
+
+/** HS-9299 — much longer backstop window for a LONE pending request (nothing
+ *  queued behind it). A lone request is the popup the user may still be
+ *  deliberating on, so the 2-minute window (the reported "it vanishes if I don't
+ *  answer within a couple minutes" pain) was far too short. It still can't be
+ *  `Infinity`: the channel is NOT told when the user answers in the TERMINAL (only
+ *  a UI response, a channel disconnect, or this expiry clears an entry), nor when
+ *  Claude abandons a request without disconnecting — so a lone stale entry needs a
+ *  backstop or a terminal-answered popup would linger until manually dismissed. */
+export const PERMISSION_LONE_TTL_MS = 900_000; // 15 minutes
 
 const queue: PendingPermission[] = [];
 
@@ -48,9 +58,17 @@ export function enqueuePermission(perm: PendingPermission): void {
  *  (or null if empty). The wire endpoint `GET /permission` returns this
  *  value verbatim — see module-top docs for the rationale.
  *
+ *  HS-9299 — the head expires against the SHORT `PERMISSION_TTL_MS` only while
+ *  it's BLOCKING a newer queued request (`queue.length > 1`); a LONE head gets
+ *  the long `PERMISSION_LONE_TTL_MS` backstop, so a request the user is still
+ *  deliberating on isn't torn down after a couple minutes, while a terminal-
+ *  answered / abandoned lone request still eventually clears. A UI response
+ *  (`completePermission`) or a channel disconnect (`clearAllPermissions`) clears
+ *  entries immediately regardless.
+ *
  *  `now` is injectable for deterministic time-based testing. */
 export function peekPending(now: number = Date.now()): PendingPermission | null {
-  while (queue.length > 0 && now - queue[0].timestamp > PERMISSION_TTL_MS) {
+  while (queue.length > 0 && now - queue[0].timestamp > (queue.length > 1 ? PERMISSION_TTL_MS : PERMISSION_LONE_TTL_MS)) {
     queue.shift();
   }
   return queue[0] ?? null;

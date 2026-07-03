@@ -9,6 +9,7 @@ import {
   enqueuePermission,
   peekPending,
   type PendingPermission,
+  PERMISSION_LONE_TTL_MS,
   PERMISSION_TTL_MS,
 } from './channelPermissions.js';
 
@@ -96,6 +97,37 @@ describe('channelPermissions queue (HS-8047)', () => {
 
     // Step past A's TTL but still inside B's. A drops; head becomes B.
     expect(peekPending(t0 + PERMISSION_TTL_MS + 1)?.request_id).toBe('B');
+    expect(_pendingCountForTesting()).toBe(1);
+  });
+
+  it('keeps a LONE stale head well past the short TTL (user still deliberating) — HS-9299', () => {
+    const t0 = 1000;
+    enqueuePermission(makePerm('A', t0));
+    // 5 minutes in — long past the 2-min blocking TTL, but A is the only entry, so
+    // it must persist (the reported "vanishes after a couple minutes" pain).
+    expect(peekPending(t0 + 5 * 60_000)?.request_id).toBe('A');
+    expect(_pendingCountForTesting()).toBe(1);
+  });
+
+  it('clears a LONE stale head at the long backstop TTL (terminal-answer / abandon) — HS-9299', () => {
+    const t0 = 1000;
+    enqueuePermission(makePerm('A', t0));
+    // Just inside the backstop → kept.
+    expect(peekPending(t0 + PERMISSION_LONE_TTL_MS - 1)?.request_id).toBe('A');
+    // Past the backstop → cleared (so a terminal-answered / abandoned popup can't linger forever).
+    expect(peekPending(t0 + PERMISSION_LONE_TTL_MS + 1)).toBeNull();
+    expect(_pendingCountForTesting()).toBe(0);
+  });
+
+  it('expires a stale head against the SHORT TTL only once a NEWER request is behind it — HS-9299', () => {
+    const t0 = 1000;
+    enqueuePermission(makePerm('A', t0));
+    // Lone + past the short TTL → still kept (backstop, not the 2-min window).
+    expect(peekPending(t0 + PERMISSION_TTL_MS + 1)?.request_id).toBe('A');
+    expect(_pendingCountForTesting()).toBe(1);
+    // A newer request arrives behind the now-blocking A → A clears at the short TTL to surface B.
+    enqueuePermission(makePerm('B', t0 + PERMISSION_TTL_MS + 2));
+    expect(peekPending(t0 + PERMISSION_TTL_MS + 3)?.request_id).toBe('B');
     expect(_pendingCountForTesting()).toBe(1);
   });
 
