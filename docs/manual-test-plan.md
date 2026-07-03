@@ -157,6 +157,14 @@ This document lists features that require manual verification before each releas
 - [ ] **Manual path unchanged (Auto off).** With Auto OFF, open the worker-pool panel and use the **+ stepper** to add a worker. It launches **client-side** as before (tab opens immediately, worker runs). Drain removes it. (No server loop runs when Auto is off, so the client stays the spawner.)
 - [ ] **Adopt on UI reopen.** With Auto on and workers running server-side, close + reopen the Hot Sheet window (or switch away and back to the project). The running workers' terminals are **re-adopted** (tabs reappear attached to the live PTYs) rather than re-launched.
 
+### Agent-in-the-loop plan preview (HS-9112 / docs/101 §101.7) — needs a live channel + agent
+The individual surfaces are unit/integration-tested; this exercises the full channel round-trip end to end (a real agent proposing over MCP), which can't be reliably automated.
+- [ ] **Reconnect after the channel bump.** After upgrading, the main server warns to reconnect the channel via `/mcp` (CHANNEL_VERSION 16 → 17). Reconnect so the agent sees the new `hotsheet_propose_partition` tool.
+- [ ] **Setting off (default) — direct dispatch unchanged.** With **Settings → "Always preview agent worker plans" OFF**, use the worker-pool prompt box ("parallelize all tickets tagged X"). The agent dispatches directly (claims the tickets) as before — no editor opens.
+- [ ] **Setting on — propose, don't dispatch.** Turn the setting **ON**. Run the same prompt. The agent calls `hotsheet_propose_partition` instead; the **partition editor opens** in your UI with its proposed assignment, and **nothing is claimed yet**. **Accept** → the tickets are dispatched (claimed) client-side; **Cancel** → nothing is dispatched. Confirm the agent's channel reply says it proposed (not dispatched).
+- [ ] **Shared/Local scope.** The setting shows the §95 Shared/Local scope control; a Local override works per-machine (verify the worklist section appears/disappears with the effective value).
+- [ ] **Late-open panel picks up a pending proposal.** Trigger a proposal, then open the worker-pool panel fresh (or from a second client) — the editor opens from `GET /api/workers/proposal` even if that client missed the live WS event.
+
 ### Visibility
 - [ ] Channel UI hidden if Claude CLI version < 2.1.80
 - [ ] Channel toggle in Settings → Experimental registers `.mcp.json`
