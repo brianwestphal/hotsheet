@@ -53,7 +53,7 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // ---------------------------------------------------------------------------
 
 describe('listTools (HS-8346 + HS-8347)', () => {
-  it('returns the 23 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by + HS-9031 worker-pool)', () => {
+  it('returns the 24 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by + HS-9031 worker-pool + HS-9112 propose)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
@@ -70,6 +70,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
       'hotsheet_edit_note',
       'hotsheet_get_ticket',
       'hotsheet_get_worker_pool',
+      'hotsheet_propose_partition',
       'hotsheet_query_tickets',
       'hotsheet_release',
       'hotsheet_renew_lease',
@@ -95,7 +96,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(23);
+    expect(_toolsForTesting).toHaveLength(24);
   });
 
   // HS-8771 — the announce tool proxies to the announcer endpoint.
@@ -886,5 +887,42 @@ describe('worker-pool management tools (HS-9031)', () => {
     expect((fetchSpy.mock.calls[1] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/drain-all');
     const neither = await callTool('hotsheet_drain_workers', {}, tmpDataDir, vi.fn());
     expect(neither.isError).toBe(true);
+  });
+
+  // HS-9112 — the propose tool posts the assignment (snake ticket_ids → camel
+  // ticketIds) to /api/workers/propose-partition and tells the agent it was NOT
+  // dispatched.
+  it('hotsheet_propose_partition — POSTs the assignment + reports "not dispatched"', async () => {
+    const fetchSpy = vi.fn();
+    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true,"proposed":3}' }; });
+    const result = await callTool(
+      'hotsheet_propose_partition',
+      { assignments: [{ worker: 'worker-1', label: 'W1', ticket_ids: [1, 2] }, { worker: 'worker-2', ticket_ids: [3] }] },
+      tmpDataDir, fetchFn,
+    );
+    expect(result.isError).toBeUndefined();
+    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
+    expect(call[0]).toBe('http://localhost:4174/api/workers/propose-partition');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(call[1].body)).toEqual({
+      assignments: [
+        { worker: 'worker-1', label: 'W1', ticketIds: [1, 2] },
+        { worker: 'worker-2', ticketIds: [3] }, // label omitted → server defaults to the worker id
+      ],
+    });
+    expect(result.content[0].text).toContain('NOT dispatched');
+  });
+
+  it('hotsheet_propose_partition — surfaces a server error (does not claim to have proposed)', async () => {
+    const fetchFn = fakeFetch(() => ({ ok: false, status: 400, text: 'bad assignment' }));
+    const result = await callTool('hotsheet_propose_partition', { assignments: [{ worker: 'w1', ticket_ids: [1] }] }, tmpDataDir, fetchFn);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).not.toContain('NOT dispatched');
+  });
+
+  it('hotsheet_propose_partition — rejects an empty assignment list', async () => {
+    const result = await callTool('hotsheet_propose_partition', { assignments: [] }, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('validation failed');
   });
 });

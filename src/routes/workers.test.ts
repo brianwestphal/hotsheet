@@ -13,10 +13,12 @@ import { join, resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WorkerLaunchSpec } from '../api/workers.js';
+import { createTicket } from '../db/tickets.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { workerLaunchCommand } from '../workers/launchWorker.js';
 import { _resetPoolsForTesting, readyCount } from '../workers/poolManager.js';
+import { _resetProposalsForTesting } from '../workers/proposalSlot.js';
 import { listWorktrees } from '../worktrees.js';
 import { workerRoutes } from './workers.js';
 
@@ -262,5 +264,71 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
     } finally {
       await cleanupTestDb(dbDir);
     }
+  });
+});
+
+// HS-9112 (docs/101 §101.7) — agent-in-the-loop plan preview: propose stores +
+// enriches + is readable + clearable.
+describe('agent partition proposal endpoints (HS-9112)', () => {
+  const SECRET = 'propose-test-secret';
+  let dbDir: string;
+
+  /** App with both dataDir + projectSecret set (the propose route needs the secret
+   *  for the slot key + the event emit). */
+  function app(dataDir: string): Hono<AppEnv> {
+    const a = new Hono<AppEnv>();
+    a.use('*', async (c, next) => { c.set('dataDir', dataDir); c.set('projectSecret', SECRET); await next(); });
+    a.route('/api', workerRoutes);
+    return a;
+  }
+
+  beforeEach(async () => { dbDir = await setupTestDb(); _resetProposalsForTesting(); });
+  afterEach(async () => { _resetProposalsForTesting(); await cleanupTestDb(dbDir); });
+
+  it('propose enriches ticket numbers, stores the slot, and reports the count', async () => {
+    const t1 = await createTicket('First', { up_next: true });
+    const t2 = await createTicket('Second', { up_next: true });
+    const res = await app(dbDir).request('/api/workers/propose-partition', post({
+      assignments: [{ worker: 'w1', label: 'W1', ticketIds: [t1.id, t2.id] }, { worker: 'w2', ticketIds: [] }],
+    }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, proposed: 2 });
+
+    // The stored/pending proposal carries the enriched HS-NNNN numbers + the
+    // worker-id default label for the label-less entry.
+    const pending = await app(dbDir).request('/api/workers/proposal');
+    const body = await pending.json() as { proposal: { assignments: { worker: string; label: string; ticketIds: number[]; ticketNumbers: string[] }[] } | null };
+    expect(body.proposal?.assignments[0]).toEqual({ worker: 'w1', label: 'W1', ticketIds: [t1.id, t2.id], ticketNumbers: [t1.ticket_number, t2.ticket_number] });
+    expect(body.proposal?.assignments[1]).toEqual({ worker: 'w2', label: 'w2', ticketIds: [], ticketNumbers: [] });
+  });
+
+  it('GET proposal is null when nothing is pending', async () => {
+    const res = await app(dbDir).request('/api/workers/proposal');
+    expect(await res.json()).toEqual({ proposal: null });
+  });
+
+  it('clear drops the pending proposal', async () => {
+    const t1 = await createTicket('Only', { up_next: true });
+    await app(dbDir).request('/api/workers/propose-partition', post({ assignments: [{ worker: 'w1', ticketIds: [t1.id] }] }));
+    expect((await (await app(dbDir).request('/api/workers/proposal')).json() as { proposal: unknown }).proposal).not.toBeNull();
+
+    const cleared = await app(dbDir).request('/api/workers/proposal/clear', post({}));
+    expect(await cleared.json()).toEqual({ ok: true });
+    expect((await (await app(dbDir).request('/api/workers/proposal')).json() as { proposal: unknown }).proposal).toBeNull();
+  });
+
+  it('propose rejects an empty assignment list (400)', async () => {
+    const res = await app(dbDir).request('/api/workers/propose-partition', post({ assignments: [] }));
+    expect(res.status).toBe(400);
+  });
+
+  it('an unknown ticket id falls back to a #id number placeholder', async () => {
+    const res = await app(dbDir).request('/api/workers/propose-partition', post({
+      assignments: [{ worker: 'w1', ticketIds: [99999] }],
+    }));
+    expect(res.status).toBe(200);
+    const pending = await app(dbDir).request('/api/workers/proposal');
+    const body = await pending.json() as { proposal: { assignments: { ticketNumbers: string[] }[] } };
+    expect(body.proposal.assignments[0].ticketNumbers).toEqual(['#99999']);
   });
 });

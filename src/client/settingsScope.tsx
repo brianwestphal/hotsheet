@@ -107,6 +107,10 @@ const SCOPED_FIELDS: ScopedField[] = [
   // committing the directory), so Shared by default with a per-machine Local
   // override — the standard scoped field (no `share` restriction).
   { controlId: 'settings-ai-review-notes', key: 'aiReviewNotes', kind: 'boolean' },
+  // HS-9112 (docs/101 §101.7) — "always preview agent plans": the main agent
+  // proposes a worker partition for review instead of dispatching directly.
+  // Shared by default (a repo/team preference) with a per-machine Local override.
+  { controlId: 'settings-always-preview-agent-plans', key: 'alwaysPreviewAgentPlans', kind: 'boolean' },
   // Terminal
   { controlId: 'settings-terminal-scrollback', key: 'terminal_scrollback_bytes', kind: 'number' },
   { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only

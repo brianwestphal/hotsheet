@@ -15,6 +15,7 @@ import {
 } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { checkPendingPartitionProposal } from './agentPartitionProposal.js';
 import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { confirmDialog } from './confirm.js';
 import { dispatchAndReport } from './dispatch.js';
@@ -761,4 +762,8 @@ export function openWorkerPoolPanel(): void {
   }).catch(() => { /* probe failed — leave Review hidden */ });
   void refreshPool(bodyEl);
   pollTimer = setInterval(() => void refreshPool(bodyEl), POLL_MS);
+  // HS-9112 — surface any pending agent-proposed partition (docs/101 §101.7) for a
+  // client that opened the panel AFTER the agent proposed (or was on the long-poll
+  // fallback when the `worker-partition-proposed` event fired).
+  void checkPendingPartitionProposal();
 }

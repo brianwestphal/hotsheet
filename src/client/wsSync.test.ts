@@ -112,6 +112,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
   const optimisticUpdate = vi.fn();
   const showHint = vi.fn();
   const onActiveDeviceChanged = vi.fn();
+  const onWorkerPartitionProposed = vi.fn();
   const loaded = new Set<number>(loadedIds);
   const ws = createWsSync({
     createSocket: (url) => { urls.push(url); const s = new FakeSocket(); sockets.push(s); return s; },
@@ -130,9 +131,10 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     getSecret: () => secret,
     buildUrl: (s, since) => `ws://x/ws/sync?project=${s}${since !== undefined ? `&since=${since}` : ''}`,
     onActiveDeviceChanged,
+    onWorkerPartitionProposed,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged,
+    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged, onWorkerPartitionProposed,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -310,6 +312,27 @@ describe('createWsSync flow', () => {
     h.ws.start();
     h.last().push({ type: 'active-device-changed', deviceId: null, expiresAt: null, seq: 1 });
     expect(h.onActiveDeviceChanged).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  // HS-9112 — an agent partition proposal routes to onWorkerPartitionProposed with
+  // the parsed assignments (opens the partition editor), not to a data refresh.
+  it('routes a worker-partition-proposed event to onWorkerPartitionProposed (HS-9112)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({
+      type: 'worker-partition-proposed',
+      assignments: [
+        { worker: 'worker-1', label: 'Worker 1', ticketIds: [1, 2], ticketNumbers: ['HS-1', 'HS-2'] },
+        { worker: 'worker-2', label: 'Worker 2', ticketIds: [3], ticketNumbers: ['HS-3'] },
+      ],
+      seq: 1,
+    });
+    expect(h.onWorkerPartitionProposed).toHaveBeenCalledTimes(1);
+    expect(h.onWorkerPartitionProposed).toHaveBeenCalledWith([
+      { worker: 'worker-1', label: 'Worker 1', ticketIds: [1, 2], ticketNumbers: ['HS-1', 'HS-2'] },
+      { worker: 'worker-2', label: 'Worker 2', ticketIds: [3], ticketNumbers: ['HS-3'] },
+    ]);
+    expect(h.refreshData).not.toHaveBeenCalled();
   });
 
   it('reconnects with ?since after a drop and shows the hint on a double-drop', () => {

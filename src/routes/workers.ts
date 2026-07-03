@@ -9,11 +9,13 @@ import { Hono } from 'hono';
 
 import {
   IntegrateReqSchema,
-  LaunchWorkerReqSchema, PartitionReqSchema, RefreshWorktreeReqSchema, RegisterWorkerReqSchema,
+  LaunchWorkerReqSchema, type PartitionAssignment, PartitionReqSchema,
+  ProposePartitionReqSchema, RefreshWorktreeReqSchema, RegisterWorkerReqSchema,
   SetQueueOnlyReqSchema, SetTargetReqSchema,
   WorkerReadyReqSchema, WorkerRefSchema,
   type WorkerSlotView, } from '../api/workers.js';
 import { getClaims } from '../db/claims.js';
+import { getDb } from '../db/connection.js';
 import { readFileSettings } from '../file-settings.js';
 import { isGitRepo } from '../gitignore.js';
 import type { AppEnv } from '../types.js';
@@ -26,11 +28,13 @@ import {
   removeWorker, requestDrain, requestDrainAll, setQueueOnly, setReady, setTarget,
   type WorkerSlot,
 } from '../workers/poolManager.js';
+import { clearProposal, getProposal, setProposal } from '../workers/proposalSlot.js';
 import { reconcilePool } from '../workers/reconcilePool.js';
 import { refreshWorktree } from '../workers/refreshWorktree.js';
 import { suggestWorkerCount } from '../workers/suggestN.js';
 import { canonicalizePath, listWorktrees } from '../worktrees.js';
 import { projectRootFromDataDir } from './git.js';
+import { emitSync } from './syncEmit.js';
 import { parseBody } from './validation.js';
 
 export const workerRoutes = new Hono<AppEnv>();
@@ -213,6 +217,56 @@ workerRoutes.post('/workers/partition', async (c) => {
   const parsed = parseBody(PartitionReqSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   return c.json({ assignments: await partitionTickets(parsed.data.workers, { tag: parsed.data.tag }) });
+});
+
+// HS-9112 (docs/101 §101.7) — agent-in-the-loop plan preview. When the main agent
+// calls `hotsheet_propose_partition` (instead of dispatching, gated on the
+// `alwaysPreviewAgentPlans` setting), store the proposal + push a
+// `worker-partition-proposed` event so the open client opens the partition editor
+// for accept/edit/cancel — dispatch happens client-side on accept (the human
+// commits the work).
+
+/** Look up `HS-NNNN` ticket numbers for a set of ids (validated integers, so the
+ *  inlined IN-list is injection-safe). Unknown ids are simply absent. */
+async function ticketNumbersByIds(ids: readonly number[]): Promise<Map<number, string>> {
+  if (ids.length === 0) return new Map();
+  const db = await getDb();
+  const rows = (await db.query<{ id: number; ticket_number: string }>(
+    `SELECT id, ticket_number FROM tickets WHERE id IN (${ids.join(',')})`,
+  )).rows;
+  return new Map(rows.map(r => [r.id, r.ticket_number]));
+}
+
+/** POST /api/workers/propose-partition — the agent's proposed assignment. Enrich
+ *  the ids with ticket numbers, store in the per-project slot, and push the event. */
+workerRoutes.post('/workers/propose-partition', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(ProposePartitionReqSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const numberById = await ticketNumbersByIds([...new Set(parsed.data.assignments.flatMap(a => a.ticketIds))]);
+  const assignments: PartitionAssignment[] = parsed.data.assignments.map(a => ({
+    worker: a.worker,
+    label: a.label ?? a.worker,
+    ticketIds: a.ticketIds,
+    ticketNumbers: a.ticketIds.map(id => numberById.get(id) ?? `#${String(id)}`),
+  }));
+  setProposal(c.get('projectSecret'), assignments);
+  emitSync(c, { type: 'worker-partition-proposed', assignments });
+  const proposed = assignments.reduce((n, a) => n + a.ticketIds.length, 0);
+  return c.json({ ok: true, proposed });
+});
+
+/** GET /api/workers/proposal — the pending agent proposal (or null). Read on
+ *  panel-open for a client that wasn't connected when the event fired. */
+workerRoutes.get('/workers/proposal', (c) => {
+  return c.json({ proposal: getProposal(c.get('projectSecret')) });
+});
+
+/** POST /api/workers/proposal/clear — drop the pending proposal once the client
+ *  has consumed it (opened the editor). */
+workerRoutes.post('/workers/proposal/clear', (c) => {
+  clearProposal(c.get('projectSecret'));
+  return c.json({ ok: true });
 });
 
 // HS-9048 — owner-side branch integration (docs/89 §89.7). The owner is the single

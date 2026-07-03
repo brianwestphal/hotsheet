@@ -189,6 +189,16 @@ suffice.
 > bump) instructs the agent to read the setting and propose-not-dispatch when it's on.
 > Implementation tracked as **HS-9112**.
 
+> **SHIPPED (HS-9112).** Built exactly as decided. Surfaces:
+> - **Setting** `alwaysPreviewAgentPlans` (`src/file-settings.ts`, Shared-default + Local override per §95; checkbox in Settings via `settingsScope.tsx` + `settingsDialog.tsx` + `pages.tsx`).
+> - **MCP tool** `hotsheet_propose_partition` (`src/channel.tools.ts`; `CHANNEL_VERSION`/`EXPECTED_CHANNEL_VERSION` **16 → 17**). Takes the whole proposed assignment (`{worker,label?,ticket_ids}[]`); proxies to `POST /api/workers/propose-partition`; its result tells the agent the plan was proposed, NOT dispatched.
+> - **Endpoint + slot** `POST /api/workers/propose-partition` enriches ticket numbers, stores a per-project slot (`src/workers/proposalSlot.ts`, keyed by secret), and emits the event; `GET /api/workers/proposal` + `POST /api/workers/proposal/clear` back the read/consume path.
+> - **§93 event** `worker-partition-proposed` (`src/schemas.ts` + `coalesce.ts`) carries the assignments; the client reducer (`wsSync.ts`) routes it to `onWorkerPartitionProposed`.
+> - **Client** `src/client/agentPartitionProposal.ts` opens the SAME partition editor (`openPartitionEditor`) as the tag quick action; **accept** dispatches each chunk via `dispatchAndReport` (the human commits the work), **cancel** dispatches nothing. Clears the slot on consume. The worker-pool panel checks `GET /api/workers/proposal` on open (covers a client that wasn't connected when the event fired — the **poll-fallback** path, since `/api/poll` doesn't carry bus events).
+> - **Skill prose** (`SKILL_VERSION` **21 → 22**) + a **worklist section** gated on the setting (`src/sync/markdown.ts`) instruct the agent to call `hotsheet_propose_partition` instead of `hotsheet_dispatch_tickets` when it's on.
+>
+> **Design note:** propose is **non-blocking** — the tool returns immediately after storing/emitting (the agent doesn't wait for the human's accept/cancel; the channel is fire-and-forget). The accept/cancel decision happens out-of-band in the UI. **After bumping the channel version the user must reconnect the channel via `/mcp`.**
+
 ## 101.6 Follow-up tickets
 
 - **Prompt box + channel-trigger wrapper** in the pool panel (the core). ✅ SHIPPED (HS-9079).
@@ -199,8 +209,8 @@ suffice.
   prompt's agent-driven dispatch be previewed/confirmed in the editor too (needs an
   agent→client proposed-plan handshake). **Design captured in §101.7** (HS-9108);
   recommended shape = a `hotsheet_propose_partition` MCP tool → server slot →
-  §93 WS event → `openPartitionEditor` → client dispatch. **Go-ahead given
-  (2026-06-29): build it, gated on a per-project `alwaysPreviewAgentPlans` setting
-  (Shared/Local, default off) — see the §101.7 DECIDED note.** Implementation
-  follow-up: **HS-9112**.
+  §93 WS event → `openPartitionEditor` → client dispatch. **✅ SHIPPED (HS-9112,
+  2026-07-03)** — gated on the per-project `alwaysPreviewAgentPlans` setting
+  (Shared/Local, default off); `CHANNEL_VERSION` 16 → 17, `SKILL_VERSION` 21 → 22.
+  See the §101.7 SHIPPED note.
 - Depends on coherent partitioner grouping (HS-9073, §98) for good default chunks. ✅ SHIPPED.

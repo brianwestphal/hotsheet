@@ -281,6 +281,19 @@ const DrainWorkersInputSchema = z.object({
   worker: z.string().min(1).nullish().describe('The worker to drain gracefully (it finishes its current ticket, then stops). Omit and set `all:true` to drain every worker.'),
   all: z.boolean().optional().describe('Drain EVERY active worker (a graceful pool stop). Ignores `worker` when true.'),
 });
+// HS-9112 (docs/101 §101.7) — propose a partition for the owner to review in the
+// UI INSTEAD of dispatching it directly. Use this in place of
+// hotsheet_dispatch_tickets when the project's `alwaysPreviewAgentPlans` setting
+// is on (the worklist tells you). The owner accepts / edits / cancels in the
+// partition editor; on accept the UI dispatches (claims) the tickets — you do NOT
+// claim them yourself.
+const ProposePartitionInputSchema = z.object({
+  assignments: z.array(z.object({
+    worker: z.string().min(1).describe('The worker to propose these tickets for (its stable id, e.g. "worker-2"; see hotsheet_get_worker_pool).'),
+    label: z.string().nullish().describe('Optional human-friendly worker label shown in the editor.'),
+    ticket_ids: z.array(z.number().int()).describe('Ticket ids proposed for this worker (one partition chunk). May be empty for a worker you propose no work for.'),
+  })).min(1).describe('The proposed assignment — one entry per worker, each with the ticket ids you propose it work. Nothing is claimed until the owner accepts in the UI.'),
+});
 
 const BatchInputSchema = z.object({
   ids: z.array(z.number().int()).min(1).describe('Ticket ids to operate on (one or more)'),
@@ -605,6 +618,29 @@ async function dispatchDispatchTickets(args: unknown, settings: ChannelSettings,
   return okResult(JSON.stringify({ worker, dispatched, failed }));
 }
 
+/** HS-9112 — propose a partition for owner review instead of dispatching. Stores
+ *  the plan server-side + pushes it to the open UI (the partition editor); the
+ *  owner accepts/edits/cancels there and the UI dispatches on accept. Returns the
+ *  server's `{ok, proposed}`; nothing is claimed by this call. */
+async function dispatchProposePartition(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
+  const parsed = ProposePartitionInputSchema.safeParse(args);
+  if (!parsed.success) {
+    return errorResult(`hotsheet_propose_partition — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  }
+  const body = {
+    assignments: parsed.data.assignments.map(a => ({
+      worker: a.worker,
+      label: a.label ?? undefined,
+      ticketIds: a.ticket_ids,
+    })),
+  };
+  const result = await proxyRequest(settings, '/api/workers/propose-partition', { method: 'POST', body }, fetchFn);
+  if (result.isError === true) return result;
+  // Make the "proposed, not dispatched — awaiting owner review" contract explicit
+  // to the agent so it doesn't also try to claim the tickets.
+  return okResult(`${result.content[0]?.text ?? '{}'}\nProposed for the owner's review in the worker-pool panel — NOT dispatched. The owner accepts/edits/cancels there; do not claim these tickets yourself.`);
+}
+
 // ---------------------------------------------------------------------------
 // Public tool catalog + top-level dispatcher.
 // ---------------------------------------------------------------------------
@@ -743,9 +779,15 @@ const TOOLS: ToolEntry[] = [
   },
   {
     name: 'hotsheet_dispatch_tickets',
-    description: 'Assign (claim) a set of tickets to one specific worker, so it works that chunk first (before the shared Up Next pool). The core "parallelize across workers" primitive: query the tickets (e.g. by tag via hotsheet_query_tickets), split them into chunks, and dispatch one chunk per worker. Returns {worker, dispatched:[ids], failed:[{id,reason}]} — a ticket already live-claimed by another worker lands in `failed` (not reassigned).',
+    description: 'Assign (claim) a set of tickets to one specific worker, so it works that chunk first (before the shared Up Next pool). The core "parallelize across workers" primitive: query the tickets (e.g. by tag via hotsheet_query_tickets), split them into chunks, and dispatch one chunk per worker. Returns {worker, dispatched:[ids], failed:[{id,reason}]} — a ticket already live-claimed by another worker lands in `failed` (not reassigned). NOTE: when the project has `alwaysPreviewAgentPlans` on (the worklist tells you), use hotsheet_propose_partition instead so the owner reviews the plan first.',
     inputSchema: DispatchTicketsInputSchema,
     call: dispatchDispatchTickets,
+  },
+  {
+    name: 'hotsheet_propose_partition',
+    description: 'Propose a worker partition for the owner to REVIEW in the UI instead of dispatching it directly — use this in place of hotsheet_dispatch_tickets when the project\'s `alwaysPreviewAgentPlans` setting is on (the worklist tells you). Pass the whole proposed assignment (one entry per worker with its ticket_ids). The owner accepts/edits/cancels in the partition editor; on accept the UI claims the tickets — you do NOT claim them yourself. Returns {ok, proposed:<ticket count>}.',
+    inputSchema: ProposePartitionInputSchema,
+    call: dispatchProposePartition,
   },
   {
     name: 'hotsheet_drain_workers',

@@ -147,6 +147,7 @@ function bindGeneralTab() {
   const hideVerifiedCheckbox = byId<HTMLInputElement>('settings-hide-verified-column');
   const shellIntegrationCheckbox = byId<HTMLInputElement>('settings-shell-integration-ui');
   const aiReviewNotesCheckbox = byIdOrNull<HTMLInputElement>('settings-ai-review-notes');
+  const alwaysPreviewAgentPlansCheckbox = byIdOrNull<HTMLInputElement>('settings-always-preview-agent-plans');
   // HS-8446 — global diagnostics opt-in. Single checkbox in Settings →
   // Experimental → Diagnostics that gates BOTH the slow-server banner
   // (HS-8175) AND the HS-8054 UI-hang toast. Stored in
@@ -251,6 +252,13 @@ function bindGeneralTab() {
   // this listener only persists the change to the active layer.
   aiReviewNotesCheckbox?.addEventListener('change', () => {
     void persistScopedSetting('aiReviewNotes', aiReviewNotesCheckbox.checked); // JSON boolean, like telemetry_*
+  });
+
+  // HS-9112 (docs/101 §101.7) — "always preview agent plans" (`alwaysPreviewAgentPlans`).
+  // Same scope-aware boolean pattern: SCOPED_FIELDS applies the value + decoration on
+  // open; this only persists the change to the active layer.
+  alwaysPreviewAgentPlansCheckbox?.addEventListener('change', () => {
+    void persistScopedSetting('alwaysPreviewAgentPlans', alwaysPreviewAgentPlansCheckbox.checked);
   });
 
   // HS-8446 — global diagnostics opt-in. PATCH `/api/global-config`

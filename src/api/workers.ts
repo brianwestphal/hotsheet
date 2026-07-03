@@ -210,6 +210,47 @@ export async function getTicketPartition(req: PartitionReq): Promise<PartitionAs
   return r.assignments;
 }
 
+// --- HS-9112 — agent-in-the-loop plan preview (docs/101 §101.7) ---
+// When the per-project `alwaysPreviewAgentPlans` setting is on, the main agent
+// calls `hotsheet_propose_partition` INSTEAD of dispatching directly; the server
+// stores the proposal + pushes a `worker-partition-proposed` §93 event, the client
+// opens the partition editor, and dispatch happens client-side on accept (so the
+// human commits the work, not the agent).
+
+/** The agent-supplied proposed assignment. `ticketNumbers` are enriched
+ *  server-side from the ids, so the request carries ids + an optional label only. */
+export const ProposePartitionReqSchema = z.object({
+  assignments: z.array(z.object({
+    worker: z.string().min(1),
+    label: z.string().optional(),
+    ticketIds: z.array(z.number().int()).default([]),
+  })).min(1),
+});
+export type ProposePartitionReq = z.infer<typeof ProposePartitionReqSchema>;
+
+export const ProposePartitionRespSchema = z.object({ ok: z.boolean(), proposed: z.number() });
+
+/** The currently-pending agent proposal for the project (the per-project slot), or
+ *  null when none is pending. Read on panel-open for a client that wasn't connected
+ *  when the `worker-partition-proposed` event fired. */
+export const PendingProposalRespSchema = z.object({
+  proposal: z.object({ assignments: z.array(PartitionAssignmentSchema) }).nullable(),
+});
+
+/** GET `/workers/proposal` → the pending agent partition proposal (or null). */
+export async function getPendingPartitionProposal(): Promise<PartitionAssignment[] | null> {
+  const r = await apiCall(PendingProposalRespSchema, '/workers/proposal');
+  return r.proposal?.assignments ?? null;
+}
+
+const ClearProposalRespSchema = z.object({ ok: z.boolean() });
+
+/** POST `/workers/proposal/clear` → clear the pending proposal once the client has
+ *  consumed it (opened the editor), so it doesn't re-open on a later panel-open. */
+export async function clearPartitionProposal(): Promise<void> {
+  await apiCall(ClearProposalRespSchema, '/workers/proposal/clear', { method: 'POST', body: {} });
+}
+
 // --- HS-9048 — owner-side branch integration (docs/89 §89.7) ---
 
 export const ReadyBranchSchema = z.object({

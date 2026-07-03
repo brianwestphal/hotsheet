@@ -38,7 +38,8 @@ function idsOf(event: SyncEvent): number[] {
     case 'settings-changed':
     case 'batch-operation':
     case 'claims-changed':
-    case 'active-device-changed': return [];
+    case 'active-device-changed':
+    case 'worker-partition-proposed': return [];
   }
 }
 

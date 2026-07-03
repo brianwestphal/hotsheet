@@ -71,7 +71,11 @@ import { getProjectSecret } from './secret-file.js';
 //   / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers` (23 tools total).
 // v16 (HS-9107) — `hotsheet_update_ticket` gained an optional `integration_branch`
 //   input (the worker branch the work landed on; lets the merge-pending badge review it).
-export const CHANNEL_VERSION = 16;
+// v17 (HS-9112) — added `hotsheet_propose_partition` (agent-in-the-loop plan
+//   preview, docs/101 §101.7): propose a worker partition for owner review in the
+//   UI instead of dispatching directly, gated on the `alwaysPreviewAgentPlans`
+//   setting (24 tools total).
+export const CHANNEL_VERSION = 17;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
