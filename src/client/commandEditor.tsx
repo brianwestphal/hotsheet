@@ -4,10 +4,12 @@ import {
   CMD_ICONS,
   type CommandGroup,
   type CommandItem,
+  commandTopLevelIds,
   contrastColor,
   copyCustomCommands,
   type CustomCommand,
   deleteAtRef,
+  getCommandCopySelection,
   getCommandMode,
   getCommandOverriddenIds,
   getCommandShared,
@@ -22,12 +24,14 @@ import {
   resetCommandOverride,
   resolveCommand,
   saveCommandItems,
+  setCommandCopySelection,
   unhideCommand,
   updateCommand,
 } from './experimentalSettings.js';
 import { showColorDropdown, showIconPicker } from './iconPicker.js';
 import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2,renderIconSvg } from './icons.js';
 import { delegate } from './reactive.js';
+import { applySelectionClick, copyButtonLabel, pruneSelection } from './settingsCopySelection.js';
 import { scopeListHintElement } from './settingsScopeList.js';
 
 /** HS-8614 — recover the `ItemRef` a delegated handler should act on from the
@@ -564,6 +568,24 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     renderCustomCommandSettings();
     void saveCommandItems();
   }));
+
+  // HS-9324 — click a TOP-LEVEL row (command or group) to (multi-)select it for
+  // the Copy button. Skips child/hidden rows (no `data-cmd-id`) and clicks on the
+  // row's own controls (buttons / drag handle / the editable group name) so
+  // editing + reordering still work. Cmd/Ctrl toggles, Shift ranges.
+  d.push(delegate<HTMLElement>(list, 'click', '.cmd-outline-row', (e, row) => {
+    if (!(e instanceof MouseEvent)) return;
+    const id = row.getAttribute('data-cmd-id');
+    if (id === null) return;
+    const target = e.target;
+    if (target instanceof Element && target.closest('button, a, input, [contenteditable], .command-drag-handle') !== null) return;
+    const next = applySelectionClick(
+      getCommandCopySelection(), commandTopLevelIds(), id,
+      { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey },
+    );
+    setCommandCopySelection(next);
+    refreshCommandCopyUI(list);
+  }));
 }
 
 function removeCommandAtRef(ref: ItemRef, commandItems: CommandItem[]): CustomCommand {
@@ -587,13 +609,20 @@ export function renderCustomCommandSettings() {
   children.push(scopeListHintElement(ctx.mode));
   for (let i = 0; i < commandItems.length; i++) {
     const item = commandItems[i];
+    // HS-9324 — tag each TOP-LEVEL row with its stable id so the copy-selection
+    // (below) can mark it `.selected` + copy it. Children aren't selectable.
+    const topId = typeof item.id === 'string' && item.id !== '' ? item.id : null;
     if (isGroup(item)) {
-      children.push(renderGroupOutlineRow(i, ctx));
+      const groupRow = renderGroupOutlineRow(i, ctx);
+      if (topId !== null) groupRow.setAttribute('data-cmd-id', topId);
+      children.push(groupRow);
       for (let j = 0; j < item.children.length; j++) {
         children.push(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }, ctx));
       }
     } else {
-      children.push(renderCommandOutlineRow({ type: 'top', index: i }, ctx));
+      const cmdRow = renderCommandOutlineRow({ type: 'top', index: i }, ctx);
+      if (topId !== null) cmdRow.setAttribute('data-cmd-id', topId);
+      children.push(cmdRow);
     }
   }
 
@@ -650,4 +679,19 @@ export function renderCustomCommandSettings() {
   // re-attach-waste concern the per-row delegation addresses.
   children.push(btnRow);
   list.replaceChildren(...children);
+  refreshCommandCopyUI(list); // HS-9324 — re-apply selection classes + Copy label
+}
+
+// HS-9324 — reflect the copy-selection: `.selected` on each top-level row + the
+// Copy button label ("Copy All"/"Copy Selected"). Prunes ids that vanished (an
+// item deleted, or a scope switch changing the visible top-level list).
+function refreshCommandCopyUI(list: HTMLElement): void {
+  const selection = pruneSelection(getCommandCopySelection(), commandTopLevelIds());
+  setCommandCopySelection(selection);
+  for (const rowEl of list.querySelectorAll<HTMLElement>('.cmd-outline-row[data-cmd-id]')) {
+    const id = rowEl.getAttribute('data-cmd-id');
+    rowEl.classList.toggle('selected', id !== null && selection.selected.has(id));
+  }
+  const copyBtn = list.querySelector('.cmd-outline-copy-btn');
+  if (copyBtn !== null) copyBtn.textContent = copyButtonLabel(selection);
 }

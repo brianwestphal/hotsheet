@@ -2630,6 +2630,16 @@ body.cross-project-stats-active {
   &.dragging { opacity: 0.4; }
   &.cmd-outline-indented { margin-left: 16px; }
 
+  // HS-9324 — a top-level row selected for "Copy Selected". Accent border + tint,
+  // mirroring `.auto-context-entry.selected`. Top-level rows carry `data-cmd-id`
+  // and hint their clickability.
+  &[data-cmd-id] { cursor: pointer; }
+  &.selected {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  }
+
   // Drop indicator lines between items
   position: relative;
   &.drop-above::before {

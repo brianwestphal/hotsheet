@@ -12,7 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ApiIndex from '../api/index.js';
 import { _resetCommandRowDelegationForTests, renderCustomCommandSettings } from './commandEditor.js';
-import { _setCommandModeForTests, _setCommandOverriddenIdsForTests, _setCommandSharedForTests, getCommandItems, reloadCustomCommands } from './experimentalSettings.js';
+import { _setCommandModeForTests, _setCommandOverriddenIdsForTests, _setCommandSharedForTests, type CommandItem, getCommandItems, reloadCustomCommands, setCommandCopySelection } from './experimentalSettings.js';
+import type * as SettingsClipboard from './settingsClipboard.js';
+import { copyJsonToClipboard } from './settingsClipboard.js';
+import { emptySelection } from './settingsCopySelection.js';
 
 const getSettingsMock = vi.hoisted(() => vi.fn<() => Promise<{ custom_commands: string }>>());
 vi.mock('../api/index.js', async (importOriginal) => ({
@@ -26,6 +29,13 @@ vi.mock('../api/index.js', async (importOriginal) => ({
 // `saveCommandItems` re-renders the sidebar — stub it so the test doesn't need
 // the channel-sidebar DOM.
 vi.mock('./commandSidebar.js', () => ({ renderChannelCommands: vi.fn() }));
+vi.mock('./toast.js', () => ({ showToast: vi.fn() }));
+// HS-9324 — spy the clipboard copy so the copy-selection tests can assert exactly
+// which top-level items get serialized (real helpers otherwise, e.g. paste).
+vi.mock('./settingsClipboard.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsClipboard>()),
+  copyJsonToClipboard: vi.fn(() => Promise.resolve()),
+}));
 
 function deleteBtnAtRow(index: number): HTMLButtonElement {
   const rows = document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row');
@@ -240,5 +250,103 @@ describe('commandEditor — delegated outline row handlers (HS-8614)', () => {
     _setCommandModeForTests('shared');
     renderCustomCommandSettings();
     expect(document.querySelectorAll('#settings-commands-list .cmd-outline-row-hidden').length).toBe(0);
+  });
+});
+
+describe('commandEditor — copy-selection (HS-9324)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="settings-commands-list"></div>';
+    getSettingsMock.mockReset();
+    _resetCommandRowDelegationForTests();
+    setCommandCopySelection(emptySelection());
+    vi.mocked(copyJsonToClipboard).mockClear();
+  });
+  afterEach(() => {
+    document.body.innerHTML = '';
+    _resetCommandRowDelegationForTests();
+    setCommandCopySelection(emptySelection());
+  });
+
+  async function seedIds(items: CommandItem[]): Promise<void> {
+    getSettingsMock.mockResolvedValue({ custom_commands: JSON.stringify(items) });
+    await reloadCustomCommands();
+    _setCommandModeForTests('shared');
+    renderCustomCommandSettings();
+  }
+
+  const topRows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row[data-cmd-id]')];
+  const copyBtn = (): HTMLElement => document.querySelector<HTMLElement>('.cmd-outline-copy-btn')!;
+  // Click a non-interactive part of the row: the name span for command rows, or
+  // the row itself for a group (whose name is contentEditable → intentionally not
+  // a select target). Either way the target isn't a button/editable/drag-handle.
+  const clickName = (row: HTMLElement, mods: MouseEventInit = {}): void => {
+    const target = row.querySelector('.cmd-outline-name') ?? row;
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, ...mods }));
+  };
+
+  it('clicking a top-level row selects it and flips Copy to "Copy Selected"; re-click clears', async () => {
+    await seedIds([
+      { id: 'c1', name: 'Build', prompt: 'b', target: 'shell' },
+      { id: 'c2', name: 'Test', prompt: 't', target: 'shell' },
+    ]);
+    const rows = topRows();
+    expect(rows.length).toBe(2);
+    expect(copyBtn().textContent).toBe('Copy All');
+
+    clickName(rows[0]);
+    expect(rows[0].classList.contains('selected')).toBe(true);
+    expect(rows[1].classList.contains('selected')).toBe(false);
+    expect(copyBtn().textContent).toBe('Copy Selected');
+
+    clickName(rows[0]); // sole selected → clears
+    expect(rows[0].classList.contains('selected')).toBe(false);
+    expect(copyBtn().textContent).toBe('Copy All');
+  });
+
+  it('Cmd-click multi-selects; clicking a row button does NOT select', async () => {
+    await seedIds([
+      { id: 'c1', name: 'Build', prompt: 'b', target: 'shell' },
+      { id: 'c2', name: 'Test', prompt: 't', target: 'shell' },
+    ]);
+    const rows = topRows();
+    clickName(rows[0]);
+    clickName(rows[1], { metaKey: true });
+    expect(rows[0].classList.contains('selected')).toBe(true);
+    expect(rows[1].classList.contains('selected')).toBe(true);
+
+    // Clicking the edit button must not toggle the selection.
+    rows[0].querySelector<HTMLButtonElement>('.cmd-outline-edit-btn')!.click();
+    expect(rows[0].classList.contains('selected')).toBe(true);
+    expect(rows[1].classList.contains('selected')).toBe(true);
+  });
+
+  it('Copy copies only the selected top-level items — a selected group copies whole', async () => {
+    await seedIds([
+      { id: 'c1', name: 'Build', prompt: 'b', target: 'shell' },
+      { id: 'g1', type: 'group', name: 'Group', children: [{ id: 'gc1', name: 'Child', prompt: 'x', target: 'shell' }] },
+      { id: 'c2', name: 'Test', prompt: 't', target: 'shell' },
+    ]);
+    const rows = topRows();
+    expect(rows.length).toBe(3); // Build, Group, Test — the group's child row has no data-cmd-id
+
+    clickName(rows[1]); // Group
+    clickName(rows[2], { metaKey: true }); // Test
+    copyBtn().click();
+
+    const call = vi.mocked(copyJsonToClipboard).mock.calls.at(-1);
+    const copied = call?.[0] as CommandItem[];
+    expect(copied.map(i => i.name)).toEqual(['Group', 'Test']); // render order; Build excluded
+    const grp = copied.find(i => i.name === 'Group');
+    expect(grp !== undefined && 'children' in grp && grp.children.length).toBe(1); // group carried its child
+  });
+
+  it('Copy with nothing selected copies the whole tree (default)', async () => {
+    await seedIds([
+      { id: 'c1', name: 'Build', prompt: 'b', target: 'shell' },
+      { id: 'c2', name: 'Test', prompt: 't', target: 'shell' },
+    ]);
+    copyBtn().click();
+    const copied = vi.mocked(copyJsonToClipboard).mock.calls.at(-1)?.[0] as CommandItem[];
+    expect(copied.map(i => i.name)).toEqual(['Build', 'Test']);
   });
 });
