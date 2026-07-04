@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+import { isAntigravityDriven, spawnAgyRun } from './antigravityDrive.js';
 import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
@@ -423,9 +424,17 @@ export async function triggerChannel(
   target?: ChannelTriggerTarget,
   opts: { isPidAlive?: (pid: number) => boolean } = {},
 ): Promise<boolean> {
+  const content = await buildTriggerContent(dataDir, serverPort, message);
+
+  // HS-9321 — Antigravity has no persistent channel session to notify; each play
+  // spawns a one-shot `agy --print` in the project dir (which processes the worklist
+  // via the MCP tools + calls hotsheet_signal_done). Bypasses the channel-port path.
+  if (isAntigravityDriven(dataDir)) {
+    return spawnAgyRun(dataDir, serverPort, content);
+  }
+
   const ports = resolveTriggerTargetPorts(dataDir, target, opts);
   if (ports.length === 0) return false;
-  const content = await buildTriggerContent(dataDir, serverPort, message);
   const results = await Promise.all(ports.map(p => postTriggerToPort(p, content)));
   return results.every(Boolean);
 }

@@ -185,7 +185,11 @@ export function setChannelAlive(alive: boolean) {
   // to, which would normally surface the warning and pollute the marketing
   // screenshot. Per the ticket: "make sure the 'claude not connected'
   // warning isn't showing. it should never show during demos".
-  warning.style.display = enabled && !alive && !isDemoMode() ? '' : 'none';
+  // HS-9321 — also suppressed for Antigravity: agy has no persistent session to be
+  // "alive" (each play spawns a one-shot `agy --print`), so "not connected" is
+  // meaningless + misleading for it.
+  const isAntigravity = state.settings.ai_tool === 'antigravity';
+  warning.style.display = enabled && !alive && !isDemoMode() && !isAntigravity ? '' : 'none';
   // If the channel server went down while we thought Claude was busy, clear busy state
   if (wasAlive && !alive && isChannelBusy()) {
     setChannelBusy(false);
@@ -427,8 +431,11 @@ function triggerChannelAndMarkBusy(message?: string, target?: ChannelTriggerTarg
 export { triggerChannelAndMarkBusy };
 
 async function checkAndTrigger(btn: HTMLElement) {
-  // Check if Claude is connected before triggering
-  if (!isChannelAlive()) {
+  // HS-9321 — Antigravity has no persistent channel session to be "alive"; the play
+  // spawns a one-shot `agy --print` server-side (see `triggerChannel`), so skip the
+  // Claude connected-check for it. Other tools still require a live channel.
+  const isAntigravity = state.settings.ai_tool === 'antigravity';
+  if (!isAntigravity && !isChannelAlive()) {
     showDisconnectedAlert();
     return;
   }
