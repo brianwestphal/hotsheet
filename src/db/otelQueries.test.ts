@@ -1555,12 +1555,13 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       await insertCostMetric({ ts: now, projectSecret: SECRET_B, model: 'opus', cost: 1.0 });
       await insertPromptEvent({ ts: now, projectSecret: SECRET_B, promptId: 'pB' });
 
-      // HS-9280 — the raw otel_* tables are gone; `clearProjectTelemetry` now clears
-      // the rollup tables + the JSONL store (+ announcer_usage). `deleted` counts the
-      // remaining DB rows (announcer_usage) — 0 here — so verify the clear FUNCTIONALLY
-      // via the reads (which come off the now-cleared rollups).
+      // HS-9280 — the raw otel_* tables are gone; `clearProjectTelemetry` clears the
+      // rollup tables + the JSONL store (+ announcer_usage). HS-9317 — `deleted` counts
+      // the project-scoped rows removed (announcer_usage + the four rollup tables), so
+      // SECRET_A's seeded metric + events (which rolled up) yield a NON-ZERO count —
+      // the fix for the deterministic clear-telemetry e2e "No telemetry data" failure.
       const result = await clearProjectTelemetry(SECRET_A);
-      expect(result.deleted).toBe(0);
+      expect(result.deleted).toBeGreaterThan(0);
 
       // A is gone; B is untouched.
       const aTotals = await getWindowTotals(SECRET_A, null);

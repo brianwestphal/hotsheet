@@ -395,7 +395,17 @@ test.describe('Settings scope control (Shared | Local)', () => {
     const textarea = page.locator('#auto-context-list .auto-context-text').first();
     await expect(textarea).toBeVisible({ timeout: 3000 });
     await textarea.fill('Machine-local context note');
-    await page.waitForTimeout(700); // debounced save
+
+    // The save is debounced — POLL the layered settings until the local delta lands.
+    // HS-9317 — the old fixed `waitForTimeout(700)` raced under CI load (the debounce
+    // + save round-trip can exceed it), reading back `added: []` and failing the job.
+    const readLocalAdded = async (): Promise<number> => {
+      const r = await page.request.get('/api/file-settings/layered');
+      const l = await r.json() as { local: Record<string, unknown> };
+      const ac = l.local.auto_context as { added?: unknown[] } | undefined;
+      return ac?.added?.length ?? 0;
+    };
+    await expect.poll(readLocalAdded, { timeout: 6000 }).toBeGreaterThan(0);
 
     // The entry persisted to the LOCAL layer as an element-level delta (added), not the shared array.
     const res = await page.request.get('/api/file-settings/layered');

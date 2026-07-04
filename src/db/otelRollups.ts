@@ -748,7 +748,11 @@ export async function getTodayCost(projectSecret: string): Promise<number> {
  * the request context for the active project). The `project_secret = $1` filter
  * is kept as defense-in-depth: a non-destructively-migrated DB may still hold
  * un-deleted foreign rows, and we must clear only this project's. Returns the
- * total rows removed across the four tables.
+ * total project-scoped rows removed: announcer_usage + the four rollup tables
+ * (HS-9317 — post the HS-9280 raw-drop those rollups ARE the project's telemetry,
+ * so a metrics-only project would otherwise clear fine yet report zero cleared).
+ * The dir-scoped JSONL raw store is also wiped but NOT counted (it isn't
+ * per-project).
  *
  * Backs the Settings → Telemetry → Retention "Clear telemetry data" button
  * (§74). An empty / missing `projectSecret` is rejected by the caller before
@@ -766,17 +770,22 @@ export async function clearProjectTelemetry(projectSecret: string): Promise<{ de
   deleted += result.affectedRows ?? 0;
   // HS-9280 — wipe the rotating JSONL raw store (the §68 deep inspectors' source),
   // else "Clear telemetry data" would leave the raw events/spans/metrics behind.
-  // Best-effort; not counted in `deleted` (that reports DB rows).
+  // NOT counted toward `deleted`: `clearOtelJsonl` is DIR-scoped, not project-scoped
+  // (it removes every day-file in the cluster dir), so counting it would attribute
+  // other projects' files to this clear.
   try {
     await clearOtelJsonl(currentTelemetryClusterDir());
   } catch { /* JSONL wipe is best-effort */ }
   // HS-9235 — the dashboards now read the ROLLUP tables (main db), so clearing a
   // project's telemetry must drop its rollup rows too, else the cost/token/count
-  // displays would keep showing the just-cleared data. The rollup-row deletes are
-  // NOT counted in `deleted` (that number reports raw rows removed, as before).
+  // displays would keep showing the just-cleared data. HS-9317 — COUNT these deletes
+  // toward `deleted`: they're the project-scoped (`WHERE project_secret`) rows that
+  // now represent this project's telemetry after the raw-drop, so a metrics-only
+  // project reports a real cleared count instead of "No telemetry data to clear."
   const mainDb = await getRollupDb();
   for (const table of ['otel_rollup_daily', 'otel_rollup_ticket', 'otel_daily_seen', 'otel_ticket_prompt_span'] as const) {
-    await mainDb.query(`DELETE FROM ${table} WHERE project_secret = $1`, [projectSecret]);
+    const r = await mainDb.query(`DELETE FROM ${table} WHERE project_secret = $1`, [projectSecret]);
+    deleted += r.affectedRows ?? 0;
   }
   return { deleted };
 }
