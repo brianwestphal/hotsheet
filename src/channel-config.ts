@@ -46,7 +46,7 @@ export function getMcpServerKey(dataDir: string): string {
  *  channel-config.ts and channel.ts are siblings in src/ (dev) and dist/ (production).
  *  Uses process.execPath for the node binary so it works even when launched from Tauri
  *  (where node may not be on the PATH). */
-function getChannelServerPath(): { command: string; args: string[] } {
+export function getChannelServerPath(): { command: string; args: string[] } {
   const thisDir = dirname(fileURLToPath(import.meta.url));
 
   // Production: this file is dist/channel-config.js, sibling is dist/channel.js

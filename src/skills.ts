@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
 import { z } from 'zod';
 
+import { ensureAntigravityMcpConfig } from './antigravity.js';
 import { readFileSettings } from './file-settings.js';
 import { getProjectSecret } from './secret-file.js';
 import type { CategoryDef } from './types.js';
@@ -684,6 +685,15 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   }
   if (wants('windsurf') && (isExecutableOnPath('windsurf') || existsSync(join(projectRoot, '.windsurf')))) {
     if (ensureWindsurfRules(projectRoot)) platforms.push('Windsurf');
+  }
+
+  // HS-9320 — Antigravity (`agy`) has no skill files (it consumes the hotsheet_*
+  // MCP tools directly), so instead of a skill generator, register the cwd-resolving
+  // channel server in agy's GLOBAL MCP config so a launched `agy` sees the tools. A
+  // single entry serves every project (see `src/antigravity.ts`); idempotent +
+  // best-effort. Gated on `agy` being present, mirroring the other tools' detection.
+  if (wants('antigravity') && isExecutableOnPath('agy')) {
+    ensureAntigravityMcpConfig();
   }
 
   if (platforms.length > 0) {
