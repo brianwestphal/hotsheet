@@ -46,6 +46,31 @@ async function switchTerminalsToShared(page: Page): Promise<void> {
   await expect(page.locator('#settings-terminals-list .scope-list-hint-shared')).toBeVisible({ timeout: 5000 });
 }
 
+// HS-9329 — create `n` dynamic terminals AND wait for each one's PTY to reach
+// `alive` before returning. The bulk-close / single-close confirm dialogs
+// (HS-6470/HS-6701) only render when `getInstance(id).status === 'alive'` for
+// the tabs being closed (see `closeTabs`/`closeDynamicTerminal` in
+// `terminalInstanceLifecycle.tsx`). The old create-loop only waited for each
+// tab to be *visible*, not for its PTY to be *alive* — so under headless CI,
+// where PTY spawn lags the tab's appearance, the subsequent bulk op ran while
+// `aliveIds.length === 0`, took the silent-destroy branch, and never rendered
+// the dialog the test then waited on ("element(s) not found", CI run
+// 28685186138). A freshly-created dynamic terminal is the *active* pane, so we
+// gate on ITS visible status dot turning `.status-alive` (the same signal the
+// single-terminal test at ~line 515 already uses); its instance keeps that
+// alive status in memory after we switch to create the next one.
+async function addDynamicTerminalsAlive(page: Page, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await page.locator('#drawer-add-terminal-btn').click();
+    const tab = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').nth(i);
+    await expect(tab).toBeVisible({ timeout: 5000 });
+    const id = await tab.getAttribute('data-terminal-id');
+    await expect(
+      page.locator(`.drawer-terminal-pane[data-drawer-panel="terminal:${id}"] .terminal-status-dot.status-alive`),
+    ).toBeVisible({ timeout: PTY_READY_MS });
+  }
+}
+
 test.describe('Embedded terminal drawer', () => {
   test.beforeAll(async ({ request }) => {
     const res = await request.get('/api/projects');
@@ -468,13 +493,11 @@ test.describe('Embedded terminal drawer', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
-    // Open drawer and create three dynamic terminals.
+    // Open drawer and create three dynamic terminals (each waited to `alive` so
+    // the bulk-close Stop-All confirm actually renders under headless CI — HS-9329).
     await page.locator('#command-log-btn').click();
     await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
-    for (let i = 0; i < 3; i++) {
-      await page.locator('#drawer-add-terminal-btn').click();
-      await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').nth(i)).toBeVisible({ timeout: 5000 });
-    }
+    await addDynamicTerminalsAlive(page, 3);
 
     // Tab strip now has: default, second (both configured), dyn-0, dyn-1, dyn-2.
     const tabs = page.locator('.drawer-terminal-tab');
@@ -557,10 +580,7 @@ test.describe('Embedded terminal drawer', () => {
 
     await page.locator('#command-log-btn').click();
     await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
-    for (let i = 0; i < 3; i++) {
-      await page.locator('#drawer-add-terminal-btn').click();
-      await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').nth(i)).toBeVisible({ timeout: 5000 });
-    }
+    await addDynamicTerminalsAlive(page, 3); // HS-9329 — wait each PTY alive so the Stop-All confirm renders in CI.
 
     const dyns = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]');
     await expect(dyns).toHaveCount(3);
@@ -593,10 +613,7 @@ test.describe('Embedded terminal drawer', () => {
 
     await page.locator('#command-log-btn').click();
     await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
-    for (let i = 0; i < 3; i++) {
-      await page.locator('#drawer-add-terminal-btn').click();
-      await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').nth(i)).toBeVisible({ timeout: 5000 });
-    }
+    await addDynamicTerminalsAlive(page, 3); // HS-9329 — wait each PTY alive so the close confirms render in CI.
 
     const dyns = page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]');
     await expect(dyns).toHaveCount(3);
@@ -848,9 +865,9 @@ test.describe('Embedded terminal drawer', () => {
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#command-log-btn').click();
     await expect(page.locator('#drawer-add-terminal-btn')).toBeVisible({ timeout: 5000 });
-    // Add one dynamic terminal so there is something bulk-close can act on.
-    await page.locator('#drawer-add-terminal-btn').click();
-    await expect(page.locator('.drawer-terminal-tab[data-terminal-id^="dyn-"]').first()).toBeVisible({ timeout: 5000 });
+    // Add one dynamic terminal so there is something bulk-close can act on
+    // (waited to `alive` so the single-tab confirm renders under CI — HS-9329).
+    await addDynamicTerminalsAlive(page, 1);
 
     await page.locator('.drawer-terminal-tab[data-terminal-id="default"]').click({ button: 'right' });
     const menu = page.locator('.terminal-tab-context-menu');

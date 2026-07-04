@@ -614,6 +614,15 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     const xtermRoot = page.locator('.terminal-dashboard-tile[data-terminal-id="live"] .terminal-dashboard-tile-xterm');
     await expect(xtermRoot).toBeAttached();
 
+    // HS-9329 — the explicit dims + scale transform are applied by `applyTileScale`
+    // on a rAF / ResizeObserver tick AFTER the dashboard opens (it measures the
+    // xterm's natural `.xterm-screen` size first). `toBeAttached` above only proves
+    // the element exists, not that sizing has run — so under headless CI, where that
+    // tick lags, the immediate read saw an un-sized root (`style.width === ""`, no
+    // transform → `nums.length` 0). Wait for the scale transform to actually land
+    // before reading. CI run 28685186138.
+    await expect(xtermRoot).toHaveAttribute('style', /scale\(/, { timeout: 15000 });
+
     const info = await xtermRoot.evaluate((el) => {
       const s = (el as HTMLElement).style;
       // The transform may be `scale(s)`, `scale(sx, sy)`, or `scale(sx sy)`
@@ -670,6 +679,11 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
 
     const xtermRoot = page.locator('.terminal-dashboard-tile[data-terminal-id="live"] .terminal-dashboard-tile-xterm');
     await expect(xtermRoot).toBeAttached();
+
+    // HS-9329 — wait for the scale transform to be applied (rAF/ResizeObserver
+    // tick after open) before reading it; headless CI lags the tick. See the
+    // sibling test above for the full rationale. CI run 28685186138.
+    await expect(xtermRoot).toHaveAttribute('style', /scale\(/, { timeout: 15000 });
 
     const layout = await xtermRoot.evaluate((el) => {
       const root = el as HTMLElement;

@@ -98,8 +98,13 @@ export function showTabContextMenu(e: MouseEvent, clickedId: string): void {
  *              destroy the inert tabs. On cancel, abort the whole bulk op.
  *   2+ alive → single "Stop All" dialog listing the running tab names;
  *              confirm destroys all, cancel aborts the whole bulk op.
+ *
+ * Exported for unit testing (HS-9329): this alive-count branching is the logic
+ * that decides whether the confirm dialogs render, and was previously guarded
+ * only by the terminal-drawer e2e specs — which flaked in headless CI on PTY
+ * timing rather than on this logic. A happy-dom unit test now pins each branch.
  */
-async function closeTabs(ids: string[]): Promise<void> {
+export async function closeTabs(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const h = requireHooks();
 
