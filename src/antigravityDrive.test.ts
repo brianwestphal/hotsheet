@@ -64,12 +64,42 @@ describe('spawnAgyRun', () => {
     expect(signalDone).toHaveBeenCalledWith(dataDir, 4174);
   });
 
-  it('signals done when the process fails to launch (error event)', () => {
+  it('posts a `busy` heartbeat on spawn and `idle` on exit (HS-9327)', () => {
+    const proc = new EventEmitter();
+    const postHeartbeat = vi.fn();
+    spawnAgyRun(join('/proj', '.hotsheet'), 4174, 'x', { spawnFn: makeSpawn(proc), signalDone: vi.fn(), postHeartbeat });
+    expect(postHeartbeat.mock.calls.at(0)?.[2]).toBe('busy'); // immediate
+    proc.emit('exit', 0, null);
+    expect(postHeartbeat.mock.calls.at(-1)?.[2]).toBe('idle'); // on finish
+  });
+
+  it('re-asserts `heartbeat` periodically while alive, and stops the interval on exit', () => {
+    vi.useFakeTimers();
+    try {
+      const proc = new EventEmitter();
+      const postHeartbeat = vi.fn();
+      spawnAgyRun(join('/proj', '.hotsheet'), 4174, 'x', { spawnFn: makeSpawn(proc), signalDone: vi.fn(), postHeartbeat });
+      const beats = () => postHeartbeat.mock.calls.filter(c => c[2] === 'heartbeat').length;
+      expect(beats()).toBe(0);
+      vi.advanceTimersByTime(31_000); // ~2 intervals (15s each)
+      expect(beats()).toBe(2);
+      proc.emit('exit', 0, null);
+      vi.advanceTimersByTime(60_000); // no more heartbeats after exit
+      expect(beats()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('signals done + idle ONCE even if both error and exit fire', () => {
     const proc = new EventEmitter();
     const signalDone = vi.fn();
-    spawnAgyRun(join('/proj', '.hotsheet'), 4174, 'x', { spawnFn: makeSpawn(proc), signalDone });
+    const postHeartbeat = vi.fn();
+    spawnAgyRun(join('/proj', '.hotsheet'), 4174, 'x', { spawnFn: makeSpawn(proc), signalDone, postHeartbeat });
     proc.emit('error', new Error('ENOENT'));
+    proc.emit('exit', 1, null);
     expect(signalDone).toHaveBeenCalledTimes(1);
+    expect(postHeartbeat.mock.calls.filter(c => c[2] === 'idle')).toHaveLength(1);
   });
 
   it('returns false when the spawn itself throws', () => {

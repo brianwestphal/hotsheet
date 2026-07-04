@@ -29,30 +29,54 @@ export function buildAgyRunArgs(content: string, model?: string): string[] {
   return args;
 }
 
+type HeartbeatState = 'busy' | 'idle' | 'heartbeat';
+
+/** HS-9327 — how often the drive re-asserts "busy" while agy runs. Well under the
+ *  client's 60s busy fallback so the indicator never lapses on a long run. */
+const AGY_HEARTBEAT_INTERVAL_MS = 15_000;
+
 export interface AgyDriveDeps {
   /** Injectable for tests. Defaults to `child_process.spawn`. */
   spawnFn?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: 'ignore' }) => ChildProcess;
   /** Injectable for tests. Defaults to the real `/channel/done` fallback POST. */
   signalDone?: (dataDir: string, serverPort: number) => void;
+  /** Injectable for tests. Defaults to the real `/channel/heartbeat` POST. */
+  postHeartbeat?: (serverPort: number, secret: string, state: HeartbeatState) => void;
 }
 
 /**
- * Spawn a one-shot `agy --print` for this project's worklist. Fire-and-forget: the
- * agent's own `hotsheet_signal_done` (from the prompt) drives the UI; the exit
- * handler only backstops it. Returns false if the spawn couldn't be started.
+ * Spawn a one-shot `agy --print` for this project's worklist. agy's own
+ * `hotsheet_signal_done` (from the prompt) drives the UI; the exit handler backstops
+ * it. HS-9327 — while the process is alive we also post periodic `busy` heartbeats
+ * (the client's long-poll reflects them independent of its 60s fallback), so the
+ * indicator survives a long run; the exit posts `idle`. Returns false if the spawn
+ * couldn't be started.
  */
 export function spawnAgyRun(dataDir: string, serverPort: number, content: string, deps: AgyDriveDeps = {}): boolean {
   const doSpawn = deps.spawnFn ?? spawn;
   const done = deps.signalDone ?? fallbackSignalDone;
+  const heartbeat = deps.postHeartbeat ?? fallbackHeartbeat;
   const projectDir = dirname(dataDir); // <root>/.hotsheet → <root>
+  const secret = getProjectSecret(dataDir);
   try {
     const proc = doSpawn('agy', buildAgyRunArgs(content), {
       cwd: projectDir,
       env: { ...process.env },
       stdio: 'ignore',
     });
-    proc.on('error', () => { done(dataDir, serverPort); }); // couldn't launch → don't leave it "busy"
-    proc.on('exit', () => { done(dataDir, serverPort); });
+    heartbeat(serverPort, secret, 'busy'); // keep the indicator busy from the start
+    const timer = setInterval(() => { heartbeat(serverPort, secret, 'heartbeat'); }, AGY_HEARTBEAT_INTERVAL_MS);
+    timer.unref(); // don't hold the event loop open for the heartbeat
+    let finished = false;
+    const finish = (): void => {
+      if (finished) return; // 'error' + 'exit' can both fire — run once
+      finished = true;
+      clearInterval(timer);
+      heartbeat(serverPort, secret, 'idle');
+      done(dataDir, serverPort);
+    };
+    proc.on('error', finish); // couldn't launch → don't leave it "busy"
+    proc.on('exit', finish);
     return true;
   } catch {
     return false;
@@ -66,4 +90,13 @@ function fallbackSignalDone(dataDir: string, serverPort: number): void {
     method: 'POST',
     headers: { 'X-Hotsheet-Secret': secret },
   }).catch(() => { /* best-effort — the agent likely already signaled done */ });
+}
+
+/** Best-effort `/channel/heartbeat` POST — the project is matched by `secret`. */
+function fallbackHeartbeat(serverPort: number, secret: string, state: HeartbeatState): void {
+  void fetch(`http://localhost:${String(serverPort)}/api/channel/heartbeat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state, secret }),
+  }).catch(() => { /* best-effort */ });
 }
