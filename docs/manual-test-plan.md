@@ -74,6 +74,11 @@ This document lists features that require manual verification before each releas
 - [ ] **Groups are atomic.** Selecting a **group** visibly selects **all its children** too (they show selected + get a non-clickable "locked" cursor); clicking a child of a selected group does **not** opt it out. Copy of a selected group = the **whole** group.
 - [ ] **Lone children.** With the group NOT selected, click individual child commands (Cmd/Ctrl to pick several). Copy → those children **wrapped back in their group** (so a paste recreates the group with just them), not the siblings you didn't pick.
 
+### Antigravity (`agy`) integration end-to-end (HS-9319/9320/9322/9326) — needs the `agy` CLI + a trusted workspace
+*(The pieces are unit-tested: command resolution, the global MCP-config write, AGENTS.md, and the `.agents/skills/` generator. But agy's WorkspaceTrust gates project customizations and it uses skills via progressive-disclosure, so the full drive can only be confirmed on a real machine.)*
+- [ ] **Setup writes the config.** In a project, set Settings → General → AI tool = **Antigravity** (`agy` on PATH). Confirm `~/.gemini/config/mcp_config.json` gains a `hotsheet-channel` server (no `--data-dir`), and the project gets `AGENTS.md` (managed Hot Sheet sections) + `.agents/skills/hotsheet/SKILL.md` (+ `hotsheet-worker`, `hs-*`).
+- [ ] **Trust the workspace in agy**, then `agy` (interactive or `--print`) **from the project dir**: it can **read tickets** ("how many are Up Next?") and **mutate** ("mark HS-N started") via the `hotsheet_*` tools, and — when told to process the worklist — follows the `.agents/skills/hotsheet` routine. Run agy in a *second* project's dir and confirm it drives *that* project (cwd-resolving, one global entry).
+
 ### Search — exact ticket-id mentions + auto-scroll (HS-9241, §40.9)
 *(The match logic is unit-tested server-side in `src/db/queries.test.ts` + client-side in `src/client/ticketsStore.test.ts`. Manual verification is for the visual auto-scroll only.)*
 - [ ] Pick a ticket `HS-N` that another ticket references (or add "see HS-N" to a second ticket's details). Search `HS-N`: the result shows **both** `HS-N` itself **and** the ticket(s) mentioning it. In column view `HS-N` lands in the **Not Started** column even if it's archived/backlog.
