@@ -250,7 +250,7 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
 // HS-9112 — bumped 16 → 17 in lockstep with `CHANNEL_VERSION` (src/channel.ts)
 // for the new `hotsheet_propose_partition` MCP tool. A running v16 channel prompts
 // the user to reconnect via `/mcp`.
-const EXPECTED_CHANNEL_VERSION = 17;
+const EXPECTED_CHANNEL_VERSION = 18;
 
 /** HS-8454 — shape of the `/health` response body the channel server
  *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7

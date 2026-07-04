@@ -23,7 +23,9 @@ import {
   clearAllPermissions,
   completePermission,
   enqueuePermission,
+  getDecision,
   peekPending,
+  recordDecision,
 } from './channelPermissions.js';
 import { maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
 import { installPortFileWatcher } from './channelPortFileWatcher.js';
@@ -75,7 +77,7 @@ import { getProjectSecret } from './secret-file.js';
 //   preview, docs/101 §101.7): propose a worker partition for owner review in the
 //   UI instead of dispatching directly, gated on the `alwaysPreviewAgentPlans`
 //   setting (24 tools total).
-export const CHANNEL_VERSION = 17;
+export const CHANNEL_VERSION = 18;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -315,12 +317,25 @@ const httpServer = createServer(async (req, res) => {
       // HS-8047 — remove this specific request from the queue. The next
       // `peekPending` will surface whichever entry is now at the head.
       completePermission(request_id);
+      // HS-9327 — retain the answer so an Antigravity PreToolUse hook (which polls
+      // rather than receiving the MCP push above) can read it.
+      recordDecision(request_id, behavior);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: String(err) }));
     }
+    return;
+  }
+
+  // HS-9327 — an Antigravity PreToolUse hook polls its permission decision here; it
+  // can't receive the `notifications/claude/channel/permission` MCP push Claude does.
+  if (req.method === 'GET' && req.url !== undefined && req.url.startsWith('/permission/decision')) {
+    const id = new URL(req.url, 'http://localhost').searchParams.get('request_id') ?? '';
+    const behavior = getDecision(id);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ decided: behavior !== null, behavior }));
     return;
   }
 

@@ -9,12 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAgyRunArgs, isAntigravityDriven, spawnAgyRun } from './antigravityDrive.js';
 
 describe('buildAgyRunArgs', () => {
-  it('builds --print + the content + --dangerously-skip-permissions', () => {
+  it('defaults to --print + content + --dangerously-skip-permissions', () => {
     expect(buildAgyRunArgs('do the thing')).toEqual(['--print', 'do the thing', '--dangerously-skip-permissions']);
   });
+  it('OMITS skip-permissions in interactive mode (HS-9327)', () => {
+    expect(buildAgyRunArgs('x', { skipPermissions: false })).toEqual(['--print', 'x']);
+  });
   it('appends --model when supplied, omits it when blank', () => {
-    expect(buildAgyRunArgs('x', 'gemini-3.1-pro')).toContain('--model');
-    expect(buildAgyRunArgs('x', '   ')).not.toContain('--model');
+    expect(buildAgyRunArgs('x', { model: 'gemini-3.1-pro' })).toContain('--model');
+    expect(buildAgyRunArgs('x', { model: '   ' })).not.toContain('--model');
   });
 });
 

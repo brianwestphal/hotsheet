@@ -88,6 +88,31 @@ export function completePermission(request_id: string): boolean {
   return true;
 }
 
+// HS-9327 — decision retention. Claude gets its permission answer PUSHED back over
+// the MCP notification channel; an Antigravity PreToolUse hook (a shell command)
+// instead POLLS for the answer. So on `/permission/respond` we record the behavior
+// keyed by request_id, and expose it via `getDecision` (the poll endpoint reads it).
+interface RecordedDecision { behavior: 'allow' | 'deny'; at: number }
+const decisions = new Map<string, RecordedDecision>();
+/** Bounded so a long-lived server can't accumulate decisions without limit. */
+const DECISION_CAP = 200;
+
+/** Record a resolved permission decision so a polling hook can read it. */
+export function recordDecision(request_id: string, behavior: 'allow' | 'deny', now: number = Date.now()): void {
+  decisions.set(request_id, { behavior, at: now });
+  // Evict the oldest entries once over the cap (insertion order = Map order).
+  while (decisions.size > DECISION_CAP) {
+    const oldest = decisions.keys().next().value;
+    if (oldest === undefined) break;
+    decisions.delete(oldest);
+  }
+}
+
+/** The recorded decision for a request, or null if not yet answered / unknown. */
+export function getDecision(request_id: string): 'allow' | 'deny' | null {
+  return decisions.get(request_id)?.behavior ?? null;
+}
+
 /** Drop every queued permission. The channel server's
  *  `POST /permission/dismiss` endpoint calls this. Pre-HS-8047 dismiss
  *  also nuked the single slot, so this preserves observable behavior. */

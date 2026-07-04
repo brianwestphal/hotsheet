@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join, relative } from 'path';
+import { dirname, join, relative } from 'path';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 import { ensureAntigravityMcpConfig } from './antigravity.js';
@@ -511,6 +512,64 @@ function ensureAntigravitySkills(cwd: string, dataDir: string = join(cwd, '.hots
   return writeSkillTree(join(cwd, '.agents', 'skills'), cwd, dataDir, false);
 }
 
+// HS-9327 — the interactive-permission PreToolUse hook for agy. A command in the
+// hook's `command` field identifies OUR entry, so we can merge in/out without
+// touching the user's other hooks.
+const AGY_HOOK_MARKER = '__agy-permission-hook';
+
+/** Resolve the `<cli> __agy-permission-hook` command (dev tsx vs prod node/dist),
+ *  quoting paths for the shell. Mirrors `getChannelServerPath`'s dev/prod probe. */
+function agyPermissionHookCommand(): string {
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const distCli = join(thisDir, 'cli.js'); // prod: skills.ts is bundled into dist/cli.js
+  if (existsSync(distCli)) return `"${process.execPath}" "${distCli}" ${AGY_HOOK_MARKER}`;
+  const srcCli = join(thisDir, 'cli.ts'); // dev: src/skills.ts sibling
+  if (existsSync(srcCli)) return `npx tsx "${srcCli}" ${AGY_HOOK_MARKER}`;
+  return `"${process.execPath}" "${distCli}" ${AGY_HOOK_MARKER}`;
+}
+
+function hookGroupIsOurs(group: unknown): boolean {
+  if (typeof group !== 'object' || group === null) return false;
+  const hooks = (group as { hooks?: unknown }).hooks;
+  return Array.isArray(hooks) && hooks.some(h =>
+    typeof h === 'object' && h !== null
+    && typeof (h as { command?: unknown }).command === 'string'
+    && ((h as { command: string }).command).includes(AGY_HOOK_MARKER));
+}
+
+/**
+ * HS-9327 — install (or, when the setting is off, remove) our PreToolUse permission
+ * hook in agy's `.agents/hooks.json`, MERGING with the user's other hooks/events.
+ * Gated on `antigravity_interactive_permissions`. Best-effort (won't clobber a
+ * corrupt hooks.json). Returns true when a write happened.
+ */
+function ensureAntigravityHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  const hooksPath = join(cwd, '.agents', 'hooks.json');
+  const want = readFileSettings(dataDir).antigravity_interactive_permissions === true;
+
+  let config: Record<string, unknown> = {};
+  if (existsSync(hooksPath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(hooksPath, 'utf-8'));
+      if (typeof parsed === 'object' && parsed !== null) config = parsed as Record<string, unknown>; // guarded
+    } catch { return false; } // corrupt → don't clobber the user's file
+  }
+  const prev = Array.isArray(config.PreToolUse) ? (config.PreToolUse as unknown[]) : [];
+  const others = prev.filter(g => !hookGroupIsOurs(g)); // drop any prior Hot Sheet hook
+  const next = want
+    ? [...others, { '//': 'Hot Sheet interactive permissions', matcher: '', hooks: [{ type: 'command', command: agyPermissionHookCommand(), timeout: 600 }] }]
+    : others;
+
+  if (next.length > 0) config.PreToolUse = next; else delete config.PreToolUse;
+  const serialized = Object.keys(config).length === 0 ? '' : JSON.stringify(config, null, 2) + '\n';
+
+  const before = existsSync(hooksPath) ? readFileSync(hooksPath, 'utf-8') : '';
+  if (serialized === before) return false; // idempotent
+  mkdirSync(dirname(hooksPath), { recursive: true });
+  writeFileSync(hooksPath, serialized, 'utf-8');
+  return true;
+}
+
 // --- Cursor (.cursor/rules/*.mdc) ---
 
 function ensureCursorRules(cwd: string): boolean {
@@ -683,6 +742,9 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
     ensureAntigravityMcpConfig();
     // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`.
     if (ensureAntigravitySkills(projectRoot, dataDir)) platforms.push('Antigravity');
+    // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
+    // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
+    ensureAntigravityHooks(projectRoot, dataDir);
   }
 
   if (platforms.length > 0) {

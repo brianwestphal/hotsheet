@@ -18,14 +18,24 @@ export function isAntigravityDriven(dataDir: string): boolean {
   return typeof tool === 'string' && tool.trim().toLowerCase() === 'antigravity';
 }
 
+/** HS-9327 — opt-in: route agy's tool calls through the §47 permission overlay
+ *  (drop `--dangerously-skip-permissions`; a `.agents/hooks.json` PreToolUse hook
+ *  gates each call). Default false = the shipped `--print` + auto-approve path. */
+export function antigravityInteractivePermissions(dataDir: string): boolean {
+  return readFileSettings(dataDir).antigravity_interactive_permissions === true;
+}
+
 /**
- * Pure: the `agy` argv for a one-shot worklist run. `--dangerously-skip-permissions`
- * is required — `--print` is non-interactive and can't answer a permission prompt
- * (mid-run permission popups are a later, persistent-mode enhancement).
+ * Pure: the `agy` argv for a one-shot worklist run. By default it passes
+ * `--dangerously-skip-permissions` (`--print` is non-interactive, so a tool call
+ * would otherwise hang). When `skipPermissions` is false (interactive-permissions
+ * mode, HS-9327) it's omitted — the `.agents/hooks.json` PreToolUse hook resolves
+ * each permission via the §47 overlay instead.
  */
-export function buildAgyRunArgs(content: string, model?: string): string[] {
-  const args = ['--print', content, '--dangerously-skip-permissions'];
-  if (model !== undefined && model.trim() !== '') args.push('--model', model.trim());
+export function buildAgyRunArgs(content: string, opts: { skipPermissions?: boolean; model?: string } = {}): string[] {
+  const args = ['--print', content];
+  if (opts.skipPermissions !== false) args.push('--dangerously-skip-permissions');
+  if (opts.model !== undefined && opts.model.trim() !== '') args.push('--model', opts.model.trim());
   return args;
 }
 
@@ -58,8 +68,9 @@ export function spawnAgyRun(dataDir: string, serverPort: number, content: string
   const heartbeat = deps.postHeartbeat ?? fallbackHeartbeat;
   const projectDir = dirname(dataDir); // <root>/.hotsheet → <root>
   const secret = getProjectSecret(dataDir);
+  const skipPermissions = !antigravityInteractivePermissions(dataDir);
   try {
-    const proc = doSpawn('agy', buildAgyRunArgs(content), {
+    const proc = doSpawn('agy', buildAgyRunArgs(content, { skipPermissions }), {
       cwd: projectDir,
       env: { ...process.env },
       stdio: 'ignore',

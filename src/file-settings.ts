@@ -47,6 +47,12 @@ const FileSettingsSchema = z.object({
   // tools (`cursor`/`copilot`/`windsurf`) are context-only (skills/instructions).
   // A project-level choice → §95 SHARED (not in `LOCAL_SCOPE_KEYS`).
   ai_tool: z.string().optional(),
+  // HS-9327 — when true, the Antigravity play button drops `--dangerously-skip-permissions`
+  // and installs a `.agents/hooks.json` PreToolUse hook that routes each tool call
+  // through the §47 permission overlay (interactive approve/deny). Default false =
+  // the shipped `--print` + auto-approve behavior. Gated so the new hook path can be
+  // verified on-device before it becomes the default.
+  antigravity_interactive_permissions: z.boolean().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */

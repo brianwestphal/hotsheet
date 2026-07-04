@@ -744,6 +744,16 @@ async function handleExistingInstance(
 }
 
 async function main() {
+  // HS-9327 — Antigravity PreToolUse permission-hook mode. agy invokes
+  // `<cli> __agy-permission-hook` before each tool call (installed via
+  // `.agents/hooks.json`); we resolve the permission through the §47 overlay and
+  // exit with 0=allow / 2=deny. Handled FIRST — a one-shot that never starts the
+  // server (the import cost is dwarfed by the user's decision wait).
+  if (process.argv.includes('__agy-permission-hook')) {
+    const { runAgyPermissionHookCli } = await import('./antigravityPermissionHookCli.js');
+    process.exit(await runAgyPermissionHookCli());
+  }
+
   // HS-8921 — if launched with `--test`, point HOTSHEET_HOME at the isolated
   // test dir BEFORE anything resolves a global path. This must precede
   // `initStartupLog()` + `startEventLoopWatchdog` below so even the startup log
