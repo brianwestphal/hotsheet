@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -806,11 +806,49 @@ describe('multi-platform skill creation', () => {
     mkdirSync(join(tempDir, '.claude'), { recursive: true });
     mkdirSync(join(tempDir, '.cursor'), { recursive: true });
     mkdirSync(join(tempDir, '.windsurf'), { recursive: true });
-    const platforms = ensureSkills();
-    expect(platforms).toContain('Claude Code');
-    expect(platforms).toContain('Cursor');
-    expect(platforms).toContain('Windsurf');
-    expect(platforms).toHaveLength(3);
+    // HS-9326 — Antigravity (`agy`) is detected PATH-only (no `.agy` folder marker),
+    // so on a dev machine with agy installed it would add a 4th platform. Neutralize
+    // PATH + HOME (extraSearchDirs) so this exercises exactly the 3 dir-detected tools.
+    const savedPath = process.env.PATH;
+    const savedHome = process.env.HOME;
+    process.env.PATH = '';
+    process.env.HOME = tempDir;
+    try {
+      const platforms = ensureSkills();
+      expect(platforms).toContain('Claude Code');
+      expect(platforms).toContain('Cursor');
+      expect(platforms).toContain('Windsurf');
+      expect(platforms).toHaveLength(3);
+    } finally {
+      process.env.PATH = savedPath;
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+  });
+
+  it('HS-9326 — seeds agy `.agents/skills/hotsheet/SKILL.md` when agy is detected', () => {
+    // Force agy detection via a fake `agy` on PATH; no other tool dirs → only agy.
+    const binDir = join(tempDir, 'fakebin');
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, 'agy'), '#!/bin/sh\n');
+    chmodSync(join(binDir, 'agy'), 0o755);
+    const savedPath = process.env.PATH;
+    const savedHome = process.env.HOME;
+    process.env.PATH = binDir;
+    process.env.HOME = tempDir;
+    try {
+      const platforms = ensureSkills();
+      expect(platforms).toContain('Antigravity');
+      const skillPath = join(tempDir, '.agents', 'skills', 'hotsheet', 'SKILL.md');
+      expect(existsSync(skillPath)).toBe(true);
+      const content = readFileSync(skillPath, 'utf-8');
+      expect(content).toContain('name: hotsheet');
+      expect(content).not.toContain('allowed-tools:'); // agy frontmatter omits Claude's line
+    } finally {
+      process.env.PATH = savedPath;
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
   });
 });
 

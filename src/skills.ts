@@ -460,68 +460,55 @@ function ensureClaudePermissions(cwd: string): boolean {
   return true;
 }
 
-// --- Claude Code (.claude/skills/*/SKILL.md) ---
+// --- SKILL.md-based tools: Claude (.claude/skills) + Antigravity (.agents/skills) ---
+
+/**
+ * HS-9326 — write the `hotsheet` + `hotsheet-worker` + per-category ticket skills
+ * as `<skillsDir>/<name>/SKILL.md`. Shared by Claude (`.claude/skills`) and
+ * Antigravity (`.agents/skills`) — the SKILL.md format (YAML `name`+`description`
+ * frontmatter + markdown body) is common; only the directory + whether Claude's
+ * `allowed-tools:` line is emitted differ. Bodies come from the same
+ * `mainSkillBody`/`workerSkillBody`/`ticketSkillBody` builders.
+ */
+function writeSkillTree(skillsDir: string, cwd: string, dataDir: string, includeAllowedTools: boolean): boolean {
+  let updated = false;
+  const allowed = (tools: string): string[] => includeAllowedTools ? [`allowed-tools: ${tools}`] : [];
+  const write = (name: string, description: string, allowedTools: string, body: string): void => {
+    const dir = join(skillsDir, name);
+    mkdirSync(dir, { recursive: true });
+    const content = ['---', `name: ${name}`, `description: ${description}`, ...allowed(allowedTools), '---', versionHeader(), '', body, ''].join('\n');
+    if (updateFile(join(dir, 'SKILL.md'), content)) updated = true;
+  };
+
+  write('hotsheet', 'Read the Hot Sheet worklist and work through the current priority items',
+    'Read, Grep, Glob, Edit, Write, Bash', mainSkillBody(cwd, dataDir));
+
+  // HS-8863 — the distributed worker skill (depends on the `hotsheet_*` MCP
+  // claim/lease tools). Not generated for Cursor/Copilot/Windsurf (no curl-only
+  // equivalent loop); agy gets it since it drives the same MCP tools.
+  write('hotsheet-worker', 'Run as a distributed worker — continuously claim, work, and release Up Next tickets',
+    'Read, Grep, Glob, Edit, Write, Bash', workerSkillBody(cwd, dataDir));
+
+  for (const skill of buildTicketSkills()) {
+    write(skill.name, `Create a new ${skill.label} ticket in Hot Sheet`, 'Bash', ticketSkillBody(skill, cwd, dataDir));
+  }
+  return updated;
+}
 
 function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   let updated = false;
-  const skillsDir = join(cwd, '.claude', 'skills');
-
   // Ensure curl permissions for Hot Sheet API calls
   if (ensureClaudePermissions(cwd)) updated = true;
-
-  // Main skill
-  const mainDir = join(skillsDir, 'hotsheet');
-  mkdirSync(mainDir, { recursive: true });
-  const mainContent = [
-    '---',
-    'name: hotsheet',
-    'description: Read the Hot Sheet worklist and work through the current priority items',
-    'allowed-tools: Read, Grep, Glob, Edit, Write, Bash',
-    '---',
-    versionHeader(),
-    '',
-    mainSkillBody(cwd, dataDir),
-    '',
-  ].join('\n');
-  if (updateFile(join(mainDir, 'SKILL.md'), mainContent)) updated = true;
-
-  // HS-8863 — the distributed worker skill (Claude-only; depends on the
-  // `hotsheet_*` MCP claim/lease tools). Not generated for Cursor/Copilot/
-  // Windsurf because it has no curl-only equivalent loop.
-  const workerDir = join(skillsDir, 'hotsheet-worker');
-  mkdirSync(workerDir, { recursive: true });
-  const workerContent = [
-    '---',
-    'name: hotsheet-worker',
-    'description: Run as a distributed worker — continuously claim, work, and release Up Next tickets',
-    'allowed-tools: Read, Grep, Glob, Edit, Write, Bash',
-    '---',
-    versionHeader(),
-    '',
-    workerSkillBody(cwd, dataDir),
-    '',
-  ].join('\n');
-  if (updateFile(join(workerDir, 'SKILL.md'), workerContent)) updated = true;
-
-  // Per-type skills
-  for (const skill of buildTicketSkills()) {
-    const dir = join(skillsDir, skill.name);
-    mkdirSync(dir, { recursive: true });
-    const content = [
-      '---',
-      `name: ${skill.name}`,
-      `description: Create a new ${skill.label} ticket in Hot Sheet`,
-      'allowed-tools: Bash',
-      '---',
-      versionHeader(),
-      '',
-      ticketSkillBody(skill, cwd, dataDir),
-      '',
-    ].join('\n');
-    if (updateFile(join(dir, 'SKILL.md'), content)) updated = true;
-  }
-
+  if (writeSkillTree(join(cwd, '.claude', 'skills'), cwd, dataDir, true)) updated = true;
   return updated;
+}
+
+// HS-9326 — Antigravity (`agy`) auto-discovers skills at `.agents/skills/<name>/SKILL.md`
+// (verified in the agy binary docs — a standard customization root, no `skills.json`
+// manifest needed). Same SKILL.md bodies as Claude, minus the Claude-specific
+// `allowed-tools:` frontmatter (agy uses its own tool set).
+function ensureAntigravitySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  return writeSkillTree(join(cwd, '.agents', 'skills'), cwd, dataDir, false);
 }
 
 // --- Cursor (.cursor/rules/*.mdc) ---
@@ -694,6 +681,8 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   // best-effort. Gated on `agy` being present, mirroring the other tools' detection.
   if (wants('antigravity') && isExecutableOnPath('agy')) {
     ensureAntigravityMcpConfig();
+    // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`.
+    if (ensureAntigravitySkills(projectRoot, dataDir)) platforms.push('Antigravity');
   }
 
   if (platforms.length > 0) {
