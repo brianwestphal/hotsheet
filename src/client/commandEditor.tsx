@@ -2,9 +2,9 @@ import { byIdOrNull, toElement } from './dom.js';
 import {
   CMD_COLORS,
   CMD_ICONS,
+  commandAllSelectableIds,
   type CommandGroup,
   type CommandItem,
-  commandTopLevelIds,
   contrastColor,
   copyCustomCommands,
   type CustomCommand,
@@ -579,8 +579,12 @@ function ensureCommandRowDelegationBound(list: HTMLElement): void {
     if (id === null) return;
     const target = e.target;
     if (target instanceof Element && target.closest('button, a, input, [contenteditable], .command-drag-handle') !== null) return;
+    // HS-9324 — a child whose group is selected is LOCKED (the group is atomic):
+    // clicking it must not opt it out.
+    const parentGroupId = row.getAttribute('data-parent-group-id');
+    if (parentGroupId !== null && getCommandCopySelection().selected.has(parentGroupId)) return;
     const next = applySelectionClick(
-      getCommandCopySelection(), commandTopLevelIds(), id,
+      getCommandCopySelection(), commandAllSelectableIds(), id,
       { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey },
     );
     setCommandCopySelection(next);
@@ -617,7 +621,16 @@ export function renderCustomCommandSettings() {
       if (topId !== null) groupRow.setAttribute('data-cmd-id', topId);
       children.push(groupRow);
       for (let j = 0; j < item.children.length; j++) {
-        children.push(renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }, ctx));
+        const childRow = renderCommandOutlineRow({ type: 'child', groupIndex: i, childIndex: j }, ctx);
+        // HS-9324 — children are selectable too; `data-parent-group-id` lets the
+        // selection lock them when their (atomic) group is selected.
+        const child = item.children[j];
+        const childId = typeof child.id === 'string' && child.id !== '' ? child.id : null;
+        if (childId !== null) {
+          childRow.setAttribute('data-cmd-id', childId);
+          if (topId !== null) childRow.setAttribute('data-parent-group-id', topId);
+        }
+        children.push(childRow);
       }
     } else {
       const cmdRow = renderCommandOutlineRow({ type: 'top', index: i }, ctx);
@@ -682,15 +695,20 @@ export function renderCustomCommandSettings() {
   refreshCommandCopyUI(list); // HS-9324 — re-apply selection classes + Copy label
 }
 
-// HS-9324 — reflect the copy-selection: `.selected` on each top-level row + the
-// Copy button label ("Copy All"/"Copy Selected"). Prunes ids that vanished (an
-// item deleted, or a scope switch changing the visible top-level list).
+// HS-9324 — reflect the copy-selection on the tree: a row is `.selected` if its
+// own id is selected OR its (atomic) group is selected; a child auto-selected via
+// its group is `.selection-locked` (can't be opted out). Updates the Copy button
+// label + prunes ids that vanished (an item deleted / a scope switch).
 function refreshCommandCopyUI(list: HTMLElement): void {
-  const selection = pruneSelection(getCommandCopySelection(), commandTopLevelIds());
+  const selection = pruneSelection(getCommandCopySelection(), commandAllSelectableIds());
   setCommandCopySelection(selection);
+  const raw = selection.selected;
   for (const rowEl of list.querySelectorAll<HTMLElement>('.cmd-outline-row[data-cmd-id]')) {
     const id = rowEl.getAttribute('data-cmd-id');
-    rowEl.classList.toggle('selected', id !== null && selection.selected.has(id));
+    const parentGroupId = rowEl.getAttribute('data-parent-group-id');
+    const viaGroup = parentGroupId !== null && raw.has(parentGroupId);
+    rowEl.classList.toggle('selected', (id !== null && raw.has(id)) || viaGroup);
+    rowEl.classList.toggle('selection-locked', viaGroup);
   }
   const copyBtn = list.querySelector('.cmd-outline-copy-btn');
   if (copyBtn !== null) copyBtn.textContent = copyButtonLabel(selection);

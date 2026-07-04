@@ -274,7 +274,8 @@ describe('commandEditor — copy-selection (HS-9324)', () => {
     renderCustomCommandSettings();
   }
 
-  const topRows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row[data-cmd-id]')];
+  const topRows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row[data-cmd-id]:not([data-parent-group-id])')];
+  const childRows = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#settings-commands-list .cmd-outline-row[data-parent-group-id]')];
   const copyBtn = (): HTMLElement => document.querySelector<HTMLElement>('.cmd-outline-copy-btn')!;
   // Click a non-interactive part of the row: the name span for command rows, or
   // the row itself for a group (whose name is contentEditable → intentionally not
@@ -348,5 +349,64 @@ describe('commandEditor — copy-selection (HS-9324)', () => {
     copyBtn().click();
     const copied = vi.mocked(copyJsonToClipboard).mock.calls.at(-1)?.[0] as CommandItem[];
     expect(copied.map(i => i.name)).toEqual(['Build', 'Test']);
+  });
+
+  // HS-9324 (maintainer refinement) — children are individually selectable; a
+  // selected group is ATOMIC (implies + locks all its children).
+  const withGroup = (): CommandItem[] => [
+    { id: 'g1', type: 'group', name: 'Group', children: [
+      { id: 'gc1', name: 'Child A', prompt: 'a', target: 'shell' },
+      { id: 'gc2', name: 'Child B', prompt: 'b', target: 'shell' },
+      { id: 'gc3', name: 'Child C', prompt: 'c', target: 'shell' },
+    ] },
+    { id: 'c1', name: 'Top', prompt: 't', target: 'shell' },
+  ];
+
+  it('a lone child is selectable on its own; Copy wraps it back in its group', async () => {
+    await seedIds(withGroup());
+    const kids = childRows();
+    expect(kids.length).toBe(3);
+    clickName(kids[0]); // Child A
+    expect(kids[0].classList.contains('selected')).toBe(true);
+    expect(topRows()[0].classList.contains('selected')).toBe(false); // the group is NOT selected
+    expect(copyBtn().textContent).toBe('Copy Selected');
+
+    copyBtn().click();
+    const copied = vi.mocked(copyJsonToClipboard).mock.calls.at(-1)?.[0] as CommandItem[];
+    expect(copied.length).toBe(1);
+    const grp = copied[0];
+    expect(grp.name).toBe('Group');
+    expect('children' in grp && grp.children.map(c => c.name)).toEqual(['Child A']); // wrapped, only the selected child
+  });
+
+  it('selecting a group selects + LOCKS all its children (atomic — a child click is a no-op)', async () => {
+    await seedIds(withGroup());
+    const group = topRows()[0];
+    clickName(group); // select the whole group
+    const kids = childRows();
+    for (const k of kids) {
+      expect(k.classList.contains('selected')).toBe(true);
+      expect(k.classList.contains('selection-locked')).toBe(true);
+    }
+    // Clicking a locked child must NOT opt it out — the group stays selected + whole.
+    clickName(kids[1]);
+    expect(group.classList.contains('selected')).toBe(true);
+    expect(kids[1].classList.contains('selected')).toBe(true);
+
+    copyBtn().click();
+    const copied = vi.mocked(copyJsonToClipboard).mock.calls.at(-1)?.[0] as CommandItem[];
+    expect(copied.length).toBe(1);
+    expect('children' in copied[0] && copied[0].children.length).toBe(3); // whole group
+  });
+
+  it('Copy of a partial-child selection carries only the selected children', async () => {
+    await seedIds(withGroup());
+    const kids = childRows();
+    clickName(kids[0]);                       // Child A
+    clickName(kids[2], { metaKey: true });    // + Child C
+    copyBtn().click();
+    const copied = vi.mocked(copyJsonToClipboard).mock.calls.at(-1)?.[0] as CommandItem[];
+    expect(copied.length).toBe(1);
+    expect('children' in copied[0] && copied[0].children.map(c => c.name)).toEqual(['Child A', 'Child C']);
   });
 });

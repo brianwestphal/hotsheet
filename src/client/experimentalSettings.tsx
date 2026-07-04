@@ -25,7 +25,7 @@ import { byId, byIdOrNull } from './dom.js';
 // All Lucide icons loaded from generated JSON
 import ALL_LUCIDE_ICONS from './lucide-icons.json';
 import { copyJsonToClipboard, newEntriesById, parsePastedEntries, readClipboardJsonOrPrompt } from './settingsClipboard.js';
-import { emptySelection, idsToCopy, type SelectionState } from './settingsCopySelection.js';
+import { emptySelection, type SelectionState } from './settingsCopySelection.js';
 import { getScopeMode } from './settingsScope.js';
 import type { ScopeMode } from './settingsSharing.js';
 import { showToast } from './toast.js';
@@ -84,10 +84,43 @@ let commandCopySelection: SelectionState = emptySelection();
 /** HS-9324 — current copy-selection for the command tree (top-level ids). */
 export function getCommandCopySelection(): SelectionState { return commandCopySelection; }
 export function setCommandCopySelection(next: SelectionState): void { commandCopySelection = next; }
-/** HS-9324 — stable ids of the top-level command/group items, in render order.
- *  Children aren't selectable (a selected group copies whole). */
-export function commandTopLevelIds(): string[] {
-  return editTree.map(it => it.id).filter((id): id is string => typeof id === 'string' && id !== '');
+/** HS-9324 — every selectable id (top-level items AND group children), in the
+ *  order they render (each group's children immediately follow it). Used for the
+ *  Shift-range ordering + pruning the selection to what's still present. */
+export function commandAllSelectableIds(): string[] {
+  const ids: string[] = [];
+  for (const item of editTree) {
+    if (typeof item.id === 'string' && item.id !== '') ids.push(item.id);
+    if (isGroup(item)) {
+      for (const ch of item.children) {
+        if (typeof ch.id === 'string' && ch.id !== '') ids.push(ch.id);
+      }
+    }
+  }
+  return ids;
+}
+
+/**
+ * HS-9324 — the subtree to copy for a raw selection: a top-level command whose id
+ * is selected; a group whose OWN id is selected (WHOLE — all children, atomic); or
+ * a group with only its selected children when the group itself isn't selected.
+ * Preserves render order + group structure so a paste round-trips.
+ */
+export function selectedCommandTree(selected: ReadonlySet<string>): CommandItem[] {
+  const out: CommandItem[] = [];
+  for (const item of editTree) {
+    if (isGroup(item)) {
+      if (typeof item.id === 'string' && selected.has(item.id)) {
+        out.push(item); // whole group — a selected group is atomic
+      } else {
+        const kids = item.children.filter(ch => typeof ch.id === 'string' && selected.has(ch.id));
+        if (kids.length > 0) out.push({ ...item, children: kids }); // group shell + selected children
+      }
+    } else if (typeof item.id === 'string' && selected.has(item.id)) {
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 /** HS-9184 — ids of shared commands locally overridden (Local mode only). */
@@ -485,16 +518,15 @@ export async function saveCommandItems() {
 /** HS-8857 — copy the current custom-command tree to the clipboard as JSON, to
  *  paste into another project. */
 export function copyCustomCommands(): void {
-  // HS-9324 — copy the SELECTED top-level items (a selected group copies whole),
-  // or the full tree when nothing is selected (the default — preserves prior
-  // behavior exactly, including items that predate stable-id backfill).
+  // HS-9324 — copy the SELECTED items, or the full tree when nothing is selected
+  // (the default — preserves prior behavior exactly, including items that predate
+  // stable-id backfill). A selected group copies whole; selected lone children
+  // copy wrapped back in their group (see `selectedCommandTree`).
   if (commandCopySelection.selected.size === 0) {
     void copyJsonToClipboard(editTree, 'Custom commands');
     return;
   }
-  const wanted = new Set(idsToCopy(commandCopySelection, commandTopLevelIds()));
-  const toCopy = editTree.filter(it => typeof it.id === 'string' && wanted.has(it.id));
-  void copyJsonToClipboard(toCopy, `${String(toCopy.length)} selected custom command${toCopy.length === 1 ? '' : 's'}`);
+  void copyJsonToClipboard(selectedCommandTree(commandCopySelection.selected), 'Selected custom commands');
 }
 
 /**
