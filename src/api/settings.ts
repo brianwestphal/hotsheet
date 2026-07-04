@@ -56,6 +56,8 @@ export const FileSettingsSchema = z.object({
   integrationGate: z.string().optional().catch(undefined),
   // HS-8009 — the project's preferred AI tool (docs/113 §113.3).
   ai_tool: z.string().optional().catch(undefined),
+  // HS-9327/9328 — opt-in interactive permission prompts for Antigravity.
+  antigravity_interactive_permissions: z.boolean().optional().catch(undefined),
   // JSON-valued keys (stored native; some readers tolerate the stringified form).
   terminals: z.union([z.string(), z.array(z.unknown())]).optional().catch(undefined),
   terminal_default: z.unknown().optional(),

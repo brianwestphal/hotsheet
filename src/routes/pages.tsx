@@ -734,6 +734,12 @@ pageRoutes.get('/', (c) => {
                 </select>
                 <span className="settings-hint">Which AI tool this project uses. <strong>Auto-detect</strong> keeps today's behavior (seed skills/instructions for every detected tool). Choosing a CLI agent (Claude / Codex / Antigravity / Gemini / OpenCode / Goose) makes a <code>{'{{aiCommand}}'}</code> terminal launch that tool's binary (Antigravity → <code>agy</code>). Editor tools (Cursor / Copilot / Windsurf) get rules + instructions only. Driving non-Claude agents through the play button / permission popup is in progress — Antigravity rides the same MCP tools as Claude (HS-9310 spike proven; docs/113).</span>
               </div>
+              {/* HS-9328 — Antigravity interactive permission prompts (HS-9327).
+                  Revealed only when ai_tool=antigravity. */}
+              <div className="settings-field" id="antigravity-perms-field" style="display:none">
+                <label><input type="checkbox" id="settings-antigravity-interactive-permissions" /> Interactive permission prompts (Antigravity)</label>
+                <span className="settings-hint">When on, the play button runs <code>agy</code> <strong>without</strong> <code>--dangerously-skip-permissions</code> and installs a <code>.agents/hooks.json</code> hook that routes each tool call through Hot Sheet's permission popup (Allow / Deny). Off = agy runs the worklist unattended (auto-approve). Requires a trusted agy workspace.</span>
+              </div>
               {/* HS-8913 — install / update Hot Sheet's recommended AI-assistant
                   instruction sections in this project's CLAUDE.md. */}
               <div className="settings-divider"></div>

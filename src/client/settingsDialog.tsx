@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { applyAiInstructions, getFileSettings, getTags, updateSettings } from '../api/index.js';
+import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { setAppTitle } from './appTitle.js';
@@ -166,6 +166,12 @@ function bindGeneralTab() {
   const worklistPreambleInput = byId<HTMLTextAreaElement>('settings-worklist-preamble');
   const integrationGateInput = byId<HTMLInputElement>('settings-integration-gate');
   const aiToolSelect = byIdOrNull<HTMLSelectElement>('ai-tool-select'); // HS-8009
+  // HS-9328 — Antigravity interactive-permission toggle (revealed only for agy).
+  const agyPermsField = byIdOrNull<HTMLDivElement>('antigravity-perms-field');
+  const agyPermsCheckbox = byIdOrNull<HTMLInputElement>('settings-antigravity-interactive-permissions');
+  const revealAgyPerms = (tool: string): void => {
+    if (agyPermsField !== null) agyPermsField.style.display = tool === 'antigravity' ? '' : 'none';
+  };
 
   // Populate values + load file-settings fields when dialog opens.
   settingsBtn.addEventListener('click', () => {
@@ -191,7 +197,10 @@ function bindGeneralTab() {
       prefixInput.value = fs.ticketPrefix ?? '';
       worklistPreambleInput.value = fs.worklist_preamble ?? '';
       integrationGateInput.value = fs.integrationGate ?? '';
-      if (aiToolSelect !== null) aiToolSelect.value = typeof fs.ai_tool === 'string' && fs.ai_tool !== '' ? fs.ai_tool : 'auto';
+      const tool = typeof fs.ai_tool === 'string' && fs.ai_tool !== '' ? fs.ai_tool : 'auto';
+      if (aiToolSelect !== null) aiToolSelect.value = tool;
+      if (agyPermsCheckbox !== null) agyPermsCheckbox.checked = fs.antigravity_interactive_permissions === true;
+      revealAgyPerms(tool);
     });
   });
 
@@ -286,7 +295,15 @@ function bindGeneralTab() {
   // HS-8009 — the project's preferred AI tool (docs/113 §113.3). A shared, scoped
   // string setting; `persistScopedSetting` writes it to the active layer.
   aiToolSelect?.addEventListener('change', () => {
-    void persistScopedSetting('ai_tool', aiToolSelect.value);
+    revealAgyPerms(aiToolSelect.value); // HS-9328 — show/hide the agy permission toggle
+    // HS-9328 — regen AI-tool files (agy hooks.json depends on the tool + the toggle).
+    void persistScopedSetting('ai_tool', aiToolSelect.value).then(() => ensureSkills());
+  });
+
+  // HS-9328 — Antigravity interactive-permission prompts (HS-9327). A JSON boolean;
+  // `ensureSkills` rewrites `.agents/hooks.json` (install when on, remove when off).
+  agyPermsCheckbox?.addEventListener('change', () => {
+    void persistScopedSetting('antigravity_interactive_permissions', agyPermsCheckbox.checked).then(() => ensureSkills());
   });
 
   // Notification dropdowns
