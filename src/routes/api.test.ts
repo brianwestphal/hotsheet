@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { join } from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PtyFactory } from '../terminals/registry.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -2317,13 +2317,20 @@ describe('claim-before-work enforcement (HS-9198)', () => {
 });
 
 describe('worker-pool endpoints + drain-aware claim-next (HS-8962)', () => {
-  beforeAll(async () => {
+  // HS-9316 — reset per-test (not per-describe). Under CI load the heavy first
+  // test can exhaust its timeout; vitest then RETRIES it. With a `beforeAll`
+  // reset the retry inherited the failed attempt's leaked `pw1: stopped` state,
+  // so the fresh-registration `expect('idle')` tripped on `'stopped'` — a
+  // misleading assertion that masked the real failure (the timeout). Resetting
+  // in `beforeEach`/`afterEach` gives every attempt a clean pool, so a retry can
+  // genuinely pass, and a real failure still surfaces as the timeout it is. The
+  // `afterEach` also stops a draining worker leaking into other describes that
+  // share this file's one dataDir.
+  beforeEach(async () => {
     const { _resetPoolsForTesting } = await import('../workers/poolManager.js');
     _resetPoolsForTesting();
   });
-  afterAll(async () => {
-    // Don't leak pool state (esp. a draining worker) into other describes that
-    // share this file's one dataDir.
+  afterEach(async () => {
     const { _resetPoolsForTesting } = await import('../workers/poolManager.js');
     _resetPoolsForTesting();
   });
@@ -2370,7 +2377,7 @@ describe('worker-pool endpoints + drain-aware claim-next (HS-8962)', () => {
     await app.request('/api/workers/pool/remove', post({ worker: 'pw1' }));
     const pool4 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string }[] };
     expect(pool4.workers.find(w => w.worker === 'pw1')).toBeUndefined();
-  });
+  }, 60000); // HS-9316 — this test drives ~12 sequential server round-trips (register/claim/drain/remove + DB UPDATEs); under the full parallel coverage run on GH's 2-CPU runner it can exceed the 30s default purely from CPU starvation. 60s headroom keeps the transient-slow case green while a genuine hang still fails.
 
   it('drain of an unknown worker → 404', async () => {
     const res = await app.request('/api/workers/pool/drain', post({ worker: 'ghost' }));
