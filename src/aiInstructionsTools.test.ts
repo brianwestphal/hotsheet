@@ -54,6 +54,13 @@ describe('writeInstructionsForTool', () => {
     expect(content).toContain('hotsheet:begin');
   });
 
+  it('creates AGENTS.md (no frontmatter) for Antigravity — HS-9322', () => {
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(true);
+    const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('hotsheet:begin section=ticket-driven-work');
+    expect(content.startsWith('---')).toBe(false); // plain markdown, like CLAUDE.md
+  });
+
   it('is idempotent — a second write of an up-to-date file returns false', () => {
     expect(writeInstructionsForTool(root, 'cursor')).toBe(true);
     expect(writeInstructionsForTool(root, 'cursor')).toBe(false);

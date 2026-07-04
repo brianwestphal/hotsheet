@@ -12,7 +12,7 @@ import { dirname, join } from 'path';
 import { applyManagedSections, getInstructionsStatus, type InstructionsStatus } from './aiInstructions.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
-export type AiInstructionTool = 'claude' | 'cursor' | 'windsurf' | 'copilot';
+export type AiInstructionTool = 'claude' | 'cursor' | 'windsurf' | 'copilot' | 'antigravity';
 
 const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
 
@@ -50,6 +50,15 @@ const TOOLS: readonly ToolTarget[] = [
   {
     tool: 'copilot', label: 'GitHub Copilot', relPath: join('.github', 'copilot-instructions.md'), frontmatter: '',
     detect: (r) => existsSync(join(r, '.github', 'copilot-instructions.md')) || existsSync(join(r, '.github', 'prompts')),
+  },
+  {
+    // HS-9322 — Antigravity (`agy`) reads the AGENTS.md standard (verified in the
+    // agy binary: instruction paths `GEMINI.md` / `AGENTS.md` / `.agents/rules/*.md`).
+    // Plain markdown, repo root. Gives agy the same managed Hot Sheet sections as
+    // CLAUDE.md. (The /hotsheet worklist SKILL — agy's `.agents/skills/` format — is
+    // a separate follow-on; see HS-9322 notes.)
+    tool: 'antigravity', label: 'Antigravity', relPath: 'AGENTS.md', frontmatter: '',
+    detect: (r) => isExecutableOnPath('agy') || existsSync(join(r, 'AGENTS.md')),
   },
 ];
 
