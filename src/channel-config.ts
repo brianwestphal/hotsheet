@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+import { isAcpDriven, spawnAcpRun } from './acp/acpDrive.js';
 import { isAntigravityDriven, spawnAgyRun } from './antigravityDrive.js';
 import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
@@ -431,6 +432,15 @@ export async function triggerChannel(
   // via the MCP tools + calls hotsheet_signal_done). Bypasses the channel-port path.
   if (isAntigravityDriven(dataDir)) {
     return spawnAgyRun(dataDir, serverPort, content);
+  }
+
+  // HS-9330 — ACP-native agents (OpenCode et al.) have no persistent channel session
+  // either; each play spawns `opencode acp` and drives ONE turn over its stdio (the
+  // agent processes the worklist via the same `hotsheet_*` MCP tools). Bypasses the
+  // channel-port path, like Antigravity. (The live turn needs `opencode auth` — see
+  // the HS-9330 note; the routing + drive core are headlessly tested.)
+  if (isAcpDriven(dataDir)) {
+    return spawnAcpRun(dataDir, serverPort, content);
   }
 
   const ports = resolveTriggerTargetPorts(dataDir, target, opts);
