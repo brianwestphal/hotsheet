@@ -302,12 +302,14 @@ Each has three options:
 ### 4.21 Undo / Redo
 
 - **Cmd/Ctrl+Z** undoes the last change; **Cmd/Ctrl+Shift+Z** redoes.
-- Works globally, including when focused in text input fields.
+- **Text fields use NATIVE undo (HS-9335).** While focus is in a text field — an `<input>`, `<textarea>`, contenteditable element, or the embedded terminal — Cmd/Ctrl+Z is the browser's own per-keystroke text undo/redo, NOT Hot Sheet's ticket-level undo. Hot Sheet's undo only hijacks the keystroke when focus is on the ticket list / non-editable surface.
+- **Modal-scoped (HS-8033/HS-9335).** When a modal dialog is open, Cmd/Ctrl+Z is left to the dialog's own inputs; it never reaches a ticket operation behind the modal.
+- **Per-project stacks (HS-9335).** Each project tab has its own undo/redo history: switching tabs switches the history, and an undo can never affect a ticket in another project. A tab's history is dropped when the tab is closed.
 - **Supported operations**: field changes (category, priority, status, up_next, title, details), ticket deletion, trash restore, batch operations (bulk field changes, bulk delete), drag-and-drop (sidebar drops, column drops).
 - **Not supported**: ticket creation, file attachments, settings changes.
-- **Text field coalescing**: Rapid edits to the same text field (title or details) are merged into a single undo step. A new undo entry is created every 5 seconds of continuous editing (rate limit, not debounce).
-- **Stack depth**: Maximum 1000 entries. Oldest entries are discarded when the limit is exceeded.
-- **In-memory only**: The undo stack is not persisted across page reloads.
+- **Text field coalescing**: Rapid edits to the same text field (title or details) merge into a single Hot Sheet undo step (5s rate limit). Note this only applies to the Hot Sheet stack (reached when the field is NOT focused); while editing, native text undo is per-keystroke.
+- **Stack depth**: Maximum 1000 entries per project. Oldest entries are discarded when the limit is exceeded.
+- **In-memory only**: The undo stacks are not persisted across page reloads.
 - Any new change clears the redo stack (standard undo/redo behavior).
 - Pending debounced saves are cancelled when undo/redo is triggered.
 

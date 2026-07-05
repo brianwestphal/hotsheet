@@ -444,10 +444,10 @@ export function bindKeyboardShortcuts() {
   // from a focused input element that has its own undo handling.
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-      // HS-8033 — bail when any modal is open so Cmd+Z reaches the native
-      // input-level undo inside the dialog instead of undoing a ticket
-      // operation behind the modal.
-      if (shouldBailForActiveModal(e.target)) return;
+      // HS-9335 / HS-8033 — bail (no preventDefault) so NATIVE undo/redo runs when
+      // the user is editing a text field or a modal is open; otherwise hijack for
+      // Hot Sheet's ticket-level undo.
+      if (shouldSkipGlobalUndo(e.target)) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.shiftKey) {
@@ -682,6 +682,19 @@ export function findVisibleModalOverlay(root: ParentNode = document): HTMLElemen
  * the global handler then bails so Cmd+A inside an `<input>` only selects
  * the input's text rather than every ticket behind the modal.
  */
+/**
+ * HS-9335 — decide whether a Cmd+Z / Cmd+Shift+Z should SKIP Hot Sheet's ticket-level
+ * undo and fall through to the browser's native undo. Two reasons to skip:
+ *   1. focus is in an editable field (input / textarea / contenteditable, incl. the
+ *      xterm helper textarea) — native per-keystroke text undo must win (§3 of the
+ *      HS-9335 report: "standard text field undo/redo should work, not Hot Sheet's").
+ *   2. a modal dialog is open (HS-8033) — the modal owns the keyboard.
+ * Exported so unit tests can pin the decision without driving the full keydown handler.
+ */
+export function shouldSkipGlobalUndo(target: EventTarget | null): boolean {
+  return isEditableTarget(target) || shouldBailForActiveModal(target);
+}
+
 export function shouldBailForActiveModal(target: EventTarget | null): boolean {
   const modal = findVisibleModalOverlay();
   if (modal === null) return false;

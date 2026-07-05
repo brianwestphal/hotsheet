@@ -4,11 +4,21 @@ import {
 } from '../../api/index.js';
 import { refreshDetail, setSuppressAutoRead } from '../detail.js';
 import type { Ticket } from '../state.js';
-import { shouldResetStatusOnUpNext, state } from '../state.js';
+import { getActiveProject, shouldResetStatusOnUpNext, state } from '../state.js';
 import { loadTickets, renderTicketList } from '../ticketList.js';
 import { ticketsStore } from '../ticketsStore.js';
-import { undoStack } from './stack.js';
+import { getUndoStack } from './stack.js';
 import type { TicketSnapshot, UndoEntry } from './types.js';
+
+/**
+ * HS-9335 — the CURRENT project's undo stack. Every record/undo/redo goes through this,
+ * so a stack is scoped to one project tab: switching tabs switches the history, and an
+ * undo can never reach a ticket in another project. Keyed by the active project secret;
+ * `''` (no active project) is a shared fallback stack.
+ */
+function activeStack() {
+  return getUndoStack(getActiveProject()?.secret ?? '');
+}
 
 export function snapshot(ticket: Ticket, includeNotes = false): TicketSnapshot {
   const s: TicketSnapshot = {
@@ -36,7 +46,7 @@ export async function trackedPatch(
   // typed request shape so we route through the typed `updateTicket` caller.
   const updated = await updateTicket(ticket.id, UpdateTicketSchema.parse(updates));
   const after = snapshot(updated);
-  undoStack.push({ label, timestamp: Date.now(), before: [before], after: [after] });
+  activeStack().push({ label, timestamp: Date.now(), before: [before], after: [after] });
   return updated;
 }
 
@@ -53,8 +63,8 @@ export function recordTextChange(ticket: Ticket, field: string, newValue: string
     coalescingKey: key,
   };
 
-  if (!undoStack.coalesce(entry)) {
-    undoStack.push(entry);
+  if (!activeStack().coalesce(entry)) {
+    activeStack().push(entry);
   }
 }
 
@@ -86,7 +96,7 @@ export async function trackedBatch(
     return a;
   });
 
-  undoStack.push({ label, timestamp: Date.now(), before: befores, after: afters });
+  activeStack().push({ label, timestamp: Date.now(), before: befores, after: afters });
 }
 
 /** Record and apply a compound batch operation (e.g. reopen + toggle up_next). */
@@ -119,7 +129,7 @@ export async function trackedCompoundBatch(
     return a;
   });
 
-  undoStack.push({ label, timestamp: Date.now(), before: befores, after: afters });
+  activeStack().push({ label, timestamp: Date.now(), before: befores, after: afters });
 }
 
 /** Record and apply a single-ticket deletion. */
@@ -127,7 +137,7 @@ export async function trackedDelete(ticket: Ticket): Promise<void> {
   const before = snapshot(ticket);
   await deleteTicket(ticket.id);
   const after = { ...before, status: 'deleted' };
-  undoStack.push({ label: 'Delete ticket', timestamp: Date.now(), before: [before], after: [after] });
+  activeStack().push({ label: 'Delete ticket', timestamp: Date.now(), before: [before], after: [after] });
 }
 
 /** Record and apply a trash restore. */
@@ -136,7 +146,7 @@ export async function trackedRestore(ticket: Ticket): Promise<void> {
   await restoreTicket(ticket.id);
   // Restore sets status back to not_started
   const after = { ...before, status: 'not_started' };
-  undoStack.push({ label: 'Restore ticket', timestamp: Date.now(), before: [before], after: [after] });
+  activeStack().push({ label: 'Restore ticket', timestamp: Date.now(), before: [before], after: [after] });
 }
 
 /** Apply a snapshot array via PATCH calls. */
@@ -169,7 +179,7 @@ let undoRedoInFlight = false;
 
 export async function performUndo(): Promise<void> {
   if (undoRedoInFlight) return;
-  const entry = undoStack.popUndo();
+  const entry = activeStack().popUndo();
   if (!entry) return;
   undoRedoInFlight = true;
   try {
@@ -186,7 +196,7 @@ export async function performUndo(): Promise<void> {
 
 export async function performRedo(): Promise<void> {
   if (undoRedoInFlight) return;
-  const entry = undoStack.popRedo();
+  const entry = activeStack().popRedo();
   if (!entry) return;
   undoRedoInFlight = true;
   try {
@@ -203,15 +213,15 @@ export async function performRedo(): Promise<void> {
 export function pushNotesUndo(ticket: Ticket, label: string, afterNotes: string) {
   const before = snapshot(ticket, true);
   const after = { ...snapshot(ticket, true), notes: afterNotes };
-  undoStack.push({ label, timestamp: Date.now(), before: [before], after: [after] });
+  activeStack().push({ label, timestamp: Date.now(), before: [before], after: [after] });
 }
 
 export function canUndo(): boolean {
-  return undoStack.canUndo();
+  return activeStack().canUndo();
 }
 
 export function canRedo(): boolean {
-  return undoStack.canRedo();
+  return activeStack().canRedo();
 }
 
 // --- Shared batch operations ---

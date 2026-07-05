@@ -20,6 +20,7 @@ import {
   shouldBailForActiveModal,
   shouldEscapeBypassHotsheet,
   shouldPreventHistoryBackKey,
+  shouldSkipGlobalUndo,
 } from './shortcuts.js';
 
 describe('isNewTerminalShortcut (HS-7926)', () => {
@@ -441,6 +442,37 @@ describe('shouldBailForActiveModal (HS-8033)', () => {
       toElement(<div className="terminal-prompt-overlay"><button>Allow</button></div>),
     );
     expect(shouldBailForActiveModal(document.getElementById('ticket-row'))).toBe(false);
+  });
+});
+
+describe('shouldSkipGlobalUndo (HS-9335)', () => {
+  afterEach(() => { document.body.innerHTML = ''; });
+
+  it('skips (native undo) when focus is in a text input or textarea', () => {
+    document.body.replaceChildren(
+      toElement(<div className="ticket-list"><input id="tin" /><textarea id="tta"></textarea></div>),
+    );
+    expect(shouldSkipGlobalUndo(document.getElementById('tin'))).toBe(true);
+    expect(shouldSkipGlobalUndo(document.getElementById('tta'))).toBe(true);
+  });
+
+  it('skips when focus is in a contenteditable element', () => {
+    const span = toElement(<span contentEditable="true">edit</span>);
+    document.body.replaceChildren(span);
+    expect(shouldSkipGlobalUndo(span)).toBe(true);
+  });
+
+  it('does NOT skip (Hot Sheet undo runs) when focus is on a plain ticket row, no modal', () => {
+    document.body.replaceChildren(toElement(<div className="ticket-list"><div id="row"></div></div>));
+    expect(shouldSkipGlobalUndo(document.getElementById('row'))).toBe(false);
+  });
+
+  it('skips when a modal is open even if the target is not editable', () => {
+    document.body.replaceChildren(
+      toElement(<div className="ticket-list"><div id="row"></div></div>),
+      toElement(<div className="confirm-dialog-overlay"><button>OK</button></div>),
+    );
+    expect(shouldSkipGlobalUndo(document.getElementById('row'))).toBe(true);
   });
 });
 

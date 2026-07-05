@@ -62,6 +62,10 @@ vi.mock('../ticketList.js', () => ({
   renderTicketList: (): void => mockRenderTicketList(),
 }));
 
+// HS-9335 — the active-project handle drives which per-project undo stack
+// `actions.ts` uses. Mutable so a test can simulate switching project tabs.
+let mockActiveProject: { secret: string } | null = null;
+
 // state mock — `shouldResetStatusOnUpNext` is pure-ish (looks at the
 // status enum). Copy the real implementation here so the test is
 // honest about which statuses trigger the reset path.
@@ -71,6 +75,7 @@ vi.mock('../state.js', () => ({
   },
   shouldResetStatusOnUpNext: (status: string): boolean =>
     status === 'completed' || status === 'verified' || status === 'backlog' || status === 'archive',
+  getActiveProject: (): { secret: string } | null => mockActiveProject,
 }));
 
 function ticket(overrides: Partial<Ticket> = {}): Ticket {
@@ -114,6 +119,7 @@ beforeEach(() => {
   mockRenderTicketList.mockReset();
   mockRefreshDetail.mockReset();
   mockSetSuppressAutoRead.mockReset();
+  mockActiveProject = null; // default: no active project (shared '' stack)
 });
 
 afterEach(() => {
@@ -484,6 +490,41 @@ describe('toggleReadState', () => {
     await toggleReadState([1]);
     expect(mockSetSuppressAutoRead).toHaveBeenCalledWith(true);
     expect(mockBatchTickets.mock.calls[0][0].action).toBe('mark_unread');
+  });
+});
+
+describe('per-project undo stacks (HS-9335)', () => {
+  it('an undo recorded under project A is invisible + un-undoable from project B', async () => {
+    const actions = await freshActions();
+
+    // Record an operation while project A is active.
+    mockActiveProject = { secret: 'project-A' };
+    await actions.trackedPatch(ticket(), { title: 'A-edit' }, 'Edit title');
+    expect(actions.canUndo()).toBe(true);
+
+    // Switch to project B — its stack is empty, so nothing is undoable here...
+    mockActiveProject = { secret: 'project-B' };
+    expect(actions.canUndo()).toBe(false);
+    mockUpdateTicket.mockClear();
+    await actions.performUndo();
+    expect(mockUpdateTicket).not.toHaveBeenCalled(); // B's undo can't touch A's op
+
+    // Back on project A — its history is intact and undo applies A's snapshot.
+    mockActiveProject = { secret: 'project-A' };
+    expect(actions.canUndo()).toBe(true);
+    await actions.performUndo();
+    expect(mockUpdateTicket).toHaveBeenCalled();
+  });
+
+  it('canRedo is likewise scoped per project', async () => {
+    const actions = await freshActions();
+    mockActiveProject = { secret: 'proj-1' };
+    await actions.trackedDelete(ticket());
+    await actions.performUndo();
+    expect(actions.canRedo()).toBe(true);
+
+    mockActiveProject = { secret: 'proj-2' };
+    expect(actions.canRedo()).toBe(false);
   });
 });
 

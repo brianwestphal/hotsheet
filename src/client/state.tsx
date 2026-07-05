@@ -2,6 +2,7 @@ import type { SafeHtml } from '../jsx-runtime.js';
 import type { TicketPriority, TicketStatus } from '../types.js';
 import { activeProjectSignal, projectsStore } from './projectsStore.js';
 import { ticketsStore } from './ticketsStore.js';
+import { clearUndoStack } from './undo/stack.js';
 
 export interface ProjectInfo {
   name: string;
@@ -104,6 +105,9 @@ export function clearPerProjectSessionState(secret: string): void {
   for (const k of [...projectViewScrollPositions.keys()]) {
     if (k.startsWith(prefix)) projectViewScrollPositions.delete(k);
   }
+  // HS-9335 — drop the removed project's undo/redo history so a re-added project at
+  // the same secret doesn't resurrect the prior tab's undo stack.
+  clearUndoStack(secret);
 }
 
 /** HS-8374 — read the saved scroll position for a `(secret, view, mode)`

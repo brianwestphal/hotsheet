@@ -3,7 +3,7 @@ import type { UndoEntry } from './types.js';
 const MAX_STACK_DEPTH = 1000;
 const COALESCE_INTERVAL_MS = 5000;
 
-class UndoStack {
+export class UndoStack {
   private undoStack: UndoEntry[] = [];
   private redoStack: UndoEntry[] = [];
 
@@ -53,4 +53,26 @@ class UndoStack {
   }
 }
 
-export const undoStack = new UndoStack();
+// HS-9335 — one UndoStack PER PROJECT, keyed by project secret, so undo/redo never
+// reaches across project tabs (each tab has its own history). `getUndoStack('')` is the
+// fallback stack used when no project is active. `actions.ts` resolves the active
+// project's stack on every operation via `getActiveProject()?.secret`.
+const stacks = new Map<string, UndoStack>();
+
+export function getUndoStack(key: string): UndoStack {
+  let s = stacks.get(key);
+  if (s === undefined) {
+    s = new UndoStack();
+    stacks.set(key, s);
+  }
+  return s;
+}
+
+/** Drop a project's undo history (e.g. when its tab is closed / project removed). */
+export function clearUndoStack(key: string): void {
+  stacks.delete(key);
+}
+
+/** Back-compat default stack (key `''`). Kept for direct importers; new code goes
+ *  through `getUndoStack(projectKey)`. */
+export const undoStack = getUndoStack('');
