@@ -837,6 +837,10 @@ async function initSchema(db: PGlite): Promise<void> {
     -- target..branch diff ("what this finished ticket added"). Nullable: owner-direct
     -- completions and pre-HS-9107 tickets have none. Cleared with pending_integration.
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS integration_branch TEXT;
+    -- HS-9336 — free-text "blocked reason" note (docs/116): what the ticket is waiting
+    -- on (prose and/or HS-NNNN refs). Orthogonal to the structured ticket_blocked_by
+    -- gate; drives the dark-gray "blocked" row border. Nullable, no default (usually absent).
+    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS blocked_reason TEXT;
     CREATE INDEX IF NOT EXISTS idx_tickets_claimed_by ON tickets(claimed_by);
   `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (claim columns):', e.message); });
 

@@ -58,6 +58,10 @@
   --danger: #ef4444;
   --warning: #f59e0b;
   --star: #eab308;
+  // HS-9336 — ticket-row blocked/feedback border accents (docs/116). Blocked is a
+  // dark gray; feedback reuses the purple of the feedback dot for extra visibility.
+  --blocked: #4b5563;
+  --feedback: #8b5cf6;
   --radius: 6px;
   --shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
@@ -3560,6 +3564,20 @@ body.cross-project-stats-active {
 
   &.up-next {
     border-left: 3px solid var(--star);
+  }
+
+  // HS-9336 (docs/116) — a ticket with a non-empty `blocked_reason` shows a dark-gray
+  // left border. Declared AFTER `.up-next` so, at equal specificity, a ticket that is
+  // both up-next AND blocked shows the blocked color (source-order precedence).
+  &.blocked {
+    border-left: 3px solid var(--blocked);
+  }
+
+  // HS-9336 — a feedback-needed ticket (last note starts with "FEEDBACK NEEDED") shows
+  // a purple left border matching the feedback dot. Declared LAST so it wins over both
+  // up-next and blocked (feedback is the most action-urgent signal).
+  &.feedback-needed {
+    border-left: 3px solid var(--feedback);
   }
 }
 

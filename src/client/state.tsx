@@ -166,6 +166,9 @@ export interface Ticket {
   // HS-9107 — the worker branch the work landed on; lets the merge-pending badge
   // pre-target Glassbox on `target..<branch>`.
   integration_branch?: string | null;
+  // HS-9336 — free-text "what is this waiting on" note (docs/116). Non-empty ⇒ the
+  // row shows the dark-gray "blocked" border; shown + editable in the detail panel.
+  blocked_reason?: string | null;
 }
 
 export interface SyncInfo {

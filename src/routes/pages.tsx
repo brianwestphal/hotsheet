@@ -395,6 +395,13 @@ pageRoutes.get('/', (c) => {
                     <textarea id="detail-details" rows={6} placeholder="Add details..." spellCheck="true"></textarea>
                   </div>
                 </div>
+                {/* HS-9336 (docs/116) — free-text "what is this waiting on" note. Non-empty
+                    marks the ticket blocked (dark-gray row border). Distinct from the
+                    structured blocked-by dependency gate. */}
+                <div className="detail-field detail-field-full">
+                  <label>Blocked reason</label>
+                  <textarea id="detail-blocked-reason" rows={2} placeholder="What is this waiting on? (leave blank if not blocked)" spellCheck="true"></textarea>
+                </div>
                 <div className="detail-field detail-field-full">
                   <label>Tags</label>
                   <div id="detail-tags" className="detail-tags"></div>

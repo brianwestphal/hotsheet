@@ -192,6 +192,9 @@ const UpdateTicketInputSchema = z.object({
   // HS-9107 — the worker branch the work landed on (e.g. "hotsheet/worker-1"), set
   // alongside pending_integration so the owner's "merge pending" badge can review it.
   integration_branch: z.string().nullish().describe('The worker branch this ticket\'s work landed on (e.g. "hotsheet/worker-1"). A worker sets it alongside pending_integration=true so the owner can review what it added; pass null/omit to clear.'),
+  // HS-9336 — free-text "what is this waiting on" note (docs/116). Re-evaluate it as
+  // conditions change; clear it when the ticket is unblocked.
+  blocked_reason: z.string().nullish().describe('Free-text note describing what this ticket is waiting on (prose and/or ticket refs like "HS-1234"). Non-empty marks the ticket blocked (dark-gray border in the UI). Re-evaluate as conditions change; pass null or an empty string to clear it when unblocked. Distinct from the structured blocked_by dependency gate.'),
 });
 
 const CreateTicketInputSchema = z.object({

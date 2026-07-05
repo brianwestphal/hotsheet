@@ -341,6 +341,9 @@ function loadPreviewDetail(id: number) {
   upnextBtn.textContent = ticket.up_next ? '\u2605' : '\u2606';
   upnextBtn.classList.toggle('active', ticket.up_next);
   byId<HTMLTextAreaElement>('detail-details').value = ticket.details;
+  // HS-9336 (docs/116) — populate the free-text blocked-reason editor.
+  const blockedArea0 = byIdOrNull<HTMLTextAreaElement>('detail-blocked-reason');
+  if (blockedArea0 !== null) blockedArea0.value = ticket.blocked_reason ?? '';
   // HS-8020 — paint the markdown-rendered view alongside the textarea
   // so the read-only preview shows formatted details (matches the live
   // detail panel post-fix).
@@ -475,6 +478,16 @@ async function loadDetail(id: number, forceTextFields = false) {
     if (forceTextFields && document.activeElement === detailsArea) {
       const len = detailsArea.value.length;
       detailsArea.setSelectionRange(len, len);
+    }
+  }
+  // HS-9336 (docs/116) — refresh the blocked-reason editor, same focus-guard so an
+  // external update (channel / MCP / another tab) doesn't clobber the user's caret.
+  const blockedArea = byIdOrNull<HTMLTextAreaElement>('detail-blocked-reason');
+  if (blockedArea !== null && (forceTextFields || document.activeElement !== blockedArea)) {
+    blockedArea.value = ticket.blocked_reason ?? '';
+    if (forceTextFields && document.activeElement === blockedArea) {
+      const len = blockedArea.value.length;
+      blockedArea.setSelectionRange(len, len);
     }
   }
   // HS-8020 — paint the markdown-rendered view on every detail-load so

@@ -8,7 +8,7 @@
 import { updateTicketField } from '../../api/index.js';
 import { TIMERS } from '../constants/timers.js';
 import { renderDetailsMarkdown } from '../detail.js';
-import { byId } from '../dom.js';
+import { byIdOrNull } from '../dom.js';
 import { syncDetailReaderButton } from '../readerOverlay.js';
 import { getDetailSaveTimeout, setDetailSaveTimeout } from '../shortcuts.js';
 import { state } from '../state.js';
@@ -19,16 +19,23 @@ export function bindDetailAutoSave(): void {
   // HS-8642 — the field key is paired with its element id up front (rather than
   // string-sliced) so it carries the `'title' | 'details'` literal type the
   // typed `updateTicketField` needs — no raw `api()` / dynamic-key fallback.
-  const fields: { fieldId: string; key: 'title' | 'details' }[] = [
+  const fields: { fieldId: string; key: 'title' | 'details' | 'blocked_reason' }[] = [
     { fieldId: 'detail-title', key: 'title' },
     { fieldId: 'detail-details', key: 'details' },
+    // HS-9336 (docs/116) — the free-text blocked-reason editor. Debounce-saves through
+    // the same path but is deliberately EXCLUDED from the special undo coalescing below,
+    // so the field's own native text undo/redo works (mirrors HS-9335's intent).
+    { fieldId: 'detail-blocked-reason', key: 'blocked_reason' },
   ];
   for (const { fieldId, key } of fields) {
-    const el = byId<HTMLInputElement | HTMLTextAreaElement>(fieldId);
+    // byIdOrNull: the blocked-reason textarea (HS-9336) may be absent in a minimal
+    // test DOM; the long-standing title/details are always present in the real panel.
+    const el = byIdOrNull<HTMLInputElement | HTMLTextAreaElement>(fieldId);
+    if (el === null) continue;
     el.addEventListener('input', () => {
-      // Record text change for undo (coalesces rapid edits)
+      // Record text change for undo (coalesces rapid edits) — title/details only.
       const ticket = state.tickets.find(t => t.id === state.activeTicketId);
-      if (ticket) {
+      if (ticket && key !== 'blocked_reason') {
         recordTextChange(ticket, key, el.value);
       }
       // HS-7957 — keep the Details reader-mode button disabled when the

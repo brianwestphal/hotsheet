@@ -72,6 +72,12 @@ export const TicketSchema = z.object({
   // (e.g. `hotsheet/worker-1`). Nullable: only set when a worker marks the ticket
   // merge-pending; absent for owner-direct completions + pre-HS-9107 rows.
   integration_branch: z.string().nullish(),
+  // HS-9336 — a free-text "what is this waiting on" note (docs/116). Distinct from
+  // the structured `ticket_blocked_by` gate: prose + ticket refs (`HS-1234`) an AI or
+  // the user maintains and re-evaluates. Non-empty ⇒ the row shows the dark-gray
+  // "blocked" border. Nullish so pre-migration rows / in-memory constructions read as
+  // unset (= not blocked).
+  blocked_reason: z.string().nullish(),
 });
 
 export type Ticket = z.infer<typeof TicketSchema>;

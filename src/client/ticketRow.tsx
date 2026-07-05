@@ -124,6 +124,13 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
     // .up-next class
     row.classList.toggle('up-next', t.up_next);
 
+    // HS-9336 (docs/116) — .blocked (non-empty free-text blocked_reason) + .feedback-needed
+    // (last note starts with "FEEDBACK NEEDED"). Both re-toggle on external updates (channel /
+    // MCP / another tab) so the row border tracks the live state. CSS source order gives
+    // feedback > blocked > up-next when more than one applies.
+    row.classList.toggle('blocked', isTicketBlocked(t));
+    row.classList.toggle('feedback-needed', getIndicatorDotType(t) === 'feedback');
+
     // Category badge — color + title attr + textContent
     if (catBadge !== null) {
       const color = getCategoryColor(t.category);
@@ -319,6 +326,14 @@ export function getIndicatorDotType(ticket: Ticket): 'feedback' | 'unread' | nul
   return null;
 }
 
+/** HS-9336 (docs/116) — true when the ticket carries a non-empty free-text
+ *  `blocked_reason`. Drives the dark-gray "blocked" row border. Whitespace-only
+ *  reasons don't count (treated the same as cleared). Distinct from the structured
+ *  `ticket_blocked_by` dependency gate (which the client doesn't render as a border). */
+export function isTicketBlocked(ticket: Ticket): boolean {
+  return typeof ticket.blocked_reason === 'string' && ticket.blocked_reason.trim() !== '';
+}
+
 // --- Ticket row ---
 
 /**
@@ -349,7 +364,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
 
   const row = toElement(
     <div
-      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}${isCut ? ' cut-pending' : ''}`}
+      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}${isTicketBlocked(ticket) ? ' blocked' : ''}${getIndicatorDotType(ticket) === 'feedback' ? ' feedback-needed' : ''}${isCut ? ' cut-pending' : ''}`}
       data-id={String(ticket.id)}
     >
       <input type="checkbox" className="ticket-checkbox" checked={isSelected} />

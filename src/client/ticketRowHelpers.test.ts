@@ -138,6 +138,26 @@ describe('hasPendingFeedback', () => {
   });
 });
 
+describe('isTicketBlocked (HS-9336)', () => {
+  it('is false when blocked_reason is absent / null / undefined', async () => {
+    const { isTicketBlocked } = await import('./ticketRow.js');
+    expect(isTicketBlocked(ticket())).toBe(false);
+    expect(isTicketBlocked(ticket({ blocked_reason: null }))).toBe(false);
+    expect(isTicketBlocked(ticket({ blocked_reason: undefined }))).toBe(false);
+  });
+
+  it('is false when blocked_reason is empty or whitespace-only', async () => {
+    const { isTicketBlocked } = await import('./ticketRow.js');
+    expect(isTicketBlocked(ticket({ blocked_reason: '' }))).toBe(false);
+    expect(isTicketBlocked(ticket({ blocked_reason: '   \n\t' }))).toBe(false);
+  });
+
+  it('is true when blocked_reason has real text', async () => {
+    const { isTicketBlocked } = await import('./ticketRow.js');
+    expect(isTicketBlocked(ticket({ blocked_reason: 'waiting on HS-1234' }))).toBe(true);
+  });
+});
+
 describe('getIndicatorDotType', () => {
   it('returns "feedback" when a feedback note is pending (highest priority)', async () => {
     const { getIndicatorDotType } = await import('./ticketRow.js');
