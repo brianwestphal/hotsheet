@@ -106,9 +106,9 @@ async function loadCommandSuggestions(): Promise<string[]> {
       } catch {
         // Network error — surface the sentinel alone so the dropdown still has
         // at least one entry. Don't cache the failure; allow a retry on the
-        // next open.
+        // next open. HS-9334 — lead with the `ai_tool`-aware `{{aiCommand}}`.
         commandSuggestionsPromise = null;
-        return ['{{claudeCommand}}'];
+        return ['{{aiCommand}}'];
       }
     })();
   }
@@ -187,7 +187,7 @@ function normalizeEntry(item: unknown, index: number): EditableTerminalConfig | 
   if (typeof item !== 'object' || item === null) return null;
   const raw = item as Partial<EditableTerminalConfig>;
   const id = typeof raw.id === 'string' && raw.id !== '' ? raw.id : `default-${index}`;
-  const command = typeof raw.command === 'string' && raw.command !== '' ? raw.command : '{{claudeCommand}}';
+  const command = typeof raw.command === 'string' && raw.command !== '' ? raw.command : '{{aiCommand}}'; // HS-9334 default
   const out: EditableTerminalConfig = { id, command };
   if (typeof raw.name === 'string') out.name = raw.name;
   if (typeof raw.cwd === 'string' && raw.cwd !== '') out.cwd = raw.cwd;
@@ -583,7 +583,7 @@ function openEditor(
               />
               <div className="cmd-combobox-popover" hidden></div>
             </div>
-            <span className="settings-hint">{'Pick a common command from the dropdown or type your own. Use {{claudeCommand}} to resolve to claude.'}</span>
+            <span className="settings-hint">{"Pick a common command from the dropdown or type your own. Use {{aiCommand}} to launch this project's AI tool (or {{claudeCommand}} for Claude specifically)."}</span>
           </div>
           <div className="settings-field">
             <label>Working directory</label>
@@ -651,7 +651,7 @@ function openEditor(
     const themeSel = overlay.querySelector<HTMLSelectElement>('.term-edit-theme');
     const fontSel = overlay.querySelector<HTMLSelectElement>('.term-edit-font');
     const sizeInput = overlay.querySelector<HTMLInputElement>('.term-edit-font-size');
-    const updated: EditableTerminalConfig = { ...entry, command: command !== '' ? command : '{{claudeCommand}}', lazy };
+    const updated: EditableTerminalConfig = { ...entry, command: command !== '' ? command : '{{aiCommand}}', lazy }; // HS-9334 default
     if (name !== '') updated.name = name; else delete updated.name;
     if (cwd !== '') updated.cwd = cwd; else delete updated.cwd;
     // HS-9272 — appearance is all-or-nothing via the segmented control. In

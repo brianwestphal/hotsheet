@@ -432,13 +432,14 @@ function defaultShellCommand(): string {
 
 /**
  * Build the suggestion list for the Edit Terminal command combobox (HS-7791).
- * Order: `{{claudeCommand}}` sentinel → user's default login shell → any
- * additional shells discovered on the system (via `/etc/shells` on Unix or
- * well-known paths on Windows). Duplicates removed; entries returned as-is
- * (full path included) so the user sees what would actually exec.
+ * Order (HS-9334): the `ai_tool`-aware `{{aiCommand}}` sentinel (the recommended
+ * default) → the Claude-specific `{{claudeCommand}}` alias → user's default login
+ * shell → any additional shells discovered on the system (via `/etc/shells` on Unix or
+ * well-known paths on Windows). Duplicates removed; entries returned as-is (full path
+ * included) so the user sees what would actually exec.
  */
 export function collectCommandSuggestions(): string[] {
-  const out: string[] = ['{{claudeCommand}}'];
+  const out: string[] = ['{{aiCommand}}', '{{claudeCommand}}'];
   const seen = new Set<string>(out);
 
   const add = (entry: string | undefined | null): void => {

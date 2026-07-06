@@ -10,9 +10,10 @@ import { collectCommandSuggestions } from './terminal.js';
  * on Unix or well-known PowerShell + cmd locations on Windows.
  */
 describe('collectCommandSuggestions', () => {
-  it('always includes the {{claudeCommand}} sentinel as the first entry', () => {
+  it('HS-9334 — leads with {{aiCommand}}, then the {{claudeCommand}} alias', () => {
     const out = collectCommandSuggestions();
-    expect(out[0]).toBe('{{claudeCommand}}');
+    expect(out[0]).toBe('{{aiCommand}}');
+    expect(out[1]).toBe('{{claudeCommand}}');
   });
 
   it('includes the user default shell when set on the env', () => {

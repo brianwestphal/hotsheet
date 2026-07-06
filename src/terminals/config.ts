@@ -19,7 +19,12 @@ import { readFileSettings } from '../file-settings.js';
 export type { TerminalConfig };
 
 export const DEFAULT_TERMINAL_ID = 'default';
-const CLAUDE_TEMPLATE = '{{claudeCommand}}';
+// HS-9334 — the default command template is now the `ai_tool`-aware `{{aiCommand}}`
+// (docs/113 §113.3), not the Claude-specific `{{claudeCommand}}`. Both resolve
+// identically for a claude/auto project; the difference is that a project whose
+// `ai_tool` selects another CLI agent gets a default terminal launching THAT agent.
+// `{{claudeCommand}}` stays a permanent back-compat alias in `resolveCommand.ts`.
+const DEFAULT_TEMPLATE = '{{aiCommand}}';
 
 /**
  * Read the configured default terminals for a project, applying migration from
@@ -56,7 +61,7 @@ export function listTerminalConfigs(dataDir: string): TerminalConfig[] {
     const entry: TerminalConfig = {
       id: DEFAULT_TERMINAL_ID,
       name: 'Terminal',
-      command: hasLegacyCommand ? (settings.terminal_command as string) : CLAUDE_TEMPLATE,
+      command: hasLegacyCommand ? (settings.terminal_command as string) : DEFAULT_TEMPLATE,
     };
     if (hasLegacyCwd) entry.cwd = settings.terminal_cwd as string;
     return [entry];
@@ -99,7 +104,7 @@ function normalizeConfig(input: unknown, index: number): TerminalConfig | null {
   if (typeof input !== 'object' || input === null) return null;
   const raw = input as Partial<TerminalConfig>;
   const id = typeof raw.id === 'string' && raw.id !== '' ? raw.id : `default-${index}`;
-  const command = typeof raw.command === 'string' && raw.command !== '' ? raw.command : CLAUDE_TEMPLATE;
+  const command = typeof raw.command === 'string' && raw.command !== '' ? raw.command : DEFAULT_TEMPLATE;
   const out: TerminalConfig = { id, command };
   if (typeof raw.name === 'string' && raw.name !== '') out.name = raw.name;
   if (typeof raw.cwd === 'string' && raw.cwd !== '') out.cwd = raw.cwd;

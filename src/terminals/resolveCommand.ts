@@ -102,7 +102,10 @@ export interface ResolveOptions {
  */
 export function resolveTerminalCommand(options: ResolveOptions): ResolvedCommand {
   const config = options.configOverride ?? lookupConfig(options);
-  const template = config.command !== '' ? config.command : CLAUDE_TOKEN;
+  // HS-9334 — default to the `ai_tool`-aware `{{aiCommand}}` when no command is set;
+  // both tokens resolve via `pickAiCommand`, so this is identical for claude/auto and
+  // launches the selected agent otherwise.
+  const template = config.command !== '' ? config.command : AI_TOKEN;
   const projectDir = dirname(options.dataDir);
   const cwd = resolveTerminalCwd(config.cwd, projectDir);
 
@@ -119,8 +122,8 @@ function lookupConfig(options: ResolveOptions): TerminalConfig {
   const id = options.terminalId ?? DEFAULT_TERMINAL_ID;
   const found = findTerminalConfig(options.dataDir, id);
   if (found) return found;
-  // Unknown id — fall back to the first configured entry so launch still works.
-  return { id, command: CLAUDE_TOKEN };
+  // Unknown id — fall back to the default AI-tool template so launch still works.
+  return { id, command: AI_TOKEN };
 }
 
 /**

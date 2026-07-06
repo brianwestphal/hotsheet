@@ -172,7 +172,9 @@ export function seedClaudeTerminalIfNew(
   if (!isClaudeOnPath()) return;
   writeFileSettings(absDataDir, {
     terminals: [
-      { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
+      // HS-9334 — seed with the `ai_tool`-aware `{{aiCommand}}` (resolves to claude for a
+      // claude/auto project, or the selected CLI agent otherwise). Gate stays claude-on-PATH.
+      { id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true },
     ],
   });
 }

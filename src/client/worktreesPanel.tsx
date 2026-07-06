@@ -61,18 +61,19 @@ export function renderWorktreeRow(
   return row;
 }
 
-/** Open a Claude terminal in a worktree's directory. Its `.mcp.json` (written at
+/** Open an AI-agent terminal in a worktree's directory. Its `.mcp.json` (written at
  *  create time) points the agent's `hotsheet_*` tools at the owner Hot Sheet.
- *  HS-9036 — launch via the `{{claudeCommand}}` token (resolved server-side) so the
- *  worktree's Claude gets the channel-connected command (with the
- *  `--dangerously-load-development-channels` flag), exactly like the main project's
- *  Claude terminal — so its permission prompts surface in Hot Sheet, not just the
- *  terminal. (A bare `claude` connected the MCP for tools but never routed permissions.) */
+ *  HS-9036 / HS-9334 — launch via the `{{aiCommand}}` token (resolved server-side, the
+ *  ad-hoc resolver handles it since HS-9333) so the worktree's agent gets the
+ *  channel-connected command (with the `--dangerously-load-development-channels` flag for
+ *  Claude), exactly like the main project's AI terminal — so its permission prompts
+ *  surface in Hot Sheet, not just the terminal. (A bare `claude` connected the MCP for
+ *  tools but never routed permissions.) */
 async function handleOpenTerminal(wt: WorktreeInfo): Promise<void> {
   closeWorktreesPanel();
   try {
     const { openTerminalRunningCommand } = await import('./terminal.js');
-    await openTerminalRunningCommand('{{claudeCommand}}', `wt: ${wt.branch ?? 'worktree'}`, wt.path);
+    await openTerminalRunningCommand('{{aiCommand}}', `wt: ${wt.branch ?? 'worktree'}`, wt.path);
   } catch (e) {
     showToast(`Couldn't open terminal: ${getErrorMessage(e)}`);
   }

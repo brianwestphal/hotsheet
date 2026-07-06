@@ -61,6 +61,13 @@ describe('TerminalConfig loader', () => {
     expect(list[0].id).toBe('default-0');
   });
 
+  it('HS-9334 — an entry with no command falls back to the {{aiCommand}} default', () => {
+    const list = listTerminalConfigs(dir({
+      terminals: [{ id: 'x' }],
+    }));
+    expect(list[0].command).toBe('{{aiCommand}}');
+  });
+
   // HS-6370: pre-fix settings.json files stored the array as a JSON string.
   // Reading must tolerate both shapes so users don't lose their configuration
   // until they re-save through the settings UI.

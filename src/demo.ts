@@ -720,7 +720,7 @@ const SCENARIO_11_TERMINALS = [
   {
     id: 'claude',
     name: 'Claude',
-    command: '{{claudeCommand}}',
+    command: '{{aiCommand}}', // HS-9334 — default AI-tool template
     lazy: true,
     ...DEMO_TERMINAL_APPEARANCE,
   },

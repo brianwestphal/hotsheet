@@ -96,17 +96,20 @@ Three unit tests in `src/terminals/registry.test.ts` guard the signal: `destroyA
 
 ## 22.5 Default command + channel-aware substitution
 
-A per-project setting `terminal_command` (stored in `.hotsheet/settings.json`) holds a template string. Default value:
+A per-project setting `terminal_command` (stored in `.hotsheet/settings.json`) holds a template string. Default value (**HS-9334** — the `ai_tool`-aware token, was `{{claudeCommand}}`):
 
 ```
-{{claudeCommand}}
+{{aiCommand}}
 ```
 
-`{{claudeCommand}}` resolves at PTY spawn time:
+Two equivalent placeholder tokens both resolve at PTY spawn time via the same `pickAiCommand` (`src/terminals/resolveCommand.ts`) — `{{aiCommand}}` is the canonical default; `{{claudeCommand}}` is a permanent **back-compat alias** (identical resolution):
 
-- If `channelEnabled === true` (global config, with per-project `channel_enabled` fallback — see [12-claude-channel.md](12-claude-channel.md)) **and** `claude` is found on PATH → `claude --dangerously-load-development-channels server:hotsheet-channel-<slug>` where `<slug>` is `slugifyDataDir(dataDir)` per HS-8349 (basename of the project root, lowercased, non-alphanumeric runs collapsed to `-`). The substitution is performed by `claudeWithChannelCommand(dataDir)` in `src/terminals/resolveCommand.ts`.
+- The resolution follows the project's **`ai_tool`** setting (docs/113 §113.3). For `auto` / `claude` / unset (and the editor-only tools), the Claude behavior below applies. For an explicit non-Claude CLI agent (`codex` / `gemini` / `opencode` / `goose` / `antigravity`→`agy`) the token resolves to that agent's binary when present, else the default shell.
+- Claude path: if `channelEnabled === true` (global config, with per-project `channel_enabled` fallback — see [12-claude-channel.md](12-claude-channel.md)) **and** `claude` is found on PATH → `claude --dangerously-load-development-channels server:hotsheet-channel-<slug>` where `<slug>` is `slugifyDataDir(dataDir)` per HS-8349. The substitution is performed by `claudeWithChannelCommand(dataDir)`.
 - Else if `claude` is found on PATH → `claude`.
 - Else → fall back to the user's default shell (`$SHELL` on Unix, `%COMSPEC%` on Windows).
+
+Both tokens are recognized everywhere a terminal is seeded, detected (drawer "AI tab"), labeled, or resolved (incl. ad-hoc run-commands) — see HS-9333/HS-9334. `commandUsesAiToken(cmd)` (`resolveCommand.ts`) tests for either.
 
 A user who wants a plain shell (or any other command) overrides `terminal_command` in settings — the value is passed verbatim, no substitution. The setting surface lives in the **Experimental** tab of the Settings dialog initially; graduates to its own section when the feature ships.
 
