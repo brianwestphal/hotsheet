@@ -64,14 +64,32 @@ the dot marks the ticket in the list; the border makes the whole row easier to s
 - Not a change to the structured `ticket_blocked_by` gate (§90.6) — `claim-next` behavior
   is unchanged. A blocked-reason string does NOT stop a worker from claiming the ticket.
   (A future enhancement could OR the two for the border; deferred.)
-- No markdown-sync change — `blocked_reason` is not written to `worklist.md` /
+- **HS-9337 update:** `blocked_reason` IS now rendered in `worklist.md` (as a `- Blocked:`
+  line + the optional "possibly unblocked" hint — see §116.5); it is still not written to
   `open-tickets.md`.
 
-## 116.5 Automatic re-evaluation (future)
+## 116.5 Automatic re-evaluation — worklist hint (HS-9337, SHIPPED)
 
 The maintainer's intent is that an AI can **re-evaluate** a blocked-reason string against
-current conditions (are the referenced tickets done? has the circumstance changed?) and
-update or clear it. Today that happens opportunistically when an agent processes the
-worklist and chooses to call `hotsheet_update_ticket`. A scheduled/automatic sweep that
-parses the `HS-NNNN` refs and clears reasons whose blockers are complete is a natural
-follow-up (not built).
+current conditions (are the referenced tickets done?) and clear it. Maintainer decision
+(2026-07-06, option **a**): **surface a worklist hint, suggest-only — never silently
+auto-clear.**
+
+- **`src/blockedReasonEval.ts`** (pure) — `extractTicketRefs(reason)` parses `HS-NNNN`
+  refs (uppercase prefix; `utf-8` etc. deliberately don't match); `analyzeBlockedReason(reason, statusOf)`
+  reports which referenced tickets are completed/verified and whether **every known ref
+  is complete** (stray non-ticket tokens are ignored); `formatUnblockHint(analysis)`
+  returns the passive hint or `null`. `statusOf` is injected — no IO in the analyzer.
+- **Worklist markdown (`src/sync/markdown.ts`)** — `formatTicket` now renders a
+  `- Blocked: <reason>` line for any Up Next ticket with a `blocked_reason`, and when
+  every referenced blocker is done, appends `⚠ Possibly unblocked: HS-1234 now
+  completed/verified. Re-evaluate … and clear it …`. `syncWorklist` batch-resolves all
+  referenced statuses in one query (`db/tickets.ts::getTicketStatusesByNumbers`).
+- **Suggest-only** — the hint asks the agent (processing the worklist) to re-read the
+  reason and clear it with judgment via `hotsheet_update_ticket`. That agent/human
+  decision is the "clear signal"; nothing is ever auto-cleared, and prose-only reasons
+  (no parseable refs) produce no hint.
+
+Open sub-question left to the maintainer's default: prose-only reasons are currently
+left entirely manual (no hint) — a heavier "surface prose reasons for a judgment call"
+mode was not built.

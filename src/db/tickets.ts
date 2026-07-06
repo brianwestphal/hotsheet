@@ -99,6 +99,26 @@ export async function getTicket(id: number): Promise<Ticket | null> {
 }
 
 /**
+ * HS-9337 — batch-resolve statuses for a set of ticket numbers (e.g. `HS-1234`).
+ * Returns a Map keyed by the UPPERCASED ticket_number → status. Used by the worklist
+ * markdown sync to re-evaluate `blocked_reason` refs (docs/116 §116.5). An empty input
+ * short-circuits (no query). Numbers with no matching ticket are simply absent from the
+ * map (the caller treats absent as "unknown → not a blocker").
+ */
+export async function getTicketStatusesByNumbers(numbers: string[]): Promise<Map<string, TicketStatus>> {
+  const out = new Map<string, TicketStatus>();
+  const unique = [...new Set(numbers.map(n => n.toUpperCase()))];
+  if (unique.length === 0) return out;
+  const db = await getDb();
+  const result = await db.query<{ ticket_number: string; status: TicketStatus }>(
+    'SELECT ticket_number, status FROM tickets WHERE UPPER(ticket_number) = ANY($1::text[])',
+    [unique],
+  );
+  for (const row of result.rows) out.set(row.ticket_number.toUpperCase(), row.status);
+  return out;
+}
+
+/**
  * HS-8681 — pure helper that returns the additional SET fragments driven by a
  * status transition. Pulled out of `updateTicket` so the status-driven column
  * mappings (`completed_at` / `verified_at` / `deleted_at` / `up_next`) are

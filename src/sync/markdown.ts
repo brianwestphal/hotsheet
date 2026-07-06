@@ -2,10 +2,12 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { resolveAutoContextWithDefaults } from '../autoContextDefaults.js';
+import { analyzeBlockedReason, extractTicketRefs, formatUnblockHint } from '../blockedReasonEval.js';
 import { getDataDir, runWithDataDir } from '../db/connection.js';
 import { parseNotes } from '../db/notes.js';
 import { getAttachments, getCategories, getSettings, getTickets } from '../db/queries.js';
 import { scheduleSnapshot } from '../db/snapshot.js';
+import { getTicketStatusesByNumbers } from '../db/tickets.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings, readLocalSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
@@ -129,7 +131,11 @@ export function getSyncState(dir: string): { worklistTimeout: ReturnType<typeof 
   return syncStates.get(dir);
 }
 
-async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Promise<string> {
+async function formatTicket(
+  ticket: Ticket,
+  autoContext: AutoContextEntry[],
+  statusOf?: (ref: string) => string | null,
+): Promise<string> {
   const attachments = await getAttachments(ticket.id);
   const lines: string[] = [];
 
@@ -167,6 +173,19 @@ async function formatTicket(ticket: Ticket, autoContext: AutoContextEntry[]): Pr
     lines.push(`- Details: ${detailLines[0]}`);
     for (let i = 1; i < detailLines.length; i++) {
       lines.push(`  ${detailLines[i]}`);
+    }
+  }
+
+  // HS-9337 (docs/116 §116.5) — surface the free-text `blocked_reason` (HS-9336) so the
+  // agent sees WHY a ticket is stuck. When `statusOf` is supplied and every referenced
+  // `HS-NNNN` blocker is completed/verified, append a passive "possibly unblocked" hint
+  // (suggest-only, never auto-clears — the maintainer's option (a) decision).
+  const blockedReason = typeof ticket.blocked_reason === 'string' ? ticket.blocked_reason.trim() : '';
+  if (blockedReason !== '') {
+    lines.push(`- Blocked: ${blockedReason}`);
+    if (statusOf) {
+      const hint = formatUnblockHint(analyzeBlockedReason(blockedReason, statusOf));
+      if (hint !== null) lines.push(`  ${hint}`);
     }
   }
 
@@ -437,11 +456,19 @@ async function syncWorklist(state: SyncState): Promise<void> {
       sections.push(...await buildAutoPrioritizeSection(port, secretHeader));
     } else {
       const autoContext = await loadAutoContext();
+      // HS-9337 — batch-resolve the statuses of every ticket referenced by an Up Next
+      // ticket's `blocked_reason`, so `formatTicket` can flag "possibly unblocked" when
+      // all referenced blockers are done. One query for the whole worklist.
+      const blockedRefs = tickets.flatMap(t =>
+        typeof t.blocked_reason === 'string' ? extractTicketRefs(t.blocked_reason) : []);
+      const refStatuses = await getTicketStatusesByNumbers(blockedRefs);
+      const statusOf = (ref: string): string | null => refStatuses.get(ref.toUpperCase()) ?? null;
+
       for (const ticket of tickets) {
         categories.add(ticket.category);
         sections.push('---');
         sections.push('');
-        const formatted = await formatTicket(ticket, autoContext);
+        const formatted = await formatTicket(ticket, autoContext, statusOf);
         sections.push(formatted);
         sections.push('');
       }

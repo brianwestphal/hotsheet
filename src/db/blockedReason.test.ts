@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
-import { createTicket, getTicket, updateTicket } from './tickets.js';
+import { createTicket, getTicket, getTicketStatusesByNumbers, updateTicket } from './tickets.js';
 
 let dataDir: string;
 beforeEach(async () => { dataDir = await setupTestDb(); });
@@ -40,5 +40,23 @@ describe('blocked_reason (HS-9336)', () => {
     await updateTicket(t.id, { blocked_reason: 'waiting on an external service' });
     const afterStatus = await updateTicket(t.id, { status: 'started' });
     expect(afterStatus?.blocked_reason).toBe('waiting on an external service');
+  });
+});
+
+describe('getTicketStatusesByNumbers (HS-9337)', () => {
+  it('batch-resolves statuses keyed by uppercased ticket_number; absent numbers omitted', async () => {
+    const a = await createTicket('done one', {});
+    await updateTicket(a.id, { status: 'completed' });
+    const b = await createTicket('open one', {}); // not_started
+
+    const map = await getTicketStatusesByNumbers([a.ticket_number.toLowerCase(), b.ticket_number, 'HS-999999']);
+    expect(map.get(a.ticket_number.toUpperCase())).toBe('completed');
+    expect(map.get(b.ticket_number.toUpperCase())).toBe('not_started');
+    expect(map.has('HS-999999')).toBe(false); // no such ticket → absent
+  });
+
+  it('returns an empty map (no query) for an empty input', async () => {
+    const map = await getTicketStatusesByNumbers([]);
+    expect(map.size).toBe(0);
   });
 });

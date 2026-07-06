@@ -62,6 +62,34 @@ describe('worklist sync', () => {
     expect(content).not.toContain('No items in the Up Next list.');
   });
 
+  // HS-9337 — blocked_reason re-evaluation hint (option (a): worklist-hint, suggest-only).
+  it('renders a blocked_reason + flags "possibly unblocked" when every ref is done', async () => {
+    const blocker = await createTicket('9337 blocker done', { category: 'task' });
+    await updateTicket(blocker.id, { status: 'completed' });
+    const dependent = await createTicket('9337 dependent unblocked', { category: 'task', priority: 'high', up_next: true });
+    await updateTicket(dependent.id, { blocked_reason: `waiting on ${blocker.ticket_number} to land` });
+
+    scheduleWorklistSync();
+    const content = await syncedWorklist();
+    const section = content.split('---').find(s => s.includes(dependent.ticket_number));
+    expect(section).toBeDefined();
+    expect(section).toContain(`- Blocked: waiting on ${blocker.ticket_number} to land`);
+    expect(section).toContain('Possibly unblocked');
+    expect(section).toContain(blocker.ticket_number);
+  });
+
+  it('renders blocked_reason but does NOT hint when a referenced blocker is still open', async () => {
+    const openBlocker = await createTicket('9337 blocker open', { category: 'task' }); // stays not_started
+    const dependent = await createTicket('9337 dependent still blocked', { category: 'task', up_next: true });
+    await updateTicket(dependent.id, { blocked_reason: `waiting on ${openBlocker.ticket_number}` });
+
+    scheduleWorklistSync();
+    const content = await syncedWorklist();
+    const section = content.split('---').find(s => s.includes(`- Blocked: waiting on ${openBlocker.ticket_number}`));
+    expect(section).toBeDefined();
+    expect(section).not.toContain('Possibly unblocked');
+  });
+
   // HS-8917 — per-project worklist preamble.
   it('injects the worklist preamble above the Workflow section, then omits it when cleared', async () => {
     writeFileSettings(tempDir, { worklist_preamble: 'Deploy only on Fridays. Ask before touching billing.' });
