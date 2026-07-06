@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveAgentTransport, resolveProjectTransport } from './agentTransport.js';
+import { resolveAgentTransport, resolveEffectiveTransport, resolveProjectTransport } from './agentTransport.js';
 
 describe('resolveAgentTransport (HS-9331)', () => {
   it('routes Antigravity to the MCP+hooks transport (docs/115)', () => {
@@ -58,5 +58,34 @@ describe('resolveProjectTransport (HS-9331)', () => {
   it('defaults to the Claude channel when ai_tool is unset or non-string', () => {
     setTool(undefined);
     expect(resolveProjectTransport(dataDir)).toBe('claude-channel');
+  });
+});
+
+describe('resolveEffectiveTransport (HS-9338)', () => {
+  let dir: string;
+  let dataDir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hs-eff-transport-'));
+    dataDir = join(dir, '.hotsheet');
+    mkdirSync(dataDir, { recursive: true });
+  });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  const writeSettings = (obj: Record<string, unknown>): void =>
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(obj), 'utf-8');
+
+  it('uses the ai_tool-derived default when agent_backend is auto/absent', () => {
+    writeSettings({ ai_tool: 'opencode' });
+    expect(resolveEffectiveTransport(dataDir)).toBe('acp');
+    writeSettings({ ai_tool: 'opencode', agent_backend: 'auto' });
+    expect(resolveEffectiveTransport(dataDir)).toBe('acp');
+  });
+
+  it('the agent_backend override wins over the ai_tool-derived transport', () => {
+    // ai_tool would derive 'acp', but the override forces the Claude channel.
+    writeSettings({ ai_tool: 'opencode', agent_backend: 'claude-channel' });
+    expect(resolveEffectiveTransport(dataDir)).toBe('claude-channel');
+    // ai_tool='claude' would derive claude-channel, but force mcp-hooks.
+    writeSettings({ ai_tool: 'claude', agent_backend: 'mcp-hooks' });
+    expect(resolveEffectiveTransport(dataDir)).toBe('mcp-hooks');
   });
 });

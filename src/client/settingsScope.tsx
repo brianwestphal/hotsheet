@@ -111,6 +111,9 @@ const SCOPED_FIELDS: ScopedField[] = [
   // proposes a worker partition for review instead of dispatching directly.
   // Shared by default (a repo/team preference) with a per-machine Local override.
   { controlId: 'settings-always-preview-agent-plans', key: 'alwaysPreviewAgentPlans', kind: 'boolean' },
+  // HS-9338 (docs/117 §117.3) — the drive-transport override is per-machine (which
+  // agent/binary is installed varies per device), so it's local-only.
+  { controlId: 'agent-backend-select', key: 'agent_backend', kind: 'text', share: 'local-only' },
   // Terminal
   { controlId: 'settings-terminal-scrollback', key: 'terminal_scrollback_bytes', kind: 'number' },
   { controlId: 'settings-shell-integration-ui', key: 'shell_integration_ui', kind: 'boolean', share: 'local-only' }, // HS-9170 local-only

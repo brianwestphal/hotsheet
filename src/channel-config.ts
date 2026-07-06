@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 import { spawnAcpRun } from './acp/acpDrive.js';
-import { resolveProjectTransport } from './agentTransport.js';
+import { resolveEffectiveTransport } from './agentTransport.js';
 import { spawnAgyRun } from './antigravityDrive.js';
 import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
@@ -435,7 +435,9 @@ export async function triggerChannel(
   //   - 'acp' (docs/114): OpenCode et al. spawn `opencode acp` and drive ONE turn over
   //     stdio (the live turn needs `opencode auth`; routing + drive core are tested).
   //   - 'claude-channel': falls through to the persistent channel-port `/trigger` path.
-  const transport = resolveProjectTransport(dataDir);
+  // HS-9338 — the EFFECTIVE transport respects the per-project `agent_backend` override
+  // (docs/117 §117.3) ahead of the `ai_tool`-derived capability-table default.
+  const transport = resolveEffectiveTransport(dataDir);
   if (transport === 'mcp-hooks') return spawnAgyRun(dataDir, serverPort, content);
   if (transport === 'acp') return spawnAcpRun(dataDir, serverPort, content);
 

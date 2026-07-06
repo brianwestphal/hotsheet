@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from './agentBackend.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindViewsTab } from './customViews.js';
@@ -172,6 +173,15 @@ function bindGeneralTab() {
   const revealAgyPerms = (tool: string): void => {
     if (agyPermsField !== null) agyPermsField.style.display = tool === 'antigravity' ? '' : 'none';
   };
+  // HS-9338 — the drive-transport override picker + its "Auto (derived: X)" hint.
+  const agentBackendSelect = byIdOrNull<HTMLSelectElement>('agent-backend-select');
+  const agentBackendDerived = byIdOrNull('agent-backend-derived');
+  const updateAgentBackendDerived = (): void => {
+    if (agentBackendDerived === null) return;
+    const isAuto = agentBackendSelect === null || agentBackendSelect.value === 'auto';
+    const tool = aiToolSelect?.value ?? 'auto';
+    agentBackendDerived.textContent = isAuto ? ` (currently: ${TRANSPORT_LABEL[deriveDefaultTransport(tool)]})` : '';
+  };
 
   // Populate values + load file-settings fields when dialog opens.
   settingsBtn.addEventListener('click', () => {
@@ -201,6 +211,9 @@ function bindGeneralTab() {
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       if (agyPermsCheckbox !== null) agyPermsCheckbox.checked = fs.antigravity_interactive_permissions === true;
       revealAgyPerms(tool);
+      // HS-9338 — load the drive-transport override (Local setting) into the picker.
+      if (agentBackendSelect !== null) agentBackendSelect.value = agentBackendSelectValue(fs.agent_backend);
+      updateAgentBackendDerived();
     });
   });
 
@@ -296,8 +309,15 @@ function bindGeneralTab() {
   // string setting; `persistScopedSetting` writes it to the active layer.
   aiToolSelect?.addEventListener('change', () => {
     revealAgyPerms(aiToolSelect.value); // HS-9328 — show/hide the agy permission toggle
+    updateAgentBackendDerived();        // HS-9338 — the derived default follows ai_tool
     // HS-9328 — regen AI-tool files (agy hooks.json depends on the tool + the toggle).
     void persistScopedSetting('ai_tool', aiToolSelect.value).then(() => ensureSkills());
+  });
+
+  // HS-9338 — persist the per-project drive-transport override (Local, §95).
+  agentBackendSelect?.addEventListener('change', () => {
+    updateAgentBackendDerived();
+    void persistScopedSetting('agent_backend', agentBackendSelect.value);
   });
 
   // HS-9328 — Antigravity interactive-permission prompts (HS-9327). A JSON boolean;

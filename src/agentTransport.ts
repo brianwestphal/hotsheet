@@ -20,9 +20,10 @@
 // is the thin dataDir-reading wrapper.
 
 import { isAcpDrivenTool } from './acp/acpAgents.js';
+import { type AgentTransport, parseAgentBackend } from './agentBackendParse.js';
 import { readFileSettings } from './file-settings.js';
 
-export type AgentTransport = 'claude-channel' | 'mcp-hooks' | 'acp';
+export type { AgentTransport } from './agentBackendParse.js';
 
 /** MCP-native agents driven on the Claude rails (docs/115). Antigravity (`agy`) is the
  *  shipped one; a second MCP+hooks agent is added here (plus its spawn handler). */
@@ -44,4 +45,14 @@ export function resolveAgentTransport(aiTool: string | undefined): AgentTranspor
 export function resolveProjectTransport(dataDir: string): AgentTransport {
   const tool = readFileSettings(dataDir).ai_tool;
   return resolveAgentTransport(typeof tool === 'string' ? tool : undefined);
+}
+
+/**
+ * The EFFECTIVE drive transport for a project: the `agent_backend` override when set,
+ * otherwise the `ai_tool`-derived capability-table default. This is what the play-button
+ * path (`triggerChannel`) consults.
+ */
+export function resolveEffectiveTransport(dataDir: string): AgentTransport {
+  const override = parseAgentBackend(readFileSettings(dataDir).agent_backend);
+  return override.mode === 'transport' ? override.transport : resolveProjectTransport(dataDir);
 }

@@ -47,6 +47,12 @@ const FileSettingsSchema = z.object({
   // tools (`cursor`/`copilot`/`windsurf`) are context-only (skills/instructions).
   // A project-level choice → §95 SHARED (not in `LOCAL_SCOPE_KEYS`).
   ai_tool: z.string().optional(),
+  // HS-9338 (docs/117 §117.3) — per-project OVERRIDE of the `ai_tool`-derived drive
+  // transport (docs/117 §117.2). `auto`/absent = use the capability table; else force
+  // `claude-channel` / `mcp-hooks` / `acp` (advanced forms `mcp-hooks:<cmd>` /
+  // `acp:<cmd>` also carry a command, honored once HS-9339 lands). §95 **LOCAL** —
+  // which transport/binary works is machine-specific (see LOCAL_SCOPE_KEYS).
+  agent_backend: z.string().optional(),
   // HS-9327 — when true, the Antigravity play button drops `--dangerously-skip-permissions`
   // and installs a `.agents/hooks.json` PreToolUse hook that routes each tool call
   // through the §47 permission overlay (interactive approve/deny). Default false =
@@ -144,6 +150,9 @@ const LOCAL_SCOPE_KEYS = new Set([
   // Per-device auto-allow rules carrying machine-specific paths/commands.
   'permission_allow_rules',
   'terminal_prompt_allow_rules',
+  // HS-9338 (docs/117 §117.3) — the drive-transport override is machine-specific (which
+  // agent/binary is installed varies per device), so it's Local, not committed.
+  'agent_backend',
   // References a personal API key by name + ephemeral last-listened timestamp.
   'announcer_ai_key_id',
   'announcer_last_listened_at',

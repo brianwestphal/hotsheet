@@ -741,6 +741,18 @@ pageRoutes.get('/', (c) => {
                 </select>
                 <span className="settings-hint">Which AI tool this project uses. <strong>Auto-detect</strong> keeps today's behavior (seed skills/instructions for every detected tool). Choosing a CLI agent (Claude / Codex / Antigravity / Gemini / OpenCode / Goose) makes a <code>{'{{aiCommand}}'}</code> terminal launch that tool's binary (Antigravity → <code>agy</code>). Editor tools (Cursor / Copilot / Windsurf) get rules + instructions only. Driving non-Claude agents through the play button / permission popup is in progress — Antigravity rides the same MCP tools as Claude (HS-9310 spike proven; docs/113).</span>
               </div>
+              {/* HS-9338 (docs/117 §117.3) — per-project OVERRIDE of the ai_tool-derived
+                  drive transport. Local/per-machine (§95). Auto = the capability table. */}
+              <div className="settings-field">
+                <label htmlFor="agent-backend-select">Agent backend</label>
+                <select id="agent-backend-select" className="settings-select">
+                  <option value="auto">Auto (from AI tool)</option>
+                  <option value="claude-channel">Claude channel (MCP)</option>
+                  <option value="mcp-hooks">MCP + hooks</option>
+                  <option value="acp">ACP</option>
+                </select>
+                <span className="settings-hint">How Hot Sheet <strong>drives</strong> this project's agent via the play button (docs/117). <strong>Auto</strong> picks the transport from the AI tool<span id="agent-backend-derived"></span> — leave it here unless you need to force a specific one. This is a per-machine (Local) setting.</span>
+              </div>
               {/* HS-9328 — Antigravity interactive permission prompts (HS-9327).
                   Revealed only when ai_tool=antigravity. */}
               <div className="settings-field" id="antigravity-perms-field" style="display:none">

@@ -1,7 +1,8 @@
 # 117. Agent-backend transport selection — the per-agent capability table
 
-Status: **Capability table + auto-routing SHIPPED (HS-9331); Settings picker + full
-MCP-hooks generalization = follow-ups.**
+Status: **Capability table + auto-routing SHIPPED (HS-9331); Settings picker + `agent_backend`
+override SHIPPED (HS-9338); the advanced `<command>` input + MCP-hooks generalization =
+HS-9339.**
 
 ## 117.1 Problem
 
@@ -33,13 +34,28 @@ instead of the two gates. **Adding an agent no longer touches `triggerChannel`:*
 - a new **MCP-hooks** agent → add it to `MCP_HOOKS_AGENTS` **and** give it a spawn
   handler (today `spawnAgyRun` is agy-specific — see §117.4).
 
-## 117.3 Settings "Agent backend" picker (follow-up — not built)
+## 117.3 Settings "Agent backend" picker (HS-9338, SHIPPED)
 
-docs/114 §114.7 envisions a per-project **override** of the auto-derived transport
-(`claude-channel-mcp` / `mcp-hooks:<command>` / `acp:<command>`), defaulting from the
-capability table. Deferred because it carries real design questions (§117.5) and the
-auto-derivation covers the common case (one transport per agent today). Tracked as a
-follow-up; the capability table already exposes the default the picker would seed from.
+A per-project **override** of the auto-derived transport. Maintainer decisions (2026-07-06):
+
+- **Storage** — a new `agent_backend` file setting (`file-settings.ts`). `auto`/absent =
+  defer to the capability table; else force `claude-channel` / `mcp-hooks` / `acp`. The
+  advanced `mcp-hooks:<cmd>` / `acp:<cmd>` forms carry a command (parsed + stored, but
+  not yet consumed by the spawners — that's HS-9339). Pure parse/format in the shared
+  **`src/agentBackendParse.ts`** (`parseAgentBackend` / `formatAgentBackend`), used by
+  both server and client. `resolveEffectiveTransport(dataDir)` (`agentTransport.ts`) =
+  the override when set, else `resolveProjectTransport`; `triggerChannel` now consults it.
+- **§95 classification — Local** (per-machine; which agent/binary is installed varies by
+  device). Added to `LOCAL_SCOPE_KEYS` + a `local-only` scoped control in `settingsScope.tsx`.
+- **UI** — Settings → General "Agent backend" `<select>` (Auto / Claude channel / MCP +
+  hooks / ACP). The "Auto" hint shows the **derived** transport for the current `ai_tool`
+  via a client mirror (`src/client/agentBackend.ts::deriveDefaultTransport`).
+
+**Deferred to HS-9339:** the advanced free-text `<command>` input (and honoring it in the
+spawners) — the command does nothing until the MCP-hooks handler is generalized, so the
+picker exposes the transport choice only for now. Tests: `agentBackendParse.test.ts`
+(parse/format round-trip), `agentTransport.test.ts` (`resolveEffectiveTransport` override
+precedence), `client/agentBackend.test.ts` (derive/select-value).
 
 ## 117.4 Generalizing the MCP-hooks transport (follow-up — premature)
 
@@ -50,13 +66,11 @@ hook install) is only worthwhile once a **second** MCP-native agent lands — un
 it would be speculative. The capability table is the seam that makes that future change
 local (add to `MCP_HOOKS_AGENTS` + a handler). Tracked as a follow-up.
 
-## 117.5 Open design questions (for the picker follow-up)
+## 117.5 Design decisions (RESOLVED by the maintainer, 2026-07-06)
 
-- **Override storage** — a new `agent_backend` setting, or derive-only with an explicit
-  override key? Interaction with `ai_tool` (does the picker override the ai_tool-derived
-  transport, or is it read-only display of the derived value + an "advanced" override?).
-- **`<command>` capture** — how the `mcp-hooks:<command>` / `acp:<command>` forms specify
-  the agent binary/entrypoint (free-text vs. derived from `ai_tool`).
-- **§95 classification** — personal/Local vs. team/Shared for the override.
-
-These are the maintainer's call (case-by-case per the §95 standing rule).
+- **Override storage** — a new `agent_backend` setting that OVERRIDES the `ai_tool`-derived
+  transport (`auto`/absent = derive). ✅ HS-9338.
+- **`<command>` capture** — derive the binary from `ai_tool` for the common case; free-text
+  `mcp-hooks:<command>` / `acp:<command>` only in an advanced expander. ✅ (parse/format
+  shipped; the advanced input + honoring the command deferred to HS-9339.)
+- **§95 classification** — **Local** (per-machine). ✅ HS-9338.
