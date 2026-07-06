@@ -3,8 +3,9 @@ import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
-import { isAcpDriven, spawnAcpRun } from './acp/acpDrive.js';
-import { isAntigravityDriven, spawnAgyRun } from './antigravityDrive.js';
+import { spawnAcpRun } from './acp/acpDrive.js';
+import { resolveProjectTransport } from './agentTransport.js';
+import { spawnAgyRun } from './antigravityDrive.js';
 import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
@@ -427,21 +428,16 @@ export async function triggerChannel(
 ): Promise<boolean> {
   const content = await buildTriggerContent(dataDir, serverPort, message);
 
-  // HS-9321 — Antigravity has no persistent channel session to notify; each play
-  // spawns a one-shot `agy --print` in the project dir (which processes the worklist
-  // via the MCP tools + calls hotsheet_signal_done). Bypasses the channel-port path.
-  if (isAntigravityDriven(dataDir)) {
-    return spawnAgyRun(dataDir, serverPort, content);
-  }
-
-  // HS-9330 — ACP-native agents (OpenCode et al.) have no persistent channel session
-  // either; each play spawns `opencode acp` and drives ONE turn over its stdio (the
-  // agent processes the worklist via the same `hotsheet_*` MCP tools). Bypasses the
-  // channel-port path, like Antigravity. (The live turn needs `opencode auth` — see
-  // the HS-9330 note; the routing + drive core are headlessly tested.)
-  if (isAcpDriven(dataDir)) {
-    return spawnAcpRun(dataDir, serverPort, content);
-  }
+  // HS-9331 — select the drive transport via the per-agent capability table
+  // (`agentTransport.ts`), replacing the previous pair of hard-coded per-agent gates.
+  //   - 'mcp-hooks' (docs/115): Antigravity has no persistent channel session; each play
+  //     spawns a one-shot `agy --print` that processes the worklist via the MCP tools.
+  //   - 'acp' (docs/114): OpenCode et al. spawn `opencode acp` and drive ONE turn over
+  //     stdio (the live turn needs `opencode auth`; routing + drive core are tested).
+  //   - 'claude-channel': falls through to the persistent channel-port `/trigger` path.
+  const transport = resolveProjectTransport(dataDir);
+  if (transport === 'mcp-hooks') return spawnAgyRun(dataDir, serverPort, content);
+  if (transport === 'acp') return spawnAcpRun(dataDir, serverPort, content);
 
   const ports = resolveTriggerTargetPorts(dataDir, target, opts);
   if (ports.length === 0) return false;
