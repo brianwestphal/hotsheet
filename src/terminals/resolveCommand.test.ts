@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { dirname, join, relative } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { claudeWithChannelCommand, resolveTerminalCommand, resolveTerminalCwd } from './resolveCommand.js';
+import { claudeWithChannelCommand, commandUsesAiToken, resolveTerminalCommand, resolveTerminalCwd } from './resolveCommand.js';
 
 // HS-8713 — same-location compare that ignores separator + drive-resolution
 // differences. The cwd resolver returns native (`\`) or token-expanded
@@ -211,6 +211,19 @@ describe('resolveTerminalCommand', () => {
       channelEnabledOverride: false,
     });
     expect(cwd).toBe(join(dirname(dataDir), 'scratch'));
+  });
+});
+
+describe('commandUsesAiToken (HS-9333)', () => {
+  it('is true for either AI-tool placeholder, embedded anywhere', () => {
+    expect(commandUsesAiToken('{{claudeCommand}}')).toBe(true);
+    expect(commandUsesAiToken('{{aiCommand}}')).toBe(true);
+    expect(commandUsesAiToken('wt: {{aiCommand}} --flag')).toBe(true);
+  });
+  it('is false for a command with no placeholder', () => {
+    expect(commandUsesAiToken('claude')).toBe(false);
+    expect(commandUsesAiToken('/bin/zsh')).toBe(false);
+    expect(commandUsesAiToken('')).toBe(false);
   });
 });
 

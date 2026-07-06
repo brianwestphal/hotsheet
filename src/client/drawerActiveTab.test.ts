@@ -6,9 +6,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AI_COMMAND_SENTINEL,
   chooseDrawerActiveTab,
   CLAUDE_COMMAND_SENTINEL,
   claudeTabIdFromConfigs,
+  isAiTerminalCommand,
 } from './drawerActiveTab.js';
 
 describe('claudeTabIdFromConfigs', () => {
@@ -48,6 +50,26 @@ describe('claudeTabIdFromConfigs', () => {
   it('returns null for null / empty configs', () => {
     expect(claudeTabIdFromConfigs(null)).toBeNull();
     expect(claudeTabIdFromConfigs({ configured: [], dynamic: [] })).toBeNull();
+  });
+
+  it('HS-9333 — also recognizes an {{aiCommand}} terminal as the AI terminal', () => {
+    const configs = {
+      configured: [{ id: 'shell', command: 'zsh' }, { id: 'ai', command: AI_COMMAND_SENTINEL }],
+      dynamic: [],
+    };
+    expect(claudeTabIdFromConfigs(configs)).toBe('terminal:ai');
+  });
+});
+
+describe('isAiTerminalCommand (HS-9333)', () => {
+  it('is true for either AI-tool sentinel', () => {
+    expect(isAiTerminalCommand(CLAUDE_COMMAND_SENTINEL)).toBe(true);
+    expect(isAiTerminalCommand(AI_COMMAND_SENTINEL)).toBe(true);
+  });
+  it('is false for a plain shell command or empty string', () => {
+    expect(isAiTerminalCommand('zsh')).toBe(false);
+    expect(isAiTerminalCommand('')).toBe(false);
+    expect(isAiTerminalCommand('claude')).toBe(false); // resolved value, not the token
   });
 });
 

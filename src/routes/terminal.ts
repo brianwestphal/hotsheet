@@ -28,7 +28,7 @@ import {
   type TerminalState,
   writeInput,
 } from '../terminals/registry.js';
-import { resolveTerminalCommand } from '../terminals/resolveCommand.js';
+import { commandUsesAiToken, resolveTerminalCommand } from '../terminals/resolveCommand.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { notifyBellWaiters } from './notify.js';
@@ -354,7 +354,10 @@ export function createDynamicTerminal(
   // Claude terminal does — crucially the `--dangerously-load-development-channels`
   // flag that routes permission prompts to Hot Sheet. A bare `claude` (no token)
   // is injected unchanged, so callers that already build a full command are unaffected.
-  const runCommand = runCommandRaw.includes('{{claudeCommand}}')
+  // HS-9333 — resolve EITHER token (`{{claudeCommand}}` or the `ai_tool`-aware
+  // `{{aiCommand}}`); previously only `{{claudeCommand}}` was resolved, so an ad-hoc
+  // `{{aiCommand}}` runCommand was launched verbatim (a broken literal command).
+  const runCommand = commandUsesAiToken(runCommandRaw)
     ? resolveTerminalCommand({ dataDir, configOverride: { id, command: runCommandRaw } }).command
     : runCommandRaw;
   if (body.spawn === true || runCommand !== '') {

@@ -26,6 +26,13 @@ describe('deriveNameFromCommand (HS-7858)', () => {
     expect(deriveNameFromCommand('{{claudeCommand}}')).toBe('Claude');
   });
 
+  it('HS-9333 — {{aiCommand}} uses the passed AI-tool label, falling back to "AI"', () => {
+    expect(deriveNameFromCommand('{{aiCommand}}', 'OpenCode')).toBe('OpenCode');
+    expect(deriveNameFromCommand('{{aiCommand}}', 'Codex')).toBe('Codex');
+    expect(deriveNameFromCommand('{{aiCommand}}')).toBe('AI');
+    expect(deriveNameFromCommand('{{aiCommand}}', '')).toBe('AI');
+  });
+
   it('returns the basename of a Unix shell path', () => {
     expect(deriveNameFromCommand('/bin/zsh')).toBe('zsh');
     expect(deriveNameFromCommand('/usr/bin/bash')).toBe('bash');

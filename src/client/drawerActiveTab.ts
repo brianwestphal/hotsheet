@@ -8,22 +8,32 @@
  *  `resolveCommand.ts` / `projects.ts` (the client has no shared export for it). */
 export const CLAUDE_COMMAND_SENTINEL = '{{claudeCommand}}';
 
+/** HS-9333 — the `ai_tool`-aware `{{aiCommand}}` alias (docs/113 §113.3). A terminal
+ *  whose command is EITHER sentinel is "the AI terminal" for drawer-default purposes. */
+export const AI_COMMAND_SENTINEL = '{{aiCommand}}';
+
+/** HS-9333 — true when a terminal's command marks it as the project's AI terminal
+ *  (either the legacy `{{claudeCommand}}` or the `{{aiCommand}}` alias). */
+export function isAiTerminalCommand(command: string): boolean {
+  return command === CLAUDE_COMMAND_SENTINEL || command === AI_COMMAND_SENTINEL;
+}
+
 /** The subset of a terminal config this module needs. */
 export interface TerminalConfigLike {
   id: string;
   command: string;
 }
 
-/** HS-9246 — the drawer tab id (`terminal:<id>`) of the Claude terminal in a
- *  project's terminal configs, or null if the project has no Claude terminal.
- *  The Claude terminal is the one whose command is the `{{claudeCommand}}`
- *  sentinel (regardless of how the user renamed the tab). */
+/** HS-9246 / HS-9333 — the drawer tab id (`terminal:<id>`) of the AI terminal in a
+ *  project's terminal configs, or null if the project has none. The AI terminal is the
+ *  one whose command is an AI-tool sentinel — `{{claudeCommand}}` OR the `{{aiCommand}}`
+ *  alias (regardless of how the user renamed the tab). */
 export function claudeTabIdFromConfigs(
   configs: { configured: TerminalConfigLike[]; dynamic: TerminalConfigLike[] } | null,
 ): string | null {
   if (configs === null) return null;
   const claude = [...configs.configured, ...configs.dynamic].find(
-    (c) => c.command === CLAUDE_COMMAND_SENTINEL,
+    (c) => isAiTerminalCommand(c.command),
   );
   return claude !== undefined ? `terminal:${claude.id}` : null;
 }

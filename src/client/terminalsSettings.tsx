@@ -1,10 +1,11 @@
 import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
+import { agentDisplayName } from './agentName.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2 } from './icons.js';
 import { delegate } from './reactive.js';
 import { loadScopedList, moveScopedListItem, saveScopedList, scopeListHintElement } from './settingsScopeList.js';
-import { getActiveProject } from './state.js';
+import { getActiveProject, state } from './state.js';
 import type { TerminalTabConfig } from './terminal.js';
 import { getProjectDefault } from './terminalAppearance.js';
 import { clampFontSize, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE, TERMINAL_FONTS } from './terminalFonts.js';
@@ -739,7 +740,9 @@ function openEditor(
   if (cmdInput !== null && cmdPopover !== null) {
     void wireCommandCombobox(cmdInput, cmdPopover, (value) => {
       if (nameInput !== null && nameInput.value.trim() === '') {
-        const derived = deriveNameFromCommand(value);
+        // HS-9333 — pass the project's AI-tool label so an `{{aiCommand}}` terminal
+        // derives e.g. "OpenCode" rather than a generic name.
+        const derived = deriveNameFromCommand(value, agentDisplayName(state.settings.ai_tool));
         if (derived !== '') nameInput.value = derived;
       }
     });
@@ -878,16 +881,19 @@ export function addTerminalEntry(): void {
   openEditor(draft, { focusField: 'command', mode: 'add' });
 }
 
-/** HS-7858 — derive a sensible default tab name from the chosen command.
- *  The sentinel `{{claudeCommand}}` becomes "Claude"; everything else uses
- *  the basename of the path with any trailing `.exe` / `.cmd` / `.ps1` /
- *  `.bat` extension stripped (so `C:\\Windows\\System32\\cmd.exe` →
- *  `cmd`, `/bin/zsh` → `zsh`). Whitespace-only input falls through to an
- *  empty string so callers can decide how to handle it. */
-export function deriveNameFromCommand(command: string): string {
+/** HS-7858 / HS-9333 — derive a sensible default tab name from the chosen command.
+ *  The sentinel `{{claudeCommand}}` becomes "Claude"; the `ai_tool`-aware
+ *  `{{aiCommand}}` alias becomes the project's AI-tool label (`aiLabel`, e.g.
+ *  "OpenCode"/"Codex"), falling back to "AI" when unknown. Everything else uses the
+ *  basename of the path with any trailing `.exe` / `.cmd` / `.ps1` / `.bat` extension
+ *  stripped (so `C:\\Windows\\System32\\cmd.exe` → `cmd`, `/bin/zsh` → `zsh`).
+ *  Whitespace-only input falls through to an empty string so callers can decide how to
+ *  handle it. */
+export function deriveNameFromCommand(command: string, aiLabel?: string): string {
   const trimmed = command.trim();
   if (trimmed === '') return '';
   if (trimmed === '{{claudeCommand}}') return 'Claude';
+  if (trimmed === '{{aiCommand}}') return aiLabel !== undefined && aiLabel !== '' ? aiLabel : 'AI';
   const slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
   const base = slash >= 0 ? trimmed.slice(slash + 1) : trimmed;
   return base.replace(/\.(exe|cmd|ps1|bat)$/i, '');

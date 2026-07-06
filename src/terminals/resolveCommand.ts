@@ -29,6 +29,16 @@ const CLI_AGENTS: ReadonlySet<string> = new Set(['codex', 'gemini', 'opencode', 
 // `ai_tool` id. Antigravity's CLI is `agy`. Others fall through to id == binary.
 const AGENT_BINARIES: Readonly<Record<string, string>> = { antigravity: 'agy' };
 
+/** HS-9333 — true when a command template contains an AI-tool placeholder that
+ *  `resolveTerminalCommand` will expand: either the legacy `{{claudeCommand}}` or the
+ *  `ai_tool`-aware `{{aiCommand}}` alias. Callers that special-case "does this need
+ *  server-side resolution?" (e.g. the ad-hoc runCommand path) must check BOTH tokens —
+ *  before HS-9333 the ad-hoc path only checked `{{claudeCommand}}`, so an ad-hoc
+ *  `{{aiCommand}}` was launched verbatim. */
+export function commandUsesAiToken(command: string): boolean {
+  return command.includes(CLAUDE_TOKEN) || command.includes(AI_TOKEN);
+}
+
 /** HS-8349 — build the development-channel command for a given project.
  *  The MCP server name is now per-project (`hotsheet-channel-<slug>`), so
  *  this needs to mirror the slug from `slugifyDataDir(dataDir)`. */
