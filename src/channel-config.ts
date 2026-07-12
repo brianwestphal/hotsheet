@@ -5,12 +5,13 @@ import { z } from 'zod';
 
 import { spawnAcpRun } from './acp/acpDrive.js';
 import { resolveEffectiveTransport } from './agentTransport.js';
-import { spawnAgyRun } from './antigravityDrive.js';
 import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
 import { listAliveEntries } from './channelRegistry.js';
 import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
+import { readFileSettings } from './file-settings.js';
+import { getMcpHooksAgent } from './mcpHooksAgents.js';
 import type { ChannelTriggerTarget } from './routes/validation.js';
 import { ChannelOkBodySchema } from './schemas.js';
 
@@ -438,7 +439,14 @@ export async function triggerChannel(
   // HS-9338 — the EFFECTIVE transport respects the per-project `agent_backend` override
   // (docs/117 §117.3) ahead of the `ai_tool`-derived capability-table default.
   const transport = resolveEffectiveTransport(dataDir);
-  if (transport === 'mcp-hooks') return spawnAgyRun(dataDir, serverPort, content);
+  if (transport === 'mcp-hooks') {
+    // HS-9339 — dispatch to the registered MCP-hooks agent by `ai_tool` (was a hard-coded
+    // `spawnAgyRun`). Null when an `agent_backend` override forced `mcp-hooks` onto an
+    // `ai_tool` that isn't a registered spawn agent → no-op (documented, docs/117 §117.3).
+    const tool = readFileSettings(dataDir).ai_tool;
+    const agent = getMcpHooksAgent(typeof tool === 'string' ? tool : undefined);
+    return agent !== null ? agent.spawnRun(dataDir, serverPort, content) : false;
+  }
   if (transport === 'acp') return spawnAcpRun(dataDir, serverPort, content);
 
   const ports = resolveTriggerTargetPorts(dataDir, target, opts);

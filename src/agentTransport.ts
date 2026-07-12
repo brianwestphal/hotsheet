@@ -22,21 +22,20 @@
 import { isAcpDrivenTool } from './acp/acpAgents.js';
 import { type AgentTransport, parseAgentBackend } from './agentBackendParse.js';
 import { readFileSettings } from './file-settings.js';
+import { isMcpHooksAiTool } from './mcpHooksAgents.js';
 
 export type { AgentTransport } from './agentBackendParse.js';
 
-/** MCP-native agents driven on the Claude rails (docs/115). Antigravity (`agy`) is the
- *  shipped one; a second MCP+hooks agent is added here (plus its spawn handler). */
-const MCP_HOOKS_AGENTS: ReadonlySet<string> = new Set(['antigravity']);
-
 /**
- * Pure: the drive transport for an `ai_tool` value. Precedence — an explicit MCP-hooks
- * agent, then an ACP-native agent (via `isAcpDrivenTool`), else the Claude channel
- * (the default for `claude`/`auto`/unset and the editor-only tools). Case-insensitive.
+ * Pure: the drive transport for an `ai_tool` value. Precedence — a registered MCP-hooks
+ * (spawn) agent (HS-9339 `mcpHooksAgents.ts`), then an ACP-native agent (via
+ * `isAcpDrivenTool`), else the Claude channel (the default for `claude`/`auto`/unset and
+ * the editor-only tools). Case-insensitive. Both membership checks are runtime lookups
+ * (no module-init call) so the `channel-config`↔`mcpHooksAgents` cycle stays init-safe.
  */
 export function resolveAgentTransport(aiTool: string | undefined): AgentTransport {
   const tool = (aiTool ?? '').trim().toLowerCase();
-  if (MCP_HOOKS_AGENTS.has(tool)) return 'mcp-hooks';
+  if (isMcpHooksAiTool(tool)) return 'mcp-hooks';
   if (isAcpDrivenTool(tool)) return 'acp';
   return 'claude-channel';
 }

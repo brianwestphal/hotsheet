@@ -3,8 +3,8 @@ import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
-import { ensureAntigravityMcpConfig } from './antigravity.js';
 import { readFileSettings } from './file-settings.js';
+import { listMcpHooksAgents } from './mcpHooksAgents.js';
 import { getProjectSecret } from './secret-file.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
@@ -733,18 +733,25 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
     if (ensureWindsurfRules(projectRoot)) platforms.push('Windsurf');
   }
 
-  // HS-9320 — Antigravity (`agy`) has no skill files (it consumes the hotsheet_*
-  // MCP tools directly), so instead of a skill generator, register the cwd-resolving
-  // channel server in agy's GLOBAL MCP config so a launched `agy` sees the tools. A
-  // single entry serves every project (see `src/antigravity.ts`); idempotent +
-  // best-effort. Gated on `agy` being present, mirroring the other tools' detection.
-  if (wants('antigravity') && isExecutableOnPath('agy')) {
-    ensureAntigravityMcpConfig();
-    // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`.
-    if (ensureAntigravitySkills(projectRoot, dataDir)) platforms.push('Antigravity');
-    // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
-    // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
-    ensureAntigravityHooks(projectRoot, dataDir);
+  // HS-9320 / HS-9339 — spawn-based MCP+hooks agents (docs/115) have no skill files for
+  // the tools (they consume the `hotsheet_*` MCP tools directly), so instead of a skill
+  // generator we register the cwd-resolving channel server in the agent's GLOBAL MCP
+  // config (a single entry serves every project; idempotent + best-effort). This now
+  // iterates the per-agent registry (`mcpHooksAgents.ts`) so a second spawn agent's
+  // config-write needs no new code here. Each is gated on its binary being present.
+  for (const agent of listMcpHooksAgents()) {
+    if (!wants(agent.aiTool) || !isExecutableOnPath(agent.binary)) continue;
+    agent.ensureMcpConfig();
+    // Antigravity extras (worklist skills + the interactive-permission hook) stay
+    // agy-specific for now — their on-disk format is agent-specific; generalize them
+    // against a real second agent when one lands (HS-9339 note).
+    if (agent.aiTool === 'antigravity') {
+      // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`.
+      if (ensureAntigravitySkills(projectRoot, dataDir)) platforms.push('Antigravity');
+      // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
+      // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
+      ensureAntigravityHooks(projectRoot, dataDir);
+    }
   }
 
   if (platforms.length > 0) {

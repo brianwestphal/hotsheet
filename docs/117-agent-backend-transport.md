@@ -1,8 +1,8 @@
 # 117. Agent-backend transport selection — the per-agent capability table
 
 Status: **Capability table + auto-routing SHIPPED (HS-9331); Settings picker + `agent_backend`
-override SHIPPED (HS-9338); the advanced `<command>` input + MCP-hooks generalization =
-HS-9339.**
+override SHIPPED (HS-9338); MCP-hooks registry generalization core SHIPPED (HS-9339 — a
+second spawn agent = one descriptor; skills/hooks + the advanced `<command>` remain).**
 
 ## 117.1 Problem
 
@@ -57,14 +57,31 @@ picker exposes the transport choice only for now. Tests: `agentBackendParse.test
 (parse/format round-trip), `agentTransport.test.ts` (`resolveEffectiveTransport` override
 precedence), `client/agentBackend.test.ts` (derive/select-value).
 
-## 117.4 Generalizing the MCP-hooks transport (follow-up — premature)
+## 117.4 Generalizing the MCP-hooks transport (HS-9339 — core SHIPPED)
 
-The MCP-hooks handler (`antigravity.ts` config-writer + `antigravityDrive.ts` spawn) is
-still agy-specific (`agy --print`, `~/.gemini/config/mcp_config.json`). Generalizing it
-to an arbitrary `mcp-hooks:<command>` agent (parameterized binary + config location +
-hook install) is only worthwhile once a **second** MCP-native agent lands — until then
-it would be speculative. The capability table is the seam that makes that future change
-local (add to `MCP_HOOKS_AGENTS` + a handler). Tracked as a follow-up.
+The MCP-hooks drive is now **registry-driven** (`src/mcpHooksAgents.ts`). A spawn-based
+MCP+hooks agent is one `McpHooksAgent` descriptor `{ aiTool, binary, spawnRun,
+ensureMcpConfig }`; the registry `AGENTS` holds **Antigravity** as the first entry
+(referencing the EXISTING, on-device-validated `spawnAgyRun` + `ensureAntigravityMcpConfig`,
+so agy behavior is byte-identical — a pure re-routing). The ticket's three named targets
+are generalized:
+
+- **Spawner + routing** — `channel-config.ts::triggerChannel`'s `mcp-hooks` branch
+  dispatches via `getMcpHooksAgent(ai_tool)?.spawnRun` (was a hard-coded `spawnAgyRun`).
+- **Config writer** — `skills.ts` iterates `listMcpHooksAgents()` and calls each
+  `ensureMcpConfig()` when its `binary` is on PATH (was a hard-coded agy `if`).
+- **Capability table** — `agentTransport.ts::resolveAgentTransport` uses
+  `isMcpHooksAiTool` (runtime lookup, keeps the `channel-config`↔`mcpHooksAgents` cycle
+  init-safe) instead of a hard-coded `{antigravity}` set.
+
+So **adding a second spawn agent = one descriptor** (no changes to `triggerChannel`, the
+capability table, or the config loop). **NOT yet generalized:** the agent's worklist
+SKILLS + interactive-permission HOOK stay agy-specific in `skills.ts` (their on-disk
+format is agent-specific — generalize against a real second agent), and the advanced
+`agent_backend` `<command>` override is still inert (it would let the override name the
+binary; wire it when the second agent lands). **Claude is NOT in this registry** — it uses
+the persistent `claude-channel` transport (docs/12), not a spawn, so it can't share this
+handler.
 
 ## 117.5 Design decisions (RESOLVED by the maintainer, 2026-07-06)
 
