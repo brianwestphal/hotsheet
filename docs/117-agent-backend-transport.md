@@ -83,6 +83,16 @@ binary; wire it when the second agent lands). **Claude is NOT in this registry**
 the persistent `claude-channel` transport (docs/12), not a spawn, so it can't share this
 handler.
 
+**Future-agent candidates (per docs/113 §113.2).** The maintainer's intent (HS-9339) was
+"build agy support so other tools plug in going forward" — this registry (for spawn-based
+MCP agents) plus the ACP client (docs/114) and the capability table together serve that.
+Note where the named candidates land: **Cursor** is **Tier B** (editor, context-only — Hot
+Sheet doesn't drive it; already handled by skills/instructions, HS-8916), so it is NOT an
+MCP-hooks registry candidate. **Codex** is **Tier A** but slated for the **ACP** transport
+(Codex-via-Zed-adapter, docs/114 — tracked under HS-9330's per-agent follow-ups), so it
+goes through the ACP client, not this spawn registry — unless a spike shows it's better
+driven spawn-style, in which case it's a one-descriptor add here.
+
 ## 117.5 Design decisions (RESOLVED by the maintainer, 2026-07-06)
 
 - **Override storage** — a new `agent_backend` setting that OVERRIDES the `ai_tool`-derived
