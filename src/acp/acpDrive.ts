@@ -15,12 +15,14 @@
 // remaining boundary (needs `opencode auth`; a manual/paired step, HS-9330 note) — the
 // protocol core + this wiring are proven headlessly, the real turn is not.
 //
-// The §47 permission overlay + the auto-allow gate are NOT wired here yet: the ACP
-// `toolCall` shape a `session/request_permission` carries wasn't captured by the spike
-// (it stopped at `session/new`, before any tool call), so mapping it onto the allow-rule
-// gate would be guessing. Until a live turn pins that shape, `requestPermission` is an
-// injected seam that defaults to deny-by-default (acpClient's own fallback). That is the
-// one real client-surface change tracked as a follow-up.
+// HS-9330 item 2 — the §47 permission overlay IS wired here now that a live OpenCode turn
+// pinned the `session/request_permission` `toolCall` shape (docs/114 §114.11). The default
+// `requestPermission` maps the toolCall to display fields (`acpToolCall.ts`) and injects it
+// into the main-server bridge (`acpPermissionBridge.ts`) → the SAME option-driven overlay
+// the Claude popup uses → the user's chosen `optionId` flows back as the ACP reply. A
+// pending request is dismissed (→ cancelled) if the turn ends first, so an abandoned
+// prompt can never leave the agent waiting. (The auto-allow gate — mapping the ACP `kind`
+// onto `permission_allow_rules` — is a follow-up.)
 
 import { type ChildProcess, spawn } from 'child_process';
 import { dirname } from 'path';
@@ -29,6 +31,8 @@ import { readFileSettings } from '../file-settings.js';
 import { getProjectSecret } from '../secret-file.js';
 import { isAcpDrivenTool, resolveAcpAgentCommand } from './acpAgents.js';
 import { type AcpClientCallbacks, type AcpTransport, createAcpClient } from './acpClient.js';
+import { dismissAcpPermission, injectAcpPermission } from './acpPermissionBridge.js';
+import { extractToolCallDisplay } from './acpToolCall.js';
 
 /** HS-9330 — does this project drive its play button over the ACP transport
  *  (docs/113 §113.2 A2)? True when `ai_tool` resolves to a known ACP entrypoint. */
@@ -55,9 +59,8 @@ export interface AcpDriveDeps {
   signalDone?: (dataDir: string, serverPort: number) => void;
   /** Injectable for tests. Defaults to the real `/channel/heartbeat` POST. */
   postHeartbeat?: (serverPort: number, secret: string, state: HeartbeatState) => void;
-  /** The permission resolver — the auto-allow gate + §47 overlay (docs/114 §114.5).
-   *  Absent (the shipped default until the overlay lands), acpClient denies by default
-   *  (never auto-approves a tool call with no resolver wired). */
+  /** Override the permission resolver (tests). Absent → the default bridge resolver
+   *  (`makeBridgeResolver`) that surfaces the request in the §47 overlay. */
   requestPermission?: AcpClientCallbacks['requestPermission'];
 }
 
@@ -105,11 +108,19 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
   const timer = setInterval(() => { heartbeat(serverPort, secret, 'heartbeat'); }, ACP_HEARTBEAT_INTERVAL_MS);
   timer.unref(); // don't hold the event loop open for the heartbeat
 
+  // HS-9330 — track request_ids we've surfaced in the overlay so a turn that ends while
+  // one is still pending can dismiss it (→ cancelled) rather than leave the agent waiting.
+  const pendingPermissionIds = new Set<string>();
+  const requestPermission = deps.requestPermission ?? makeBridgeResolver(secret, pendingPermissionIds);
+
   let finished = false;
   const finish = (): void => {
     if (finished) return; // turn-end, 'error', and 'exit' can all fire — run once
     finished = true;
     clearInterval(timer);
+    // Dismiss any still-open permission popup for this turn so it can't hang the agent.
+    for (const id of pendingPermissionIds) dismissAcpPermission(id);
+    pendingPermissionIds.clear();
     heartbeat(serverPort, secret, 'idle');
     done(dataDir, serverPort);
     try { proc.kill(); } catch { /* already gone */ }
@@ -118,7 +129,7 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
   const client = createAcpClient(transport, {
     onBusy: () => { heartbeat(serverPort, secret, 'heartbeat'); }, // activity-driven beat
     onTurnEnd: () => { finish(); },                                // stopReason ⇒ done
-    requestPermission: deps.requestPermission,
+    requestPermission,
   });
 
   // Attach the stdout pump BEFORE runPrompt sends `initialize`, so no reply is missed.
@@ -131,6 +142,35 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
   // throw, and swallows the rejection so it can't surface as an unhandled rejection.
   void client.runPrompt(projectDir, content).catch(() => { finish(); });
   return true;
+}
+
+/**
+ * The default permission resolver: surface the agent's `session/request_permission` in
+ * the §47 overlay (via the main-server bridge) and resolve with the user's choice. Maps
+ * the ACP `toolCall` → display fields (`extractToolCallDisplay`) and passes the agent's
+ * own `options` straight through (they're already `{ optionId, name, kind }`). Tracks the
+ * request_id in `pending` so `finish()` can dismiss it if the turn ends first.
+ */
+function makeBridgeResolver(
+  secret: string,
+  pending: Set<string>,
+): NonNullable<AcpClientCallbacks['requestPermission']> {
+  return async (req) => {
+    const display = extractToolCallDisplay(req.toolCall);
+    const { request_id, promise } = injectAcpPermission({
+      secret,
+      tool_name: display.tool_name,
+      description: display.description,
+      input_preview: display.input_preview,
+      options: req.options,
+    });
+    pending.add(request_id);
+    try {
+      return await promise;
+    } finally {
+      pending.delete(request_id);
+    }
+  };
 }
 
 /** Best-effort `/channel/done` POST so busy clears when the turn ends (mirrors the agy

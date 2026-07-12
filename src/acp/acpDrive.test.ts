@@ -8,9 +8,56 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getProjectSecret } from '../secret-file.js';
 import { type AcpDriveDeps, isAcpDriven, spawnAcpRun } from './acpDrive.js';
+import {
+  _resetAcpPermissionsForTesting, pendingAcpPermissionForSecret, resolveAcpPermission,
+} from './acpPermissionBridge.js';
 
 type SpawnFn = NonNullable<AcpDriveDeps['spawnFn']>;
+
+/** The exact edit toolCall + options captured from a live OpenCode turn (§114.11). */
+const EDIT_TOOL_CALL = {
+  toolCallId: 'call_x', title: '/tmp/acp-probe/hello.txt', kind: 'edit', status: 'pending',
+  locations: [{ path: '/tmp/acp-probe/hello.txt' }],
+  rawInput: { filepath: '/tmp/acp-probe/hello.txt', diff: '@@ -0,0 +1,1 @@\n+hi from acp\n' },
+};
+const PERM_OPTIONS = [
+  { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+  { optionId: 'always', kind: 'allow_always', name: 'Always allow' },
+  { optionId: 'reject', kind: 'reject_once', name: 'Reject' },
+];
+
+/** A fake agent that, on `session/prompt`, raises a `session/request_permission` and
+ *  waits for the client's reply before finishing the turn. Captures the reply outcome. */
+function scriptedAgentWithPermission(): {
+  proc: EventEmitter & { stdin: unknown; stdout: EventEmitter; kill: () => void };
+  spawnFn: SpawnFn;
+  getOutcome: () => unknown;
+} {
+  const stdout = new EventEmitter();
+  const emit = (obj: unknown): void => { stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n', 'utf-8')); };
+  let outcome: unknown;
+  let promptId: unknown;
+  const respond = (line: string): void => {
+    let msg: { id?: unknown; method?: string; result?: { outcome?: unknown } };
+    try { msg = JSON.parse(line) as typeof msg; } catch { return; }
+    if (msg.method === 'initialize') emit({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
+    else if (msg.method === 'session/new') emit({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } });
+    else if (msg.method === 'session/prompt') {
+      promptId = msg.id;
+      emit({ jsonrpc: '2.0', id: 'perm-1', method: 'session/request_permission', params: { sessionId: 'sess-1', toolCall: EDIT_TOOL_CALL, options: PERM_OPTIONS } });
+    } else if (msg.id === 'perm-1' && msg.result !== undefined) {
+      outcome = msg.result.outcome; // the client's reply to the permission request
+      emit({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } }); // now finish
+    }
+  };
+  const proc = Object.assign(new EventEmitter(), {
+    stdin: { write: (s: string) => { respond(s); }, end: () => {} }, stdout, kill: vi.fn(),
+  });
+  const spawnFn = vi.fn<SpawnFn>(() => proc as unknown as ChildProcess);
+  return { proc, spawnFn, getOutcome: () => outcome };
+}
 
 /** Flush the microtask + immediate queues so the async `runPrompt` chain settles. */
 const flush = async (): Promise<void> => {
@@ -191,5 +238,47 @@ describe('spawnAcpRun', () => {
     setTool('opencode');
     const spawnFn = vi.fn<SpawnFn>(() => { throw new Error("ENOENT"); });
     expect(spawnAcpRun(dataDir, 4174, 'go', { spawnFn, signalDone: vi.fn() })).toBe(false);
+  });
+
+  // HS-9330 item 2 — the default resolver surfaces the agent's session/request_permission
+  // in the §47 overlay (via the main-server bridge) and relays the user's choice back.
+  describe('permission bridge wiring (HS-9330)', () => {
+    afterEach(() => { _resetAcpPermissionsForTesting(); });
+
+    it('surfaces the request in the bridge, relays the chosen option, and completes', async () => {
+      setTool('opencode');
+      const secret = getProjectSecret(dataDir);
+      const { spawnFn, getOutcome } = scriptedAgentWithPermission();
+      const signalDone = vi.fn();
+      spawnAcpRun(dataDir, 4174, 'edit a file', { spawnFn, signalDone, postHeartbeat: vi.fn() });
+      await flush();
+
+      // The toolCall was mapped to display fields + the agent's options passed through.
+      const pending = pendingAcpPermissionForSecret(secret);
+      expect(pending?.tool_name).toBe('edit');
+      expect(pending?.description).toBe('/tmp/acp-probe/hello.txt');
+      expect(pending?.input_preview).toContain('+hi from acp');
+      expect(pending?.options.map((o) => o.optionId)).toEqual(['once', 'always', 'reject']);
+
+      // User picks "Always allow" → the agent receives that exact optionId; turn ends.
+      resolveAcpPermission(pending!.request_id, { optionId: 'always' });
+      await flush();
+      expect(getOutcome()).toEqual({ outcome: 'selected', optionId: 'always' });
+      expect(signalDone).toHaveBeenCalled();
+      expect(pendingAcpPermissionForSecret(secret)).toBeNull(); // cleared
+    });
+
+    it('dismisses a still-pending permission when the turn ends first (no hang)', async () => {
+      setTool('opencode');
+      const secret = getProjectSecret(dataDir);
+      const { proc, spawnFn } = scriptedAgentWithPermission();
+      spawnAcpRun(dataDir, 4174, 'edit', { spawnFn, signalDone: vi.fn(), postHeartbeat: vi.fn() });
+      await flush();
+      expect(pendingAcpPermissionForSecret(secret)).not.toBeNull();
+
+      proc.emit('exit', 0, null); // process gone before the user answered
+      await flush();
+      expect(pendingAcpPermissionForSecret(secret)).toBeNull(); // dismissed → agent unblocked
+    });
   });
 });

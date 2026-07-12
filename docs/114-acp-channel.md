@@ -59,7 +59,9 @@ Maintainer decision: *"we can generalize the permissions support and not worry a
 - **Respond** — `POST /channel/permission/respond` (`routes/channel.ts`) routes an ACP `request_id` (via `hasAcpPermission`) to `resolveAcpPermission` with the client's chosen `option_id` (no channel-server hop); `PermissionRespondSchema` (`validation.ts`) gained `option_id?`, and the client (`permissionOverlay.tsx::respondToPermission`) sends it from the clicked option's `data-option-id`.
 - Bumping/resolving calls `notifyPermission()` so the long-poll surfaces/clears promptly. Unit-tested: `acpPermissionBridge.test.ts` (5) + `channelPermissionMultiServer.test.ts` ACP branch (2). Inert in production until `acpDrive` calls `injectAcpPermission` (below).
 
-**Remaining (needs a live agent):** wire `acpDrive.ts::requestPermission` → `injectAcpPermission` (extract `tool_name`/`description`/`input_preview` from the ACP `toolCall` + supply the agent's `options`) + turn-end/dismiss cleanup + the auto-allow gate (`pickAllowOptionId`) — **still needs a REAL `session/request_permission` to pin the `toolCall` shape** (the spike stopped at `session/new`); and the live `opencode auth` smoke test.
+**Item 2 SHIPPED + live-validated (§114.12):** `acpDrive.ts::requestPermission` (`makeBridgeResolver`) now maps the ACP `toolCall` (via `acpToolCall.ts::extractToolCallDisplay`) + injects it into the bridge, with turn-end/dismiss cleanup — validated against a REAL OpenCode turn (the `toolCall`/`options`/`stopReason` shapes are captured, the permission callback fired, the turn completed).
+
+**Remaining:** the auto-allow gate (map ACP `kind` → `permission_allow_rules` + `pickAllowOptionId`); OpenCode `ai_tool` label/skills wiring; and a full in-app end-to-end — gated on **HS-9340** (implement `fs/read_text_file`/`fs/write_text_file` so edits actually land — opencode delegates them) + **HS-9341** (ensure opencode `permission: ask` so the overlay is used at all). See §114.12.
 
 ## 114.6 Busy / done via the update stream
 
@@ -110,3 +112,25 @@ The lead ACP agent, **OpenCode 1.17.9** (`opencode acp` — "start ACP (Agent Cl
   - `src/acp/acpDrive.ts` — `isAcpDriven(dataDir)` + `spawnAcpRun(dataDir, serverPort, content, deps)`: spawns the ACP agent (`opencode acp`, `stdio: ['pipe','pipe','ignore']` so its stderr logs can't block it), pipes child `stdout`→`createAcpClient.receive` and `transport.send`→child `stdin`, and wires `onBusy`→`/channel/heartbeat` (activity beats + a 15s timer backstop) and `onTurnEnd`/`error`/`exit`→`/channel/done` + `idle`, fired exactly once so busy can never stick. Parallels `antigravityDrive.ts`; the child process + spawn/heartbeat/done are all **injected**, so the whole wiring is unit-tested against a scripted fake agent (**9 tests**, real OpenCode message shapes — no spawn/auth/LLM turn).
   - Play-button routing wired in `channel-config.ts::triggerChannel` (after the Antigravity branch): `isAcpDriven(dataDir)` → `spawnAcpRun`, bypassing the channel-port path like Antigravity. Dormant until a project sets `ai_tool='opencode'` (already a selectable option).
 - **Remaining for the client (HS-9330):** the **option-driven §47 overlay UI rewrite** (accept `PermissionOption[]`, return `optionId` — ⚠ touches the shipped Claude permission path) + the auto-allow gate mapping (ACP `toolCall`→`permission_allow_rules`, which needs a **real** `session/request_permission` captured from a live turn to pin the `toolCall` shape — the spike stopped at `session/new`, before any tool call, so `requestPermission` is currently an injected deny-by-default seam); OpenCode `ai_tool` label/skills wiring; and a **live `session/prompt`→`stopReason` smoke test** (needs `opencode auth`, a manual/paired step). The **`--print`/one-shot vs. persistent** question doesn't apply — ACP is inherently a persistent session.
+
+## 114.12 Live turn VALIDATED — permission wiring + captured toolCall/fs shapes (HS-9330 item 2, 2026-07-12)
+
+Ran a **live OpenCode turn** (v1.17.18, OpenAI provider) end-to-end through the REAL `acpClient` module (not a mock): `initialize` → `session/new` (with the `hotsheet_*` MCP entry) → `session/prompt` → **`stopReason: end_turn`** (`onTurnEnd('completed','end_turn')`), and a real `session/request_permission` routed through the `requestPermission` callback. Item 2 (permission wiring) is now built + validated.
+
+**Captured `session/request_permission` shape** (an `edit` tool):
+```
+{ sessionId, toolCall: { toolCallId, title: "<file path>", kind: "edit", status: "pending",
+    locations: [{ path }], rawInput: { filepath, diff }, content: [{ type: "diff", oldText, newText }] },
+  options: [ {optionId:"once",kind:"allow_once",name:"Allow once"},
+             {optionId:"always",kind:"allow_always",name:"Always allow"},
+             {optionId:"reject",kind:"reject_once",name:"Reject"} ] }
+```
+`options` is **exactly** our `{ optionId, name, kind }` — pass straight through to the overlay. Shipped:
+- **`src/acp/acpToolCall.ts`** — `extractToolCallDisplay(toolCall)` → `{ tool_name (=kind), description (=title), input_preview (=the diff, else rawInput JSON, capped 2000) }`. Pure, tested against the captured fixture.
+- **`src/acp/acpDrive.ts`** — the default `requestPermission` (`makeBridgeResolver`) maps the toolCall via `extractToolCallDisplay` + injects it into `acpPermissionBridge` (§114.5.1 item 1) → the §47 overlay → the user's `optionId` flows back as the ACP reply. A pending request is **dismissed (→ cancelled) if the turn ends first** (tracked in a per-run set, cleared in `finish()`), so an abandoned prompt can't hang the agent. Unit-tested (permission-relay + turn-end-dismiss) against the captured shape.
+
+**Two live findings → follow-ups:**
+- **HS-9340 (edits don't land):** after granting permission, OpenCode DELEGATES the write via an `fs/write_text_file` REQUEST (`{ sessionId, path, content }`) — **regardless of our `clientCapabilities.fs.writeTextFile:false`**. `acpClient` replies method-not-found, so the file write FAILS (turn still completes). Need to implement `fs/write_text_file` (reply `{}`) + `fs/read_text_file` (`{sessionId,path}`→`{content}`) in `acpClient.route()`. Verified: replying `{}` makes the turn complete cleanly.
+- **HS-9341 (overlay inert by default):** OpenCode AUTO-APPROVES tools unless its config sets `permission: { edit:"ask", bash:"ask" }` — so the overlay is never used until Hot Sheet ensures that config (per-project `opencode.json`, or ideally the per-session `session/set_config_option`/`session/set_mode` methods the spike surfaced).
+
+**Still remaining on HS-9330:** the auto-allow gate (map ACP `kind` → `permission_allow_rules` + `pickAllowOptionId`); OpenCode `ai_tool` label/skills wiring; and a full in-app end-to-end (play button → overlay → choice → agent) once HS-9340/9341 land so a real edit actually applies.
