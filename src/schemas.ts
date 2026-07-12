@@ -265,6 +265,14 @@ export const PendingPermissionEntrySchema = z.object({
   description: z.string().optional(),
   input_preview: z.string().optional(),
   tool_input: z.unknown().optional(),
+  // HS-9330 (docs/114 §114.5.1) — the OPTION-DRIVEN generalization: an ACP request
+  // carries the agent's own `PermissionOption[]` (`{ optionId, name, kind }`); the
+  // overlay renders one button per option. Absent for the Claude/MCP-hooks path.
+  options: z.array(z.object({
+    optionId: z.string(),
+    name: z.string(),
+    kind: z.string(),
+  })).optional(),
 }).loose();
 
 export const PendingPermissionSchema = z.object({

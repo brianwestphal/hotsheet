@@ -5,6 +5,7 @@
 import { Hono } from 'hono';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { _resetAcpPermissionsForTesting, injectAcpPermission } from '../acp/acpPermissionBridge.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { channelRoutes } from './channel.js';
@@ -89,5 +90,52 @@ describe('channel permission — multi-server (HS-9036)', () => {
     expect(res.status).toBe(200);
     expect(calls.some(u => u.includes(`:${String(WORKER_PORT)}/permission/respond`))).toBe(true);
     expect(calls.some(u => u.includes(`:${String(LEADER_PORT)}/permission/respond`))).toBe(false);
+  });
+});
+
+// HS-9330 (docs/114 §114.5.1) — an ACP request_id is held in the main-server bridge
+// (no channel-server hop): /channel/permission/respond resolves it directly.
+describe('channel permission — ACP bridge (HS-9330)', () => {
+  let tempDir: string;
+  let app: Hono<AppEnv>;
+
+  beforeAll(async () => {
+    tempDir = await setupTestDb();
+    app = new Hono<AppEnv>();
+    app.use('*', async (c, next) => { c.set('dataDir', tempDir); c.set('projectSecret', 'sek'); await next(); });
+    app.route('/api', channelRoutes);
+  });
+  afterAll(async () => { await cleanupTestDb(tempDir); });
+  afterEach(() => { vi.restoreAllMocks(); _resetAcpPermissionsForTesting(); });
+
+  it('resolves an ACP request with the chosen option — no channel-server fetch', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    const { request_id, promise } = injectAcpPermission({
+      secret: 'sek', tool_name: 'read_file', description: 'Read',
+      options: [{ optionId: 'ok', name: 'OK', kind: 'allow_once' }],
+    });
+    const res = await app.request('/api/channel/permission/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id, behavior: 'allow', option_id: 'ok' }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    await expect(promise).resolves.toEqual({ optionId: 'ok' });
+    expect(fetchSpy).not.toHaveBeenCalled(); // no channel-server hop for ACP
+  });
+
+  it('a respond with no option_id cancels the ACP request', async () => {
+    const { request_id, promise } = injectAcpPermission({
+      secret: 'sek', tool_name: 't', description: 'd',
+      options: [{ optionId: 'ok', name: 'OK', kind: 'allow_once' }],
+    });
+    const res = await app.request('/api/channel/permission/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id, behavior: 'deny' }),
+    });
+    expect(res.status).toBe(200);
+    await expect(promise).resolves.toEqual({ cancelled: true });
   });
 });

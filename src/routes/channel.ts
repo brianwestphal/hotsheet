@@ -1,6 +1,7 @@
 import { execFileSync } from 'child_process';
 import { Hono } from 'hono';
 
+import { hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBridge.js';
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
 import { disconnectMainConnections, listAliveEntries } from '../channelRegistry.js';
@@ -326,6 +327,25 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   const raw: unknown = await c.req.json();
   const parsed = parseBody(PermissionRespondSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
+
+  // HS-9330 (docs/114 §114.5.1) — an ACP request_id is held in the main-server bridge
+  // (no channel-server hop): resolve it with the chosen option and return. The option
+  // id is authoritative for ACP; `behavior` is only used for the command-log summary.
+  if (hasAcpPermission(parsed.data.request_id)) {
+    const optionId = parsed.data.option_id;
+    resolveAcpPermission(
+      parsed.data.request_id,
+      optionId !== undefined && optionId !== '' ? { optionId } : { cancelled: true },
+    );
+    const acpAction = parsed.data.behavior === 'allow' ? 'Allowed' : 'Denied';
+    const acpTool = parsed.data.tool_name ?? 'tool';
+    const acpLogId = loggedPermissionRequests.get(parsed.data.request_id);
+    if (acpLogId !== undefined && acpLogId > 0) {
+      updateLogEntry(acpLogId, { summary: `Permission: ${acpTool} — ${acpAction}` }).catch(() => {});
+    }
+    return c.json({ ok: true });
+  }
+
   // HS-9036 — route the response to the SAME channel server that raised it (a
   // worktree worker's, not necessarily the leader); fall back to the leader.
   const port = requestSourcePort.get(parsed.data.request_id) ?? getChannelPort(dataDir);

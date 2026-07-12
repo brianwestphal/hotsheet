@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { resolve } from 'path';
 import type { z } from 'zod';
 
+import { pendingAcpPermissionForSecret } from '../acp/acpPermissionBridge.js';
 import { getChannelPort, isChannelAlive, registerChannel } from '../channel-config.js';
 import { projectHasPendingFeedback } from '../feedback-state.js';
 import { readFileSettings } from '../file-settings.js';
@@ -180,6 +181,21 @@ projectRoutes.get('/permissions', async (c) => {
     const projects = getAllProjects();
     const result: Record<string, PendingEntry | null> = {};
     await Promise.all(projects.map(async (p) => {
+      // HS-9330 (docs/114 §114.5.1) — an ACP-driven project holds its pending permission
+      // in the main-server bridge (no channel-server hop), surfaced through this same
+      // per-secret poll so ONE overlay serves both transports. Checked first; when there
+      // IS an ACP pending, use it (with the agent's `options`).
+      const acpPending = pendingAcpPermissionForSecret(p.secret);
+      if (acpPending !== null) {
+        result[p.secret] = {
+          request_id: acpPending.request_id,
+          tool_name: acpPending.tool_name,
+          description: acpPending.description,
+          input_preview: acpPending.input_preview,
+          options: acpPending.options,
+        };
+        return;
+      }
       const port = getChannelPort(p.dataDir);
       // No channel-port file → channel server has never been connected for
       // this project. Definitive "not pending" → null.

@@ -201,6 +201,11 @@ export const ChannelTriggerSchema = z.object({
 export const PermissionRespondSchema = z.object({
   request_id: z.string(),
   behavior: z.enum(['allow', 'deny']),
+  // HS-9330 (docs/114 §114.5.1) — the chosen ACP option id. The overlay sends it
+  // alongside `behavior` when the popup was option-driven; the server resolves an ACP
+  // `request_id` (`acpPermissionBridge`) with this id and ignores `behavior`. Absent
+  // for the Claude/MCP-hooks path (which uses `behavior`).
+  option_id: z.string().optional(),
   tool_name: z.string().optional(),
   // Optional context the client already has (HS-6477) — used to populate the
   // command-log entry when the server never logged a `permission_request`

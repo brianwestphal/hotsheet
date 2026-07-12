@@ -401,7 +401,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     restoreEditorFocusIfIdle(); // HS-9162
   }
 
-  function respondToPermission(behavior: 'allow' | 'deny') {
+  function respondToPermission(behavior: 'allow' | 'deny', optionId?: string) {
     respondedRequestIds.add(perm.request_id);
     // Send with the OWNING project's secret — not the active project's — so a
     // response initiated from a background-project popup still routes.
@@ -415,6 +415,9 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     void respondChannelPermission({
       request_id: perm.request_id,
       behavior,
+      // HS-9330 — the chosen ACP option id (option-driven popup); the server resolves an
+      // ACP request with it. Omitted for the legacy Claude/MCP-hooks allow/deny path.
+      option_id: optionId,
       tool_name: perm.tool_name,
       description: perm.description,
       input_preview: perm.input_preview ?? '',
@@ -484,7 +487,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     for (const btn of handle.overlay.querySelectorAll<HTMLButtonElement>('.permission-popup-option')) {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        respondToPermission(optionKindToBehavior(btn.dataset.kind ?? ''));
+        respondToPermission(optionKindToBehavior(btn.dataset.kind ?? ''), btn.dataset.optionId);
       });
     }
   } else if (!isBashCustomLayout && !isWriteCustomLayout) {
