@@ -1152,3 +1152,70 @@ describe('sync engine — getPendingSyncCounts (HS-8791)', () => {
     expect(counts.toPush).toBe(1); // not 2
   });
 });
+
+// --- HS-9147 — targeted branch coverage: getPendingSyncCounts + scheduling helpers ---
+
+describe('getPendingSyncCounts branches (HS-9147)', () => {
+  /** A minimal backend with controllable pullChanges + capabilities. */
+  const makeBackend = (
+    id: string,
+    changes: { remoteId: string; fields: Partial<RemoteTicketFields>; remoteUpdatedAt: Date; deleted: boolean }[],
+    caps: Partial<TicketingBackend['capabilities']> = {},
+  ): TicketingBackend => ({
+    id,
+    name: id,
+    capabilities: { create: true, update: true, delete: true, incrementalPull: true, syncableFields: [], ...caps },
+    fieldMappings: { category: { toRemote: {}, toLocal: {} }, priority: { toRemote: {}, toLocal: {} }, status: { toRemote: {}, toLocal: {} } },
+    createRemote: () => Promise.resolve('x'),
+    updateRemote: () => Promise.resolve({ remoteUpdatedAt: new Date() }),
+    deleteRemote: () => Promise.resolve(),
+    pullChanges: () => Promise.resolve(changes),
+    getRemoteTicket: () => Promise.resolve(null),
+    checkConnection: () => Promise.resolve({ connected: true }),
+  });
+
+  it('counts a new remote item with no local record; skips a deleted change', async () => {
+    const backend = makeBackend('pc-new', [
+      { remoteId: 'pcn-new', fields: { title: 'New' }, remoteUpdatedAt: new Date(), deleted: false },
+      { remoteId: 'pcn-del', fields: { title: 'Del' }, remoteUpdatedAt: new Date(), deleted: true },
+    ]);
+    const counts = await getPendingSyncCounts(backend);
+    expect(counts.toPull).toBe(1); // new counted (!rec branch); deleted skipped
+  });
+
+  it('counts an existing record only when the remote is newer than the base', async () => {
+    const t = await createTicket('pc-existing', {});
+    await upsertSyncRecord(t.id, 'pc-exist', 'pce-r', 'synced', new Date(1_000_000));
+    // remote newer than the record's base → counted
+    const newer = makeBackend('pc-exist', [{ remoteId: 'pce-r', fields: {}, remoteUpdatedAt: new Date(5_000_000), deleted: false }]);
+    expect((await getPendingSyncCounts(newer)).toPull).toBe(1);
+    // remote NOT newer → not counted
+    const older = makeBackend('pc-exist', [{ remoteId: 'pce-r', fields: {}, remoteUpdatedAt: new Date(500_000), deleted: false }]);
+    expect((await getPendingSyncCounts(older)).toPull).toBe(0);
+  });
+
+  it('toPush is 0 when the backend can neither create nor update (canPush false)', async () => {
+    const backend = makeBackend('pc-nopush', [], { create: false, update: false });
+    expect((await getPendingSyncCounts(backend)).toPush).toBe(0);
+  });
+
+  it('evaluates the update capability when create is false (|| short-circuit)', async () => {
+    // create=false forces the `|| update` side to be evaluated → canPush true.
+    const t = await createTicket('pc-updonly', {});
+    await upsertSyncRecord(t.id, 'pc-updonly', 'pcu-r', 'synced', new Date());
+    await addToOutbox(t.id, 'pc-updonly', 'create', {}); // a non-update outbox entry → counts
+    const backend = makeBackend('pc-updonly', [], { create: false, update: true });
+    expect((await getPendingSyncCounts(backend)).toPush).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('scheduling helpers without dataDir (HS-9147)', () => {
+  it('isSyncScheduled / stopScheduledSync operate across all projects for a plugin', () => {
+    startScheduledSync('sched-x', 60_000, '/proj-a');
+    expect(isSyncScheduled('sched-x')).toBe(true);            // no dataDir → any project (line 115)
+    expect(isSyncScheduled('sched-x', '/proj-a')).toBe(true); // specific project armed
+    expect(isSyncScheduled('sched-x', '/proj-b')).toBe(false); // other project not armed
+    stopScheduledSync('sched-x');                              // no dataDir → stops every project's timer
+    expect(isSyncScheduled('sched-x')).toBe(false);
+  });
+});
