@@ -8,7 +8,9 @@
 // The transport (child-process stdio) is INJECTED, so this whole driver is
 // unit-testable against a scripted mock agent replaying real OpenCode messages —
 // no spawn, no auth, no LLM turn. The thin real-IO edge (spawn `opencode acp`,
-// pipe stdio) is `acpDrive.ts` (still to build), mirroring antigravityDrive.ts.
+// pipe stdio, wire the bridge resolver + the confined fs handlers) is `acpDrive.ts`,
+// mirroring antigravityDrive.ts. HS-9340 — the agent delegates file reads/writes via
+// `fs/*` requests; the injected `fs` handlers perform them (else edits never land).
 
 import { ACP_PROTOCOL_VERSION, buildHotsheetMcpServerEntry } from './acpAgents.js';
 import {
@@ -38,6 +40,18 @@ export interface AcpPermissionRequest {
 /** A permission resolver's answer: pick an option, or cancel (no option chosen). */
 export type AcpPermissionReply = { optionId: string } | { cancelled: true };
 
+/** HS-9340 — client-side filesystem ops the agent DELEGATES via `fs/read_text_file` /
+ *  `fs/write_text_file` requests. OpenCode delegates ALL file reads/writes to the ACP
+ *  client (verified live, docs/114 §114.12) — WITHOUT these, an edit's write is a
+ *  method-not-found and the change never lands. Injected so the driver supplies a
+ *  path-confined real-fs adapter and tests supply a fake. */
+export interface AcpFsHandlers {
+  /** Read a file's text. Rejects → the agent gets a JSON-RPC error (never a hang). */
+  readTextFile: (path: string) => Promise<string>;
+  /** Write a file's text. Rejects (e.g. path outside the project) → JSON-RPC error. */
+  writeTextFile: (path: string, content: string) => Promise<void>;
+}
+
 export interface AcpClientCallbacks {
   /** Fired on every `session/update` (activity ⇒ busy — a heartbeat while a turn
    *  runs). `known` reports whether the update kind is one we model (§114.6). */
@@ -49,6 +63,10 @@ export interface AcpClientCallbacks {
    *  applies the auto-allow gate (`permission_allow_rules`) then the §47 overlay;
    *  absent, every request is cancelled (deny-by-default, never auto-approve). */
   requestPermission?: (req: AcpPermissionRequest) => Promise<AcpPermissionReply>;
+  /** HS-9340 — filesystem ops the agent delegates. Absent → `fs/*` requests get
+   *  method-not-found (the pre-9340 behavior). Wiring this advertises the fs
+   *  capability to the agent. */
+  fs?: AcpFsHandlers;
   /** Non-fatal protocol surprise (unknown message, parse issue) — for logging. */
   onNotice?: (message: string) => void;
 }
@@ -117,6 +135,27 @@ export function createAcpClient(transport: AcpTransport, callbacks: AcpClientCal
     );
   };
 
+  // HS-9340 — the agent delegates file ops; perform them via the injected handler and
+  // reply, or JSON-RPC-error (never leave the agent hanging). `path`/`content` are taken
+  // only when they're actually strings (a malformed request → an error reply, not a crash).
+  const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+  const handleFsRead = (msg: AcpMessage): void => {
+    if (callbacks.fs === undefined) { replyError(msg.id, -32601, 'Method not found: fs/read_text_file'); return; }
+    const params = (msg.params ?? {}) as Record<string, unknown>;
+    void callbacks.fs.readTextFile(asString(params.path)).then(
+      (content) => { replyResult(msg.id, { content }); },
+      (e: unknown) => { replyError(msg.id, -32603, `fs/read_text_file failed: ${errText(e)}`); },
+    );
+  };
+  const handleFsWrite = (msg: AcpMessage): void => {
+    if (callbacks.fs === undefined) { replyError(msg.id, -32601, 'Method not found: fs/write_text_file'); return; }
+    const params = (msg.params ?? {}) as Record<string, unknown>;
+    void callbacks.fs.writeTextFile(asString(params.path), asString(params.content)).then(
+      () => { replyResult(msg.id, {}); },
+      (e: unknown) => { replyError(msg.id, -32603, `fs/write_text_file failed: ${errText(e)}`); },
+    );
+  };
+
   const route = (msg: AcpMessage): void => {
     if (isResponse(msg)) {
       const p = pending.get(msg.id as number);
@@ -132,6 +171,8 @@ export function createAcpClient(transport: AcpTransport, callbacks: AcpClientCal
     }
     if (isRequest(msg)) {
       if (msg.method === 'session/request_permission') { handlePermissionRequest(msg); return; }
+      if (msg.method === 'fs/read_text_file') { handleFsRead(msg); return; }
+      if (msg.method === 'fs/write_text_file') { handleFsWrite(msg); return; }
       // Any other agent→client request we don't implement: JSON-RPC method-not-found,
       // so the agent isn't left waiting on a reply.
       replyError(msg.id, -32601, `Method not found: ${String(msg.method)}`);
@@ -162,9 +203,12 @@ export function createAcpClient(transport: AcpTransport, callbacks: AcpClientCal
       callbacks.onTurnEnd?.(outcome, stopReason);
     };
     try {
+      // HS-9340 — advertise the fs capability iff we actually implement it (a handler is
+      // wired). OpenCode delegates fs ops regardless, but this is the honest declaration.
+      const hasFs = callbacks.fs !== undefined;
       await sendRequest('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+        clientCapabilities: { fs: { readTextFile: hasFs, writeTextFile: hasFs } },
         clientInfo: { name: 'hotsheet', version: '1' },
       });
       const session = await sendRequest('session/new', {

@@ -152,3 +152,58 @@ describe('createAcpClient.runPrompt (HS-9330)', () => {
     expect(onBusy).toHaveBeenCalledWith('available_commands_update', false);
   });
 });
+
+// HS-9340 — the agent delegates file ops via fs/read_text_file / fs/write_text_file;
+// the client performs them via the injected handler and replies (never method-not-found).
+describe('fs delegation (HS-9340)', () => {
+  const feedReq = (h: ReturnType<typeof makeHarness>, client: ReturnType<typeof createAcpClient>, req: unknown): void => {
+    void h; client.receive(JSON.stringify(req) + '\n');
+  };
+
+  it('performs fs/write_text_file and replies {}', async () => {
+    const h = makeHarness();
+    const writeTextFile = vi.fn(() => Promise.resolve());
+    const client = createAcpClient(h.transport, { fs: { writeTextFile, readTextFile: () => Promise.resolve('') } });
+    feedReq(h, client, { jsonrpc: '2.0', id: 'fs-1', method: 'fs/write_text_file', params: { sessionId: 's', path: '/repo/x.txt', content: 'hi' } });
+    await tick();
+    expect(writeTextFile).toHaveBeenCalledWith('/repo/x.txt', 'hi');
+    expect(h.sent(0)).toEqual({ jsonrpc: '2.0', id: 'fs-1', result: {} });
+  });
+
+  it('performs fs/read_text_file and replies the content', async () => {
+    const h = makeHarness();
+    const client = createAcpClient(h.transport, { fs: { writeTextFile: () => Promise.resolve(), readTextFile: () => Promise.resolve('file body') } });
+    feedReq(h, client, { jsonrpc: '2.0', id: 'fs-2', method: 'fs/read_text_file', params: { path: '/repo/y.txt' } });
+    await tick();
+    expect(h.sent(0)).toEqual({ jsonrpc: '2.0', id: 'fs-2', result: { content: 'file body' } });
+  });
+
+  it('replies a JSON-RPC error when the op rejects (e.g. path outside project)', async () => {
+    const h = makeHarness();
+    const client = createAcpClient(h.transport, { fs: { writeTextFile: () => Promise.reject(new Error('path outside project: /etc/x')), readTextFile: () => Promise.resolve('') } });
+    feedReq(h, client, { jsonrpc: '2.0', id: 'fs-3', method: 'fs/write_text_file', params: { path: '/etc/x', content: 'no' } });
+    await tick();
+    const reply = h.sent(0);
+    expect(reply.id).toBe('fs-3');
+    expect((reply.error as { message: string }).message).toContain('outside project');
+  });
+
+  it('replies method-not-found when no fs handler is wired', () => {
+    const h = makeHarness();
+    const client = createAcpClient(h.transport, {});
+    feedReq(h, client, { jsonrpc: '2.0', id: 'fs-4', method: 'fs/write_text_file', params: {} });
+    expect((h.sent(0).error as { code: number }).code).toBe(-32601);
+  });
+
+  it('advertises the fs capability in initialize only when a handler is wired', async () => {
+    const withFs = makeHarness();
+    void createAcpClient(withFs.transport, { fs: { writeTextFile: () => Promise.resolve(), readTextFile: () => Promise.resolve('') } }).runPrompt('/repo', 'go');
+    await tick();
+    expect((withFs.sent(0).params as { clientCapabilities: { fs: unknown } }).clientCapabilities.fs).toEqual({ readTextFile: true, writeTextFile: true });
+
+    const noFs = makeHarness();
+    void createAcpClient(noFs.transport, {}).runPrompt('/repo', 'go');
+    await tick();
+    expect((noFs.sent(0).params as { clientCapabilities: { fs: unknown } }).clientCapabilities.fs).toEqual({ readTextFile: false, writeTextFile: false });
+  });
+});

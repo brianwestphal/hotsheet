@@ -31,6 +31,7 @@ import { readFileSettings } from '../file-settings.js';
 import { getProjectSecret } from '../secret-file.js';
 import { isAcpDrivenTool, resolveAcpAgentCommand } from './acpAgents.js';
 import { type AcpClientCallbacks, type AcpTransport, createAcpClient } from './acpClient.js';
+import { makeProjectFsHandlers } from './acpFs.js';
 import { dismissAcpPermission, injectAcpPermission } from './acpPermissionBridge.js';
 import { extractToolCallDisplay } from './acpToolCall.js';
 
@@ -130,6 +131,9 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
     onBusy: () => { heartbeat(serverPort, secret, 'heartbeat'); }, // activity-driven beat
     onTurnEnd: () => { finish(); },                                // stopReason ⇒ done
     requestPermission,
+    // HS-9340 — OpenCode delegates file writes/reads; perform them, confined to the
+    // project dir, so edits actually land (else the write is method-not-found + dropped).
+    fs: makeProjectFsHandlers(projectDir),
   });
 
   // Attach the stdout pump BEFORE runPrompt sends `initialize`, so no reply is missed.
