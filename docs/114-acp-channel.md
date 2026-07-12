@@ -46,6 +46,16 @@ This is the HS-8008 spike's key finding. ACP's `session/request_permission` supp
 
 The `permission_allow_rules` auto-allow gate (`src/routes/channel.ts`, §47.4) still works: on a rule match, auto-pick the `allow_always` (or `allow_once`) option by `kind`. The `kind` set maps **1:1** onto our rule semantics — so this is a render/plumbing change (accept a supplied option list + return an id), not a permission-model change.
 
+### 114.5.1 — Maintainer unblock + build status (HS-9330, 2026-07-12)
+
+Maintainer decision: *"we can generalize the permissions support and not worry about backwards compatibility — the current impl isn't great and is seldom used."* That lifts the "must not regress the shipped Claude permission path" constraint that had deferred this.
+
+**Shipped (client foundation + option-capable overlay):**
+- **`src/client/permissionOptions.ts`** (pure, shared vocabulary) — `PermissionOption { optionId, name, kind }` (mirrors `acpMapping.ts::AcpPermissionOption`), `standardClaudeOptions()` (the synthesized allow/allow-always/deny triple the Claude/MCP-hooks path uses), `optionKindToBehavior(kind)` (allow_* → `allow`, else fail-closed `deny` — the map onto the legacy `PermissionRespondSchema` wire), `isAllowKind`/`firstAllowOption`/`firstRejectOption`. Unit-tested.
+- **`src/client/permissionOverlay.tsx`** — `PermissionData` gained `options?: PermissionOption[]`; when present, the overlay renders ONE button per option (class `.permission-popup-option`, `data-option-id`/`data-kind`), skipping the fixed Allow/Deny icons + the always-allow affordance, and maps the chosen option's `kind` → behavior for the current wire. **Additive: the legacy Claude layout is untouched when no options are supplied.** Styling in `styles.scss` (`.permission-popup-options`). Unit-tested (render + click).
+
+**Remaining (needs the server relay + a live agent):** thread `options` through the SERVER permission relay (`channelPermissions.ts` + the `/permission` poll/respond endpoints + `PermissionData` on the wire) so an ACP request can INJECT its options and the client can RETURN the chosen `optionId` (today the overlay maps to the legacy `allow`/`deny` wire); wire `acpDrive.ts::requestPermission` to that relay (+ the auto-allow gate via `pickAllowOptionId`, still needing a REAL `session/request_permission` to pin the `toolCall` shape); and the live `opencode auth` smoke test.
+
 ## 114.6 Busy / done via the update stream
 
 The Claude path infers busy from PTY spinners + hook heartbeats (fragile, docs/12). ACP gives it natively: any `session/update` notification during a turn ⇒ busy; the turn's terminal `stopReason` ⇒ idle + channel-done. This is strictly cleaner and per-agent-uniform. The Claude channel keeps its hook mechanism (unchanged); only the ACP-backed agents use this path.

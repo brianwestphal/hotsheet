@@ -5040,6 +5040,47 @@ body.cross-project-stats-active {
   }
 }
 
+// HS-9330 (docs/114 §114.5) — the option-driven layout: one stacked button per
+// agent-supplied PermissionOption. Allow-kind options get the accent treatment (the
+// first is the primary), reject-kind options the muted treatment — mirroring the
+// stacked Bash/Write actions above.
+.permission-popup-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  width: 100%;
+
+  .permission-popup-option {
+    flex-shrink: 0;
+    width: 100%;
+    border-radius: 4px;
+    padding: 8px 12px;
+    cursor: pointer;
+    display: block;
+    text-align: center;
+    font-size: 13px;
+    line-height: 1.3;
+    background: transparent;
+    color: inherit;
+    border: 1px solid var(--border);
+    &:hover { background: var(--bg-secondary); }
+
+    &.is-allow {
+      background: var(--accent, #2563eb);
+      color: white;
+      border-color: transparent;
+      font-weight: 600;
+      &:hover { background: var(--accent-hover, #1d4ed8); }
+    }
+    &.is-reject {
+      background: transparent;
+      color: var(--text-muted);
+      &:hover { background: var(--bg-secondary); color: var(--text); }
+    }
+  }
+}
+
 // HS-8299 — body `<pre>` for the bash command rendering. Width fills
 // the dialog content area; height caps at 60vh so a long pipeline still
 // leaves room for the buttons + dialog header. Word-break + pre-wrap so

@@ -1732,3 +1732,56 @@ describe('Write custom layout (HS-8296)', () => {
   });
 });
 
+
+describe('option-driven layout (HS-9330)', () => {
+  // HS-9330 (docs/114 §114.5) — when the request carries an agent-supplied
+  // PermissionOption[] (the ACP path), the overlay renders one button per option
+  // instead of the fixed Allow/Deny icons, and skips the always-allow affordance.
+  it('renders one button per option, skipping the legacy icons + always-allow affordance', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({
+          request_id: 'req-opts-1',
+          tool_name: 'Task',
+          description: 'Agent wants to run a tool',
+          input_preview: '{"foo":"bar"}',
+          options: [
+            { optionId: 'opt-allow', name: 'Allow once', kind: 'allow_once' },
+            { optionId: 'opt-always', name: 'Always allow', kind: 'allow_always' },
+            { optionId: 'opt-reject', name: 'Reject', kind: 'reject_once' },
+          ],
+        }),
+      },
+      v: 1,
+    });
+    const container = document.querySelector<HTMLElement>('.permission-popup-options');
+    expect(container).not.toBeNull();
+    const buttons = [...container!.querySelectorAll<HTMLButtonElement>('.permission-popup-option')];
+    expect(buttons.map(b => b.textContent)).toEqual(['Allow once', 'Always allow', 'Reject']);
+    expect(buttons[0].dataset.optionId).toBe('opt-allow');
+    expect(buttons[0].dataset.kind).toBe('allow_once');
+    expect(buttons[0].classList.contains('is-allow')).toBe(true);
+    expect(buttons[1].classList.contains('is-allow')).toBe(true);
+    expect(buttons[2].classList.contains('is-reject')).toBe(true);
+    // Legacy icon buttons + always-allow affordance are NOT rendered.
+    expect(document.querySelector('.permission-popup-allow')).toBeNull();
+    expect(document.querySelector('.permission-popup-deny')).toBeNull();
+    expect(document.querySelector('.permission-popup-always-allow')).toBeNull();
+  });
+
+  it('clicking an option button responds + tears the popup down (wires the decision)', () => {
+    processPermissionPollResponse({
+      permissions: {
+        'secret-A': makePerm({
+          request_id: 'req-opts-2', tool_name: 'Task', input_preview: '{}',
+          options: [{ optionId: 'o', name: 'OK', kind: 'allow_once' }],
+        }),
+      },
+      v: 1,
+    });
+    expect(_inspectStateForTesting().activePopupRequestId).toBe('req-opts-2');
+    document.querySelector<HTMLButtonElement>('.permission-popup-option')?.click();
+    // Responded → the active popup slot is cleared (no other pending → null).
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+});

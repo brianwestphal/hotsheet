@@ -42,6 +42,7 @@ import {
   setActiveCheckout,
   setActiveLiveTermResizeObserver,
 } from './permissionLiveCheckout.js';
+import { isAllowKind, optionKindToBehavior } from './permissionOptions.js';
 import {
   extractWriteFields,
   LIVE_CHECKOUT_PREVIEW_CHAR_THRESHOLD,
@@ -240,6 +241,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   let actions: HTMLElement;
   let alwaysAffordance: HTMLElement | null = null;
   let writeCustomTitle: string | null = null;
+  let isOptionDrivenLayout = false; // HS-9330 — set when rendering agent-supplied options
   if (isBashCustomLayout) {
     const parts = buildBashPermissionPreview({
       command: primaryValue,
@@ -270,24 +272,49 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
       bodyElement = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
     }
 
-    // HS-8069 — actions slot: Allow / Deny icon buttons.
-    actions = toElement(
-      <div className="permission-popup-actions">
-        <button className="permission-popup-allow" title="Allow">{CHECK_ICON}</button>
-        <button className="permission-popup-deny" title="Deny">{X_ICON}</button>
-      </div>
-    );
+    // HS-9330 (docs/114 §114.5) — OPTION-DRIVEN actions: when the request carries an
+    // agent-supplied `PermissionOption[]` (ACP), render one button per option, mapping
+    // the chosen option's `kind` onto the existing allow/deny wire (fail-closed via
+    // `optionKindToBehavior`). The always-allow affordance is skipped (the option list
+    // already carries any `allow_always` choice). The legacy two-icon Allow/Deny path
+    // (Claude / MCP-hooks) is unchanged when no options are supplied.
+    const options = perm.options ?? [];
+    if (options.length > 0) {
+      isOptionDrivenLayout = true;
+      actions = toElement(
+        <div className="permission-popup-actions permission-popup-options">
+          {options.map(o => (
+            <button
+              className={`permission-popup-option${isAllowKind(o.kind) ? ' is-allow' : ' is-reject'}`}
+              data-option-id={o.optionId}
+              data-kind={o.kind}
+              title={o.name}
+            >
+              {o.name}
+            </button>
+          ))}
+        </div>
+      );
+    } else {
+      // HS-8069 — legacy actions slot: Allow / Deny icon buttons.
+      actions = toElement(
+        <div className="permission-popup-actions">
+          <button className="permission-popup-allow" title="Allow">{CHECK_ICON}</button>
+          <button className="permission-popup-deny" title="Deny">{X_ICON}</button>
+        </div>
+      );
 
-    // HS-7953 / HS-8069 — "Always allow this" affordance. Skipped for
-    // non-allow-listable tools (Edit / Write / unknown) and when the
-    // primary-field value is empty. Confirming a new rule writes to
-    // settings.json then immediately invokes the allow-current-request path.
-    if (primaryValue !== null) {
-      alwaysAffordance = buildAlwaysAllowAffordance({
-        toolName: perm.tool_name,
-        primaryValue,
-        onCommit: () => { respondToPermission('allow'); },
-      });
+      // HS-7953 / HS-8069 — "Always allow this" affordance. Skipped for
+      // non-allow-listable tools (Edit / Write / unknown) and when the
+      // primary-field value is empty. Confirming a new rule writes to
+      // settings.json then immediately invokes the allow-current-request path.
+      if (primaryValue !== null) {
+        alwaysAffordance = buildAlwaysAllowAffordance({
+          toolName: perm.tool_name,
+          primaryValue,
+          onCommit: () => { respondToPermission('allow'); },
+        });
+      }
     }
   }
 
@@ -451,8 +478,16 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
 
   // HS-8299 / HS-8296 — Bash + Write layouts wire their buttons inside
   // their own preview helpers; only the legacy two-icon-button path
-  // needs click wiring here.
-  if (!isBashCustomLayout && !isWriteCustomLayout) {
+  // needs click wiring here. HS-9330 — the option-driven layout wires one
+  // handler per option button, mapping its `kind` onto the allow/deny wire.
+  if (isOptionDrivenLayout) {
+    for (const btn of handle.overlay.querySelectorAll<HTMLButtonElement>('.permission-popup-option')) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        respondToPermission(optionKindToBehavior(btn.dataset.kind ?? ''));
+      });
+    }
+  } else if (!isBashCustomLayout && !isWriteCustomLayout) {
     handle.overlay.querySelector('.permission-popup-allow')!.addEventListener('click', (e) => {
       e.stopPropagation();
       respondToPermission('allow');

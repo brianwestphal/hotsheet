@@ -9,9 +9,21 @@
  * existing `from './permissionOverlay.js'` imports keep their shape.
  */
 
+import type { PermissionOption } from './permissionOptions.js';
 import type { EditDiffShape } from './permissionPreview.js';
 
-export type PermissionData = { request_id: string; tool_name: string; description: string; input_preview?: string };
+// HS-9330 (docs/114 §114.5) — `options` is the OPTION-DRIVEN generalization: when the
+// permission request carries a `PermissionOption[]` (an ACP agent supplies its own via
+// `session/request_permission`), the overlay renders one button per option instead of
+// the fixed Allow/Deny icons. Absent (the Claude/MCP-hooks path) → the legacy layout is
+// unchanged. See `permissionOptions.ts`.
+export type PermissionData = {
+  request_id: string;
+  tool_name: string;
+  description: string;
+  input_preview?: string;
+  options?: PermissionOption[];
+};
 
 /**
  * HS-8217 — single-line flat preview length above which the popup
