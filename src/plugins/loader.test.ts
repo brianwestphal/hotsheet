@@ -3,6 +3,7 @@ import * as os from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { keychainGet, keychainSet } from '../keychain.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 
 const { tmpdir } = os;
@@ -22,21 +23,42 @@ vi.mock('../keychain.js', () => ({
 const {
   compareSemver,
   discoverPlugins,
+  installBundledPlugin,
   installBundledPlugins,
   dismissBundledPlugin,
   disablePlugin,
   enablePlugin,
   getAllBackends,
+  getBackendForPlugin,
   getConfigLabelOverride,
   getGlobalPluginSetting,
   getLoadedPlugins,
   getPluginById,
   getPluginUIElements,
+  listBundledPlugins,
+  loadAllPlugins,
   reactivatePlugin,
   setGlobalPluginSetting,
   undismissBundledPlugin,
   unregisterPlugin,
 } = await import('./loader.js');
+
+/** Reset the plugin dir + registry between tests. */
+function resetPluginDir(): void {
+  const pluginDir = join(tempHome, '.hotsheet', 'plugins');
+  try { rmSync(pluginDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  mkdirSync(pluginDir, { recursive: true });
+  for (const p of getLoadedPlugins()) unregisterPlugin(p.manifest.id);
+}
+
+/** Write a plugin under the plugin dir with a manifest + index.js body. */
+function writePlugin(id: string, manifest: Record<string, unknown>, indexBody: string): string {
+  const pluginPath = join(tempHome, '.hotsheet', 'plugins', id);
+  mkdirSync(pluginPath, { recursive: true });
+  writeFileSync(join(pluginPath, 'manifest.json'), JSON.stringify({ id, name: id, version: '1.0.0', ...manifest }));
+  writeFileSync(join(pluginPath, 'index.js'), indexBody);
+  return pluginPath;
+}
 
 let dbTempDir: string;
 
@@ -793,5 +815,237 @@ describe('unloadAllPlugins', () => {
 
     await unloadAllPlugins();
     expect(getLoadedPlugins().length).toBe(0);
+  });
+});
+
+// --- HS-9147 — targeted branch coverage for loader.ts error/edge paths ---
+
+describe('getBackendForPlugin (HS-9147)', () => {
+  beforeEach(resetPluginDir);
+
+  it('returns null for an unknown plugin (optional-chain short-circuit)', () => {
+    expect(getBackendForPlugin('does-not-exist')).toBeNull();
+  });
+
+  it('returns the backend for a plugin whose activate returned one, null when none', async () => {
+    writePlugin('be-yes', {}, 'export async function activate() { return { kind: "backend" }; }');
+    writePlugin('be-no', {}, 'export async function activate() { return undefined; }');
+    await loadAllPlugins();
+    expect(getBackendForPlugin('be-yes')).not.toBeNull(); // ?? left branch
+    expect(getBackendForPlugin('be-no')).toBeNull();      // ?? right branch (backend null)
+  });
+});
+
+describe('getAllBackends includes an enabled plugin with a backend (HS-9147)', () => {
+  beforeEach(resetPluginDir);
+
+  it('a plugin returning a backend appears in getAllBackends', async () => {
+    writePlugin('allbe', {}, 'export async function activate() { return { kind: "backend" }; }');
+    await loadAllPlugins();
+    // covers the `p.backend !== null && p.enabled` true path
+    expect(getAllBackends().some(b => (b as { kind?: string }).kind === 'backend')).toBe(true);
+  });
+});
+
+describe('discoverPlugins edge branches (HS-9147)', () => {
+  it('returns [] when the plugin dir does not exist at all', () => {
+    const pluginDir = join(tempHome, '.hotsheet', 'plugins');
+    try { rmSync(pluginDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    expect(discoverPlugins()).toEqual([]); // !existsSync(pluginDir) branch
+    mkdirSync(pluginDir, { recursive: true }); // restore for other suites
+  });
+
+  it('skips a broken symlink whose target does not resolve to a directory', () => {
+    resetPluginDir();
+    const link = join(tempHome, '.hotsheet', 'plugins', 'broken-link');
+    symlinkSync(join(tempHome, 'nonexistent-target'), link, 'dir'); // dangling → statSync throws
+    expect(discoverPlugins()).toEqual([]); // symlink statSync catch → continue
+  });
+});
+
+describe('readManifest package.json branches (HS-9147)', () => {
+  beforeEach(resetPluginDir);
+
+  it('ignores a package.json whose top-level JSON is not an object', () => {
+    const p = join(tempHome, '.hotsheet', 'plugins', 'pkg-nonobj');
+    mkdirSync(p, { recursive: true });
+    writeFileSync(join(p, 'package.json'), '42'); // valid JSON, not an object
+    expect(discoverPlugins()).toEqual([]);
+  });
+
+  it('falls back to package.json fields when the hotsheet block omits them', () => {
+    const p = join(tempHome, '.hotsheet', 'plugins', 'pkg-fallback');
+    mkdirSync(p, { recursive: true });
+    // hotsheet:{} → id/name ← pkg.name, version ← pkg.version, entry ← pkg.main, author object → author.name
+    writeFileSync(join(p, 'package.json'), JSON.stringify({
+      name: 'fallback-pkg', version: '3.2.1', main: 'dist/entry.js',
+      author: { name: 'Ada' }, hotsheet: {},
+    }));
+    const found = discoverPlugins();
+    expect(found).toHaveLength(1);
+    expect(found[0].manifest.id).toBe('fallback-pkg');
+    expect(found[0].manifest.name).toBe('fallback-pkg');
+    expect(found[0].manifest.version).toBe('3.2.1');
+    expect(found[0].manifest.entry).toBe('dist/entry.js');
+    expect(found[0].manifest.author).toBe('Ada');
+  });
+
+  it('handles a string author + missing version/main (defaults 0.0.0 / index.js)', () => {
+    const p = join(tempHome, '.hotsheet', 'plugins', 'pkg-strauthor');
+    mkdirSync(p, { recursive: true });
+    writeFileSync(join(p, 'package.json'), JSON.stringify({
+      name: 'strauthor-pkg', author: 'Grace', hotsheet: {},
+    }));
+    const found = discoverPlugins();
+    expect(found).toHaveLength(1);
+    expect(found[0].manifest.version).toBe('0.0.0'); // pkg.version ?? '0.0.0'
+    expect(found[0].manifest.entry).toBe('index.js'); // pkg.main ?? 'index.js'
+    expect(found[0].manifest.author).toBe('Grace');   // string author branch
+  });
+});
+
+describe('config-file schema-failure branches (HS-9147)', () => {
+  it('readGlobalConfig treats a schema-invalid file as empty', () => {
+    const configPath = join(tempHome, '.hotsheet', 'plugin-config.json');
+    writeFileSync(configPath, JSON.stringify({ plugin: 123 })); // valid JSON, wrong shape
+    expect(getGlobalPluginSetting('plugin', 'key')).toBeNull(); // safeParse false → {}
+    try { rmSync(configPath); } catch { /* ignore */ }
+  });
+
+  it('a schema-invalid dismissed-plugins.json is treated as no dismissals', () => {
+    resetPluginDir();
+    const bundledDir = join(tempHome, 'bundled-dismiss-src');
+    try { rmSync(bundledDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    mkdirSync(join(bundledDir, 'dm'), { recursive: true });
+    writeFileSync(join(bundledDir, 'dm', 'manifest.json'), JSON.stringify({ id: 'dm', name: 'dm', version: '1.0.0' }));
+    writeFileSync(join(bundledDir, 'dm', 'index.js'), 'export const x = 1;');
+    writeFileSync(join(tempHome, '.hotsheet', 'dismissed-plugins.json'), JSON.stringify([123])); // wrong element type
+    installBundledPlugins(bundledDir);
+    // schema-invalid dismissed list → empty set → the plugin is NOT skipped → installed
+    expect(existsSync(join(tempHome, '.hotsheet', 'plugins', 'dm', 'index.js'))).toBe(true);
+    try { rmSync(join(tempHome, '.hotsheet', 'dismissed-plugins.json')); } catch { /* ignore */ }
+    try { rmSync(bundledDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+});
+
+describe('installBundledPlugins more branches (HS-9147)', () => {
+  const bundledDir = join(tempHome, 'bundled-more-src');
+  beforeEach(() => {
+    resetPluginDir();
+    try { rmSync(bundledDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    mkdirSync(bundledDir, { recursive: true });
+  });
+  afterAll(() => { try { rmSync(bundledDir, { recursive: true, force: true }); } catch { /* ignore */ } });
+
+  it('is a no-op when bundledDir is null', () => {
+    expect(() => installBundledPlugins(null)).not.toThrow();
+  });
+
+  it('skips a non-directory entry in the bundle', () => {
+    writeFileSync(join(bundledDir, 'loose-file.txt'), 'x'); // non-dir entry
+    mkdirSync(join(bundledDir, 'ok'), { recursive: true });
+    writeFileSync(join(bundledDir, 'ok', 'manifest.json'), JSON.stringify({ id: 'ok', name: 'ok', version: '1.0.0' }));
+    writeFileSync(join(bundledDir, 'ok', 'index.js'), 'export const x = 1;');
+    installBundledPlugins(bundledDir);
+    expect(existsSync(join(tempHome, '.hotsheet', 'plugins', 'ok', 'index.js'))).toBe(true);
+  });
+
+  it('refreshes over an installed dir that has no valid manifest', () => {
+    // Existing install with a broken manifest → installedManifest is null → refresh path.
+    const stale = join(tempHome, '.hotsheet', 'plugins', 'brokeninstall');
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, 'manifest.json'), '{ not json');
+    mkdirSync(join(bundledDir, 'brokeninstall'), { recursive: true });
+    writeFileSync(join(bundledDir, 'brokeninstall', 'manifest.json'), JSON.stringify({ id: 'brokeninstall', name: 'bi', version: '1.0.0' }));
+    writeFileSync(join(bundledDir, 'brokeninstall', 'index.js'), 'export const fixed = true;');
+    installBundledPlugins(bundledDir);
+    expect(readFileSync(join(stale, 'index.js'), 'utf-8')).toBe('export const fixed = true;');
+  });
+
+  it('walks nested directories when hashing a same-version rebuild', () => {
+    const write = (body: string): void => {
+      const d = join(bundledDir, 'nested');
+      mkdirSync(join(d, 'sub'), { recursive: true });
+      writeFileSync(join(d, 'manifest.json'), JSON.stringify({ id: 'nested', name: 'nested', version: '1.0.0' }));
+      writeFileSync(join(d, 'index.js'), 'export const x = 1;');
+      writeFileSync(join(d, 'sub', 'helper.js'), body); // nested file → hashPluginDir recursion
+    };
+    write('export const h = 1;');
+    installBundledPlugins(bundledDir);
+    write('export const h = 2;'); // same version, changed nested content → refresh
+    installBundledPlugins(bundledDir);
+    expect(readFileSync(join(tempHome, '.hotsheet', 'plugins', 'nested', 'sub', 'helper.js'), 'utf-8')).toBe('export const h = 2;');
+  });
+});
+
+describe('installBundledPlugin (singular) + listBundledPlugins (HS-9147)', () => {
+  it('installBundledPlugin returns false for an id not in the bundle', () => {
+    expect(installBundledPlugin('definitely-not-a-bundled-plugin-id')).toBe(false);
+  });
+  it('listBundledPlugins returns an array', () => {
+    expect(Array.isArray(listBundledPlugins())).toBe(true);
+  });
+});
+
+describe('createPluginContext log levels + secret prefs (HS-9147)', () => {
+  beforeEach(() => {
+    resetPluginDir();
+    vi.mocked(keychainGet).mockReset().mockResolvedValue(null);
+    vi.mocked(keychainSet).mockReset().mockResolvedValue(false);
+  });
+
+  it('log() routes error/warn/info to the right console fn', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    writePlugin('logger', {}, `export async function activate(ctx) { ctx.log('error','e'); ctx.log('warn','w'); ctx.log('info','i'); return undefined; }`);
+    await loadAllPlugins();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('[plugin:logger] e'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[plugin:logger] w'));
+    errSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it('getSetting returns a keychain hit for a secret pref (short-circuits file/DB)', async () => {
+    // Keyed by pluginId so a co-loaded bundled plugin's own getSetting doesn't consume it.
+    vi.mocked(keychainGet).mockImplementation((id: string) => Promise.resolve(id === 'kc-hit' ? 'from-keychain' : null));
+    writePlugin('kc-hit', { preferences: [{ key: 'token', label: 'T', type: 'string', secret: true }] },
+      `export async function activate(ctx) { const v = await ctx.getSetting('token'); ctx.updateConfigLabel('r', v, undefined); return undefined; }`);
+    await loadAllPlugins();
+    expect(getConfigLabelOverride('kc-hit', 'r')?.text).toBe('from-keychain');
+  });
+
+  it('getSetting migrates a global+secret file value into the keychain', async () => {
+    setGlobalPluginSetting('mig', 'token', 'file-value');
+    writePlugin('mig', { preferences: [{ key: 'token', label: 'T', type: 'string', scope: 'global', secret: true }] },
+      `export async function activate(ctx) { const v = await ctx.getSetting('token'); ctx.updateConfigLabel('r', v, undefined); return undefined; }`);
+    await loadAllPlugins();
+    expect(getConfigLabelOverride('mig', 'r')?.text).toBe('file-value');
+    expect(vi.mocked(keychainSet)).toHaveBeenCalledWith('mig', 'token', 'file-value'); // migration
+  });
+
+  it('setSetting stores a secret pref in the keychain', async () => {
+    writePlugin('setter', { preferences: [{ key: 'token', label: 'T', type: 'string', secret: true }] },
+      `export async function activate(ctx) { await ctx.setSetting('token', 'sekret'); return undefined; }`);
+    await loadAllPlugins();
+    expect(vi.mocked(keychainSet)).toHaveBeenCalledWith('setter', 'token', 'sekret');
+  });
+});
+
+describe('enable/reactivate with a backend-returning plugin (HS-9147)', () => {
+  beforeEach(resetPluginDir);
+
+  it('enablePlugin sets a non-null backend when activate returns one', async () => {
+    writePlugin('en-be', {}, 'export async function activate() { return { kind: "be" }; }');
+    await loadAllPlugins({ 'en-be': false }); // load disabled → no backend yet
+    expect(getPluginById('en-be')!.enabled).toBe(false);
+    expect(await enablePlugin('en-be')).toBe(true);
+    expect(getPluginById('en-be')!.backend).not.toBeNull(); // result != null ? result : null (left)
+  });
+
+  it('reactivatePlugin sets a non-null backend when activate returns one', async () => {
+    writePlugin('re-be', {}, 'export async function activate() { return { kind: "be" }; }');
+    await loadAllPlugins();
+    expect(await reactivatePlugin('re-be')).toBe(true);
+    expect(getPluginById('re-be')!.backend).not.toBeNull();
   });
 });
