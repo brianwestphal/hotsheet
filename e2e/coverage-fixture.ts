@@ -92,7 +92,11 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
     // ("expanded state persists across reload"). When set, `.app.drawer-expanded`
     // applies `display: none` to `.app-body`, hiding the draft input + ticket
     // list for any later spec that does `page.goto('/')`.
-    request.patch('/api/file-settings', { headers: authHeaders, data: { drawer_open: 'false', drawer_active_tab: 'commands-log', drawer_expanded: 'false' } }),
+    // HS-9349 — `auto_context: []` leaks from auto-context-defaults.spec.ts:19 (its
+    // "clean slate" write to the SHARED layer, never reset), so any later spec that
+    // asserts the shared auto-context state (settings-sharing.spec.ts) sees a stray `[]`
+    // instead of a pristine one. Reset it here (shared-scope key → routed to settings.json).
+    request.patch('/api/file-settings', { headers: authHeaders, data: { drawer_open: 'false', drawer_active_tab: 'commands-log', drawer_expanded: 'false', auto_context: [] } }),
     // HS-8419 — `dashboard.layoutMode` moved from per-project file-settings
     // to global config in HS-8290. `terminal-dashboard-flow-layout.spec.ts`
     // test 42 toggles flow mode and persists via the UI (which writes to

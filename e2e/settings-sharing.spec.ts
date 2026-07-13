@@ -414,8 +414,11 @@ test.describe('Settings scope control (Shared | Local)', () => {
     expect(localAc).toBeTruthy();
     expect(Array.isArray(localAc?.added)).toBe(true);
     expect(localAc?.added?.length).toBeGreaterThan(0);
-    // Shared layer was NOT written.
-    expect(layered.shared.auto_context).toBeUndefined();
+    // Shared layer was NOT written with the local entry — assert the real invariant (no
+    // shared entries), not the implementation detail (key absent). A pristine shared layer
+    // is `undefined`; the HS-9349 cross-spec reset leaves it `[]`; a real regression that
+    // leaked the just-added local entry into the shared array would be NON-empty and fail.
+    expect((layered.shared.auto_context as unknown[] | undefined) ?? []).toEqual([]);
   });
 
   test('HS-9120: a locally-edited shared auto-context shows "overridden" + Reset to shared', async ({ page }) => {
