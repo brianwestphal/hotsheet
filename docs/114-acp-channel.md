@@ -61,7 +61,7 @@ Maintainer decision: *"we can generalize the permissions support and not worry a
 
 **Item 2 SHIPPED + live-validated (§114.12):** `acpDrive.ts::requestPermission` (`makeBridgeResolver`) now maps the ACP `toolCall` (via `acpToolCall.ts::extractToolCallDisplay`) + injects it into the bridge, with turn-end/dismiss cleanup — validated against a REAL OpenCode turn (the `toolCall`/`options`/`stopReason` shapes are captured, the permission callback fired, the turn completed).
 
-**Remaining:** the auto-allow gate (map ACP `kind` → `permission_allow_rules` + `pickAllowOptionId`); OpenCode `ai_tool` label/skills wiring; and a full in-app end-to-end — gated on **HS-9340** (implement `fs/read_text_file`/`fs/write_text_file` so edits actually land — opencode delegates them) + **HS-9341** (ensure opencode `permission: ask` so the overlay is used at all). See §114.12.
+**Auto-allow gate — SHIPPED (HS-9346):** `src/acp/acpAutoAllow.ts` maps the ACP `toolCall.kind` → a Claude-style `(tool, primary)` (`execute`→`Bash`/`rawInput.command`, `read`→`Read`, `fetch`→`WebFetch`; `edit`/others not gated — `findMatchingAllowRule` already refuses `Edit`/`Write`), and `acpDrive::makeBridgeResolver` checks `permission_allow_rules` BEFORE injecting: a match auto-resolves with `pickAllowOptionId(options,false)` so the popup never renders (the §47 equivalent of the Claude channel gate). Both toolCall shapes captured live. **Remaining:** OpenCode `ai_tool` label/skills wiring (HS-9344) + a full in-app end-to-end (through the running server/client) — the pieces are unit- + live-validated (HS-9340 fs writes land, HS-9341 opencode asks); the last step just exercises them together in the app.
 
 ## 114.6 Busy / done via the update stream
 

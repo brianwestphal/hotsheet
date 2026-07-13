@@ -30,7 +30,7 @@ const PERM_OPTIONS = [
 
 /** A fake agent that, on `session/prompt`, raises a `session/request_permission` and
  *  waits for the client's reply before finishing the turn. Captures the reply outcome. */
-function scriptedAgentWithPermission(): {
+function scriptedAgentWithPermission(toolCall: unknown = EDIT_TOOL_CALL): {
   proc: EventEmitter & { stdin: unknown; stdout: EventEmitter; kill: () => void };
   spawnFn: SpawnFn;
   getOutcome: () => unknown;
@@ -46,7 +46,7 @@ function scriptedAgentWithPermission(): {
     else if (msg.method === 'session/new') emit({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'sess-1' } });
     else if (msg.method === 'session/prompt') {
       promptId = msg.id;
-      emit({ jsonrpc: '2.0', id: 'perm-1', method: 'session/request_permission', params: { sessionId: 'sess-1', toolCall: EDIT_TOOL_CALL, options: PERM_OPTIONS } });
+      emit({ jsonrpc: '2.0', id: 'perm-1', method: 'session/request_permission', params: { sessionId: 'sess-1', toolCall, options: PERM_OPTIONS } });
     } else if (msg.id === 'perm-1' && msg.result !== undefined) {
       outcome = msg.result.outcome; // the client's reply to the permission request
       emit({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } }); // now finish
@@ -277,6 +277,25 @@ describe('spawnAcpRun', () => {
       expect(getOutcome()).toEqual({ outcome: 'selected', optionId: 'always' });
       expect(signalDone).toHaveBeenCalled();
       expect(pendingAcpPermissionForSecret(secret)).toBeNull(); // cleared
+    });
+
+    it('auto-allows a toolCall matching a permission_allow_rule — no popup (HS-9346)', async () => {
+      // Bash rule matching `git status`; the agent raises an `execute` permission request.
+      writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({
+        ai_tool: 'opencode',
+        permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: 'git status', added_at: '' }],
+      }), 'utf-8');
+      const secret = getProjectSecret(dataDir);
+      const execToolCall = { toolCallId: 'c', title: 'git status', kind: 'execute', rawInput: { command: 'git status' } };
+      const { spawnFn, getOutcome } = scriptedAgentWithPermission(execToolCall);
+      const signalDone = vi.fn();
+      spawnAcpRun(dataDir, 4174, 'run git status', { spawnFn, signalDone, postHeartbeat: vi.fn() });
+      await flush();
+
+      // Gate fired → resolved with the allow option directly; NO popup was ever surfaced.
+      expect(pendingAcpPermissionForSecret(secret)).toBeNull();
+      expect(getOutcome()).toEqual({ outcome: 'selected', optionId: 'once' });
+      expect(signalDone).toHaveBeenCalled();
     });
 
     it('dismisses a still-pending permission when the turn ends first (no hang)', async () => {

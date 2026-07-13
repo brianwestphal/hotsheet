@@ -21,15 +21,18 @@
 // into the main-server bridge (`acpPermissionBridge.ts`) → the SAME option-driven overlay
 // the Claude popup uses → the user's chosen `optionId` flows back as the ACP reply. A
 // pending request is dismissed (→ cancelled) if the turn ends first, so an abandoned
-// prompt can never leave the agent waiting. (The auto-allow gate — mapping the ACP `kind`
-// onto `permission_allow_rules` — is a follow-up.)
+// prompt can never leave the agent waiting. HS-9346 — a `permission_allow_rules` match
+// (`acpAutoAllow.ts`) short-circuits the popup and auto-resolves with the allow option,
+// the §47 equivalent of the Claude channel's `findMatchingAllowRule` pre-emption.
 
 import { type ChildProcess, spawn } from 'child_process';
 import { dirname } from 'path';
 
 import { readFileSettings } from '../file-settings.js';
+import { parseAllowRules } from '../permissionAllowRules.js';
 import { getProjectSecret } from '../secret-file.js';
 import { isAcpDrivenTool, resolveAcpAgentCommand } from './acpAgents.js';
+import { acpAutoAllowOptionId } from './acpAutoAllow.js';
 import { type AcpClientCallbacks, type AcpTransport, createAcpClient } from './acpClient.js';
 import { makeProjectFsHandlers } from './acpFs.js';
 import { dismissAcpPermission, injectAcpPermission } from './acpPermissionBridge.js';
@@ -122,7 +125,7 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
   // HS-9330 — track request_ids we've surfaced in the overlay so a turn that ends while
   // one is still pending can dismiss it (→ cancelled) rather than leave the agent waiting.
   const pendingPermissionIds = new Set<string>();
-  const requestPermission = deps.requestPermission ?? makeBridgeResolver(secret, pendingPermissionIds);
+  const requestPermission = deps.requestPermission ?? makeBridgeResolver(secret, dataDir, pendingPermissionIds);
 
   let finished = false;
   const finish = (): void => {
@@ -167,9 +170,20 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
  */
 function makeBridgeResolver(
   secret: string,
+  dataDir: string,
   pending: Set<string>,
 ): NonNullable<AcpClientCallbacks['requestPermission']> {
   return async (req) => {
+    // HS-9346 — auto-allow gate: if a `permission_allow_rules` rule matches this toolCall,
+    // resolve with the allow option WITHOUT rendering the popup (the §47 equivalent of the
+    // Claude channel's `findMatchingAllowRule` pre-emption). Best-effort: a settings read
+    // failure just falls through to showing the popup.
+    try {
+      const rules = parseAllowRules(readFileSettings(dataDir).permission_allow_rules);
+      const autoAllow = acpAutoAllowOptionId(req.toolCall, req.options, rules);
+      if (autoAllow !== null) return { optionId: autoAllow };
+    } catch { /* fall through to the overlay */ }
+
     const display = extractToolCallDisplay(req.toolCall);
     const { request_id, promise } = injectAcpPermission({
       secret,
