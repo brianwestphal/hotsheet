@@ -18,6 +18,14 @@ const TERMINAL_SPECS = [
   '**/terminal*.spec.ts',
   '**/show-hide-terminals.spec.ts',
   '**/drawer-terminal-grid.spec.ts',
+  // HS-9350 — this spec spawns 3 live PTYs and asserts the quit-confirm preview
+  // xterm PAINTS (`.xterm-screen` renders `TOP-STATUS-BAR`) — a real-PTY render
+  // round-trip, same timing class as the specs above. Left in the `no-terminal`
+  // job it failed deterministically (3/3 CI + local sweeps) because the shared
+  // server, loaded by ~280 other specs, couldn't spawn+paint the PTY inside the
+  // 8s window. It passes in isolation. Route it to the dedicated `e2e-terminal`
+  // job (fresh server + full runner + 60s timeout) where terminal timing lives.
+  '**/quit-confirm-dialog-growth.spec.ts',
 ];
 const scope = process.env.E2E_SCOPE;
 const terminalScope = scope === 'terminal';
