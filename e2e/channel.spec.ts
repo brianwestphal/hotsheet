@@ -2,8 +2,10 @@ import { expect, test } from './coverage-fixture.js';
 
 /** POST helper that includes Origin header so the secret middleware allows the request. */
 async function apiPost(page: import('@playwright/test').Page, path: string) {
+  // HS-9352 — derive the Origin from the page's actual URL (the per-worker
+  // server's port), not a hard-coded 4190, so the CSRF Origin check matches.
   return page.request.post(path, {
-    headers: { Origin: 'http://localhost:4190' },
+    headers: { Origin: new URL(page.url()).origin },
   });
 }
 

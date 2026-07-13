@@ -76,7 +76,9 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
-      - run: npm run build:client
+      # HS-9352 — the client build now happens once in the Playwright globalSetup
+      # (e2e/globalSetup.ts) before the per-worker isolated servers start, so no
+      # separate build step is needed here.
       - run: npx playwright install chromium --with-deps
       - run: npm run test:e2e:fast
         env:
@@ -89,7 +91,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
-      - run: npm run build:client
+      # HS-9352 — client build happens in the Playwright globalSetup (see above).
       - run: npx playwright install chromium --with-deps
       - run: npm run test:e2e:fast
         env:

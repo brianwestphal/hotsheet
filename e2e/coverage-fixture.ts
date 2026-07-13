@@ -1,6 +1,36 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test as base } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, resolve } from 'path';
+
+// HS-9352 — repo root, for spawning the per-worker Hot Sheet server (src/cli.ts).
+const E2E_REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// HS-9352 — the load-bearing startup banner (`src/server.ts`, pinned by
+// launchReadinessContract.test.ts) prints the ACTUAL listening port. Parsing it
+// lets each worker spawn on an OS-assigned ephemeral port (`--port 0`) instead of
+// a fixed one — so there is NO possibility of a port collision (stale server from
+// a prior run, a restarted worker, or two workers), which was the entire class of
+// flakiness a fixed `4190+idx` scheme reintroduced.
+const SERVER_BANNER = /Hot Sheet running at https?:\/\/localhost:(\d+)/;
+
+/** HS-9352 — poll a spawned server's `/` until it answers 2xx (or reject). */
+async function confirmServerReachable(baseURL: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastErr: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${baseURL}/`);
+      if (res.ok) return;
+    } catch (e) { lastErr = e; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`HS-9352 — e2e server at ${baseURL} not reachable in ${timeoutMs}ms (last error: ${String(lastErr)})`);
+}
 
 // HS-8367 — suppress the §50 / HS-7962 upgrade-nudge overlay in every
 // e2e test by default. The nudge is a near-full-viewport modal that
@@ -235,7 +265,100 @@ export const test = base.extend<{
   suppressUpgradeNudge: void;
   resetSettings: void;
   errorCapture: ErrorCaptureFixture;
+}, {
+  // HS-9352 — each Playwright worker gets its OWN isolated Hot Sheet server
+  // (fresh data-dir + HOME, distinct port) so no single server is loaded by
+  // the whole ~280-spec sweep. This removes the load-induced flaky tail (specs
+  // missing fixed timeouts under a shared, event-loop-starved PGLite server)
+  // and all cross-WORKER contamination. `baseURL` is worker-scoped so it
+  // resolves in `beforeAll` hooks (37 no-terminal specs read `request` there).
+  workerServer: { baseURL: string };
 }>({
+  // HS-9352 — spawn (and tear down) the per-worker server. Coverage path
+  // (scripts/test-all.sh) sets NO_WEB_SERVER and runs its OWN single server on
+  // 4190 with NODE_V8_COVERAGE, so there we DON'T spawn — just target 4190
+  // (config forces workers:1 in that mode). Otherwise spawn on 4190+parallelIndex
+  // (parallelIndex is 0..workers-1, stable across worker restarts — unlike
+  // workerIndex — so ports never collide).
+  workerServer: [async ({}, use) => {
+    if (process.env.NO_WEB_SERVER !== undefined && process.env.NO_WEB_SERVER !== '') {
+      await use({ baseURL: 'http://localhost:4190' });
+      return;
+    }
+    const home = mkdtempSync(join(tmpdir(), 'hs-e2e-home-'));
+    const dataDir = mkdtempSync(join(tmpdir(), 'hs-e2e-data-'));
+    // os.homedir() reads HOME on POSIX / USERPROFILE on Windows — set both so
+    // the isolated home takes effect everywhere (mirrors scripts/e2e-server.mjs).
+    const env = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      PLUGINS_ENABLED: process.env.PLUGINS_ENABLED ?? 'true',
+    };
+    // `--port 0` → OS-assigned ephemeral port (no `--strict-port` needed: an
+    // ephemeral bind never collides). The real port is read from the startup banner.
+    const server = spawn(
+      process.execPath,
+      ['--import', 'tsx', join(E2E_REPO_ROOT, 'src', 'cli.ts'),
+        '--data-dir', dataDir, '--no-open', '--port', '0'],
+      { cwd: E2E_REPO_ROOT, env, stdio: 'pipe' },
+    );
+    // Buffer output: scan for the port banner during startup, keep a bounded tail
+    // for crash diagnostics over the worker's lifetime.
+    let serverLog = '';
+    let port = 0;
+    const onChunk = (d: Buffer): void => {
+      serverLog = (serverLog + d.toString()).slice(-16_000);
+      if (port === 0) {
+        const m = SERVER_BANNER.exec(serverLog);
+        if (m) port = Number(m[1]);
+      }
+    };
+    server.stdout?.on('data', onChunk);
+    server.stderr?.on('data', onChunk);
+    // Wait for the banner (→ the server is listening) or an early exit.
+    const deadline = Date.now() + 80_000;
+    while (port === 0 && Date.now() < deadline) {
+      if (server.exitCode !== null) {
+        throw new Error(`HS-9352 — e2e server exited early (code ${String(server.exitCode)}) before listening\n--- server log (tail) ---\n${serverLog}`);
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (port === 0) {
+      server.kill('SIGKILL');
+      throw new Error(`HS-9352 — e2e server never printed its port banner in 80s\n--- server log (tail) ---\n${serverLog}`);
+    }
+    const baseURL = `http://localhost:${port}`;
+    try {
+      await confirmServerReachable(baseURL);
+    } catch (e) {
+      server.kill('SIGKILL');
+      throw new Error(`${String(e)}\n--- server log (tail) ---\n${serverLog}`);
+    }
+    await use({ baseURL });
+    // Teardown: SIGKILL for guaranteed, immediate port release. These are
+    // ephemeral e2e servers with no state to flush, so a graceful SIGTERM (which
+    // can hang the shutdown for seconds) buys nothing and risks a leaked server.
+    await new Promise<void>((resolveClose) => {
+      if (server.exitCode !== null) { resolveClose(); return; }
+      server.once('exit', () => resolveClose());
+      server.kill('SIGKILL');
+      setTimeout(resolveClose, 3000);
+    });
+    // HS-9352 — 100s setup budget. Workers cold-start `node --import tsx` servers
+    // concurrently (TS compile + PGLite init), so the last one up can take well past
+    // the 30s test timeout — but it's a ONE-TIME per-worker cost amortized over ~140
+    // specs, so a generous budget is cheap and prevents a slow cold-start from
+    // false-failing the worker.
+  }, { scope: 'worker', timeout: 100_000 }],
+  // HS-9352 — point every consumer (`page`, `request`, `page.request`, and
+  // worker-level `beforeAll` `request`) at this worker's server. `baseURL` is a
+  // built-in option so it stays test-scoped, but it depends only on the
+  // worker-scoped `workerServer`, so Playwright resolves it at worker granularity
+  // (available in `beforeAll` too).
+  baseURL: async ({ workerServer }, use) => {
+    await use(workerServer.baseURL);
+  },
   resetSettings: [async ({ request }, use) => {
     await resetCrossSpecSettings(request);
     await use();

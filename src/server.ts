@@ -48,7 +48,15 @@ function tryServe(
     // `createServer` + mTLS `serverOptions` (`requestCert`/`rejectUnauthorized`).
     // On loopback/Tier-0 it's absent → plain HTTP, exactly as before.
     const server = serve({ fetch, port, hostname, ...(tls ?? {}) });
-    server.on('listening', () => { resolve({ port, server: server as HttpServer }); });
+    server.on('listening', () => {
+      // HS-9352 — resolve with the ACTUAL bound port. For an explicit port this is
+      // identical to `port`, but for `--port 0` (OS-assigned ephemeral, used by the
+      // per-worker e2e servers) the kernel picks the real port and we must report
+      // THAT, not the requested 0. `address()` is `{ port }` for a TCP listener.
+      const addr = (server as HttpServer).address();
+      const boundPort = addr !== null && typeof addr === 'object' ? addr.port : port;
+      resolve({ port: boundPort, server: server as HttpServer });
+    });
     server.on('error', (err: NodeJS.ErrnoException) => {
       reject(err);
     });
