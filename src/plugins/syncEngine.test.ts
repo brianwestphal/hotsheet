@@ -43,7 +43,7 @@ const loaderMock = await import('./loader.js') as typeof import('./loader.js') &
   __registerPlugin: (p: LoadedPlugin) => void;
   __clearPlugins: () => void;
 };
-const { runSync, resolveConflict, onTicketChanged, onTicketCreated, stopAllScheduledSyncs, cancelPendingPush, startScheduledSync, stopScheduledSync, applyScheduledSyncFromConfig, isSyncScheduled, getPendingSyncCounts } = await import('./syncEngine.js');
+const { runSync, resolveConflict, onTicketChanged, onTicketCreated, onTicketDeleted, stopAllScheduledSyncs, cancelPendingPush, startScheduledSync, stopScheduledSync, applyScheduledSyncFromConfig, isSyncScheduled, getPendingSyncCounts } = await import('./syncEngine.js');
 
 let tempDir: string;
 
@@ -558,6 +558,44 @@ describe('sync engine — onTicketChanged', () => {
     // No outbox entries should be created
     const entries = await getOutboxEntries('mock-backend');
     expect(entries.filter(e => e.ticket_id === ticket.id).length).toBe(0);
+  });
+});
+
+describe('sync engine — onTicketDeleted (HS-9147)', () => {
+  it('queues a delete outbox entry for a synced ticket', async () => {
+    const backend = createMockBackend();
+    loaderMock.__registerBackend(backend);
+
+    const ticket = await createTicket('Delete me');
+    await upsertSyncRecord(ticket.id, 'mock-backend', 'remote-del-1', 'synced');
+    await onTicketDeleted(ticket.id);
+
+    const entries = await getOutboxEntries('mock-backend');
+    expect(entries.some(e => e.ticket_id === ticket.id && e.action === 'delete')).toBe(true);
+  });
+
+  it('does nothing for an unsynced ticket', async () => {
+    const backend = createMockBackend();
+    loaderMock.__registerBackend(backend);
+
+    const ticket = await createTicket('Never synced');
+    await onTicketDeleted(ticket.id);
+
+    const entries = await getOutboxEntries('mock-backend');
+    expect(entries.some(e => e.ticket_id === ticket.id && e.action === 'delete')).toBe(false);
+  });
+
+  it('skips the delete when the plugin is disabled for the project', async () => {
+    const backend = createMockBackend();
+    loaderMock.__registerBackend(backend);
+    const ticket = await createTicket('Disabled-project delete');
+    await upsertSyncRecord(ticket.id, 'mock-backend', 'remote-del-2', 'synced');
+
+    pluginEnabledForProject = false; // reset to true in afterEach
+    await onTicketDeleted(ticket.id);
+
+    const entries = await getOutboxEntries('mock-backend');
+    expect(entries.some(e => e.ticket_id === ticket.id && e.action === 'delete')).toBe(false);
   });
 });
 
