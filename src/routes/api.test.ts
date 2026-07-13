@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1547,6 +1547,22 @@ describe('channel endpoints', () => {
     expect(res.status).toBe(200);
     const data = await res.json() as OkResponse;
     expect(data.ok).toBe(true);
+  });
+
+  it('POST /api/channel/done labels the done entry with the agent name (HS-9345)', async () => {
+    // Shared tempDir → save + restore settings.json around the ai_tool override.
+    const settingsPath = join(tempDir, 'settings.json');
+    const original = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf-8') : null;
+    try {
+      const base = original !== null ? JSON.parse(original) as Record<string, unknown> : {};
+      writeFileSync(settingsPath, JSON.stringify({ ...base, ai_tool: 'opencode' }));
+      await app.request('/api/channel/done', { method: 'POST' });
+      const log = await (await app.request('/api/command-log')).json() as { event_type: string; summary: string }[];
+      // NOT the hardcoded "Claude finished" — reflects the project's ai_tool.
+      expect(log.some(e => e.event_type === 'done' && e.summary === 'OpenCode finished')).toBe(true);
+    } finally {
+      writeFileSync(settingsPath, original ?? '{}');
+    }
   });
 
   it('GET /api/channel/status returns status fields', async () => {

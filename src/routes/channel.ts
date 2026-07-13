@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import { Hono } from 'hono';
 
 import { hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBridge.js';
+import { agentDisplayName } from '../agentDisplayName.js';
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
 import { disconnectMainConnections, listAliveEntries } from '../channelRegistry.js';
@@ -407,7 +408,10 @@ channelRoutes.post('/channel/done', (_c) => {
     // can't keep accruing unrelated future cost.
     void closeOpenTicketIntervalsForProject(secret);
   }
-  addLogEntry('done', 'incoming', 'Claude finished', '').catch(() => {});
+  // HS-9345 — label the done entry with the ACTUAL agent (both spawn drives — ACP /
+  // MCP-hooks — POST here on turn-end), not a hardcoded "Claude finished".
+  const tool = readFileSettings(_c.get('dataDir')).ai_tool;
+  addLogEntry('done', 'incoming', `${agentDisplayName(typeof tool === 'string' ? tool : undefined)} finished`, '').catch(() => {});
   notifyChange(); // Triggers long-poll so client picks up the done state
   return _c.json({ ok: true });
 });
