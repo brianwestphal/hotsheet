@@ -3,7 +3,7 @@
 // shapes (from the §114.11 spike) — no spawn, no `opencode auth`, no LLM turn.
 import { type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -74,7 +74,7 @@ const flush = async (): Promise<void> => {
 function scriptedAgent(stopReason = 'end_turn'): {
   proc: EventEmitter & { stdin: unknown; stdout: EventEmitter; kill: () => void };
   spawnFn: SpawnFn;
-  spawned: { command?: string; args?: string[]; cwd?: string };
+  spawned: { command?: string; args?: string[]; cwd?: string; env?: NodeJS.ProcessEnv };
 } {
   const stdout = new EventEmitter();
   const emit = (obj: unknown): void => { stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n', 'utf-8')); };
@@ -98,11 +98,12 @@ function scriptedAgent(stopReason = 'end_turn'): {
     stdout,
     kill: vi.fn(),
   });
-  const spawned: { command?: string; args?: string[]; cwd?: string } = {};
+  const spawned: { command?: string; args?: string[]; cwd?: string; env?: NodeJS.ProcessEnv } = {};
   const spawnFn = vi.fn<SpawnFn>((command, args, options) => {
     spawned.command = command;
     spawned.args = args;
     spawned.cwd = options.cwd;
+    spawned.env = options.env;
     return proc as unknown as ChildProcess;
   });
   return { proc, spawnFn, spawned };
@@ -160,6 +161,16 @@ describe('spawnAcpRun', () => {
     expect(spawned.command).toBe('opencode');
     expect(spawned.args).toEqual(['acp']);
     expect(spawned.cwd).toBe(dir); // <root>/.hotsheet → <root>
+  });
+
+  it('points opencode at the managed permission:ask config via OPENCODE_CONFIG (HS-9341)', () => {
+    setTool('opencode');
+    const { spawnFn, spawned } = scriptedAgent();
+    spawnAcpRun(dataDir, 4174, 'go', { spawnFn, signalDone: vi.fn(), postHeartbeat: vi.fn() });
+    const cfgPath = join(dataDir, 'opencode-acp.json');
+    expect(spawned.env?.OPENCODE_CONFIG).toBe(cfgPath);
+    expect(existsSync(cfgPath)).toBe(true);
+    expect((JSON.parse(readFileSync(cfgPath, 'utf-8')) as { permission: { edit: string } }).permission.edit).toBe('ask');
   });
 
   it('drives one full turn: busy on start, activity heartbeats, idle + done on stopReason', async () => {

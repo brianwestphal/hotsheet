@@ -34,6 +34,7 @@ import { type AcpClientCallbacks, type AcpTransport, createAcpClient } from './a
 import { makeProjectFsHandlers } from './acpFs.js';
 import { dismissAcpPermission, injectAcpPermission } from './acpPermissionBridge.js';
 import { extractToolCallDisplay } from './acpToolCall.js';
+import { ensureOpencodeAcpConfig } from './opencodeConfig.js';
 
 /** HS-9330 — does this project drive its play button over the ACP transport
  *  (docs/113 §113.2 A2)? True when `ai_tool` resolves to a known ACP entrypoint. */
@@ -87,13 +88,22 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
   const projectDir = dirname(dataDir); // <root>/.hotsheet → <root>
   const secret = getProjectSecret(dataDir);
 
+  // HS-9341 — point OpenCode at Hot Sheet's managed `permission: ask` config (a low-
+  // priority default the user's own config can override) so tool calls route to the §47
+  // overlay instead of being auto-approved. OpenCode-specific (its config env var); other
+  // ACP agents get no extra env until they need it.
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (resolved.command === 'opencode') {
+    env.OPENCODE_CONFIG = ensureOpencodeAcpConfig(dataDir);
+  }
+
   let proc: ChildProcess;
   try {
     // stderr → ignore: OpenCode logs there (docs/114 §114.11); leaving it a live but
     // unread pipe could block the child on a full buffer. stdin/stdout stay pipes.
     proc = doSpawn(resolved.command, resolved.args, {
       cwd: projectDir,
-      env: { ...process.env },
+      env,
       stdio: ['pipe', 'pipe', 'ignore'] as const,
     });
   } catch {
