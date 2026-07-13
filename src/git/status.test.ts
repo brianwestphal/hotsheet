@@ -3,9 +3,12 @@
  * spawn-shell-out path is covered at the integration level (the live spawn
  * uses real `git`); these tests pin the porcelain-format parsing math.
  */
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, getRecentCommits, parsePendingCommits, parseStatusV2 } from './status.js';
+import { _resetFetchStateForTests, bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, getRecentCommits, parsePendingCommits, parseStatusV2, runGitFetch } from './status.js';
 
 const US = '\x1f';
 const RS = '\x1e';
@@ -319,5 +322,74 @@ describe('parseStatusV2 (HS-9238)', () => {
       branch: '', detached: false, upstream: null,
       ahead: 0, behind: 0, staged: 0, unstaged: 0, untracked: 0, conflicted: 0,
     });
+  });
+});
+
+// HS-9150 — runGitFetch (previously untested; injectable invoker, no real network).
+describe('runGitFetch (HS-9150)', () => {
+  const REPO = process.cwd(); // a real git repo so isGitRepo passes
+  afterEach(() => { _resetFetchStateForTests(); });
+
+  type Res = { stdout: string; status: number };
+  /** Dispatch canned responses by the git subcommand (`rev-parse` = upstream check, else fetch). */
+  const invokerFor = (upstream: Res, fetch: Res) =>
+    (args: string[]): Promise<Res> => Promise.resolve(args[0] === 'rev-parse' ? upstream : fetch);
+
+  it('errors when the project root is not a git repository', async () => {
+    const notRepo = mkdtempSync(join(tmpdir(), 'nogit-'));
+    try {
+      const res = await runGitFetch(notRepo, () => Promise.resolve({ stdout: '', status: 0 }));
+      expect(res.ok).toBe(false);
+      expect(res.error).toBe('Not a git repository');
+      expect(res.lastFetchedAt).toBeNull();
+    } finally {
+      rmSync(notRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('errors when the branch has no upstream', async () => {
+    const res = await runGitFetch(REPO, invokerFor({ stdout: '', status: 128 }, { stdout: '', status: 0 }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('No upstream');
+  });
+
+  it('errors when the upstream check succeeds but returns an empty ref', async () => {
+    const res = await runGitFetch(REPO, invokerFor({ stdout: '   \n', status: 0 }, { stdout: '', status: 0 }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('No upstream');
+  });
+
+  it('succeeds and records a timestamp on a clean fetch', async () => {
+    const res = await runGitFetch(REPO, invokerFor({ stdout: 'origin/main\n', status: 0 }, { stdout: '', status: 0 }));
+    expect(res.ok).toBe(true);
+    expect(typeof res.lastFetchedAt).toBe('number');
+    expect(res.error).toBe('');
+  });
+
+  it('surfaces the captured output on a failed fetch', async () => {
+    const res = await runGitFetch(REPO, invokerFor({ stdout: 'origin/main\n', status: 0 }, { stdout: 'fatal: could not read from remote\n', status: 1 }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('could not read from remote');
+  });
+
+  it('falls back to a generic message when a failed fetch produced no output', async () => {
+    const res = await runGitFetch(REPO, invokerFor({ stdout: 'origin/main\n', status: 0 }, { stdout: '', status: 1 }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('fetch failed');
+  });
+});
+
+// HS-9150 — exercise the DEFAULT (real-git) invoker path once, so makeGitInvoker +
+// bufToStr aren't bypassed by the injected-invoker tests. Read-only `git status` against
+// the real repo (process.cwd()); asserts only the structural shape (not flaky on a dirty tree).
+describe('getGitStatus — default invoker against the real repo (HS-9150)', () => {
+  it('returns a structured status via the real git invocation', async () => {
+    const res = await getGitStatus(process.cwd());
+    expect(res).not.toBeNull();
+    expect(res).toHaveProperty('branch'); // string | null — a real git status resolved
+    expect(typeof res!.staged).toBe('number');
+    expect(typeof res!.unstaged).toBe('number');
+    expect(typeof res!.untracked).toBe('number');
+    expect(typeof res!.conflicted).toBe('number');
   });
 });
