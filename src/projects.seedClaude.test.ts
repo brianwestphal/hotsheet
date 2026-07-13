@@ -10,7 +10,7 @@ import { seedClaudeTerminalIfNew } from './projects.js';
  * HS-8491 — pin the auto-seed behavior of `seedClaudeTerminalIfNew`.
  *
  * Contract:
- *   - Seeds a `{ id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true }`
+ *   - Seeds a `{ id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true }`
  *     terminal in `.hotsheet/settings.json` when `terminals` is not
  *     yet set AND `claude` is on PATH.
  *   - Does NOT seed when `terminals` is already set (even to an
@@ -59,7 +59,7 @@ describe('seedClaudeTerminalIfNew (HS-8491)', () => {
     seedClaudeTerminalIfNew(dataDir, () => true);
     const settings = readFileSettings(dataDir);
     expect(settings.terminals).toEqual([
-      { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
+      { id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true },
     ]);
   });
 
@@ -110,7 +110,7 @@ describe('seedClaudeTerminalIfNew (HS-8491)', () => {
     withClaudeOnPath();
     seedClaudeTerminalIfNew(dataDir);
     expect(readFileSettings(dataDir).terminals).toEqual([
-      { id: 'claude', name: 'Claude', command: '{{claudeCommand}}', lazy: true },
+      { id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true },
     ]);
   });
 });

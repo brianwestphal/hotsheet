@@ -136,9 +136,9 @@ describe('openWorktreesPanel (HS-8938)', () => {
     // main + follower both get one; click the follower's (second).
     btn[btn.length - 1].click();
     await flush();
-    // HS-9036 — launches via the `{{claudeCommand}}` token (server resolves it to the
-    // channel-connected command so the worktree's Claude routes permissions to Hot Sheet).
-    expect(mockOpenTerminal).toHaveBeenCalledWith('{{claudeCommand}}', expect.stringContaining('feat'), follower.path);
+    // HS-9036 / HS-9334 — launches via the `{{aiCommand}}` token (server resolves it to the
+    // channel-connected command so the worktree's agent routes permissions to Hot Sheet).
+    expect(mockOpenTerminal).toHaveBeenCalledWith('{{aiCommand}}', expect.stringContaining('feat'), follower.path);
     // opening a terminal closes the panel.
     expect(document.querySelector('.worktrees-overlay')).toBeNull();
   });
