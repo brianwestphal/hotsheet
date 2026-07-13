@@ -61,6 +61,15 @@ describe('writeInstructionsForTool', () => {
     expect(content.startsWith('---')).toBe(false); // plain markdown, like CLAUDE.md
   });
 
+  it('creates AGENTS.md for OpenCode (same shared file as Antigravity) — HS-9344', () => {
+    expect(writeInstructionsForTool(root, 'opencode')).toBe(true);
+    const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('hotsheet:begin section=ticket-driven-work');
+    expect(content.startsWith('---')).toBe(false);
+    // Shared AGENTS.md: a second write via the Antigravity entry is an idempotent no-op.
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false);
+  });
+
   it('is idempotent — a second write of an up-to-date file returns false', () => {
     expect(writeInstructionsForTool(root, 'cursor')).toBe(true);
     expect(writeInstructionsForTool(root, 'cursor')).toBe(false);

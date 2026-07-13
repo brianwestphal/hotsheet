@@ -12,7 +12,7 @@ import { dirname, join } from 'path';
 import { applyManagedSections, getInstructionsStatus, type InstructionsStatus } from './aiInstructions.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
-export type AiInstructionTool = 'claude' | 'cursor' | 'windsurf' | 'copilot' | 'antigravity';
+export type AiInstructionTool = 'claude' | 'cursor' | 'windsurf' | 'copilot' | 'antigravity' | 'opencode';
 
 const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
 
@@ -59,6 +59,15 @@ const TOOLS: readonly ToolTarget[] = [
     // a separate follow-on; see HS-9322 notes.)
     tool: 'antigravity', label: 'Antigravity', relPath: 'AGENTS.md', frontmatter: '',
     detect: (r) => isExecutableOnPath('agy') || existsSync(join(r, 'AGENTS.md')),
+  },
+  {
+    // HS-9344 — OpenCode (the lead ACP agent, docs/114) reads the same AGENTS.md
+    // standard, so an opencode-driven project gets the managed Hot Sheet sections too.
+    // Shares the AGENTS.md file with the Antigravity entry above — when both are present
+    // the file is written twice, which is idempotent (`applyManagedSections` no-ops when
+    // unchanged), so no special-casing is needed.
+    tool: 'opencode', label: 'OpenCode', relPath: 'AGENTS.md', frontmatter: '',
+    detect: (r) => isExecutableOnPath('opencode') || existsSync(join(r, 'AGENTS.md')),
   },
 ];
 
