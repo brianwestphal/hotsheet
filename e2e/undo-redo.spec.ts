@@ -77,25 +77,30 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
     await row.locator('.ticket-number').click();
     await expect(page.locator('#detail-title')).toHaveValue(title, { timeout: 5000 });
 
-    // Enter edit mode on the Details field (click the rendered view), then type.
+    // Enter edit mode on the Details field (click the rendered view).
     await page.locator('#detail-details-rendered').click();
     const detailsArea = page.locator('#detail-details');
     await expect(detailsArea).toBeFocused();
-    await detailsArea.fill('original details — edited');
-    // HS-9352 — the undo entry is recorded SYNCHRONOUSLY in the same input handler
-    // that schedules the debounced save (autoSave.tsx), so once the save has
-    // round-tripped the undo entry is GUARANTEED to have been recorded. Poll for
-    // that instead of a fixed `waitForTimeout` (which raced the save under CI load,
-    // so Meta+z fired before the entry existed and the revert never happened — the
-    // recurring hard-failure).
+    await expect(detailsArea).toHaveValue('original details');
+
+    // HS-9352 — append the edit with REAL keystrokes, not `fill()`. For a focused
+    // editable field the app delegates Cmd+Z to the browser's NATIVE undo
+    // (HS-9335 `shouldSkipGlobalUndo`), and `fill()` sets `.value` directly WITHOUT
+    // a native-undo entry — so native Cmd+Z was a no-op and the revert never
+    // happened (the recurring hard-failure). A contiguous typed run is one native
+    // undo unit, so a single Cmd+Z reverts exactly it.
+    await detailsArea.press('End');
+    await page.keyboard.type('EDITED');
+    await expect(detailsArea).toHaveValue('original detailsEDITED');
+    // Let the debounced auto-save round-trip (recorded synchronously in the same
+    // input handler; a landed save proves the edit registered).
     await expect.poll(async () => {
       const res = await page.request.get('/api/tickets?status=active');
       const tickets = await res.json() as { title: string; details: string }[];
       return tickets.find(t => t.title === title)?.details ?? '';
-    }, { timeout: 8000 }).toBe('original details — edited');
+    }, { timeout: 8000 }).toBe('original detailsEDITED');
 
-    // Keep focus in the textarea and undo. Pre-HS-9117 the focus guard skipped
-    // the value update, so the revert only showed after the panel redrew.
+    // Keep focus in the textarea and undo — the native undo reverts the typed run.
     await detailsArea.focus();
     await page.keyboard.press('Meta+z');
 
