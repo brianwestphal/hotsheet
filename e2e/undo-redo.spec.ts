@@ -82,8 +82,17 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
     const detailsArea = page.locator('#detail-details');
     await expect(detailsArea).toBeFocused();
     await detailsArea.fill('original details — edited');
-    // Let the debounced auto-save (300ms) round-trip so state is persisted.
-    await page.waitForTimeout(600);
+    // HS-9352 — the undo entry is recorded SYNCHRONOUSLY in the same input handler
+    // that schedules the debounced save (autoSave.tsx), so once the save has
+    // round-tripped the undo entry is GUARANTEED to have been recorded. Poll for
+    // that instead of a fixed `waitForTimeout` (which raced the save under CI load,
+    // so Meta+z fired before the entry existed and the revert never happened — the
+    // recurring hard-failure).
+    await expect.poll(async () => {
+      const res = await page.request.get('/api/tickets?status=active');
+      const tickets = await res.json() as { title: string; details: string }[];
+      return tickets.find(t => t.title === title)?.details ?? '';
+    }, { timeout: 8000 }).toBe('original details — edited');
 
     // Keep focus in the textarea and undo. Pre-HS-9117 the focus guard skipped
     // the value update, so the revert only showed after the panel redrew.

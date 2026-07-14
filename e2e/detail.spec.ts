@@ -41,16 +41,26 @@ test.describe('Detail panel interactions', () => {
     const detailsArea = page.locator('#detail-details');
     await detailsArea.fill('These are the ticket details.');
 
-    // Wait for debounced save
-    await page.waitForTimeout(1500);
+    // HS-9352 — poll until the debounced save has round-tripped to the server
+    // BEFORE reloading. A fixed `waitForTimeout` raced the save under load (the
+    // reload then read back an empty value), which made this a recurring flake.
+    await expect.poll(async () => {
+      const res = await page.request.get('/api/tickets?status=active');
+      const tickets = await res.json() as { title: string; details: string }[];
+      return tickets.find(t => t.title === 'Detail persist ticket')?.details ?? '';
+    }, { timeout: 8000 }).toBe('These are the ticket details.');
 
     // Reload and re-open detail
     await page.reload();
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await openDetail(page, 'Detail persist ticket');
 
-    // After reload the wrap flips back to rendered mode. Re-enter editing
-    // to inspect the textarea's persisted value.
+    // HS-9352 — `openDetail` only waits for the header; the details field loads
+    // slightly later. Wait for the persisted value to appear in the RENDERED view
+    // before entering edit mode — otherwise the click swaps in a not-yet-populated
+    // (empty) textarea and the assertion reads "".
+    await expect(page.locator('#detail-details-rendered')).toContainText('These are the ticket details.', { timeout: 8000 });
+    // Re-enter editing to inspect the textarea's persisted value.
     await page.locator('#detail-details-rendered').click();
     await expect(page.locator('#detail-details')).toHaveValue('These are the ticket details.');
   });

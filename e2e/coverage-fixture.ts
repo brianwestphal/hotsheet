@@ -281,7 +281,14 @@ export const test = base.extend<{
   // (parallelIndex is 0..workers-1, stable across worker restarts — unlike
   // workerIndex — so ports never collide).
   workerServer: [async ({}, use) => {
-    if (process.env.NO_WEB_SERVER !== undefined && process.env.NO_WEB_SERVER !== '') {
+    // HS-9352 — spawn a per-worker isolated server ONLY for the no-terminal scope.
+    // The coverage path (NO_WEB_SERVER) runs its own external server on 4190, and
+    // the terminal scope keeps its shared `webServer` on 4190 (also external to
+    // this fixture) — in both cases just target 4190.
+    const usesSharedServer =
+      (process.env.NO_WEB_SERVER !== undefined && process.env.NO_WEB_SERVER !== '') ||
+      process.env.E2E_SCOPE === 'terminal';
+    if (usesSharedServer) {
       await use({ baseURL: 'http://localhost:4190' });
       return;
     }

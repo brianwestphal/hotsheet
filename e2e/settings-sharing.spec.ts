@@ -583,18 +583,20 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await expect(hidden).toBeVisible({ timeout: 5000 });
     await expect(hidden.locator('.scope-tag')).toContainText('Locally hidden');
 
-    // The local layer recorded the hide (terminals scheduleSave is debounced ~400ms).
-    await page.waitForTimeout(700);
-    let layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
-    expect((layered.local.terminals as { hidden?: string[] }).hidden).toContain('shared-term');
+    // HS-9352 — poll until the debounced (~400ms) save records the hide, instead
+    // of a fixed wait that raced it under load.
+    await expect.poll(async () => {
+      const l = await (await page.request.get('/api/file-settings/layered')).json() as { local: { terminals?: { hidden?: string[] } } };
+      return l.local.terminals?.hidden ?? [];
+    }, { timeout: 8000 }).toContain('shared-term');
 
     // Re-enable restores the editable row + clears the hidden delta.
     await hidden.locator('.term-reenable-btn').click();
-    await page.waitForTimeout(600);
-    await expect(page.locator('.settings-terminal-row-hidden')).toHaveCount(0);
-    layered = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
-    const localTerms = layered.local.terminals as { hidden?: string[] } | undefined;
-    expect(localTerms?.hidden ?? []).not.toContain('shared-term');
+    await expect(page.locator('.settings-terminal-row-hidden')).toHaveCount(0, { timeout: 8000 });
+    await expect.poll(async () => {
+      const l = await (await page.request.get('/api/file-settings/layered')).json() as { local: { terminals?: { hidden?: string[] } } };
+      return l.local.terminals?.hidden ?? [];
+    }, { timeout: 8000 }).not.toContain('shared-term');
   });
 
   test('HS-9159: Announcer is a machine-local-only tab — scope bar hidden + local-only note, no enable toggle', async ({ page }) => {

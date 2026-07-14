@@ -87,11 +87,15 @@ test.describe('Drawer full-height expand', () => {
     await page.locator('#command-log-btn').click();
     await page.locator('#drawer-expand-btn').click();
     await expect(page.locator('.app')).toHaveClass(/drawer-expanded/);
-    await page.waitForTimeout(300);
 
-    // Confirm the setting was persisted.
-    const fs = await (await request.get('/api/file-settings', { headers })).json() as { drawer_expanded?: string };
-    expect(fs.drawer_expanded).toBe('true');
+    // HS-9352 — poll until the debounced save has hit disk BEFORE reloading. The
+    // old fixed `waitForTimeout(300)` + immediate read raced the save under CI
+    // load, so it read back the un-persisted value and the reload came back
+    // un-expanded (a recurring hard-failure).
+    await expect.poll(async () => {
+      const fs = await (await request.get('/api/file-settings', { headers })).json() as { drawer_expanded?: string };
+      return fs.drawer_expanded;
+    }, { timeout: 8000 }).toBe('true');
 
     // Reload — the drawer should come back open AND expanded. `.draft-input`
     // is inside the tickets area (.app-body) which the expand class hides,

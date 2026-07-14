@@ -131,14 +131,22 @@ test.describe('Sidebar navigation and custom views', () => {
     };
     const before = await upNextOf();
 
+    // HS-9352 — let the `/ws/sync` socket finish connecting before the out-of-band
+    // change. This test verifies the LIVE push path; if the PATCH lands before the
+    // socket is up the push is missed and the count only catches up on the 30s poll
+    // (past this test's budget). There's no exposed "connected" signal, so settle
+    // briefly — the socket connects well within this on a healthy client.
+    await page.waitForTimeout(1500);
+
     // Out-of-band toggle (NOT through this client's UI) — mimics a channel/AI
     // or second-device change pushed over `/ws/sync`.
     await request.patch(`/api/tickets/${created.id}`, { headers, data: { up_next: true } });
 
     // The count must climb on its own — no navigation, no project switch.
+    // HS-9352 — widen the budget: the WS-push round-trip can lag on a loaded runner.
     await expect(async () => {
       expect(await upNextOf()).toBe(before + 1);
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: 15000 });
   });
 
   // HS-8511 — per-view count badges in the sidebar. Increment-based so it's

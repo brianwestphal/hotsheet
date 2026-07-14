@@ -35,40 +35,46 @@ const terminalScope = scope === 'terminal';
 
 const isCI = process.env.CI !== undefined && process.env.CI !== '';
 
-// HS-9352 — worker count. The coverage path is single-worker against its one
-// external server (no per-worker isolation there). Otherwise parallelize so each
-// worker's ISOLATED server handles ~1/N of the sweep instead of all ~280 specs:
-//   - no-terminal (the big, formerly-flaky suite) → 2 workers on CI. GitHub's
-//     runner is CPU-constrained (~2 cores — see HS-9141); 2 workers = ~1 server
-//     per core, so we HALVE per-server load without oversubscribing the CPUs
-//     (which would reintroduce the very timing flakiness this removes). A later
-//     ticket can raise this if the runner gets more cores.
-//   - terminal scope stays single-worker: those specs are PTY-timing-sensitive,
-//     already on their own green job (HS-9141), and get isolated servers too —
-//     parallelize them conservatively (a later ticket can raise this).
-// Local runs let Playwright pick the default (CPU-based) for no-terminal.
-const workers = coveragePath ? 1 : terminalScope ? 1 : isCI ? 2 : undefined;
+// HS-9352 — per-worker ISOLATED servers apply ONLY to the no-terminal scope (the
+// big, formerly-flaky suite). The terminal scope keeps its single shared
+// `webServer` (below): it's workers:1 so it gains nothing from isolation, and it's
+// PTY-timing-sensitive + was already green (HS-9141) — routing it through the new
+// fixture destabilized it, so leave it exactly as it was. The coverage path runs
+// its own single external server (scripts/test-all.sh, NO_WEB_SERVER).
+const perWorkerServers = !coveragePath && !terminalScope;
+
+// Worker count:
+//   - no-terminal → 2 workers on CI: each worker's isolated server handles ~half
+//     the sweep instead of all ~280 specs, halving per-server load. Local runs let
+//     Playwright pick the CPU-based default.
+//   - terminal / coverage → single-worker against their one shared server.
+const workers = perWorkerServers ? (isCI ? 2 : undefined) : 1;
 
 export default defineConfig({
   testDir: 'e2e',
-  // HS-9352 — build the client once before workers start (each worker only
-  // serves the built assets). Skipped on the coverage path (builds itself).
-  globalSetup: './e2e/globalSetup.ts',
+  // HS-9352 — build the client once before the per-worker servers start (they only
+  // serve the built assets). Only needed for the per-worker (no-terminal) path;
+  // the terminal `webServer` (scripts/e2e-server.mjs) and the coverage path build
+  // the client themselves.
+  ...(perWorkerServers ? { globalSetup: './e2e/globalSetup.ts' } : {}),
   // Smoke tests use playwright.config.smoke.ts with their own server.
   testIgnore: ['**/smoke/**', ...(scope === 'no-terminal' ? TERMINAL_SPECS : [])],
   ...(terminalScope ? { testMatch: TERMINAL_SPECS } : {}),
   // Terminal specs get extra headroom for the real-PTY escape-sequence round-trips.
   timeout: terminalScope ? 60_000 : 30_000,
-  // Retry on CI only. Even with per-worker isolation (HS-9352) a spec can flake on
-  // a loaded runner; retries keep one flake from failing the job without masking a
-  // deterministic failure (which fails every attempt). Local runs keep retries: 0.
-  retries: isCI ? 2 : 0,
+  // Retry on CI only. Per-worker isolation (HS-9352) cut the flake RATE, and the
+  // known save-race / WS-liveness offenders are hardened, but the suite still has a
+  // broad pre-existing timing-flake tail (e.g. sidebar:117 is ~33% flaky even in
+  // isolation — a WS-connect race). 3 retries (4 attempts) is the backstop that
+  // keeps a rotating low-rate flake from reddening the job; it does NOT mask a
+  // deterministic failure (which fails all 4). Local runs keep retries: 0 so flakes
+  // surface during dev. HS-9353 tracks fixing the tail so this can drop back to 2.
+  retries: isCI ? 3 : 0,
   workers,
   use: {
-    // HS-9352 — a fallback only. The real per-worker baseURL is injected by the
-    // `workerServer` fixture in e2e/coverage-fixture.ts (http://localhost:4190+N,
-    // or 4190 on the coverage path). Specs that don't use that fixture (none in
-    // practice) would fall back to this.
+    // HS-9352 — for no-terminal the real per-worker baseURL is injected by the
+    // `workerServer` fixture (e2e/coverage-fixture.ts). For terminal + coverage the
+    // fixture targets this shared server on 4190.
     baseURL: 'http://localhost:4190',
     headless: true,
     screenshot: 'only-on-failure',
@@ -79,4 +85,19 @@ export default defineConfig({
       use: { browserName: 'chromium' },
     },
   ],
+  // HS-9352 — the terminal scope keeps its single shared webServer (the setup it
+  // was green on). No-terminal spawns per-worker isolated servers via the fixture
+  // (no webServer here); the coverage path (NO_WEB_SERVER) runs its own external
+  // server. HS-8714 — scripts/e2e-server.mjs is the cross-platform launcher
+  // (isolates HOME, temp data dir, builds the client, then `node --import tsx`).
+  ...(terminalScope && !coveragePath
+    ? {
+        webServer: {
+          command: 'node scripts/e2e-server.mjs',
+          port: 4190,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        },
+      }
+    : {}),
 });
