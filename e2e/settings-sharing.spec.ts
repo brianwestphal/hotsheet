@@ -334,12 +334,17 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await list.locator('.cmd-outline-add-btn').click();
     const modal = page.locator('.cmd-editor-overlay');
     await expect(modal).toBeVisible({ timeout: 3000 });
-    await modal.locator('.settings-command-row-header input[type="text"]').fill('Brand New Shared');
-    await page.waitForTimeout(300);
+    const nameInput = modal.locator('.settings-command-row-header input[type="text"]');
+    await nameInput.fill('Brand New Shared');
+    // HS-9353 — gate on observable state instead of fixed `waitForTimeout`s (they
+    // raced the modal-close + list re-render under load): confirm the name
+    // registered, wait for the editor to close, then for the new row to render.
+    await expect(nameInput).toHaveValue('Brand New Shared');
     await modal.locator('.cmd-editor-done-btn').click();
-    await page.waitForTimeout(300);
+    await expect(modal).toBeHidden({ timeout: 5000 });
 
     const row = list.locator('.cmd-outline-row').filter({ hasText: 'Brand New Shared' });
+    await expect(row).toBeVisible({ timeout: 5000 });
     await expect(row.locator('.cmd-scope-tag.scope-tag-shared')).toHaveCount(1);
     await expect(row.locator('.cmd-scope-tag.scope-tag-local')).toHaveCount(0);
   });
