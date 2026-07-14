@@ -74,7 +74,13 @@ test.describe('Settings persistence', () => {
     } else {
       await expect(autoOrderCheckbox).toBeChecked({ timeout: 3000 });
     }
-    await page.waitForTimeout(600); // debounced write to settings.local.json
+    // HS-9353 — poll until the debounced write to settings.local.json lands, rather
+    // than a fixed `waitForTimeout(600)` that raced it under CI load (it hard-failed
+    // the e2e job on run 29312007800).
+    await expect.poll(async () => {
+      const l = await (await page.request.get('/api/file-settings/layered')).json() as { local: Record<string, unknown> };
+      return l.local.auto_order;
+    }, { timeout: 8000 }).toBe(!initialChecked);
 
     // It persisted to the LOCAL file layer (the value the client now reads back),
     // as a real JSON boolean (HS-9173 — not a "true"/"false" string).
