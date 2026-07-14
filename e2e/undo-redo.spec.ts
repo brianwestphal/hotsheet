@@ -101,8 +101,13 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
     }, { timeout: 8000 }).toBe('original detailsEDITED');
 
     // Keep focus in the textarea and undo — the native undo reverts the typed run.
+    // HS-9352 — `ControlOrMeta`, NOT `Meta`: for a focused field the app delegates
+    // to the browser's NATIVE undo (HS-9335), whose chord is Ctrl+Z on Linux/Windows
+    // and Cmd+Z on macOS. Hard-coding Meta+z passed on the macOS dev box but was a
+    // no-op on the Linux CI runner (received "original detailsEDITED"), the last
+    // e2e-job hard-failer.
     await detailsArea.focus();
-    await page.keyboard.press('Meta+z');
+    await page.keyboard.press('ControlOrMeta+z');
 
     await expect(detailsArea).toHaveValue('original details', { timeout: 5000 });
   });
