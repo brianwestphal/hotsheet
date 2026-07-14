@@ -153,7 +153,13 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
   // starvation can perturb that timing enough to surface a rare non-deterministic
   // failure (e.g. an empty restored set). A genuine logic regression would fail
   // all three attempts deterministically; a starvation race clears on retry.
-  it('SIGKILL + corrupt cluster → auto-restores from snapshot; loss is bounded to post-snapshot writes', { retry: 2, timeout: 90_000 }, async () => {
+  // HS-9351 — generous timeouts: each test cold-starts one or two real `tsx`
+  // servers (PGLite init + snapshot restore of a corrupt cluster) and those spawns
+  // contend for CPU with the rest of the PARALLEL unit run on the ~2-core CI runner,
+  // so the wall time swings widely. The unit job has no retries at the job level, so
+  // an occasional slow run reddened it (`vitest run`, single attempt) — headroom +
+  // the per-test `retry: 2` keep it green without masking a real regression.
+  it('SIGKILL + corrupt cluster → auto-restores from snapshot; loss is bounded to post-snapshot writes', { retry: 2, timeout: 150_000 }, async () => {
     const child = spawnTracked();
     await child.ready;
     const secret = readSecret(child.dataDir);
@@ -191,7 +197,7 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
     expect(titles).not.toContain('Lost-2');
   });
 
-  it('prefers the fresher canonical snapshot over an older §7 backup tarball', { retry: 2, timeout: 90_000 }, async () => {
+  it('prefers the fresher canonical snapshot over an older §7 backup tarball', { retry: 2, timeout: 150_000 }, async () => {
     const child = spawnTracked();
     await child.ready;
     const secret = readSecret(child.dataDir);
@@ -240,7 +246,11 @@ describe.skipIf(!canRunServerSpawnTests)('snapshot crash-recovery e2e (HS-8588) 
     expect(titles).toEqual(expect.arrayContaining(['Old-1', 'Old-2', 'Fresh-1']));
   });
 
-  it('multi-project: both projects restore their own data with no cross-talk', { retry: 2, timeout: 120_000 }, async () => {
+  // The heaviest of the three: spawns a server, registers a SECOND project, then
+  // relaunches a fresh server that restores BOTH corrupt clusters — ~2× the cold-
+  // start + restore work, so it gets the largest budget (it's the one that timed
+  // out at ~120s in CI run 29244831663).
+  it('multi-project: both projects restore their own data with no cross-talk', { retry: 2, timeout: 180_000 }, async () => {
     const child = spawnTracked();
     await child.ready;
     const secret1 = readSecret(child.dataDir);
