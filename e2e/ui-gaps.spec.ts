@@ -174,8 +174,12 @@ test.describe('UI gaps (HS-5183)', () => {
   test('ticket list auto-refreshes when data changes via API', async ({ page }) => {
     const unique = `AutoRefresh ${Date.now()}`;
 
-    // Count tickets before
-    const countBefore = await page.locator('.ticket-row[data-id]').count();
+    // HS-9353 — let the `/ws/sync` socket finish connecting before the out-of-band
+    // create. This test asserts the LIVE-refresh path; if the POST lands before the
+    // socket is up the push is missed and the row only appears on the slower poll
+    // fallback (past the 15s budget under CI load — it hard-failed run 29313504381).
+    // No exposed "connected" signal yet (see HS-9353), so settle briefly.
+    await page.waitForTimeout(1500);
 
     // Create a ticket via API (not the UI) to simulate an external change
     await page.request.post('/api/tickets', {
