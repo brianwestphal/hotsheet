@@ -1,4 +1,4 @@
-import { expect, test } from './coverage-fixture.js';
+import { awaitWsConnected, expect, test } from './coverage-fixture.js';
 
 /** Ensure the app is in list view (not column view). */
 async function ensureListView(page: import('@playwright/test').Page) {
@@ -131,12 +131,12 @@ test.describe('Sidebar navigation and custom views', () => {
     };
     const before = await upNextOf();
 
-    // HS-9352 — let the `/ws/sync` socket finish connecting before the out-of-band
-    // change. This test verifies the LIVE push path; if the PATCH lands before the
-    // socket is up the push is missed and the count only catches up on the 30s poll
-    // (past this test's budget). There's no exposed "connected" signal, so settle
-    // briefly — the socket connects well within this on a healthy client.
-    await page.waitForTimeout(1500);
+    // HS-9353 — wait until the `/ws/sync` socket is actually connected before the
+    // out-of-band change (this test verifies the LIVE push path; a PATCH landing
+    // before the socket is up misses the push and only catches up on the 30s poll).
+    // Deterministic now via the `__hotsheetWsConnected` flag — replaces the old
+    // fixed settle.
+    await awaitWsConnected(page);
 
     // Out-of-band toggle (NOT through this client's UI) — mimics a channel/AI
     // or second-device change pushed over `/ws/sync`.

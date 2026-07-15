@@ -3,9 +3,26 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test as base } from '@playwright/test';
+import { expect as pwExpect, test as base, type Page } from '@playwright/test';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, resolve } from 'path';
+
+/**
+ * HS-9353 — deterministically wait until this page's `/ws/sync` live-refresh
+ * channel is connected before driving an out-of-band change. The client sets
+ * `window.__hotsheetWsConnected` (remoteConnectivity.ts) once the socket's
+ * `connected` frame lands, so a live-refresh assertion no longer has to race a
+ * fixed settle. Replaces the `waitForTimeout(1500)` band-aids in the WS-liveness
+ * specs (sidebar / ui-gaps).
+ */
+export async function awaitWsConnected(page: Page, timeoutMs = 10_000): Promise<void> {
+  await pwExpect
+    .poll(
+      () => page.evaluate(() => (window as Window & { __hotsheetWsConnected?: boolean }).__hotsheetWsConnected === true),
+      { timeout: timeoutMs },
+    )
+    .toBe(true);
+}
 
 // HS-9352 — repo root, for spawning the per-worker Hot Sheet server (src/cli.ts).
 const E2E_REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');

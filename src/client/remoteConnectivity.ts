@@ -14,12 +14,26 @@ export type ConnectivityState = 'connected' | 'reconnecting' | 'unreachable' | '
  *  change; the map is replaced (new reference) on every set so `effect`s fire. */
 const connectivitySignal = signal<Readonly<Record<string, ConnectivityState>>>({});
 
+/** HS-9353 — mirror "is any project's `/ws/sync` live?" onto a window flag so e2e
+ *  tests can deterministically wait for the live-refresh channel before driving an
+ *  out-of-band change (previously a `waitForTimeout` settle raced the connect and
+ *  the push was missed — flaked sidebar:117 / ui-gaps:174). Set here (the client
+ *  wiring) rather than in the pure `wsSync.ts` so that module stays DOM-free. */
+type WsConnectedFlag = { __hotsheetWsConnected?: boolean };
+function publishWsConnectedFlag(map: Readonly<Record<string, ConnectivityState>>): void {
+  if (typeof window === 'undefined') return;
+  (window as Window & WsConnectedFlag).__hotsheetWsConnected =
+    Object.values(map).some((s) => s === 'connected');
+}
+
 /** Set (and broadcast) the connectivity for `secret`. No-op when unchanged. */
 export function setConnectivity(secret: string, state: ConnectivityState): void {
   if (secret === '') return;
   const cur = connectivitySignal.value;
   if (cur[secret] === state) return;
-  connectivitySignal.value = { ...cur, [secret]: state };
+  const next = { ...cur, [secret]: state };
+  connectivitySignal.value = next;
+  publishWsConnectedFlag(next);
 }
 
 /** The connectivity for `secret` (`'unknown'` when never reported). */
@@ -35,4 +49,5 @@ export function connectivity(): typeof connectivitySignal {
 /** TEST hook — clear all connectivity state. */
 export function _resetConnectivityForTesting(): void {
   connectivitySignal.value = {};
+  publishWsConnectedFlag({});
 }

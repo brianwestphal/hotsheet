@@ -3,7 +3,7 @@
  * strikethrough styling, batch tags, detail position toggle.
  * Skips drag-and-drop tests (unreliable in headless Playwright).
  */
-import { expect, test } from './coverage-fixture.js';
+import { awaitWsConnected, expect, test } from './coverage-fixture.js';
 
 async function createTicket(page: import('@playwright/test').Page, title: string, opts?: { category?: string; priority?: string; status?: string }) {
   const draftInput = page.locator('.draft-input');
@@ -174,12 +174,11 @@ test.describe('UI gaps (HS-5183)', () => {
   test('ticket list auto-refreshes when data changes via API', async ({ page }) => {
     const unique = `AutoRefresh ${Date.now()}`;
 
-    // HS-9353 — let the `/ws/sync` socket finish connecting before the out-of-band
-    // create. This test asserts the LIVE-refresh path; if the POST lands before the
-    // socket is up the push is missed and the row only appears on the slower poll
-    // fallback (past the 15s budget under CI load — it hard-failed run 29313504381).
-    // No exposed "connected" signal yet (see HS-9353), so settle briefly.
-    await page.waitForTimeout(1500);
+    // HS-9353 — wait until the `/ws/sync` socket is actually connected before the
+    // out-of-band create (this test asserts the LIVE-refresh path; a POST landing
+    // before the socket is up misses the push and the row only appears on the slower
+    // poll fallback, past the 15s budget). Deterministic via `__hotsheetWsConnected`.
+    await awaitWsConnected(page);
 
     // Create a ticket via API (not the UI) to simulate an external change
     await page.request.post('/api/tickets', {
