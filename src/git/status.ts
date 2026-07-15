@@ -20,7 +20,7 @@ const execFileAsync = promisify(execFile);
 /** execFile on a non-zero exit, timeout, or missing-binary REJECTS rather than
  *  returning a status code. Coerce whatever it carries (stdout/stderr may be a
  *  string or Buffer depending on the failure mode) into a plain string. */
-function bufToStr(v: string | Buffer | undefined): string {
+export function bufToStr(v: string | Buffer | undefined): string { // Exported for tests (HS-9148)
   if (typeof v === 'string') return v;
   if (v !== undefined) return v.toString();
   return '';
@@ -72,7 +72,11 @@ const GIT_MAX_BUFFER = 32 * 1024 * 1024;
  * `{ stdout, status }` shape the synchronous version returned, so the callers
  * downstream are unchanged.
  */
-function makeGitInvoker({ timeoutMs, includeStderr = false }: { timeoutMs: number; includeStderr?: boolean }): GitInvoker {
+// Exported for tests (HS-9148) — the consumers (`getGitStatus` /
+// `getGitStatusFiles`) guard with `isGitRepo` before ever invoking, so the real
+// error path (a non-zero git exit / ENOENT / timeout) can only be exercised by
+// driving this factory's invoker directly.
+export function makeGitInvoker({ timeoutMs, includeStderr = false }: { timeoutMs: number; includeStderr?: boolean }): GitInvoker {
   return async (args, cwd) => {
     const opts = {
       cwd,

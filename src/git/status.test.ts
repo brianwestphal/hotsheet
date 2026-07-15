@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { _resetFetchStateForTests, bucketPorcelain, bucketPorcelainFiles, getGitStatus, getGitStatusFiles, getPendingCommits, getRecentCommits, parsePendingCommits, parseStatusV2, runGitFetch } from './status.js';
+import { _resetFetchStateForTests, bucketPorcelain, bucketPorcelainFiles, bufToStr, getGitStatus, getGitStatusFiles, getPendingCommits, getRecentCommits, makeGitInvoker, parsePendingCommits, parseStatusV2, runGitFetch } from './status.js';
 
 const US = '\x1f';
 const RS = '\x1e';
@@ -391,5 +391,66 @@ describe('getGitStatus — default invoker against the real repo (HS-9150)', () 
     expect(typeof res!.unstaged).toBe('number');
     expect(typeof res!.untracked).toBe('number');
     expect(typeof res!.conflicted).toBe('number');
+  });
+
+  // HS-9148 — getGitStatus short-circuits on `!isGitRepo` (status.ts:118) before
+  // invoking git; pin that guard's null return for a non-repo dir.
+  it('returns null outside a git repository', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hs-git-nonrepo-'));
+    try {
+      expect(await getGitStatus(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // HS-9148 — getGitStatusFiles short-circuits on `!isGitRepo` (status.ts:342)
+  // before ever invoking git; pin that guard's null return for a non-repo dir.
+  it('getGitStatusFiles returns null outside a git repository', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hs-git-nonrepo-files-'));
+    try {
+      expect(await getGitStatusFiles(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// HS-9148 — the real invoker's error path (makeGitInvoker's catch, status.ts:93-101).
+// The public fns guard with `isGitRepo`, so drive the invoker directly: `git status`
+// in a non-repo dir exits 128, execFile REJECTS, and the catch coerces the numeric
+// code + string-coerces stdout/stderr.
+describe('makeGitInvoker error path (HS-9148)', () => {
+  it('coerces a non-zero git exit into a numeric status (non-repo → 128)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hs-git-invoker-'));
+    try {
+      const res = await makeGitInvoker({ timeoutMs: 5_000 })(['status', '--porcelain=v2'], dir);
+      expect(res.status).toBe(128); // numeric git exit, not a string ENOENT/ETIMEDOUT
+      expect(typeof res.stdout).toBe('string');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('includeStderr folds git stderr into stdout on failure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hs-git-invoker-err-'));
+    try {
+      const res = await makeGitInvoker({ timeoutMs: 5_000, includeStderr: true })(['status', '--porcelain=v2'], dir);
+      expect(res.status).toBe(128);
+      expect(res.stdout).toMatch(/not a git repository/i); // stderr surfaced via includeStderr
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// HS-9148 — `bufToStr` coerces execFile's stdout/stderr (string | Buffer | undefined,
+// depending on the failure mode) into a plain string. The utf-8 invoker only ever
+// yields strings, so the Buffer + undefined branches are defensive; pin them directly.
+describe('bufToStr (HS-9148)', () => {
+  it('coerces string / Buffer / undefined to a string', () => {
+    expect(bufToStr('hi')).toBe('hi');
+    expect(bufToStr(Buffer.from('buf'))).toBe('buf');
+    expect(bufToStr(undefined)).toBe('');
   });
 });
