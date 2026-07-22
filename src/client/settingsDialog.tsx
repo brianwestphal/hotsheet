@@ -171,8 +171,12 @@ function bindGeneralTab() {
   // HS-9328 — Antigravity interactive-permission toggle (revealed only for agy).
   const agyPermsField = byIdOrNull<HTMLDivElement>('antigravity-perms-field');
   const agyPermsCheckbox = byIdOrNull<HTMLInputElement>('settings-antigravity-interactive-permissions');
+  // HS-9359 — the Codex sibling (revealed only for codex).
+  const codexPermsField = byIdOrNull<HTMLDivElement>('codex-perms-field');
+  const codexPermsCheckbox = byIdOrNull<HTMLInputElement>('settings-codex-interactive-permissions');
   const revealAgyPerms = (tool: string): void => {
     if (agyPermsField !== null) agyPermsField.style.display = tool === 'antigravity' ? '' : 'none';
+    if (codexPermsField !== null) codexPermsField.style.display = tool === 'codex' ? '' : 'none';
   };
   // HS-9338 — the drive-transport override picker + its "Auto (derived: X)" hint.
   const agentBackendSelect = byIdOrNull<HTMLSelectElement>('agent-backend-select');
@@ -211,6 +215,7 @@ function bindGeneralTab() {
       const tool = typeof fs.ai_tool === 'string' && fs.ai_tool !== '' ? fs.ai_tool : 'auto';
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       if (agyPermsCheckbox !== null) agyPermsCheckbox.checked = fs.antigravity_interactive_permissions === true;
+      if (codexPermsCheckbox !== null) codexPermsCheckbox.checked = fs.codex_interactive_permissions === true; // HS-9359
       revealAgyPerms(tool);
       // HS-9338 — load the drive-transport override (Local setting) into the picker.
       if (agentBackendSelect !== null) agentBackendSelect.value = agentBackendSelectValue(fs.agent_backend);
@@ -329,6 +334,12 @@ function bindGeneralTab() {
   // `ensureSkills` rewrites `.agents/hooks.json` (install when on, remove when off).
   agyPermsCheckbox?.addEventListener('change', () => {
     void persistScopedSetting('antigravity_interactive_permissions', agyPermsCheckbox.checked).then(() => ensureSkills());
+  });
+
+  // HS-9359 — Codex interactive-permission prompts. Same model: `ensureSkills`
+  // rewrites `.codex/hooks.json` (install when on, remove when off).
+  codexPermsCheckbox?.addEventListener('change', () => {
+    void persistScopedSetting('codex_interactive_permissions', codexPermsCheckbox.checked).then(() => ensureSkills());
   });
 
   // Notification dropdowns

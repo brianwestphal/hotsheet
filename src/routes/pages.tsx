@@ -759,6 +759,12 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-antigravity-interactive-permissions" /> Interactive permission prompts (Antigravity)</label>
                 <span className="settings-hint">When on, the play button runs <code>agy</code> <strong>without</strong> <code>--dangerously-skip-permissions</code> and installs a <code>.agents/hooks.json</code> hook that routes each tool call through Hot Sheet's permission popup (Allow / Deny). Off = agy runs the worklist unattended (auto-approve). Requires a trusted agy workspace.</span>
               </div>
+              {/* HS-9359 — Codex interactive permission prompts.
+                  Revealed only when ai_tool=codex. */}
+              <div className="settings-field" id="codex-perms-field" style="display:none">
+                <label><input type="checkbox" id="settings-codex-interactive-permissions" /> Interactive permission prompts (Codex)</label>
+                <span className="settings-hint">When on, the play button runs <code>codex exec</code> <strong>without</strong> the approvals/sandbox bypass (workspace-write sandbox + hooks instead) and installs <code>.codex/hooks.json</code> hooks that route each mutating tool call and approval request through Hot Sheet's permission popup (Allow / Deny). Hot Sheet's own <code>hotsheet_*</code> tools are auto-allowed. Off = codex runs the worklist unattended (auto-approve).</span>
+              </div>
               {/* HS-8913 — install / update Hot Sheet's recommended AI-assistant
                   instruction sections in this project's CLAUDE.md. */}
               <div className="settings-divider"></div>

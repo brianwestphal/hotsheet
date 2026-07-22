@@ -12,6 +12,15 @@ describe('buildCodexExecArgs', () => {
       'exec', '--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', 'do the thing',
     ]);
   });
+
+  it('interactive-permissions mode (HS-9359) swaps the bypass for sandbox + hooks', () => {
+    expect(buildCodexExecArgs('x', { interactivePermissions: true })).toEqual([
+      'exec', '--json', '--skip-git-repo-check',
+      '--enable', 'hooks', '--dangerously-bypass-hook-trust', '--sandbox', 'workspace-write', 'x',
+    ]);
+    // The dangerous approvals/sandbox bypass is gone in interactive mode.
+    expect(buildCodexExecArgs('x', { interactivePermissions: true })).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+  });
 });
 
 describe('parseCodexEventType', () => {

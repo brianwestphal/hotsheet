@@ -28,12 +28,35 @@ export interface PermissionHookIO {
   newRequestId: () => string;
 }
 
-/** agy's PreToolUse payload (only the fields we use; shape assumed Claude-like). */
-interface PreToolUsePayload { tool_name?: string; tool_input?: unknown }
+/** The hook payload (only the fields we use; Claude-shaped — agy and codex both
+ *  emit this shape; codex adds `hook_event_name`, HS-9359). */
+interface PreToolUsePayload { hook_event_name?: string; tool_name?: string; tool_input?: unknown }
 
 /** agy/Claude PreToolUse permission-decision JSON emitted on stdout. */
 export function decisionJson(decision: 'allow' | 'deny'): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision } });
+}
+
+/**
+ * HS-9359 — per-agent customization of the shared hook flow. Defaults reproduce
+ * the shipped Antigravity behavior exactly; the Codex hook passes its own.
+ */
+export interface PermissionHookOpts {
+  /** Overlay description prefix ("<label> wants to use <tool>"). Default 'Antigravity'. */
+  agentLabel?: string;
+  /** Build the stdout JSON + exit code for a decision, given the event name from
+   *  the payload. Default: the agy/Claude PreToolUse shape, exit 2 on deny.
+   *  (Codex needs exit 0 even on deny — its runner treats a non-zero hook exit
+   *  as "hook failed, proceed", verified live on 0.145.0.) */
+  emit?: (decision: 'allow' | 'deny', eventName: string) => { stdout: string; exitCode: number };
+  /** Tool names to ALLOW instantly without surfacing the overlay — e.g. Hot
+   *  Sheet's own `hotsheet_*` control-plane MCP calls (gating those would spam
+   *  the §47 overlay with our own machinery). Default: none. */
+  autoAllow?: (toolName: string) => boolean;
+}
+
+function defaultEmit(decision: 'allow' | 'deny'): { stdout: string; exitCode: number } {
+  return { stdout: decisionJson(decision), exitCode: decision === 'deny' ? 2 : 0 };
 }
 
 function previewInput(input: unknown): string {
@@ -54,7 +77,7 @@ function previewInput(input: unknown): string {
  * silent-degrade. A TIMEOUT with no answer fails CLOSED (deny) — an unattended run
  * shouldn't silently proceed on an unanswered permission.
  */
-export async function runPermissionHook(io: PermissionHookIO, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<number> {
+export async function runPermissionHook(io: PermissionHookIO, timeoutMs: number = DEFAULT_TIMEOUT_MS, opts: PermissionHookOpts = {}): Promise<number> {
   const raw = await io.readStdin().catch(() => '');
   let payload: PreToolUsePayload = {};
   try {
@@ -62,9 +85,20 @@ export async function runPermissionHook(io: PermissionHookIO, timeoutMs: number 
     if (typeof parsed === 'object' && parsed !== null) payload = parsed; // guarded above
   } catch { /* unparseable → treat as a bare tool */ }
   const toolName = typeof payload.tool_name === 'string' && payload.tool_name !== '' ? payload.tool_name : 'tool';
+  const eventName = typeof payload.hook_event_name === 'string' && payload.hook_event_name !== '' ? payload.hook_event_name : 'PreToolUse';
+  const label = opts.agentLabel ?? 'Antigravity';
+  const emitFn = opts.emit ?? defaultEmit;
+  const emit = (decision: 'allow' | 'deny'): number => {
+    const { stdout, exitCode } = emitFn(decision, eventName);
+    io.writeStdout(stdout);
+    return exitCode;
+  };
+
+  // HS-9359 — our own control-plane tools pass straight through (no overlay).
+  if (opts.autoAllow !== undefined && opts.autoAllow(toolName)) return emit('allow');
 
   const base = io.channelBaseUrl();
-  if (base === null) return allow(io); // no channel → fail-open
+  if (base === null) return emit('allow'); // no channel → fail-open
 
   const requestId = io.newRequestId();
   const injected = await io.fetchFn(`${base}/permission/inject`, {
@@ -73,11 +107,11 @@ export async function runPermissionHook(io: PermissionHookIO, timeoutMs: number 
     body: JSON.stringify({
       request_id: requestId,
       tool_name: toolName,
-      description: `Antigravity wants to use ${toolName}`,
+      description: `${label} wants to use ${toolName}`,
       input_preview: previewInput(payload.tool_input),
     }),
   }).then(() => true).catch(() => false);
-  if (!injected) return allow(io); // couldn't reach the channel → fail-open
+  if (!injected) return emit('allow'); // couldn't reach the channel → fail-open
 
   const deadline = io.now() + timeoutMs;
   while (io.now() < deadline) {
@@ -88,12 +122,9 @@ export async function runPermissionHook(io: PermissionHookIO, timeoutMs: number 
       })
       .catch(() => null);
     if (decision?.decided === true) {
-      return decision.behavior === 'deny' ? deny(io) : allow(io);
+      return decision.behavior === 'deny' ? emit('deny') : emit('allow');
     }
     await io.sleep(POLL_INTERVAL_MS);
   }
-  return deny(io); // timed out unanswered → fail-closed
+  return emit('deny'); // timed out unanswered → fail-closed
 }
-
-function allow(io: PermissionHookIO): number { io.writeStdout(decisionJson('allow')); return 0; }
-function deny(io: PermissionHookIO): number { io.writeStdout(decisionJson('deny')); return 2; }

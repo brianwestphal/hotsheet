@@ -59,6 +59,8 @@ const FileSettingsSchema = z.object({
   // the shipped `--print` + auto-approve behavior. Gated so the new hook path can be
   // verified on-device before it becomes the default.
   antigravity_interactive_permissions: z.boolean().optional(),
+  // HS-9359 — route codex tool calls through the §47 permission overlay.
+  codex_interactive_permissions: z.boolean().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */

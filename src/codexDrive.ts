@@ -20,25 +20,44 @@
 import { type ChildProcess, spawn } from 'child_process';
 import { dirname } from 'path';
 
+import { readFileSettings } from './file-settings.js';
 import { getProjectSecret } from './secret-file.js';
+
+/** HS-9359 — opt-in: route codex's tool calls through the §47 permission overlay
+ *  (drop the approvals/sandbox bypass; the project's `.codex/hooks.json` hooks
+ *  gate each call). Default false = the auto-approve one-shot path. */
+export function codexInteractivePermissions(dataDir: string): boolean {
+  return readFileSettings(dataDir).codex_interactive_permissions === true;
+}
 
 /**
  * Pure: the `codex` argv for a one-shot worklist run.
  * - `exec` — non-interactive (the `agy --print` analog); prompt as the final arg.
  * - `--json` — structured JSONL events on stdout (busy liveness + observability).
- * - `--dangerously-bypass-approvals-and-sandbox` — the agy
- *   `--dangerously-skip-permissions` analog: `exec` can't prompt, so an approval
- *   or sandbox-escalation request would otherwise hang the run; and Codex's
- *   sandbox would block the MCP channel server's localhost HTTP calls to the Hot
- *   Sheet API. Auto-approve is the accepted Tier-A default (docs/113 footnote ¹);
- *   the §47 interactive-permission overlay for Codex is the HS-9359 follow-up on
- *   its hooks surface.
  * - `--skip-git-repo-check` — the drive always runs with an explicit project cwd,
  *   so the accidental-homedir guard the check exists for doesn't apply, and a
  *   non-git project must still be drivable.
+ *
+ * Default (auto-approve) adds `--dangerously-bypass-approvals-and-sandbox` — the
+ * agy `--dangerously-skip-permissions` analog: `exec` can't prompt, so an
+ * approval request would otherwise be auto-cancelled; and Codex's sandbox blocks
+ * MCP-call approvals. Auto-approve is the accepted Tier-A default (docs/113
+ * footnote ¹).
+ *
+ * Interactive-permissions mode (HS-9359, `codex_interactive_permissions`) swaps
+ * the bypass for `--sandbox workspace-write` + `--enable hooks` +
+ * `--dangerously-bypass-hook-trust` (our project-local `.codex/hooks.json` hooks
+ * run without a persisted-trust prompt): each mutating tool call routes through
+ * the §47 overlay via PreToolUse, and approval requests (e.g. MCP calls under
+ * the sandbox) route via PermissionRequest — with Hot Sheet's own `hotsheet_*`
+ * calls auto-allowed by the hook.
  */
-export function buildCodexExecArgs(content: string): string[] {
-  return ['exec', '--json', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', content];
+export function buildCodexExecArgs(content: string, opts: { interactivePermissions?: boolean } = {}): string[] {
+  const base = ['exec', '--json', '--skip-git-repo-check'];
+  if (opts.interactivePermissions === true) {
+    return [...base, '--enable', 'hooks', '--dangerously-bypass-hook-trust', '--sandbox', 'workspace-write', content];
+  }
+  return [...base, '--dangerously-bypass-approvals-and-sandbox', content];
 }
 
 /** Pure: classify one stdout line from `codex exec --json`. Returns the event type
@@ -86,8 +105,9 @@ export function spawnCodexRun(dataDir: string, serverPort: number, content: stri
   const heartbeat = deps.postHeartbeat ?? fallbackHeartbeat;
   const projectDir = dirname(dataDir); // <root>/.hotsheet → <root>
   const secret = getProjectSecret(dataDir);
+  const interactivePermissions = codexInteractivePermissions(dataDir);
   try {
-    const proc = doSpawn('codex', buildCodexExecArgs(content), {
+    const proc = doSpawn('codex', buildCodexExecArgs(content, { interactivePermissions }), {
       cwd: projectDir,
       env: { ...process.env },
       // stdout is piped for the JSONL event stream; it MUST be consumed (below)

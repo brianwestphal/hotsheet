@@ -151,3 +151,59 @@ describe('ensureSkillsForDir — AGENTS-family adapter mode + Codex (HS-9366)', 
     expect(adapter).toContain('description: Create a new bug ticket in Hot Sheet'); // discovery metadata kept
   });
 });
+
+// HS-9359 — the Codex interactive-permission hooks (`.codex/hooks.json`):
+// merge-in when `codex_interactive_permissions` is on, merge-out when off,
+// preserving the user's other hooks. Verified-live schema (top-level `hooks`
+// object, matcher + nested hooks entries).
+describe('ensureSkillsForDir — Codex interactive-permission hooks (HS-9359)', () => {
+  const hooksPath = (): string => join(dir, '.codex', 'hooks.json');
+  const setSettings = (o: Record<string, unknown>): void => writeFileSync(join(dir, '.hotsheet', 'settings.json'), JSON.stringify(o), 'utf-8');
+  interface HookGroup { matcher?: string; hooks?: { command?: string; timeout?: number }[] }
+  const readHooks = (): Partial<Record<string, HookGroup[]>> => {
+    const parsed: unknown = JSON.parse(readFileSync(hooksPath(), 'utf-8'));
+    return (parsed as { hooks?: Record<string, HookGroup[]> }).hooks ?? {};
+  };
+
+  it('installs PreToolUse (mutating-tools matcher) + PermissionRequest (*) when the setting is on', () => {
+    setSettings({ ai_tool: 'codex', codex_interactive_permissions: true });
+    h.onPath.mockImplementation((bin) => bin === 'codex');
+    ensureSkillsForDir(dir);
+
+    const events = readHooks();
+    expect(events.PreToolUse?.[0]?.matcher).toBe('^(Bash|apply_patch|Edit|Write)$');
+    expect(events.PreToolUse?.[0]?.hooks?.[0]?.command).toContain('__codex-permission-hook');
+    expect(events.PermissionRequest?.[0]?.matcher).toBe('*');
+    expect(events.PermissionRequest?.[0]?.hooks?.[0]?.command).toContain('__codex-permission-hook');
+  });
+
+  it('does NOT install when the setting is off/absent (default)', () => {
+    setSettings({ ai_tool: 'codex' });
+    h.onPath.mockImplementation((bin) => bin === 'codex');
+    ensureSkillsForDir(dir);
+    expect(existsSync(hooksPath())).toBe(false);
+  });
+
+  it('MERGES with the user\'s other hooks, and removes ours when toggled off', () => {
+    mkdirSync(join(dir, '.codex'), { recursive: true });
+    writeFileSync(hooksPath(), JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'my-own-hook.sh' }] }] },
+    }), 'utf-8');
+
+    setSettings({ ai_tool: 'codex', codex_interactive_permissions: true });
+    h.onPath.mockImplementation((bin) => bin === 'codex');
+    ensureSkillsForDir(dir);
+    let events = readHooks();
+    const commands = (events.PreToolUse ?? []).flatMap(g => (g.hooks ?? []).map(x => x.command ?? ''));
+    expect(commands).toContain('my-own-hook.sh');                                    // user hook kept
+    expect(commands.some(c => c.includes('__codex-permission-hook'))).toBe(true);    // ours added
+
+    setSettings({ ai_tool: 'codex' }); // toggle off
+    ensureSkillsForDir(dir);
+    events = readHooks();
+    const after = (events.PreToolUse ?? []).flatMap(g => (g.hooks ?? []).map(x => x.command ?? ''));
+    expect(after).toContain('my-own-hook.sh');                                       // user hook still kept
+    expect(after.some(c => c.includes('__codex-permission-hook'))).toBe(false);      // ours removed
+    expect(events.PermissionRequest).toBeUndefined();                                // our event fully gone
+  });
+});

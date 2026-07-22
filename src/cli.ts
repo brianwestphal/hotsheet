@@ -754,6 +754,15 @@ async function main() {
     process.exit(await runAgyPermissionHookCli());
   }
 
+  // HS-9359 — Codex permission-hook mode (PreToolUse + PermissionRequest, installed
+  // via the project's `.codex/hooks.json`). Same §47 overlay flow; codex reads the
+  // decision from stdout JSON and the process always exits 0 (a non-zero exit is
+  // treated by codex as "hook failed, proceed" — verified on 0.145.0).
+  if (process.argv.includes('__codex-permission-hook')) {
+    const { runCodexPermissionHookCli } = await import('./codexPermissionHook.js');
+    process.exit(await runCodexPermissionHookCli());
+  }
+
   // HS-8921 — if launched with `--test`, point HOTSHEET_HOME at the isolated
   // test dir BEFORE anything resolves a global path. This must precede
   // `initStartupLog()` + `startEventLoopWatchdog` below so even the startup log

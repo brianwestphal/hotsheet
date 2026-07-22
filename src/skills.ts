@@ -615,6 +615,82 @@ function ensureAntigravityHooks(cwd: string, dataDir: string = join(cwd, '.hotsh
   return true;
 }
 
+// HS-9359 — the interactive-permission hooks for Codex. Same marker-based
+// merge-in/merge-out model as agy's, but codex's `.codex/hooks.json` nests
+// events under a top-level `hooks` object and each group nests `hooks` entries
+// under a `matcher` (the Claude schema; verified live on codex-cli 0.145.0).
+const CODEX_HOOK_MARKER = '__codex-permission-hook';
+
+/** Resolve the `<cli> __codex-permission-hook` command (dev tsx vs prod node/dist). */
+function codexPermissionHookCommand(): string {
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const distCli = join(thisDir, 'cli.js'); // prod: skills.ts is bundled into dist/cli.js
+  if (existsSync(distCli)) return `"${process.execPath}" "${distCli}" ${CODEX_HOOK_MARKER}`;
+  const srcCli = join(thisDir, 'cli.ts'); // dev: src/skills.ts sibling
+  if (existsSync(srcCli)) return `npx tsx "${srcCli}" ${CODEX_HOOK_MARKER}`;
+  return `"${process.execPath}" "${distCli}" ${CODEX_HOOK_MARKER}`;
+}
+
+function codexHookGroupIsOurs(group: unknown): boolean {
+  if (typeof group !== 'object' || group === null) return false;
+  const hooks = (group as { hooks?: unknown }).hooks;
+  return Array.isArray(hooks) && hooks.some(h =>
+    typeof h === 'object' && h !== null
+    && typeof (h as { command?: unknown }).command === 'string'
+    && ((h as { command: string }).command).includes(CODEX_HOOK_MARKER));
+}
+
+/**
+ * HS-9359 — install (or, when the setting is off, remove) our permission hooks in
+ * the project's `.codex/hooks.json`, MERGING with the user's other hooks/events.
+ * Two events (both feed the same `__codex-permission-hook` CLI → §47 overlay):
+ *  - `PreToolUse`, matcher-scoped to the MUTATING tools
+ *    (`Bash|apply_patch|Edit|Write`) — read-only tools and Hot Sheet's own
+ *    `hotsheet_*` MCP calls skip the overlay (codex matchers are Rust regex — no
+ *    negative lookahead — so the scoping is an explicit allow-list of gated tools).
+ *  - `PermissionRequest`, matcher `*` — answers codex approval requests (e.g. an
+ *    MCP call under `--sandbox workspace-write`, which exec mode otherwise
+ *    auto-cancels); the hook itself auto-allows `hotsheet_*` tools.
+ * Gated on `codex_interactive_permissions`. Best-effort (won't clobber a corrupt
+ * hooks.json). Returns true when a write happened.
+ */
+function ensureCodexHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  const hooksPath = join(cwd, '.codex', 'hooks.json');
+  const want = readFileSettings(dataDir).codex_interactive_permissions === true;
+
+  let config: Record<string, unknown> = {};
+  if (existsSync(hooksPath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(hooksPath, 'utf-8'));
+      if (typeof parsed === 'object' && parsed !== null) config = parsed as Record<string, unknown>; // guarded
+    } catch { return false; } // corrupt → don't clobber the user's file
+  }
+  const events = typeof config.hooks === 'object' && config.hooks !== null && !Array.isArray(config.hooks)
+    ? { ...(config.hooks as Record<string, unknown>) } // guarded above
+    : {};
+
+  const hookEntry = { type: 'command', command: codexPermissionHookCommand(), timeout: 180 };
+  const wanted: Record<string, { matcher: string }> = {
+    PreToolUse: { matcher: '^(Bash|apply_patch|Edit|Write)$' },
+    PermissionRequest: { matcher: '*' },
+  };
+  for (const [event, { matcher }] of Object.entries(wanted)) {
+    const prev = Array.isArray(events[event]) ? (events[event] as unknown[]) : [];
+    const others = prev.filter(g => !codexHookGroupIsOurs(g)); // drop any prior Hot Sheet group
+    const next = want ? [...others, { matcher, hooks: [hookEntry] }] : others;
+    if (next.length > 0) events[event] = next; else delete events[event]; // eslint-disable-line @typescript-eslint/no-dynamic-delete
+  }
+
+  if (Object.keys(events).length > 0) config.hooks = events; else delete config.hooks;
+  const serialized = Object.keys(config).length === 0 ? '' : JSON.stringify(config, null, 2) + '\n';
+
+  const before = existsSync(hooksPath) ? readFileSync(hooksPath, 'utf-8') : '';
+  if (serialized === before) return false; // idempotent
+  mkdirSync(dirname(hooksPath), { recursive: true });
+  writeFileSync(hooksPath, serialized, 'utf-8');
+  return true;
+}
+
 // --- Cursor (.cursor/rules/*.mdc) ---
 
 function ensureCursorRules(cwd: string): boolean {
@@ -797,6 +873,11 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
       // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
       // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
       ensureAntigravityHooks(projectRoot, dataDir);
+    }
+    if (agent.aiTool === 'codex') {
+      // HS-9359 — install/remove the interactive-permission hooks (`.codex/hooks.json`)
+      // per the `codex_interactive_permissions` setting (idempotent, merge-safe).
+      ensureCodexHooks(projectRoot, dataDir);
     }
   }
 

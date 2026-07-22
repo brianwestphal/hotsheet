@@ -80,17 +80,31 @@ Registered as the second `mcpHooksAgents.ts` descriptor (`aiTool: 'codex'`,
 - **Live-validated (2026-07-22):** `codex exec --json` with the registered
   channel server made real `hotsheet_*` `mcp_tool_call`s against the running
   instance end-to-end.
-- **Permission overlay for codex is NOT yet built** — the drive defaults to
-  auto-approve (the accepted Tier-A default); the PreToolUse-style hook → §47
-  overlay needs Codex's hooks surface researched first (codex has hooks —
-  `--dangerously-bypass-hook-trust` — but the config format is undocumented in
-  `--help`). Tracked as HS-9359.
+- **Permission overlay (HS-9359, SHIPPED)** — the opt-in
+  `codex_interactive_permissions` setting (Settings → General, revealed for
+  codex; the HS-9328 agy-toggle sibling) swaps the drive's bypass flag for
+  `--sandbox workspace-write --enable hooks --dangerously-bypass-hook-trust` and
+  installs TWO hooks in the project's `.codex/hooks.json`
+  (`skills.ts::ensureCodexHooks`, marker-merge like agy's): **`PreToolUse`**
+  matcher-scoped to the mutating tools (`^(Bash|apply_patch|Edit|Write)$` —
+  Rust-regex matchers have no negative lookahead, so gated tools are an explicit
+  list) and **`PermissionRequest`** matcher `*` (answers codex approval
+  requests — e.g. an MCP call under the sandbox, which exec mode otherwise
+  auto-cancels as "user cancelled MCP tool call"). Both feed
+  `<cli> __codex-permission-hook` (`src/codexPermissionHook.ts`), which rides the
+  agy hook's shared IO-injected flow (`runPermissionHook` gained per-agent
+  `PermissionHookOpts`) with codex specifics: the `PermissionRequest` decision
+  shape (`hookSpecificOutput.decision.{behavior}`), **auto-allow of Hot Sheet's
+  own `hotsheet_*` control-plane MCP calls** (underscore-normalized ids,
+  `mcp__hotsheet_channel__…`), and **exit 0 on every decision** — verified live:
+  codex treats a non-zero hook exit as "hook failed, proceed", so a deny riding
+  exit 2 did NOT block while the same stdout JSON with exit 0 did.
 
 ## 115.7 Remaining (not yet built)
 
 - **Transport-selection layer / three-way "Agent backend" picker** — today the transport is wired directly off `ai_tool` (`isAntigravityDriven`); a general per-agent capability table (`ai_tool` → A1 MCP+hooks vs A2 ACP) + the Settings "Agent backend" picker (`claude-channel-mcp` / `mcp-hooks:<command>` / `acp:<command>`) is the shared generalization once a *second* MCP+hooks agent or the ACP transport lands. See docs/113 §113.4.
 - ~~**Other MCP-native agents** — if another MCP+hooks CLI agent appears, generalize `antigravity.ts`'s config-writer + `antigravityDrive.ts`'s drive into a per-agent abstraction rather than agy-specific modules.~~ **Done:** the HS-9339 registry + Codex as the second agent (§115.6a) prove the abstraction.
-- **Codex permission hook** — the §47 overlay for codex tool calls (HS-9359; see §115.6a).
+- ~~**Codex permission hook** — the §47 overlay for codex tool calls.~~ **Done (HS-9359, §115.6a).**
 - **Persistent-mode (`-i` / `--continue`) drive** — the `--print` one-shot is the shipped default; a long-lived session driven by `Stop`/`PreToolUse` hooks per-turn (like Claude's interactive channel) is a possible richer follow-up (the permission hook already exists; the session lifecycle does not).
 
 ## 115.8 Open decisions
