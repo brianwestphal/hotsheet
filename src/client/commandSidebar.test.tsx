@@ -14,10 +14,11 @@ import type * as experimentalSettings from './experimentalSettings.js';
 import { setActiveProject } from './state.js';
 import { resetApiTransport, wireRealApiTransport } from './test-helpers/realApiTransport.js';
 
-const { apiMock, getCommandItemsMock, isChannelAliveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock, triggerBusyMock } = vi.hoisted(() => ({
+const { apiMock, getCommandItemsMock, isChannelAliveMock, requiresLiveMock, setShellBusyMock, refreshLogBadgeMock, confirmDialogMock, triggerBusyMock } = vi.hoisted(() => ({
   apiMock: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   getCommandItemsMock: vi.fn<() => unknown[]>(() => []),
   isChannelAliveMock: vi.fn<() => boolean>(() => false),
+  requiresLiveMock: vi.fn<() => boolean>(() => true),
   setShellBusyMock: vi.fn<(busy: boolean) => void>(),
   refreshLogBadgeMock: vi.fn<() => Promise<void>>(() => Promise.resolve()),
   confirmDialogMock: vi.fn<() => Promise<boolean>>(() => Promise.resolve(true)),
@@ -40,6 +41,7 @@ vi.mock('./experimentalSettings.js', async () => {
 
 vi.mock('./channelUI.js', () => ({
   isChannelAlive: () => isChannelAliveMock(),
+  requiresLiveClaudeChannel: () => requiresLiveMock(),
   setShellBusy: (busy: boolean) => setShellBusyMock(busy),
   triggerChannelAndMarkBusy: (...args: unknown[]) => triggerBusyMock(...args),
 }));
@@ -397,12 +399,22 @@ describe('runClaudeCommandOnTarget (HS-9083)', () => {
     confirmDialogMock.mockReset();
     confirmDialogMock.mockResolvedValue(true);
     isChannelAliveMock.mockReturnValue(true);
+    requiresLiveMock.mockReturnValue(true);
   });
 
   it('does NOT fire (warns) when Claude is not connected', async () => {
     isChannelAliveMock.mockReturnValue(false);
     await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'main' }, []);
     expect(triggerBusyMock).not.toHaveBeenCalled();
+  });
+
+  // HS-9364 — a driven non-Claude tool (Antigravity/OpenCode) has no live channel to
+  // wait on; the fire must proceed even with the Claude channel dead.
+  it('fires with a dead channel when the tool does not require a live Claude channel', async () => {
+    isChannelAliveMock.mockReturnValue(false);
+    requiresLiveMock.mockReturnValue(false);
+    await runClaudeCommandOnTarget(makeClaudeCommand('Ask', 'hi'), { kind: 'main' }, []);
+    expect(triggerBusyMock).toHaveBeenCalledWith('hi', { kind: 'main' });
   });
 
   it('main target fires immediately with no confirm', async () => {

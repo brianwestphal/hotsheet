@@ -1,7 +1,7 @@
 import { type ChannelTriggerTarget, createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, getWorkerPool, killShellCommand, type WorkerSlotView } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
 import { workerTargetWarning } from '../workers/triggerTarget.js';
-import { isChannelAlive, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
+import { isChannelAlive, requiresLiveClaudeChannel, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { isGroupCollapsed, setGroupCollapsed } from './commandGroupCollapse.js';
 import { refreshLogBadge } from './commandLog.js';
 import { getCommandLastRun, recordCommandRun } from './commandRunTimes.js';
@@ -284,8 +284,10 @@ function wireClaudeButtonPress(btn: HTMLElement, cmd: CustomCommand): void {
   btn.addEventListener('click', (e) => {
     if (longPressed) { longPressed = false; e.preventDefault(); e.stopPropagation(); return; }
     maybeFireClaudeLongPressHintToast();
-    if (!isChannelAlive()) {
+    if (requiresLiveClaudeChannel() && !isChannelAlive()) {
       // HS-8538 — in-app toast (not window.alert, which WKWebView no-ops).
+      // HS-9364 — only gate on channel liveness for `claude-channel`-transport tools;
+      // Antigravity/OpenCode drives spin up server-side on trigger.
       showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
     } else {
       recordCommandRun(runningKey(getActiveProject()?.secret ?? '', cmd)); // HS-8398
@@ -336,9 +338,10 @@ export async function runClaudeCommandOnTarget(
   target: ChannelTriggerTarget,
   workers: WorkerSlotView[],
 ): Promise<void> {
-  if (!isChannelAlive()) {
+  if (requiresLiveClaudeChannel() && !isChannelAlive()) {
     // Same guard as a normal button click — the picker can be opened/previewed
-    // before Claude connects, but firing needs a live channel.
+    // before Claude connects, but firing needs a live channel (for `claude-channel`
+    // tools; HS-9364 — Antigravity/OpenCode drives spin up server-side on trigger).
     showToast('Claude is not connected. Launch Claude Code with channel support first.', { variant: 'warning' });
     return;
   }

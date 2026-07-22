@@ -17,6 +17,7 @@ import {
   clearProjectAttention,
   getProjectAttentionSecrets,
   markProjectAttention,
+  requiresLiveClaudeChannel,
   setChannelAlive,
 } from './channelUI.js';
 import { resetAllStores } from './reactive.js';
@@ -63,6 +64,24 @@ describe('setChannelAlive — "Claude not connected" strip gate (HS-9357)', () =
   });
 
   afterEach(() => { state.settings.ai_tool = 'auto'; });
+});
+
+describe('requiresLiveClaudeChannel — play/command fire gate (HS-9364)', () => {
+  afterEach(() => { state.settings.ai_tool = 'auto'; });
+
+  it('is true for claude-channel-transport tools (claude / auto / unset / editor-only)', () => {
+    for (const tool of ['claude', 'auto', '', 'cursor', 'copilot', 'windsurf', 'codex', 'goose']) {
+      state.settings.ai_tool = tool;
+      expect(requiresLiveClaudeChannel(), `ai_tool=${JSON.stringify(tool)}`).toBe(true);
+    }
+  });
+
+  it('is false for the driven non-Claude tools — their drive spins up server-side on trigger', () => {
+    for (const tool of ['antigravity', 'Antigravity', 'opencode', 'OpenCode']) {
+      state.settings.ai_tool = tool;
+      expect(requiresLiveClaudeChannel(), `ai_tool=${tool}`).toBe(false);
+    }
+  });
 });
 
 describe('channelUI attention store (HS-8238 / §61 Phase 1 trial)', () => {

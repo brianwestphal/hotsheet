@@ -2,6 +2,7 @@ import { type ChannelTriggerTarget, cleanupChannelConnections, ensureSkills, get
 import type { SafeHtml } from '../jsx-runtime.js';
 import { busyStaleDecision, shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { deriveDefaultTransport } from './agentBackend.js';
 import { agentDisplayName } from './agentName.js';
 import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
@@ -170,6 +171,19 @@ export function isChannelBusy(): boolean {
   return secret !== undefined && secret !== '' ? channelStore.state.value.busySecrets.has(secret) : channelStore.state.value.busy;
 }
 export function isChannelAlive(): boolean { return channelStore.state.value.alive; }
+
+/**
+ * HS-9364 — does the project's selected tool require a live *Claude* channel before
+ * the client fires a play/command drive? Only `claude-channel`-transport tools do
+ * (Claude / `auto` / unset / the editor-only tools). Tools driven via `mcp-hooks`
+ * (Antigravity) or `acp` (OpenCode) have no persistent channel to be "alive" — the
+ * server spins up a one-shot drive on trigger (see `triggerChannel`), so the client
+ * must NOT block on `isChannelAlive()` for them. Generalizes the old antigravity-only
+ * bypass (HS-9321) into the shared capability table (`deriveDefaultTransport`).
+ */
+export function requiresLiveClaudeChannel(): boolean {
+  return deriveDefaultTransport(state.settings.ai_tool) === 'claude-channel';
+}
 
 /** Update alive state — called from initChannel and checkChannelDone */
 export function setChannelAlive(alive: boolean) {
@@ -435,11 +449,11 @@ function triggerChannelAndMarkBusy(message?: string, target?: ChannelTriggerTarg
 export { triggerChannelAndMarkBusy };
 
 async function checkAndTrigger(btn: HTMLElement) {
-  // HS-9321 — Antigravity has no persistent channel session to be "alive"; the play
-  // spawns a one-shot `agy --print` server-side (see `triggerChannel`), so skip the
-  // Claude connected-check for it. Other tools still require a live channel.
-  const isAntigravity = state.settings.ai_tool === 'antigravity';
-  if (!isAntigravity && !isChannelAlive()) {
+  // HS-9321 / HS-9364 — tools driven via `mcp-hooks` (Antigravity) or `acp` (OpenCode)
+  // have no persistent channel session to be "alive"; the play spawns a one-shot drive
+  // server-side (see `triggerChannel`), so skip the Claude connected-check for them.
+  // Only `claude-channel`-transport tools still require a live channel.
+  if (requiresLiveClaudeChannel() && !isChannelAlive()) {
     showDisconnectedAlert();
     return;
   }
