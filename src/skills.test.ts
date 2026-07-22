@@ -985,8 +985,10 @@ describe('ensureSkillsForDir honors the ai_tool setting (HS-9311)', () => {
     expect(platforms).toEqual(['Cursor']);
   });
 
-  it('an explicit CLI agent with no skill generator seeds nothing (codex)', () => {
-    setAiTool('codex');
+  it('an explicit CLI agent with no skill generator seeds nothing (goose)', () => {
+    // HS-9366 gave codex a generator (`.agents/skills`, see skillsAntigravity.test.ts),
+    // so goose is now the representative generator-less agent.
+    setAiTool('goose');
     const platforms = ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
     expect(platforms).toEqual([]);
   });

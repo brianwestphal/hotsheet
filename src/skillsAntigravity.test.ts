@@ -95,3 +95,59 @@ describe('ensureSkillsForDir — Antigravity interactive-permissions hook (HS-93
     expect(hookCommands().some(c => c.includes('__agy-permission-hook'))).toBe(false); // ours removed
   });
 });
+
+// HS-9366 (docs/118) — adapter mode for the AGENTS-family skill tree
+// (`.agents/skills`, shared by Antigravity + Codex): thin adapters referencing
+// the canonical `.claude/skills` when it exists, full bodies otherwise.
+describe('ensureSkillsForDir — AGENTS-family adapter mode + Codex (HS-9366)', () => {
+  const agentsSkill = (name: string): string => join(dir, '.agents', 'skills', name, 'SKILL.md');
+  const claudeSkill = (name: string): string => join(dir, '.claude', 'skills', name, 'SKILL.md');
+  const makeCanonical = (): void => {
+    writeFileSync(join(dir, 'CLAUDE.md'), '# Project\n');
+    mkdirSync(join(dir, '.claude', 'skills'), { recursive: true });
+  };
+
+  it('codex: seeds .agents/skills as thin adapters when the canonical Claude source exists', () => {
+    setAiTool('codex');
+    h.onPath.mockImplementation((bin) => bin === 'codex');
+    makeCanonical();
+    const platforms = ensureSkillsForDir(dir);
+    expect(platforms).toContain('Codex');
+
+    const adapter = readFileSync(agentsSkill('hotsheet'), 'utf-8');
+    expect(adapter).toContain('name: hotsheet');                                // frontmatter kept for discovery
+    expect(adapter).toContain('../../../.claude/skills/hotsheet/SKILL.md');     // delegates to canonical
+    expect(adapter).not.toContain('.hotsheet/worklist.md');                     // body NOT duplicated
+    // The canonical tree was refreshed first (even though ai_tool excludes
+    // claude) so the adapters can't reference stale content.
+    expect(readFileSync(claudeSkill('hotsheet'), 'utf-8')).toContain('.hotsheet/worklist.md');
+  });
+
+  it('codex: full bodies when there is no canonical Claude source (started-on-Codex fallback)', () => {
+    setAiTool('codex');
+    h.onPath.mockImplementation((bin) => bin === 'codex');
+    ensureSkillsForDir(dir);
+
+    const content = readFileSync(agentsSkill('hotsheet'), 'utf-8');
+    expect(content).toContain('.hotsheet/worklist.md');                         // full body
+    expect(content).not.toContain('../../../.claude/skills');
+    expect(existsSync(join(dir, '.claude'))).toBe(false);                       // canonical NOT invented
+  });
+
+  it('codex: detected via AGENTS.md presence when the binary is absent', () => {
+    setAiTool('codex');
+    writeFileSync(join(dir, 'AGENTS.md'), '# existing\n');
+    ensureSkillsForDir(dir);
+    expect(existsSync(agentsSkill('hotsheet'))).toBe(true);
+  });
+
+  it('antigravity: the shared writer emits adapters for the ticket skills too', () => {
+    setAiTool('antigravity');
+    h.onPath.mockImplementation((bin) => bin === 'agy');
+    makeCanonical();
+    ensureSkillsForDir(dir);
+    const adapter = readFileSync(agentsSkill('hs-bug'), 'utf-8');
+    expect(adapter).toContain('../../../.claude/skills/hs-bug/SKILL.md');
+    expect(adapter).toContain('description: Create a new bug ticket in Hot Sheet'); // discovery metadata kept
+  });
+});

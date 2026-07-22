@@ -116,6 +116,35 @@ export const MANAGED_SECTIONS: ManagedSection[] = [
   { id: 'requirements-documentation', prescribed: REQUIREMENTS_DOCUMENTATION, version: 1, specifics: REQUIREMENTS_SPECIFICS, specificsVersion: 1 },
 ];
 
+// HS-9366 (docs/118) — the ADAPTER alternative to duplicating the full managed
+// sections. When a project already has a canonical Claude source (`CLAUDE.md` +
+// `.claude/skills`), a non-Claude AGENTS-family tool's instruction file
+// (`AGENTS.md`) gets this single thin section instead — the video-studio model:
+// point at CLAUDE.md as the shared source of truth rather than forking content.
+const CLAUDE_ADAPTER = `## Shared Project Guidance (CLAUDE.md)
+
+\`CLAUDE.md\` is the shared source of truth for this repository's engineering rules. Read it completely before making or reviewing changes, and follow it as if its contents appeared here. The filename reflects the project's history; the instructions apply equally to this tool.
+
+- Project workflows are exposed as skills under \`.agents/skills/\`. Use a skill when the user names it or the request clearly matches its description.
+- The skill adapters delegate to \`.claude/skills/\`, the canonical source for workflows shared across AI tools. When changing a shared workflow, edit the canonical file and keep the adapter metadata in sync.
+- Claude tool names in shared documents describe capabilities, not required product-specific tools — use this tool's equivalent file-search, shell, editing, or web capability.
+- Keep durable repository guidance in \`CLAUDE.md\`; provider-specific configuration belongs in its provider's directory.`;
+
+/** HS-9366 — the adapter-mode section set for AGENTS-family instruction files. */
+export const ADAPTER_SECTIONS: ManagedSection[] = [
+  { id: 'claude-adapter', prescribed: CLAUDE_ADAPTER, version: 1 },
+];
+
+/**
+ * HS-9366 — does this project have the canonical Claude source that adapters
+ * can reference? Both halves are required: `CLAUDE.md` (the instruction adapter's
+ * target) AND `.claude/skills` (the skill adapters' target) — a project that
+ * started on Codex has neither and gets full content (today's behavior).
+ */
+export function canonicalClaudeSourceExists(projectRoot: string): boolean {
+  return existsSync(claudeMdPath(projectRoot)) && existsSync(join(projectRoot, '.claude', 'skills'));
+}
+
 // --- Marker helpers ---
 
 function sectionBegin(id: string, v: number): string { return `<!-- hotsheet:begin section=${id} v=${v} -->`; }
@@ -194,9 +223,12 @@ export interface InstructionsStatus {
   setupNeeded: boolean;
 }
 
-/** Inspect existing CLAUDE.md text (or '' when the file is absent). */
-export function getInstructionsStatus(existing: string): InstructionsStatus {
-  const sections = MANAGED_SECTIONS.map((def): SectionStatus => {
+/** Inspect existing CLAUDE.md text (or '' when the file is absent).
+ *  HS-9366 — `sectionDefs` selects the section set to evaluate against
+ *  (default: the full managed sections; adapter-mode files pass
+ *  `ADAPTER_SECTIONS` so a thin adapter isn't reported as "missing"). */
+export function getInstructionsStatus(existing: string, sectionDefs: ManagedSection[] = MANAGED_SECTIONS): InstructionsStatus {
+  const sections = sectionDefs.map((def): SectionStatus => {
     const m = existing.match(sectionRe(def.id));
     if (m === null) {
       return { id: def.id, present: false, version: null, outdated: false, needsSetup: false };
@@ -215,12 +247,14 @@ export function getInstructionsStatus(existing: string): InstructionsStatus {
  * Apply the managed sections to existing CLAUDE.md text. Present sections are
  * rewritten in place (preserving filled specifics); absent sections are
  * appended. Returns the new content and whether anything changed.
+ * HS-9366 — `sectionDefs` selects the section set to install (default: the full
+ * managed sections; adapter-mode AGENTS-family files pass `ADAPTER_SECTIONS`).
  */
-export function applyManagedSections(existing: string): { content: string; changed: boolean } {
+export function applyManagedSections(existing: string, sectionDefs: ManagedSection[] = MANAGED_SECTIONS): { content: string; changed: boolean } {
   let content = existing;
   let changed = false;
 
-  for (const def of MANAGED_SECTIONS) {
+  for (const def of sectionDefs) {
     const re = sectionRe(def.id);
     const m = content.match(re);
     if (m !== null) {

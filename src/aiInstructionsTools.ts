@@ -9,10 +9,23 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
-import { applyManagedSections, getInstructionsStatus, type InstructionsStatus } from './aiInstructions.js';
+import { ADAPTER_SECTIONS, applyManagedSections, canonicalClaudeSourceExists, getInstructionsStatus, type InstructionsStatus, MANAGED_SECTIONS,type ManagedSection } from './aiInstructions.js';
+import type { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
-export type AiInstructionTool = 'claude' | 'cursor' | 'windsurf' | 'copilot' | 'antigravity' | 'opencode';
+// HS-9366 — derived from the wire SSOT (`src/api/aiInstructions.ts`), so adding
+// a tool to the server table without the client schema is a compile error (the
+// HS-9322/HS-9344 drift silently broke `/ai-instructions/status` validation).
+export type AiInstructionTool = typeof AI_INSTRUCTION_TOOLS[number];
+
+/**
+ * HS-9366 (docs/118) — the AGENTS-family tools (their instruction file is
+ * `AGENTS.md`) support ADAPTER MODE: when the project has a canonical Claude
+ * source (`CLAUDE.md` + `.claude/skills`), their file gets the thin
+ * `ADAPTER_SECTIONS` reference ("CLAUDE.md is the shared source of truth")
+ * instead of a duplicate of the full managed sections.
+ */
+const AGENTS_FAMILY: ReadonlySet<AiInstructionTool> = new Set(['antigravity', 'opencode', 'codex']);
 
 const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
 
@@ -69,7 +82,29 @@ const TOOLS: readonly ToolTarget[] = [
     tool: 'opencode', label: 'OpenCode', relPath: 'AGENTS.md', frontmatter: '',
     detect: (r) => isExecutableOnPath('opencode') || existsSync(join(r, 'AGENTS.md')),
   },
+  {
+    // HS-9366 (docs/118) — Codex reads the AGENTS.md standard (+ `.agents/skills`,
+    // the video-studio model). Shares the AGENTS.md file with the two entries above
+    // (idempotent double-write, same as the OpenCode note).
+    tool: 'codex', label: 'Codex', relPath: 'AGENTS.md', frontmatter: '',
+    detect: (r) => isExecutableOnPath('codex') || existsSync(join(r, 'AGENTS.md')),
+  },
 ];
+
+/**
+ * HS-9366 — which section set a tool's instruction file should carry.
+ * AGENTS-family + canonical Claude source present → the thin adapter, UNLESS the
+ * file already contains any full managed section: a pre-adapter-era file keeps
+ * full mode (grandfathered), because converting it would delete our marker
+ * blocks — including a possibly user-filled specifics sub-block. Retiring those
+ * duplicates is the HS-9358 L3 "retire stale files" work, out of scope here.
+ */
+function sectionSetFor(projectRoot: string, tool: AiInstructionTool, existingBody: string): ManagedSection[] {
+  if (!AGENTS_FAMILY.has(tool)) return MANAGED_SECTIONS;
+  if (!canonicalClaudeSourceExists(projectRoot)) return MANAGED_SECTIONS;
+  const fullPresent = getInstructionsStatus(existingBody).sections.some(s => s.present);
+  return fullPresent ? MANAGED_SECTIONS : ADAPTER_SECTIONS;
+}
 
 /**
  * Split a leading YAML frontmatter block (`---\n…\n---\n`) from the body. Pure.
@@ -105,7 +140,9 @@ function stateForTarget(projectRoot: string, t: ToolTarget): ToolInstructionsSta
   if (exists) {
     try { body = splitFrontmatter(readFileSync(path, 'utf-8')).body; } catch { /* unreadable → treat as empty */ }
   }
-  return { ...getInstructionsStatus(body), tool: t.tool, label: t.label, detected: t.detect(projectRoot), fileExists: exists };
+  // HS-9366 — evaluate against the section set the file SHOULD carry, so an
+  // adapter-mode AGENTS.md isn't forever reported "missing" the full sections.
+  return { ...getInstructionsStatus(body, sectionSetFor(projectRoot, t.tool, body)), tool: t.tool, label: t.label, detected: t.detect(projectRoot), fileExists: exists };
 }
 
 /** The managed-section state for every supported tool. */
@@ -131,7 +168,9 @@ export function writeInstructionsForTool(projectRoot: string, tool: AiInstructio
       body = split.body;
     } catch { /* unreadable → recreate from scratch */ frontmatter = t.frontmatter; }
   }
-  const { content, changed } = applyManagedSections(body);
+  // HS-9366 — AGENTS-family files in adapter mode get the thin CLAUDE.md
+  // reference instead of a duplicate of the full sections.
+  const { content, changed } = applyManagedSections(body, sectionSetFor(projectRoot, tool, body));
   if (existed && !changed) return false;
   try {
     mkdirSync(dirname(path), { recursive: true });

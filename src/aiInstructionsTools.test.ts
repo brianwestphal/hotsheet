@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   anyAiToolDetected,
+  getInstructionsStatesForTools,
   splitFrontmatter,
   writeInstructionsForDetectedTools,
   writeInstructionsForTool,
 } from './aiInstructionsTools.js';
+import { ToolInstructionsStateSchema } from './api/aiInstructions.js';
 
 let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'hs-aitools-')); });
@@ -86,6 +88,93 @@ describe('writeInstructionsForTool', () => {
     expect(content).toContain('alwaysApply: true');
     expect(content).toContain('My own notes.');                // user body kept
     expect(content).toContain('hotsheet:begin');               // managed sections appended
+  });
+});
+
+// HS-9366 (docs/118) — adapter mode: AGENTS-family instruction files reference
+// the canonical CLAUDE.md instead of duplicating the full managed sections.
+describe('adapter mode (HS-9366)', () => {
+  const makeCanonical = (): void => {
+    writeFileSync(join(root, 'CLAUDE.md'), '# Project\n');
+    mkdirSync(join(root, '.claude', 'skills'), { recursive: true });
+  };
+
+  it('writes the thin adapter section into AGENTS.md when the canonical Claude source exists', () => {
+    makeCanonical();
+    expect(writeInstructionsForTool(root, 'codex')).toBe(true);
+    const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('hotsheet:begin section=claude-adapter');
+    expect(content).toContain('shared source of truth');
+    expect(content).not.toContain('section=ticket-driven-work'); // no duplicated full sections
+  });
+
+  it('CLAUDE.md alone is NOT a canonical source (needs .claude/skills too) → full sections', () => {
+    writeFileSync(join(root, 'CLAUDE.md'), '# Project\n');
+    writeInstructionsForTool(root, 'codex');
+    const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('section=ticket-driven-work');
+    expect(content).not.toContain('section=claude-adapter');
+  });
+
+  it('no canonical source at all → full sections (a project that started on Codex)', () => {
+    writeInstructionsForTool(root, 'codex');
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf-8')).toContain('section=ticket-driven-work');
+  });
+
+  it('grandfathers an AGENTS.md already carrying the full sections (no destructive conversion)', () => {
+    // Full sections installed pre-adapter-era (no canonical source yet)…
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(true);
+    // …then the canonical source appears. Retiring the duplicate is HS-9358 L3;
+    // for now the file stays in full mode and stays up to date.
+    makeCanonical();
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false); // already current in full mode
+    const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('section=ticket-driven-work');
+    expect(content).not.toContain('section=claude-adapter');
+  });
+
+  it('adapter write is idempotent and preserves user content around the section', () => {
+    makeCanonical();
+    writeFileSync(join(root, 'AGENTS.md'), '# My agents notes\n\nCustom content.\n');
+    expect(writeInstructionsForTool(root, 'codex')).toBe(true);
+    expect(writeInstructionsForTool(root, 'codex')).toBe(false); // no-op second time
+    const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    expect(content).toContain('Custom content.');            // user content kept
+    expect(content).toContain('section=claude-adapter');     // adapter appended
+  });
+
+  it('non-AGENTS tools keep the full sections even with a canonical source', () => {
+    makeCanonical();
+    writeInstructionsForTool(root, 'cursor');
+    const content = readFileSync(join(root, '.cursor', 'rules', 'hotsheet-instructions.mdc'), 'utf-8');
+    expect(content).toContain('section=ticket-driven-work');
+    expect(content).not.toContain('section=claude-adapter');
+  });
+
+  it('status reflects adapter mode — an adapter AGENTS.md is not "missing" the full sections', () => {
+    makeCanonical();
+    writeInstructionsForTool(root, 'codex');
+    const codex = getInstructionsStatesForTools(root).find(s => s.tool === 'codex');
+    expect(codex).toBeDefined();
+    expect(codex?.setupNeeded).toBe(false);
+    expect(codex?.fileExists).toBe(true);
+  });
+
+  it('detects codex via AGENTS.md presence', () => {
+    writeFileSync(join(root, 'AGENTS.md'), '# existing\n');
+    const codex = getInstructionsStatesForTools(root).find(s => s.tool === 'codex');
+    expect(codex?.detected).toBe(true);
+  });
+
+  it('every server tool-state row validates against the wire schema (HS-9366 regression guard)', () => {
+    // HS-9322/HS-9344 added tools to the server TOOLS table without extending the
+    // client wire enum, so EVERY `/ai-instructions/status` response failed zod
+    // validation and the §86 nudge/silent-update path was silently dead. The tool
+    // id list is now a shared SSOT; this pins server output ⊆ wire schema.
+    for (const st of getInstructionsStatesForTools(root)) {
+      const parsed = ToolInstructionsStateSchema.safeParse(st);
+      expect(parsed.success, `tool row '${st.tool}' must validate against the wire schema`).toBe(true);
+    }
   });
 });
 

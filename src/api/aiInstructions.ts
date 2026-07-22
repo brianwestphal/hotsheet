@@ -20,11 +20,21 @@ export const SectionStatusSchema = z.object({
   needsSetup: z.boolean(),
 });
 
-// HS-8916 — per-tool managed-instructions state (Claude / Cursor / Windsurf /
-// Copilot). Added to the status + apply responses so the UI can show which tools
-// got their instruction files written.
+// HS-8916 — per-tool managed-instructions state. Added to the status + apply
+// responses so the UI can show which tools got their instruction files written.
+//
+// HS-9366 — the SINGLE source of truth for the instruction-tool id list, shared
+// with the server's `AiInstructionTool` type (`src/aiInstructionsTools.ts`
+// derives from it). The enum previously listed only the original four tools, so
+// when the server's TOOLS table gained `antigravity` (HS-9322) + `opencode`
+// (HS-9344) every `/ai-instructions/status` response FAILED validation — the
+// §86 nudge/silent-update path was silently dead (its catch swallowed the
+// mismatch). Deriving the server type from this list makes that drift a
+// compile-time error instead.
+export const AI_INSTRUCTION_TOOLS = ['claude', 'cursor', 'windsurf', 'copilot', 'antigravity', 'opencode', 'codex'] as const;
+
 export const ToolInstructionsStateSchema = z.object({
-  tool: z.enum(['claude', 'cursor', 'windsurf', 'copilot']),
+  tool: z.enum(AI_INSTRUCTION_TOOLS),
   label: z.string(),
   detected: z.boolean(),
   fileExists: z.boolean(),

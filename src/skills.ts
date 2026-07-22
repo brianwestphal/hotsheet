@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { readFileSettings } from './file-settings.js';
 import { listMcpHooksAgents } from './mcpHooksAgents.js';
 import { getProjectSecret } from './secret-file.js';
@@ -54,7 +55,12 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // `hotsheet_propose_partition` (docs/101 §101.7) — when the project's
 // `alwaysPreviewAgentPlans` setting is on (the worklist says so), propose a worker
 // partition for owner review instead of dispatching it directly.
-export const SKILL_VERSION = 22;
+// HS-9366 — bumped 22 → 23: adapter mode (docs/118). When the project has a
+// canonical Claude source (`CLAUDE.md` + `.claude/skills`), the AGENTS-family
+// tree (`.agents/skills`, Antigravity/Codex) is written as THIN ADAPTERS that
+// reference the canonical `.claude/skills/<name>/SKILL.md` instead of
+// duplicating the body; the bump rewrites existing full-content copies.
+export const SKILL_VERSION = 23;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -471,13 +477,19 @@ function ensureClaudePermissions(cwd: string): boolean {
  * `allowed-tools:` line is emitted differ. Bodies come from the same
  * `mainSkillBody`/`workerSkillBody`/`ticketSkillBody` builders.
  */
-function writeSkillTree(skillsDir: string, cwd: string, dataDir: string, includeAllowedTools: boolean): boolean {
+function writeSkillTree(skillsDir: string, cwd: string, dataDir: string, includeAllowedTools: boolean, adaptToCanonicalDir?: string): boolean {
   let updated = false;
   const allowed = (tools: string): string[] => includeAllowedTools ? [`allowed-tools: ${tools}`] : [];
   const write = (name: string, description: string, allowedTools: string, body: string): void => {
     const dir = join(skillsDir, name);
     mkdirSync(dir, { recursive: true });
-    const content = ['---', `name: ${name}`, `description: ${description}`, ...allowed(allowedTools), '---', versionHeader(), '', body, ''].join('\n');
+    // HS-9366 (docs/118) — adapter mode: when a canonical dir is given and it has
+    // this skill, write a thin adapter that references it instead of duplicating
+    // the body. Frontmatter (`name` + `description`) is kept for discovery.
+    const effectiveBody = adaptToCanonicalDir !== undefined && existsSync(join(adaptToCanonicalDir, name, 'SKILL.md'))
+      ? adapterSkillBody(name)
+      : body;
+    const content = ['---', `name: ${name}`, `description: ${description}`, ...allowed(allowedTools), '---', versionHeader(), '', effectiveBody, ''].join('\n');
     if (updateFile(join(dir, 'SKILL.md'), content)) updated = true;
   };
 
@@ -496,6 +508,23 @@ function writeSkillTree(skillsDir: string, cwd: string, dataDir: string, include
   return updated;
 }
 
+/**
+ * HS-9366 (docs/118) — the thin adapter body written into an AGENTS-family tree
+ * (`.agents/skills/<name>/SKILL.md`) when the canonical Claude skill exists.
+ * The relative path is FIXED: both trees are repo-root-anchored at the same
+ * depth (`<root>/.agents/skills/<name>/` vs `<root>/.claude/skills/<name>/`),
+ * so `../../../` always lands on the repo root regardless of platform (markdown
+ * paths use forward slashes on every OS). The video-studio model.
+ */
+function adapterSkillBody(name: string): string {
+  return [
+    `Read \`../../../.claude/skills/${name}/SKILL.md\` completely and follow its`,
+    'workflow. Treat Claude-specific tool names as capability labels and use the',
+    'equivalent tools available in the current session. Follow `AGENTS.md` for',
+    'repository-wide conventions.',
+  ].join('\n');
+}
+
 function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   let updated = false;
   // Ensure curl permissions for Hot Sheet API calls
@@ -506,10 +535,26 @@ function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet'
 
 // HS-9326 — Antigravity (`agy`) auto-discovers skills at `.agents/skills/<name>/SKILL.md`
 // (verified in the agy binary docs — a standard customization root, no `skills.json`
-// manifest needed). Same SKILL.md bodies as Claude, minus the Claude-specific
-// `allowed-tools:` frontmatter (agy uses its own tool set).
-function ensureAntigravitySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
-  return writeSkillTree(join(cwd, '.agents', 'skills'), cwd, dataDir, false);
+// manifest needed). Codex reads the same root (HS-9366, the video-studio model).
+// Same SKILL.md bodies as Claude, minus the Claude-specific `allowed-tools:`
+// frontmatter (these tools use their own tool sets).
+//
+// HS-9366 (docs/118) — adapter mode: when the project has a canonical Claude
+// source (`CLAUDE.md` + `.claude/skills`), the `.agents/skills` tree is written
+// as thin adapters referencing the canonical files — and the canonical tree is
+// refreshed FIRST (even when `ai_tool` excludes Claude), so the referenced
+// content can't go stale while adapters point at it. With no canonical source
+// (a project that started on Codex), full bodies are written (the old behavior).
+function ensureAgentsFamilySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  let updated = false;
+  const canonicalDir = join(cwd, '.claude', 'skills');
+  const adapter = canonicalClaudeSourceExists(cwd);
+  if (adapter) {
+    // Keep the canonical source fresh — the adapters delegate to it.
+    if (writeSkillTree(canonicalDir, cwd, dataDir, true)) updated = true;
+  }
+  if (writeSkillTree(join(cwd, '.agents', 'skills'), cwd, dataDir, false, adapter ? canonicalDir : undefined)) updated = true;
+  return updated;
 }
 
 // HS-9327 — the interactive-permission PreToolUse hook for agy. A command in the
@@ -746,12 +791,21 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
     // agy-specific for now — their on-disk format is agent-specific; generalize them
     // against a real second agent when one lands (HS-9339 note).
     if (agent.aiTool === 'antigravity') {
-      // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`.
-      if (ensureAntigravitySkills(projectRoot, dataDir)) platforms.push('Antigravity');
+      // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`
+      // (HS-9366: thin adapters when the canonical Claude source exists).
+      if (ensureAgentsFamilySkills(projectRoot, dataDir)) platforms.push('Antigravity');
       // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
       // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
       ensureAntigravityHooks(projectRoot, dataDir);
     }
+  }
+
+  // HS-9366 (docs/118) — Codex reads the AGENTS.md standard + `.agents/skills`
+  // (the video-studio model), so a codex project gets the same skill tree the
+  // Antigravity branch writes: thin adapters when the canonical Claude source
+  // exists, full bodies otherwise. Idempotent when both agents seeded it.
+  if (wants('codex') && (isExecutableOnPath('codex') || existsSync(join(projectRoot, 'AGENTS.md')))) {
+    if (ensureAgentsFamilySkills(projectRoot, dataDir)) platforms.push('Codex');
   }
 
   if (platforms.length > 0) {
@@ -764,8 +818,8 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
  * HS-9311 — a predicate: should this tool's skills be seeded for the project?
  * Reads the `ai_tool` file-setting (default `auto`). `auto` → every tool (today's
  * behavior); an explicit tool → only that one. An explicit CLI agent with no skill
- * generator here (codex/gemini/opencode/goose) matches none of the four, so nothing
- * is seeded — correct, there's no skill format for them yet.
+ * generator here (gemini/opencode/goose) matches no branch, so nothing is seeded —
+ * correct, there's no skill format for them yet (codex gained one in HS-9366).
  */
 export function wantsTool(dataDir: string): (tool: string) => boolean {
   const raw = readFileSettings(dataDir).ai_tool;
