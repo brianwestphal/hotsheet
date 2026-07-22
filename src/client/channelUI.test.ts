@@ -70,14 +70,16 @@ describe('requiresLiveClaudeChannel — play/command fire gate (HS-9364)', () =>
   afterEach(() => { state.settings.ai_tool = 'auto'; });
 
   it('is true for claude-channel-transport tools (claude / auto / unset / editor-only)', () => {
-    for (const tool of ['claude', 'auto', '', 'cursor', 'copilot', 'windsurf', 'codex', 'goose']) {
+    for (const tool of ['claude', 'auto', '', 'cursor', 'copilot', 'windsurf', 'goose']) {
       state.settings.ai_tool = tool;
       expect(requiresLiveClaudeChannel(), `ai_tool=${JSON.stringify(tool)}`).toBe(true);
     }
   });
 
   it('is false for the driven non-Claude tools — their drive spins up server-side on trigger', () => {
-    for (const tool of ['antigravity', 'Antigravity', 'opencode', 'OpenCode']) {
+    // HS-9369 — codex joined the driven set (MCP+hooks): the exact HS-9364 report
+    // ("clicking play with codex still shows Claude is not connected") pins here.
+    for (const tool of ['antigravity', 'Antigravity', 'opencode', 'OpenCode', 'codex', 'Codex']) {
       state.settings.ai_tool = tool;
       expect(requiresLiveClaudeChannel(), `ai_tool=${tool}`).toBe(false);
     }

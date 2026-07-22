@@ -7,6 +7,7 @@ describe('deriveDefaultTransport (HS-9338, mirror of the server capability table
   it('maps antigravity → mcp-hooks, opencode → acp, everything else → claude-channel', () => {
     expect(deriveDefaultTransport('antigravity')).toBe('mcp-hooks');
     expect(deriveDefaultTransport('Antigravity')).toBe('mcp-hooks'); // case-insensitive
+    expect(deriveDefaultTransport('codex')).toBe('mcp-hooks'); // HS-9369 — codex drive
     expect(deriveDefaultTransport('opencode')).toBe('acp');
     expect(deriveDefaultTransport('claude')).toBe('claude-channel');
     expect(deriveDefaultTransport('auto')).toBe('claude-channel');

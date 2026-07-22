@@ -12,6 +12,11 @@ describe('resolveAgentTransport (HS-9331)', () => {
     expect(resolveAgentTransport('Antigravity')).toBe('mcp-hooks'); // case-insensitive
   });
 
+  it('routes Codex to the MCP+hooks transport (HS-9369 — codex exec drive)', () => {
+    expect(resolveAgentTransport('codex')).toBe('mcp-hooks');
+    expect(resolveAgentTransport('Codex')).toBe('mcp-hooks');
+  });
+
   it('routes an ACP-native agent to the ACP transport (docs/114)', () => {
     expect(resolveAgentTransport('opencode')).toBe('acp');
     expect(resolveAgentTransport('OpenCode')).toBe('acp');

@@ -13,6 +13,15 @@ describe('mcpHooksAgents registry (HS-9339)', () => {
     expect(typeof agy?.ensureMcpConfig).toBe('function');
   });
 
+  it('resolves Codex by ai_tool (case-insensitive), with its binary + handlers (HS-9369)', () => {
+    const codex = getMcpHooksAgent('Codex');
+    expect(codex).not.toBeNull();
+    expect(codex?.aiTool).toBe('codex');
+    expect(codex?.binary).toBe('codex');
+    expect(typeof codex?.spawnRun).toBe('function');
+    expect(typeof codex?.ensureMcpConfig).toBe('function');
+  });
+
   it('returns null for non-registered / Claude / ACP / editor tools + unset', () => {
     expect(getMcpHooksAgent('claude')).toBeNull(); // Claude is claude-channel, not spawn
     expect(getMcpHooksAgent('opencode')).toBeNull(); // ACP, not MCP-hooks

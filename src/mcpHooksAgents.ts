@@ -17,6 +17,8 @@
 
 import { ensureAntigravityMcpConfig } from './antigravity.js';
 import { spawnAgyRun } from './antigravityDrive.js';
+import { ensureCodexMcpConfig } from './codex.js';
+import { spawnCodexRun } from './codexDrive.js';
 
 /**
  * One spawn-based MCP+hooks agent. `aiTool` is the `ai_tool` id (lowercase). `binary`
@@ -32,7 +34,7 @@ export interface McpHooksAgent {
   ensureMcpConfig: () => void;
 }
 
-/** Antigravity (`agy`) — the first (currently only) spawn-based MCP+hooks agent. */
+/** Antigravity (`agy`) — the first spawn-based MCP+hooks agent. */
 const ANTIGRAVITY: McpHooksAgent = {
   aiTool: 'antigravity',
   binary: 'agy',
@@ -40,8 +42,17 @@ const ANTIGRAVITY: McpHooksAgent = {
   ensureMcpConfig: () => { ensureAntigravityMcpConfig(); },
 };
 
-/** The registry. Add a second spawn-based MCP agent by appending one descriptor. */
-const AGENTS: readonly McpHooksAgent[] = [ANTIGRAVITY];
+/** HS-9369 — Codex (`codex`): MCP-native (no ACP mode in codex-cli), driven via
+ *  `codex exec --json` (docs/115 §115.7). The second registry proof point. */
+const CODEX: McpHooksAgent = {
+  aiTool: 'codex',
+  binary: 'codex',
+  spawnRun: spawnCodexRun,
+  ensureMcpConfig: () => { ensureCodexMcpConfig(); },
+};
+
+/** The registry. Add another spawn-based MCP agent by appending one descriptor. */
+const AGENTS: readonly McpHooksAgent[] = [ANTIGRAVITY, CODEX];
 
 /** The descriptor for an `ai_tool`, or null when it isn't a registered MCP-hooks agent. */
 export function getMcpHooksAgent(aiTool: string | undefined): McpHooksAgent | null {

@@ -21,7 +21,7 @@ export const TRANSPORT_LABEL: Record<AgentTransport, string> = {
 // server-side. Keep in sync when enabling an agent: an MCP-hooks agent → add to
 // `MCP_HOOKS_AI_TOOLS` here AND `MCP_HOOKS_AGENTS`; an ACP agent → add to `ACP_AI_TOOLS`
 // here AND give it an `acpAgents.ts` entrypoint.
-const MCP_HOOKS_AI_TOOLS = new Set(['antigravity']);
+const MCP_HOOKS_AI_TOOLS = new Set(['antigravity', 'codex']); // HS-9369 — codex drive
 const ACP_AI_TOOLS = new Set(['opencode']);
 
 /** The transport the capability table would auto-derive for an `ai_tool` (display only). */
