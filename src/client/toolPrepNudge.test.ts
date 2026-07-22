@@ -22,7 +22,7 @@ function status(partial: Partial<ToolPrepStatusResp>): ToolPrepStatusResp {
 }
 
 describe('decideToolPrepAction', () => {
-  const cases: Array<[string, Pick<ToolPrepStatusResp, 'aiTool' | 'needed'>, 'switch' | 'open', string | null, ToolPrepAction]> = [
+  const cases: Array<[string, Pick<ToolPrepStatusResp, 'aiTool' | 'needed' | 'conversionOffered'>, 'switch' | 'open', string | null, ToolPrepAction]> = [
     ['auto + switch → silent ensure (pre-HS-9367 refresh preserved)', { aiTool: 'auto', needed: false }, 'switch', null, 'silent-ensure'],
     ['auto + open → none', { aiTool: 'auto', needed: false }, 'open', null, 'none'],
     ['prepared tool + switch → silent ensure', { aiTool: 'codex', needed: false }, 'switch', null, 'silent-ensure'],
@@ -31,6 +31,9 @@ describe('decideToolPrepAction', () => {
     ['needed + open + not dismissed → dialog', { aiTool: 'codex', needed: true }, 'open', null, 'dialog'],
     ['needed + open + dismissed for THIS tool → none', { aiTool: 'codex', needed: true }, 'open', 'codex', 'none'],
     ['needed + open + dismissed for a DIFFERENT tool → dialog (re-armed)', { aiTool: 'codex', needed: true }, 'open', 'opencode', 'dialog'],
+    // HS-9375 — an adapter-retirement offer dialogs even when nothing else is needed.
+    ['conversion offered + switch → dialog', { aiTool: 'codex', needed: false, conversionOffered: true }, 'switch', null, 'dialog'],
+    ['conversion offered + open + dismissed for this tool → none', { aiTool: 'codex', needed: false, conversionOffered: true }, 'open', 'codex', 'none'],
   ];
   for (const [name, st, source, dismissed, expected] of cases) {
     it(name, () => {
@@ -67,6 +70,13 @@ describe('showToolPrepDialog + maybeOfferToolPrep', () => {
     expect(overlay?.textContent).toContain('Prepare Codex Config?');
     expect(overlay?.textContent).toContain('AGENTS.md');
     expect(overlay?.querySelectorAll('li')).toHaveLength(1); // skills item omitted
+  });
+
+  it('HS-9375 — discloses the adapter-retirement conversion when offered', () => {
+    showToolPrepDialog(status({ instructionsNeeded: false, skillsNeeded: false, conversionOffered: true }));
+    const overlay = document.querySelector('.tool-prep-nudge-overlay');
+    expect(overlay?.textContent).toContain('convert its duplicated sections');
+    expect(overlay?.textContent).toContain('nothing is lost');
   });
 
   it('the CTA posts /ai-instructions/prepare-tool', () => {

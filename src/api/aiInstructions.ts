@@ -83,6 +83,9 @@ export const ToolPrepStatusSchema = z.object({
   instructionsPath: z.string().nullable(),
   skillsNeeded: z.boolean(),
   skillsPath: z.string().nullable(),
+  // HS-9375 — ask-first adapter retirement offer (filled specifics migratable
+  // into CLAUDE.md). Optional for compatibility with a pre-HS-9375 server.
+  conversionOffered: z.boolean().optional(),
   needed: z.boolean(),
 });
 export type ToolPrepStatusResp = z.infer<typeof ToolPrepStatusSchema>;

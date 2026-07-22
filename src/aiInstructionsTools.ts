@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
-import { ADAPTER_SECTIONS, applyManagedSections, canonicalClaudeSourceExists, getInstructionsStatus, type InstructionsStatus, MANAGED_SECTIONS,type ManagedSection } from './aiInstructions.js';
+import { ADAPTER_SECTIONS, type AdapterConversionPlan, applyManagedSections, canonicalClaudeSourceExists, claudeMdPath, convertBodyToAdapter, getInstructionsStatus, type InstructionsStatus, MANAGED_SECTIONS,type ManagedSection, planAdapterConversion, readClaudeMd, removeManagedSections } from './aiInstructions.js';
 import type { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
@@ -92,18 +92,32 @@ const TOOLS: readonly ToolTarget[] = [
 ];
 
 /**
- * HS-9366 — which section set a tool's instruction file should carry.
- * AGENTS-family + canonical Claude source present → the thin adapter, UNLESS the
- * file already contains any full managed section: a pre-adapter-era file keeps
- * full mode (grandfathered), because converting it would delete our marker
- * blocks — including a possibly user-filled specifics sub-block. Retiring those
- * duplicates is the HS-9358 L3 "retire stale files" work, out of scope here.
+ * HS-9366 / HS-9375 (docs/118 §118.3, docs/120) — which section set a tool's
+ * instruction file should carry, and whether the old full sections should be
+ * STRIPPED first (the adapter retirement).
+ *
+ * AGENTS-family + canonical Claude source present → the thin adapter. A file
+ * that already carries the full sections (pre-adapter era):
+ *  - **lossless** (every specifics block still scaffolded/absent) → converted
+ *    automatically: strip our marker blocks, install the adapter. Nothing
+ *    user-authored is deleted.
+ *  - **migratable** (a filled specifics block whose CLAUDE.md counterpart is
+ *    unfilled/absent) → stays FULL here; conversion is ask-first via the
+ *    HS-9367 tool-prep flow (`prepareToolConfig` migrates the filled blocks
+ *    into CLAUDE.md, then converts).
+ *  - **conflict** (filled block differing from a filled CLAUDE.md one) → stays
+ *    FULL; the user must reconcile (docs/120 §120.4).
  */
-function sectionSetFor(projectRoot: string, tool: AiInstructionTool, existingBody: string): ManagedSection[] {
-  if (!AGENTS_FAMILY.has(tool)) return MANAGED_SECTIONS;
-  if (!canonicalClaudeSourceExists(projectRoot)) return MANAGED_SECTIONS;
+function sectionSetFor(projectRoot: string, tool: AiInstructionTool, existingBody: string): { sections: ManagedSection[]; stripFullSections: boolean } {
+  if (!AGENTS_FAMILY.has(tool)) return { sections: MANAGED_SECTIONS, stripFullSections: false };
+  if (!canonicalClaudeSourceExists(projectRoot)) return { sections: MANAGED_SECTIONS, stripFullSections: false };
   const fullPresent = getInstructionsStatus(existingBody).sections.some(s => s.present);
-  return fullPresent ? MANAGED_SECTIONS : ADAPTER_SECTIONS;
+  if (!fullPresent) return { sections: ADAPTER_SECTIONS, stripFullSections: false };
+  const plan = planAdapterConversion(existingBody, readClaudeMd(projectRoot) ?? '');
+  if (plan.outcome === 'lossless' || plan.outcome === 'not-applicable') {
+    return { sections: ADAPTER_SECTIONS, stripFullSections: true };
+  }
+  return { sections: MANAGED_SECTIONS, stripFullSections: false };
 }
 
 /**
@@ -142,7 +156,10 @@ function stateForTarget(projectRoot: string, t: ToolTarget): ToolInstructionsSta
   }
   // HS-9366 — evaluate against the section set the file SHOULD carry, so an
   // adapter-mode AGENTS.md isn't forever reported "missing" the full sections.
-  return { ...getInstructionsStatus(body, sectionSetFor(projectRoot, t.tool, body)), tool: t.tool, label: t.label, detected: t.detect(projectRoot), fileExists: exists };
+  // (A lossless-convertible full-mode file reports against the ADAPTER set —
+  // its "missing adapter section" drives the automatic HS-9375 conversion via
+  // the §86 silent-update / apply path.)
+  return { ...getInstructionsStatus(body, sectionSetFor(projectRoot, t.tool, body).sections), tool: t.tool, label: t.label, detected: t.detect(projectRoot), fileExists: exists };
 }
 
 /** The managed-section state for every supported tool. */
@@ -175,8 +192,13 @@ export function writeInstructionsForTool(projectRoot: string, tool: AiInstructio
     } catch { /* unreadable → recreate from scratch */ frontmatter = t.frontmatter; }
   }
   // HS-9366 — AGENTS-family files in adapter mode get the thin CLAUDE.md
-  // reference instead of a duplicate of the full sections.
-  const { content, changed } = applyManagedSections(body, sectionSetFor(projectRoot, tool, body));
+  // reference instead of a duplicate of the full sections. HS-9375 — a
+  // grandfathered full-mode file whose conversion is LOSSLESS is retired here:
+  // strip our old marker blocks, then install the adapter section.
+  const mode = sectionSetFor(projectRoot, tool, body);
+  const baseBody = mode.stripFullSections ? removeManagedSections(body) : body;
+  const { content } = applyManagedSections(baseBody, mode.sections);
+  const changed = content !== body; // vs the ORIGINAL body — a strip alone is a change
   if (existed && !changed) return false;
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -184,6 +206,59 @@ export function writeInstructionsForTool(projectRoot: string, tool: AiInstructio
     return true;
   } catch (err: unknown) {
     if (err instanceof Error) console.warn(`[ai-instructions] Failed to write ${t.relPath} in ${projectRoot}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * HS-9375 (docs/120) — the retirement plan for a tool's instruction file, or
+ * null when retirement doesn't apply (not AGENTS-family, no canonical source,
+ * file absent/unreadable, or no full sections present). `migratable` drives the
+ * ask-first offer in the HS-9367 tool-prep flow; `lossless` converts silently
+ * inside `writeInstructionsForTool`; `conflict` stays full-mode.
+ */
+export function adapterConversionPlanFor(projectRoot: string, tool: AiInstructionTool): AdapterConversionPlan | null {
+  if (!AGENTS_FAMILY.has(tool) || !canonicalClaudeSourceExists(projectRoot)) return null;
+  const t = TOOLS.find(x => x.tool === tool);
+  if (t === undefined) return null;
+  const path = join(projectRoot, t.relPath);
+  if (!existsSync(path)) return null;
+  let body: string;
+  try { body = splitFrontmatter(readFileSync(path, 'utf-8')).body; } catch { return null; }
+  if (!getInstructionsStatus(body).sections.some(s => s.present)) return null;
+  return planAdapterConversion(body, readClaudeMd(projectRoot) ?? '');
+}
+
+/**
+ * HS-9375 — perform the MIGRATABLE conversion for a tool's instruction file:
+ * move its filled specifics blocks into CLAUDE.md (whose counterparts are
+ * unfilled/absent — verified by the plan), strip the full sections, install the
+ * thin adapter. Both files written. Returns false when the plan isn't
+ * `lossless`/`migratable` (nothing written). Called from the ask-first
+ * `prepareToolConfig` path — never silently.
+ */
+export function convertToolFileToAdapter(projectRoot: string, tool: AiInstructionTool): boolean {
+  const t = TOOLS.find(x => x.tool === tool);
+  if (t === undefined) return false;
+  const path = join(projectRoot, t.relPath);
+  if (!existsSync(path)) return false;
+  let frontmatter = '';
+  let body = '';
+  try {
+    const split = splitFrontmatter(readFileSync(path, 'utf-8'));
+    frontmatter = split.frontmatter;
+    body = split.body;
+  } catch { return false; }
+  const claudeMd = readClaudeMd(projectRoot) ?? '';
+  const plan = planAdapterConversion(body, claudeMd);
+  if (plan.outcome === 'conflict' || plan.outcome === 'not-applicable') return false;
+  const res = convertBodyToAdapter(body, claudeMd);
+  try {
+    if (res.claudeMd !== claudeMd) writeFileSync(claudeMdPath(projectRoot), res.claudeMd, 'utf-8');
+    writeFileSync(path, joinFrontmatter(frontmatter, res.agentsBody), 'utf-8');
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error) console.warn(`[ai-instructions] Adapter conversion failed for ${t.relPath} in ${projectRoot}: ${err.message}`);
     return false;
   }
 }

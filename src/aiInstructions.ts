@@ -145,6 +145,117 @@ export function canonicalClaudeSourceExists(projectRoot: string): boolean {
   return existsSync(claudeMdPath(projectRoot)) && existsSync(join(projectRoot, '.claude', 'skills'));
 }
 
+// --- HS-9375 (docs/120) — retire grandfathered full-section duplicates ---
+
+/** The fill state of a section's specifics sub-block within a body. */
+export type SpecificsState = 'section-absent' | 'no-specifics' | 'unfilled' | 'filled';
+
+/** HS-9375 — inspect one section's specifics in a body: is the user's per-project
+ *  sub-block filled in (sentinel removed)? Returns the state + the filled block's
+ *  FULL text (markers included) for migration. Exported for testing. */
+export function sectionSpecificsState(body: string, def: ManagedSection): { state: SpecificsState; block: string | null } {
+  const m = body.match(sectionRe(def.id));
+  if (m === null) return { state: 'section-absent', block: null };
+  const inner = m[2];
+  const sm = inner.match(specificsRe(def.id));
+  if (sm === null) return { state: 'no-specifics', block: null };
+  if (sm[0].includes(NEEDS_SETUP_SENTINEL)) return { state: 'unfilled', block: null };
+  return { state: 'filled', block: sm[0] };
+}
+
+/** HS-9375 — remove our marker-wrapped managed sections from a body (user content
+ *  around them is untouched; runs of 3+ blank lines left behind are collapsed).
+ *  Exported for testing. */
+export function removeManagedSections(body: string, sectionDefs: ManagedSection[] = MANAGED_SECTIONS): string {
+  let out = body;
+  for (const def of sectionDefs) {
+    const m = out.match(sectionRe(def.id));
+    if (m !== null) out = out.replace(m[0], '');
+  }
+  return out.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+}
+
+export interface AdapterConversionPlan {
+  /** Can the AGENTS-family body be converted to the thin adapter? */
+  outcome:
+    /** No full sections present — nothing to convert. */
+    | 'not-applicable'
+    /** Every present section's specifics are unfilled/absent — conversion loses
+     *  nothing and may run automatically. */
+    | 'lossless'
+    /** ≥1 filled specifics block whose canonical CLAUDE.md counterpart is
+     *  unfilled/absent/identical — convertible after MIGRATING those blocks into
+     *  CLAUDE.md (ask-first). */
+    | 'migratable'
+    /** ≥1 filled block that CONFLICTS with a differently-filled CLAUDE.md block —
+     *  don't convert automatically; the user must reconcile. */
+    | 'conflict';
+  /** Section ids whose filled specifics would migrate into CLAUDE.md. */
+  migrate: string[];
+  /** Section ids whose filled specifics conflict with CLAUDE.md's. */
+  conflicts: string[];
+}
+
+/**
+ * HS-9375 — classify whether an AGENTS-family body in FULL mode can be retired
+ * to the thin adapter, given the canonical CLAUDE.md content. Pure. The safety
+ * invariant: conversion may only delete content that is scaffold (unfilled) or
+ * preserved in CLAUDE.md (identical / migrated there first).
+ */
+export function planAdapterConversion(agentsBody: string, claudeMd: string): AdapterConversionPlan {
+  const migrate: string[] = [];
+  const conflicts: string[] = [];
+  let anyPresent = false;
+  for (const def of MANAGED_SECTIONS) {
+    const agents = sectionSpecificsState(agentsBody, def);
+    if (agents.state === 'section-absent') continue;
+    anyPresent = true;
+    if (agents.state !== 'filled') continue; // scaffold/none → nothing to lose
+    const canonical = sectionSpecificsState(claudeMd, def);
+    if (canonical.state === 'filled') {
+      if (canonical.block === agents.block) continue; // identical → nothing to lose
+      conflicts.push(def.id);
+    } else {
+      migrate.push(def.id); // CLAUDE.md unfilled/absent → move the filled block there
+    }
+  }
+  if (!anyPresent) return { outcome: 'not-applicable', migrate: [], conflicts: [] };
+  if (conflicts.length > 0) return { outcome: 'conflict', migrate, conflicts };
+  return { outcome: migrate.length > 0 ? 'migratable' : 'lossless', migrate, conflicts: [] };
+}
+
+/**
+ * HS-9375 — perform the conversion: migrate any filled specifics into the
+ * CLAUDE.md content (replacing its unfilled block, or appending the whole
+ * section via `applyManagedSections` first when absent), strip the full
+ * sections from the AGENTS-family body, and install the thin adapter section.
+ * Pure; callers write the files. Throws on a `conflict` plan — resolve first.
+ */
+export function convertBodyToAdapter(agentsBody: string, claudeMd: string): { agentsBody: string; claudeMd: string; plan: AdapterConversionPlan } {
+  const plan = planAdapterConversion(agentsBody, claudeMd);
+  if (plan.outcome === 'conflict') throw new Error(`adapter conversion conflict: ${plan.conflicts.join(', ')}`);
+
+  let nextClaudeMd = claudeMd;
+  if (plan.migrate.length > 0) {
+    // Make sure CLAUDE.md carries every managed section (so there's a specifics
+    // block to replace), then swap in the filled blocks from the agents file.
+    nextClaudeMd = applyManagedSections(nextClaudeMd).content;
+    for (const def of MANAGED_SECTIONS) {
+      if (!plan.migrate.includes(def.id)) continue;
+      const filled = sectionSpecificsState(agentsBody, def).block;
+      const canonical = sectionSpecificsState(nextClaudeMd, def);
+      const target = nextClaudeMd.match(specificsRe(def.id));
+      if (filled !== null && canonical.state === 'unfilled' && target !== null) {
+        nextClaudeMd = nextClaudeMd.replace(target[0], () => filled);
+      }
+    }
+  }
+
+  const stripped = removeManagedSections(agentsBody);
+  const nextAgentsBody = applyManagedSections(stripped, ADAPTER_SECTIONS).content;
+  return { agentsBody: nextAgentsBody, claudeMd: nextClaudeMd, plan };
+}
+
 // --- Marker helpers ---
 
 function sectionBegin(id: string, v: number): string { return `<!-- hotsheet:begin section=${id} v=${v} -->`; }

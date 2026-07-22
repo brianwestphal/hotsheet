@@ -54,8 +54,10 @@ An `AGENTS.md` that **already contains the full managed sections** (installed
 pre-adapter-era) stays in full mode: converting it would delete our marker
 blocks, including a possibly user-filled specifics sub-block. `sectionSetFor`
 (`src/aiInstructionsTools.ts`) checks for any present full section before
-choosing the adapter set. Retiring/converting those duplicates is the HS-9358
-**L3** "retire stale files" work (follow-up ticket filed), out of scope here.
+choosing the adapter set. **Superseded by HS-9375
+([120-agents-md-adapter-retirement.md](120-agents-md-adapter-retirement.md)):**
+grandfathering now only persists for files with FILLED specifics (ask-first
+migration) or a CLAUDE.md conflict; unfilled full-mode files auto-convert.
 
 Similarly, `SKILL_VERSION` was bumped 22 → 23 so existing full-content
 `.agents/skills` copies are rewritten as adapters on the next ensure pass (the

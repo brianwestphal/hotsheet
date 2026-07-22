@@ -46,15 +46,17 @@ export type ToolPrepAction = 'dialog' | 'silent-ensure' | 'none';
 /** Pure decision — exported for unit testing.
  *  - `auto` never needs tool-specific prep: a switch keeps the silent refresh,
  *    an open check does nothing.
- *  - Something missing/stale → dialog; on `open` the per-tool dismissal wins.
+ *  - Something missing/stale — or an HS-9375 adapter-retirement offer — →
+ *    dialog; on `open` the per-tool dismissal wins.
  *  - Nothing needed → a switch still silently ensures (hooks refresh); an open
  *    check does nothing. */
 export function decideToolPrepAction(
-  status: Pick<ToolPrepStatusResp, 'aiTool' | 'needed'>,
+  status: Pick<ToolPrepStatusResp, 'aiTool' | 'needed' | 'conversionOffered'>,
   source: 'switch' | 'open',
   dismissedTool: string | null,
 ): ToolPrepAction {
-  if (status.aiTool === 'auto' || !status.needed) {
+  const wantsDialog = status.needed || status.conversionOffered === true;
+  if (status.aiTool === 'auto' || !wantsDialog) {
     return source === 'switch' ? 'silent-ensure' : 'none';
   }
   if (source === 'open' && dismissedTool === status.aiTool) return 'none';
@@ -126,6 +128,9 @@ export function showToolPrepDialog(status: ToolPrepStatusResp): void {
           </p>
           <ul>
             {items.map(p => <li><code>{p}</code></li>)}
+            {status.conversionOffered === true && status.instructionsPath !== null
+              ? <li><code>{status.instructionsPath}</code> — convert its duplicated sections to the thin <code>CLAUDE.md</code> adapter (your filled-in specifics move into <code>CLAUDE.md</code> first, so nothing is lost)</li>
+              : null}
           </ul>
           <p className="ai-instructions-nudge-note">
             Existing files are preserved — sections are added with markers, and when this project has a canonical <code>CLAUDE.md</code> the new files are thin adapters that reference it. MCP registration and permissions are set up as needed.

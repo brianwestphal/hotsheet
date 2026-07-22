@@ -5,7 +5,9 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  adapterConversionPlanFor,
   anyAiToolDetected,
+  convertToolFileToAdapter,
   getInstructionsStatesForTools,
   splitFrontmatter,
   writeInstructionsForDetectedTools,
@@ -121,16 +123,78 @@ describe('adapter mode (HS-9366)', () => {
     expect(readFileSync(join(root, 'AGENTS.md'), 'utf-8')).toContain('section=ticket-driven-work');
   });
 
-  it('grandfathers an AGENTS.md already carrying the full sections (no destructive conversion)', () => {
+  it('HS-9375 — AUTO-retires a full-mode AGENTS.md whose specifics are all unfilled (lossless)', () => {
     // Full sections installed pre-adapter-era (no canonical source yet)…
     expect(writeInstructionsForTool(root, 'antigravity')).toBe(true);
-    // …then the canonical source appears. Retiring the duplicate is HS-9358 L3;
-    // for now the file stays in full mode and stays up to date.
+    // …then the canonical source appears. Every specifics block still carries the
+    // needs-setup sentinel, so conversion loses nothing → automatic.
     makeCanonical();
-    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false); // already current in full mode
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(true); // the conversion write
     const content = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
-    expect(content).toContain('section=ticket-driven-work');
+    expect(content).toContain('section=claude-adapter');
+    expect(content).not.toContain('section=ticket-driven-work'); // duplicates retired
+    // Idempotent afterwards.
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false);
+  });
+
+  it('HS-9375 — a full-mode AGENTS.md with FILLED specifics stays full (conversion is ask-first)', () => {
+    writeInstructionsForTool(root, 'antigravity');
+    // The user filled in the testing specifics (sentinel removed) in AGENTS.md.
+    const path = join(root, 'AGENTS.md');
+    const filled = readFileSync(path, 'utf-8').replace(
+      /<!-- hotsheet:begin specifics=testing-philosophy v=\d+ -->[\s\S]*?<!-- hotsheet:end specifics=testing-philosophy -->/,
+      '<!-- hotsheet:begin specifics=testing-philosophy v=1 -->\nMY FILLED TEST SETUP\n<!-- hotsheet:end specifics=testing-philosophy -->',
+    );
+    writeFileSync(path, filled, 'utf-8');
+    makeCanonical(); // CLAUDE.md exists but has no sections → migratable, not lossless
+
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false); // no silent conversion
+    const content = readFileSync(path, 'utf-8');
+    expect(content).toContain('section=ticket-driven-work'); // kept full
+    expect(content).toContain('MY FILLED TEST SETUP');       // user content untouched
     expect(content).not.toContain('section=claude-adapter');
+    // …but the ask-first plan reports it as migratable.
+    expect(adapterConversionPlanFor(root, 'antigravity')?.outcome).toBe('migratable');
+  });
+
+  it('HS-9375 — convertToolFileToAdapter migrates the filled specifics into CLAUDE.md, then retires', () => {
+    writeInstructionsForTool(root, 'antigravity');
+    const path = join(root, 'AGENTS.md');
+    const filled = readFileSync(path, 'utf-8').replace(
+      /<!-- hotsheet:begin specifics=testing-philosophy v=\d+ -->[\s\S]*?<!-- hotsheet:end specifics=testing-philosophy -->/,
+      '<!-- hotsheet:begin specifics=testing-philosophy v=1 -->\nMY FILLED TEST SETUP\n<!-- hotsheet:end specifics=testing-philosophy -->',
+    );
+    writeFileSync(path, filled, 'utf-8');
+    makeCanonical();
+
+    expect(convertToolFileToAdapter(root, 'antigravity')).toBe(true);
+    const agents = readFileSync(path, 'utf-8');
+    expect(agents).toContain('section=claude-adapter');
+    expect(agents).not.toContain('MY FILLED TEST SETUP'); // moved, not duplicated
+    const claudeMd = readFileSync(join(root, 'CLAUDE.md'), 'utf-8');
+    expect(claudeMd).toContain('MY FILLED TEST SETUP');   // …into the canonical file
+    // Post-conversion, the normal write is a no-op (adapter current).
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false);
+  });
+
+  it('HS-9375 — a CONFLICTING filled block (differs from a filled CLAUDE.md one) blocks conversion', () => {
+    writeInstructionsForTool(root, 'antigravity');
+    const fill = (content: string, text: string): string => content.replace(
+      /<!-- hotsheet:begin specifics=testing-philosophy v=\d+ -->[\s\S]*?<!-- hotsheet:end specifics=testing-philosophy -->/,
+      `<!-- hotsheet:begin specifics=testing-philosophy v=1 -->\n${text}\n<!-- hotsheet:end specifics=testing-philosophy -->`,
+    );
+    const path = join(root, 'AGENTS.md');
+    writeFileSync(path, fill(readFileSync(path, 'utf-8'), 'AGENTS VERSION'), 'utf-8');
+    // CLAUDE.md carries the full sections too, with a DIFFERENT filled block.
+    writeInstructionsForTool(root, 'claude');
+    const cm = join(root, 'CLAUDE.md');
+    writeFileSync(cm, fill(readFileSync(cm, 'utf-8'), 'CLAUDE VERSION'), 'utf-8');
+    mkdirSync(join(root, '.claude', 'skills'), { recursive: true });
+
+    expect(adapterConversionPlanFor(root, 'antigravity')?.outcome).toBe('conflict');
+    expect(convertToolFileToAdapter(root, 'antigravity')).toBe(false); // refuses
+    expect(readFileSync(path, 'utf-8')).toContain('AGENTS VERSION');   // nothing touched
+    expect(readFileSync(cm, 'utf-8')).toContain('CLAUDE VERSION');
   });
 
   it('adapter write is idempotent and preserves user content around the section', () => {

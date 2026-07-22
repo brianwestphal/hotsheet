@@ -121,6 +121,32 @@ describe('prepareToolConfig', () => {
     expect(res.status.needed).toBe(false);
   });
 
+  it('HS-9375 — offers + performs the migratable adapter retirement through prepare', () => {
+    setAiTool('codex');
+    // A pre-adapter-era AGENTS.md carrying the FULL sections with a user-FILLED
+    // specifics block, in a project that now has the canonical Claude source.
+    prepareToolConfig(root, dataDir); // seeds full AGENTS.md (no canonical yet)
+    const agentsPath = join(root, 'AGENTS.md');
+    writeFileSync(agentsPath, readFileSync(agentsPath, 'utf-8').replace(
+      /<!-- hotsheet:begin specifics=testing-philosophy v=\d+ -->[\s\S]*?<!-- hotsheet:end specifics=testing-philosophy -->/,
+      '<!-- hotsheet:begin specifics=testing-philosophy v=1 -->\nMY FILLED TEST SETUP\n<!-- hotsheet:end specifics=testing-philosophy -->',
+    ), 'utf-8');
+    writeFileSync(join(root, 'CLAUDE.md'), '# Project\n');
+    mkdirSync(join(root, '.claude', 'skills'), { recursive: true });
+
+    const st = getToolPrepStatus(root, dataDir);
+    expect(st.conversionOffered).toBe(true); // the ask-first offer
+
+    const res = prepareToolConfig(root, dataDir); // = the dialog's accept
+    expect(res.instructionsWritten).toBe(true);
+    const agents = readFileSync(agentsPath, 'utf-8');
+    expect(agents).toContain('section=claude-adapter');
+    expect(agents).not.toContain('MY FILLED TEST SETUP');
+    expect(readFileSync(join(root, 'CLAUDE.md'), 'utf-8')).toContain('MY FILLED TEST SETUP'); // migrated
+    expect(res.status.conversionOffered).toBe(false); // retired
+    expect(res.status.needed).toBe(false);
+  });
+
   it('is idempotent — a second prepare is a no-op', () => {
     setAiTool('codex');
     prepareToolConfig(root, dataDir);

@@ -21,7 +21,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
-import { type AiInstructionTool, getInstructionsStatesForTools, instructionFileRelPath, writeInstructionsForTool } from './aiInstructionsTools.js';
+import { adapterConversionPlanFor, type AiInstructionTool, convertToolFileToAdapter, getInstructionsStatesForTools, instructionFileRelPath, writeInstructionsForTool } from './aiInstructionsTools.js';
 import { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 import { readFileSettings } from './file-settings.js';
 import { ensureSkillsForDir, parseVersionHeader, SKILL_VERSION } from './skills.js';
@@ -41,7 +41,13 @@ export interface ToolPrepStatus {
   skillsNeeded: boolean;
   /** Repo-relative main skill artifact path (null = tool has no skill format). */
   skillsPath: string | null;
-  /** instructionsNeeded || skillsNeeded — drives the ask-first nudge. */
+  /** HS-9375 (docs/120) — the tool's instruction file still carries the FULL
+   *  duplicated sections with user-FILLED specifics that can be safely migrated
+   *  into CLAUDE.md; the prep dialog offers the conversion (ask-first).
+   *  (`lossless` conversions happen automatically; `conflict` is never offered.) */
+  conversionOffered: boolean;
+  /** instructionsNeeded || skillsNeeded — drives the ask-first nudge (the client
+   *  also dialogs on `conversionOffered`). */
   needed: boolean;
 }
 
@@ -94,24 +100,28 @@ export function getToolPrepStatus(projectRoot: string, dataDir: string): ToolPre
   // `auto` = detect-and-seed-everything; nothing tool-specific to prepare (the
   // existing detected-tool flows already cover it silently).
   if (aiTool === 'auto') {
-    return { aiTool, instructionTool: null, instructionsNeeded: false, instructionsPath: null, skillsNeeded: false, skillsPath: null, needed: false };
+    return { aiTool, instructionTool: null, instructionsNeeded: false, instructionsPath: null, skillsNeeded: false, skillsPath: null, conversionOffered: false, needed: false };
   }
 
   const instructionTool = isInstructionTool(aiTool) ? aiTool : null;
   let instructionsNeeded = false;
   let instructionsPath: string | null = null;
+  let conversionOffered = false;
   if (instructionTool !== null) {
     instructionsPath = instructionFileRelPath(instructionTool);
     const st = getInstructionsStatesForTools(projectRoot).find(s => s.tool === instructionTool);
     // `setupNeeded` = missing || outdated, evaluated against the section set the
     // file SHOULD carry (adapter-aware, HS-9366) — exactly "prep needed".
     instructionsNeeded = st !== undefined && st.setupNeeded;
+    // HS-9375 — a full-mode file with migratable filled specifics: offer the
+    // ask-first conversion (performed by `prepareToolConfig`).
+    conversionOffered = adapterConversionPlanFor(projectRoot, instructionTool)?.outcome === 'migratable';
   }
 
   const skillsPath = skillArtifactRelPath(aiTool);
   const skillsNeeded = skillsPath !== null && skillArtifactStale(projectRoot, skillsPath);
 
-  return { aiTool, instructionTool, instructionsNeeded, instructionsPath, skillsNeeded, skillsPath, needed: instructionsNeeded || skillsNeeded };
+  return { aiTool, instructionTool, instructionsNeeded, instructionsPath, skillsNeeded, skillsPath, conversionOffered, needed: instructionsNeeded || skillsNeeded };
 }
 
 export interface ToolPrepResult {
@@ -132,8 +142,15 @@ export interface ToolPrepResult {
 export function prepareToolConfig(projectRoot: string, dataDir: string, categories?: CategoryDef[]): ToolPrepResult {
   const before = getToolPrepStatus(projectRoot, dataDir);
   let instructionsWritten = false;
+  // HS-9375 — the user accepted the prep dialog, which disclosed the conversion:
+  // migrate the filled specifics into CLAUDE.md, strip the duplicated full
+  // sections, install the thin adapter. (Never reached silently — the status's
+  // `conversionOffered` gates the dialog.)
+  if (before.conversionOffered && before.instructionTool !== null) {
+    instructionsWritten = convertToolFileToAdapter(projectRoot, before.instructionTool) || instructionsWritten;
+  }
   if (before.instructionTool !== null) {
-    instructionsWritten = writeInstructionsForTool(projectRoot, before.instructionTool);
+    instructionsWritten = writeInstructionsForTool(projectRoot, before.instructionTool) || instructionsWritten;
   }
   // Skills + MCP config + permissions/hooks — `wantsTool(dataDir)` inside
   // narrows generation to the selected tool.
