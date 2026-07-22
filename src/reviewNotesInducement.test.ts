@@ -69,6 +69,11 @@ describe('buildReviewNotesSection (HS-9221 / HS-9371)', () => {
     expect(out).toContain('prNoteAnchor/v1');
     expect(out).toContain('rationale|proof|assumption|alternative-considered|risk|test-evidence');
     expect(out).toContain('workItemUris');
+    // HS-9377 — diagram-as-proof artifacts: Mermaid SOURCE attached, never
+    // rendered images / ASCII art.
+    expect(out).toContain('Mermaid SOURCE');
+    expect(out).toContain('.pr-notes/artifacts/');
+    expect(out).toContain('attachments');
     // No degradation to "record it in the ticket note instead".
     expect(out).not.toContain('completion note instead');
   });
@@ -118,6 +123,8 @@ describe('buildReviewNotesSection (HS-9221 / HS-9371)', () => {
             properties: { tags: ['rationale'] },
             workItemUris: ['HS-1234'],
             partialFingerprints: { 'prNoteAnchor/v1': 'deadbeefdeadbeefdeadbeefdeadbeef' },
+            // HS-9377 — a Mermaid-source proof artifact attached per the template.
+            attachments: [{ artifactLocation: { uri: '.pr-notes/artifacts/claim-flow.mmd' } }],
           }],
         }],
       };
@@ -128,6 +135,10 @@ describe('buildReviewNotesSection (HS-9221 / HS-9371)', () => {
       const notes = await readReviewProofForTicket(root, 'HS-1234');
       expect(notes).toHaveLength(1);
       expect(notes[0].file).toBe('src/api/client.ts');
+      // HS-9377 — the attached Mermaid-source artifact surfaces (as a text kind).
+      expect(notes[0].attachments).toEqual([
+        expect.objectContaining({ uri: '.pr-notes/artifacts/claim-flow.mmd', kind: 'text' }),
+      ]);
       // Word-boundary ticket matching still applies (HS-123 must not match).
       expect(await readReviewProofForTicket(root, 'HS-123')).toEqual([]);
     } finally {

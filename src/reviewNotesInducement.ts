@@ -200,7 +200,8 @@ export const DIRECT_AUTHORING_INSTRUCTIONS: readonly string[] = [
   '      } }],',
   '      "properties": { "tags": ["<rationale|proof|assumption|alternative-considered|risk|test-evidence>"] },',
   '      "workItemUris": ["<HS-NNNN>"],',
-  '      "partialFingerprints": { "prNoteAnchor/v1": "<optional, see below>" }',
+  '      "partialFingerprints": { "prNoteAnchor/v1": "<optional, see below>" },',
+  '      "attachments": [{ "artifactLocation": { "uri": "<optional proof artifact, e.g. .pr-notes/artifacts/<name>.mmd — see below>" } }]',
   '    }]',
   '  }]',
   '}',
@@ -217,6 +218,13 @@ export const DIRECT_AUTHORING_INSTRUCTIONS: readonly string[] = [
     'inner whitespace to single spaces, join with `\\n` (NO trailing newline), then the ' +
     'first 32 hex chars of the SHA-256. Shell: ' +
     '`printf \'%s\' "$(sed -n \'<A>,<B>p\' <file> | sed -E \'s/^[[:space:]]+|[[:space:]]+$//g; s/[[:space:]]+/ /g\')" | shasum -a 256 | cut -c1-32`.',
+  '- **Proof artifacts** (the optional `attachments`): when a claim is clearer shown than ' +
+    'told, save the evidence under `.pr-notes/artifacts/` and reference it via ' +
+    '`attachments[].artifactLocation.uri`. **When a diagram is the clearest proof or ' +
+    'rationale — a state machine, data/control flow, sequence of interactions, or ' +
+    'architecture relationship — write it as Mermaid SOURCE** (a `.mmd` file) and attach ' +
+    'that; never a rendered diagram image, never ASCII art in the body. Test output/logs ' +
+    'attach as plain text files. One artifact per claim, not per step.',
   '- Keep notes reflecting the FINAL state of your change: update or delete your own ' +
     'earlier results (match by `guid`) when the work evolves, and drop notes the finished ' +
     'diff made obvious.',

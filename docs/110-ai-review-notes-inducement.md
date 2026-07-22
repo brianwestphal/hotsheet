@@ -143,6 +143,20 @@ Settled secondary points:
   test proves a template-authored file round-trips through Hot Sheet's own §111
   proof reader. (The §110.6 "Hot Sheet never creates `.pr-notes/`" non-goal is
   unchanged — the *agent* writes the files, not Hot Sheet.)
+- **Diagram-as-proof artifacts (HS-9377, 2026-07-22).** Both instruction paths
+  now induce proof ARTIFACTS, with diagrams specifically called out: **when a
+  diagram is the clearest proof or rationale** (state machine, data/control
+  flow, sequence of interactions, architecture relationship), the agent writes
+  it as **Mermaid source** (`.mmd` under `.pr-notes/artifacts/`) and attaches it
+  — via `--artifact` on the CLI path (the canonical `glassbox note instructions`
+  text gained a "Proof artifacts" section, Glassbox-side change), or via
+  `attachments[].artifactLocation.uri` in the direct-authoring template. Never a
+  rendered diagram image, never ASCII art in the body (Glassbox docs/20 §20.5:
+  diagram source stays diffable). Viewing: a `.mmd` artifact renders as an
+  inline collapsible code block in Glassbox today; LIVE diagram rendering is
+  Glassbox's tracked follow-up (its docs/20 §20.11 P4 + the opt-in Mermaid
+  content plugin, GB-1045). The §111 round-trip test attaches a `.mmd` artifact
+  and asserts Hot Sheet's proof reader surfaces it.
 
 ## 110.5 Ticket ↔ notes linkage (Glassbox §20.7)
 
