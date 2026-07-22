@@ -1,3 +1,4 @@
+import { agentDisplayName } from './agentName.js';
 import { byIdOrNull, toElement } from './dom.js';
 import {
   CMD_COLORS,
@@ -33,6 +34,7 @@ import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2,renderIconSvg } from './icons.js';
 import { delegate } from './reactive.js';
 import { applySelectionClick, copyButtonLabel, pruneSelection } from './settingsCopySelection.js';
 import { scopeListHintElement } from './settingsScopeList.js';
+import { state } from './state.js';
 
 /** HS-8614 — recover the `ItemRef` a delegated handler should act on from the
  *  row's `data-ref` attribute (`renderCommandOutlineRow` / `renderGroupOutlineRow`
@@ -62,8 +64,14 @@ export function showCommandEditorModal(ref: ItemRef) {
   const currentIcon = CMD_ICONS.find(ic => ic.name === cmd.icon) || CMD_ICONS[0];
   const currentColor = cmd.color ?? CMD_COLORS[0].value;
   const currentTarget = cmd.target ?? 'claude';
-  const promptLabel = currentTarget === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
-  const promptPlaceholder = currentTarget === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+  // HS-9364 — the "AI agent" command target is labeled with the project's actual
+  // selected tool (Claude / Codex / OpenCode / …), not a hard-coded "Claude Code",
+  // so custom commands read right for whichever AI tool the project uses. The
+  // stored `cmd.target` value stays `'claude'` (= "the AI agent target"); only the
+  // display label is tool-aware.
+  const agentName = agentDisplayName(state.settings.ai_tool);
+  const promptLabel = currentTarget === 'shell' ? 'Shell command to run:' : `Prompt sent to ${agentName}:`;
+  const promptPlaceholder = currentTarget === 'shell' ? 'e.g. npm run build' : `Tell ${agentName} what to do...`;
 
   const overlay = toElement(
     <div className="cmd-editor-overlay">
@@ -79,7 +87,7 @@ export function showCommandEditorModal(ref: ItemRef) {
             <input type="text" value={cmd.name} placeholder="Button label..." />
           </div>
           <div className="command-target-segmented">
-            <button className={`seg-btn${currentTarget === 'claude' ? ' active' : ''}`} data-target="claude">Claude Code</button>
+            <button className={`seg-btn${currentTarget === 'claude' ? ' active' : ''}`} data-target="claude">{agentName}</button>
             <button className={`seg-btn${currentTarget === 'shell' ? ' active' : ''}`} data-target="shell">Shell</button>
           </div>
           <label className="command-prompt-label">{promptLabel}</label>
@@ -164,8 +172,8 @@ export function showCommandEditorModal(ref: ItemRef) {
       for (const b of segBtns) b.classList.remove('active');
       segBtn.classList.add('active');
       updateCommand(ref, c => { c.target = target === 'claude' ? undefined : target; });
-      promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : 'Prompt sent to Claude:';
-      promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : 'Tell Claude what to do...';
+      promptLabelEl.textContent = target === 'shell' ? 'Shell command to run:' : `Prompt sent to ${agentName}:`;
+      promptArea.placeholder = target === 'shell' ? 'e.g. npm run build' : `Tell ${agentName} what to do...`;
       autoShowLabel.style.display = target === 'shell' ? '' : 'none';
       launchTerminalLabel.style.display = target === 'shell' ? '' : 'none';
       workerSafeLabel.style.display = target === 'shell' ? 'none' : ''; // HS-9102 — Claude-only
