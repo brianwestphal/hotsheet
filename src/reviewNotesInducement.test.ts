@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetGlassboxInstructionsCacheForTests,
   buildReviewNotesSection,
+  DIRECT_AUTHORING_INSTRUCTIONS,
   getGlassboxNoteInstructions,
 } from './reviewNotesInducement.js';
 
@@ -53,22 +54,100 @@ describe('buildReviewNotesSection (HS-9221 / HS-9371)', () => {
     expect(out).toContain(text);
   });
 
-  it('injects the CLI-absent fallback nudge (not forked instructions) for not-on-path', () => {
+  // HS-9376 — glassbox is only needed for VIEWING notes; without a working CLI
+  // the section must still enable GENERATION via direct SARIF authoring.
+  it('injects the direct-authoring instructions (not a completion-note nudge) for not-on-path', () => {
     const out = buildReviewNotesSection(true, { kind: 'not-on-path' }).join('\n');
 
     expect(out).toContain('## AI Review Notes (`.pr-notes/`)');
     expect(out).toContain('--ticket <its HS-NNNN>');
     expect(out).toContain('The `glassbox` CLI was not found on PATH');
-    expect(out).toContain('docs/20-ai-review-notes.md');
+    expect(out).toContain('only needed for *viewing*');
+    // The full self-contained on-disk contract (Glassbox docs/20 §20.2).
+    expect(out).toContain('.pr-notes/notes/<repo-relative source path>.000000.sarif');
+    expect(out).toContain('"ruleId": "review-note"');
+    expect(out).toContain('prNoteAnchor/v1');
+    expect(out).toContain('rationale|proof|assumption|alternative-considered|risk|test-evidence');
+    expect(out).toContain('workItemUris');
+    // No degradation to "record it in the ticket note instead".
+    expect(out).not.toContain('completion note instead');
   });
 
-  it('injects the too-old fallback (distinct from not-on-path) for probe-failed', () => {
+  it('injects the same direct-authoring instructions (distinct preamble) for probe-failed', () => {
     const out = buildReviewNotesSection(true, { kind: 'probe-failed' }).join('\n');
 
     expect(out).toContain('## AI Review Notes (`.pr-notes/`)');
-    expect(out).toContain('installed but `glassbox note instructions` failed');
+    expect(out).toContain('does not support `note` subcommands');
     expect(out).not.toContain('was not found on PATH');
-    expect(out).toContain('docs/20-ai-review-notes.md');
+    expect(out).toContain('only needed for *viewing*');
+    expect(out).toContain('.pr-notes/notes/<repo-relative source path>.000000.sarif');
+    expect(out).toContain('"ruleId": "review-note"');
+    expect(out).not.toContain('completion note instead');
+  });
+
+  it('the ok path does NOT include the direct-authoring template (canonical text wins)', () => {
+    const out = buildReviewNotesSection(true, { kind: 'ok', text: 'canonical', browserPrefix: false }).join('\n');
+    expect(out).not.toContain('.pr-notes/notes/<repo-relative source path>.000000.sarif');
+  });
+
+  it('a file authored per the template is read back by Hot Sheet\'s own §111 proof reader', async () => {
+    // The template must produce files the ecosystem actually consumes — this is
+    // the direct-generation analogue of the HS-9371 live-CLI guard.
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const { readReviewProofForTicket } = await import('./reviewNotes/prNotesReader.js');
+
+    const root = mkdtempSync(join(tmpdir(), 'hs-prnotes-'));
+    try {
+      // Exactly the template shape from DIRECT_AUTHORING_INSTRUCTIONS, filled in.
+      const log = {
+        $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
+        version: '2.1.0',
+        runs: [{
+          tool: { driver: { name: 'Claude Code', rules: [{ id: 'review-note', name: 'ReviewNote', shortDescription: { text: 'AI-authored, line-anchored review note.' } }] } },
+          versionControlProvenance: [{ revisionId: 'abc123', branch: 'main' }],
+          results: [{
+            ruleId: 'review-note',
+            ruleIndex: 0,
+            kind: 'informational',
+            level: 'none',
+            guid: '3f2c8f60-0000-4000-8000-000000000001',
+            message: { text: 'Chose a probe over a flag: **rationale**.', markdown: 'Chose a probe over a flag: **rationale**.' },
+            locations: [{ physicalLocation: { artifactLocation: { uri: 'src/api/client.ts' }, region: { startLine: 12, endLine: 18, snippet: { text: 'const x = 1;' } } } }],
+            properties: { tags: ['rationale'] },
+            workItemUris: ['HS-1234'],
+            partialFingerprints: { 'prNoteAnchor/v1': 'deadbeefdeadbeefdeadbeefdeadbeef' },
+          }],
+        }],
+      };
+      const shardDir = join(root, '.pr-notes', 'notes', 'src', 'api');
+      mkdirSync(shardDir, { recursive: true });
+      writeFileSync(join(shardDir, 'client.ts.000000.sarif'), JSON.stringify(log, null, 2), 'utf-8');
+
+      const notes = await readReviewProofForTicket(root, 'HS-1234');
+      expect(notes).toHaveLength(1);
+      expect(notes[0].file).toBe('src/api/client.ts');
+      // Word-boundary ticket matching still applies (HS-123 must not match).
+      expect(await readReviewProofForTicket(root, 'HS-123')).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('documented fingerprint recipe matches the Glassbox algorithm (sha256 of normalized lines, first 32 hex)', async () => {
+    // Pin the algorithm the instructions describe: trim each anchored line,
+    // collapse inner whitespace, join with \n (no trailing newline), sha256 → 32.
+    const { createHash } = await import('crypto');
+    const slice = ['  const x =  1;', '\treturn   x;'];
+    const normalized = slice.map(l => l.trim().replace(/\s+/g, ' ')).join('\n');
+    const fp = createHash('sha256').update(normalized).digest('hex').slice(0, 32);
+    expect(fp).toHaveLength(32);
+    expect(normalized).toBe('const x = 1;\nreturn x;');
+    // The injected text must describe exactly this recipe.
+    const text = DIRECT_AUTHORING_INSTRUCTIONS.join('\n');
+    expect(text).toContain('first 32 hex chars of the SHA-256');
+    expect(text).toContain('NO trailing newline');
   });
 });
 

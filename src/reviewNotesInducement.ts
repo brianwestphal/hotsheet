@@ -136,21 +136,88 @@ export function buildReviewNotesSection(
     );
     sections.push('');
     sections.push(probe.text);
-  } else if (probe.kind === 'probe-failed') {
-    sections.push(
-      'The `glassbox` CLI is installed but `glassbox note instructions` failed — most ' +
-        'likely an older Glassbox without review-notes support. Ask the maintainer to ' +
-        'update Glassbox; meanwhile record your rationale/proof in the ticket completion ' +
-        'note instead. See Glassbox `docs/20-ai-review-notes.md`.',
-    );
   } else {
+    // HS-9376 — glassbox is only needed for VIEWING notes, never for generating
+    // them. Without a working CLI, instruct the agent to write the SARIF files
+    // directly (the Glassbox docs/20 §20.2 on-disk contract) instead of
+    // degrading to "put it in the completion note".
     sections.push(
-      'The `glassbox` CLI was not found on PATH. If you can run it, emit notes via ' +
-        '`glassbox note add --file … --lines A-B --kind … --ticket <HS-NNNN> ' +
-        '--producer "Hot Sheet" --body -`; otherwise record your rationale/proof in the ' +
-        'ticket completion note instead. See Glassbox `docs/20-ai-review-notes.md`.',
+      probe.kind === 'probe-failed'
+        ? 'The installed `glassbox` CLI does not support `note` subcommands (older version), ' +
+            'but the CLI is only needed for *viewing* notes — write the SARIF files directly:'
+        : 'The `glassbox` CLI was not found on PATH, but it is only needed for *viewing* ' +
+            'notes — write the SARIF files directly:',
     );
+    sections.push('');
+    sections.push(...DIRECT_AUTHORING_INSTRUCTIONS);
   }
   sections.push('');
   return sections;
 }
+
+/**
+ * HS-9376 — self-contained direct-authoring instructions for `.pr-notes/` SARIF,
+ * injected when no working `glassbox` CLI is available. Mirrors the on-disk
+ * contract of Glassbox docs/20 §20.2 (`buildResult` in its
+ * `src/review-notes/sarif.ts` is the reference writer); Hot Sheet's own §111
+ * proof reader (`src/reviewNotes/prNotesReader.ts`) reads the same shape.
+ * Exported for testing.
+ */
+export const DIRECT_AUTHORING_INSTRUCTIONS: readonly string[] = [
+  'Emit a note when a future reader would otherwise have to ask "why?" — a non-obvious ' +
+    'decision, proof a change is correct, an assumption, a rejected alternative, a risk, or ' +
+    'test evidence. Do not narrate the obvious; one note per genuine decision or claim.',
+  '',
+  '**File layout:** notes for a source file live at ' +
+    '`.pr-notes/notes/<repo-relative source path>.000000.sarif` (e.g. ' +
+    '`.pr-notes/notes/src/api/client.ts.000000.sarif`). Append to the existing shard when ' +
+    'one exists — add your result to a run with your producer name and current commit, or ' +
+    'add a new run. One note = one SARIF `result`.',
+  '',
+  '**Template** (a valid SARIF 2.1.0 log; replace the `<…>` placeholders):',
+  '',
+  '```json',
+  '{',
+  '  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",',
+  '  "version": "2.1.0",',
+  '  "runs": [{',
+  '    "tool": { "driver": {',
+  '      "name": "<your tool/agent name, e.g. Claude Code>",',
+  '      "rules": [{ "id": "review-note", "name": "ReviewNote",',
+  '        "shortDescription": { "text": "AI-authored, line-anchored review note." } }]',
+  '    } },',
+  '    "versionControlProvenance": [{ "revisionId": "<git rev-parse HEAD>", "branch": "<current branch>" }],',
+  '    "results": [{',
+  '      "ruleId": "review-note",',
+  '      "ruleIndex": 0,',
+  '      "kind": "informational",',
+  '      "level": "none",',
+  '      "guid": "<a fresh UUID v4>",',
+  '      "message": { "text": "<note body (markdown)>", "markdown": "<same body>" },',
+  '      "locations": [{ "physicalLocation": {',
+  '        "artifactLocation": { "uri": "<repo-relative source path>" },',
+  '        "region": { "startLine": <A>, "endLine": <B>, "snippet": { "text": "<the anchored lines, verbatim>" } }',
+  '      } }],',
+  '      "properties": { "tags": ["<rationale|proof|assumption|alternative-considered|risk|test-evidence>"] },',
+  '      "workItemUris": ["<HS-NNNN>"],',
+  '      "partialFingerprints": { "prNoteAnchor/v1": "<optional, see below>" }',
+  '    }]',
+  '  }]',
+  '}',
+  '```',
+  '',
+  'Details:',
+  '',
+  '- `level` is `"warning"` for the `risk` kind, `"none"` otherwise. `result.rank` (0–100 ' +
+    'importance) and `result.properties["ext-ai-tool-confidence"]` (0–1) are optional.',
+  '- Group results into runs by (producer, commit): reuse a run whose driver name + ' +
+    '`revisionId` match yours, else append a new run to the shard.',
+  '- The `prNoteAnchor/v1` fingerprint (optional but recommended — it lets Glassbox ' +
+    're-anchor the note after edits): take the anchored lines, trim each and collapse ' +
+    'inner whitespace to single spaces, join with `\\n` (NO trailing newline), then the ' +
+    'first 32 hex chars of the SHA-256. Shell: ' +
+    '`printf \'%s\' "$(sed -n \'<A>,<B>p\' <file> | sed -E \'s/^[[:space:]]+|[[:space:]]+$//g; s/[[:space:]]+/ /g\')" | shasum -a 256 | cut -c1-32`.',
+  '- Keep notes reflecting the FINAL state of your change: update or delete your own ' +
+    'earlier results (match by `guid`) when the work evolves, and drop notes the finished ' +
+    'diff made obvious.',
+];

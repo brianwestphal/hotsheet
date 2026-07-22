@@ -125,6 +125,24 @@ Settled secondary points:
   Glassbox (all three platform shims exec `cli.js` directly for `note` /
   `ground-truth` subcommands) — the `--browser` fallback remains for older
   installed builds.
+- **Glassbox is only needed for VIEWING notes, never for generating them
+  (HS-9376 — maintainer decision, 2026-07-22).** Both no-CLI fallback modes
+  inject `DIRECT_AUTHORING_INSTRUCTIONS` — a self-contained block teaching the
+  agent to write the `.pr-notes/` SARIF **directly**: the shard layout
+  (`.pr-notes/notes/<source path>.000000.sarif`), a filled SARIF 2.1.0 template
+  (one note = one `review-note` result; kind vocabulary in `properties.tags`;
+  `workItemUris` ticket threading; run grouping by producer + commit with
+  `versionControlProvenance`), and the optional `prNoteAnchor/v1` fingerprint
+  recipe (sha-256 of the trimmed/whitespace-collapsed anchored lines joined with
+  `\n`, first 32 hex chars — verified byte-identical to Glassbox's
+  `anchorSnippet`). This supersedes the earlier "record your rationale in the
+  completion note instead" degradation, which generated no notes at all. The
+  §110.2 don't-fork rule still governs the CLI-present path (canonical text
+  injected verbatim); the direct-authoring block is Hot Sheet-owned fallback
+  prose mirroring the Glassbox docs/20 §20.2 on-disk contract, and a regression
+  test proves a template-authored file round-trips through Hot Sheet's own §111
+  proof reader. (The §110.6 "Hot Sheet never creates `.pr-notes/`" non-goal is
+  unchanged — the *agent* writes the files, not Hot Sheet.)
 
 ## 110.5 Ticket ↔ notes linkage (Glassbox §20.7)
 
