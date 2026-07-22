@@ -92,6 +92,27 @@ describe('showToolPrepDialog + maybeOfferToolPrep', () => {
     await vi.waitFor(() => { expect(document.querySelector('.tool-prep-nudge-overlay')).not.toBeNull(); });
   });
 
+  it('honors the __HOTSHEET_DISABLE_AI_NUDGE__ e2e seam — no dialog, switch still ensures skills', async () => {
+    (window as unknown as { __HOTSHEET_DISABLE_AI_NUDGE__?: boolean }).__HOTSHEET_DISABLE_AI_NUDGE__ = true;
+    try {
+      responses['/ensure-skills'] = { updated: false };
+      maybeOfferToolPrep('switch');
+      await vi.waitFor(() => {
+        expect(calls.some(c => c.path === '/ensure-skills' && c.method === 'POST')).toBe(true);
+      });
+      // No status fetch, no dialog.
+      expect(calls.some(c => c.path === '/ai-instructions/tool-prep')).toBe(false);
+      expect(document.querySelector('.tool-prep-nudge-overlay')).toBeNull();
+
+      calls.length = 0;
+      maybeOfferToolPrep('open'); // fully inert on the open path
+      await new Promise(r => setTimeout(r, 0));
+      expect(calls).toEqual([]);
+    } finally {
+      delete (window as unknown as { __HOTSHEET_DISABLE_AI_NUDGE__?: boolean }).__HOTSHEET_DISABLE_AI_NUDGE__;
+    }
+  });
+
   it('maybeOfferToolPrep(switch): silently ensures skills when nothing is needed', async () => {
     responses['/ai-instructions/tool-prep'] = status({ needed: false });
     responses['/file-settings'] = {};

@@ -66,6 +66,10 @@ detection inside `ensureSkillsForDir` even when the tool binary isn't on PATH.
   (`tool_prep_nudge_dismissed` file-setting stores the tool id, so switching to
   a different tool re-arms the nudge; an explicit dropdown switch always shows
   the dialog). Per-session once-per-project guard on the `open` path.
+- **E2E seam:** the module honors the same `__HOTSHEET_DISABLE_AI_NUDGE__` flag
+  as the §86 nudge (set by `e2e/coverage-fixture.ts`), so the dialog never
+  intercepts clicks in unrelated specs — under the flag a `switch` falls back to
+  the pre-HS-9367 silent `ensureSkills()` and `open` is inert.
 
 ## 119.5 Caveats / out of scope
 

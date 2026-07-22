@@ -33,6 +33,14 @@ export function _resetToolPrepCheckedForTesting(): void {
   checkedSecrets.clear();
 }
 
+/** E2E force-disable seam — the SAME `__HOTSHEET_DISABLE_AI_NUDGE__` flag the
+ *  §86 nudge honors (`aiInstructionsNudge.tsx`; set by `coverage-fixture.ts` so
+ *  nudge overlays never intercept clicks in unrelated specs). Read locally
+ *  rather than imported to avoid an aiInstructionsNudge ↔ toolPrepNudge cycle. */
+function toolPrepDisabledForTesting(): boolean {
+  return (window as unknown as { __HOTSHEET_DISABLE_AI_NUDGE__?: boolean }).__HOTSHEET_DISABLE_AI_NUDGE__ === true;
+}
+
 export type ToolPrepAction = 'dialog' | 'silent-ensure' | 'none';
 
 /** Pure decision — exported for unit testing.
@@ -60,6 +68,12 @@ function readDismissedTool(value: unknown): string | null {
 /** Entry point. `switch` = the ai_tool dropdown changed (always re-evaluates);
  *  `open` = boot / project switch (once per project per session). Fire-and-forget. */
 export function maybeOfferToolPrep(source: 'switch' | 'open'): void {
+  if (toolPrepDisabledForTesting()) {
+    // Keep the pre-HS-9367 switch behavior under e2e (skills refresh, no dialog)
+    // so specs that drive the ai_tool dropdown aren't blocked by an overlay.
+    if (source === 'switch') void ensureSkills().catch(() => { /* best-effort */ });
+    return;
+  }
   if (source === 'open') {
     const secret = getActiveProject()?.secret;
     if (secret !== undefined) {
