@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ANNOUNCER_MODEL, buildSystemPrompt, dropToolChurn, isToolChurn, summarizeWork } from './summarize.js';
+import { ANNOUNCER_MODEL, buildSystemPrompt, dropToolChurn, dropUngrounded, isGroundedInMaterial, isPromptEcho, isToolChurn, PROMPT_ECHO_SENTINEL, summarizeWork } from './summarize.js';
 
 interface CreateArgs { model: string; system?: string; output_config?: unknown }
 interface FakeMessage { content: { type: string; text?: string }[]; usage: { input_tokens: number; output_tokens: number } }
@@ -58,13 +58,15 @@ describe('summarizeWork (HS-8745)', () => {
 
   // HS-8790 — provider routing.
   it('routes an Apple model to the on-device helper (no Anthropic call, no key, no usage)', async () => {
-    appleRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'Local', script: 'Summarized on device.' }] }));
+    // HS-9372 — on-device entries must be grounded in the material, so the
+    // fixture script shares a distinctive word ("material") with the input.
+    appleRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'Local', script: 'Summarized the material on device.' }] }));
     const res = await summarizeWork('real material', { model: 'apple-foundation' });
 
     expect(appleRunMock).toHaveBeenCalledTimes(1);
     expect(createMock).not.toHaveBeenCalled();   // no cloud call
     expect(ctorMock).not.toHaveBeenCalled();      // no Anthropic client built
-    expect(res.entries).toEqual([{ title: 'Local', script: 'Summarized on device.' }]);
+    expect(res.entries).toEqual([{ title: 'Local', script: 'Summarized the material on device.' }]);
     expect(res.usage).toBeNull();                 // on-device = free
   });
 
@@ -75,7 +77,9 @@ describe('summarizeWork (HS-8745)', () => {
 
   // HS-8792 — local-provider routing.
   it('routes a local model to the OpenAI-compatible endpoint (no Anthropic call, no key, no usage)', async () => {
-    localRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'On device', script: 'Summarized locally.' }] }));
+    // HS-9372 — local-endpoint entries must be grounded in the material, so the
+    // fixture script shares a distinctive word ("material") with the input.
+    localRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'On device', script: 'Summarized the material locally.' }] }));
     const res = await summarizeWork('real material', { model: 'local', localEndpoint: 'http://localhost:1234/v1', localModel: 'llama3.1' });
 
     expect(localRunMock).toHaveBeenCalledTimes(1);
@@ -86,7 +90,7 @@ describe('summarizeWork (HS-8745)', () => {
     const [system, , opts] = localRunMock.mock.calls[0];
     expect(opts).toEqual({ endpoint: 'http://localhost:1234/v1', model: 'llama3.1' });
     expect(system).toContain('OUTPUT FORMAT');
-    expect(res.entries).toEqual([{ title: 'On device', script: 'Summarized locally.' }]);
+    expect(res.entries).toEqual([{ title: 'On device', script: 'Summarized the material locally.' }]);
     expect(res.usage).toBeNull();                 // on-device = free
   });
 
@@ -242,6 +246,88 @@ describe('summarizeWork (HS-8745)', () => {
     });
   });
 
+  // HS-9372 — prompt-echo + grounding guards: a small on-device model was
+  // observed parroting the system prompt's example phrases as fabricated "work"
+  // ("fixed the export bug and added tests", "marked ticket #123 as completed"),
+  // which read as another project's activity in the All Projects reel.
+  describe('prompt-echo + grounding guards (HS-9372)', () => {
+    it('isPromptEcho flags entries containing the sentinel, in title or script', () => {
+      expect(isPromptEcho({ title: 'Bug fix', script: 'fixed the example-widget bug and added tests' })).toBe(true);
+      expect(isPromptEcho({ title: 'Example-Widget Feature', script: 'finished it.' })).toBe(true);
+      expect(isPromptEcho({ title: 'Bug fix', script: 'fixed the CSV export bug and added tests' })).toBe(false);
+    });
+
+    it('the system prompt uses ONLY the sentinel in its illustrative work examples', async () => {
+      createMock.mockResolvedValue(textResponse({ entries: [] }));
+      await summarizeWork('m', { apiKey: 'sk-test', compression: 'high' });
+      const system = createMock.mock.calls[0][0].system ?? '';
+      // Every illustrative "work done" phrase carries the sentinel…
+      expect(system).toContain(`fixed the ${PROMPT_ECHO_SENTINEL} bug and added tests`);
+      expect(system).toContain(`finished the ${PROMPT_ECHO_SENTINEL} feature and its tests`);
+      expect(system).toContain(`working on the ${PROMPT_ECHO_SENTINEL} bug`);
+      // …and the old realistic phrases (observed parroted into the reel) are gone.
+      expect(system).not.toContain('fixed the export bug');
+      expect(system).not.toContain('finished the export feature');
+      expect(system).not.toContain('CSV export bug');
+    });
+
+    it('drops a parroted example even on the Anthropic path (echo guard is provider-wide)', async () => {
+      createMock.mockResolvedValue(textResponse({ entries: [
+        { title: 'Echo', script: 'Finished the example-widget feature and its tests.' },
+        { title: 'Real', script: 'Refactored the parser pipeline.' },
+      ] }));
+      const res = await summarizeWork('note: refactored the parser pipeline', { apiKey: 'sk-test' });
+      expect(res.entries.map(e => e.title)).toEqual(['Real']);
+    });
+
+    it('isGroundedInMaterial keeps entries sharing a distinctive token or a ticket id, drops confabulation', () => {
+      const material = '[HS-100 "Add tests"] marked completed.\n[activity] git push to origin/main';
+      // Distinctive token overlap ("push").
+      expect(isGroundedInMaterial({ title: 'Pushed', script: 'completed a git push to the main branch.' }, material)).toBe(true);
+      // Ticket id quoted from the material grounds an otherwise-generic entry.
+      expect(isGroundedInMaterial({ title: 'Done', script: 'HS-100 completed: added tests.' }, material)).toBe(true);
+      // All-generic fabrication (the observed "#123" junk) has no grounding.
+      expect(isGroundedInMaterial({ title: 'Ticket Completion', script: 'marked ticket #123 as completed.' }, material)).toBe(false);
+      // Pure confabulated filler — none of its distinctive words are in the material.
+      expect(isGroundedInMaterial({
+        title: 'Working on a New Feature',
+        script: 'working on a new feature to enhance the user interface of the application. the team is focused on delivering a high-quality product.',
+      }, material)).toBe(false);
+    });
+
+    it('dropUngrounded filters fabricated entries, keeps grounded ones', () => {
+      const material = 'HS-42 "Speed up startup" marked completed. Reduced boot time via lazy imports.';
+      const kept = dropUngrounded([
+        { title: 'Startup faster', script: 'Sped up startup with lazy imports.' },
+        { title: 'Ticket Completion', script: 'marked ticket #123 as completed.' },
+      ], material);
+      expect(kept.map(e => e.title)).toEqual(['Startup faster']);
+    });
+
+    it('the on-device path drops ungrounded entries end to end (Anthropic path does not)', async () => {
+      const entries = [
+        { title: 'Real', script: 'Summarized the row-selector example app work.' },
+        { title: 'Fabricated', script: 'the development team is pleased with the progress and looks forward to the next steps.' },
+      ];
+      appleRunMock.mockResolvedValue(JSON.stringify({ entries }));
+      const apple = await summarizeWork('[K-1 "row-selector"] built the row-selector example app', { model: 'apple-foundation' });
+      expect(apple.entries.map(e => e.title)).toEqual(['Real']);
+
+      // The Anthropic path trusts the model's instruction-following — no
+      // grounding drop (avoids false positives on legitimate paraphrase).
+      createMock.mockResolvedValue(textResponse({ entries }));
+      const anthropic = await summarizeWork('[K-1 "row-selector"] built the row-selector example app', { apiKey: 'sk-test' });
+      expect(anthropic.entries.map(e => e.title)).toEqual(['Real', 'Fabricated']);
+    });
+
+    it('tells the model the sentinel is fictional and must never appear in output', async () => {
+      createMock.mockResolvedValue(textResponse({ entries: [] }));
+      await summarizeWork('m', { apiKey: 'sk-test' });
+      const system = createMock.mock.calls[0][0].system ?? '';
+      expect(system).toContain('FICTIONAL placeholder');
+    });
+  });
+
   // HS-8806 — guard the prompt directives that tell the model to omit ongoing
   // work + never emit tool-name lists, so a future prompt edit can't regress them.
   it('instructs the model to omit ongoing work and forbid tool-name lists (HS-8806)', async () => {
@@ -322,7 +408,9 @@ describe('summarizeWork (HS-8745)', () => {
 
     it('falls back to the configured LOCAL model on Apple failure (no cloud call, no usage)', async () => {
       appleRunMock.mockRejectedValue(new Error('Apple Foundation Models helper exited with code 4'));
-      localRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'Recovered', script: 'Via local.' }] }));
+      // HS-9372 — the local-fallback path also applies the grounding guard, so
+      // the fixture script shares a distinctive word with the material.
+      localRunMock.mockResolvedValue(JSON.stringify({ entries: [{ title: 'Recovered', script: 'Via local material.' }] }));
 
       const res = await summarizeWork('real material', {
         model: 'apple-foundation',
@@ -336,7 +424,7 @@ describe('summarizeWork (HS-8745)', () => {
       const [system, , opts] = localRunMock.mock.calls[0];
       expect(opts).toEqual({ endpoint: 'http://localhost:1234/v1', model: 'llama3.1' });
       expect(system).toContain('OUTPUT FORMAT'); // the local JSON contract is appended
-      expect(res.entries).toEqual([{ title: 'Recovered', script: 'Via local.' }]);
+      expect(res.entries).toEqual([{ title: 'Recovered', script: 'Via local material.' }]);
       expect(res.usage).toBeNull();               // local = free
     });
 

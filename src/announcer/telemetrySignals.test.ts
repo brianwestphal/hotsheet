@@ -75,6 +75,29 @@ describe('collectTelemetrySignals (HS-8789)', () => {
     expect(lines[0].text).toBe('[in progress] working on: "refactor the parser"');
   });
 
+  // HS-9372 — the raw OTLP log record wraps its body as an AnyValue
+  // (`body: {stringValue: "…"}`); the old scalar-only walk skipped it and fed the
+  // summarizer `JSON.stringify` of the whole record.
+  it('unwraps the OTLP AnyValue body shape ({body: {stringValue}})', async () => {
+    await prompt(NEW, 'p1', { timeUnixNano: '123', body: { stringValue: 'ship the row selector' }, droppedAttributesCount: 0 });
+    const lines = await collectTelemetrySignals(SECRET, CURSOR);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe('[in progress] working on: "ship the row selector"');
+  });
+
+  // HS-9372 — with prompt-content logging off (`OTEL_LOG_USER_PROMPTS` unset),
+  // the user_prompt body is just the EVENT NAME. Narrating it produced nonsense
+  // entries ('working on: "claude_code.user_prompt"'); treat it as no-prompt so
+  // the turn contributes nothing (HS-8806: no prompt context → no line).
+  it('skips the event-name placeholder body (prompt logging off)', async () => {
+    await prompt(NEW, 'p1', { body: { stringValue: 'claude_code.user_prompt' } });
+    await tool(NEW, 'p1', 'Bash');
+    expect(await collectTelemetrySignals(SECRET, CURSOR)).toEqual([]);
+    // The bare-string variant is skipped too.
+    await prompt(NEWER, 'p2', 'claude_code.user_prompt');
+    expect(await collectTelemetrySignals(SECRET, CURSOR)).toEqual([]);
+  });
+
   it('does NOT emit a line for tool activity with no in-window prompt (HS-8806)', async () => {
     // Tool events whose user_prompt started before the cursor (not in window).
     // Pre-HS-8806 this folded into an "[in progress] ongoing work (used Read ×2)"

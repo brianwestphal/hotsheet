@@ -113,25 +113,53 @@ async function collectTelemetrySignalsFromCurrentDb(projectSecret: string, since
   return lines;
 }
 
+/** HS-9372 — unwrap one candidate prompt value. Scalars render to text
+ *  (mirroring PostgreSQL `->>`); an OTLP AnyValue object (`{stringValue: …}` —
+ *  the shape the raw log record's `body` field actually carries in the JSONL
+ *  store) unwraps to its string. Anything else → null (fall through). */
+function unwrapPromptValue(v: unknown): string | null {
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    const sv = (v as Record<string, unknown>).stringValue;
+    if (typeof sv === 'string') return sv;
+  }
+  return null;
+}
+
 /**
  * JS analogue of the old prompt-body COALESCE (prompt / message / body, then the
  * whole record as text). Mirrors PostgreSQL's `->>` semantics: a JSON SCALAR
  * (string / number / boolean) renders to text; an object / array / null value
  * yields SQL null and falls through to the next key, then to the serialized
  * record. Returns null when there's nothing.
+ *
+ * HS-9372 — the raw OTLP log record wraps its body as an AnyValue
+ * (`body: {stringValue: "…"}`), which the old scalar-only walk skipped — so the
+ * whole record fell through to `JSON.stringify` and the summarizer received a
+ * JSON blob to "narrate". `unwrapPromptValue` handles that shape.
  */
 function extractPromptBody(bodyJson: unknown): string | null {
   if (bodyJson === null || bodyJson === undefined) return null;
-  if (typeof bodyJson === 'string') return bodyJson;
-  if (typeof bodyJson === 'number' || typeof bodyJson === 'boolean') return String(bodyJson);
+  const direct = unwrapPromptValue(bodyJson);
+  if (direct !== null) return direct;
   if (typeof bodyJson !== 'object') return null; // symbol / function / bigint — not real JSON
   const o = bodyJson as Record<string, unknown>;
   for (const k of ['prompt', 'message', 'body'] as const) {
-    const v = o[k];
-    if (typeof v === 'string') return v;
-    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    const v = unwrapPromptValue(o[k]);
+    if (v !== null) return v;
   }
   return JSON.stringify(bodyJson);
+}
+
+/** HS-9372 — when Claude Code's prompt-content logging is off
+ *  (`OTEL_LOG_USER_PROMPTS` unset), the `user_prompt` log body is just the
+ *  EVENT NAME (`claude_code.user_prompt`), not prompt text. Feeding that to the
+ *  summarizer produced nonsense entries ("Ongoing Work: Claude Prompt
+ *  Development — working on: \"claude_code.user_prompt\""). Treat it as
+ *  no-prompt so the turn is skipped (HS-8806: no prompt context → no line). */
+function isPromptPlaceholder(cleaned: string): boolean {
+  return /^claude_code\.[a-z0-9_.]+$/i.test(cleaned);
 }
 
 /** Trim a prompt body to a single-line snippet, stripping the hotsheet ticket
@@ -140,6 +168,7 @@ function promptSnippet(body: string | null): string {
   if (body === null) return '';
   const cleaned = body.replace(/<!--\s*hotsheet:ticket=[^>]*-->/g, '').replace(/\s+/g, ' ').trim();
   if (cleaned === '') return '';
+  if (isPromptPlaceholder(cleaned)) return ''; // HS-9372 — event-name placeholder, not a prompt
   return cleaned.length > PROMPT_SNIPPET_LEN
     ? cleaned.slice(0, PROMPT_SNIPPET_LEN - 1).replace(/\s+\S*$/, '').trimEnd() + '…'
     : cleaned;

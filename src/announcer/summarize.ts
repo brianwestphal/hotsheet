@@ -92,18 +92,105 @@ export function dropToolChurn(entries: GeneratedEntry[]): GeneratedEntry[] {
 }
 
 /**
+ * HS-9372 — the system prompt's illustrative examples use this SENTINEL term
+ * instead of realistic phrases. A small on-device model (Apple Foundation
+ * Models) was observed parroting the old examples verbatim as "work done" —
+ * fabricated entries like "fixed the export bug and added tests" / "completed a
+ * git push … 'finished the export feature and its tests'" landed in the reel
+ * (and, seen next to another project's chip, read as cross-project mislabeling).
+ * The sentinel can never occur in real work signals, so any entry echoing it is
+ * provably a prompt echo and is dropped deterministically.
+ */
+export const PROMPT_ECHO_SENTINEL = 'example-widget';
+
+/** HS-9372 — true when an entry's title or script parrots a system-prompt
+ *  example (contains the sentinel term). Exported for testing. */
+export function isPromptEcho(entry: GeneratedEntry): boolean {
+  return entry.title.toLowerCase().includes(PROMPT_ECHO_SENTINEL)
+    || entry.script.toLowerCase().includes(PROMPT_ECHO_SENTINEL);
+}
+
+/** HS-9372 — drop entries that echo the prompt's examples. Exported for testing. */
+export function dropPromptEcho(entries: GeneratedEntry[]): GeneratedEntry[] {
+  return entries.filter(e => !isPromptEcho(e));
+}
+
+/** HS-9372 — generic words that don't count as evidence an entry is grounded in
+ *  the material (an invented entry is built almost entirely from these). */
+const GROUNDING_STOPWORDS = new Set([
+  // common English function/filler words (≥4 chars — shorter ones never token-match)
+  'with', 'that', 'this', 'from', 'have', 'been', 'were', 'will', 'would', 'into',
+  'over', 'then', 'than', 'they', 'them', 'their', 'when', 'what', 'which', 'while',
+  'about', 'after', 'before', 'more', 'most', 'some', 'also', 'only', 'just', 'very',
+  'each', 'other', 'both', 'many', 'much', 'such', 'here', 'there', 'these', 'those',
+  'your', 'been', 'being', 'does', 'doing', 'made', 'make', 'making', 'still', 'were',
+  // generic work-narration vocabulary a fabricated entry leans on
+  'completed', 'completion', 'finished', 'finishing', 'marked', 'ticket', 'tickets',
+  'feature', 'features', 'work', 'working', 'worked', 'update', 'updated', 'updates',
+  'project', 'projects', 'test', 'tests', 'tested', 'testing', 'added', 'adding',
+  'fixed', 'fixing', 'change', 'changed', 'changes', 'code', 'file', 'files', 'done',
+  'task', 'tasks', 'user', 'users', 'team', 'development', 'developer', 'progress',
+  'next', 'steps', 'successfully', 'implemented', 'implementation', 'application',
+  'improve', 'improved', 'enhance', 'enhanced', 'ongoing', 'ensure', 'ensuring',
+  'includes', 'include', 'included', 'including', 'currently', 'phase', 'sprint',
+  'quality', 'product', 'deadline', 'forward', 'looks', 'pleased', 'focused',
+]);
+
+/**
+ * HS-9372 — is this entry grounded in the material it claims to summarize?
+ * Conservative lexical check: at least one DISTINCTIVE content token (≥4 chars,
+ * not a grounding stopword) of the title+script must appear in the material. A
+ * real summary virtually always shares a key noun with its source (a file name,
+ * feature name, command); a confabulated one ("working on a new feature to
+ * enhance the user interface of the application…") is built entirely from
+ * generic vocabulary. An entry with NO distinctive tokens at all is inherently
+ * generic ("marked ticket #123 as completed.") and counts as ungrounded.
+ * Exported for testing.
+ */
+export function isGroundedInMaterial(entry: GeneratedEntry, material: string): boolean {
+  const text = `${entry.title} ${entry.script}`;
+  const materialLower = material.toLowerCase();
+  // A ticket id quoted from the material (HS-42 / GB-812 …) is grounding on its
+  // own — protects a terse-but-real completion whose other words are all generic
+  // ("HS-100 added tests"). A fabricated id ("#123") never matches this shape.
+  for (const id of text.match(/\b[A-Za-z]{2,6}-\d+\b/g) ?? []) {
+    if (materialLower.includes(id.toLowerCase())) return true;
+  }
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 4 && !GROUNDING_STOPWORDS.has(t));
+  if (tokens.length === 0) return false;
+  return tokens.some(t => materialLower.includes(t));
+}
+
+/** HS-9372 — drop entries not grounded in the material. Applied only on the
+ *  on-device / local-endpoint paths (no instruction-following guarantees); the
+ *  Anthropic path trusts the model's "do not invent" adherence, avoiding
+ *  false-positive drops of legitimate paraphrase. Exported for testing. */
+export function dropUngrounded(entries: GeneratedEntry[], material: string): GeneratedEntry[] {
+  return entries.filter(e => isGroundedInMaterial(e, material));
+}
+
+/**
  * HS-8806 — the full post-parse cleanup pipeline shared by every provider.
  * `dropToolChurn` ALWAYS runs (the deterministic safety net for valueless
- * "Read Bash Edit" scripts). `dropUnimportant` runs only when
+ * "Read Bash Edit" scripts), as does `dropPromptEcho` (HS-9372 — a parroted
+ * prompt example is junk from any provider). `dropUnimportant` runs only when
  * `excludeLowImportance` is set — HS-8800: the model's `low` rating is meant for
  * the live mid-task stream's "[in progress]" churn, so it's applied on the
  * live/telemetry path but NOT on the after-the-fact "Listen" digest, where it
  * could silently drop a small-but-wanted completion note (worst case: a one-entry
- * reel rated `low` → an empty "nothing new" digest).
+ * reel rated `low` → an empty "nothing new" digest). `groundingMaterial` (HS-9372,
+ * on-device/local paths only) additionally drops entries with no lexical overlap
+ * with the source material — the fabricated-work guard.
  */
-function sanitizeEntries(entries: GeneratedEntry[], excludeLowImportance: boolean): GeneratedEntry[] {
+function sanitizeEntries(entries: GeneratedEntry[], excludeLowImportance: boolean, groundingMaterial?: string): GeneratedEntry[] {
   const kept = excludeLowImportance ? dropUnimportant(entries) : entries;
-  return dropToolChurn(kept);
+  const echoFree = dropPromptEcho(kept);
+  const grounded = groundingMaterial === undefined ? echoFree : dropUngrounded(echoFree, groundingMaterial);
+  return dropToolChurn(grounded);
 }
 
 /** Validate a model's JSON output (Anthropic or the Apple helper) into entries.
@@ -164,16 +251,17 @@ const SYSTEM_PROMPT = `You are the "Announcer" for Hot Sheet, a local project-ma
 You are given a chronological list of raw work signals: completion/ticket notes the AI wrote when it finished tickets, status changes, and activity-log events. Turn them into a short sequence of narrated entries to be read aloud by text-to-speech.
 
 Rules:
-- Produce 1 to 4 entries for general activity. Strongly prefer FEWER, broader entries: group related signals into one (e.g. "fixed the export bug and added tests" is one entry, not three). Two or three tight entries usually beats five. (Ticket completions and feedback requests are the exception — see the dedicated rule below.)
+- Produce 1 to 4 entries for general activity. Strongly prefer FEWER, broader entries: group related signals into one (e.g. "fixed the example-widget bug and added tests" is one entry, not three). Two or three tight entries usually beats five. (Ticket completions and feedback requests are the exception — see the dedicated rule below.)
 - Each entry has a short "title" (a few words) and a "script". Keep the script to ONE or at most two short sentences — aim for under 30 words. It's spoken aloud, so be terse: lead with what changed, drop preamble ("I went ahead and…", "It looks like…"), filler, and hedging. No markdown, no code blocks, no bullet symbols, no ticket-number jargon unless it genuinely aids clarity.
 - Lead with the most significant work. Skip noise (routine status pings, trivial log lines) — if nothing meaningful happened, return an empty entries array.
 - ALMOST ALWAYS narrate ticket COMPLETIONS (a "marked completed." signal) and tickets WAITING FOR FEEDBACK — these are exactly what the listener wants to hear. Give each its own entry with a concise summary of the note that was written: for a completion, what was actually done, fixed, or decided (not a bare "finished a ticket"); for a "WAITING FOR FEEDBACK" signal, the specific question being asked of the listener. Do NOT merge these into a vague group summary, do NOT omit them, and do NOT rate them "low". They may push you past the usual entry count — that's fine; covering every completion and feedback request matters more than staying terse. (Only when explicitly told to catch up after the listener has fallen behind may you compress multiple completions together, and even then keep each one's outcome identifiable.)
 - EVERY entry must be a cohesive, plain-language summary of something a developer would actually care to hear — what was built, fixed, decided, or changed. NEVER produce an entry that is merely a list of tool names or a restatement of raw mechanical activity (e.g. "Read, Bash, Edit", "ran some commands", "edited files", "ongoing work"). If a signal can't be turned into a meaningful, self-contained summary, OMIT it entirely — a sparse or empty reel is far better than a valueless one.
 - For each entry, set an "importance" of "low", "medium", or "high" — how interesting/significant it is to a developer hearing a briefing. Completed tickets, feedback requests, decisions, and notable changes are "medium" or "high" (never "low"). Routine, mechanical, or merely in-progress activity — reading files, a single command, boilerplate steps, "[in progress]" tool churn — is "low".
-- "[in progress]" signals describe work that is still UNDERWAY and is "ongoing work" by nature, which on its own is NOT interesting. Narrate one ONLY when you can summarize it as a concrete, cohesive activity the listener would care about (e.g. "working on the CSV export bug" from a clear prompt) — never as bare tool usage. When in doubt, mark it "low".
+- "[in progress]" signals describe work that is still UNDERWAY and is "ongoing work" by nature, which on its own is NOT interesting. Narrate one ONLY when you can summarize it as a concrete, cohesive activity the listener would care about (e.g. "working on the example-widget bug" from a clear prompt) — never as bare tool usage. When in doubt, mark it "low".
 - An entry you'd mark "low" should be OMITTED; only keep one if it's genuinely the only thing that happened AND you can still phrase it as a real, cohesive summary (never as tool churn).
 - Be accurate to the signals; do not invent work that isn't described. Concise and plain over engaging and breathless — the listener wants the gist fast, not a recap.
-- Optionally include an "emphasis" array of 0 to 2 short key phrases per entry — the single most important noun or action in the script (e.g. "export bug", "added tests"). Each MUST be a verbatim substring of that entry's script (exact characters, same case), so it can be visually highlighted. Omit it (or use an empty array) when nothing clearly stands out; never emphasize a whole sentence.`;
+- "example-widget" in these rules is a FICTIONAL placeholder used only to illustrate phrasing — it never refers to real work. NEVER use it (or any other example wording from these rules) in your output; describe only the actual signals given.
+- Optionally include an "emphasis" array of 0 to 2 short key phrases per entry — the single most important noun or action in the script (e.g. "example-widget bug", "added tests"). Each MUST be a verbatim substring of that entry's script (exact characters, same case), so it can be visually highlighted. Omit it (or use an empty array) when nothing clearly stands out; never emphasize a whole sentence.`;
 
 /** Summarization "altitude" — `high` is the catch-up compression used by live
  *  mode when the listener has fallen behind (HS-8768). */
@@ -184,7 +272,7 @@ export type Compression = 'normal' | 'high';
 export function buildSystemPrompt(opts: { compression?: Compression; dismissedTopics?: readonly string[] } = {}): string {
   let prompt = SYSTEM_PROMPT;
   if (opts.compression === 'high') {
-    prompt += `\n\nBACKLOG: the listener has fallen behind and narration must catch up. Be maximally terse — produce AT MOST 1 or 2 entries, merging everything into the highest-level summary. Favor one broad sentence ("finished the export feature and its tests") over any per-item detail.`;
+    prompt += `\n\nBACKLOG: the listener has fallen behind and narration must catch up. Be maximally terse — produce AT MOST 1 or 2 entries, merging everything into the highest-level summary. Favor one broad sentence ("finished the example-widget feature and its tests") over any per-item detail.`;
   }
   const topics = opts.dismissedTopics?.filter(t => t.trim() !== '') ?? [];
   if (topics.length > 0) {
@@ -257,7 +345,9 @@ export async function summarizeWork(
     // free, so no usage/cost is recorded.
     try {
       const out = await runAppleFoundationSummarize(system, material, OUTPUT_SCHEMA);
-      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow), usage: null };
+      // HS-9372 — the on-device model has weak instruction-following, so also
+      // require entries to be grounded in the material (fabricated-work guard).
+      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow, material), usage: null };
     } catch (err) {
       return onDeviceFallbackOrThrow(err, 'Apple Foundation Models', material, system, opts, excludeLow);
     }
@@ -272,7 +362,9 @@ export async function summarizeWork(
         endpoint: opts.localEndpoint?.trim() !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT,
         model: opts.localModel ?? '',
       });
-      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow), usage: null };
+      // HS-9372 — a generic local model has weak instruction-following, so also
+      // require entries to be grounded in the material (fabricated-work guard).
+      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLow, material), usage: null };
     } catch (err) {
       return onDeviceFallbackOrThrow(err, 'local model', material, system, opts, excludeLow);
     }
@@ -337,7 +429,8 @@ async function onDeviceFallbackOrThrow(
       console.warn(`[announcer] ${providerLabel} summarization failed (${reason}); falling back to the configured local model.`);
       const endpoint = opts.localEndpoint !== undefined && opts.localEndpoint.trim() !== '' ? opts.localEndpoint : DEFAULT_LOCAL_ENDPOINT;
       const out = await runLocalSummarize(system + LOCAL_JSON_INSTRUCTION, material, { endpoint, model: opts.localModel ?? '' });
-      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLowImportance), usage: null };
+      // HS-9372 — grounded-entries guard on the local-fallback path too.
+      return { entries: sanitizeEntries(parseEntriesJson(out), excludeLowImportance, material), usage: null };
     }
     // Anthropic fallback id — needs the key; without it, surface the original error.
     const key = opts.anthropicFallbackKey;

@@ -87,6 +87,39 @@ an entry whose spoken `script` is *entirely* tool names + filler words (e.g. "Re
 Bash Edit", "used Read, Bash and Edit", "ongoing work"). Any substantive word
 keeps the entry, so it's conservative.
 
+**HS-9372 — prompt-echo sentinel + grounding guard (fabricated-entry class).**
+Reported as "the announcer labels things with the wrong project names": the
+project chips were in fact CORRECT — the small on-device model (Apple Foundation
+Models) was **parroting the system prompt's illustrative examples as work done**
+("fixed the export bug and added tests", "finished the export feature and its
+tests") and confabulating filler ("marked ticket #123 as completed", "the
+development team is pleased with the progress"), which read as some other
+project's activity. Three fixes in `summarize.ts`:
+
+1. **Sentinel examples** — every illustrative "work done" phrase in the system
+   prompt now uses the fictional `example-widget` term (`PROMPT_ECHO_SENTINEL`),
+   plus an explicit "this is a FICTIONAL placeholder, never use it" rule. The
+   sentinel can never occur in real signals, so an echo is provably junk.
+2. **`dropPromptEcho()`** — runs in `sanitizeEntries()` on EVERY provider path:
+   drops any entry whose title/script contains the sentinel.
+3. **`dropUngrounded()` / `isGroundedInMaterial()`** — on-device + local-endpoint
+   paths only (weak instruction-following; the Anthropic path is exempt to avoid
+   false-positive drops of legitimate paraphrase): an entry must share at least
+   one distinctive content token (≥4 chars, minus a generic-vocabulary stopword
+   list) — or quote a ticket id present in the material — with the source
+   material; entries with no distinctive tokens at all ("marked ticket #123 as
+   completed.") are inherently generic and dropped.
+
+Related fix in `telemetrySignals.ts` (same ticket): the raw OTLP log record
+wraps its body as an AnyValue (`body: {stringValue: "…"}`), which the old
+scalar-only `extractPromptBody` walk skipped — the whole record was
+`JSON.stringify`ed into the "working on:" snippet. And with prompt-content
+logging off (`OTEL_LOG_USER_PROMPTS` unset) that stringValue is just the EVENT
+NAME (`claude_code.user_prompt`), which narrated as nonsense ("Ongoing Work:
+Claude Prompt Development"). `unwrapPromptValue` now unwraps the AnyValue shape,
+and `isPromptPlaceholder` treats a `claude_code.*` body as no-prompt so the turn
+contributes nothing (per the HS-8806 no-prompt-context rule).
+
 ## 82.5 Gating + cost
 
 - **Off unless live + telemetry on:** `generateAnnouncementsOnce` includes
@@ -102,7 +135,9 @@ keeps the entry, so it's conservative.
 
 - `telemetrySignals.test.ts` — turn grouping (snippet + tool counts), marker
   strip, cursor + project scoping, empty; **HS-8806** — orphan tool activity (no
-  in-window prompt) emits NO line, and in-window turns still emit alongside it.
+  in-window prompt) emits NO line, and in-window turns still emit alongside it;
+  **HS-9372** — the OTLP AnyValue body shape unwraps to its string, and the
+  `claude_code.user_prompt` placeholder body (prompt logging off) is skipped.
 - `collectSignals.test.ts` — telemetry merged only when
   `includeTelemetry`+`projectSecret`; default path untouched.
 - `summarize.test.ts` — `low` entries dropped (default), medium/high/unrated kept,
@@ -110,7 +145,12 @@ keeps the entry, so it's conservative.
   after-the-fact digest) `low` entries are KEPT, while `dropToolChurn` still drops
   pure churn; **HS-8806** — `isToolChurn`/`dropToolChurn` (flags pure tool/filler
   text, keeps substantive), end-to-end churn drop, and prompt-directive guards
-  (cohesive-only, no tool-name lists, "ongoing work" omitted).
+  (cohesive-only, no tool-name lists, "ongoing work" omitted); **HS-9372** —
+  `isPromptEcho`/`dropPromptEcho` (sentinel echoes dropped on every provider
+  path), `isGroundedInMaterial`/`dropUngrounded` (token/ticket-id grounding;
+  confabulated + all-generic entries dropped on the on-device/local paths only),
+  system-prompt guards (examples use only the sentinel; the old realistic
+  phrases are gone; the fictional-placeholder rule is present).
 
 ## 82.7 Follow-ups
 
