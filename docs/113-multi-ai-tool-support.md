@@ -79,10 +79,10 @@ Legend: ✅ Full · ◐ Partial · ⏳ Planned (design-only) · — None · N/A 
 |---|---|---|---|---|---|---|---|---|---|
 | **1. Launch command** (`{{aiCommand}}`, `resolveCommand.ts`) | ✅ | ✅ (`agy`) | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A |
 | **2. Drive transport** (`agentTransport.ts`) | claude-channel | mcp-hooks | acp | fallback→ch | fallback→ch | fallback→ch | N/A | N/A | N/A |
-| **3. Play button** (real drive, `triggerChannel`) | ✅ | ✅ | ◐ (needs `opencode auth`) | — | — | — | N/A | N/A | N/A |
-| **4. Permission overlay** (§47) | ✅ | ◐ opt-in¹ | ✅ | — | — | — | N/A | N/A | N/A |
-| **5. Busy indicator** ("X working") | ✅ | ✅ | ✅ | label-only² | label-only² | label-only² | N/A | N/A | N/A |
-| **6. Done signaling** ("X finished") | ✅ | ✅ | ✅ | — | — | — | N/A | N/A | N/A |
+| **3. Play button** (real drive, `triggerChannel`) | ✅ | ✅ | ◐ (needs `opencode auth`) | ⏳ MCP+hooks⁵ | ⏳ ACP | —⁶ | N/A⁷ | N/A⁷ | N/A⁷ |
+| **4. Permission overlay** (§47) | ✅ | ◐ opt-in¹ | ✅ | ⏳ | ⏳ | — | N/A | N/A | N/A |
+| **5. Busy indicator** ("X working") | ✅ | ✅ | ✅ | ⏳ (label ready²) | ⏳ (label ready²) | — | N/A | N/A | N/A |
+| **6. Done signaling** ("X finished") | ✅ | ✅ | ✅ | ⏳ | ⏳ | — | N/A | N/A | N/A |
 | **7. MCP tools** (`hotsheet_*`) + registration | ✅ `.mcp.json` | ✅ global `mcp_config.json` | ✅ ACP session | ⏳ | ⏳ | — | N/A | N/A | N/A |
 | **8. Instruction file** (`aiInstructionsTools.ts`) | ✅ `CLAUDE.md` | ✅ `AGENTS.md` | ✅ `AGENTS.md` | ◐ no own entry³ | — | — | ✅ `.cursor/rules` | ✅ `.github/copilot-instructions.md` | ✅ `.windsurf/rules` |
 | **9. Skills generation** (`skills.ts`) | ✅ `.claude/skills` | ✅ `.agents/skills` | — | — | — | — | ✅ `.cursor/rules` | ✅ `.github/prompts` | ✅ `.windsurf/rules` |
@@ -91,9 +91,9 @@ Legend: ✅ Full · ◐ Partial · ⏳ Planned (design-only) · — None · N/A 
 | **12. Telemetry + usage UIs + mid-task narration** (docs/67, docs/82) | ✅ | — | — | — | — | — | — | — | — |
 | **13. Persistent (`-i`) drive** | ✅ | ◐ planned | ✅ (ACP session) | N/A | N/A | N/A | N/A | N/A | N/A |
 
-**Footnotes:** ¹ `agy` defaults to auto-approve (`--dangerously-skip-permissions`); the §47 prompt is an opt-in PreToolUse hook (`antigravity_interactive_permissions`). ² display name exists (`agentDisplayName.ts`) but nothing emits heartbeats without a drive transport. ³ codex isn't in the `TOOLS` table — it only benefits from `AGENTS.md` if antigravity/opencode already wrote one (HS-9366 closes this). ⁴ `agy` is auto-approve by default; the opt-in hook flips it to prompt.
+**Footnotes:** ¹ `agy` defaults to auto-approve (`--dangerously-skip-permissions`); the §47 prompt is an opt-in PreToolUse hook (`antigravity_interactive_permissions`). ² display name exists (`agentDisplayName.ts`); it emits busy once a drive transport is wired. ³ codex isn't in the `TOOLS` table — it only benefits from `AGENTS.md` if antigravity/opencode already wrote one (HS-9366 closes this). ⁴ `agy` is auto-approve by default; the opt-in hook flips it to prompt. ⁵ **Codex has a native MCP+hooks drive path** — `codex exec "<prompt>"` (non-interactive play) + `codex exec --json` (structured busy/tool/done event stream) + `codex mcp add` (register `hotsheet_*`) + its hooks/sandbox for permission. So it fits **A1**, NOT the ACP-via-adapter path the earlier taxonomy assumed (there is no working Codex ACP adapter). Buildable now, just unwired (HS-9347). ⁶ gemini's play cell is a true dead-end: the Gemini CLI is decommissioned. ⁷ editor tools are the ONLY genuine "can't play-drive" case — Hot Sheet never launches them (they run inside the IDE), so there's no process to prompt; they can still consume `hotsheet_*` MCP tools *user-initiated* from the IDE.
 
-**Reading it:** only **Claude, Antigravity, OpenCode** are fully driven today (the two reference transports + Claude). codex/goose/kiro have launch + a display label ready but no drive (planned ACP — Codex has no working Zed adapter yet). **Telemetry / usage-cost UIs / mid-task narration are Claude-only** (they ride the Claude-Code OTLP stream — docs/67 §67.1). **Worker pool = Claude + Antigravity only** (needs the MCP claim/lease tools). Tier-B tools (cursor/copilot/windsurf) get instructions + skills only, by design. The `agent_backend` override (Local setting) can force a transport per project but no-ops on an unregistered tool.
+**Reading it:** only **Claude, Antigravity, OpenCode** are DRIVEN today. But the play button is **buildable for every CLI agent** via one of the two transports — **codex → A1 MCP+hooks** (`codex exec --json` + `codex mcp`), **goose → A2 ACP** (native). The only rows that are genuinely un-drivable are **gemini** (decommissioned) and the **editor tools** (no process to launch — Tier B, context-only by design). So a "⏳" in a drive row means "a clear path exists, not yet wired," not "impossible." **Telemetry / usage-cost UIs / mid-task narration are Claude-only** (they ride the Claude-Code OTLP stream — docs/67 §67.1). **Worker pool = Claude + Antigravity only** (needs the MCP claim/lease tools). The `agent_backend` override (Local setting) can force a transport per project but no-ops on an unregistered tool.
 
 ## 113.7 Superseded / subsumed tickets
 
