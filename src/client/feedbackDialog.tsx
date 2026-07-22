@@ -659,11 +659,13 @@ export function showFeedbackDialog(
  * restored, never rebuilt). Keyboard ↑/↓ also navigate, but only when focus
  * isn't in an editable field, so typing a response keeps normal cursor motion.
  */
-function wireFeedbackNav(overlay: HTMLElement, nav: FeedbackNav): void {
+export function wireFeedbackNav(overlay: HTMLElement, nav: FeedbackNav): void {
   const prevBtn = overlay.querySelector<HTMLButtonElement>('.feedback-nav-prev');
   const nextBtn = overlay.querySelector<HTMLButtonElement>('.feedback-nav-next');
   if (prevBtn === null || nextBtn === null) return;
-  const promptStack = requireChild(overlay, '.feedback-prompt-stack');
+  // HS-9365 — hide the ENTIRE interactive section (prompt-stack + response box +
+  // action buttons) when paging to a non-feedback note, so it's pure reader mode.
+  const inputSection = requireChild(overlay, '.feedback-input-section');
   const contextView = requireChild(overlay, '.feedback-context-view');
   const caption = requireChild(overlay, '.feedback-nav-caption');
 
@@ -675,7 +677,7 @@ function wireFeedbackNav(overlay: HTMLElement, nav: FeedbackNav): void {
 
   const paint = (): void => {
     const onFeedback = currentIndex === activeIndex;
-    promptStack.hidden = !onFeedback;
+    inputSection.hidden = !onFeedback;
     contextView.hidden = onFeedback;
     caption.hidden = onFeedback;
     if (!onFeedback) {
@@ -760,6 +762,10 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
                 <div className="feedback-context-view note-markdown" hidden={true}></div>
               </>
             : null}
+          {/* HS-9365 — the whole interactive section (prompt-stack + response box +
+              action buttons) is ONE unit so paging to a non-feedback note can hide
+              it entirely (pure reader mode), not just the prompt-stack. */}
+          <div className="feedback-input-section">
           <div className="feedback-prompt-stack">
             {blocks.length === 0
               ? <div className="feedback-prompt-block note-markdown feedback-prompt-empty"><em>(no prompt text)</em></div>
@@ -801,6 +807,7 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
             <button className="btn btn-sm" id="feedback-save-draft" title="Save the response as a draft to come back to later (HS-7599)">Save Draft</button>
             <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
             <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
+          </div>
           </div>
         </div>
       </div>

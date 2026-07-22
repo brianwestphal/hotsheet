@@ -14,6 +14,7 @@ import {
   shouldAutoShowFeedback,
   suppressNextAutoShowFeedback,
   toDraftSeed,
+  wireFeedbackNav,
 } from './feedbackDialog.js';
 import type { FeedbackDraft, NoteEntry } from './noteRenderer.js';
 import { _resetPrefixesForTesting } from './ticketRefs.js';
@@ -407,6 +408,41 @@ describe('buildOverlay nav chevrons (HS-8836)', () => {
     // The response box + buttons still render (Option 1 — pinned below).
     expect(overlay.querySelector('#feedback-catchall-text')).not.toBeNull();
     expect(overlay.querySelector('#feedback-submit')).not.toBeNull();
+  });
+});
+
+describe('wireFeedbackNav — reader mode on non-feedback notes (HS-9365)', () => {
+  const nav = {
+    entries: [
+      { id: 'd', title: 'Details', markdown: 'the details' },
+      { id: 'n0', title: 'Note 1', markdown: 'an earlier note' },
+      { id: 'n-fb', title: 'Note 2', markdown: 'FEEDBACK NEEDED: help me' },
+    ],
+    activeNoteId: 'n-fb',
+  };
+
+  it('shows the input section on the feedback note but hides it (pure reader) on others', () => {
+    const overlay = buildOverlay('HS-9001', [{ markdown: 'help me', html: '<p>help me</p>' }], true);
+    wireFeedbackNav(overlay, nav);
+    const inputSection = overlay.querySelector<HTMLElement>('.feedback-input-section')!;
+    const contextView = overlay.querySelector<HTMLElement>('.feedback-context-view')!;
+    const caption = overlay.querySelector<HTMLElement>('.feedback-nav-caption')!;
+
+    // Opens on the feedback note → interactive input visible, reader hidden.
+    expect(inputSection.hidden).toBe(false);
+    expect(contextView.hidden).toBe(true);
+
+    // Page back to an earlier (non-feedback) note → the WHOLE input section hides,
+    // leaving only the read-only reader (this is the HS-9365 fix).
+    overlay.querySelector<HTMLButtonElement>('.feedback-nav-prev')!.click();
+    expect(inputSection.hidden).toBe(true);
+    expect(contextView.hidden).toBe(false);
+    expect(caption.textContent).toContain('Note 1');
+
+    // Page forward back to the feedback note → input restored, reader hidden.
+    overlay.querySelector<HTMLButtonElement>('.feedback-nav-next')!.click();
+    expect(inputSection.hidden).toBe(false);
+    expect(contextView.hidden).toBe(true);
   });
 });
 
