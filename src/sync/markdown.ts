@@ -436,8 +436,8 @@ async function syncWorklist(state: SyncState): Promise<void> {
     // HS-9221 (docs/110) — when this project opts into Glassbox `.pr-notes/`
     // review notes (`aiReviewNotes`), inject the inducement section: Hot Sheet's
     // ticket-id wrapper + the verbatim `glassbox note instructions` text (or a
-    // fallback nudge when the `glassbox` CLI isn't on PATH). Off by default →
-    // `buildReviewNotesSection` returns [] and nothing is added.
+    // failure-mode-specific fallback nudge — CLI absent vs. too old; HS-9371).
+    // Off by default → `buildReviewNotesSection` returns [] and nothing is added.
     const aiReviewNotes = settings.aiReviewNotes === true;
     sections.push(...buildReviewNotesSection(aiReviewNotes, aiReviewNotes ? getGlassboxNoteInstructions() : null));
 

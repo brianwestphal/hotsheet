@@ -108,6 +108,23 @@ Settled secondary points:
   `glassbox note instructions`). If `aiReviewNotes` is on but the CLI is absent,
   inject the minimal fallback nudge (§110.2.4) rather than a `glassbox note`
   command the agent can't run.
+- **Desktop-launcher quirk + failure modes (HS-9371)** — the Glassbox
+  desktop-app launcher shim (the `/usr/local/bin/glassbox` symlink into
+  `Glassbox.app`) historically prepended `--no-open --project-dir` before its
+  passthrough args, so plain `glassbox note …` never reached `cli.js`'s
+  subcommand check ("Unknown option: note") even though the bundled `cli.js`
+  supports it; only the `glassbox --browser note …` form worked. The probe
+  (`src/reviewNotesInducement.ts`) therefore tries **both invocation forms**
+  (plain first, then `--browser`) and, when only the `--browser` form works,
+  the injected section tells the agent to prefix note subcommands with
+  `--browser`. Failure modes are distinguished in the fallback text: **CLI not
+  on PATH** vs. **CLI installed but `note instructions` failed** (an older
+  Glassbox without note support). A `not-on-path` result is re-probed on later
+  syncs (cheap PATH check) so installing Glassbox mid-session is picked up; the
+  exec-backed results stay cached per process. The launcher itself is fixed in
+  Glassbox (all three platform shims exec `cli.js` directly for `note` /
+  `ground-truth` subcommands) — the `--browser` fallback remains for older
+  installed builds.
 
 ## 110.5 Ticket ↔ notes linkage (Glassbox §20.7)
 
