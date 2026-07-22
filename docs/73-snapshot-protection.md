@@ -174,7 +174,12 @@ N KB"). **Shipped (HS-8594).** The checkbox (`#settings-snapshot-protection`) is
 `db_snapshot_protection` and PATCHes `/api/file-settings` on change (default-on hydration
 reads the same key back, treating only an explicit stored `false` as off). The status line
 (`#settings-snapshot-status`) is fed by `GET /api/db/snapshot-status`, which returns
-`getSnapshotStatus(dataDir)` (`{ lastSnapshotAt, lastSizeBytes }`); before the session's
+`getSnapshotStatus(dataDir)` (`{ lastSnapshotAt, lastSnapshotStartedAt, lastSizeBytes }` —
+HS-9361 added `lastSnapshotStartedAt`, the **content-cutoff bound**: a snapshot contains
+everything committed before its START; `lastSnapshotAt` is only when the write finished,
+so a slow dump can complete long after mutations it never captured. Anything waiting for
+"a snapshot that captures mutation X" — e.g. the crash-recovery e2e's
+`waitForSnapshotAfter` — must compare against the start time); before the session's
 first snapshot both are null and the line says so rather than rendering a bogus
 "00:00 · 0 B". Client lives in `src/client/snapshotProtectionUI.tsx` (sibling of
 `dbRepairUI.tsx`), wired from `bindBackupsUI` / `loadBackupList` in `backups.tsx`.

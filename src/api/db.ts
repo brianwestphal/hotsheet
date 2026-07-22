@@ -28,10 +28,14 @@ export type RecoveryMarker = z.infer<typeof RecoveryMarkerSchema>;
 
 const RecoveryStatusRespSchema = z.object({ marker: RecoveryMarkerSchema.nullable() });
 
-/** §73 Snapshot Protection status line. Both null until the first snapshot of
- *  the session lands. Matches `getSnapshotStatus`'s return in `db/snapshot.ts`. */
+/** §73 Snapshot Protection status line. All null until the first snapshot of
+ *  the session lands. Matches `getSnapshotStatus`'s return in `db/snapshot.ts`.
+ *  HS-9361 — `lastSnapshotStartedAt` (optional for older servers) is the
+ *  content-cutoff bound: a snapshot contains everything committed before its
+ *  START, while `lastSnapshotAt` is just when the write finished. */
 export const SnapshotStatusSchema = z.object({
   lastSnapshotAt: z.number().nullable(),
+  lastSnapshotStartedAt: z.number().nullable().optional(),
   lastSizeBytes: z.number().nullable(),
 });
 export type SnapshotStatus = z.infer<typeof SnapshotStatusSchema>;

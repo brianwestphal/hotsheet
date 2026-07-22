@@ -83,15 +83,23 @@ function removeStaleLock(dataDir: string): void {
   try { rmSync(join(dataDir, 'hotsheet.lock'), { force: true }); } catch { /* ignore */ }
 }
 
-interface SnapshotStatus { lastSnapshotAt: number | null; lastSizeBytes: number | null }
+interface SnapshotStatus { lastSnapshotAt: number | null; lastSnapshotStartedAt: number | null; lastSizeBytes: number | null }
 interface RecoveryMarker { restoredFrom?: string; restoredTicketCount?: number; corruptPath: string }
 
 function projectQuery(secret?: string): string {
   return secret === undefined ? '' : `?project=${encodeURIComponent(secret)}`;
 }
 
-/** Poll the snapshot-status route until a snapshot written at/after `afterMs`
- *  is visible — i.e. one that captures every mutation made before `afterMs`. */
+/** Poll the snapshot-status route until a snapshot that STARTED at/after
+ *  `afterMs` has completed — i.e. one guaranteed to capture every mutation
+ *  committed before `afterMs`.
+ *
+ *  HS-9361 — this must compare the snapshot's START time, not its completion
+ *  (`lastSnapshotAt`): a dump that began BEFORE the test's mutations can finish
+ *  after `afterMs` under CI load, satisfying a completion-time check while its
+ *  CONTENT predates the mutations — the exact "restored open-titles came back
+ *  []" flake. The follow-up snapshot (the writer re-sets `dirty` for mutations
+ *  arriving mid-dump) hadn't fired yet when the test SIGKILLed the child. */
 async function waitForSnapshotAfter(port: number, afterMs: number, secret: string | undefined, timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -99,12 +107,12 @@ async function waitForSnapshotAfter(port: number, afterMs: number, secret: strin
       const res = await fetch(`http://localhost:${port}/api/db/snapshot-status${projectQuery(secret)}`);
       if (res.ok) {
         const s = await res.json() as SnapshotStatus;
-        if (s.lastSnapshotAt !== null && s.lastSnapshotAt >= afterMs) return;
+        if (s.lastSnapshotAt !== null && s.lastSnapshotStartedAt !== null && s.lastSnapshotStartedAt >= afterMs) return;
       }
     } catch { /* transient */ }
     await new Promise((r) => setTimeout(r, 150));
   }
-  throw new Error(`No snapshot at/after ${afterMs} appeared within ${timeoutMs}ms on port ${port}`);
+  throw new Error(`No snapshot STARTED at/after ${afterMs} completed within ${timeoutMs}ms on port ${port}`);
 }
 
 async function createTickets(port: number, secret: string, titles: string[]): Promise<void> {

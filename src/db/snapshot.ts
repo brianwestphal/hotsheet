@@ -75,6 +75,11 @@ interface SnapshotState {
   debounceTimer: ReturnType<typeof setTimeout> | null;
   safetyTimer: ReturnType<typeof setInterval> | null;
   lastSnapshotAt: number | null;
+  /** HS-9361 — when the last COMPLETED snapshot's write BEGAN (pre-CHECKPOINT).
+   *  The content cutoff: everything committed before this instant is in the
+   *  snapshot; `lastSnapshotAt` (completion) is NOT a content bound — a slow
+   *  dump can finish long after mutations it never captured. */
+  lastSnapshotStartedAt: number | null;
   lastSizeBytes: number | null;
 }
 
@@ -93,6 +98,7 @@ function getOrCreateState(dataDir: string): SnapshotState {
       debounceTimer: null,
       safetyTimer: null,
       lastSnapshotAt: null,
+      lastSnapshotStartedAt: null,
       lastSizeBytes: null,
     };
     snapshotStates.set(dataDir, state);
@@ -217,6 +223,7 @@ export async function writeSnapshotNow(dataDir: string): Promise<SnapshotResult 
   // Optimistically clear; a mutation arriving during the dump re-sets dirty
   // (via scheduleSnapshot) so the follow-up write captures it.
   state.dirty = false;
+  const startedAt = Date.now(); // HS-9361 — the content cutoff (see state doc)
   try {
     const db = await getDbForDir(dataDir);
     // CHECKPOINT first so the dump is internally consistent — without it
@@ -227,6 +234,7 @@ export async function writeSnapshotNow(dataDir: string): Promise<SnapshotResult 
     const buffer = Buffer.from(await blob.arrayBuffer());
     await instrumentAsync(dataDir, 'snapshot.write', () => writeFileAtomic(snapshotPath(dataDir), buffer));
     state.lastSnapshotAt = Date.now();
+    state.lastSnapshotStartedAt = startedAt; // committed only on success, paired with lastSnapshotAt
     state.lastSizeBytes = buffer.length;
     return { path: snapshotPath(dataDir), sizeBytes: buffer.length, at: state.lastSnapshotAt };
   } catch (err) {
@@ -265,11 +273,15 @@ export async function snapshotAllForShutdown(): Promise<void> {
   }
 }
 
-/** Last-snapshot metadata for the Phase 2 Settings status line. */
-export function getSnapshotStatus(dataDir: string): { lastSnapshotAt: number | null; lastSizeBytes: number | null } {
+/** Last-snapshot metadata for the Phase 2 Settings status line. HS-9361 —
+ *  `lastSnapshotStartedAt` is the content-cutoff bound (see the state doc);
+ *  anyone waiting for "a snapshot that captures mutation X" must compare X's
+ *  time against the START, not the completion. */
+export function getSnapshotStatus(dataDir: string): { lastSnapshotAt: number | null; lastSnapshotStartedAt: number | null; lastSizeBytes: number | null } {
   const state = snapshotStates.get(dataDir);
   return {
     lastSnapshotAt: state?.lastSnapshotAt ?? null,
+    lastSnapshotStartedAt: state?.lastSnapshotStartedAt ?? null,
     lastSizeBytes: state?.lastSizeBytes ?? null,
   };
 }

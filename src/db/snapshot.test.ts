@@ -5,6 +5,7 @@
  * the produced tarball round-trips).
  */
 import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { writeFileSettings } from '../file-settings.js';
@@ -103,10 +104,23 @@ describe('writeSnapshotNow', () => {
 
   it('records last-snapshot status for the Settings line', async () => {
     await seedTickets(2);
+    const before = Date.now();
     await writeSnapshotNow(dataDir);
     const status = getSnapshotStatus(dataDir);
     expect(status.lastSnapshotAt).toBeGreaterThan(0);
     expect(status.lastSizeBytes).toBeGreaterThan(0);
+    // HS-9361 — the start time is the content-cutoff bound: recorded, bounded
+    // by the call window, and never after the completion stamp. Consumers
+    // waiting for "a snapshot capturing mutation X" must compare against THIS,
+    // not lastSnapshotAt (a slow dump finishes long after its cutoff).
+    expect(status.lastSnapshotStartedAt).toBeGreaterThanOrEqual(before);
+    expect(status.lastSnapshotStartedAt).toBeLessThanOrEqual(status.lastSnapshotAt!);
+  });
+
+  it('HS-9361 — start/completion stamps stay null before any snapshot', () => {
+    const status = getSnapshotStatus(join(dataDir, 'nonexistent'));
+    expect(status.lastSnapshotAt).toBeNull();
+    expect(status.lastSnapshotStartedAt).toBeNull();
   });
 
   it('returns null + writes nothing when protection is disabled', async () => {
