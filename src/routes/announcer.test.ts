@@ -43,6 +43,17 @@ vi.mock('../announcer/key.js', () => ({
 vi.mock('../announcer/appleFoundation.js', () => ({
   isAppleFoundationAvailable: vi.fn(() => Promise.resolve(false)),
 }));
+// Same host-dependency for the LOCAL provider: `isLocalProviderAvailable` REALLY
+// probes `localhost:11434` — with Ollama running on the dev machine, `usable`
+// flipped true and the overview assertion failed (env-dependent flake). Mock it
+// OFF like Apple so usability is fully deterministic.
+vi.mock('../announcer/localProvider.js', () => ({
+  isLocalProviderAvailable: vi.fn(() => Promise.resolve(false)),
+  resolveLocalModel: vi.fn(() => ''),
+  listLocalModels: vi.fn(() => Promise.resolve([])),
+  DEFAULT_LOCAL_ENDPOINT: 'http://localhost:11434/v1',
+  runLocalSummarize: vi.fn(() => Promise.resolve('{"entries":[]}')),
+}));
 // HS-8762 — the overview endpoint enumerates registered projects; mock the
 // registry so a single fake project points at this test's temp DB.
 vi.mock('../projects.js', () => ({ getAllProjects: vi.fn(() => []) }));
