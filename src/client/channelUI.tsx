@@ -185,11 +185,15 @@ export function setChannelAlive(alive: boolean) {
   // to, which would normally surface the warning and pollute the marketing
   // screenshot. Per the ticket: "make sure the 'claude not connected'
   // warning isn't showing. it should never show during demos".
-  // HS-9321 — also suppressed for Antigravity: agy has no persistent session to be
-  // "alive" (each play spawns a one-shot `agy --print`), so "not connected" is
-  // meaningless + misleading for it.
-  const isAntigravity = state.settings.ai_tool === 'antigravity';
-  warning.style.display = enabled && !alive && !isDemoMode() && !isAntigravity ? '' : 'none';
+  // HS-9321 / HS-9357 — the "Claude not connected" strip is only meaningful when
+  // the persistent Claude channel is the actual driver, i.e. ai_tool is claude /
+  // auto / unset. Every other tool drives differently (Antigravity = one-shot
+  // `agy --print`, OpenCode = a per-play ACP session, others aren't channel-driven
+  // at all), so "Claude not connected" is meaningless + misleading for them —
+  // suppress it. (Generalizes the HS-9321 Antigravity-only special-case.)
+  const tool = state.settings.ai_tool.trim().toLowerCase();
+  const usesClaudeChannel = tool === '' || tool === 'auto' || tool === 'claude';
+  warning.style.display = enabled && !alive && !isDemoMode() && usesClaudeChannel ? '' : 'none';
   // If the channel server went down while we thought Claude was busy, clear busy state
   if (wasAlive && !alive && isChannelBusy()) {
     setChannelBusy(false);

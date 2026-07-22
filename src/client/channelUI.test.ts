@@ -17,8 +17,10 @@ import {
   clearProjectAttention,
   getProjectAttentionSecrets,
   markProjectAttention,
+  setChannelAlive,
 } from './channelUI.js';
 import { resetAllStores } from './reactive.js';
+import { state } from './state.js';
 
 beforeEach(() => {
   // Mount a no-op `.project-tab-dot` so the lazy-imported `syncDots`
@@ -32,6 +34,35 @@ beforeEach(() => {
 afterEach(() => {
   _projectAttentionStoreForTesting.reset();
   document.body.innerHTML = '';
+});
+
+describe('setChannelAlive — "Claude not connected" strip gate (HS-9357)', () => {
+  function mountStrip(): HTMLElement {
+    document.body.innerHTML =
+      '<div id="channel-play-section"></div>' +
+      '<div id="channel-disconnected" style="display:none">Claude not connected</div>';
+    return document.getElementById('channel-disconnected')!;
+  }
+
+  it('shows the strip when the Claude channel is the driver + it is dead (claude / auto / unset)', () => {
+    for (const tool of ['claude', 'auto', '']) {
+      const warning = mountStrip();
+      state.settings.ai_tool = tool;
+      setChannelAlive(false);
+      expect(warning.style.display, `ai_tool=${JSON.stringify(tool)}`).toBe('');
+    }
+  });
+
+  it('suppresses the strip for non-Claude tools (codex/opencode/goose/cursor) — "Claude not connected" is meaningless there', () => {
+    for (const tool of ['codex', 'opencode', 'goose', 'cursor', 'antigravity']) {
+      const warning = mountStrip();
+      state.settings.ai_tool = tool;
+      setChannelAlive(false);
+      expect(warning.style.display, `ai_tool=${tool}`).toBe('none');
+    }
+  });
+
+  afterEach(() => { state.settings.ai_tool = 'auto'; });
 });
 
 describe('channelUI attention store (HS-8238 / §61 Phase 1 trial)', () => {
