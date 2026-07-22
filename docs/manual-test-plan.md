@@ -942,6 +942,18 @@ The git core (detect target / list ready / safe merge incl. conflict-abort) is a
 
 ---
 
+## 18. Tool-switch config prep (HS-9367, §119)
+
+The switch → confirm → files-written flow (decision logic + generators are unit-tested; the visual dialog flow is manual):
+
+- [ ] In a project with a `CLAUDE.md` + `.claude/skills` and no `AGENTS.md`, open Settings → General and change **AI tool** to **Codex**. The "Prepare Codex Config?" dialog appears listing `AGENTS.md` (and the `.agents/skills/...` artifact if stale/missing).
+- [ ] Click **Prepare Codex config** → the dialog shows "Prepared ✓" and closes; `AGENTS.md` now exists containing the thin `claude-adapter` managed section (not the full sections), and `.agents/skills/hotsheet/SKILL.md` is an adapter referencing `../../../.claude/skills/hotsheet/SKILL.md`.
+- [ ] Change the tool again with everything already prepared → NO dialog (silent refresh only).
+- [ ] Dismiss the dialog with "Not now", reload the app → no nudge on project open (dismissed for that tool); switch to a different unprepared tool → the dialog re-appears.
+- [ ] With `ai_tool` explicitly set (non-auto) and no config prepared, reloading the app shows the prep nudge once (project-open drift check) instead of the generic "Set Up Your AI Assistant" prompt.
+
+---
+
 ## Automated Coverage Summary
 
 For reference, here's what IS covered by automated tests (no manual check needed):

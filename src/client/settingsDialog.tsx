@@ -27,6 +27,7 @@ import { bindClearTelemetryButton, resetClearTelemetryStatus } from './telemetry
 import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
 import { isTerminalWebglOptOut, isWebgl2Available, setTerminalWebglOptOut } from './terminalWebgl.js';
 import { showToast } from './toast.js';
+import { maybeOfferToolPrep } from './toolPrepNudge.js';
 
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindTabSwitching();
@@ -310,8 +311,12 @@ function bindGeneralTab() {
   aiToolSelect?.addEventListener('change', () => {
     revealAgyPerms(aiToolSelect.value); // HS-9328 — show/hide the agy permission toggle
     updateAgentBackendDerived();        // HS-9338 — the derived default follows ai_tool
-    // HS-9328 — regen AI-tool files (agy hooks.json depends on the tool + the toggle).
-    void persistScopedSetting('ai_tool', aiToolSelect.value).then(() => ensureSkills());
+    // HS-9367 (docs/119) — prepare the NEW tool's full config, ask-first: when
+    // something is missing/stale for the selected tool the prep dialog offers a
+    // one-click write (instruction file + skills + MCP + permissions); when
+    // nothing is needed it silently `ensureSkills()` (the pre-HS-9367 refresh —
+    // agy hooks.json etc. — is preserved).
+    void persistScopedSetting('ai_tool', aiToolSelect.value).then(() => maybeOfferToolPrep('switch'));
   });
 
   // HS-9338 — persist the per-project drive-transport override (Local, §95).

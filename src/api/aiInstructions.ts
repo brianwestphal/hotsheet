@@ -72,3 +72,34 @@ export async function getAiInstructionsStatus(): Promise<AiInstructionsStateResp
 export async function applyAiInstructions(): Promise<ApplyAiInstructionsResp> {
   return apiCall(ApplyAiInstructionsRespSchema, '/ai-instructions/apply', { method: 'POST' });
 }
+
+// HS-9367 (docs/119) — tool-prep status + one-click prepare for the project's
+// selected `ai_tool` (`src/toolPrep.ts`). Drives the ask-first nudge on an
+// ai_tool switch and the project-open drift check.
+export const ToolPrepStatusSchema = z.object({
+  aiTool: z.string(),
+  instructionTool: z.enum(AI_INSTRUCTION_TOOLS).nullable(),
+  instructionsNeeded: z.boolean(),
+  instructionsPath: z.string().nullable(),
+  skillsNeeded: z.boolean(),
+  skillsPath: z.string().nullable(),
+  needed: z.boolean(),
+});
+export type ToolPrepStatusResp = z.infer<typeof ToolPrepStatusSchema>;
+
+export const ToolPrepResultSchema = z.object({
+  instructionsWritten: z.boolean(),
+  platforms: z.array(z.string()),
+  status: ToolPrepStatusSchema,
+});
+export type ToolPrepResultResp = z.infer<typeof ToolPrepResultSchema>;
+
+/** GET `/ai-instructions/tool-prep` → what's missing/stale for the selected tool. */
+export async function getToolPrepStatus(): Promise<ToolPrepStatusResp> {
+  return apiCall(ToolPrepStatusSchema, '/ai-instructions/tool-prep');
+}
+
+/** POST `/ai-instructions/prepare-tool` → prepare the full config for the selected tool. */
+export async function prepareToolConfig(): Promise<ToolPrepResultResp> {
+  return apiCall(ToolPrepResultSchema, '/ai-instructions/prepare-tool', { method: 'POST' });
+}

@@ -1,0 +1,150 @@
+import { ensureSkills, getFileSettings, getToolPrepStatus, prepareToolConfig, type ToolPrepStatusResp, updateFileSettings } from '../api/index.js';
+import { agentDisplayName } from './agentName.js';
+import { toElement } from './dom.js';
+import { getActiveProject } from './state.js';
+
+/**
+ * HS-9367 (docs/119) — ask-first preparation of the SELECTED tool's config.
+ *
+ * Two entry points share this module:
+ *  - **`switch`** — the Settings `ai_tool` dropdown changed. Instead of silently
+ *    writing `AGENTS.md`/skills to the repo, ask first ("Prepare Codex config
+ *    for this project?"); one click applies the full prep (instruction file
+ *    [adapter-mode, HS-9366] + skills + MCP + permissions). When nothing is
+ *    missing, silently `ensureSkills()` — the pre-HS-9367 refresh behavior
+ *    (agy hooks install/remove etc.) is preserved.
+ *  - **`open`** — the project-open drift check (the L1 fallback folded into
+ *    HS-9367): a project whose selected tool's config is absent/stale gets the
+ *    same nudge once, gated by a per-project dismissal flag so it can't nag.
+ *
+ * The dialog reuses the §86 `.ai-instructions-nudge-*` surface (same CSS).
+ */
+
+/** File-settings key recording WHICH tool's open-nudge was dismissed — switching
+ *  to a different tool later re-arms the nudge. */
+const DISMISSED_KEY = 'tool_prep_nudge_dismissed';
+
+/** Per-session guard for the `open` path (mirrors `aiInstructionsNudge`'s
+ *  checkedSecrets) — a project is drift-checked once per session. */
+const checkedSecrets = new Set<string>();
+
+/** **TEST ONLY** — clear the per-session checked-projects guard. */
+export function _resetToolPrepCheckedForTesting(): void {
+  checkedSecrets.clear();
+}
+
+export type ToolPrepAction = 'dialog' | 'silent-ensure' | 'none';
+
+/** Pure decision — exported for unit testing.
+ *  - `auto` never needs tool-specific prep: a switch keeps the silent refresh,
+ *    an open check does nothing.
+ *  - Something missing/stale → dialog; on `open` the per-tool dismissal wins.
+ *  - Nothing needed → a switch still silently ensures (hooks refresh); an open
+ *    check does nothing. */
+export function decideToolPrepAction(
+  status: Pick<ToolPrepStatusResp, 'aiTool' | 'needed'>,
+  source: 'switch' | 'open',
+  dismissedTool: string | null,
+): ToolPrepAction {
+  if (status.aiTool === 'auto' || !status.needed) {
+    return source === 'switch' ? 'silent-ensure' : 'none';
+  }
+  if (source === 'open' && dismissedTool === status.aiTool) return 'none';
+  return 'dialog';
+}
+
+function readDismissedTool(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/** Entry point. `switch` = the ai_tool dropdown changed (always re-evaluates);
+ *  `open` = boot / project switch (once per project per session). Fire-and-forget. */
+export function maybeOfferToolPrep(source: 'switch' | 'open'): void {
+  if (source === 'open') {
+    const secret = getActiveProject()?.secret;
+    if (secret !== undefined) {
+      if (checkedSecrets.has(secret)) return;
+      checkedSecrets.add(secret);
+    }
+  }
+  void (async () => {
+    try {
+      const [status, fs] = await Promise.all([getToolPrepStatus(), getFileSettings()]);
+      const action = decideToolPrepAction(status, source, readDismissedTool(fs[DISMISSED_KEY]));
+      if (action === 'dialog') {
+        showToolPrepDialog(status);
+      } else if (action === 'silent-ensure') {
+        await ensureSkills();
+      }
+    } catch {
+      // Network hiccup / older server — skip silently.
+    }
+  })();
+}
+
+function persistDismissed(aiTool: string): void {
+  void updateFileSettings({ [DISMISSED_KEY]: aiTool });
+}
+
+const CLOSE_ICON_SVG = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
+
+/** Build + mount the prepare dialog. Exported so tests can drive it directly. */
+export function showToolPrepDialog(status: ToolPrepStatusResp): void {
+  document.querySelectorAll('.tool-prep-nudge-overlay').forEach(el => el.remove());
+  const label = agentDisplayName(status.aiTool);
+
+  const items: string[] = [];
+  if (status.instructionsNeeded && status.instructionsPath !== null) items.push(status.instructionsPath);
+  if (status.skillsNeeded && status.skillsPath !== null) items.push(status.skillsPath);
+
+  const overlay = toElement(
+    <div className="ai-instructions-nudge-overlay tool-prep-nudge-overlay" role="dialog" aria-modal="true" aria-label={`Prepare ${label} config`}>
+      <div className="ai-instructions-nudge-dialog">
+        <div className="ai-instructions-nudge-header">
+          <span className="ai-instructions-nudge-title">Prepare {label} Config?</span>
+          <button className="ai-instructions-nudge-close" type="button" title="Close" aria-label="Close">
+            {CLOSE_ICON_SVG}
+          </button>
+        </div>
+        <div className="ai-instructions-nudge-body">
+          <p>
+            This project's AI tool is set to <strong>{label}</strong>, but its config isn't fully prepared. Hot Sheet can write:
+          </p>
+          <ul>
+            {items.map(p => <li><code>{p}</code></li>)}
+          </ul>
+          <p className="ai-instructions-nudge-note">
+            Existing files are preserved — sections are added with markers, and when this project has a canonical <code>CLAUDE.md</code> the new files are thin adapters that reference it. MCP registration and permissions are set up as needed.
+          </p>
+          <button className="ai-instructions-nudge-cta" type="button">Prepare {label} config</button>
+          <a className="ai-instructions-nudge-dismiss" href="#">Not now</a>
+        </div>
+      </div>
+    </div>
+  );
+
+  const close = (dismiss: boolean): void => {
+    overlay.remove();
+    if (dismiss) persistDismissed(status.aiTool);
+  };
+
+  const ctaBtn = overlay.querySelector<HTMLButtonElement>('.ai-instructions-nudge-cta')!;
+  overlay.querySelector('.ai-instructions-nudge-close')!.addEventListener('click', () => close(true));
+  overlay.querySelector('.ai-instructions-nudge-dismiss')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    close(true);
+  });
+  ctaBtn.addEventListener('click', () => {
+    ctaBtn.disabled = true;
+    ctaBtn.textContent = 'Preparing…';
+    void prepareToolConfig()
+      .then(() => { ctaBtn.textContent = 'Prepared ✓'; })
+      .catch(() => { ctaBtn.textContent = 'Failed — try again from Settings'; })
+      .finally(() => { setTimeout(() => close(false), 700); });
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close(true);
+  });
+
+  document.body.appendChild(overlay);
+}

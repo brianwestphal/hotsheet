@@ -1,6 +1,7 @@
 import { type AiInstructionsStateResp, applyAiInstructions, getAiInstructionsStatus, getFileSettings, updateFileSettings } from '../api/index.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
+import { maybeOfferToolPrep } from './toolPrepNudge.js';
 
 /**
  * HS-8913 — once-per-project nudge to install Hot Sheet's recommended
@@ -91,12 +92,19 @@ export function maybeShowAiInstructionsNudge(): void {
   void (async () => {
     try {
       const [state, fs] = await Promise.all([getAiInstructionsStatus(), getFileSettings()]);
+      // HS-9367 — a project with an EXPLICIT ai_tool gets the selected-tool prep
+      // check instead of the generic "Add to CLAUDE.md" prompt (whose copy is
+      // wrong for, say, a Codex project). The silent keep-current update still
+      // runs — the canonical CLAUDE.md serves every tool under adapter mode.
+      const rawTool = fs.ai_tool;
+      const explicitTool = typeof rawTool === 'string' && rawTool.trim() !== '' && rawTool.trim().toLowerCase() !== 'auto';
       const action = decideNudgeAction(state, readDismissed(fs[DISMISSED_KEY]));
       if (action === 'silent-update') {
         await applyAiInstructions();
-      } else if (action === 'prompt') {
+      } else if (action === 'prompt' && !explicitTool) {
         showAiInstructionsNudgeDialog();
       }
+      if (explicitTool) maybeOfferToolPrep('open'); // its own needed/dismissed gating
     } catch {
       // Network hiccup / older server without the endpoint — skip silently.
     }

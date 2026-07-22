@@ -150,6 +150,12 @@ export function getInstructionsStatesForTools(projectRoot: string): ToolInstruct
   return TOOLS.map(t => stateForTarget(projectRoot, t));
 }
 
+/** HS-9367 — a tool's instruction file path relative to the project root (for
+ *  the tool-prep status/nudge copy). Null for an unknown tool id. */
+export function instructionFileRelPath(tool: AiInstructionTool): string | null {
+  return TOOLS.find(t => t.tool === tool)?.relPath ?? null;
+}
+
 /** Install / update the managed sections in one tool's instruction file (creating
  *  dirs + frontmatter as needed). Returns whether the file was written. */
 export function writeInstructionsForTool(projectRoot: string, tool: AiInstructionTool): boolean {
