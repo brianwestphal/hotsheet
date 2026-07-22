@@ -31,7 +31,7 @@ export const SectionStatusSchema = z.object({
 // §86 nudge/silent-update path was silently dead (its catch swallowed the
 // mismatch). Deriving the server type from this list makes that drift a
 // compile-time error instead.
-export const AI_INSTRUCTION_TOOLS = ['claude', 'cursor', 'windsurf', 'copilot', 'antigravity', 'opencode', 'codex'] as const;
+export const AI_INSTRUCTION_TOOLS = ['claude', 'cursor', 'windsurf', 'copilot', 'antigravity', 'opencode', 'codex', 'gemini'] as const;
 
 export const ToolInstructionsStateSchema = z.object({
   tool: z.enum(AI_INSTRUCTION_TOOLS),

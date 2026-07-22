@@ -207,3 +207,56 @@ describe('ensureSkillsForDir — Codex interactive-permission hooks (HS-9359)', 
     expect(events.PermissionRequest).toBeUndefined();                                // our event fully gone
   });
 });
+
+// HS-9374 — Gemini (`.gemini/skills`) + OpenCode (reads `.claude/skills`
+// DIRECTLY — no duplicate-name adapters) skill seeding.
+describe('ensureSkillsForDir — Gemini + OpenCode skill seeding (HS-9374)', () => {
+  const geminiSkill = (name: string): string => join(dir, '.gemini', 'skills', name, 'SKILL.md');
+  const agentsSkill2 = (name: string): string => join(dir, '.agents', 'skills', name, 'SKILL.md');
+  const claudeSkill2 = (name: string): string => join(dir, '.claude', 'skills', name, 'SKILL.md');
+  const makeCanonical = (): void => {
+    writeFileSync(join(dir, 'CLAUDE.md'), '# Project\n');
+    mkdirSync(join(dir, '.claude', 'skills'), { recursive: true });
+  };
+
+  it('gemini: seeds .gemini/skills as adapters when the canonical source exists (same fixed depth)', () => {
+    setAiTool('gemini');
+    h.onPath.mockImplementation((bin) => bin === 'gemini');
+    makeCanonical();
+    const platforms = ensureSkillsForDir(dir);
+    expect(platforms).toContain('Gemini');
+    const adapter = readFileSync(geminiSkill('hotsheet'), 'utf-8');
+    expect(adapter).toContain('name: hotsheet');
+    expect(adapter).toContain('../../../.claude/skills/hotsheet/SKILL.md'); // .gemini/skills/<name>/ is root+3 too
+    expect(adapter).not.toContain('.hotsheet/worklist.md');
+    expect(readFileSync(claudeSkill2('hotsheet'), 'utf-8')).toContain('.hotsheet/worklist.md'); // canonical refreshed
+  });
+
+  it('gemini: full bodies in .gemini/skills without a canonical source', () => {
+    setAiTool('gemini');
+    h.onPath.mockImplementation((bin) => bin === 'gemini');
+    ensureSkillsForDir(dir);
+    expect(readFileSync(geminiSkill('hotsheet'), 'utf-8')).toContain('.hotsheet/worklist.md');
+    expect(existsSync(join(dir, '.claude'))).toBe(false);
+  });
+
+  it('opencode + canonical: refreshes ONLY the canonical tree — no duplicate-name adapters', () => {
+    setAiTool('opencode');
+    h.onPath.mockImplementation((bin) => bin === 'opencode');
+    makeCanonical();
+    const platforms = ensureSkillsForDir(dir);
+    expect(platforms).toContain('OpenCode');
+    // OpenCode reads .claude/skills directly; adapters in .agents/skills would
+    // DUPLICATE every skill name in its list (it scans both roots).
+    expect(readFileSync(claudeSkill2('hotsheet'), 'utf-8')).toContain('.hotsheet/worklist.md');
+    expect(existsSync(agentsSkill2('hotsheet'))).toBe(false);
+  });
+
+  it('opencode without a canonical source: seeds full bodies into .agents/skills', () => {
+    setAiTool('opencode');
+    h.onPath.mockImplementation((bin) => bin === 'opencode');
+    ensureSkillsForDir(dir);
+    expect(readFileSync(agentsSkill2('hotsheet'), 'utf-8')).toContain('.hotsheet/worklist.md');
+    expect(existsSync(join(dir, '.claude'))).toBe(false);
+  });
+});

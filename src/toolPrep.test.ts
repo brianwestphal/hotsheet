@@ -27,13 +27,21 @@ describe('skillArtifactRelPath', () => {
     expect(skillArtifactRelPath('claude')).toBe(join('.claude', 'skills', 'hotsheet', 'SKILL.md'));
     expect(skillArtifactRelPath('codex')).toBe(join('.agents', 'skills', 'hotsheet', 'SKILL.md'));
     expect(skillArtifactRelPath('antigravity')).toBe(join('.agents', 'skills', 'hotsheet', 'SKILL.md'));
+    expect(skillArtifactRelPath('gemini')).toBe(join('.gemini', 'skills', 'hotsheet', 'SKILL.md')); // HS-9374
     expect(skillArtifactRelPath('cursor')).toBe(join('.cursor', 'rules', 'hotsheet.mdc'));
     expect(skillArtifactRelPath('windsurf')).toBe(join('.windsurf', 'rules', 'hotsheet.md'));
     expect(skillArtifactRelPath('copilot')).toBe(join('.github', 'prompts', 'hotsheet.prompt.md'));
   });
 
-  it('returns null for tools without a skill format (opencode/gemini/goose/auto)', () => {
-    for (const t of ['opencode', 'gemini', 'goose', 'auto']) expect(skillArtifactRelPath(t)).toBeNull();
+  it('HS-9374 — opencode maps to the canonical tree when it exists, .agents/skills otherwise', () => {
+    expect(skillArtifactRelPath('opencode', root)).toBe(join('.agents', 'skills', 'hotsheet', 'SKILL.md'));
+    writeFileSync(join(root, 'CLAUDE.md'), '# P\n');
+    mkdirSync(join(root, '.claude', 'skills'), { recursive: true });
+    expect(skillArtifactRelPath('opencode', root)).toBe(join('.claude', 'skills', 'hotsheet', 'SKILL.md'));
+  });
+
+  it('returns null for tools without a skill format (goose/auto)', () => {
+    for (const t of ['goose', 'auto']) expect(skillArtifactRelPath(t)).toBeNull();
   });
 });
 

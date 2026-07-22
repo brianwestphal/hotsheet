@@ -118,22 +118,31 @@ export const MANAGED_SECTIONS: ManagedSection[] = [
 
 // HS-9366 (docs/118) — the ADAPTER alternative to duplicating the full managed
 // sections. When a project already has a canonical Claude source (`CLAUDE.md` +
-// `.claude/skills`), a non-Claude AGENTS-family tool's instruction file
-// (`AGENTS.md`) gets this single thin section instead — the video-studio model:
-// point at CLAUDE.md as the shared source of truth rather than forking content.
-const CLAUDE_ADAPTER = `## Shared Project Guidance (CLAUDE.md)
+// `.claude/skills`), a non-Claude adapter-family tool's instruction file
+// (`AGENTS.md`, `GEMINI.md`) gets this single thin section instead — the
+// video-studio model: point at CLAUDE.md as the shared source of truth rather
+// than forking content. HS-9374 — the skills root is parameterized per FILE
+// (all AGENTS.md-sharing tools use `.agents/skills/`; gemini's GEMINI.md uses
+// `.gemini/skills/`) — one text per file, so tools sharing a file can't
+// ping-pong rewrites.
+function claudeAdapterText(skillsRoot: string): string {
+  return `## Shared Project Guidance (CLAUDE.md)
 
 \`CLAUDE.md\` is the shared source of truth for this repository's engineering rules. Read it completely before making or reviewing changes, and follow it as if its contents appeared here. The filename reflects the project's history; the instructions apply equally to this tool.
 
-- Project workflows are exposed as skills under \`.agents/skills/\`. Use a skill when the user names it or the request clearly matches its description.
+- Project workflows are exposed as skills under \`${skillsRoot}/\`. Use a skill when the user names it or the request clearly matches its description.
 - The skill adapters delegate to \`.claude/skills/\`, the canonical source for workflows shared across AI tools. When changing a shared workflow, edit the canonical file and keep the adapter metadata in sync.
 - Claude tool names in shared documents describe capabilities, not required product-specific tools — use this tool's equivalent file-search, shell, editing, or web capability.
 - Keep durable repository guidance in \`CLAUDE.md\`; provider-specific configuration belongs in its provider's directory.`;
+}
 
-/** HS-9366 — the adapter-mode section set for AGENTS-family instruction files. */
-export const ADAPTER_SECTIONS: ManagedSection[] = [
-  { id: 'claude-adapter', prescribed: CLAUDE_ADAPTER, version: 1 },
-];
+/** HS-9374 — the adapter-mode section set for a given per-file skills root. */
+export function adapterSectionsFor(skillsRoot: string): ManagedSection[] {
+  return [{ id: 'claude-adapter', prescribed: claudeAdapterText(skillsRoot), version: 1 }];
+}
+
+/** HS-9366 — the adapter-mode section set for AGENTS.md-family instruction files. */
+export const ADAPTER_SECTIONS: ManagedSection[] = adapterSectionsFor('.agents/skills');
 
 /**
  * HS-9366 — does this project have the canonical Claude source that adapters

@@ -21,6 +21,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
+import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { adapterConversionPlanFor, type AiInstructionTool, convertToolFileToAdapter, getInstructionsStatesForTools, instructionFileRelPath, writeInstructionsForTool } from './aiInstructionsTools.js';
 import { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 import { readFileSettings } from './file-settings.js';
@@ -31,7 +32,7 @@ export interface ToolPrepStatus {
   /** The project's selected `ai_tool` (normalized; `auto` when unset). */
   aiTool: string;
   /** The mapped instruction tool, or null when the tool has no instruction
-   *  convention yet (gemini/goose) or the selection is `auto`. */
+   *  convention yet (goose — unverified, HS-9374) or the selection is `auto`. */
   instructionTool: AiInstructionTool | null;
   /** Instruction file missing/outdated for the tool (adapter-aware). */
   instructionsNeeded: boolean;
@@ -54,14 +55,22 @@ export interface ToolPrepStatus {
 /** The main generated skill artifact per `ai_tool` — the file whose presence +
  *  version header tell us whether the tool's skills are prepared. Mirrors the
  *  generator targets in `skills.ts` (`ensureClaudeSkills` /
- *  `ensureAgentsFamilySkills` / `ensureCursorRules` / `ensureWindsurfRules` /
- *  `ensureCopilotPrompts`). Null → no skill format for the tool (opencode /
- *  gemini / goose — see HS-9374). */
-export function skillArtifactRelPath(aiTool: string): string | null {
+ *  `ensureAgentsFamilySkills` / `ensureGeminiSkills` / `ensureOpencodeSkills` /
+ *  `ensureCursorRules` / `ensureWindsurfRules` / `ensureCopilotPrompts`).
+ *  Null → no skill format for the tool (goose — unverified, see HS-9374).
+ *  HS-9374 — `projectRoot` disambiguates OpenCode, whose generator targets the
+ *  CANONICAL `.claude/skills` when it exists (OpenCode reads it directly) and
+ *  the shared `.agents/skills` otherwise. */
+export function skillArtifactRelPath(aiTool: string, projectRoot?: string): string | null {
   switch (aiTool) {
     case 'claude': return join('.claude', 'skills', 'hotsheet', 'SKILL.md');
     case 'antigravity':
     case 'codex': return join('.agents', 'skills', 'hotsheet', 'SKILL.md');
+    case 'gemini': return join('.gemini', 'skills', 'hotsheet', 'SKILL.md');
+    case 'opencode':
+      return projectRoot !== undefined && canonicalClaudeSourceExists(projectRoot)
+        ? join('.claude', 'skills', 'hotsheet', 'SKILL.md')
+        : join('.agents', 'skills', 'hotsheet', 'SKILL.md');
     case 'cursor': return join('.cursor', 'rules', 'hotsheet.mdc');
     case 'windsurf': return join('.windsurf', 'rules', 'hotsheet.md');
     case 'copilot': return join('.github', 'prompts', 'hotsheet.prompt.md');
@@ -118,7 +127,7 @@ export function getToolPrepStatus(projectRoot: string, dataDir: string): ToolPre
     conversionOffered = adapterConversionPlanFor(projectRoot, instructionTool)?.outcome === 'migratable';
   }
 
-  const skillsPath = skillArtifactRelPath(aiTool);
+  const skillsPath = skillArtifactRelPath(aiTool, projectRoot);
   const skillsNeeded = skillsPath !== null && skillArtifactStale(projectRoot, skillsPath);
 
   return { aiTool, instructionTool, instructionsNeeded, instructionsPath, skillsNeeded, skillsPath, conversionOffered, needed: instructionsNeeded || skillsNeeded };

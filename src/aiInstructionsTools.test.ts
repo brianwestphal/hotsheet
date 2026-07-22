@@ -230,6 +230,36 @@ describe('adapter mode (HS-9366)', () => {
     expect(codex?.detected).toBe(true);
   });
 
+  // HS-9374 — Gemini CLI: GEMINI.md instruction file whose adapter references
+  // ITS skills root (`.gemini/skills`, verified against gemini-cli 0.49.0).
+  it('gemini: writes a GEMINI.md adapter referencing .gemini/skills when canonical exists', () => {
+    makeCanonical();
+    expect(writeInstructionsForTool(root, 'gemini')).toBe(true);
+    const content = readFileSync(join(root, 'GEMINI.md'), 'utf-8');
+    expect(content).toContain('section=claude-adapter');
+    expect(content).toContain('`.gemini/skills/`');
+    expect(content).not.toContain('`.agents/skills/`'); // gemini's root, not the AGENTS family's
+    expect(content).not.toContain('section=ticket-driven-work');
+  });
+
+  it('gemini: full sections in GEMINI.md without a canonical source', () => {
+    writeInstructionsForTool(root, 'gemini');
+    const content = readFileSync(join(root, 'GEMINI.md'), 'utf-8');
+    expect(content).toContain('section=ticket-driven-work');
+    expect(content).not.toContain('section=claude-adapter');
+  });
+
+  it('the AGENTS.md adapter text is IDENTICAL for all tools sharing the file (no rewrite ping-pong)', () => {
+    makeCanonical();
+    writeInstructionsForTool(root, 'codex');
+    const afterCodex = readFileSync(join(root, 'AGENTS.md'), 'utf-8');
+    // A different AGENTS.md-family tool writing the same file must be a NO-OP —
+    // if their adapter texts diverged, auto mode would rewrite on every pass.
+    expect(writeInstructionsForTool(root, 'antigravity')).toBe(false);
+    expect(writeInstructionsForTool(root, 'opencode')).toBe(false);
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf-8')).toBe(afterCodex);
+  });
+
   it('every server tool-state row validates against the wire schema (HS-9366 regression guard)', () => {
     // HS-9322/HS-9344 added tools to the server TOOLS table without extending the
     // client wire enum, so EVERY `/ai-instructions/status` response failed zod

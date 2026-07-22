@@ -79,6 +79,31 @@ the video-studio model *is* a Codex setup):
 - `ai_tool: 'codex'` was already a valid selection (dropdown, `resolveCommand`);
   this closes its missing config generation.
 
+## 118.4a Gemini CLI + OpenCode (HS-9374)
+
+The remaining installed tools' conventions, verified against real binaries
+(goose stays deferred — not installed, nothing to verify against):
+
+- **Gemini CLI** (verified on gemini-cli 0.49.0 — alive and actively developed,
+  including a `skills` subcommand; the docs/114 "decommissioned" note applies to
+  its ACP drive story, not the CLI): instruction file is hierarchical
+  **`GEMINI.md`** (no `AGENTS.md` support in its bundle) and skills are
+  discovered at **`.gemini/skills/<name>/SKILL.md`** (project scope requires
+  workspace trust). Added to `TOOLS` (detect `gemini` on PATH ∥ `GEMINI.md` ∥
+  `.gemini/`) + `ensureGeminiSkills` (`ensureAdapterSkillTree` over
+  `.gemini/skills` — the same root+3 depth, so the fixed `../../../` adapter
+  path holds). Its adapter text references `.gemini/skills` via
+  `adapterSectionsFor(skillsRoot)` — parameterized **per FILE**, so the
+  AGENTS.md-sharing tools keep one identical text (no rewrite ping-pong).
+- **OpenCode** (verified: opencode.ai/docs/skills + installed 1.x): discovers
+  skills at `.opencode/skills`, **`.claude/skills`** and `.agents/skills` —
+  it reads the CANONICAL tree directly. So `ensureOpencodeSkills` must NOT
+  write `.agents/skills` adapters when the canonical source exists (same-`name`
+  adapters would duplicate every skill in its list); it just keeps the
+  canonical tree fresh. Without a canonical source it seeds full bodies into
+  the shared `.agents/skills`. `skillArtifactRelPath('opencode', root)` is
+  correspondingly canonical-aware.
+
 ## 118.5 Relative-path robustness
 
 The skill adapter's reference path is FIXED at
@@ -90,13 +115,13 @@ adapter body must compute its own relative prefix (note for that future change).
 
 ## 118.6 Open questions / deferred
 
-- **gemini / goose conventions** — codex + opencode read `AGENTS.md` (confirmed);
-  gemini (`GEMINI.md`? `AGENTS.md`?) and goose (`.goosehints`?) need their real
-  instruction/skill conventions researched before adapter-izing. Deferred with a
-  follow-up ticket (HS-9366 sub-decision).
-- **OpenCode skills** — OpenCode gets the adapter/full `AGENTS.md` (it was already
-  in the TOOLS table) but no `.agents/skills` seeding yet; verify it reads that
-  root before adding it to the codex branch (same follow-up ticket).
+- ~~**gemini conventions**~~ **Resolved (HS-9374, §118.4a):** `GEMINI.md` +
+  `.gemini/skills`, verified against the installed 0.49.0.
+- ~~**OpenCode skills**~~ **Resolved (HS-9374, §118.4a):** OpenCode reads
+  `.claude/skills` directly — canonical-refresh instead of duplicate adapters.
+- **goose conventions** — still unverified (not installed; the HS-9307
+  don't-build-blind rule applies). Ride HS-9347 (goose ACP enablement) — verify
+  `.goosehints`/skills against a real install there.
 - **Retiring grandfathered full-section AGENTS.md files** — the HS-9358 L3 work
   (follow-up ticket filed).
 

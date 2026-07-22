@@ -535,17 +535,19 @@ function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet'
 
 // HS-9326 — Antigravity (`agy`) auto-discovers skills at `.agents/skills/<name>/SKILL.md`
 // (verified in the agy binary docs — a standard customization root, no `skills.json`
-// manifest needed). Codex reads the same root (HS-9366, the video-studio model).
+// manifest needed). Codex reads the same root (HS-9366, the video-studio model);
+// Gemini CLI reads `.gemini/skills/<name>/SKILL.md` (HS-9374, verified against
+// gemini-cli 0.49.0 — same depth, so the fixed `../../../` adapter path holds).
 // Same SKILL.md bodies as Claude, minus the Claude-specific `allowed-tools:`
 // frontmatter (these tools use their own tool sets).
 //
 // HS-9366 (docs/118) — adapter mode: when the project has a canonical Claude
-// source (`CLAUDE.md` + `.claude/skills`), the `.agents/skills` tree is written
-// as thin adapters referencing the canonical files — and the canonical tree is
+// source (`CLAUDE.md` + `.claude/skills`), the tool's tree is written as thin
+// adapters referencing the canonical files — and the canonical tree is
 // refreshed FIRST (even when `ai_tool` excludes Claude), so the referenced
 // content can't go stale while adapters point at it. With no canonical source
-// (a project that started on Codex), full bodies are written (the old behavior).
-function ensureAgentsFamilySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+// (a project that started on that tool), full bodies are written.
+function ensureAdapterSkillTree(cwd: string, dataDir: string, treeDir: string): boolean {
   let updated = false;
   const canonicalDir = join(cwd, '.claude', 'skills');
   const adapter = canonicalClaudeSourceExists(cwd);
@@ -553,8 +555,33 @@ function ensureAgentsFamilySkills(cwd: string, dataDir: string = join(cwd, '.hot
     // Keep the canonical source fresh — the adapters delegate to it.
     if (writeSkillTree(canonicalDir, cwd, dataDir, true)) updated = true;
   }
-  if (writeSkillTree(join(cwd, '.agents', 'skills'), cwd, dataDir, false, adapter ? canonicalDir : undefined)) updated = true;
+  if (writeSkillTree(treeDir, cwd, dataDir, false, adapter ? canonicalDir : undefined)) updated = true;
   return updated;
+}
+
+function ensureAgentsFamilySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  return ensureAdapterSkillTree(cwd, dataDir, join(cwd, '.agents', 'skills'));
+}
+
+/** HS-9374 — Gemini CLI's skills root (`.gemini/skills`). */
+function ensureGeminiSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  return ensureAdapterSkillTree(cwd, dataDir, join(cwd, '.gemini', 'skills'));
+}
+
+/**
+ * HS-9374 — OpenCode discovers skills at `.opencode/skills`, `.claude/skills`
+ * AND `.agents/skills` (verified: opencode.ai/docs/skills, installed 1.x). So
+ * with a canonical Claude source we must NOT write `.agents/skills` adapters —
+ * OpenCode reads the canonical tree directly, and same-`name` adapters would
+ * DUPLICATE every skill in its list. Canonical present → just keep it fresh;
+ * absent (started-on-OpenCode) → seed full bodies into the shared
+ * `.agents/skills` root.
+ */
+function ensureOpencodeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+  if (canonicalClaudeSourceExists(cwd)) {
+    return writeSkillTree(join(cwd, '.claude', 'skills'), cwd, dataDir, true);
+  }
+  return writeSkillTree(join(cwd, '.agents', 'skills'), cwd, dataDir, false);
 }
 
 // HS-9327 — the interactive-permission PreToolUse hook for agy. A command in the
@@ -889,6 +916,20 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
     if (ensureAgentsFamilySkills(projectRoot, dataDir)) platforms.push('Codex');
   }
 
+  // HS-9374 (docs/118 §118.4a) — OpenCode reads `.claude/skills` DIRECTLY (plus
+  // `.agents/skills` / `.opencode/skills`): with a canonical source, only keep it
+  // fresh (adapters would duplicate names in its skill list); without one, seed
+  // full bodies into `.agents/skills`.
+  if (wants('opencode') && (isExecutableOnPath('opencode') || existsSync(join(projectRoot, 'AGENTS.md')))) {
+    if (ensureOpencodeSkills(projectRoot, dataDir)) platforms.push('OpenCode');
+  }
+
+  // HS-9374 — Gemini CLI: `GEMINI.md` context + `.gemini/skills` discovery
+  // (verified against gemini-cli 0.49.0). Adapter mode like the AGENTS family.
+  if (wants('gemini') && (isExecutableOnPath('gemini') || existsSync(join(projectRoot, 'GEMINI.md')) || existsSync(join(projectRoot, '.gemini')))) {
+    if (ensureGeminiSkills(projectRoot, dataDir)) platforms.push('Gemini');
+  }
+
   if (platforms.length > 0) {
     skillsState.pendingCreatedFlag = true;
   }
@@ -898,9 +939,9 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
 /**
  * HS-9311 — a predicate: should this tool's skills be seeded for the project?
  * Reads the `ai_tool` file-setting (default `auto`). `auto` → every tool (today's
- * behavior); an explicit tool → only that one. An explicit CLI agent with no skill
- * generator here (gemini/opencode/goose) matches no branch, so nothing is seeded —
- * correct, there's no skill format for them yet (codex gained one in HS-9366).
+ * behavior); an explicit tool → only that one. Goose is now the only CLI agent
+ * with no skill generator (its conventions are unverified — not installed; see
+ * HS-9374/docs/118 §118.6): it matches no branch, so nothing is seeded.
  */
 export function wantsTool(dataDir: string): (tool: string) => boolean {
   const raw = readFileSettings(dataDir).ai_tool;

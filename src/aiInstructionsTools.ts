@@ -9,7 +9,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 
-import { ADAPTER_SECTIONS, type AdapterConversionPlan, applyManagedSections, canonicalClaudeSourceExists, claudeMdPath, convertBodyToAdapter, getInstructionsStatus, type InstructionsStatus, MANAGED_SECTIONS,type ManagedSection, planAdapterConversion, readClaudeMd, removeManagedSections } from './aiInstructions.js';
+import { type AdapterConversionPlan, adapterSectionsFor, applyManagedSections, canonicalClaudeSourceExists, claudeMdPath, convertBodyToAdapter, getInstructionsStatus, type InstructionsStatus, MANAGED_SECTIONS,type ManagedSection, planAdapterConversion, readClaudeMd, removeManagedSections } from './aiInstructions.js';
 import type { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
@@ -19,13 +19,21 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 export type AiInstructionTool = typeof AI_INSTRUCTION_TOOLS[number];
 
 /**
- * HS-9366 (docs/118) — the AGENTS-family tools (their instruction file is
- * `AGENTS.md`) support ADAPTER MODE: when the project has a canonical Claude
- * source (`CLAUDE.md` + `.claude/skills`), their file gets the thin
- * `ADAPTER_SECTIONS` reference ("CLAUDE.md is the shared source of truth")
- * instead of a duplicate of the full managed sections.
+ * HS-9366 / HS-9374 (docs/118) — the ADAPTER-family tools support ADAPTER MODE:
+ * when the project has a canonical Claude source (`CLAUDE.md` + `.claude/skills`),
+ * their instruction file gets the thin adapter section ("CLAUDE.md is the shared
+ * source of truth") instead of a duplicate of the full managed sections. The map
+ * value is the skills root the adapter text references — per FILE, so the
+ * AGENTS.md-sharing tools all say `.agents/skills` (one text per file, no
+ * rewrite ping-pong) while gemini's GEMINI.md says `.gemini/skills` (its real
+ * discovery root, verified against gemini-cli 0.49.0).
  */
-const AGENTS_FAMILY: ReadonlySet<AiInstructionTool> = new Set(['antigravity', 'opencode', 'codex']);
+const ADAPTER_FAMILY: ReadonlyMap<AiInstructionTool, string> = new Map([
+  ['antigravity', '.agents/skills'],
+  ['opencode', '.agents/skills'],
+  ['codex', '.agents/skills'],
+  ['gemini', '.gemini/skills'],
+]);
 
 const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
 
@@ -89,6 +97,14 @@ const TOOLS: readonly ToolTarget[] = [
     tool: 'codex', label: 'Codex', relPath: 'AGENTS.md', frontmatter: '',
     detect: (r) => isExecutableOnPath('codex') || existsSync(join(r, 'AGENTS.md')),
   },
+  {
+    // HS-9374 (docs/118) — Gemini CLI reads hierarchical `GEMINI.md` context files
+    // (verified against the installed gemini-cli 0.49.0 — no AGENTS.md support in
+    // its bundle) and discovers skills at `.gemini/skills/<name>/SKILL.md`. Its
+    // adapter text therefore references `.gemini/skills` (ADAPTER_FAMILY above).
+    tool: 'gemini', label: 'Gemini CLI', relPath: 'GEMINI.md', frontmatter: '',
+    detect: (r) => isExecutableOnPath('gemini') || existsSync(join(r, 'GEMINI.md')) || existsSync(join(r, '.gemini')),
+  },
 ];
 
 /**
@@ -109,13 +125,15 @@ const TOOLS: readonly ToolTarget[] = [
  *    FULL; the user must reconcile (docs/120 §120.4).
  */
 function sectionSetFor(projectRoot: string, tool: AiInstructionTool, existingBody: string): { sections: ManagedSection[]; stripFullSections: boolean } {
-  if (!AGENTS_FAMILY.has(tool)) return { sections: MANAGED_SECTIONS, stripFullSections: false };
+  const skillsRoot = ADAPTER_FAMILY.get(tool);
+  if (skillsRoot === undefined) return { sections: MANAGED_SECTIONS, stripFullSections: false };
   if (!canonicalClaudeSourceExists(projectRoot)) return { sections: MANAGED_SECTIONS, stripFullSections: false };
+  const adapterSections = adapterSectionsFor(skillsRoot);
   const fullPresent = getInstructionsStatus(existingBody).sections.some(s => s.present);
-  if (!fullPresent) return { sections: ADAPTER_SECTIONS, stripFullSections: false };
+  if (!fullPresent) return { sections: adapterSections, stripFullSections: false };
   const plan = planAdapterConversion(existingBody, readClaudeMd(projectRoot) ?? '');
   if (plan.outcome === 'lossless' || plan.outcome === 'not-applicable') {
-    return { sections: ADAPTER_SECTIONS, stripFullSections: true };
+    return { sections: adapterSections, stripFullSections: true };
   }
   return { sections: MANAGED_SECTIONS, stripFullSections: false };
 }
@@ -218,7 +236,7 @@ export function writeInstructionsForTool(projectRoot: string, tool: AiInstructio
  * inside `writeInstructionsForTool`; `conflict` stays full-mode.
  */
 export function adapterConversionPlanFor(projectRoot: string, tool: AiInstructionTool): AdapterConversionPlan | null {
-  if (!AGENTS_FAMILY.has(tool) || !canonicalClaudeSourceExists(projectRoot)) return null;
+  if (!ADAPTER_FAMILY.has(tool) || !canonicalClaudeSourceExists(projectRoot)) return null;
   const t = TOOLS.find(x => x.tool === tool);
   if (t === undefined) return null;
   const path = join(projectRoot, t.relPath);
