@@ -69,6 +69,32 @@ Per the maintainer's "make sub-tickets for all the aspects." Grouped:
 - **O4 — Cursor/Windsurf/Copilot as "drivable"?** They're editor-integrated, not CLI agents — recommend **context-only** (skills+instructions, done), NOT part of either drive transport. Confirm.
 - **O5 — new: does the `ai_tool` enum gain `antigravity`?** Yes (docs/115 §115.6) — needed for command resolution + display name + transport selection. Filed as a follow-up.
 
-## 113.6 Superseded / subsumed tickets
+## 113.6 Per-tool compatibility matrix (status)
+
+Which integration aspect each `ai_tool` supports today. **Keep this current** when a tool's support changes (a new drive transport enabled, a skill generator added, etc.). Evidence for each cell lives in the code cited in the surrounding sections.
+
+Legend: ✅ Full · ◐ Partial · ⏳ Planned (design-only) · — None · N/A (not applicable by design). `auto` behaves as **claude**; `gemini` is in the UI picker but its CLI is decommissioned; `kiro` is docs-only (not in the picker).
+
+| Integration aspect | claude | antigravity | opencode | codex | goose | gemini | cursor | copilot | windsurf |
+|---|---|---|---|---|---|---|---|---|---|
+| **1. Launch command** (`{{aiCommand}}`, `resolveCommand.ts`) | ✅ | ✅ (`agy`) | ✅ | ✅ | ✅ | ✅ | N/A | N/A | N/A |
+| **2. Drive transport** (`agentTransport.ts`) | claude-channel | mcp-hooks | acp | fallback→ch | fallback→ch | fallback→ch | N/A | N/A | N/A |
+| **3. Play button** (real drive, `triggerChannel`) | ✅ | ✅ | ◐ (needs `opencode auth`) | — | — | — | N/A | N/A | N/A |
+| **4. Permission overlay** (§47) | ✅ | ◐ opt-in¹ | ✅ | — | — | — | N/A | N/A | N/A |
+| **5. Busy indicator** ("X working") | ✅ | ✅ | ✅ | label-only² | label-only² | label-only² | N/A | N/A | N/A |
+| **6. Done signaling** ("X finished") | ✅ | ✅ | ✅ | — | — | — | N/A | N/A | N/A |
+| **7. MCP tools** (`hotsheet_*`) + registration | ✅ `.mcp.json` | ✅ global `mcp_config.json` | ✅ ACP session | ⏳ | ⏳ | — | N/A | N/A | N/A |
+| **8. Instruction file** (`aiInstructionsTools.ts`) | ✅ `CLAUDE.md` | ✅ `AGENTS.md` | ✅ `AGENTS.md` | ◐ no own entry³ | — | — | ✅ `.cursor/rules` | ✅ `.github/copilot-instructions.md` | ✅ `.windsurf/rules` |
+| **9. Skills generation** (`skills.ts`) | ✅ `.claude/skills` | ✅ `.agents/skills` | — | — | — | — | ✅ `.cursor/rules` | ✅ `.github/prompts` | ✅ `.windsurf/rules` |
+| **10. Auto-allow / perms config** | ✅ | ✅ (inverse⁴) | ✅ (`permission:ask`) | — | — | — | N/A | N/A | N/A |
+| **11. Worker pool / distributed** (`hotsheet-worker`) | ✅ | ✅ | — | — | — | — | — | — | — |
+| **12. Telemetry + usage UIs + mid-task narration** (docs/67, docs/82) | ✅ | — | — | — | — | — | — | — | — |
+| **13. Persistent (`-i`) drive** | ✅ | ◐ planned | ✅ (ACP session) | N/A | N/A | N/A | N/A | N/A | N/A |
+
+**Footnotes:** ¹ `agy` defaults to auto-approve (`--dangerously-skip-permissions`); the §47 prompt is an opt-in PreToolUse hook (`antigravity_interactive_permissions`). ² display name exists (`agentDisplayName.ts`) but nothing emits heartbeats without a drive transport. ³ codex isn't in the `TOOLS` table — it only benefits from `AGENTS.md` if antigravity/opencode already wrote one (HS-9366 closes this). ⁴ `agy` is auto-approve by default; the opt-in hook flips it to prompt.
+
+**Reading it:** only **Claude, Antigravity, OpenCode** are fully driven today (the two reference transports + Claude). codex/goose/kiro have launch + a display label ready but no drive (planned ACP — Codex has no working Zed adapter yet). **Telemetry / usage-cost UIs / mid-task narration are Claude-only** (they ride the Claude-Code OTLP stream — docs/67 §67.1). **Worker pool = Claude + Antigravity only** (needs the MCP claim/lease tools). Tier-B tools (cursor/copilot/windsurf) get instructions + skills only, by design. The `agent_backend` override (Local setting) can force a transport per project but no-ops on an unregistered tool.
+
+## 113.7 Superseded / subsumed tickets
 
 This epic subsumes the earlier exploratory tickets: **HS-8006** ("per project select preferred ai tool?") = the §113.3 `ai_tool` setting (HS-8009); **HS-8003** ("Support OpenCode") + **HS-8943** ("Support codex") = per-tool enablement (§113.4); **HS-8007** ("acp support?") = investigated + closed, its recommendation is §113.3's ACP client. **HS-8916** (instructions) is the shipped Tier-B half.
