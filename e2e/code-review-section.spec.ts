@@ -8,9 +8,12 @@
  */
 import { expect, test } from './coverage-fixture.js';
 
+// The first subject is deliberately long: HS-9401 asserts the chooser stays inside
+// the detail panel's width (pre-fix, nowrap option rows pushed it past the edge).
+const LONG_SUBJECT = 'HS-E2E: newer fix with a deliberately long subject line that used to overflow the detail panel horizontally before the two-line clamp landed';
 const GROUPS = {
   groups: [
-    { from: 'ccc^', to: 'ddd', count: 1, subjects: ['HS-E2E: newer fix'], earliestDate: '2026-07-23T10:00:00Z', latestDate: '2026-07-23T10:00:00Z' },
+    { from: 'ccc^', to: 'ddd', count: 1, subjects: [LONG_SUBJECT], earliestDate: '2026-07-23T10:00:00Z', latestDate: '2026-07-23T10:00:00Z' },
     { from: 'aaa^', to: 'bbb', count: 2, subjects: ['HS-E2E: part two', 'HS-E2E: part one'], earliestDate: '2026-07-22T10:00:00Z', latestDate: '2026-07-22T11:00:00Z' },
   ],
   span: { from: 'aaa^', to: 'ddd', unrelatedCount: 2 },
@@ -56,11 +59,18 @@ test.describe('Code Review section (HS-9393)', () => {
     await expect(options).toHaveCount(3); // 2 groups + the span option
     await expect(options.nth(2)).toContainText('includes 2 unrelated commits');
 
-    // Pick the two-commit group → the exact range posts to /glassbox/review.
-    // (The menu's collapse-after-pick is asserted deterministically in the unit
-    // test; here a background detail reload can re-render the section, so we only
+    // HS-9401 — the long-subject row must stay INSIDE the detail panel: pre-fix,
+    // nowrap option labels widened the chooser past the panel's right edge.
+    const panelBox = (await page.locator('#detail-panel').boundingBox())!;
+    const menuBox = (await menu.boundingBox())!;
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(panelBox.x + panelBox.width + 1);
+
+    // Pick the two-commit group via its Review button (HS-9401: row click expands;
+    // the button launches) → the exact range posts to /glassbox/review. (The
+    // menu's collapse-after-pick is asserted deterministically in the unit test;
+    // here a background detail reload can re-render the section, so we only
     // assert the review request landed.)
-    await options.nth(1).click();
+    await options.nth(1).locator('.code-review-option-review').click();
     await expect.poll(() => reviewPosts.length, { timeout: 5000 }).toBe(1);
     expect(reviewPosts[0]).toEqual({ mode: 'range', from: 'aaa^', to: 'bbb' });
   });

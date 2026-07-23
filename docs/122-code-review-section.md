@@ -51,7 +51,11 @@ decides the header button, `renderHeader` builds it:
   commit and `--commit` is the sharper view); ≥2 groups → an inline
   `.code-review-chooser` (per-group `{count · date (on ref) — subject}` labels,
   plus a "Review all, earliest→latest (includes N unrelated commits)" option
-  when a HEAD span exists); no commits + `started` + dirty → "Review
+  when a HEAD span exists). Chooser rows mirror the git-status popover's commit
+  rows (HS-9401): the full-subject label wraps to the panel width and clamps to
+  2 lines, clicking the row expands/collapses it, and an explicit **Review**
+  button launches; the menu genuinely toggles from the header button
+  (`&[hidden]` display override — HS-9400). No commits + `started` + dirty → "Review
   uncommitted changes" (`mode:'uncommitted'`); no commits at all → the
   files-mode aggregate over note-anchored files; nothing actionable + no notes
   → the section collapses.
@@ -91,4 +95,8 @@ notes-files aggregate.
   range bases.
 - `e2e/code-review-section.spec.ts` — chooser renders for interleaved groups +
   posts the right range; single group reviews directly (route-mocked discovery
-  + `/glassbox/review`).
+  + `/glassbox/review`); chooser visibility asserted as COMPUTED style across
+  toggles (HS-9400 — the attribute-only unit assertions are blind to CSS-cascade
+  bugs); the long-subject chooser stays inside the detail panel's width
+  (HS-9401); ticket→ticket switches incl. cached revisits repaint the section
+  for the selected ticket (HS-9402).

@@ -123,12 +123,45 @@ describe('reviewProofSection (HS-9293)', () => {
     expect(menu.hasAttribute('hidden')).toBe(true);
     btn.click();
     expect(menu.hasAttribute('hidden')).toBe(false);
-    const options = [...menu.querySelectorAll<HTMLButtonElement>('.code-review-chooser-option')];
+    const options = [...menu.querySelectorAll<HTMLElement>('.code-review-chooser-option')];
     expect(options).toHaveLength(3); // two groups + the span option
     expect(options[2].textContent).toContain('includes 3 unrelated commits');
-    options[2].click();
+    options[2].querySelector<HTMLButtonElement>('.code-review-option-review')!.click();
     expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'range', from: 'aaa^', to: 'd' });
     expect(menu.hasAttribute('hidden')).toBe(true); // collapses after a pick
+  });
+
+  // HS-9401 — chooser rows wrap + clamp to 2 lines, expanding on row click (the
+  // git-status-popover pattern); the Review button launches without toggling.
+  it('HS-9401 — a chooser row starts clamped, expands on row click, and collapses again', async () => {
+    getReviewProof.mockResolvedValue({ notes: [] });
+    getTicketCommits.mockResolvedValue(noCommits({
+      groups: [group({ from: 'c^', to: 'd', count: 1, subjects: ['HS-1234: newer'] }), group()],
+    }));
+    await loadAndRenderReviewProof('HS-1234');
+    const row = container().querySelector<HTMLElement>('.code-review-chooser-option')!;
+    const label = row.querySelector<HTMLElement>('.code-review-option-label')!;
+    expect(label.classList.contains('is-clamped')).toBe(true);
+    row.click();
+    expect(row.classList.contains('is-expanded')).toBe(true);
+    expect(label.classList.contains('is-clamped')).toBe(false);
+    row.click();
+    expect(row.classList.contains('is-expanded')).toBe(false);
+    expect(label.classList.contains('is-clamped')).toBe(true);
+  });
+
+  it('HS-9401 — the Review button launches without expanding the row, and the full subject is kept (no JS truncation)', async () => {
+    const longSubject = `HS-1234: ${'x'.repeat(90)}`;
+    getReviewProof.mockResolvedValue({ notes: [] });
+    getTicketCommits.mockResolvedValue(noCommits({
+      groups: [group({ from: 'c^', to: 'd', count: 1, subjects: [longSubject] }), group()],
+    }));
+    await loadAndRenderReviewProof('HS-1234');
+    const row = container().querySelector<HTMLElement>('.code-review-chooser-option')!;
+    expect(row.textContent).toContain(longSubject); // wrapped/clamped by CSS, not sliced in JS
+    row.querySelector<HTMLButtonElement>('.code-review-option-review')!.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'commit', sha: 'd' });
+    expect(row.classList.contains('is-expanded')).toBe(false); // stopPropagation — no toggle
   });
 
   it('HS-9393 — started + dirty + no commits offers the uncommitted review', async () => {

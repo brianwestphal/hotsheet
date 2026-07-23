@@ -190,6 +190,69 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrxb2ixtqlmtl85o",
+          "message": {
+            "text": "Chooser rows changed from `<button>` (whole row launches, nowrap + JS-truncated label) to a `<div>` row + explicit Review `<button>`, mirroring `gitStatusPopover.tsx`'s commit rows per the maintainer's request (\"like we do in git status popup\"): row click toggles a 2-line CSS clamp (`is-clamped`/`is-expanded`), the Review button launches with `stopPropagation` so launching never doubles as an expand toggle. The 60-char JS subject truncation is dropped — the CSS clamp owns the fit, and expanding reveals the full subject. The div-row shape also avoids invalid nested buttons; keyboard reachability is preserved via the real Review button.",
+            "markdown": "Chooser rows changed from `<button>` (whole row launches, nowrap + JS-truncated label) to a `<div>` row + explicit Review `<button>`, mirroring `gitStatusPopover.tsx`'s commit rows per the maintainer's request (\"like we do in git status popup\"): row click toggles a 2-line CSS clamp (`is-clamped`/`is-expanded`), the Review button launches with `stopPropagation` so launching never doubles as an expand toggle. The 60-char JS subject truncation is dropped — the CSS clamp owns the fit, and expanding reveals the full subject. The div-row shape also avoids invalid nested buttons; keyboard reachability is preserved via the real Review button."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/reviewProofSection.tsx"
+                },
+                "region": {
+                  "startLine": 253,
+                  "endLine": 274,
+                  "snippet": {
+                    "text": "  // collapses it, and the explicit (keyboard-reachable) Review button launches.\n  const menu = toElement(<div className=\"code-review-chooser\" hidden></div>);\n  for (const opt of action.options) {\n    const optRow = toElement(\n      <div className=\"code-review-chooser-option\">\n        <span className=\"code-review-option-label is-clamped\">{opt.label}</span>\n        <button type=\"button\" className=\"code-review-option-review\" title=\"Open this review in Glassbox\">Review</button>\n      </div>,\n    );\n    const label = optRow.querySelector<HTMLElement>('.code-review-option-label')!;\n    optRow.addEventListener('click', () => {\n      const expanded = optRow.classList.toggle('is-expanded');\n      label.classList.toggle('is-clamped', !expanded);\n    });\n    optRow.querySelector<HTMLButtonElement>('.code-review-option-review')!.addEventListener('click', (e) => {\n      e.stopPropagation(); // launching is not an expand/collapse\n      void reviewInGlassbox(opt.req);\n      menu.toggleAttribute('hidden', true);\n    });\n    menu.appendChild(optRow);\n  }\n  btn.addEventListener('click', () => { menu.toggleAttribute('hidden', !menu.hasAttribute('hidden')); });"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9401"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "9f66b05768345eb354ef00a71b4ea1fb"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "07fd178c54a3acbfd3bcb431f46de545e5de587b",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

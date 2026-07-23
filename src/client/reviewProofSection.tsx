@@ -181,12 +181,13 @@ function shortDate(iso: string): string {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-/** One chooser row's label for a commit group. */
+/** One chooser row's label for a commit group. No JS truncation — the label wraps
+ *  and CSS clamps it to 2 lines, expandable by clicking the row (HS-9401). */
 function groupLabel(g: CommitGroup): string {
   const subject = g.subjects[0] ?? '';
   const head = `${String(g.count)} commit${g.count === 1 ? '' : 's'} · ${shortDate(g.latestDate)}`;
   const refSuffix = g.ref !== undefined ? ` (on ${g.ref})` : '';
-  return `${head}${refSuffix} — ${subject.length > 60 ? `${subject.slice(0, 57)}…` : subject}`;
+  return `${head}${refSuffix} — ${subject}`;
 }
 
 /** The review request for one group: a single commit reviews as `--commit` (its
@@ -246,16 +247,29 @@ function renderHeader(action: AggregateReviewAction): HTMLElement {
     btn.addEventListener('click', () => { void reviewInGlassbox(action.req); });
     return header;
   }
-  // Chooser: an inline option list toggled under the header (no floating layer —
-  // simple, keyboard-reachable buttons; collapses after a pick).
+  // Chooser: an inline option list toggled under the header (no floating layer;
+  // collapses after a pick). HS-9401 — each row mirrors the git-status popover's
+  // commit rows: the label wraps and clamps to 2 lines, clicking the ROW expands/
+  // collapses it, and the explicit (keyboard-reachable) Review button launches.
   const menu = toElement(<div className="code-review-chooser" hidden></div>);
   for (const opt of action.options) {
-    const optBtn = toElement(<button type="button" className="code-review-chooser-option">{opt.label}</button>);
-    optBtn.addEventListener('click', () => {
+    const optRow = toElement(
+      <div className="code-review-chooser-option">
+        <span className="code-review-option-label is-clamped">{opt.label}</span>
+        <button type="button" className="code-review-option-review" title="Open this review in Glassbox">Review</button>
+      </div>,
+    );
+    const label = optRow.querySelector<HTMLElement>('.code-review-option-label')!;
+    optRow.addEventListener('click', () => {
+      const expanded = optRow.classList.toggle('is-expanded');
+      label.classList.toggle('is-clamped', !expanded);
+    });
+    optRow.querySelector<HTMLButtonElement>('.code-review-option-review')!.addEventListener('click', (e) => {
+      e.stopPropagation(); // launching is not an expand/collapse
       void reviewInGlassbox(opt.req);
       menu.toggleAttribute('hidden', true);
     });
-    menu.appendChild(optBtn);
+    menu.appendChild(optRow);
   }
   btn.addEventListener('click', () => { menu.toggleAttribute('hidden', !menu.hasAttribute('hidden')); });
   header.appendChild(menu);
