@@ -4544,6 +4544,7 @@ body.cross-project-stats-active {
 
 .code-review-chooser {
   flex-basis: 100%;
+  min-width: 0; // HS-9401 — don't let long option labels widen past the panel
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -4552,6 +4553,11 @@ body.cross-project-stats-active {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-secondary);
+
+  // HS-9400 — `display: flex` (author style) beats the UA's `[hidden] { display:
+  // none }`, so without this the menu rendered permanently open and the header
+  // button's hidden-attribute toggle visibly did nothing.
+  &[hidden] { display: none; }
 }
 
 .code-review-chooser-option {

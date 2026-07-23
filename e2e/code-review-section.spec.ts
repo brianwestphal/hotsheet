@@ -40,8 +40,17 @@ test.describe('Code Review section (HS-9393)', () => {
 
     const btn = section.locator('.code-review-aggregate-btn');
     await expect(btn).toContainText('Open in Glassbox');
-    await btn.click();
+    // HS-9400 — assert COMPUTED visibility (not the hidden attribute): the menu's
+    // `display: flex` used to beat the UA's `[hidden]` rule, leaving it permanently
+    // open so the button toggle visibly did nothing. The unit test's attribute
+    // assertions can't catch that CSS-cascade class of bug; this can.
     const menu = section.locator('.code-review-chooser');
+    await expect(menu).toBeHidden();
+    await btn.click();
+    await expect(menu).toBeVisible();
+    await btn.click(); // toggles closed…
+    await expect(menu).toBeHidden();
+    await btn.click(); // …and open again
     await expect(menu).toBeVisible();
     const options = menu.locator('.code-review-chooser-option');
     await expect(options).toHaveCount(3); // 2 groups + the span option

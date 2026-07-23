@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrxayn2amic547xe",
+          "message": {
+            "text": "The \"clicking Open in Glassbox ▾ does nothing\" report was a CSS-cascade bug, not a Tauri no-op: the chooser's `display: flex` (author style) overrides the UA stylesheet's `[hidden] { display: none }`, so the menu rendered permanently open and the button's hidden-attribute toggle had no visible effect. The explicit `&[hidden] { display: none; }` restores the toggle. Regression protection lives in the e2e (Playwright asserts COMPUTED visibility — verified failing pre-fix); the unit test's attribute assertions are structurally blind to this class of bug (happy-dom applies no CSS cascade).",
+            "markdown": "The \"clicking Open in Glassbox ▾ does nothing\" report was a CSS-cascade bug, not a Tauri no-op: the chooser's `display: flex` (author style) overrides the UA stylesheet's `[hidden] { display: none }`, so the menu rendered permanently open and the button's hidden-attribute toggle had no visible effect. The explicit `&[hidden] { display: none; }` restores the toggle. Regression protection lives in the e2e (Playwright asserts COMPUTED visibility — verified failing pre-fix); the unit test's attribute assertions are structurally blind to this class of bug (happy-dom applies no CSS cascade)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/styles.scss"
+                },
+                "region": {
+                  "startLine": 4557,
+                  "endLine": 4560,
+                  "snippet": {
+                    "text": "  // HS-9400 — `display: flex` (author style) beats the UA's `[hidden] { display:\n  // none }`, so without this the menu rendered permanently open and the header\n  // button's hidden-attribute toggle visibly did nothing.\n  &[hidden] { display: none; }"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9400"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "a804ce5ed6d46e1023a14545977a560c"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "8953c334e98174b775be5476ef25c72b09e8bf6f",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}
