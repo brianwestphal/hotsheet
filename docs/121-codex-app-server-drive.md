@@ -148,12 +148,23 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
   Caveats: `thread/resume` needs the on-disk rollout, which exists only after
   the first turn persists (resume-before-first-turn → "no rollout found");
   Node `ws` needs `perMessageDeflate: false` (+ a plain `host` header) or the
-  daemon hangs up the upgrade. The codex TUI runs its own core (not
-  daemon-attached) — live watching is for app-server clients (VS Code
-  extension / desktop app / a Hot Sheet transcript pane); `codex resume
-  <threadId>` in a terminal opens the shared HISTORY but as its own session.
+  daemon hangs up the upgrade.
   Follow-up: offer the daemon UDS transport in the drive so external
   app-server UIs can watch the driven thread.
+- **TUI daemon attach — VERIFIED (2026-07-23, supersedes the HS-9386 "TUI
+  runs its own core" limitation):** the TUI takes `--remote <ADDR>` ("Connect
+  the TUI to a remote app server endpoint"; accepts `unix://PATH`), which the
+  HS-9386 pass missed. Live-verified on 0.145.0 with a node-pty-driven TUI +
+  a headless-ws driver on the shared daemon: (1) `codex --remote
+  unix://<sock>` starts a TUI whose session runs ON the daemon (its
+  `thread/started` broadcasts to other clients); (2) `codex resume <threadId>
+  --remote unix://<sock>` attaches the TUI to a HEADLESS-DRIVEN thread —
+  history renders, and a subsequent driven `turn/start` from the other client
+  appears on the TUI screen **live, with no user interaction**. So the
+  Claude-parity "watch Hot Sheet's driven session in codex's own terminal
+  UI" outcome IS achievable once the drive uses the daemon transport
+  (HS-9388); Hot Sheet-spawned codex terminals can launch pre-attached to the
+  project's driven thread.
 
 ## 121.7 Settings + UI gating (SHIPPED, HS-9384)
 
