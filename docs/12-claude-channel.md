@@ -291,10 +291,11 @@ trigger, so extra connections never misroute a trigger.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/channel/claude-check` | GET | Check if `claude` CLI is installed and meets minimum version (v2.1.80+) |
-| `/api/channel/status` | GET | Returns `{ enabled, alive, port, done, versionMismatch, serverName, aliveCount }` — channel state, completion flag, version check, and the count of alive channel-servers (HS-8460) |
+| `/api/channel/status` | GET | Returns `{ enabled, alive, port, done, versionMismatch, serverName, aliveCount, codexAppServerEnabled, codexAppServerFailed }` — channel state, completion flag, version check, the count of alive channel-servers (HS-8460), and the codex app-server drive state (HS-9384) |
 | `/api/channel/cleanup-connections` | POST | HS-8948 / HS-9225 — disconnect ALL main channel-servers (incl. the leader; workers spared) so the user reconnects the one they want via `/mcp`; returns `{ ok, killed }` |
 | `/api/channel/trigger` | POST | Send a worklist event to Claude via the channel server |
 | `/api/channel/done` | POST | Called by Claude to signal it has finished processing |
+| `/api/channel/codex-app-server` | POST | HS-9384 — flip the machine-global codex app-server drive toggle (`{ enabled }`); disable kills live driven sessions, enable clears handshake-failure flags ([121-codex-app-server-drive.md](121-codex-app-server-drive.md) §121.7) |
 | `/api/channel/enable` | POST | Enable the channel and register in `.mcp.json` |
 | `/api/channel/disable` | POST | Disable the channel and remove from `.mcp.json` |
 | `/api/channel/permission` | GET | Check for pending permission requests from Claude |

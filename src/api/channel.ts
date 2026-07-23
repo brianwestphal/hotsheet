@@ -49,6 +49,10 @@ export const ChannelStatusSchema = z.object({
   versionMismatch: z.boolean(),
   serverName: z.string(),
   aliveCount: z.number(),
+  // HS-9384 (docs/121 §121.7) — codex app-server drive state. Optional so a status
+  // response from an older server still validates during an upgrade window.
+  codexAppServerEnabled: z.boolean().optional(),
+  codexAppServerFailed: z.boolean().optional(),
 });
 export type ChannelStatus = z.infer<typeof ChannelStatusSchema>;
 
@@ -127,6 +131,16 @@ export async function enableChannel(): Promise<OkResponse> {
 /** POST `/channel/disable` → turn the channel off for every project. */
 export async function disableChannel(): Promise<OkResponse> {
   return apiCall(OkResponseSchema, '/channel/disable', { method: 'POST' });
+}
+
+/** HS-9384 (docs/121 §121.7) — flip the machine-global codex app-server drive toggle.
+ *  Disabling kills live driven sessions; enabling clears handshake-failure flags. */
+export const CodexAppServerToggleResponseSchema = z.object({ ok: z.boolean(), enabled: z.boolean() });
+export async function setCodexAppServerEnabled(enabled: boolean): Promise<z.infer<typeof CodexAppServerToggleResponseSchema>> {
+  return apiCall(CodexAppServerToggleResponseSchema, '/channel/codex-app-server', {
+    method: 'POST',
+    body: { enabled },
+  });
 }
 
 /** GET `/channel/heartbeat-status` → busy/idle updates after the client's `since`

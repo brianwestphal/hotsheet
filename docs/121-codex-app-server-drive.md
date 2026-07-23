@@ -1,6 +1,6 @@
 # 121 — Codex App-Server Persistent Drive
 
-> **Status: CORE DRIVE SHIPPED (HS-9383, 2026-07-23); toggle/gating (HS-9384) + Commands Log transcript (HS-9385) + daemon transport (HS-9388) pending.** Follow-up to HS-9380 — the user-visible half of "clicking play with codex does the work invisibly in a background one-shot." **Maintainer decisions (2026-07-23):** (1) drive codex through its **`app-server` protocol** (a persistent, programmatic session that play/custom commands send user turns into) rather than terminal-PTY models; (2) treat it like the Claude Channel — an **Experimental-tab toggle, enabled by default**; (3) when disabled, **hide the play button and custom codex prompt-command buttons** (no silent fallback to the one-shot drive). §121.10 decisions (2026-07-23): **O1 queue+coalesce**, **O3 manual-only thread reset**, **O4 overlay approvals ON by default**.
+> **Status: CORE DRIVE (HS-9383) + TOGGLE/GATING (HS-9384) SHIPPED, 2026-07-23; Commands Log transcript (HS-9385) + daemon transport (HS-9388) pending.** Follow-up to HS-9380 — the user-visible half of "clicking play with codex does the work invisibly in a background one-shot." **Maintainer decisions (2026-07-23):** (1) drive codex through its **`app-server` protocol** (a persistent, programmatic session that play/custom commands send user turns into) rather than terminal-PTY models; (2) treat it like the Claude Channel — an **Experimental-tab toggle, enabled by default**; (3) when disabled, **hide the play button and custom codex prompt-command buttons** (no silent fallback to the one-shot drive). §121.10 decisions (2026-07-23): **O1 queue+coalesce**, **O3 manual-only thread reset**, **O4 overlay approvals ON by default**.
 >
 > Shipped shape: `src/codexAppServerMapping.ts` (pure protocol core) + `src/codexAppServer.ts` (per-project session manager — lazy spawn, `thread/resume` from `<dataDir>/codex-app-server.json`, queue+coalesce, busy/done, §47 approval bridge via `acpPermissionBridge`, allow-rules auto-allow, `turn/interrupt`, crash/shutdown teardown); the `mcpHooksAgents.ts` codex descriptor now points at it and the §115.6a one-shot exec drive (`codexDrive.ts`) is retired.
 >
@@ -146,21 +146,31 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
   Follow-up: offer the daemon UDS transport in the drive so external
   app-server UIs can watch the driven thread.
 
-## 121.7 Settings + UI gating (maintainer-decided)
+## 121.7 Settings + UI gating (SHIPPED, HS-9384)
 
 Treated like the Claude Channel (§12):
 
-- **Experimental tab toggle** — "Codex app-server drive", stored machine-global
-  in `~/.hotsheet/config.json` (like `channelEnabled`), **default ON**.
-- **Disabled ⇒ hide the drive surface** for codex-driven projects: the play
-  button and custom **prompt** command buttons are hidden (shell-command
-  buttons are unaffected). No silent fallback to the one-shot exec drive —
-  mirrors how a disabled Claude Channel hides the play section.
-- **Supersession:** when this ships, the app-server drive REPLACES the §115.6a
-  one-shot `codex exec` drive as codex's play path (`mcpHooksAgents.ts`
-  descriptor swaps `spawnRun`; the exec drive code is retired). A failed
-  handshake (version drift, protocol change) hides the surface with a Commands
-  Log warning rather than reviving the one-shot path.
+- **Experimental tab toggle** — "Codex app-server drive"
+  (`#settings-codex-app-server-enabled`), stored machine-global as
+  `codexAppServerEnabled` in `~/.hotsheet/config.json` (like `channelEnabled`),
+  **default ON** (absent ⇒ enabled). Flipping it POSTs
+  `/api/channel/codex-app-server {enabled}` — disable kills every live driven
+  session (`shutdownCodexAppServers`); enable clears handshake-failure flags so
+  the next play retries fresh.
+- **Disabled ⇒ hide the drive surface** for codex-driven projects: `initChannel`
+  applies the pure `shouldHideCodexDriveSurface(status, ai_tool)`
+  (`src/client/codexDriveGate.ts`) and hides the play section, which also hides
+  custom **prompt** command buttons via `isCommandVisible` (shell-command
+  buttons are unaffected). The drive is gated server-side too
+  (`spawnCodexAppServerRun` refuses when disabled). No silent fallback to the
+  one-shot exec drive.
+- **Handshake-failure degradation:** a failed `initialize`/thread setup marks
+  the project (`hasCodexAppServerHandshakeFailed`), `GET /channel/status`
+  surfaces `codexAppServerEnabled` + `codexAppServerFailed`, the client hides
+  the surface, and the status route writes ONE Commands Log warning (with the
+  retry hint: toggle off/on). A healthy boot clears the flag.
+- **Supersession:** shipped — the `mcpHooksAgents.ts` descriptor's `spawnRun`
+  is `spawnCodexAppServerRun` and the exec drive code is retired (HS-9383).
 
 ## 121.8 Out of scope
 

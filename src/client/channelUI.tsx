@@ -5,6 +5,7 @@ import { getErrorMessage } from '../utils/errorMessage.js';
 import { deriveDefaultTransport } from './agentBackend.js';
 import { agentDisplayName } from './agentName.js';
 import { channelStore } from './channelStore.js';
+import { shouldHideCodexDriveSurface } from './codexDriveGate.js';
 import { TIMERS } from './constants/timers.js';
 import { isDemoMode } from './demoMode.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -519,7 +520,7 @@ async function handleCleanupConnections(btn: HTMLButtonElement): Promise<void> {
 }
 
 export async function initChannel() {
-  let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number } | null = null;
+  let status: { enabled: boolean; alive: boolean; versionMismatch?: boolean; aliveCount?: number; codexAppServerEnabled?: boolean; codexAppServerFailed?: boolean } | null = null;
   try {
     status = await getChannelStatus();
   } catch { /* endpoint may not exist yet */ }
@@ -565,6 +566,18 @@ export async function initChannel() {
   const autoRow = byIdOrNull('sidebar-worker-auto');
   const workerActionsRow = byIdOrNull('sidebar-worker-actions');
   if (!status.enabled) {
+    section.style.display = 'none';
+    if (autoRow) autoRow.style.display = 'none';
+    if (workerActionsRow) workerActionsRow.style.display = 'none';
+    setChannelAlive(false);
+    stopPermissionPolling();
+    renderChannelCommands(); // Still render shell commands
+    return;
+  }
+  // HS-9384 (docs/121 §121.7) — a codex project whose app-server drive is toggled
+  // off (or whose handshake failed) hides the SAME surface: play button + prompt
+  // commands (via isCommandVisible seeing the hidden section); shell buttons stay.
+  if (shouldHideCodexDriveSurface(status, state.settings.ai_tool)) {
     section.style.display = 'none';
     if (autoRow) autoRow.style.display = 'none';
     if (workerActionsRow) workerActionsRow.style.display = 'none';

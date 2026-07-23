@@ -33,6 +33,7 @@ import {
   threadIdFromResponse,
 } from './codexAppServerMapping.js';
 import { readFileSettings } from './file-settings.js';
+import { readGlobalConfig } from './global-config.js';
 import { findMatchingAllowRule, parseAllowRules } from './permissionAllowRules.js';
 import { getProjectSecret } from './secret-file.js';
 
@@ -40,6 +41,27 @@ import { getProjectSecret } from './secret-file.js';
  *  now ON (absent ⇒ overlay); explicit `false` ⇒ auto-approve in the bridge. */
 export function codexInteractivePermissions(dataDir: string): boolean {
   return readFileSettings(dataDir).codex_interactive_permissions !== false;
+}
+
+/** HS-9384 (docs/121 §121.7) — the machine-global Experimental toggle, DEFAULT ON
+ *  (absent ⇒ enabled, like `channelEnabled`'s treatment of the Claude Channel). */
+export function isCodexAppServerEnabled(): boolean {
+  return readGlobalConfig().codexAppServerEnabled !== false;
+}
+
+/** HS-9384 — projects whose app-server HANDSHAKE failed (protocol/version drift).
+ *  The status route surfaces this so the client hides the drive surface, and logs a
+ *  Commands Log warning; cleared on re-enable / server restart. */
+const handshakeFailed = new Set<string>();
+
+export function hasCodexAppServerHandshakeFailed(dataDir: string): boolean {
+  return handshakeFailed.has(dataDir);
+}
+
+/** Clear failure flags (all when `dataDir` omitted) — a toggle re-enable retries fresh. */
+export function clearCodexAppServerFailures(dataDir?: string): void {
+  if (dataDir === undefined) handshakeFailed.clear();
+  else handshakeFailed.delete(dataDir);
 }
 
 type HeartbeatState = 'busy' | 'idle' | 'heartbeat';
@@ -105,6 +127,9 @@ const sessions = new Map<string, Session>();
  * turn when idle. Returns false only when the child could not be spawned.
  */
 export function spawnCodexAppServerRun(dataDir: string, serverPort: number, content: string, deps: CodexAppServerDeps = {}): boolean {
+  // HS-9384 — the Experimental toggle gates the drive server-side too (the client
+  // hides the buttons, but a stale client / direct trigger must not spawn either).
+  if (!isCodexAppServerEnabled()) return false;
   const existing = sessions.get(dataDir);
   let session: Session;
   if (existing === undefined || existing.finished) {
@@ -195,7 +220,13 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
   proc.stdout?.on('data', (chunk: Buffer | string) => { onStdout(session, typeof chunk === 'string' ? chunk : chunk.toString('utf-8')); });
   proc.on('error', () => { teardown(session, 'spawn-error'); });
   proc.on('exit', () => { teardown(session, 'process-exit'); });
-  void bootSession(session).catch(() => { teardown(session, 'handshake-failed'); });
+  void bootSession(session).catch(() => {
+    // HS-9384 — a failed handshake (initialize/thread setup) marks the project so
+    // the status route can surface it (client hides the drive + a Commands Log
+    // warning is written there, in project context). No one-shot fallback.
+    handshakeFailed.add(dataDir);
+    teardown(session, 'handshake-failed');
+  });
   return session;
 }
 
@@ -225,6 +256,7 @@ async function bootSession(session: Session): Promise<void> {
   }
   session.threadId = threadId;
   session.phase = 'idle';
+  handshakeFailed.delete(session.dataDir); // a healthy boot clears any stale failure flag
   if (session.queue.length > 0) void startNextTurn(session);
 }
 

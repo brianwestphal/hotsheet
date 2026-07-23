@@ -7,6 +7,7 @@ import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, r
 import { appendMainServerEvent } from '../channelLog.js';
 import { disconnectMainConnections, listAliveEntries, mainConnections } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
+import { clearCodexAppServerFailures, hasCodexAppServerHandshakeFailed, isCodexAppServerEnabled, shutdownCodexAppServers } from '../codexAppServer.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import { closeOpenTicketIntervalsForProject } from '../db/ticketWorkIntervals.js';
@@ -19,7 +20,7 @@ import { PendingPermissionSchema } from '../schemas.js';
 import { flushPendingSyncs } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
-import { ChannelHeartbeatSchema, ChannelTriggerSchema, parseBody, PermissionRespondSchema } from './validation.js';
+import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexAppServerToggleSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
@@ -144,7 +145,45 @@ channelRoutes.get('/channel/status', async (c) => {
       lastMultiConnSignature.delete(dataDir);
     }
   }
-  return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount });
+  // HS-9384 (docs/121 §121.7) — codex app-server drive state: the machine-global
+  // Experimental toggle + a per-project handshake-failure flag. The client hides
+  // the play/prompt surface for codex projects when either says no. A newly
+  // observed failure gets ONE Commands Log warning (written here — project
+  // context — because the session manager runs outside any request).
+  const codexAppServerEnabled = isCodexAppServerEnabled();
+  const codexAppServerFailed = hasCodexAppServerHandshakeFailed(dataDir);
+  if (codexAppServerFailed && !loggedCodexHandshakeFailures.has(dataDir)) {
+    loggedCodexHandshakeFailures.add(dataDir);
+    addLogEntry('trigger', 'incoming', 'Codex app-server handshake failed — drive hidden',
+      'The codex app-server session could not initialize (protocol/version drift or codex not runnable). The play button and codex prompt commands are hidden. Toggle Settings → Experimental → "Codex app-server drive" off and on to retry, and check that `codex app-server` works in a terminal.').catch(() => {});
+  } else if (!codexAppServerFailed) {
+    loggedCodexHandshakeFailures.delete(dataDir);
+  }
+  return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount, codexAppServerEnabled, codexAppServerFailed });
+});
+
+/** HS-9384 — dedup so the polled status route logs a handshake failure once. */
+const loggedCodexHandshakeFailures = new Set<string>();
+
+/**
+ * HS-9384 (docs/121 §121.7) — flip the machine-global codex app-server drive toggle.
+ * Disabling kills every live driven session (no one-shot fallback — the client hides
+ * the drive surface); enabling clears handshake-failure flags so the next play
+ * retries fresh.
+ */
+channelRoutes.post('/channel/codex-app-server', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(CodexAppServerToggleSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  writeGlobalConfig({ codexAppServerEnabled: parsed.data.enabled });
+  if (parsed.data.enabled) {
+    clearCodexAppServerFailures();
+    loggedCodexHandshakeFailures.clear();
+  } else {
+    shutdownCodexAppServers();
+  }
+  notifyChange();
+  return c.json({ ok: true, enabled: parsed.data.enabled });
 });
 
 /** HS-8948 — per-dataDir dedup of the multi-connection diagnostic log so the

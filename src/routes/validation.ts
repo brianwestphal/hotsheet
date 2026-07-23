@@ -198,6 +198,11 @@ export const ChannelTriggerSchema = z.object({
   target: ChannelTriggerTargetSchema.optional(),
 });
 
+/** HS-9384 — flip the machine-global codex app-server drive toggle (docs/121 §121.7). */
+export const CodexAppServerToggleSchema = z.object({
+  enabled: z.boolean(),
+});
+
 export const PermissionRespondSchema = z.object({
   request_id: z.string(),
   behavior: z.enum(['allow', 'deny']),
@@ -318,6 +323,9 @@ export type SecretKeyMeta = z.infer<typeof SecretKeyMetaSchema>;
 
 export const GlobalConfigSchema = z.object({
   channelEnabled: z.boolean().optional(),
+  /** HS-9384 (docs/121 §121.7) — the codex app-server drive toggle. Absent ⇒ ENABLED
+   *  (default ON, like an experimental feature the user hasn't turned off). */
+  codexAppServerEnabled: z.boolean().optional(),
   shareTotalSeconds: z.number().optional(),
   shareLastPrompted: z.string().optional(),
   shareAccepted: z.boolean().optional(),

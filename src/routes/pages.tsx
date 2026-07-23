@@ -1151,6 +1151,18 @@ pageRoutes.get('/', (c) => {
                   </div>
                 </div>
               </div>
+              {/* HS-9384 (docs/121 §121.7) — the codex app-server drive toggle.
+                  Machine-global (`~/.hotsheet/config.json` `codexAppServerEnabled`),
+                  DEFAULT ON. Disabled ⇒ codex projects hide the play button +
+                  prompt-command buttons (shell buttons unaffected) — no one-shot
+                  fallback. */}
+              <div className="settings-field" style="margin-top:16px">
+                <label className="settings-checkbox-label">
+                  <input type="checkbox" id="settings-codex-app-server-enabled" />
+                  Codex app-server drive <span className="global-setting-badge">Global Setting</span>
+                </label>
+                <span className="settings-hint">Drive Codex projects through a persistent <code>codex app-server</code> session (play + prompt commands share one conversation with approvals in the permission popup). On by default. When off, the play button and Codex prompt commands are hidden for Codex projects.</span>
+              </div>
               {/* HS-9222 (docs/110 §110.7 P2) — AI Review Notes inducement toggle
                   (`aiReviewNotes`). Scope-aware Shared/Local (registered in
                   `settingsScope.tsx` SCOPED_FIELDS); when on, the worklist induces

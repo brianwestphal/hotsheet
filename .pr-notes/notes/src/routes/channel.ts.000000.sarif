@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwvlo4cz7euh6wy",
+          "message": {
+            "text": "The handshake-failure Commands Log warning is written by the STATUS ROUTE (project request context), not by `codexAppServer.ts` where the failure is detected — `addLogEntry` resolves the project DB from request context, and the session manager runs outside any request, so logging there could misattribute the entry in a multi-project server. The per-dataDir dedup set mirrors `lastMultiConnSignature` one screen up; both flag-clear paths (healthy boot in `codexAppServer.ts`, toggle re-enable in the route below) also clear the dedup so a RECURRING failure logs again.\n",
+            "markdown": "The handshake-failure Commands Log warning is written by the STATUS ROUTE (project request context), not by `codexAppServer.ts` where the failure is detected — `addLogEntry` resolves the project DB from request context, and the session manager runs outside any request, so logging there could misattribute the entry in a multi-project server. The per-dataDir dedup set mirrors `lastMultiConnSignature` one screen up; both flag-clear paths (healthy boot in `codexAppServer.ts`, toggle re-enable in the route below) also clear the dedup so a RECURRING failure logs again.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/routes/channel.ts"
+                },
+                "region": {
+                  "startLine": 145,
+                  "endLine": 158,
+                  "snippet": {
+                    "text": "      lastMultiConnSignature.delete(dataDir);\n    }\n  }\n  // HS-9384 (docs/121 §121.7) — codex app-server drive state: the machine-global\n  // Experimental toggle + a per-project handshake-failure flag. The client hides\n  // the play/prompt surface for codex projects when either says no. A newly\n  // observed failure gets ONE Commands Log warning (written here — project\n  // context — because the session manager runs outside any request).\n  const codexAppServerEnabled = isCodexAppServerEnabled();\n  const codexAppServerFailed = hasCodexAppServerHandshakeFailed(dataDir);\n  if (codexAppServerFailed && !loggedCodexHandshakeFailures.has(dataDir)) {\n    loggedCodexHandshakeFailures.add(dataDir);\n    addLogEntry('trigger', 'incoming', 'Codex app-server handshake failed — drive hidden',\n      'The codex app-server session could not initialize (protocol/version drift or codex not runnable). The play button and codex prompt commands are hidden. Toggle Settings → Experimental → \"Codex app-server drive\" off and on to retry, and check that `codex app-server` works in a terminal.').catch(() => {});"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9384"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "af978ab6c88055c5a2b1f33ba08d03e5"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "0ef0ef304e5d8fc2bf8889037398395ce144ce23",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

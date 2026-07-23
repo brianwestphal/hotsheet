@@ -10,9 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { _resetAcpPermissionsForTesting, pendingAcpPermissionForSecret, resolveAcpPermission } from './acp/acpPermissionBridge.js';
 import {
   _resetCodexAppServersForTesting,
+  clearCodexAppServerFailures,
   type CodexAppServerDeps,
   codexInteractivePermissions,
+  hasCodexAppServerHandshakeFailed,
   interruptCodexAppServerTurn,
+  isCodexAppServerEnabled,
   readPersistedThreadId,
   spawnCodexAppServerRun,
 } from './codexAppServer.js';
@@ -329,5 +332,81 @@ describe('interrupt + crash', () => {
   it('readPersistedThreadId returns null on a corrupt state file', () => {
     writeFileSync(join(dataDir, 'codex-app-server.json'), 'not json', 'utf-8');
     expect(readPersistedThreadId(dataDir)).toBeNull();
+  });
+});
+
+describe('HS-9384 — Experimental toggle + handshake-failure degradation', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
+    vi.stubEnv('HOTSHEET_HOME', home);
+    clearCodexAppServerFailures();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('isCodexAppServerEnabled defaults ON (absent) and honors an explicit false', () => {
+    expect(isCodexAppServerEnabled()).toBe(true);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
+    expect(isCodexAppServerEnabled()).toBe(false);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: true }), 'utf-8');
+    expect(isCodexAppServerEnabled()).toBe(true);
+  });
+
+  it('spawnCodexAppServerRun refuses to spawn when the toggle is off (no one-shot fallback)', () => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
+    const fake = scriptedAppServer();
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(false);
+    expect(fake.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('a failed initialize marks the project handshake-failed, clears busy; clearing the flag retries fresh', async () => {
+    // A fake that ERRORS the initialize handshake.
+    const stdout = new EventEmitter();
+    const proc = Object.assign(new EventEmitter(), {
+      stdin: {
+        write: (s: string) => {
+          const msg = JSON.parse(s) as { id?: unknown; method?: string };
+          if (msg.method === 'initialize') {
+            stdout.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: 'unsupported protocol' } }) + '\n'));
+          }
+        },
+      },
+      stdout,
+      kill: vi.fn(),
+    });
+    const spawnFn = vi.fn<SpawnFn>(() => proc as unknown as ChildProcess);
+    const postHeartbeat = vi.fn();
+    const signalDone = vi.fn();
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn, postHeartbeat, signalDone })).toBe(true);
+    await flush();
+    expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(true);
+    expect(heartbeats(postHeartbeat)).toContain('idle'); // busy can't stick
+    expect(signalDone).toHaveBeenCalled();
+
+    clearCodexAppServerFailures(); // the toggle re-enable path
+    expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(false);
+  });
+
+  it('a healthy boot clears a stale handshake-failure flag', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    // Simulate a prior failure, then a successful boot.
+    const stdoutFail = new EventEmitter();
+    const failProc = Object.assign(new EventEmitter(), {
+      stdin: { write: (s: string) => {
+        const msg = JSON.parse(s) as { id?: unknown; method?: string };
+        if (msg.method === 'initialize') stdoutFail.emit('data', Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { message: 'nope' } }) + '\n'));
+      } },
+      stdout: stdoutFail, kill: vi.fn(),
+    });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: vi.fn<SpawnFn>(() => failProc as unknown as ChildProcess), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(true);
+
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(false);
   });
 });
