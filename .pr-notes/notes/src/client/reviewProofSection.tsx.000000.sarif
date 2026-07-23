@@ -127,6 +127,69 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrxawpqopr3chx5t",
+          "message": {
+            "text": "Root cause of the stale-section bug: the cache stored only a JSON signature, and the unchanged-guard accepted `container.childElementCount > 0` as proof the section was already painted — but on a ticket→ticket switch (which never passes through `clearReviewProof`) the non-empty container held the PREVIOUS ticket's DOM, so a revisit with unchanged data skipped the repaint and left the wrong ticket's section showing. Fix mirrors `ticketTelemetryStats.tsx`: cache the data itself and, on switch, repaint the new ticket's cached content immediately (or clear when unseen), making the guard's non-empty check refer to the correct ticket's DOM by construction.",
+            "markdown": "Root cause of the stale-section bug: the cache stored only a JSON signature, and the unchanged-guard accepted `container.childElementCount > 0` as proof the section was already painted — but on a ticket→ticket switch (which never passes through `clearReviewProof`) the non-empty container held the PREVIOUS ticket's DOM, so a revisit with unchanged data skipped the repaint and left the wrong ticket's section showing. Fix mirrors `ticketTelemetryStats.tsx`: cache the data itself and, on switch, repaint the new ticket's cached content immediately (or clear when unseen), making the guard's non-empty check refer to the correct ticket's DOM by construction."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/reviewProofSection.tsx"
+                },
+                "region": {
+                  "startLine": 290,
+                  "endLine": 305,
+                  "snippet": {
+                    "text": " * Fetch + render the review-proof section for `ticketNumber`. Repaints only when\n * the data changed (a stable signature over the notes) so expanded rows survive a\n * background reload; skips the repaint entirely when the user has switched tickets\n * mid-fetch. A network hiccup keeps whatever's shown.\n */\nexport async function loadAndRenderReviewProof(ticketNumber: string): Promise<void> {\n  const container = byIdOrNull('detail-review-proof');\n  if (container === null) return;\n  const switching = currentTicket !== ticketNumber;\n  currentTicket = ticketNumber;\n  if (switching) {\n    // HS-9402 — a direct ticket→ticket switch never goes through clearReviewProof,\n    // so the container may still hold the PREVIOUS ticket's section. Repaint the\n    // new ticket's cached content immediately when we have it, else clear — the\n    // old `childElementCount > 0` unchanged-guard below would otherwise accept the\n    // stale DOM as \"already painted\" and leave the wrong ticket's section showing."
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9402"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "ff2d12282236d04150d66d08ff5ca9b9"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "c02f167d7034f42f8867b3a786a0dd5bcb48d24c",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

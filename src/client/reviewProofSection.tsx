@@ -26,7 +26,12 @@ import { getActiveProject } from './state.js';
  * block nor collapses a row the user just expanded.
  */
 
-const sigCache = new Map<string, string>();
+/** HS-9402 — cache the DATA (not just a signature) per ticket, mirroring
+ *  `ticketTelemetryStats.tsx`: a ticket switch repaints the new ticket's cached
+ *  content immediately (or clears when unseen), so the previous ticket's section
+ *  can never linger under the new ticket. */
+interface CachedProof { sig: string; notes: ReviewProofNote[]; commits: TicketCommitsResponse | null }
+const proofCache = new Map<string, CachedProof>();
 let currentTicket: string | null = null;
 
 /** Basename of an artifact URI (`.pr-notes/artifacts/shot.png` → `shot.png`). */
@@ -292,7 +297,16 @@ export async function loadAndRenderReviewProof(ticketNumber: string): Promise<vo
   if (container === null) return;
   const switching = currentTicket !== ticketNumber;
   currentTicket = ticketNumber;
-  if (switching && !sigCache.has(ticketNumber)) container.replaceChildren();
+  if (switching) {
+    // HS-9402 — a direct ticket→ticket switch never goes through clearReviewProof,
+    // so the container may still hold the PREVIOUS ticket's section. Repaint the
+    // new ticket's cached content immediately when we have it, else clear — the
+    // old `childElementCount > 0` unchanged-guard below would otherwise accept the
+    // stale DOM as "already painted" and leave the wrong ticket's section showing.
+    const cached = proofCache.get(ticketNumber);
+    if (cached !== undefined) render(container, cached.notes, cached.commits);
+    else container.replaceChildren();
+  }
 
   // HS-9393 / HS-9398 — the two fetches degrade INDEPENDENTLY: a commits failure
   // (older server, non-repo) keeps the notes-only view, and a notes failure keeps
@@ -307,13 +321,14 @@ export async function loadAndRenderReviewProof(ticketNumber: string): Promise<vo
   if (currentTicket !== ticketNumber) return; // switched away mid-fetch
 
   const sig = JSON.stringify({ notes, commits });
-  if (sigCache.get(ticketNumber) === sig && container.childElementCount > 0) return; // unchanged — preserve expansions
-  sigCache.set(ticketNumber, sig);
+  const prev = proofCache.get(ticketNumber);
+  proofCache.set(ticketNumber, { sig, notes, commits });
+  if (prev?.sig === sig && container.childElementCount > 0) return; // unchanged — preserve expansions
   render(container, notes, commits);
 }
 
 /** Clear the section on detail close so a reopen of a DIFFERENT ticket can't
- *  briefly show this one's proof. The signature cache is kept so a revisit repaints
+ *  briefly show this one's proof. The data cache is kept so a revisit repaints
  *  instantly without a flash. */
 export function clearReviewProof(): void {
   byIdOrNull('detail-review-proof')?.replaceChildren();
@@ -322,6 +337,6 @@ export function clearReviewProof(): void {
 
 /** Test hook — reset module state. */
 export function _resetReviewProofForTests(): void {
-  sigCache.clear();
+  proofCache.clear();
   currentTicket = null;
 }

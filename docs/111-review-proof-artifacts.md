@@ -71,7 +71,10 @@ requirement), while a URL ending in the id still matches.
     Presence-gated (`:empty`-collapses); each note row shows kind + `file:line` +
     summary and **expands on click** to its attachment chips (name + image/text
     icon + description). Poll-safe: cached per ticket, repainted only on change, so
-    a background reload never flashes or collapses an expanded row.
+    a background reload never flashes or collapses an expanded row. Switch-safe
+    (HS-9402): the cache holds the data (not just a signature), so a ticket→ticket
+    switch repaints the new ticket's cached section immediately (or clears when
+    unseen) — the previous ticket's section can never linger under the new one.
     `reviewProofSection.test.ts`.
 - **Phase 3 — inline rich artifacts + Open-in-Glassbox (SHIPPED, HS-9294).**
   - **Artifact route:** `GET /tickets/review-proof/artifact?path=<repo-relative>`

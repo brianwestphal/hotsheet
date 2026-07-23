@@ -56,6 +56,49 @@ test.describe('Code Review section (HS-9393)', () => {
     expect(reviewPosts[0]).toEqual({ mode: 'range', from: 'aaa^', to: 'bbb' });
   });
 
+  test('HS-9402 — switching tickets (incl. revisits) repaints the section for the selected ticket', async ({ page }) => {
+    // Per-ticket mock: every ticket gets two groups whose subjects embed the
+    // requested ticket number, so the chooser's option text identifies WHOSE
+    // section is currently painted.
+    await page.route('**/api/tickets/*/commits*', (route) => {
+      const m = /tickets\/([^/]+)\/commits/.exec(route.request().url());
+      const num = m ? decodeURIComponent(m[1]) : '?';
+      return route.fulfill({ json: {
+        groups: [
+          { from: 'a^', to: 'b', count: 1, subjects: [`${num}: first group`], earliestDate: '2026-07-22T10:00:00Z', latestDate: '2026-07-22T10:00:00Z' },
+          { from: 'c^', to: 'd', count: 1, subjects: [`${num}: second group`], earliestDate: '2026-07-23T10:00:00Z', latestDate: '2026-07-23T10:00:00Z' },
+        ],
+        span: null, dirty: false, ticketStatus: 'completed',
+      } });
+    });
+
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('.draft-input').fill('Switch ticket A');
+    await page.locator('.draft-input').press('Enter');
+    const rowA = page.locator('.ticket-row[data-id]').filter({ has: page.locator('.ticket-title-input[value="Switch ticket A"]') });
+    await expect(rowA).toBeVisible({ timeout: 5000 });
+    const numA = (await rowA.locator('.ticket-number').textContent())?.trim() ?? '';
+    await page.locator('.draft-input').fill('Switch ticket B');
+    await page.locator('.draft-input').press('Enter');
+    const rowB = page.locator('.ticket-row[data-id]').filter({ has: page.locator('.ticket-title-input[value="Switch ticket B"]') });
+    await expect(rowB).toBeVisible({ timeout: 5000 });
+    const numB = (await rowB.locator('.ticket-number').textContent())?.trim() ?? '';
+
+    const firstOption = page.locator('#detail-review-proof .code-review-chooser-option').first();
+    // A → B is the plain-switch path; B → A → B revisits hit the per-ticket cache
+    // (the HS-9402 stale-content path: an unchanged cached ticket + a non-empty
+    // container holding the OTHER ticket's section used to skip the repaint).
+    await rowA.locator('.ticket-number').click();
+    await expect(firstOption).toContainText(`${numA}: first group`, { timeout: 5000 });
+    await rowB.locator('.ticket-number').click();
+    await expect(firstOption).toContainText(`${numB}: first group`, { timeout: 5000 });
+    await rowA.locator('.ticket-number').click();
+    await expect(firstOption).toContainText(`${numA}: first group`, { timeout: 5000 });
+    await rowB.locator('.ticket-number').click();
+    await expect(firstOption).toContainText(`${numB}: first group`, { timeout: 5000 });
+  });
+
   test('a single linear group reviews directly via range mode', async ({ page }) => {
     const reviewPosts: unknown[] = [];
     await page.route('**/api/tickets/*/commits*', (route) => route.fulfill({

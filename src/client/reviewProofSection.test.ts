@@ -234,6 +234,57 @@ describe('reviewProofSection (HS-9293)', () => {
   });
 });
 
+// HS-9402 — switching tickets must never leave the previous ticket's section
+// showing. A direct ticket→ticket switch doesn't go through clearReviewProof, and
+// the old signature-only cache accepted the stale DOM as "already painted" when
+// the new ticket's data was cached and unchanged.
+describe('HS-9402 — ticket switches repaint (no stale section)', () => {
+  const noteFor = (t: string): ReviewProofNote => note({ summary: `summary for ${t}`, file: `src/${t}.ts` });
+
+  beforeEach(() => {
+    getReviewProof.mockImplementation((t) => Promise.resolve({ notes: [noteFor(t)] }));
+  });
+
+  it('revisiting a previously-seen ticket with unchanged data replaces the other ticket\'s content', async () => {
+    await loadAndRenderReviewProof('HS-1'); // seen + cached
+    await loadAndRenderReviewProof('HS-2');
+    expect(container().querySelector('.review-proof-summary')?.textContent).toBe('summary for HS-2');
+    // The bug: HS-1's sig is cached + unchanged, and the container is non-empty
+    // (holding HS-2's DOM) — the unchanged-guard used to skip the repaint.
+    await loadAndRenderReviewProof('HS-1');
+    expect(container().querySelector('.review-proof-summary')?.textContent).toBe('summary for HS-1');
+  });
+
+  it('switching to an unseen ticket clears the container before the fetch resolves', async () => {
+    await loadAndRenderReviewProof('HS-1');
+    expect(container().childElementCount).toBeGreaterThan(0);
+    let resolve!: (v: { notes: ReviewProofNote[] }) => void;
+    getReviewProof.mockImplementation(() => new Promise((r) => { resolve = r; }));
+    const p = loadAndRenderReviewProof('HS-2');
+    expect(container().childElementCount).toBe(0); // no stale HS-1 content during the fetch
+    resolve({ notes: [noteFor('HS-2')] });
+    await p;
+    expect(container().querySelector('.review-proof-summary')?.textContent).toBe('summary for HS-2');
+  });
+
+  it('switching to a cached ticket repaints its cached content before the fetch resolves', async () => {
+    await loadAndRenderReviewProof('HS-1');
+    await loadAndRenderReviewProof('HS-2');
+    getReviewProof.mockImplementation(() => new Promise(() => { /* never resolves */ }));
+    void loadAndRenderReviewProof('HS-1');
+    expect(container().querySelector('.review-proof-summary')?.textContent).toBe('summary for HS-1');
+  });
+
+  it('a same-ticket reload still preserves an expanded row (poll-safe guard intact)', async () => {
+    await loadAndRenderReviewProof('HS-1');
+    container().querySelector<HTMLElement>('.review-proof-note-head')!.click();
+    const detailBefore = container().querySelector<HTMLElement>('.review-proof-note-detail')!;
+    await loadAndRenderReviewProof('HS-1');
+    expect(container().querySelector<HTMLElement>('.review-proof-note-detail')).toBe(detailBefore);
+    expect(detailBefore.hasAttribute('hidden')).toBe(false);
+  });
+});
+
 // HS-9398 (docs/122 §122.3) — the section must not require `.pr-notes/` or a
 // working review-proof endpoint: a notes-fetch failure degrades to commits-only.
 describe('HS-9398 — notes-fetch failure keeps the commits-only view', () => {
