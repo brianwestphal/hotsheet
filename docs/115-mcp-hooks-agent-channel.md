@@ -52,7 +52,16 @@ The permission hook installs via a `.agents/hooks.json` PreToolUse entry that sh
 - **Managed instructions (HS-9322)** — `aiInstructionsTools.ts` targets `AGENTS.md` for `antigravity` (agy reads AGENTS.md/GEMINI.md/.agents/rules — the AGENTS.md standard; also benefits Codex).
 - **Commands Log labels** already reflect `ai_tool` via `agentDisplayName` (HS-9313).
 
-## 115.6a Codex — the second MCP+hooks agent (SHIPPED, HS-9369)
+## 115.6a Codex — the second MCP+hooks agent (HS-9369; ⚠ one-shot drive SUPERSEDED by docs/121)
+
+> **HS-9383 (2026-07-23):** the `codex exec --json` one-shot drive below is **retired** —
+> codex now rides the persistent app-server session drive
+> ([121-codex-app-server-drive.md](121-codex-app-server-drive.md)): `codexDrive.ts` is
+> deleted, the `mcpHooksAgents.ts` descriptor's `spawnRun` is `spawnCodexAppServerRun`,
+> and approvals reach the §47 overlay through the app-server protocol (no hooks / bypass
+> flags for driven sessions — the HS-9359 `.codex/hooks.json` machinery remains only for
+> manual `codex --enable hooks` runs). The **config write** (`src/codex.ts`) and the
+> AGENTS.md/skills wiring are unchanged and still current. Historical record below.
 
 Codex (`codex-cli`) is MCP-native (no ACP mode — `app-server` is its own
 protocol), so per the HS-9310 pick-by-protocol principle it rides these rails.

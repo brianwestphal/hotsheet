@@ -645,8 +645,13 @@ async function setupInstanceLifecycle(actualPort: number): Promise<void> {
   // arriving between server-listening and post-startup completion still
   // hits the graceful pipeline.
   const { destroyAllTerminals } = await import('./terminals/registry.js');
+  // HS-9383 — also pre-import the codex app-server session manager so its
+  // children are killed on the same synchronous exit path (a leaked session
+  // would keep an orphan `codex app-server` + its MCP child alive).
+  const { shutdownCodexAppServers } = await import('./codexAppServer.js');
   const cleanupInstance = (): void => {
     try { destroyAllTerminals(); } catch { /* already torn down */ }
+    try { shutdownCodexAppServers(); } catch { /* already torn down */ }
     removeInstanceFile();
   };
   // HS-7931: synchronous exit handler stays as the lockfile-removal safety

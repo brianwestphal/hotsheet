@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwv1sdebrlvtwk0",
+          "message": {
+            "text": "O1 (maintainer decision 2026-07-23): a play during an active turn queues; **identical queued content coalesces** (`queue.includes(content)`), so repeated play clicks collapse to one pending worklist trigger while distinct custom prompts stay FIFO. Exact-string matching is deliberate — the worklist trigger text is stable within a session, and semantic dedup would risk dropping genuinely different prompts. `hotsheet_signal_done`/fallback done fire only when the queue drains (see `onTurnEnded`), so busy cannot clear between queued turns.\n",
+            "markdown": "O1 (maintainer decision 2026-07-23): a play during an active turn queues; **identical queued content coalesces** (`queue.includes(content)`), so repeated play clicks collapse to one pending worklist trigger while distinct custom prompts stay FIFO. Exact-string matching is deliberate — the worklist trigger text is stable within a session, and semantic dedup would risk dropping genuinely different prompts. `hotsheet_signal_done`/fallback done fire only when the queue drains (see `onTurnEnded`), so busy cannot clear between queued turns.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 107,
+                  "endLine": 124,
+                  "snippet": {
+                    "text": "export function spawnCodexAppServerRun(dataDir: string, serverPort: number, content: string, deps: CodexAppServerDeps = {}): boolean {\n  const existing = sessions.get(dataDir);\n  let session: Session;\n  if (existing === undefined || existing.finished) {\n    const created = createSession(dataDir, serverPort, deps);\n    if (created === null) return false;\n    sessions.set(dataDir, created);\n    session = created;\n  } else {\n    session = existing;\n  }\n  // O1 — queue + coalesce: an identical prompt already queued is not queued again\n  // (repeated play clicks collapse to one pending trigger); distinct prompts FIFO.\n  if (!session.queue.includes(content)) session.queue.push(content);\n  session.deps.postHeartbeat(serverPort, session.secret, 'busy'); // busy from the click\n  if (session.phase === 'idle') void startNextTurn(session);\n  return true;\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9383"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "d67076c85b2e8c91c3322014f98dfb09"
+          }
+        },
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "warning",
+          "guid": "mrwv1siz8w8c7btt",
+          "message": {
+            "text": "O4 flips the `codex_interactive_permissions` default: absent now means the **overlay is ON** (`!== false`), where the HS-9359 exec drive treated absent as auto-approve. Behavior change for existing codex projects is intentional (maintainer decision) — the spike showed `approvalPolicy: 'untrusted'` only escalates genuinely unsafe actions, so popup noise stays low. `skills.ts::ensureCodexHooks` still gates on `=== true` (hooks are legacy, only for manual `codex --enable hooks` runs); the client checkbox default was flipped in `settingsDialog.tsx` to match.\n",
+            "markdown": "O4 flips the `codex_interactive_permissions` default: absent now means the **overlay is ON** (`!== false`), where the HS-9359 exec drive treated absent as auto-approve. Behavior change for existing codex projects is intentional (maintainer decision) — the spike showed `approvalPolicy: 'untrusted'` only escalates genuinely unsafe actions, so popup noise stays low. `skills.ts::ensureCodexHooks` still gates on `=== true` (hooks are legacy, only for manual `codex --enable hooks` runs); the client checkbox default was flipped in `settingsDialog.tsx` to match.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 39,
+                  "endLine": 43,
+                  "snippet": {
+                    "text": "/** HS-9359 / HS-9383 (O4) — route codex approvals through the §47 overlay. Default is\n *  now ON (absent ⇒ overlay); explicit `false` ⇒ auto-approve in the bridge. */\nexport function codexInteractivePermissions(dataDir: string): boolean {\n  return readFileSettings(dataDir).codex_interactive_permissions !== false;\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "risk"
+            ]
+          },
+          "workItemUris": [
+            "HS-9383"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "d8423ac78a8b3d81b54dbd8fb258af51"
+          }
+        },
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwv1solgtectfo2",
+          "message": {
+            "text": "Teardown fires `idle` + fallback done ONLY when work was in flight (`phase === 'active' || queue.length > 0`) — an idle session dying (e.g. shutdown) must not emit a spurious \"Codex finished\" Commands Log entry. Pending JSON-RPC requests are rejected (not left dangling) so a mid-handshake crash surfaces as a failed boot rather than a 60s timeout, and pending overlay popups are dismissed so the §47 UI can't hang on a dead session. See also `src/cli.ts` (exit hook calls `shutdownCodexAppServers`).\n",
+            "markdown": "Teardown fires `idle` + fallback done ONLY when work was in flight (`phase === 'active' || queue.length > 0`) — an idle session dying (e.g. shutdown) must not emit a spurious \"Codex finished\" Commands Log entry. Pending JSON-RPC requests are rejected (not left dangling) so a mid-handshake crash surfaces as a failed boot rather than a 60s timeout, and pending overlay popups are dismissed so the §47 UI can't hang on a dead session. See also `src/cli.ts` (exit hook calls `shutdownCodexAppServers`).\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 342,
+                  "endLine": 365,
+                  "snippet": {
+                    "text": "    description: display.description,\n    input_preview: display.input_preview,\n    options: display.options,\n  });\n  session.pendingPermissionIds.add(request_id);\n  try {\n    const reply = await promise;\n    write(session, buildResponseLine(id, decisionFromReply(reply)));\n  } finally {\n    session.pendingPermissionIds.delete(request_id);\n  }\n}\n\nfunction request(session: Session, method: string, params: unknown, timeoutMs: number): Promise<unknown> {\n  const id = session.nextId++;\n  return new Promise<unknown>((resolve, reject) => {\n    const timer = setTimeout(() => {\n      session.pending.delete(id);\n      reject(new Error(`codex app-server: timeout waiting for ${method}`));\n    }, timeoutMs);\n    timer.unref();\n    session.pending.set(id, { resolve, reject, timer });\n    write(session, buildRequestLine(id, method, params));\n  });"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9383"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "6b382e918073f993286af1b2e22a9e66"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "a1887cefa28631018bc598b566706629064b65a1",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

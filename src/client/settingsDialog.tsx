@@ -215,7 +215,9 @@ function bindGeneralTab() {
       const tool = typeof fs.ai_tool === 'string' && fs.ai_tool !== '' ? fs.ai_tool : 'auto';
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       if (agyPermsCheckbox !== null) agyPermsCheckbox.checked = fs.antigravity_interactive_permissions === true;
-      if (codexPermsCheckbox !== null) codexPermsCheckbox.checked = fs.codex_interactive_permissions === true; // HS-9359
+      // HS-9359 / HS-9383 (docs/121 O4) — default flipped ON for the app-server
+      // drive: absent ⇒ overlay approvals; explicit false ⇒ auto-approve.
+      if (codexPermsCheckbox !== null) codexPermsCheckbox.checked = fs.codex_interactive_permissions !== false;
       revealAgyPerms(tool);
       // HS-9338 — load the drive-transport override (Local setting) into the picker.
       if (agentBackendSelect !== null) agentBackendSelect.value = agentBackendSelectValue(fs.agent_backend);

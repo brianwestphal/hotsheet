@@ -18,7 +18,7 @@
 import { ensureAntigravityMcpConfig } from './antigravity.js';
 import { spawnAgyRun } from './antigravityDrive.js';
 import { ensureCodexMcpConfig } from './codex.js';
-import { spawnCodexRun } from './codexDrive.js';
+import { spawnCodexAppServerRun } from './codexAppServer.js';
 
 /**
  * One spawn-based MCP+hooks agent. `aiTool` is the `ai_tool` id (lowercase). `binary`
@@ -42,12 +42,14 @@ const ANTIGRAVITY: McpHooksAgent = {
   ensureMcpConfig: () => { ensureAntigravityMcpConfig(); },
 };
 
-/** HS-9369 — Codex (`codex`): MCP-native (no ACP mode in codex-cli), driven via
- *  `codex exec --json` (docs/115 §115.7). The second registry proof point. */
+/** HS-9369 — Codex (`codex`): MCP-native (no ACP mode in codex-cli). The second
+ *  registry proof point. HS-9383 — the drive is now the PERSISTENT app-server
+ *  session (docs/121; supersedes the §115.6a one-shot `codex exec` drive):
+ *  play/custom commands become `turn/start` on a per-project resumed thread. */
 const CODEX: McpHooksAgent = {
   aiTool: 'codex',
   binary: 'codex',
-  spawnRun: spawnCodexRun,
+  spawnRun: spawnCodexAppServerRun,
   ensureMcpConfig: () => { ensureCodexMcpConfig(); },
 };
 
