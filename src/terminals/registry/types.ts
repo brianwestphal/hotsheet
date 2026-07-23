@@ -122,4 +122,9 @@ export interface SessionState {
   lastOutputAtMs: number | null;
   /** HS-6702 — wall-clock ms of the last chunk containing a Claude busy-spinner glyph. */
   lastSpinnerAtMs: number | null;
+  /** HS-9397 — the `resolveTerminalCommand` output this PTY launched with,
+   *  BEFORE the shell-history rewrite (`command` stores the rewritten form).
+   *  Compared against a fresh resolution to detect "the codex attach target
+   *  changed since launch" for the reattach affordance (docs/123 §123.7). */
+  resolvedCommand: string | null;
 }

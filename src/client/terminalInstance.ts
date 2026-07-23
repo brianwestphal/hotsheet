@@ -115,6 +115,11 @@ export interface TerminalInstance {
   /** True when the process has rung the bell (`\x07`) since this terminal tab
    *  was last activated. Cleared by `activateTerminal` (HS-6473). */
   hasBell: boolean;
+  /** HS-9397 (docs/123 §123.7) — server-flagged: restarting this live codex
+   *  terminal would join the project's driven app-server thread. Drives the
+   *  "Rejoin codex" header chip; seeded from `/terminal/list`'s
+   *  `codexReattach` annotation on each refresh. */
+  codexReattach: boolean;
   /** OSC 133 shell-integration state (HS-7267 / docs/26-shell-integration-osc133.md).
    *  `enabled` flips true once the first 133 escape is seen; the gutter only
    *  renders while enabled so users who haven't opted into shell integration

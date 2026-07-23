@@ -4,8 +4,10 @@ import { Hono } from 'hono';
 import { homedir } from 'os';
 
 import { CreateTerminalReqSchema } from '../api/terminal.js';
+import { codexTerminalAttachCommand } from '../codexAppServer.js';
 import { readFileSettings } from '../file-settings.js';
 import { openInFileManager } from '../open-in-file-manager.js';
+import { codexReattachAvailable } from '../terminals/codexReattach.js';
 import { DEFAULT_TERMINAL_ID, listTerminalConfigs, type TerminalConfig } from '../terminals/config.js';
 import {
   DEFAULT_EXEMPT_PROCESSES,
@@ -122,7 +124,10 @@ terminalRoutes.get('/list', (c) => {
   // HS-6702 — `lastSpinnerAtMs` + `lastOutputAtMs` let the channel-UI
   // distinguish channel-busy-but-Claude-idle from channel-busy-and-Claude-
   // working. See `containsClaudeSpinner` in `src/terminals/claudeSpinner.ts`.
-  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; currentCwd: string | null; state: TerminalState; exitCode: number | null; lastSpinnerAtMs: number | null; lastOutputAtMs: number | null })[] =>
+  // HS-9397 (docs/123 §123.7) — one per-project attach resolution feeds every
+  // entry's reattach check (the check itself no-ops when this is null).
+  const codexAttach = codexTerminalAttachCommand(dataDir);
+  const annotate = <T extends { id: string }>(items: T[]): (T & { bellPending: boolean; notificationMessage: string | null; currentCwd: string | null; state: TerminalState; exitCode: number | null; lastSpinnerAtMs: number | null; lastOutputAtMs: number | null; codexReattach: boolean })[] =>
     items.map(item => {
       const status = getTerminalStatus(secret, dataDir, item.id);
       return {
@@ -134,6 +139,8 @@ terminalRoutes.get('/list', (c) => {
         exitCode: status.exitCode,
         lastSpinnerAtMs: getLastSpinnerAtMs(secret, item.id),
         lastOutputAtMs: getLastOutputAtMs(secret, item.id),
+        // HS-9397 — restarting this live codex terminal would join the driven thread.
+        codexReattach: codexAttach !== null && codexReattachAvailable(secret, dataDir, item.id, { attachCommand: () => codexAttach }),
       };
     });
 

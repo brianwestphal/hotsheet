@@ -95,14 +95,37 @@ behavior, zero surprise. Notably:
   before any terminal attaches. No thread warming is needed: a freshly started
   daemon loads a thread's rollout from disk on `thread/resume` (live-verified,
   0.145.0).
-- **Already-open terminals** keep whatever they launched with; a terminal opened
-  before the first play stays unattached until relaunched.
+- **Already-open terminals** keep whatever they launched with until relaunched —
+  the §123.8 reattach chip surfaces when a relaunch would join the driven thread.
+
+## 123.8 Reattach affordance (SHIPPED, HS-9397)
+
+Live codex terminals whose launch no longer matches the current attach resolution
+get a **"↻ Rejoin codex"** pill in the terminal pane header (accent-outlined,
+between the cwd chip and the copy-output button). It covers both drift
+directions: a plain-`codex` terminal whose project has since gained a resumable
+driven thread, and an attached terminal stranded on an old thread after a
+§121.5 reset.
+
+- **Detection** — `codexReattachAvailable` (`src/terminals/codexReattach.ts`):
+  the session is alive with a recorded launch resolution (`resolvedCommand`,
+  captured at spawn BEFORE the shell-history rewrite), the project currently
+  emits an attach command, and a fresh `resolveTerminalCommand` (a) differs from
+  the launch and (b) **contains** that attach command — (b) scopes the signal to
+  codex-attach drift so unrelated template/config edits never light the chip.
+- **Transport** — a `codexReattach` boolean per entry on `GET /terminal/list`
+  (computed against one per-project attach resolution), seeded into the client
+  on every list refresh (drawer open / project switch / settings save).
+- **Action** — confirm dialog (relaunch kills the running TUI) → the standard
+  `POST /terminal/restart`, which re-resolves the command on spawn — no special
+  relaunch path. The chip clears optimistically; the next list refresh is
+  authoritative.
 
 ## 123.6 Limitations
 
 - A **thread reset** (§121.5 "New session") strands attached TUIs on the old thread;
-  they keep working as ordinary codex sessions on the old conversation. Relaunching
-  the terminal attaches to the new thread once it has a rollout.
+  they keep working as ordinary codex sessions on the old conversation. Once the new
+  thread has a rollout, the §123.8 chip offers the relaunch that attaches to it.
 - If a future codex removes/changes `--remote`, the terminal shows codex's own
   launch error — visible, not silent; the drive toggle (off ⇒ plain `codex`)
   is the escape hatch.
@@ -113,6 +136,4 @@ behavior, zero surprise. Notably:
 
 - **HS-9396 — SHIPPED** (daemon pre-start; folded into §123.5). Thread warming
   was investigated and found unnecessary.
-- **HS-9397** — attach/reattach affordance for live terminals: surface "driven
-  session available — reattach" when an open plain-codex terminal's project gains a
-  resumable driven thread (or its thread was reset).
+- **HS-9397 — SHIPPED** (reattach affordance; §123.8).

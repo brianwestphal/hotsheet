@@ -9332,6 +9332,24 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     // no-op — kept here so the selector exists if future theming lands.
   }
 
+  // HS-9397 (docs/123 §123.7) — "Rejoin codex" chip: a labeled accent pill
+  // (unlike the icon-only siblings) because it signals a rare, actionable
+  // state change rather than a persistent control.
+  &.terminal-reattach-btn {
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+
+    &:hover {
+      color: var(--bg);
+      background: var(--accent);
+    }
+  }
+
   // When a stop has been issued but the process is still alive, the next click
   // force-quits. Flash the button red so the escalation is obvious.
   &.is-stop-pending {

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrx77cdxgqu9590h",
+          "message": {
+            "text": "Two subtleties in the detection predicate: (1) the comparison uses the NEW `SessionState.resolvedCommand` (captured at spawn, pre-shell-history-rewrite) rather than `session.command` — the rewrite wraps the resolved command in a history-scoping shim, so comparing the rewritten form against a fresh resolution would always differ and the chip would never turn off. (2) The `fresh.includes(attach)` clause is the scope guard: \"fresh differs from launch\" alone would also fire on unrelated terminal-config/template edits; requiring the fresh resolution to contain the current attach command limits the signal to codex-attach drift in both directions (plain→attach-available and attached→stale-after-reset), including template expansions like `env X=1 <attach>`. The action side needs no new server path — `POST /terminal/restart` already re-resolves on spawn, which is exactly the relaunch semantics.\n",
+            "markdown": "Two subtleties in the detection predicate: (1) the comparison uses the NEW `SessionState.resolvedCommand` (captured at spawn, pre-shell-history-rewrite) rather than `session.command` — the rewrite wraps the resolved command in a history-scoping shim, so comparing the rewritten form against a fresh resolution would always differ and the chip would never turn off. (2) The `fresh.includes(attach)` clause is the scope guard: \"fresh differs from launch\" alone would also fire on unrelated terminal-config/template edits; requiring the fresh resolution to contain the current attach command limits the signal to codex-attach drift in both directions (plain→attach-available and attached→stale-after-reset), including template expansions like `env X=1 <attach>`. The action side needs no new server path — `POST /terminal/restart` already re-resolves on spawn, which is exactly the relaunch semantics.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/terminals/codexReattach.ts"
+                },
+                "region": {
+                  "startLine": 29,
+                  "endLine": 43,
+                  "snippet": {
+                    "text": "export function codexReattachAvailable(secret: string, dataDir: string, terminalId: string, deps: CodexReattachDeps = {}): boolean {\n  const session = sessions.get(sessionKey(secret, terminalId));\n  if (session === undefined || session.pty === null || session.resolvedCommand === null) return false;\n  const attachCommand = deps.attachCommand ?? codexTerminalAttachCommand;\n  const attach = attachCommand(dataDir);\n  if (attach === null) return false;\n  const fresh = (deps.resolve ?? resolveTerminalCommand)({\n    dataDir,\n    terminalId,\n    configOverride: session.configOverride ?? undefined,\n    codexAttachOverride: deps.attachCommand,\n  }).command;\n  return fresh !== session.resolvedCommand && fresh.includes(attach);\n}\n"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9397"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "cc1639acc99d934a9effed482372e304"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "7c652371d9b0d527c45ab89ed085f10310e88f1b",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

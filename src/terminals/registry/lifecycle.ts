@@ -67,6 +67,7 @@ export function createSession(
     hasBeenAttached: false,
     lastOutputAtMs: null,
     lastSpinnerAtMs: null,
+    resolvedCommand: null,
   };
 }
 
@@ -96,6 +97,7 @@ export function spawnIntoSession(session: SessionState, dataDir: string): void {
   session.pty = pty;
   session.startedAt = Date.now();
   session.command = finalCommand;
+  session.resolvedCommand = resolved.command; // HS-9397 — pre-rewrite, for reattach compare
   session.exitCode = null;
   // Fresh PTY — drop any OSC-scan state left from a previous process.
   session.bellScanInString = false;
