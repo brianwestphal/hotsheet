@@ -3,7 +3,7 @@ import { suppressAnimation } from './animate.js';
 import { setAppTitleFromActiveProject } from './appTitle.js';
 import { applyDetailPosition, applyDetailSize, updateDetailCategory } from './detail.js';
 import { byIdOrNull, toElement } from './dom.js';
-import { state } from './state.js';
+import { DEFAULT_LAYOUT, DEFAULT_SETTINGS, DEFAULT_SORT_BY, DEFAULT_SORT_DIR, state } from './state.js';
 import { loadTickets } from './ticketList.js';
 
 /** Load settings from the API and apply them to the app state and UI. */
@@ -37,36 +37,45 @@ export async function loadSettings() {
         ? fileResolved.ai_tool
         : 'auto';
     } catch { /* file-settings fetch failed — keep DB values */ }
-    if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
-      state.settings.detail_position = settings.detail_position;
-    }
-    if (settings.detail_visible !== '') {
-      state.settings.detail_visible = settings.detail_visible !== 'false';
-    }
-    if (settings.detail_width !== '') state.settings.detail_width = parseInt(settings.detail_width, 10) || 360;
-    if (settings.detail_height !== '') state.settings.detail_height = parseInt(settings.detail_height, 10) || 300;
-    if (settings.trash_cleanup_days !== '') state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || 3;
-    if (settings.verified_cleanup_days !== '') state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || 30;
-    if (settings.layout === 'list' || settings.layout === 'columns') state.layout = settings.layout;
-    if (settings.notify_permission === 'none' || settings.notify_permission === 'once' || settings.notify_permission === 'persistent') {
-      state.settings.notify_permission = settings.notify_permission;
-    }
-    if (settings.notify_completed === 'none' || settings.notify_completed === 'once' || settings.notify_completed === 'persistent') {
-      state.settings.notify_completed = settings.notify_completed;
-    }
-    if (settings.auto_order !== '') {
-      state.settings.auto_order = settings.auto_order !== 'false';
-    }
-    if (settings.hide_verified_column !== '') {
-      state.settings.hide_verified_column = settings.hide_verified_column === 'true';
-    }
-    // HS-7269 — defaults to true when the key is absent, so users on upgraded
-    // installs get the Phase 2 UI without touching settings.
-    if (settings.shell_integration_ui !== '') {
-      state.settings.shell_integration_ui = settings.shell_integration_ui !== 'false';
-    }
-    if (settings.sort_by) state.sortBy = settings.sort_by;
-    if (settings.sort_dir) state.sortDir = settings.sort_dir;
+    // HS-9407 — every per-project value below is assigned UNCONDITIONALLY,
+    // falling back to its `DEFAULT_SETTINGS` (or `DEFAULT_LAYOUT` / `DEFAULT_SORT_*`)
+    // value when THIS project has none. `loadSettings()` runs on every project
+    // switch (`reloadAppState`), so the pre-fix `if (settings.X !== '') …` shape
+    // silently left the PREVIOUS project's value in state for any project that
+    // never persisted its own — the same stale-carryover class as HS-8451 (app
+    // title) and HS-9406 (`ai_tool`). `unset()` is the single "this project has
+    // no value" test; anything present but unparseable also falls back.
+    const unset = (v: string | undefined): boolean => v === undefined || v === '';
+    state.settings.detail_position = settings.detail_position === 'side' || settings.detail_position === 'bottom'
+      ? settings.detail_position
+      : DEFAULT_SETTINGS.detail_position;
+    state.settings.detail_visible = unset(settings.detail_visible)
+      ? DEFAULT_SETTINGS.detail_visible
+      : settings.detail_visible !== 'false';
+    state.settings.detail_width = parseInt(settings.detail_width, 10) || DEFAULT_SETTINGS.detail_width;
+    state.settings.detail_height = parseInt(settings.detail_height, 10) || DEFAULT_SETTINGS.detail_height;
+    state.settings.trash_cleanup_days = parseInt(settings.trash_cleanup_days, 10) || DEFAULT_SETTINGS.trash_cleanup_days;
+    state.settings.verified_cleanup_days = parseInt(settings.verified_cleanup_days, 10) || DEFAULT_SETTINGS.verified_cleanup_days;
+    state.layout = settings.layout === 'list' || settings.layout === 'columns' ? settings.layout : DEFAULT_LAYOUT;
+    state.settings.notify_permission = settings.notify_permission === 'none' || settings.notify_permission === 'once' || settings.notify_permission === 'persistent'
+      ? settings.notify_permission
+      : DEFAULT_SETTINGS.notify_permission;
+    state.settings.notify_completed = settings.notify_completed === 'none' || settings.notify_completed === 'once' || settings.notify_completed === 'persistent'
+      ? settings.notify_completed
+      : DEFAULT_SETTINGS.notify_completed;
+    state.settings.auto_order = unset(settings.auto_order)
+      ? DEFAULT_SETTINGS.auto_order
+      : settings.auto_order !== 'false';
+    state.settings.hide_verified_column = unset(settings.hide_verified_column)
+      ? DEFAULT_SETTINGS.hide_verified_column
+      : settings.hide_verified_column === 'true';
+    // HS-7269 / HS-9188 — an explicit stored value wins; absent falls back to
+    // the opt-in default (OFF) rather than the previous project's choice.
+    state.settings.shell_integration_ui = unset(settings.shell_integration_ui)
+      ? DEFAULT_SETTINGS.shell_integration_ui
+      : settings.shell_integration_ui !== 'false';
+    state.sortBy = unset(settings.sort_by) ? DEFAULT_SORT_BY : settings.sort_by;
+    state.sortDir = unset(settings.sort_dir) ? DEFAULT_SORT_DIR : settings.sort_dir;
   } catch { /* use defaults */ }
 
   // Sync sort dropdown UI to loaded state
@@ -75,13 +84,15 @@ export async function loadSettings() {
 
   applyDetailPosition(state.settings.detail_position);
   applyDetailSize();
-  // Apply detail panel visibility
-  if (!state.settings.detail_visible) {
-    const panel = byIdOrNull('detail-panel');
-    const handle = byIdOrNull('detail-resize-handle');
-    if (panel) panel.style.display = 'none';
-    if (handle) handle.style.display = 'none';
-  }
+  // Apply detail panel visibility. HS-9407 — SYMMETRIC: this used to only ever
+  // hide, so switching from a project with the panel hidden to one that never
+  // persisted `detail_visible` left the panel hidden even though state now says
+  // visible (the DOM half of the same carryover). `'flex'` / `''` match what
+  // `updateDetailPanel` (detail.tsx) uses for the shown state.
+  const panel = byIdOrNull('detail-panel');
+  const handle = byIdOrNull('detail-resize-handle');
+  if (panel) panel.style.display = state.settings.detail_visible ? 'flex' : 'none';
+  if (handle) handle.style.display = state.settings.detail_visible ? '' : 'none';
 }
 
 /** Load category definitions and rebuild the UI. */

@@ -47,7 +47,9 @@ Buttons fire copy / rerun without any visual confirmation; the clipboard update 
 
 ## 32.4 Settings toggle
 
-Added field: `shell_integration_ui: boolean` in `AppSettings` (default `true`). Persistence: stored as `"true"` / `"false"` string in the existing per-project settings store (`/api/settings` PATCH). Loader handles missing keys gracefully — an upgraded install with no `shell_integration_ui` in `settings.json` reads as `true` (the default), so Phase 2 turns on automatically for existing projects.
+Added field: `shell_integration_ui: boolean` in `AppSettings` — **default OFF since HS-9188** (experimental, opt-in; see the banner in [26-shell-integration-osc133.md](26-shell-integration-osc133.md)). Persistence: stored as `"true"` / `"false"` string in the existing per-project settings store (`/api/settings` PATCH). A project with no `shell_integration_ui` in `settings.json` reads as the `DEFAULT_SETTINGS` value.
+
+> **HS-9407 (2026-07-24)** — until this fix, `loadSettings()` mapped a *missing* key to `true` (the original HS-7269 default-on behavior), which silently defeated HS-9188's flip: every project that had never touched the setting got Phase 2 turned on regardless. The loader now falls back to `DEFAULT_SETTINGS.shell_integration_ui` (OFF) like every other setting, so "opt-in" actually means opt-in. Projects that want it keep the explicit `"shell_integration_ui": "true"` they already have; anyone else re-enables it with the Settings → Terminal checkbox.
 
 UI: a checkbox under Settings → Terminal (`#settings-shell-integration-ui`) with a one-line hint explaining what the UI comprises and noting that the parser stays on.
 

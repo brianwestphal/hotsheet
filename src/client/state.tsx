@@ -269,6 +269,23 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ai_tool: 'auto', // HS-9313 — default preserves today's Claude labelling
 };
 
+/** HS-8490 (2026-05-22) — initial layout flipped from `'list'` to `'columns'` so
+ *  new installs default to the column-board view. `loadSettings` overrides it
+ *  with the persisted `layout` value when the project has one (`'list'` OR
+ *  `'columns'`), so existing users who had explicitly chosen list view keep
+ *  seeing list view. Only users with no persisted choice (genuinely new installs
+ *  OR new projects on existing installs) hit this default. The `canUseColumnView`
+ *  gate further falls back to list view for the views that don't support columns
+ *  (completed / verified / trash / backlog / archive) regardless of this. */
+export const DEFAULT_LAYOUT: 'list' | 'columns' = 'columns';
+
+/** HS-9407 — `state.sortBy` / `state.sortDir` defaults. Exported (rather than
+ *  inlined in the state literal) because `loadSettings` must RESET to them for a
+ *  project that persisted no sort, not leave the previous project's sort in
+ *  place. Same reason `DEFAULT_LAYOUT` is exported. */
+export const DEFAULT_SORT_BY = 'created';
+export const DEFAULT_SORT_DIR = 'desc';
+
 export interface AppState {
   tickets: Ticket[];
   categories: CategoryDef[];
@@ -341,19 +358,9 @@ export const state: AppState = {
   // required by the type-literal shape but immediately overwritten by
   // the `Object.defineProperty` calls after the object is created.
   view: 'all',
-  // HS-8490 (2026-05-22) — initial layout flipped from `'list'` to
-  // `'columns'` so new installs default to the column-board view.
-  // `loadSettings` overrides this with the persisted `layout` value
-  // when one exists (`'list'` OR `'columns'`), so existing users
-  // who had explicitly chosen list view keep seeing list view. Only
-  // users with no persisted choice (genuinely new installs OR new
-  // projects on existing installs) hit this new default. The
-  // `canUseColumnView` gate further falls back to list view for
-  // the views that don't support columns (completed / verified /
-  // trash / backlog / archive) regardless of this default.
-  layout: 'columns',
-  sortBy: 'created',
-  sortDir: 'desc',
+  layout: DEFAULT_LAYOUT,
+  sortBy: DEFAULT_SORT_BY,
+  sortDir: DEFAULT_SORT_DIR,
   search: '',
   settings: { ...DEFAULT_SETTINGS },
   backupPreview: null,
