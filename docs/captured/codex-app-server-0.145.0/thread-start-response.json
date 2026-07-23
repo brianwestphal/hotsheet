@@ -1,0 +1,50 @@
+{
+  "thread": {
+    "id": "019f8c9a-67ef-7993-85aa-496f9b333a4e",
+    "extra": null,
+    "sessionId": "019f8c9a-67ef-7993-85aa-496f9b333a4e",
+    "forkedFromId": null,
+    "parentThreadId": null,
+    "preview": "",
+    "ephemeral": false,
+    "historyMode": "legacy",
+    "modelProvider": "openai",
+    "createdAt": 1784770357,
+    "updatedAt": 1784770357,
+    "recencyAt": 1784770357,
+    "status": {
+      "type": "idle"
+    },
+    "path": "~/.codex/sessions/2026/07/23/rollout-2026-07-23T09-32-37-019f8c9a-67ef-7993-85aa-496f9b333a4e.jsonl",
+    "cwd": "~/.hs9382-probe-project",
+    "cliVersion": "0.145.0",
+    "source": "vscode",
+    "canAcceptDirectInput": true,
+    "threadSource": null,
+    "agentNickname": null,
+    "agentRole": null,
+    "gitInfo": null,
+    "name": null,
+    "turns": []
+  },
+  "model": "gpt-5.6-sol",
+  "modelProvider": "openai",
+  "serviceTier": null,
+  "cwd": "~/.hs9382-probe-project",
+  "runtimeWorkspaceRoots": [
+    "~/.hs9382-probe-project"
+  ],
+  "instructionSources": [],
+  "approvalPolicy": "untrusted",
+  "approvalsReviewer": "user",
+  "sandbox": {
+    "type": "workspaceWrite",
+    "writableRoots": [],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": false,
+    "excludeSlashTmp": false
+  },
+  "activePermissionProfile": null,
+  "reasoningEffort": null,
+  "multiAgentMode": "explicitRequestOnly"
+}

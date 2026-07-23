@@ -1,0 +1,35 @@
+{
+  "method": "item/commandExecution/requestApproval",
+  "id": 0,
+  "params": {
+    "threadId": "019f8c9b-9b73-7163-84fb-4104fd0b188a",
+    "turnId": "019f8c9b-9ba6-7830-9a50-71e320e7b77f",
+    "itemId": "exec-863585b8-aa37-492e-a547-7fe0742575f0",
+    "startedAtMs": 1784770443213,
+    "environmentId": "local",
+    "command": "/bin/zsh -lc 'touch ~/.hs9382-escape-probe && echo escaped-ok'",
+    "cwd": "~/.hs9382-probe-project",
+    "commandActions": [
+      {
+        "type": "unknown",
+        "command": "touch ~/.hs9382-escape-probe && echo escaped-ok"
+      }
+    ],
+    "proposedExecpolicyAmendment": [
+      "touch",
+      "~/.hs9382-escape-probe"
+    ],
+    "availableDecisions": [
+      "accept",
+      {
+        "acceptWithExecpolicyAmendment": {
+          "execpolicy_amendment": [
+            "touch",
+            "~/.hs9382-escape-probe"
+          ]
+        }
+      },
+      "cancel"
+    ]
+  }
+}

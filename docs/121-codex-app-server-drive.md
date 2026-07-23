@@ -37,12 +37,21 @@ The one caveat of every programmatic surface: the session it drives is one
 **Hot Sheet owns**, not a TUI the user launched themselves. Visibility is
 therefore a design axis of its own (§121.6).
 
-## 121.3 The app-server protocol (captured, codex-cli 0.145.0)
+## 121.3 The app-server protocol (captured + LIVE-VALIDATED, codex-cli 0.145.0)
 
-`codex app-server generate-json-schema --out <dir>` emits the full JSON Schema
-contract — the spike (§121.9) commits a captured copy as the version-pinned
-reference, the same pattern as the §115.6a captured JSONL event contract. The
-relevant surface:
+**Spike complete (HS-9382, 2026-07-23)** — the full contract is captured under
+[`docs/captured/codex-app-server-0.145.0/`](captured/codex-app-server-0.145.0/README.md)
+(schema + golden transcripts + the approval-request shape), and every §121.9
+step-1 question was live-verified: JSONL JSON-RPC framing; `turn/start`
+responds immediately (completion is notification-only);
+`thread/status/changed {active|idle}` as a clean busy signal; approvals fire
+only for genuinely escalating actions under `approvalPolicy: 'untrusted'`
+(safe commands auto-run — good default §47 UX) and answer with
+`{decision: 'accept'}`; `thread/resume` retains context across process
+restarts; `turn/interrupt` requires `{threadId, turnId}` (capture turnId from
+`turn/started`) and ends the turn `status: "interrupted"`; the driven session
+sees the global cwd-resolving `hotsheet-channel` MCP entry (24 tools) with no
+extra config. The relevant surface:
 
 - **Client → server requests:** `initialize`, `thread/start`, `thread/resume`,
   `thread/list`, `thread/read`, `turn/start`, `turn/steer`, `turn/interrupt`.
