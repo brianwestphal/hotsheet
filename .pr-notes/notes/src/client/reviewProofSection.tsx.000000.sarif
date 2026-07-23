@@ -64,6 +64,69 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwzfoujflw42rel",
+          "message": {
+            "text": "`aggregateReviewAction` is a pure exported function precisely so the button-decision matrix (single→range, single-commit→commit, interleaved→chooser+span, started-dirty→uncommitted, fallback→files, else none) is unit-tested deterministically — the section's async render races the detail-panel rebuild (the reason this section has no other e2e), so the e2e only asserts the coarse chooser-renders + range-POST path with routes installed BEFORE navigation. A single-commit group deliberately uses `mode:'commit'` not `range` from `<sha>^`: the `^` base breaks on a repo-root commit and `--commit` is the sharper single-change view.\n",
+            "markdown": "`aggregateReviewAction` is a pure exported function precisely so the button-decision matrix (single→range, single-commit→commit, interleaved→chooser+span, started-dirty→uncommitted, fallback→files, else none) is unit-tested deterministically — the section's async render races the detail-panel rebuild (the reason this section has no other e2e), so the e2e only asserts the coarse chooser-renders + range-POST path with routes installed BEFORE navigation. A single-commit group deliberately uses `mode:'commit'` not `range` from `<sha>^`: the `^` base breaks on a repo-root commit and `--commit` is the sharper single-change view.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/reviewProofSection.tsx"
+                },
+                "region": {
+                  "startLine": 191,
+                  "endLine": 215,
+                  "snippet": {
+                    "text": "}\n\n/**\n * Pure — decide the header button's behavior from the discovery result + the\n * notes' anchored files (docs/122 §122.3): one group → direct range/commit review;\n * several → chooser (+ the earliest→latest span option with its unrelated-count\n * caveat when the span exists — HEAD-interleaved case); no commits → the\n * started-and-dirty uncommitted fallback, else a files-mode aggregate over the\n * note-anchored files, else nothing.\n */\nexport function aggregateReviewAction(commits: TicketCommitsResponse | null, noteFiles: string[]): AggregateReviewAction {\n  const groups = commits?.groups ?? [];\n  if (groups.length === 1) {\n    return { kind: 'direct', label: 'Open in Glassbox', req: groupReq(groups[0]) };\n  }\n  if (groups.length > 1) {\n    const options = groups.map(g => ({ label: groupLabel(g), req: groupReq(g) }));\n    if (commits?.span != null) {\n      options.push({\n        label: `Review all, earliest→latest (includes ${String(commits.span.unrelatedCount)} unrelated commit${commits.span.unrelatedCount === 1 ? '' : 's'})`,\n        req: { mode: 'range', from: commits.span.from, to: commits.span.to },\n      });\n    }\n    return { kind: 'chooser', label: 'Open in Glassbox', options };\n  }"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9393"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "e3604b8cd1a87dc60928a424756004fc"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "9ac2dbacf7b42c252ac06c15f5bddb226e416c31",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

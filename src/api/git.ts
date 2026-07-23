@@ -127,6 +127,10 @@ export const GlassboxReviewReqSchema = z.discriminatedUnion('mode', [
   // working state). `worktree` is the absolute worktree path; the server validates
   // it against `listWorktrees(repoRoot)` before spawning (no arbitrary cwd).
   z.object({ mode: z.literal('worktree'), worktree: z.string() }),
+  // HS-9393 (docs/122) — review the project's uncommitted changes
+  // (`glassbox --uncommitted`): the Code Review section's fallback for a started
+  // ticket whose work hasn't been committed yet.
+  z.object({ mode: z.literal('uncommitted') }),
 ]);
 export type GlassboxReviewReq = z.infer<typeof GlassboxReviewReqSchema>;
 

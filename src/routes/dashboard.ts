@@ -243,8 +243,12 @@ export function buildGlassboxReviewArgs(req: GlassboxReviewReq): string[] | null
   // HS-9106 — the worktree mode carries no diff args (it reviews the working
   // state in place); it's handled by the route via `cwd`, not here.
   if (req.mode === 'worktree') return null;
+  // HS-9393 — the uncommitted fallback (started ticket, no commits yet).
+  if (req.mode === 'uncommitted') return ['--uncommitted'];
   // A ref starts with a word char (never `-`) and uses only ref-safe chars.
-  const SAFE_REF = /^[\w][\w./-]*$/;
+  // HS-9393 — `^`/`~` admitted for rev suffixes: the Code Review ranges use
+  // `<sha>^..<sha>` bases (spawn is arg-array, so there's no shell to escape).
+  const SAFE_REF = /^[\w][\w./~^-]*$/;
   if (req.mode === 'commit') {
     if (!/^[0-9a-fA-F]{7,40}$/.test(req.sha)) return null;
     return ['--commit', req.sha];

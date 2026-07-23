@@ -2,7 +2,7 @@ import './markdownSetup.js'; // HS-9387 — escape-html marked config for note b
 
 import { marked } from 'marked';
 
-import { getReviewProof, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote } from '../api/index.js';
+import { type CommitGroup, getReviewProof, getTicketCommits, type GlassboxReviewReq, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote, type TicketCommitsResponse } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
@@ -162,22 +162,122 @@ function renderNote(note: ReviewProofNote): HTMLElement {
   return row;
 }
 
-function render(container: HTMLElement, notes: ReviewProofNote[]): void {
-  if (notes.length === 0) {
+// --- HS-9393 (docs/122) — the aggregate "Open in Glassbox" action -------------
+
+/** What the header button should do. `chooser` renders the option menu. */
+export type AggregateReviewAction =
+  | { kind: 'direct'; label: string; req: GlassboxReviewReq }
+  | { kind: 'chooser'; label: string; options: { label: string; req: GlassboxReviewReq }[] }
+  | { kind: 'none' };
+
+/** `2026-07-23T…` → `Jul 23` (locale-independent enough for a chip label). */
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** One chooser row's label for a commit group. */
+function groupLabel(g: CommitGroup): string {
+  const subject = g.subjects[0] ?? '';
+  const head = `${String(g.count)} commit${g.count === 1 ? '' : 's'} · ${shortDate(g.latestDate)}`;
+  const refSuffix = g.ref !== undefined ? ` (on ${g.ref})` : '';
+  return `${head}${refSuffix} — ${subject.length > 60 ? `${subject.slice(0, 57)}…` : subject}`;
+}
+
+/** The review request for one group: a single commit reviews as `--commit` (its
+ *  `<sha>^` base would break on a root commit and `--commit` is the sharper view). */
+function groupReq(g: CommitGroup): GlassboxReviewReq {
+  return g.count === 1 ? { mode: 'commit', sha: g.to } : { mode: 'range', from: g.from, to: g.to };
+}
+
+/**
+ * Pure — decide the header button's behavior from the discovery result + the
+ * notes' anchored files (docs/122 §122.3): one group → direct range/commit review;
+ * several → chooser (+ the earliest→latest span option with its unrelated-count
+ * caveat when the span exists — HEAD-interleaved case); no commits → the
+ * started-and-dirty uncommitted fallback, else a files-mode aggregate over the
+ * note-anchored files, else nothing.
+ */
+export function aggregateReviewAction(commits: TicketCommitsResponse | null, noteFiles: string[]): AggregateReviewAction {
+  const groups = commits?.groups ?? [];
+  if (groups.length === 1) {
+    return { kind: 'direct', label: 'Open in Glassbox', req: groupReq(groups[0]) };
+  }
+  if (groups.length > 1) {
+    const options = groups.map(g => ({ label: groupLabel(g), req: groupReq(g) }));
+    if (commits?.span != null) {
+      options.push({
+        label: `Review all, earliest→latest (includes ${String(commits.span.unrelatedCount)} unrelated commit${commits.span.unrelatedCount === 1 ? '' : 's'})`,
+        req: { mode: 'range', from: commits.span.from, to: commits.span.to },
+      });
+    }
+    return { kind: 'chooser', label: 'Open in Glassbox', options };
+  }
+  if (commits !== null && commits.ticketStatus === 'started' && commits.dirty) {
+    return { kind: 'direct', label: 'Review uncommitted changes', req: { mode: 'uncommitted' } };
+  }
+  const files = [...new Set(noteFiles.filter(f => f !== ''))];
+  if (files.length > 0) {
+    return { kind: 'direct', label: 'Open in Glassbox', req: { mode: 'files', patterns: files } };
+  }
+  return { kind: 'none' };
+}
+
+/** Build the header row: title + the aggregate button (with its chooser menu). */
+function renderHeader(action: AggregateReviewAction): HTMLElement {
+  const header = toElement(
+    <div className="code-review-header">
+      <h4 className="review-proof-label">Code Review</h4>
+    </div>,
+  );
+  if (action.kind === 'none') return header;
+  const btn = toElement(
+    <button type="button" className="review-proof-open-glassbox code-review-aggregate-btn">
+      {action.kind === 'chooser' ? `${action.label} ▾` : action.label}
+    </button>,
+  );
+  header.appendChild(btn);
+  if (action.kind === 'direct') {
+    btn.addEventListener('click', () => { void reviewInGlassbox(action.req); });
+    return header;
+  }
+  // Chooser: an inline option list toggled under the header (no floating layer —
+  // simple, keyboard-reachable buttons; collapses after a pick).
+  const menu = toElement(<div className="code-review-chooser" hidden></div>);
+  for (const opt of action.options) {
+    const optBtn = toElement(<button type="button" className="code-review-chooser-option">{opt.label}</button>);
+    optBtn.addEventListener('click', () => {
+      void reviewInGlassbox(opt.req);
+      menu.toggleAttribute('hidden', true);
+    });
+    menu.appendChild(optBtn);
+  }
+  btn.addEventListener('click', () => { menu.toggleAttribute('hidden', !menu.hasAttribute('hidden')); });
+  header.appendChild(menu);
+  return header;
+}
+
+function render(container: HTMLElement, notes: ReviewProofNote[], commits: TicketCommitsResponse | null): void {
+  const action = aggregateReviewAction(commits, notes.map(n => n.file ?? ''));
+  // Presence rule (docs/122 §122.3): notes OR an actionable aggregate (commits /
+  // the uncommitted fallback). A ticket with neither collapses the section.
+  if (notes.length === 0 && action.kind === 'none') {
     container.replaceChildren();
     return;
   }
   const block = toElement(
     <div className="review-proof-block">
-      <h4 className="review-proof-label">{`Review Proof (${String(notes.length)})`}</h4>
       <ul className="review-proof-list"></ul>
     </div>,
   );
-  // `renderNote` returns a live element with a click listener, so append the built
-  // rows rather than embedding them as JSX children (the runtime builds SafeHtml,
-  // not DOM).
+  block.prepend(renderHeader(action));
   const list = block.querySelector<HTMLElement>('.review-proof-list')!;
-  for (const note of notes) list.appendChild(renderNote(note));
+  if (notes.length > 0) {
+    list.before(toElement(<div className="code-review-notes-count">{`${String(notes.length)} review note${notes.length === 1 ? '' : 's'}`}</div>));
+    // `renderNote` returns a live element with a click listener, so append the
+    // built rows rather than embedding them as JSX children.
+    for (const note of notes) list.appendChild(renderNote(note));
+  }
   container.replaceChildren(block);
 }
 
@@ -195,17 +295,25 @@ export async function loadAndRenderReviewProof(ticketNumber: string): Promise<vo
   if (switching && !sigCache.has(ticketNumber)) container.replaceChildren();
 
   let notes: ReviewProofNote[];
+  let commits: TicketCommitsResponse | null;
   try {
-    ({ notes } = await getReviewProof(ticketNumber));
+    // HS-9393 — commits fetched alongside the notes; a commits failure (older
+    // server, non-repo) degrades to the notes-only view rather than blanking.
+    const [proof, commitsRes] = await Promise.all([
+      getReviewProof(ticketNumber),
+      getTicketCommits(ticketNumber).catch(() => null),
+    ]);
+    notes = proof.notes;
+    commits = commitsRes;
   } catch {
     return; // transient failure — keep whatever's shown
   }
   if (currentTicket !== ticketNumber) return; // switched away mid-fetch
 
-  const sig = JSON.stringify(notes);
+  const sig = JSON.stringify({ notes, commits });
   if (sigCache.get(ticketNumber) === sig && container.childElementCount > 0) return; // unchanged — preserve expansions
   sigCache.set(ticketNumber, sig);
-  render(container, notes);
+  render(container, notes, commits);
 }
 
 /** Clear the section on detail close so a reopen of a DIFFERENT ticket can't

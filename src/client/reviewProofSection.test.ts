@@ -8,17 +8,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ReviewProofNote } from '../api/reviewProof.js';
+import type { TicketCommitsResponse } from '../api/ticketCommits.js';
 
 const getReviewProof = vi.fn<(t: string) => Promise<{ notes: ReviewProofNote[] }>>();
+const getTicketCommits = vi.fn<(t: string) => Promise<TicketCommitsResponse>>();
 const reviewInGlassbox = vi.fn<(req: unknown) => Promise<{ ok: true }>>(() => Promise.resolve({ ok: true as const }));
 const launchGlassbox = vi.fn<() => Promise<{ ok: true }>>(() => Promise.resolve({ ok: true as const }));
 vi.mock('../api/index.js', () => ({
   getReviewProof: (t: string) => getReviewProof(t),
+  getTicketCommits: (t: string) => getTicketCommits(t),
   reviewInGlassbox: (req: unknown) => reviewInGlassbox(req),
   launchGlassbox: () => launchGlassbox(),
 }));
 
-const { loadAndRenderReviewProof, clearReviewProof, _resetReviewProofForTests } = await import('./reviewProofSection.js');
+const { loadAndRenderReviewProof, clearReviewProof, _resetReviewProofForTests, aggregateReviewAction } = await import('./reviewProofSection.js');
+
+/** No-commit discovery result (the pre-HS-9393 baseline). */
+const noCommits = (over: Partial<TicketCommitsResponse> = {}): TicketCommitsResponse => ({
+  groups: [], span: null, dirty: false, ticketStatus: 'completed', ...over,
+});
+const group = (over: Record<string, unknown> = {}): TicketCommitsResponse['groups'][number] => ({
+  from: 'aaa^', to: 'bbb', count: 2, subjects: ['HS-1234: two', 'HS-1234: one'],
+  earliestDate: '2026-07-20T00:00:00Z', latestDate: '2026-07-23T00:00:00Z', ...over,
+});
 
 function note(over: Partial<ReviewProofNote> = {}): ReviewProofNote {
   return {
@@ -35,6 +47,8 @@ beforeEach(() => {
   _resetReviewProofForTests();
   document.body.innerHTML = '<div id="detail-review-proof"></div>';
   getReviewProof.mockReset();
+  getTicketCommits.mockReset();
+  getTicketCommits.mockResolvedValue(noCommits()); // default: no discovered commits
   reviewInGlassbox.mockClear();
   launchGlassbox.mockClear();
 });
@@ -44,7 +58,8 @@ describe('reviewProofSection (HS-9293)', () => {
   it('renders the light list with kind + file:line + summary', async () => {
     getReviewProof.mockResolvedValue({ notes: [note()] });
     await loadAndRenderReviewProof('HS-1234');
-    expect(container().querySelector('.review-proof-label')?.textContent).toBe('Review Proof (1)');
+    expect(container().querySelector('.review-proof-label')?.textContent).toBe('Code Review'); // HS-9393 rename
+    expect(container().querySelector('.code-review-notes-count')?.textContent).toBe('1 review note');
     expect(container().querySelector('.review-proof-kind')?.textContent).toBe('proof');
     expect(container().querySelector('.review-proof-loc')?.textContent).toBe('src/x.ts:3–9');
     expect(container().querySelector('.review-proof-summary')?.textContent).toBe('proved it');
@@ -70,10 +85,86 @@ describe('reviewProofSection (HS-9293)', () => {
     expect(container().querySelector('.review-proof-body')?.textContent).toContain('proved it');
   });
 
-  it('is presence-gated: empty container when there are no notes', async () => {
+  it('is presence-gated: empty container when there are no notes AND no commits', async () => {
     getReviewProof.mockResolvedValue({ notes: [] });
     await loadAndRenderReviewProof('HS-1234');
     expect(container().childElementCount).toBe(0);
+  });
+
+  it('HS-9393 — commits alone (no notes) still surface the section + aggregate button', async () => {
+    getReviewProof.mockResolvedValue({ notes: [] });
+    getTicketCommits.mockResolvedValue(noCommits({ groups: [group()] }));
+    await loadAndRenderReviewProof('HS-1234');
+    expect(container().querySelector('.review-proof-label')?.textContent).toBe('Code Review');
+    expect(container().querySelector('.code-review-notes-count')).toBeNull();
+    const btn = container().querySelector<HTMLButtonElement>('.code-review-aggregate-btn')!;
+    btn.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'range', from: 'aaa^', to: 'bbb' });
+  });
+
+  it('HS-9393 — a single-commit group reviews via commit mode', async () => {
+    getReviewProof.mockResolvedValue({ notes: [] });
+    getTicketCommits.mockResolvedValue(noCommits({ groups: [group({ count: 1, subjects: ['HS-1234: only'] })] }));
+    await loadAndRenderReviewProof('HS-1234');
+    container().querySelector<HTMLButtonElement>('.code-review-aggregate-btn')!.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'commit', sha: 'bbb' });
+  });
+
+  it('HS-9393 — interleaved groups open the chooser; the span option carries the unrelated-count caveat', async () => {
+    getReviewProof.mockResolvedValue({ notes: [] });
+    getTicketCommits.mockResolvedValue(noCommits({
+      groups: [group({ from: 'c^', to: 'd', count: 1, subjects: ['HS-1234: newer'] }), group()],
+      span: { from: 'aaa^', to: 'd', unrelatedCount: 3 },
+    }));
+    await loadAndRenderReviewProof('HS-1234');
+    const btn = container().querySelector<HTMLButtonElement>('.code-review-aggregate-btn')!;
+    expect(btn.textContent).toContain('▾');
+    const menu = container().querySelector<HTMLElement>('.code-review-chooser')!;
+    expect(menu.hasAttribute('hidden')).toBe(true);
+    btn.click();
+    expect(menu.hasAttribute('hidden')).toBe(false);
+    const options = [...menu.querySelectorAll<HTMLButtonElement>('.code-review-chooser-option')];
+    expect(options).toHaveLength(3); // two groups + the span option
+    expect(options[2].textContent).toContain('includes 3 unrelated commits');
+    options[2].click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'range', from: 'aaa^', to: 'd' });
+    expect(menu.hasAttribute('hidden')).toBe(true); // collapses after a pick
+  });
+
+  it('HS-9393 — started + dirty + no commits offers the uncommitted review', async () => {
+    getReviewProof.mockResolvedValue({ notes: [note()] });
+    getTicketCommits.mockResolvedValue(noCommits({ dirty: true, ticketStatus: 'started' }));
+    await loadAndRenderReviewProof('HS-1234');
+    const btn = container().querySelector<HTMLButtonElement>('.code-review-aggregate-btn')!;
+    expect(btn.textContent).toBe('Review uncommitted changes');
+    btn.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'uncommitted' });
+  });
+
+  it('HS-9393 — no commits at all falls back to a files-mode aggregate over note files', async () => {
+    getReviewProof.mockResolvedValue({ notes: [note(), note({ file: 'src/y.ts' })] });
+    await loadAndRenderReviewProof('HS-1234');
+    container().querySelector<HTMLButtonElement>('.code-review-aggregate-btn')!.click();
+    expect(reviewInGlassbox).toHaveBeenCalledWith({ mode: 'files', patterns: ['src/x.ts', 'src/y.ts'] });
+  });
+
+  it('HS-9393 — a commits fetch failure degrades to the notes-only view', async () => {
+    getReviewProof.mockResolvedValue({ notes: [note()] });
+    getTicketCommits.mockRejectedValue(new Error('older server'));
+    await loadAndRenderReviewProof('HS-1234');
+    expect(container().querySelector('.review-proof-label')?.textContent).toBe('Code Review');
+    expect(container().querySelector('.review-proof-note')).not.toBeNull();
+  });
+
+  it('HS-9393 — aggregateReviewAction labels ref-carrying (integration-branch) groups', () => {
+    const action = aggregateReviewAction(noCommits({
+      groups: [group(), group({ ref: 'hotsheet/w1', from: 'w^', to: 'w', count: 1, subjects: ['HS-1234: worker part'] })],
+    }), []);
+    expect(action.kind).toBe('chooser');
+    if (action.kind === 'chooser') {
+      expect(action.options[1].label).toContain('(on hotsheet/w1)');
+      expect(action.options).toHaveLength(2); // no span (branch group isn't spanable) — no span option
+    }
   });
 
   it('expands a note on click to render an inline image + Open-in-Glassbox', async () => {

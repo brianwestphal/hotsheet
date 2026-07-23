@@ -393,6 +393,17 @@ describe('buildGlassboxReviewArgs (HS-8472)', () => {
     expect(buildGlassboxReviewArgs({ mode: 'worktree', worktree: '/some/wt' })).toBeNull();
   });
 
+  it('HS-9393: uncommitted mode → --uncommitted', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'uncommitted' })).toEqual(['--uncommitted']);
+  });
+
+  it('HS-9393: range accepts `^`/`~` rev suffixes (the Code Review `<sha>^..<sha>` bases)', () => {
+    expect(buildGlassboxReviewArgs({ mode: 'range', from: 'abc1234^', to: 'def5678' }))
+      .toEqual(['--range', 'abc1234^..def5678']);
+    expect(buildGlassboxReviewArgs({ mode: 'range', from: 'HEAD~3', to: 'HEAD' }))
+      .toEqual(['--range', 'HEAD~3..HEAD']);
+  });
+
   it('HS-9205: files mode → --files with comma-joined repo-relative paths', () => {
     expect(buildGlassboxReviewArgs({ mode: 'files', patterns: ['src/a.ts'] })).toEqual(['--files', 'src/a.ts']);
     expect(buildGlassboxReviewArgs({ mode: 'files', patterns: ['src/a.ts', 'docs/b.md'] }))

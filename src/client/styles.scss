@@ -4524,6 +4524,52 @@ body.cross-project-stats-active {
 // so the head's one-line ellipsis preview hides instead of duplicating line 1.
 .review-proof-note.is-open .review-proof-summary { display: none; }
 
+// HS-9393 (docs/122) — the "Code Review" header: title + the aggregate
+// Open-in-Glassbox button, with the inline chooser for interleaved commit groups.
+.code-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+
+  .review-proof-label { margin: 0; }
+}
+
+.code-review-notes-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 2px 0 4px;
+}
+
+.code-review-chooser {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.code-review-chooser-option {
+  text-align: left;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &:hover { background: var(--bg-hover); }
+}
+
 // HS-9387 — the full note text, markdown-rendered and WRAPPING (the readability
 // fix: pre-fix only the truncated first line was ever visible).
 .review-proof-body {

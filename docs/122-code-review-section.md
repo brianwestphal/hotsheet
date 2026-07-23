@@ -1,6 +1,6 @@
 # 122 — Code Review Section (aggregate ticket review in Glassbox)
 
-> **Status: server discovery SHIPPED (HS-9392, 2026-07-23); client rename + aggregate button (HS-9393) in progress.** The HS-9389 investigation's proposal, maintainer-approved: replace the per-note "Open in Glassbox" as the section's primary affordance with ONE aggregate button that reviews **all of a ticket's changes** (Glassbox shows the associated `.pr-notes/` proof items inline for free).
+> **Status: SHIPPED (server discovery HS-9392 + client rename/aggregate button HS-9393, 2026-07-23).** The HS-9389 investigation's proposal, maintainer-approved: replace the per-note "Open in Glassbox" as the section's primary affordance with ONE aggregate button that reviews **all of a ticket's changes** (Glassbox shows the associated `.pr-notes/` proof items inline for free).
 >
 > Cross-refs: [111-review-proof-artifacts.md](111-review-proof-artifacts.md) (the section this evolves — reader/API/inline artifacts/per-note deep-links), [110-ai-review-notes-inducement.md](110-ai-review-notes-inducement.md) (how the notes get authored), [48-git-status-tracker.md](48-git-status-tracker.md) (repo-root resolution), [89-git-worktrees.md](89-git-worktrees.md) (worker `integration_branch` flow).
 
@@ -39,18 +39,28 @@ unrelated-changes caveat).
   on HEAD/branch tips — an unmoved tip skips the log walk (dirtiness is
   re-probed). Non-repo projects / git failures return the empty shape.
 
-## 122.3 Client (HS-9393)
+## 122.3 Client (SHIPPED, HS-9393)
 
-- Rename "Review Proof (N)" → **"Code Review"** (note count moves into the body).
-- Header-level aggregate **Open in Glassbox**: 1 group → `mode:'range'`
-  (single commit → `mode:'commit'`); ≥2 groups → chooser (per-group subjects +
-  dates, plus "Review all, earliest→latest" with the unrelated-count caveat);
-  no commits + `started` + dirty → "Review uncommitted changes"
-  (`mode:'uncommitted'` → `glassbox --uncommitted`); no commits at all → the
-  files-mode aggregate over note-anchored files.
-- Presence rule widens to **notes OR commits** (a note-less ticket with commits
-  still gets the button).
-- Per-note deep-links stay in expanded rows (secondary affordance).
+`src/client/reviewProofSection.tsx` — pure `aggregateReviewAction(commits, noteFiles)`
+decides the header button, `renderHeader` builds it:
+
+- Section renamed "Review Proof (N)" → **"Code Review"** (note count moves to a
+  `.code-review-notes-count` line in the body).
+- Header-level aggregate **Open in Glassbox**: 1 group → `reviewInGlassbox({mode:'range', from, to})`
+  (single-commit group → `mode:'commit'`, since `<sha>^` breaks on a root
+  commit and `--commit` is the sharper view); ≥2 groups → an inline
+  `.code-review-chooser` (per-group `{count · date (on ref) — subject}` labels,
+  plus a "Review all, earliest→latest (includes N unrelated commits)" option
+  when a HEAD span exists); no commits + `started` + dirty → "Review
+  uncommitted changes" (`mode:'uncommitted'`); no commits at all → the
+  files-mode aggregate over note-anchored files; nothing actionable + no notes
+  → the section collapses.
+- **`mode:'uncommitted'`** added to `GlassboxReviewReqSchema` → `glassbox
+  --uncommitted`; `buildGlassboxReviewArgs`'s `SAFE_REF` now admits `^`/`~` for
+  the range bases (arg-array spawn, no shell).
+- Presence rule widens to **notes OR an actionable aggregate**.
+- Per-note "Open in Glassbox" deep-links stay in expanded rows (secondary
+  affordance — "show me THIS note in context").
 
 ## 122.4 Implications recorded (HS-9389)
 
@@ -67,4 +77,12 @@ notes-files aggregate.
   contiguous vs interleaved grouping, span/unrelated counts, log parsing) +
   real-temp-git fixtures (body-mention exclusion, ref-labeled branch groups,
   missing branch tolerated, tip-keyed cache behavior, dirty flag, non-repo).
-- Client/E2E coverage lands with HS-9393 (chooser render, range POST).
+- `reviewProofSection.test.ts` — `aggregateReviewAction` + render (rename,
+  commits-only presence, single-commit `commit` mode, chooser + span caveat,
+  ref-labeled options, uncommitted fallback, files-mode fallback,
+  commits-failure degrades to notes-only).
+- `dashboard.test.ts` — `buildGlassboxReviewArgs` uncommitted mode + `^`/`~`
+  range bases.
+- `e2e/code-review-section.spec.ts` — chooser renders for interleaved groups +
+  posts the right range; single group reviews directly (route-mocked discovery
+  + `/glassbox/review`).
