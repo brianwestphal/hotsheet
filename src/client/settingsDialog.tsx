@@ -316,6 +316,12 @@ function bindGeneralTab() {
   // HS-8009 — the project's preferred AI tool (docs/113 §113.3). A shared, scoped
   // string setting; `persistScopedSetting` writes it to the active layer.
   aiToolSelect?.addEventListener('change', () => {
+    // HS-9406 — mirror the new value into `state.settings` immediately. The
+    // client-side consumers (command-editor "AI agent" label, channel busy
+    // indicator, `{{aiCommand}}` terminal-name derivation) read state, which was
+    // only hydrated by `loadSettings()` — so before this, picking a tool didn't
+    // relabel anything until a project switch or reload.
+    state.settings.ai_tool = aiToolSelect.value;
     revealAgyPerms(aiToolSelect.value); // HS-9328 — show/hide the agy permission toggle
     updateAgentBackendDerived();        // HS-9338 — the derived default follows ai_tool
     // HS-9367 (docs/119) — prepare the NEW tool's full config, ask-first: when

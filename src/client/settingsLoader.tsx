@@ -23,10 +23,19 @@ export async function loadSettings() {
         else if (typeof v === 'boolean' || typeof v === 'number') settings[k] = String(v);
       }
       // HS-9313 — `ai_tool` is a shared file setting; hydrate it for the channel
-      // busy-indicator label (agentDisplayName). Default stays 'auto' when absent.
-      if (typeof fileResolved.ai_tool === 'string' && fileResolved.ai_tool !== '') {
-        state.settings.ai_tool = fileResolved.ai_tool;
-      }
+      // busy-indicator label (agentDisplayName) and the command editor's "AI
+      // agent" target button.
+      //
+      // HS-9406 — ALWAYS assign, falling back to 'auto' when the project leaves
+      // the setting unset. Pre-fix this only wrote when the new project's file
+      // settings actually carried an `ai_tool`, so `loadSettings()` on a project
+      // switch (`reloadAppState`) left the PREVIOUS project's value in state —
+      // the exact stale-carryover class as HS-8451's frozen app title. Symptom:
+      // after visiting a `codex` project, every subsequent project's command
+      // editor segmented control (and busy indicator) said "Codex" until reload.
+      state.settings.ai_tool = typeof fileResolved.ai_tool === 'string' && fileResolved.ai_tool !== ''
+        ? fileResolved.ai_tool
+        : 'auto';
     } catch { /* file-settings fetch failed — keep DB values */ }
     if (settings.detail_position === 'side' || settings.detail_position === 'bottom') {
       state.settings.detail_position = settings.detail_position;
