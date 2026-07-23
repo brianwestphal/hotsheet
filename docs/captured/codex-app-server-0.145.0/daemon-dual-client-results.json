@@ -1,0 +1,23 @@
+{
+  "transport": "ws over UDS ~/.codex/app-server-control/app-server-control.sock",
+  "threadId": "019f8ca3-4f47-7ca0-91f8-1832668229cc",
+  "bResume": "ok",
+  "bSaw": {
+    "turnStarted": true,
+    "itemCompleted": true,
+    "turnCompleted": true,
+    "agentDelta": true,
+    "sawWatchersText": true,
+    "methods": [
+      "thread/tokenUsage/updated",
+      "thread/goal/cleared",
+      "thread/status/changed",
+      "turn/started",
+      "item/started",
+      "item/completed",
+      "item/agentMessage/delta",
+      "account/rateLimits/updated",
+      "turn/completed"
+    ]
+  }
+}

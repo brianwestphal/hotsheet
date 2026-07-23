@@ -123,14 +123,26 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
 - **Phase 2 — dedicated transcript pane (open decision O2):** a per-project
   session view (drawer tile or panel) rendering the live turn stream with
   markdown.
-- **Investigation — daemon attach (Claude-parity):** `codex app-server daemon`
-  + `remote-control` suggest codex UIs can attach to a shared daemon. If a
-  user-launched codex TUI (or the Codex desktop app) can attach to the SAME
-  daemon/thread Hot Sheet drives, the user watches the driven session in
-  codex's own UI — the genuine Claude-channel-parity outcome. Separate spike
-  ticket; the stdio-child model above works regardless and can switch to the
-  daemon transport later (`app-server proxy` suggests the protocol is
-  transport-agnostic).
+- **Daemon attach — INVESTIGATED, works (HS-9386, 2026-07-23):** the daemon
+  (`codex app-server daemon start`) exposes the same protocol over a UDS at
+  `~/.codex/app-server-control/app-server-control.sock` as **WebSocket** (HTTP
+  Upgrade + frames — NOT raw JSONL; `app-server proxy` just bridges bytes).
+  Multiple clients connect concurrently; `thread/started` broadcasts to every
+  connection, and `thread/start`/`thread/resume` auto-subscribes a connection
+  to that thread's turn/item events. **Live-verified dual-client:** a watcher
+  connection that `thread/resume`d the driven thread received the next turn's
+  `turn/started` → `item/agentMessage/delta` → `item/completed` →
+  `turn/completed` in real time (transcript:
+  `docs/captured/codex-app-server-0.145.0/transcript-daemon-watcher-B.jsonl`).
+  Caveats: `thread/resume` needs the on-disk rollout, which exists only after
+  the first turn persists (resume-before-first-turn → "no rollout found");
+  Node `ws` needs `perMessageDeflate: false` (+ a plain `host` header) or the
+  daemon hangs up the upgrade. The codex TUI runs its own core (not
+  daemon-attached) — live watching is for app-server clients (VS Code
+  extension / desktop app / a Hot Sheet transcript pane); `codex resume
+  <threadId>` in a terminal opens the shared HISTORY but as its own session.
+  Follow-up: offer the daemon UDS transport in the drive so external
+  app-server UIs can watch the driven thread.
 
 ## 121.7 Settings + UI gating (maintainer-decided)
 

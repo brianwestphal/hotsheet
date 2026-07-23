@@ -17,6 +17,7 @@ combined `codex_app_server_protocol.schemas.json`; the generator also emits
 - `server-request-item_commandExecution_requestApproval-1.json` — the captured approval request shape.
 - `transcript-interrupt2.jsonl` — `turn/interrupt` probe (turn ends `status: "interrupted"`).
 - `mcp-server-status-summary.json` — `mcpServerStatus/list` summary: `hotsheet-channel` visible with 24 tools.
+- `transcript-daemon-watcher-B.jsonl` / `daemon-dual-client-results.json` — HS-9386 dual-client daemon probe: the WATCHER connection's transcript over the daemon's UDS WebSocket (client A drove the turn; B, subscribed via `thread/resume`, received `turn/started` / `item/agentMessage/delta` / `item/completed` / `turn/completed` live).
 
 ## Verified findings (all live, 2026-07-23)
 
@@ -48,3 +49,14 @@ combined `codex_app_server_protocol.schemas.json`; the generator also emits
 7. **MCP pickup:** the driven session sees the §115.5/§115.6a global
    cwd-resolving `hotsheet-channel` MCP entry — `mcpServerStatus/list` reports
    it with all 24 `hotsheet_*` tools. No extra config needed for the drive.
+8. **Daemon multi-client watch (HS-9386):** the daemon's UDS
+   (`~/.codex/app-server-control/app-server-control.sock`) speaks the SAME
+   protocol over **WebSocket** (HTTP Upgrade + frames; `app-server proxy` only
+   bridges bytes — a raw-JSONL client gets no reply). Node `ws` connects via
+   `ws+unix://<sock>:/` with `perMessageDeflate: false` + a plain `host`
+   header (deflate negotiation → the daemon hangs up). `thread/started`
+   broadcasts to all connections; turn/item events are per-connection
+   subscriptions created by `thread/start`/`thread/resume`. `thread/resume`
+   requires the persisted rollout (fails "no rollout found" before the first
+   turn). A watcher client subscribed this way receives another client's
+   turns LIVE — delta streaming included.
