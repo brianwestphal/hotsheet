@@ -51,6 +51,7 @@ import {
   type CodexTransport,
   type CodexTransportHandlers,
   connectCodexDaemon,
+  ensureCodexDaemonRunning,
 } from './codexDaemonTransport.js';
 import { readFileSettings } from './file-settings.js';
 import { readGlobalConfig } from './global-config.js';
@@ -172,6 +173,33 @@ const sessions = new Map<string, Session>();
 export interface AttachCommandDeps {
   fileExists?: (path: string) => boolean;
   socketPath?: string;
+}
+
+/** HS-9396 — injectables for `prestartCodexDaemonIfNeeded`. */
+export interface PrestartDeps extends AttachCommandDeps {
+  ensureDaemon?: () => Promise<boolean>;
+}
+
+/**
+ * HS-9396 (docs/123 §123.5) — fire-and-forget daemon pre-start so codex
+ * terminals can launch ATTACHED without waiting for a play. Called at project
+ * registration, on an `ai_tool` settings change, and on drive re-enable. Only
+ * acts when the attach would otherwise be one missing daemon away: drive
+ * enabled + `ai_tool=codex` + a resumable rollout persisted on disk + the
+ * daemon socket absent. The resolver (`codexTerminalAttachCommand`) stays
+ * side-effect-free — this is the async spawn-adjacent path. No thread warming:
+ * a fresh daemon loads rollouts on `thread/resume` (live-verified).
+ */
+export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps = {}): void {
+  if (!isCodexAppServerEnabled()) return;
+  const tool = readFileSettings(dataDir).ai_tool;
+  if (typeof tool !== 'string' || tool.trim().toLowerCase() !== 'codex') return;
+  const persisted = readPersistedCodexThread(dataDir);
+  if (persisted === null || persisted.rolloutPath === null) return;
+  const fileExists = deps.fileExists ?? existsSync;
+  if (!fileExists(persisted.rolloutPath)) return;
+  if (fileExists(deps.socketPath ?? codexDaemonSocketPath())) return; // already up
+  void (deps.ensureDaemon ?? ensureCodexDaemonRunning)().catch(() => { /* best-effort — plain codex fallback stands */ });
 }
 
 /**

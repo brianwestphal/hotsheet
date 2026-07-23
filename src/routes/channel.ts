@@ -7,7 +7,7 @@ import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, r
 import { appendMainServerEvent } from '../channelLog.js';
 import { disconnectMainConnections, listAliveEntries, mainConnections } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
-import { clearCodexAppServerFailures, hasCodexAppServerHandshakeFailed, isCodexAppServerEnabled, shutdownCodexAppServers } from '../codexAppServer.js';
+import { clearCodexAppServerFailures, hasCodexAppServerHandshakeFailed, isCodexAppServerEnabled, prestartCodexDaemonIfNeeded, shutdownCodexAppServers } from '../codexAppServer.js';
 import { appendTranscriptDetail } from '../codexAppServerMapping.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
@@ -224,6 +224,9 @@ channelRoutes.post('/channel/codex-app-server', async (c) => {
   if (parsed.data.enabled) {
     clearCodexAppServerFailures();
     loggedCodexHandshakeFailures.clear();
+    // HS-9396 (docs/123 §123.5) — re-enabling the drive readies the daemon so
+    // this project's next codex terminal can launch attached.
+    prestartCodexDaemonIfNeeded(c.get('dataDir'));
   } else {
     shutdownCodexAppServers();
   }

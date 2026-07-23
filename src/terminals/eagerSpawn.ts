@@ -1,3 +1,4 @@
+import { prestartCodexDaemonIfNeeded } from '../codexAppServer.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { listTerminalConfigs } from './config.js';
 import { ensureSpawned } from './registry.js';
@@ -19,6 +20,12 @@ import { ensureSpawned } from './registry.js';
  * binary or a broken shell should not take the whole server down.
  */
 export function eagerSpawnTerminals(secret: string, dataDir: string): void {
+  // HS-9396 (docs/123 §123.5) — fire-and-forget daemon pre-start for codex
+  // projects with a resumable driven thread, so terminals opened later (lazy
+  // included) resolve to the ATTACHED command without waiting for a play.
+  // Called at exactly the right moments (project registration + terminals
+  // settings changes); a no-op for every other project.
+  try { prestartCodexDaemonIfNeeded(dataDir); } catch { /* best-effort */ }
   let configs;
   try {
     configs = listTerminalConfigs(dataDir);

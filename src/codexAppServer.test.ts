@@ -17,6 +17,7 @@ import {
   hasCodexAppServerHandshakeFailed,
   interruptCodexAppServerTurn,
   isCodexAppServerEnabled,
+  prestartCodexDaemonIfNeeded,
   readPersistedCodexThread,
   readPersistedThreadId,
   shutdownCodexAppServers,
@@ -695,5 +696,59 @@ describe('HS-9394 — persisted rollout path + terminal attach command', () => {
       expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p !== '/s.sock', socketPath: '/s.sock' }))
         .toBe("codex resume th-a --remote 'unix:///s.sock'");
     });
+  });
+});
+
+describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
+    vi.stubEnv('HOTSHEET_HOME', home);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const withRollout = (): void => {
+    writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-a', rolloutPath: '/sessions/r.jsonl' }), 'utf-8');
+  };
+
+  it('starts the daemon when codex + drive on + rollout on disk + socket missing', async () => {
+    withRollout();
+    const ensureDaemon = vi.fn().mockResolvedValue(true);
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    await flush();
+    expect(ensureDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it('no-ops when the socket is already up', () => {
+    withRollout();
+    const ensureDaemon = vi.fn();
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: () => true });
+    expect(ensureDaemon).not.toHaveBeenCalled();
+  });
+
+  it('no-ops for non-codex projects, when the drive is off, or without a resumable rollout', () => {
+    const ensureDaemon = vi.fn();
+    // no state file at all
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    // rollout persisted but missing on disk
+    withRollout();
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: () => false });
+    // non-codex tool
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'gemini' }), 'utf-8');
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    // drive toggle off
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'codex' }), 'utf-8');
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    expect(ensureDaemon).not.toHaveBeenCalled();
+  });
+
+  it('a rejecting ensure never throws out of the fire-and-forget path', async () => {
+    withRollout();
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon: () => Promise.reject(new Error('boom')), socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    await flush(); // unhandled rejection would fail the test run
   });
 });

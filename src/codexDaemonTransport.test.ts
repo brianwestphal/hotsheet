@@ -9,10 +9,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type WebSocket as ServerWebSocket,WebSocketServer } from 'ws';
 
 import {
+  _resetEnsureCodexDaemonForTesting,
   codexDaemonSocketPath,
   type CodexTransport,
   type CodexTransportHandlers,
   connectCodexDaemon,
+  ensureCodexDaemonRunning,
 } from './codexDaemonTransport.js';
 
 const NOOP_HANDLERS: CodexTransportHandlers = { onMessage: () => { /* noop */ }, onClose: () => { /* noop */ } };
@@ -131,5 +133,40 @@ describe('connectCodexDaemon — real UDS WebSocket round-trip', () => {
       startDaemon: () => Promise.resolve(false),
     });
     expect(transport).toBeNull();
+  });
+});
+
+describe('ensureCodexDaemonRunning (HS-9396)', () => {
+  afterEach(() => { _resetEnsureCodexDaemonForTesting(); });
+
+  it('resolves true immediately when the socket already exists (no start)', async () => {
+    const startDaemon = vi.fn();
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', fileExists: () => true, startDaemon })).toBe(true);
+    expect(startDaemon).not.toHaveBeenCalled();
+  });
+
+  it('starts the daemon and polls until the socket appears', async () => {
+    let up = false;
+    const startDaemon = vi.fn().mockImplementation(() => { up = true; return Promise.resolve(true); });
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', fileExists: () => up, startDaemon })).toBe(true);
+    expect(startDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves false when the start command fails', async () => {
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', fileExists: () => false, startDaemon: () => Promise.resolve(false) })).toBe(false);
+  });
+
+  it('concurrent callers share ONE in-flight start (several projects registering at once)', async () => {
+    let resolveStart: (v: boolean) => void = () => { /* replaced below */ };
+    let up = false;
+    const startDaemon = vi.fn().mockImplementation(() => new Promise<boolean>((r) => { resolveStart = r; }));
+    const deps = { socketPath: '/s.sock', fileExists: () => up, startDaemon };
+    const a = ensureCodexDaemonRunning(deps);
+    const b = ensureCodexDaemonRunning(deps);
+    up = true;
+    resolveStart(true);
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(startDaemon).toHaveBeenCalledTimes(1);
   });
 });

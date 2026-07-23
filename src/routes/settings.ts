@@ -1,5 +1,6 @@
 import { type Context, Hono } from 'hono';
 
+import { prestartCodexDaemonIfNeeded } from '../codexAppServer.js';
 import {
   getAllTags,
   getCategories,
@@ -130,6 +131,11 @@ function applyFileSettingsSideEffects(
   // listTerminalConfigs.
   if ('terminals' in changed) {
     eagerSpawnTerminals(secret, dataDir);
+  }
+  // HS-9396 (docs/123 §123.5) — switching a project to codex should ready the
+  // daemon so the next terminal launches attached to the driven thread.
+  if ('ai_tool' in changed) {
+    prestartCodexDaemonIfNeeded(dataDir);
   }
 }
 

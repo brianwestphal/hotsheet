@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrx6w2w98zdsjy5f",
+          "message": {
+            "text": "The pre-start deliberately does NOT live in the terminal-spawn path the ticket suggested: `attach` → `spawnIntoSession` is fully synchronous (called from the WS message handler), so an in-line daemon start would either block the attach or ripple async through the registry. Pre-starting at project registration (this hook) + `ai_tool` change + drive re-enable achieves a strictly better outcome — the daemon is up long before any terminal resolves, so even the FIRST post-reboot terminal launches attached with zero added latency. \"Warm the thread\" (the ticket's optional half) was investigated and dropped: a freshly restarted daemon loads a thread's rollout from disk on `thread/resume` (live-verified on 0.145.0 by stopping/starting the daemon and resuming a pre-existing thread). See also `src/codexAppServer.ts` (`prestartCodexDaemonIfNeeded` conditions) and `src/codexDaemonTransport.ts` (`ensureCodexDaemonRunning` in-flight dedupe for concurrent project registrations).\n",
+            "markdown": "The pre-start deliberately does NOT live in the terminal-spawn path the ticket suggested: `attach` → `spawnIntoSession` is fully synchronous (called from the WS message handler), so an in-line daemon start would either block the attach or ripple async through the registry. Pre-starting at project registration (this hook) + `ai_tool` change + drive re-enable achieves a strictly better outcome — the daemon is up long before any terminal resolves, so even the FIRST post-reboot terminal launches attached with zero added latency. \"Warm the thread\" (the ticket's optional half) was investigated and dropped: a freshly restarted daemon loads a thread's rollout from disk on `thread/resume` (live-verified on 0.145.0 by stopping/starting the daemon and resuming a pre-existing thread). See also `src/codexAppServer.ts` (`prestartCodexDaemonIfNeeded` conditions) and `src/codexDaemonTransport.ts` (`ensureCodexDaemonRunning` in-flight dedupe for concurrent project registrations).\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/terminals/eagerSpawn.ts"
+                },
+                "region": {
+                  "startLine": 22,
+                  "endLine": 28,
+                  "snippet": {
+                    "text": "export function eagerSpawnTerminals(secret: string, dataDir: string): void {\n  // HS-9396 (docs/123 §123.5) — fire-and-forget daemon pre-start for codex\n  // projects with a resumable driven thread, so terminals opened later (lazy\n  // included) resolve to the ATTACHED command without waiting for a play.\n  // Called at exactly the right moments (project registration + terminals\n  // settings changes); a no-op for every other project.\n  try { prestartCodexDaemonIfNeeded(dataDir); } catch { /* best-effort */ }"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9396"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "aee93bc620fea49501b200042db1290b"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "f5bc3eb572621d330ed0c8d570c22d8fb99ffcc7",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

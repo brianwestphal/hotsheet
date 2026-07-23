@@ -10,6 +10,7 @@
 // `perMessageDeflate: false` and a plain `host` header.
 
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { WebSocket } from 'ws';
@@ -116,6 +117,54 @@ function startDaemonProcess(): Promise<boolean> {
     proc.on('error', () => { clearTimeout(timer); resolve(false); });
     proc.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
   });
+}
+
+export interface EnsureDaemonDeps {
+  /** Injectable for tests. Defaults to `codexDaemonSocketPath()`. */
+  socketPath?: string;
+  /** Injectable for tests. Defaults to `fs.existsSync`. */
+  fileExists?: (path: string) => boolean;
+  /** Injectable for tests. Defaults to the real `codex app-server daemon start`. */
+  startDaemon?: () => Promise<boolean>;
+}
+
+let ensureInFlight: Promise<boolean> | null = null;
+
+/** Test-only: forget an in-flight ensure so tests don't leak into each other. */
+export function _resetEnsureCodexDaemonForTesting(): void {
+  ensureInFlight = null;
+}
+
+/**
+ * HS-9396 (docs/123 §123.5) — make sure the shared daemon is RUNNING without
+ * opening a connection to it: socket present → done; otherwise start the daemon
+ * and poll for the socket. Used by the terminal-prep pre-start (project
+ * registration / `ai_tool` switch / drive re-enable) so codex terminals can
+ * launch attached with no play required first. Concurrent callers (several
+ * projects registering at once) share one in-flight start. Resolves whether the
+ * socket is up; never throws. Thread warming is deliberately NOT needed — a
+ * freshly started daemon loads a thread's rollout from disk on `thread/resume`
+ * (live-verified, 0.145.0).
+ */
+export function ensureCodexDaemonRunning(deps: EnsureDaemonDeps = {}): Promise<boolean> {
+  const sockPath = deps.socketPath ?? codexDaemonSocketPath();
+  const fileExists = deps.fileExists ?? existsSync;
+  if (fileExists(sockPath)) return Promise.resolve(true);
+  if (ensureInFlight !== null) return ensureInFlight;
+  const start = deps.startDaemon ?? startDaemonProcess;
+  ensureInFlight = (async () => {
+    try {
+      if (!await start()) return false;
+      for (const delayMs of [250, 1500, 3000]) {
+        if (fileExists(sockPath)) return true;
+        await new Promise((r) => { const t = setTimeout(r, delayMs); t.unref(); });
+      }
+      return fileExists(sockPath);
+    } finally {
+      ensureInFlight = null;
+    }
+  })();
+  return ensureInFlight;
 }
 
 /**

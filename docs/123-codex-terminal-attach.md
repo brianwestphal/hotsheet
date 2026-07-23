@@ -81,8 +81,20 @@ behavior, zero surprise. Notably:
   is no rollout ⇒ plain `codex`. The terminal does NOT pre-create or pre-attach a
   daemon session (a fresh `codex --remote` session would be daemon-attached but
   still not the driven thread — no watch value). See §123.7.
-- **Daemon not running** (e.g. after a machine restart, before the first play) ⇒
-  plain `codex`. The terminal spawn path does not start the daemon itself (§123.7).
+- **Daemon not running** at the moment a terminal resolves ⇒ plain `codex`. The
+  synchronous resolver never starts the daemon itself; instead **HS-9396
+  (SHIPPED)** pre-starts it ahead of need: `prestartCodexDaemonIfNeeded(dataDir)`
+  (`codexAppServer.ts`) fires — fire-and-forget — at **project registration**
+  (inside `eagerSpawnTerminals`), on an **`ai_tool` settings change**, and on
+  **drive re-enable** (`POST /channel/codex-app-server`). It acts only when the
+  attach is exactly one missing daemon away (drive on + `ai_tool=codex` +
+  resumable rollout on disk + socket absent), calling
+  `ensureCodexDaemonRunning()` (`codexDaemonTransport.ts` — socket check →
+  `codex app-server daemon start` → poll; concurrent callers share one
+  in-flight start). So after a machine restart, the daemon is typically up long
+  before any terminal attaches. No thread warming is needed: a freshly started
+  daemon loads a thread's rollout from disk on `thread/resume` (live-verified,
+  0.145.0).
 - **Already-open terminals** keep whatever they launched with; a terminal opened
   before the first play stays unattached until relaunched.
 
@@ -99,8 +111,8 @@ behavior, zero surprise. Notably:
 
 ## 123.7 Follow-ups
 
-- **HS-9396** — pre-start the daemon (and optionally warm the thread) at terminal
-  launch time, so post-reboot terminals attach without waiting for a play.
+- **HS-9396 — SHIPPED** (daemon pre-start; folded into §123.5). Thread warming
+  was investigated and found unnecessary.
 - **HS-9397** — attach/reattach affordance for live terminals: surface "driven
   session available — reattach" when an open plain-codex terminal's project gains a
   resumable driven thread (or its thread was reset).
