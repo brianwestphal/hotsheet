@@ -58,7 +58,12 @@ decides the header button, `renderHeader` builds it:
 - **`mode:'uncommitted'`** added to `GlassboxReviewReqSchema` → `glassbox
   --uncommitted`; `buildGlassboxReviewArgs`'s `SAFE_REF` now admits `^`/`~` for
   the range bases (arg-array spawn, no shell).
-- Presence rule widens to **notes OR an actionable aggregate**.
+- Presence rule widens to **notes OR an actionable aggregate**. **Explicitly
+  independent of `.pr-notes/` (HS-9398):** a project that never emits review
+  notes still gets the section whenever the ticket has at least one discovered
+  commit (or the uncommitted fallback applies) — and the two fetches degrade
+  independently, so a review-proof failure (older server, no route) keeps the
+  commits-only view rather than blanking the section.
 - Per-note "Open in Glassbox" deep-links stay in expanded rows (secondary
   affordance — "show me THIS note in context").
 
@@ -80,7 +85,8 @@ notes-files aggregate.
 - `reviewProofSection.test.ts` — `aggregateReviewAction` + render (rename,
   commits-only presence, single-commit `commit` mode, chooser + span caveat,
   ref-labeled options, uncommitted fallback, files-mode fallback,
-  commits-failure degrades to notes-only).
+  commits-failure degrades to notes-only, notes-failure degrades to
+  commits-only + both-fail keeps the prior view — HS-9398).
 - `dashboard.test.ts` — `buildGlassboxReviewArgs` uncommitted mode + `^`/`~`
   range bases.
 - `e2e/code-review-section.spec.ts` — chooser renders for interleaved groups +

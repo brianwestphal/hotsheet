@@ -294,20 +294,16 @@ export async function loadAndRenderReviewProof(ticketNumber: string): Promise<vo
   currentTicket = ticketNumber;
   if (switching && !sigCache.has(ticketNumber)) container.replaceChildren();
 
-  let notes: ReviewProofNote[];
-  let commits: TicketCommitsResponse | null;
-  try {
-    // HS-9393 — commits fetched alongside the notes; a commits failure (older
-    // server, non-repo) degrades to the notes-only view rather than blanking.
-    const [proof, commitsRes] = await Promise.all([
-      getReviewProof(ticketNumber),
-      getTicketCommits(ticketNumber).catch(() => null),
-    ]);
-    notes = proof.notes;
-    commits = commitsRes;
-  } catch {
-    return; // transient failure — keep whatever's shown
-  }
+  // HS-9393 / HS-9398 — the two fetches degrade INDEPENDENTLY: a commits failure
+  // (older server, non-repo) keeps the notes-only view, and a notes failure keeps
+  // the commits-only view (the section must not require `.pr-notes/` to exist —
+  // docs/122 §122.3). Only both failing keeps whatever's shown.
+  const [proof, commits] = await Promise.all([
+    getReviewProof(ticketNumber).catch(() => null),
+    getTicketCommits(ticketNumber).catch(() => null),
+  ]);
+  if (proof === null && commits === null) return; // transient failure — keep whatever's shown
+  const notes: ReviewProofNote[] = proof?.notes ?? [];
   if (currentTicket !== ticketNumber) return; // switched away mid-fetch
 
   const sig = JSON.stringify({ notes, commits });

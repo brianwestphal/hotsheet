@@ -233,3 +233,26 @@ describe('reviewProofSection (HS-9293)', () => {
     expect(container().childElementCount).toBe(0);
   });
 });
+
+// HS-9398 (docs/122 §122.3) — the section must not require `.pr-notes/` or a
+// working review-proof endpoint: a notes-fetch failure degrades to commits-only.
+describe('HS-9398 — notes-fetch failure keeps the commits-only view', () => {
+  it('renders the aggregate button when review-proof rejects but commits exist', async () => {
+    getReviewProof.mockRejectedValue(new Error('no review-proof route'));
+    getTicketCommits.mockResolvedValue({
+      groups: [{ from: 'a^', to: 'a', count: 1, subjects: ['HS-1: fix'], earliestDate: '2026-07-23T10:00:00Z', latestDate: '2026-07-23T10:00:00Z' }],
+      span: null, dirty: false, ticketStatus: 'completed',
+    });
+    await loadAndRenderReviewProof('HS-1');
+    const container = document.getElementById('detail-review-proof')!;
+    expect(container.querySelector('.code-review-aggregate-btn')?.textContent).toBe('Open in Glassbox');
+    expect(container.querySelector('.code-review-notes-count')).toBeNull();
+  });
+
+  it('keeps whatever is shown when BOTH fetches fail', async () => {
+    getReviewProof.mockRejectedValue(new Error('down'));
+    getTicketCommits.mockRejectedValue(new Error('down'));
+    await loadAndRenderReviewProof('HS-1');
+    expect(document.getElementById('detail-review-proof')!.childElementCount).toBe(0);
+  });
+});
