@@ -17,11 +17,16 @@ import {
   interruptCodexAppServerTurn,
   isCodexAppServerEnabled,
   readPersistedThreadId,
+  shutdownCodexAppServers,
   spawnCodexAppServerRun,
 } from './codexAppServer.js';
+import type { CodexTransportHandlers } from './codexDaemonTransport.js';
 import { getProjectSecret } from './secret-file.js';
 
 type SpawnFn = NonNullable<CodexAppServerDeps['spawnFn']>;
+
+/** HS-9388 — force the stdio fallback path (no daemon in unit tests). */
+const noDaemon = (): Promise<null> => Promise.resolve(null);
 
 /** Flush microtasks so the async boot/turn chains settle. */
 const flush = async (): Promise<void> => {
@@ -127,7 +132,7 @@ describe('spawnCodexAppServerRun — boot + first turn', () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
     const postHeartbeat = vi.fn();
     const signalDone = vi.fn();
-    expect(spawnCodexAppServerRun(dataDir, 4174, 'process the worklist', { spawnFn: fake.spawnFn, postHeartbeat, signalDone })).toBe(true);
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'process the worklist', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat, signalDone })).toBe(true);
     await flush();
 
     expect(fake.spawned.command).toBe('codex');
@@ -153,7 +158,7 @@ describe('spawnCodexAppServerRun — boot + first turn', () => {
   it('resumes the persisted thread (no thread/start) when the rollout exists', async () => {
     writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-old' }), 'utf-8');
     const fake = scriptedAppServer({ resumable: ['th-old'] });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     expect(fake.sent.map(m => m.method)).toEqual(['initialize', 'initialized', 'thread/resume', 'turn/start']);
     expect(fake.sent.find(m => m.method === 'turn/start')?.params?.threadId).toBe('th-old');
@@ -162,7 +167,7 @@ describe('spawnCodexAppServerRun — boot + first turn', () => {
   it('O3 — falls back to a fresh thread/start when resume fails (missing rollout) and re-persists', async () => {
     writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-gone' }), 'utf-8');
     const fake = scriptedAppServer({ resumable: [], newThreadId: 'th-fresh' });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     expect(fake.sent.map(m => m.method)).toEqual(['initialize', 'initialized', 'thread/resume', 'thread/start', 'turn/start']);
     expect(readPersistedThreadId(dataDir)).toBe('th-fresh');
@@ -174,7 +179,7 @@ describe('O1 — queue + coalesce', () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
     const postHeartbeat = vi.fn();
     const signalDone = vi.fn();
-    const deps = { spawnFn: fake.spawnFn, postHeartbeat, signalDone };
+    const deps = { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat, signalDone };
     spawnCodexAppServerRun(dataDir, 4174, 'worklist trigger', deps);
     await flush(); // turn 1 running
 
@@ -222,7 +227,7 @@ describe('approvals → §47 overlay bridge', () => {
 
   it('surfaces the captured approval in the bridge and forwards the chosen decision', async () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
 
     fake.emit(CAPTURED_APPROVAL);
@@ -241,7 +246,7 @@ describe('approvals → §47 overlay bridge', () => {
 
   it('a dismissed popup declines', async () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     fake.emit(CAPTURED_APPROVAL);
     await flush();
@@ -254,7 +259,7 @@ describe('approvals → §47 overlay bridge', () => {
   it('O4 opt-out (`codex_interactive_permissions: false`) auto-approves without a popup', async () => {
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'codex', codex_interactive_permissions: false }), 'utf-8');
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     fake.emit(CAPTURED_APPROVAL);
     await flush();
@@ -268,7 +273,7 @@ describe('approvals → §47 overlay bridge', () => {
       permission_allow_rules: [{ id: 'r1', tool: 'Bash', pattern: '/bin/zsh -lc .*', added_at: '2026-07-23T00:00:00.000Z' }],
     }), 'utf-8');
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     fake.emit(CAPTURED_APPROVAL);
     await flush();
@@ -278,7 +283,7 @@ describe('approvals → §47 overlay bridge', () => {
 
   it('answers non-approval server requests with an empty result so the agent never hangs', async () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     fake.emit({ jsonrpc: '2.0', id: 'other-1', method: 'item/tool/requestUserInput', params: {} });
     await flush();
@@ -289,7 +294,7 @@ describe('approvals → §47 overlay bridge', () => {
 describe('interrupt + crash', () => {
   it('interruptCodexAppServerTurn sends turn/interrupt {threadId, turnId} and clears the queue', async () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
-    const deps = { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() };
+    const deps = { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() };
     spawnCodexAppServerRun(dataDir, 4174, 'go', deps);
     await flush(); // turn-1 active
     spawnCodexAppServerRun(dataDir, 4174, 'queued extra', deps);
@@ -314,7 +319,7 @@ describe('interrupt + crash', () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
     const postHeartbeat = vi.fn();
     const signalDone = vi.fn();
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat, signalDone });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat, signalDone });
     await flush(); // turn active
 
     fake.proc.emit('exit', 1, null);
@@ -324,7 +329,7 @@ describe('interrupt + crash', () => {
 
     // Lazy respawn on the next play — a NEW child (resume of the persisted thread).
     const fake2 = scriptedAppServer({ resumable: ['th-1'] });
-    expect(spawnCodexAppServerRun(dataDir, 4174, 'again', { spawnFn: fake2.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(true);
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'again', { spawnFn: fake2.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(true);
     await flush();
     expect(fake2.sent.map(m => m.method)).toEqual(['initialize', 'initialized', 'thread/resume', 'turn/start']);
   });
@@ -339,7 +344,7 @@ describe('HS-9385 — transcript events', () => {
   it('posts start on turn/started, item lines for completed items, and end with the terminal status', async () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
     const postTranscript = vi.fn();
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn(), postTranscript });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn(), postTranscript });
     await flush(); // turn-1 started
 
     fake.emit({ jsonrpc: '2.0', method: 'item/completed', params: { item: { type: 'agentMessage', text: 'working on it', phase: 'commentary' }, threadId: 'th-1' } });
@@ -358,7 +363,7 @@ describe('HS-9385 — transcript events', () => {
   it('an interrupted turn ends the transcript with its status', async () => {
     const fake = scriptedAppServer({ newThreadId: 'th-1' });
     const postTranscript = vi.fn();
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn(), postTranscript });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn(), postTranscript });
     await flush();
     fake.completeTurn('turn-1', 'interrupted');
     await flush();
@@ -390,7 +395,7 @@ describe('HS-9384 — Experimental toggle + handshake-failure degradation', () =
   it('spawnCodexAppServerRun refuses to spawn when the toggle is off (no one-shot fallback)', () => {
     writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
     const fake = scriptedAppServer();
-    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(false);
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(false);
     expect(fake.spawnFn).not.toHaveBeenCalled();
   });
 
@@ -412,7 +417,7 @@ describe('HS-9384 — Experimental toggle + handshake-failure degradation', () =
     const spawnFn = vi.fn<SpawnFn>(() => proc as unknown as ChildProcess);
     const postHeartbeat = vi.fn();
     const signalDone = vi.fn();
-    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn, postHeartbeat, signalDone })).toBe(true);
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn, connectDaemon: noDaemon, postHeartbeat, signalDone })).toBe(true);
     await flush();
     expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(true);
     expect(heartbeats(postHeartbeat)).toContain('idle'); // busy can't stick
@@ -433,12 +438,178 @@ describe('HS-9384 — Experimental toggle + handshake-failure degradation', () =
       } },
       stdout: stdoutFail, kill: vi.fn(),
     });
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: vi.fn<SpawnFn>(() => failProc as unknown as ChildProcess), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: vi.fn<SpawnFn>(() => failProc as unknown as ChildProcess), connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(true);
 
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(false);
+  });
+});
+
+describe('HS-9388 — daemon transport', () => {
+  /** Wrap a scripted fake app-server as a DAEMON transport (UDS-WS stand-in):
+   *  same responder, no child process. `closeSpy` observes teardown. */
+  function daemonize(fake: FakeServer): { connectDaemon: NonNullable<CodexAppServerDeps['connectDaemon']>; closeSpy: ReturnType<typeof vi.fn> } {
+    const closeSpy = vi.fn();
+    const connectDaemon = (h: CodexTransportHandlers): Promise<{ kind: 'daemon'; send: (json: string) => void; close: () => void }> => {
+      fake.proc.stdout.on('data', (chunk: Buffer) => {
+        for (const line of chunk.toString().split('\n')) if (line.trim() !== '') h.onMessage(line);
+      });
+      return Promise.resolve({ kind: 'daemon' as const, send: (json: string) => { fake.proc.stdin.write(json); }, close: closeSpy });
+    };
+    return { connectDaemon, closeSpy };
+  }
+
+  it('prefers the daemon: no stdio child, and thread/start pins the project MCP server per-thread (abs --data-dir + drive marker)', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-d' });
+    const { connectDaemon } = daemonize(fake);
+    const postHeartbeat = vi.fn();
+    const signalDone = vi.fn();
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat, signalDone })).toBe(true);
+    await flush();
+
+    expect(fake.spawnFn).not.toHaveBeenCalled(); // daemon won — no private child
+    const start = fake.sent.find(m => m.method === 'thread/start');
+    expect(start?.params?.cwd).toBe(dir);
+    const override = (start?.params?.config as { mcp_servers?: Record<string, { args?: string[]; env?: Record<string, string> }> } | undefined)?.mcp_servers?.['hotsheet-channel'];
+    expect(override?.args?.slice(-2)).toEqual(['--data-dir', dataDir]);
+    expect(override?.env).toEqual({ HOTSHEET_DRIVE_SPAWNED: '1' });
+
+    fake.completeTurn('turn-1');
+    await flush();
+    expect(signalDone).toHaveBeenCalledTimes(1);
+    expect(readPersistedThreadId(dataDir)).toBe('th-d');
+  });
+
+  it('thread/resume carries the per-thread override too', async () => {
+    writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-r' }), 'utf-8');
+    const fake = scriptedAppServer({ resumable: ['th-r'] });
+    const { connectDaemon } = daemonize(fake);
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    const resume = fake.sent.find(m => m.method === 'thread/resume');
+    const override = (resume?.params?.config as { mcp_servers?: Record<string, unknown> } | undefined)?.mcp_servers;
+    expect(override).toHaveProperty('hotsheet-channel');
+  });
+
+  it('the stdio fallback does NOT send a config override (global codex config already applies)', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-s' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    const start = fake.sent.find(m => m.method === 'thread/start');
+    expect(start?.params).not.toHaveProperty('config');
+  });
+
+  it('ignores notifications about OTHER threads on the shared connection', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-d' });
+    const { connectDaemon } = daemonize(fake);
+    const signalDone = vi.fn();
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat: vi.fn(), signalDone });
+    await flush(); // our turn-1 active
+
+    // A broadcast about someone else's thread must not end OUR turn.
+    fake.emit({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'th-foreign', turn: { id: 'x', status: 'completed' } } });
+    await flush();
+    expect(signalDone).not.toHaveBeenCalled();
+
+    fake.emit({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'th-d', turn: { id: 'turn-1', status: 'completed' } } });
+    await flush();
+    expect(signalDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("a shared-thread turn we did NOT start (an attached TUI's) streams to the transcript but never drives done", async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-d' });
+    const { connectDaemon } = daemonize(fake);
+    const signalDone = vi.fn();
+    const postTranscript = vi.fn();
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat: vi.fn(), signalDone, postTranscript });
+    await flush();
+    fake.completeTurn('turn-1');
+    await flush();
+    expect(signalDone).toHaveBeenCalledTimes(1); // our own turn — baseline
+
+    // HS-9394 scenario: a user-attached `codex --remote` TUI runs a turn on the SAME thread.
+    fake.emit({ jsonrpc: '2.0', method: 'turn/started', params: { threadId: 'th-d', turn: { id: 'tui-turn', status: 'inProgress' } } });
+    fake.emit({ jsonrpc: '2.0', method: 'item/completed', params: { threadId: 'th-d', item: { type: 'agentMessage', text: 'tui says hi' } } });
+    fake.emit({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'th-d', turn: { id: 'tui-turn', status: 'completed' } } });
+    await flush();
+    expect(postTranscript.mock.calls.map(c => (c[2] as { phase: string }).phase)).toContain('item');
+    expect(postTranscript.mock.calls.some(c => (c[2] as { text?: string }).text === 'tui says hi')).toBe(true);
+    expect(signalDone).toHaveBeenCalledTimes(1); // unchanged — not our turn
+  });
+
+  it('shutdown closes OUR daemon connection (the shared daemon itself is not killed)', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-d' });
+    const { connectDaemon, closeSpy } = daemonize(fake);
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    shutdownCodexAppServers();
+    expect(closeSpy).toHaveBeenCalled();
+    expect(fake.proc.kill).not.toHaveBeenCalled();
+  });
+
+  it('a rejecting daemon connect marks the project handshake-failed (no zombie session)', async () => {
+    const fake = scriptedAppServer();
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: () => Promise.reject(new Error('boom')), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    expect(hasCodexAppServerHandshakeFailed(dataDir)).toBe(true);
+  });
+});
+
+describe('HS-9395 — MCP tool-call elicitations', () => {
+  const elicitParams = (serverName: string): Record<string, unknown> => ({
+    threadId: 'th-1',
+    turnId: 'turn-1',
+    serverName,
+    mode: 'form',
+    _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: { id: 9388 } },
+    message: `Allow the ${serverName} MCP server to run tool "hotsheet_get_ticket"?`,
+    requestedSchema: { type: 'object', properties: {} },
+  });
+
+  it("auto-accepts hotsheet's own MCP server with the REQUIRED {action, content} shape (the old {} reply read as a decline)", async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    fake.emit({ jsonrpc: '2.0', id: 'elicit-1', method: 'mcpServer/elicitation/request', params: elicitParams('hotsheet-channel') });
+    await flush();
+    expect(fake.sent.find(m => m.id === 'elicit-1')?.result).toEqual({ action: 'accept', content: {} });
+    // No popup was rendered for our own control surface.
+    expect(pendingAcpPermissionForSecret(getProjectSecret(dataDir))).toBeNull();
+  });
+
+  it("routes OTHER servers' elicitations to the §47 overlay; an accepted popup accepts, a dismissed one declines", async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    const secret = getProjectSecret(dataDir);
+
+    fake.emit({ jsonrpc: '2.0', id: 'elicit-2', method: 'mcpServer/elicitation/request', params: elicitParams('some-other-server') });
+    await flush();
+    const pending = pendingAcpPermissionForSecret(secret);
+    expect(pending).not.toBeNull();
+    expect(pending?.tool_name).toBe('Codex: MCP tool (hotsheet_get_ticket)');
+    resolveAcpPermission(pending!.request_id, { optionId: 'accept' });
+    await flush();
+    expect(fake.sent.find(m => m.id === 'elicit-2')?.result).toEqual({ action: 'accept', content: {} });
+
+    fake.emit({ jsonrpc: '2.0', id: 'elicit-3', method: 'mcpServer/elicitation/request', params: elicitParams('some-other-server') });
+    await flush();
+    const pending3 = pendingAcpPermissionForSecret(secret);
+    resolveAcpPermission(pending3!.request_id, { cancelled: true });
+    await flush();
+    expect(fake.sent.find(m => m.id === 'elicit-3')?.result).toEqual({ action: 'decline' });
+  });
+
+  it('auto-accepts ANY server when interactive permissions are explicitly off (O4 opt-out)', async () => {
+    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'codex', codex_interactive_permissions: false }), 'utf-8');
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    fake.emit({ jsonrpc: '2.0', id: 'elicit-4', method: 'mcpServer/elicitation/request', params: elicitParams('some-other-server') });
+    await flush();
+    expect(fake.sent.find(m => m.id === 'elicit-4')?.result).toEqual({ action: 'accept', content: {} });
   });
 });

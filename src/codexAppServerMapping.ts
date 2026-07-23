@@ -152,6 +152,69 @@ export function decisionFromReply(reply: { optionId: string } | { cancelled: tru
   return { decision: reply.optionId };
 }
 
+/** HS-9395 — display fields for an MCP tool-call elicitation server-request
+ *  (`mcpServer/elicitation/request`, `_meta.codex_approval_kind: 'mcp_tool_call'`);
+ *  null for other methods. Captured shape: params carry `serverName`, a human
+ *  `message` (`Allow the <server> MCP server to run tool "<name>"?`), and
+ *  `_meta.tool_params`. NOTE the response shape differs from the requestApproval
+ *  family — reply via `elicitationResponseFromReply`, not `decisionFromReply`. */
+export interface ElicitationDisplay {
+  /** The MCP server config key (e.g. `hotsheet-channel`) — the auto-accept gate. */
+  serverName: string;
+  tool_name: string;
+  description: string;
+  input_preview: string;
+  options: AcpPermissionOption[];
+}
+
+export function elicitationDisplayFromRequest(method: string, params: Record<string, unknown>): ElicitationDisplay | null {
+  if (method !== 'mcpServer/elicitation/request') return null;
+  const serverName = typeof params.serverName === 'string' ? params.serverName : '';
+  const message = typeof params.message === 'string' ? params.message : '';
+  const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : {};
+  const toolName = /tool "([^"]+)"/.exec(message)?.[1] ?? null;
+  const toolParams = meta.tool_params;
+  return {
+    serverName,
+    tool_name: `Codex: MCP tool${toolName !== null ? ` (${toolName})` : ''}`,
+    description: message !== '' ? message : 'Codex wants to call an MCP tool',
+    input_preview: toolParams !== undefined ? JSON.stringify(toolParams) : '',
+    options: [
+      { optionId: 'accept', name: 'Allow', kind: 'allow_once' },
+      { optionId: 'decline', name: 'Deny', kind: 'reject_once' },
+    ],
+  };
+}
+
+/** HS-9395 — the `McpServerElicitationRequestResponse` payload for an overlay reply.
+ *  `action` is REQUIRED (the shipped drive's generic `{}` reply read as a decline —
+ *  the root cause of driven sessions' hotsheet tools failing); accepted elicitations
+ *  carry empty `content` (the captured requestedSchema has no fields). */
+export function elicitationResponseFromReply(reply: { optionId: string } | { cancelled: true }): { action: string; content?: Record<string, never> } {
+  if ('cancelled' in reply || reply.optionId !== 'accept') return { action: 'decline' };
+  return { action: 'accept', content: {} };
+}
+
+/**
+ * HS-9388 — the per-thread `config` override for `thread/start`/`thread/resume`
+ * in DAEMON mode: pins the hotsheet-channel MCP server to this project (absolute
+ * `--data-dir` — the shared daemon's cwd is not the project's) and marks its env
+ * so the channel server registers `drive: true` (HS-9380) no matter who started
+ * the daemon or from where. Live-verified on 0.145.0: the override is honored
+ * per-thread and the given env is MERGED into the child's (PATH survives).
+ */
+export function buildThreadMcpOverride(mcpKey: string, channel: { command: string; args: string[] }, dataDir: string): Record<string, unknown> {
+  return {
+    mcp_servers: {
+      [mcpKey]: {
+        command: channel.command,
+        args: [...channel.args, '--data-dir', dataDir],
+        env: { HOTSHEET_DRIVE_SPAWNED: '1' },
+      },
+    },
+  };
+}
+
 /**
  * HS-9385 (docs/121 §121.6 phase 1) — one Commands Log transcript line from an
  * `item/completed` notification's params, or null for items the transcript skips

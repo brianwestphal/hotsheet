@@ -8,9 +8,12 @@ import {
   buildNotificationLine,
   buildRequestLine,
   buildResponseLine,
+  buildThreadMcpOverride,
   classifyAppServerLine,
   decisionFromReply,
   driveEventFromNotification,
+  elicitationDisplayFromRequest,
+  elicitationResponseFromReply,
   threadIdFromResponse,
   TRANSCRIPT_TRUNCATION_MARKER,
   transcriptLineFromItem,
@@ -166,5 +169,64 @@ describe('appendTranscriptDetail (HS-9385)', () => {
     const frozen = appendTranscriptDetail(capped.detail, 'more', 100);
     expect(frozen.detail).toBe(capped.detail);
     expect(frozen.detail.match(/\[transcript truncated\]/g)).toHaveLength(1);
+  });
+});
+
+describe('elicitationDisplayFromRequest (HS-9395)', () => {
+  // The CAPTURED 0.145.0 shape for an MCP tool-call elicitation.
+  const params = {
+    threadId: 'th-1',
+    turnId: 'turn-1',
+    serverName: 'hotsheet-channel',
+    mode: 'form',
+    _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: { id: 9388 } },
+    message: 'Allow the hotsheet-channel MCP server to run tool "hotsheet_get_ticket"?',
+    requestedSchema: { type: 'object', properties: {} },
+  };
+
+  it('maps the captured mcp_tool_call shape: server name, tool name from the message, params preview, allow/deny options', () => {
+    const d = elicitationDisplayFromRequest('mcpServer/elicitation/request', params);
+    expect(d).not.toBeNull();
+    expect(d?.serverName).toBe('hotsheet-channel');
+    expect(d?.tool_name).toBe('Codex: MCP tool (hotsheet_get_ticket)');
+    expect(d?.description).toContain('hotsheet_get_ticket');
+    expect(d?.input_preview).toBe('{"id":9388}');
+    expect(d?.options.map(o => o.optionId)).toEqual(['accept', 'decline']);
+  });
+
+  it('tolerates a message without the tool-name quote and missing _meta', () => {
+    const d = elicitationDisplayFromRequest('mcpServer/elicitation/request', { serverName: 's', message: 'Allow?' });
+    expect(d?.tool_name).toBe('Codex: MCP tool');
+    expect(d?.input_preview).toBe('');
+  });
+
+  it('returns null for non-elicitation methods (the requestApproval family keeps its own path)', () => {
+    expect(elicitationDisplayFromRequest('item/commandExecution/requestApproval', params)).toBeNull();
+    expect(elicitationDisplayFromRequest('item/tool/requestUserInput', params)).toBeNull();
+  });
+});
+
+describe('elicitationResponseFromReply (HS-9395)', () => {
+  it('accept carries the REQUIRED action plus empty content (the old `{}` reply read as a decline)', () => {
+    expect(elicitationResponseFromReply({ optionId: 'accept' })).toEqual({ action: 'accept', content: {} });
+  });
+
+  it('decline and dismissed popups decline without content', () => {
+    expect(elicitationResponseFromReply({ optionId: 'decline' })).toEqual({ action: 'decline' });
+    expect(elicitationResponseFromReply({ cancelled: true })).toEqual({ action: 'decline' });
+  });
+});
+
+describe('buildThreadMcpOverride (HS-9388)', () => {
+  it('pins the channel server to the project: absolute --data-dir appended + the HS-9380 drive marker env', () => {
+    expect(buildThreadMcpOverride('hotsheet-channel', { command: 'npx', args: ['tsx', '/repo/src/channel.ts'] }, '/repo/.hotsheet')).toEqual({
+      mcp_servers: {
+        'hotsheet-channel': {
+          command: 'npx',
+          args: ['tsx', '/repo/src/channel.ts', '--data-dir', '/repo/.hotsheet'],
+          env: { HOTSHEET_DRIVE_SPAWNED: '1' },
+        },
+      },
+    });
   });
 });

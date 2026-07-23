@@ -14,6 +14,13 @@
 // thread reset (auto-fresh only when `thread/resume` fails), O4 approvals surface
 // in the overlay BY DEFAULT (`codex_interactive_permissions` absent ⇒ on;
 // explicit false ⇒ auto-approve in the bridge).
+//
+// HS-9388 (docs/121 §121.6) — transport: the session prefers the SHARED daemon
+// (UDS WebSocket via `codexDaemonTransport.ts`, started if absent) so external
+// codex UIs — including a `codex resume <threadId> --remote`-attached TUI
+// (HS-9394) — can watch the driven thread live; the private stdio child is the
+// automatic fallback when the daemon can't be reached. Same JSON-RPC protocol
+// either way, behind one `CodexTransport` interface.
 
 import { type ChildProcess, spawn } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
@@ -21,18 +28,28 @@ import { dirname, join } from 'path';
 import { z } from 'zod';
 
 import { dismissAcpPermission, injectAcpPermission } from './acp/acpPermissionBridge.js';
+import { getChannelServerPath } from './channel-config.js';
+import { CODEX_MCP_KEY } from './codex.js';
 import {
   approvalDisplayFromRequest,
   type AppServerIncoming,
   buildNotificationLine,
   buildRequestLine,
   buildResponseLine,
+  buildThreadMcpOverride,
   classifyAppServerLine,
   decisionFromReply,
   driveEventFromNotification,
+  elicitationDisplayFromRequest,
+  elicitationResponseFromReply,
   threadIdFromResponse,
   transcriptLineFromItem,
 } from './codexAppServerMapping.js';
+import {
+  type CodexTransport,
+  type CodexTransportHandlers,
+  connectCodexDaemon,
+} from './codexDaemonTransport.js';
 import { readFileSettings } from './file-settings.js';
 import { readGlobalConfig } from './global-config.js';
 import { findMatchingAllowRule, parseAllowRules } from './permissionAllowRules.js';
@@ -99,8 +116,11 @@ export interface CodexTranscriptEvent {
 }
 
 export interface CodexAppServerDeps {
-  /** Injectable for tests. Defaults to `child_process.spawn`. */
+  /** Injectable for tests. Defaults to `child_process.spawn` (the stdio fallback child). */
   spawnFn?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly ['pipe', 'pipe', 'ignore'] }) => ChildProcess;
+  /** HS-9388 — injectable for tests. Defaults to the real daemon connect (start-if-absent);
+   *  `async () => null` forces the stdio fallback path. */
+  connectDaemon?: (handlers: CodexTransportHandlers) => Promise<CodexTransport | null>;
   /** Injectable for tests. Defaults to the real `/channel/done` fallback POST. */
   signalDone?: (dataDir: string, serverPort: number) => void;
   /** Injectable for tests. Defaults to the real `/channel/heartbeat` POST. */
@@ -110,7 +130,8 @@ export interface CodexAppServerDeps {
 }
 
 interface Session {
-  proc: ChildProcess;
+  /** Null until `establishTransport` resolves (daemon connect or stdio spawn). */
+  transport: CodexTransport | null;
   dataDir: string;
   serverPort: number;
   secret: string;
@@ -135,9 +156,11 @@ const sessions = new Map<string, Session>();
 
 /**
  * The play/custom-command entry point — the `McpHooksAgent.spawnRun` signature.
- * Ensures the per-project session (spawn + handshake + thread resume/start on first
- * use), queues the prompt (O1: coalescing exact duplicates), and starts the next
- * turn when idle. Returns false only when the child could not be spawned.
+ * Ensures the per-project session (transport + handshake + thread resume/start on
+ * first use), queues the prompt (O1: coalescing exact duplicates), and starts the
+ * next turn when idle. Returns false only when the drive toggle is off; transport
+ * failures surface asynchronously via the HS-9384 handshake-failed flag (HS-9388 —
+ * establishing the daemon transport is async, so spawn errors can't be sync).
  */
 export function spawnCodexAppServerRun(dataDir: string, serverPort: number, content: string, deps: CodexAppServerDeps = {}): boolean {
   // HS-9384 — the Experimental toggle gates the drive server-side too (the client
@@ -147,7 +170,6 @@ export function spawnCodexAppServerRun(dataDir: string, serverPort: number, cont
   let session: Session;
   if (existing === undefined || existing.finished) {
     const created = createSession(dataDir, serverPort, deps);
-    if (created === null) return false;
     sessions.set(dataDir, created);
     session = created;
   } else {
@@ -194,24 +216,9 @@ export function _resetCodexAppServersForTesting(): void {
   sessions.clear();
 }
 
-function createSession(dataDir: string, serverPort: number, deps: CodexAppServerDeps): Session | null {
-  const doSpawn = deps.spawnFn ?? spawn;
-  const projectDir = dirname(dataDir); // <root>/.hotsheet → <root>
-  let proc: ChildProcess;
-  try {
-    proc = doSpawn('codex', ['app-server'], {
-      cwd: projectDir,
-      // HS-9380 — the marker propagates to the MCP channel-server child the driven
-      // session starts, so it registers `drive: true` (not a duplicate main).
-      env: { ...process.env, HOTSHEET_DRIVE_SPAWNED: '1' },
-      // stderr → ignore (codex logs there; an unread pipe could stall the child).
-      stdio: ['pipe', 'pipe', 'ignore'] as const,
-    });
-  } catch {
-    return null;
-  }
+function createSession(dataDir: string, serverPort: number, deps: CodexAppServerDeps): Session {
   const session: Session = {
-    proc,
+    transport: null,
     dataDir,
     serverPort,
     secret: getProjectSecret(dataDir),
@@ -231,28 +238,88 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     pendingPermissionIds: new Set(),
     finished: false,
   };
-  proc.stdout?.on('data', (chunk: Buffer | string) => { onStdout(session, typeof chunk === 'string' ? chunk : chunk.toString('utf-8')); });
-  proc.on('error', () => { teardown(session, 'spawn-error'); });
-  proc.on('exit', () => { teardown(session, 'process-exit'); });
-  void bootSession(session).catch(() => {
-    // HS-9384 — a failed handshake (initialize/thread setup) marks the project so
-    // the status route can surface it (client hides the drive + a Commands Log
-    // warning is written there, in project context). No one-shot fallback.
-    handshakeFailed.add(dataDir);
-    teardown(session, 'handshake-failed');
-  });
+  void establishTransport(session, deps)
+    .then(() => bootSession(session))
+    .catch(() => {
+      // HS-9384 — a failed transport/handshake (connect/spawn/initialize/thread
+      // setup) marks the project so the status route can surface it (client hides
+      // the drive + a Commands Log warning is written there, in project context).
+      // No one-shot fallback.
+      handshakeFailed.add(dataDir);
+      teardown(session, 'handshake-failed');
+    });
   return session;
+}
+
+/** HS-9388 — prefer the shared daemon (external codex UIs can watch the driven
+ *  thread); fall back to the private stdio child when it can't be reached. */
+async function establishTransport(session: Session, deps: CodexAppServerDeps): Promise<void> {
+  const handlers: CodexTransportHandlers = {
+    onMessage: (text) => { onIncomingText(session, text); },
+    onClose: () => { teardown(session, 'transport-closed'); },
+  };
+  const connect = deps.connectDaemon ?? connectCodexDaemon;
+  const daemon = await connect(handlers);
+  if (session.finished) { daemon?.close(); return; }
+  if (daemon !== null) {
+    session.transport = daemon;
+    return;
+  }
+  session.transport = createStdioTransport(session, deps.spawnFn ?? ((command, args, options) => spawn(command, args, { ...options, stdio: [...options.stdio] })), handlers);
+  if (session.transport === null) throw new Error('codex app-server: stdio spawn failed');
+}
+
+/** The private stdio child (pre-HS-9388 behavior), now behind the transport
+ *  interface: newline framing on stdout, SIGTERM on close. Null on spawn failure. */
+function createStdioTransport(session: Session, doSpawn: NonNullable<CodexAppServerDeps['spawnFn']>, handlers: CodexTransportHandlers): CodexTransport | null {
+  const projectDir = dirname(session.dataDir); // <root>/.hotsheet → <root>
+  let proc: ChildProcess;
+  try {
+    proc = doSpawn('codex', ['app-server'], {
+      cwd: projectDir,
+      // HS-9380 — the marker propagates to the MCP channel-server child the driven
+      // session starts, so it registers `drive: true` (not a duplicate main).
+      env: { ...process.env, HOTSHEET_DRIVE_SPAWNED: '1' },
+      // stderr → ignore (codex logs there; an unread pipe could stall the child).
+      stdio: ['pipe', 'pipe', 'ignore'] as const,
+    });
+  } catch {
+    return null;
+  }
+  proc.stdout?.on('data', (chunk: Buffer | string) => {
+    session.buffered += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+    let nl = session.buffered.indexOf('\n');
+    while (nl !== -1) {
+      const line = session.buffered.slice(0, nl);
+      session.buffered = session.buffered.slice(nl + 1);
+      handlers.onMessage(line);
+      nl = session.buffered.indexOf('\n');
+    }
+  });
+  proc.on('error', () => { handlers.onClose(); });
+  proc.on('exit', () => { handlers.onClose(); });
+  return {
+    kind: 'stdio',
+    send: (json: string) => { try { proc.stdin?.write(json); } catch { /* dying process — exit handler cleans up */ } },
+    close: () => { try { proc.kill('SIGTERM'); } catch { /* already gone */ } },
+  };
 }
 
 /** initialize → initialized → thread/resume (persisted id) or thread/start → drain. */
 async function bootSession(session: Session): Promise<void> {
   await request(session, 'initialize', { clientInfo: { name: 'hotsheet', version: '0.1.0' } }, 30_000);
   write(session, buildNotificationLine('initialized', {}));
+  // HS-9388 — in daemon mode, pin the hotsheet-channel MCP server to THIS project
+  // per-thread: the shared daemon's cwd/env are not ours, so the override carries an
+  // absolute `--data-dir` + the HS-9380 drive marker (live-verified honored).
+  const config = session.transport?.kind === 'daemon'
+    ? buildThreadMcpOverride(CODEX_MCP_KEY, getChannelServerPath(), session.dataDir)
+    : undefined;
   const persisted = readPersistedThreadId(session.dataDir);
   let threadId: string | null = null;
   if (persisted !== null) {
     // O3 — auto-fresh ONLY when resume fails (missing/corrupt rollout).
-    const resumed = await request(session, 'thread/resume', { threadId: persisted }, 60_000).catch(() => null);
+    const resumed = await request(session, 'thread/resume', { threadId: persisted, config }, 60_000).catch(() => null);
     if (resumed !== null) threadId = persisted;
   }
   if (threadId === null) {
@@ -263,6 +330,7 @@ async function bootSession(session: Session): Promise<void> {
       // route to the bridge instead of a bypass flag.
       sandbox: 'workspace-write',
       approvalPolicy: 'untrusted',
+      config,
     }, 60_000);
     threadId = threadIdFromResponse(started);
     if (threadId === null) throw new Error('thread/start returned no thread id');
@@ -312,16 +380,23 @@ function onTurnEnded(session: Session): void {
   session.deps.signalDone(session.dataDir, session.serverPort);
 }
 
-function onStdout(session: Session, chunk: string): void {
-  session.buffered += chunk;
-  let nl = session.buffered.indexOf('\n');
-  while (nl !== -1) {
-    const line = session.buffered.slice(0, nl);
-    session.buffered = session.buffered.slice(nl + 1);
-    const msg = classifyAppServerLine(line);
-    if (msg !== null) handleIncoming(session, msg);
-    nl = session.buffered.indexOf('\n');
+/** One incoming JSON-RPC message (a framed stdout line, or one daemon WS frame). */
+function onIncomingText(session: Session, text: string): void {
+  const msg = classifyAppServerLine(text);
+  if (msg !== null) handleIncoming(session, msg);
+}
+
+/** HS-9388 — the thread id a notification names, when it names one. On the shared
+ *  daemon a connection can also receive broadcasts about OTHER threads (e.g.
+ *  `thread/started` from any client); lifecycle handling must ignore those. */
+function notificationThreadId(params: Record<string, unknown>): string | null {
+  if (typeof params.threadId === 'string') return params.threadId;
+  const thread = params.thread;
+  if (typeof thread === 'object' && thread !== null) {
+    const id = (thread as Record<string, unknown>).id;
+    if (typeof id === 'string') return id;
   }
+  return null;
 }
 
 function handleIncoming(session: Session, msg: AppServerIncoming): void {
@@ -339,6 +414,10 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
     void handleServerRequest(session, msg.id, msg.method, msg.params);
     return;
   }
+  // HS-9388 — on the shared daemon, ignore notifications about threads that aren't
+  // ours (broadcasts like `thread/started`, or another subscription's events).
+  const aboutThread = notificationThreadId(msg.params);
+  if (aboutThread !== null && session.threadId !== null && aboutThread !== session.threadId) return;
   // HS-9385 — stream completed items into the Commands Log transcript.
   if (msg.method === 'item/completed') {
     const line = transcriptLineFromItem(msg.params);
@@ -356,7 +435,11 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
     if (session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
   } else if (event.type === 'turn-ended') {
     session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId ?? '', status: event.status ?? 'completed' });
-    onTurnEnded(session);
+    // HS-9388/HS-9394 — on a SHARED thread another client (an attached TUI) can run
+    // turns too; those still stream to the transcript above, but only a turn WE
+    // started (phase 'active') drives the busy/done lifecycle.
+    if (session.phase === 'active') onTurnEnded(session);
+    else session.currentTurnId = null;
   } else {
     // thread-status active/idle — event-driven busy reassertion (spike finding).
     if (event.active && session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
@@ -366,6 +449,34 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
 /** Approvals → the §47 overlay via the ACP bridge; unknown server requests are
  *  declined-shaped empty results so the agent never hangs on us. */
 async function handleServerRequest(session: Session, id: number | string, method: string, params: Record<string, unknown>): Promise<void> {
+  // HS-9395 — MCP tool-call elicitations have their OWN response shape ({action},
+  // not {decision}); the old generic `{}` fallback read as a decline, silently
+  // failing every hotsheet_* call in driven sessions.
+  const elicitation = elicitationDisplayFromRequest(method, params);
+  if (elicitation !== null) {
+    // Hotsheet's own MCP server is the drive's control surface — auto-accept
+    // (same reasoning as the HS-9359 hook's auto-allow). Also auto-accept when
+    // interactive permissions are explicitly off (O4).
+    if (elicitation.serverName === CODEX_MCP_KEY || !codexInteractivePermissions(session.dataDir)) {
+      write(session, buildResponseLine(id, elicitationResponseFromReply({ optionId: 'accept' })));
+      return;
+    }
+    const { request_id, promise } = injectAcpPermission({
+      secret: session.secret,
+      tool_name: elicitation.tool_name,
+      description: elicitation.description,
+      input_preview: elicitation.input_preview,
+      options: elicitation.options,
+    });
+    session.pendingPermissionIds.add(request_id);
+    try {
+      const reply = await promise;
+      write(session, buildResponseLine(id, elicitationResponseFromReply(reply)));
+    } finally {
+      session.pendingPermissionIds.delete(request_id);
+    }
+    return;
+  }
   const display = approvalDisplayFromRequest(method, params);
   if (display === null) {
     // Not an approval (e.g. item/tool/requestUserInput) — answer with an empty
@@ -421,11 +532,13 @@ function request(session: Session, method: string, params: unknown, timeoutMs: n
 }
 
 function write(session: Session, line: string): void {
-  try { session.proc.stdin?.write(line); } catch { /* dying process — exit handler cleans up */ }
+  session.transport?.send(line);
 }
 
 /** Tear the session down exactly once: clear timers, dismiss popups, reject pending
- *  requests, clear busy (+ fallback done if work was in flight), kill the child. */
+ *  requests, clear busy (+ fallback done if work was in flight), close the transport
+ *  (stdio: SIGTERM the child; daemon: close OUR connection — the shared daemon and
+ *  the thread keep running for other attached clients). */
 function teardown(session: Session, _reason: string): void {
   if (session.finished) return;
   session.finished = true;
@@ -440,7 +553,7 @@ function teardown(session: Session, _reason: string): void {
     session.deps.postHeartbeat(session.serverPort, session.secret, 'idle');
     session.deps.signalDone(session.dataDir, session.serverPort); // busy can't stick
   }
-  try { session.proc.kill('SIGTERM'); } catch { /* already gone */ }
+  session.transport?.close();
   if (sessions.get(session.dataDir) === session) sessions.delete(session.dataDir);
 }
 

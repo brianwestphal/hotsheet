@@ -1,8 +1,8 @@
 # 121 — Codex App-Server Persistent Drive
 
-> **Status: CORE DRIVE (HS-9383) + TOGGLE/GATING (HS-9384) + COMMANDS LOG TRANSCRIPT (HS-9385) SHIPPED, 2026-07-23; daemon transport (HS-9388) + phase-2 transcript pane pending.** Follow-up to HS-9380 — the user-visible half of "clicking play with codex does the work invisibly in a background one-shot." **Maintainer decisions (2026-07-23):** (1) drive codex through its **`app-server` protocol** (a persistent, programmatic session that play/custom commands send user turns into) rather than terminal-PTY models; (2) treat it like the Claude Channel — an **Experimental-tab toggle, enabled by default**; (3) when disabled, **hide the play button and custom codex prompt-command buttons** (no silent fallback to the one-shot drive). §121.10 decisions (2026-07-23): **O1 queue+coalesce**, **O3 manual-only thread reset**, **O4 overlay approvals ON by default**.
+> **Status: CORE DRIVE (HS-9383) + TOGGLE/GATING (HS-9384) + COMMANDS LOG TRANSCRIPT (HS-9385) + DAEMON TRANSPORT (HS-9388) + MCP ELICITATION FIX (HS-9395) SHIPPED, 2026-07-23; terminal pre-attach (HS-9394) + phase-2 transcript pane pending.** Follow-up to HS-9380 — the user-visible half of "clicking play with codex does the work invisibly in a background one-shot." **Maintainer decisions (2026-07-23):** (1) drive codex through its **`app-server` protocol** (a persistent, programmatic session that play/custom commands send user turns into) rather than terminal-PTY models; (2) treat it like the Claude Channel — an **Experimental-tab toggle, enabled by default**; (3) when disabled, **hide the play button and custom codex prompt-command buttons** (no silent fallback to the one-shot drive). §121.10 decisions (2026-07-23): **O1 queue+coalesce**, **O3 manual-only thread reset**, **O4 overlay approvals ON by default**.
 >
-> Shipped shape: `src/codexAppServerMapping.ts` (pure protocol core) + `src/codexAppServer.ts` (per-project session manager — lazy spawn, `thread/resume` from `<dataDir>/codex-app-server.json`, queue+coalesce, busy/done, §47 approval bridge via `acpPermissionBridge`, allow-rules auto-allow, `turn/interrupt`, crash/shutdown teardown); the `mcpHooksAgents.ts` codex descriptor now points at it and the §115.6a one-shot exec drive (`codexDrive.ts`) is retired.
+> Shipped shape: `src/codexAppServerMapping.ts` (pure protocol core) + `src/codexAppServer.ts` (per-project session manager — lazy transport, `thread/resume` from `<dataDir>/codex-app-server.json`, queue+coalesce, busy/done, §47 approval bridge via `acpPermissionBridge`, allow-rules auto-allow, MCP tool-call elicitation handling, `turn/interrupt`, crash/shutdown teardown) + `src/codexDaemonTransport.ts` (HS-9388 — shared-daemon UDS-WebSocket transport, start-if-absent, private-stdio-child fallback); the `mcpHooksAgents.ts` codex descriptor now points at it and the §115.6a one-shot exec drive (`codexDrive.ts`) is retired.
 >
 > Cross-refs: [115-mcp-hooks-agent-channel.md](115-mcp-hooks-agent-channel.md) (the shipped one-shot `codex exec` drive this supersedes for codex, §115.6a/§115.7), [12-claude-channel.md](12-claude-channel.md) (the Claude analog whose UX this matches), [47-richer-permission-overlay.md](47-richer-permission-overlay.md) (the overlay the approval requests feed), [114-acp-channel.md](114-acp-channel.md) (the sibling persistent-session transport whose permission-bridge pattern this reuses), [113-multi-ai-tool-support.md](113-multi-ai-tool-support.md) (the epic), [14-commands-log.md](14-commands-log.md) (phase-1 transcript surface).
 
@@ -101,8 +101,20 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
   the HS-9359 `.codex/hooks.json` machinery for the driven session. The
   existing `codex_interactive_permissions` setting maps to: on = surface
   approvals to the overlay; off = auto-approve them in the bridge.
-- **Crash/restart:** child exit while enabled → clear busy, log to Commands
-  Log, respawn lazily on next play (not eagerly — no respawn loops).
+- **MCP tool-call elicitations (HS-9395 fix, SHIPPED 2026-07-23):** codex asks
+  permission for MCP tool calls via a SEPARATE server-request —
+  `mcpServer/elicitation/request` (`_meta.codex_approval_kind: 'mcp_tool_call'`)
+  — whose response shape is `{action: 'accept'|'decline', content}` (NOT the
+  requestApproval family's `{decision}`). The original drive's generic `{}`
+  reply to unmodeled requests read as a decline, silently failing every
+  `hotsheet_*` call in driven sessions (masked by the fallback done POST).
+  Now: `serverName === 'hotsheet-channel'` (the drive's own control surface)
+  auto-accepts; other MCP servers' elicitations route to the §47 overlay
+  (`elicitationDisplayFromRequest` / `elicitationResponseFromReply`);
+  `codex_interactive_permissions: false` auto-accepts everything (O4 opt-out).
+- **Crash/restart:** transport loss (child exit / daemon connection closed)
+  while enabled → clear busy, log to Commands Log, reconnect lazily on next
+  play (not eagerly — no respawn loops).
 
 ## 121.5 Session lifecycle
 
@@ -149,8 +161,28 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
   the first turn persists (resume-before-first-turn → "no rollout found");
   Node `ws` needs `perMessageDeflate: false` (+ a plain `host` header) or the
   daemon hangs up the upgrade.
-  Follow-up: offer the daemon UDS transport in the drive so external
-  app-server UIs can watch the driven thread.
+- **Daemon transport (SHIPPED, HS-9388, 2026-07-23):** the drive now PREFERS
+  the shared daemon — `src/codexDaemonTransport.ts` (`connectCodexDaemon`)
+  tries the control socket, runs `codex app-server daemon start` if absent
+  (with the HS-9380 marker env), retries, and falls back to the private stdio
+  child when the daemon can't be reached; both sit behind one `CodexTransport`
+  interface in `codexAppServer.ts`. Daemon-mode threads carry a per-thread
+  `config.mcp_servers['hotsheet-channel']` override on `thread/start` /
+  `thread/resume` (live-verified honored, env MERGED): absolute `--data-dir`
+  (the shared daemon's cwd is not the project's — though the daemon DOES spawn
+  MCP children with the thread's cwd, verified) + `HOTSHEET_DRIVE_SPAWNED=1`
+  so the channel server registers `drive: true` regardless of who started the
+  daemon. Shared-connection guards: notifications naming a different
+  `threadId` are ignored (daemon broadcasts), and a shared-thread turn the
+  drive did NOT start (an attached TUI's — HS-9394) streams to the transcript
+  but never drives the busy/done lifecycle. Teardown closes OUR connection
+  only — the daemon and thread keep serving other attached clients.
+  **User attach flow (until HS-9394 automates it):** get the thread id from
+  `<dataDir>/codex-app-server.json`, then `codex resume <threadId> --remote
+  unix://~/.codex/app-server-control/app-server-control.sock` — the TUI shows
+  the driven history and renders new driven turns live. Live-validated
+  end-to-end (real module → real daemon → turn → transcript/done → thread
+  resumable by a second client).
 - **TUI daemon attach — VERIFIED (2026-07-23, supersedes the HS-9386 "TUI
   runs its own core" limitation):** the TUI takes `--remote <ADDR>` ("Connect
   the TUI to a remote app server endpoint"; accepts `unix://PATH`), which the
@@ -160,11 +192,11 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
   `thread/started` broadcasts to other clients); (2) `codex resume <threadId>
   --remote unix://<sock>` attaches the TUI to a HEADLESS-DRIVEN thread —
   history renders, and a subsequent driven `turn/start` from the other client
-  appears on the TUI screen **live, with no user interaction**. So the
-  Claude-parity "watch Hot Sheet's driven session in codex's own terminal
-  UI" outcome IS achievable once the drive uses the daemon transport
-  (HS-9388); Hot Sheet-spawned codex terminals can launch pre-attached to the
-  project's driven thread.
+  appears on the TUI screen **live, with no user interaction**. With the
+  HS-9388 daemon transport shipped, the Claude-parity "watch Hot Sheet's
+  driven session in codex's own terminal UI" outcome works today via the
+  manual attach flow above; HS-9394 (pending) launches Hot Sheet-spawned
+  codex terminals pre-attached to the project's driven thread.
 
 ## 121.7 Settings + UI gating (SHIPPED, HS-9384)
 
