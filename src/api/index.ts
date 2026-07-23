@@ -42,6 +42,7 @@ import * as settings from './settings.js';
 import * as shell from './shell.js';
 import * as telemetry from './telemetry.js';
 import * as terminal from './terminal.js';
+import * as ticketCommits from './ticketCommits.js';
 import * as tickets from './tickets.js';
 import * as workers from './workers.js';
 import * as worktrees from './worktrees.js';
@@ -68,6 +69,7 @@ export * from './settings.js';
 export * from './shell.js';
 export * from './telemetry.js';
 export * from './terminal.js';
+export * from './ticketCommits.js';
 export * from './tickets.js';
 export * from './workers.js';
 export * from './worktrees.js';
@@ -77,6 +79,7 @@ export * from './worktrees.js';
 export const apis = {
   ...git,
   ...tickets,
+  ...ticketCommits,
   ...feedbackDrafts,
   ...terminal,
   ...telemetry,

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwyp87ysujuewva",
+          "message": {
+            "text": "Subject-line-only matching is the load-bearing choice (HS-9389 finding): commit BODIES in this repo routinely cross-reference other tickets (\"Follow-up from HS-9384\" in HS-9390's commit), and pulling those diffs into a ticket's review would be wrong. The word-boundary lookaround mirrors `prNotesReader`'s ticket matcher so `HS-12` never matches `HS-123`. Note the deliberate looseness WITHIN the subject: any word-boundary mention in a subject counts (not only the leading `HS-NNNN:` form), because squash/merge subjects sometimes carry the ref mid-line.\n",
+            "markdown": "Subject-line-only matching is the load-bearing choice (HS-9389 finding): commit BODIES in this repo routinely cross-reference other tickets (\"Follow-up from HS-9384\" in HS-9390's commit), and pulling those diffs into a ticket's review would be wrong. The word-boundary lookaround mirrors `prNotesReader`'s ticket matcher so `HS-12` never matches `HS-123`. Note the deliberate looseness WITHIN the subject: any word-boundary mention in a subject counts (not only the leading `HS-NNNN:` form), because squash/merge subjects sometimes carry the ref mid-line.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/reviewNotes/ticketCommits.ts"
+                },
+                "region": {
+                  "startLine": 57,
+                  "endLine": 66,
+                  "snippet": {
+                    "text": "\n/** Pure: the entries whose SUBJECT references the ticket (word-boundary). */\nexport function matchTicketCommits(entries: readonly CommitEntry[], ticketNumber: string): CommitEntry[] {\n  const re = ticketRefRegExp(ticketNumber);\n  return entries.filter(e => re.test(e.subject));\n}\n\n/**\n * Pure: cluster matched commits into linear groups. `entries` is the FULL bounded\n * log (newest first — its indexes are the history positions); `matched` must be a"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9392"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "b9471ac4e6db68f7bc7e3a1279f460af"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "2f22681555ccafdd6a0019e56559e17cd76eaad6",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

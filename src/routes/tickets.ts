@@ -32,7 +32,7 @@ import {
   toggleUpNext,
   updateTicket,
 } from '../db/queries.js';
-import { countSearchMatchesInExcludedStatuses, listKnownTicketPrefixes } from '../db/tickets.js';
+import { countSearchMatchesInExcludedStatuses, getTicketMetaByNumber, listKnownTicketPrefixes } from '../db/tickets.js';
 import { readFileSettings } from '../file-settings.js';
 import { getGitRoot } from '../gitignore.js';
 import { TICKETS_LIST_MAX_LIMIT } from '../limits.js';
@@ -40,6 +40,7 @@ import { getMimeType } from '../mime-types.js';
 import { getBackendForPlugin, getPluginById as getPluginMeta } from '../plugins/loader.js';
 import { onTicketChanged, onTicketCreated, onTicketDeleted } from '../plugins/syncEngine.js';
 import { readReviewProofArtifact, readReviewProofForTicket } from '../reviewNotes/prNotesReader.js';
+import { discoverTicketCommits } from '../reviewNotes/ticketCommits.js';
 import { parseJsonOrNull, type SyncEventInput, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
 import { isQueueOnly, onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
@@ -315,6 +316,26 @@ ticketRoutes.get('/tickets/:number/review-proof', async (c) => {
   const gitRoot = getGitRoot(projectRoot) ?? projectRoot;
   const notes = await readReviewProofForTicket(gitRoot, ticketNumber);
   return c.json({ notes });
+});
+
+// HS-9392 (docs/122) — the ticket's discovered commits + linear grouping, for the
+// "Code Review" aggregate Open-in-Glassbox button. Discovery matches the ticket ref
+// in commit SUBJECT lines only (body mentions are cross-references — HS-9389
+// finding); a pending-integration ticket's `integration_branch` contributes
+// branch-labeled groups. Async spawns + tip-keyed cache inside
+// `discoverTicketCommits`; a non-repo project returns the empty shape.
+ticketRoutes.get('/tickets/:number/commits', async (c) => {
+  const ticketNumber = c.req.param('number');
+  const projectRoot = projectRootFromDataDir(c.get('dataDir'));
+  const gitRoot = getGitRoot(projectRoot);
+  const meta = await getTicketMetaByNumber(ticketNumber);
+  if (gitRoot === null) {
+    return c.json({ groups: [], span: null, dirty: false, ticketStatus: meta?.status ?? null });
+  }
+  const result = await discoverTicketCommits(gitRoot, ticketNumber, {
+    integrationBranch: meta?.integration_branch ?? null,
+  });
+  return c.json({ ...result, ticketStatus: meta?.status ?? null });
 });
 
 // HS-9294 (docs/111 Phase 3) — serve one `.pr-notes/` proof ARTIFACT (a screenshot

@@ -119,6 +119,19 @@ export async function getTicketStatusesByNumbers(numbers: string[]): Promise<Map
 }
 
 /**
+ * HS-9392 — the fields the ticket-commit discovery route needs, by human ticket
+ * number (case-insensitive). Null when no such ticket.
+ */
+export async function getTicketMetaByNumber(ticketNumber: string): Promise<{ status: TicketStatus; integration_branch: string | null } | null> {
+  const db = await getDb();
+  const result = await db.query<{ status: TicketStatus; integration_branch: string | null }>(
+    'SELECT status, integration_branch FROM tickets WHERE UPPER(ticket_number) = $1',
+    [ticketNumber.toUpperCase()],
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
  * HS-8681 — pure helper that returns the additional SET fragments driven by a
  * status transition. Pulled out of `updateTicket` so the status-driven column
  * mappings (`completed_at` / `verified_at` / `deleted_at` / `up_next`) are
