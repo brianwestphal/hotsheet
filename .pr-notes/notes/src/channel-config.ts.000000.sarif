@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwoi9n7mkye3d4a",
+          "message": {
+            "text": "Bumped CHANNEL_VERSION/EXPECTED_CHANNEL_VERSION 18 → 19 even though no MCP tool or HTTP endpoint changed: an already-running v18 channel server will not read `HOTSHEET_DRIVE_SPAWNED` or write the `drive` registry field, so the bogus warning would persist for that connection until reconnect. The version-mismatch nudge (\"reconnect via /mcp\") is the existing mechanism that gets users onto server code that understands the marker.\n",
+            "markdown": "Bumped CHANNEL_VERSION/EXPECTED_CHANNEL_VERSION 18 → 19 even though no MCP tool or HTTP endpoint changed: an already-running v18 channel server will not read `HOTSHEET_DRIVE_SPAWNED` or write the `drive` registry field, so the bogus warning would persist for that connection until reconnect. The version-mismatch nudge (\"reconnect via /mcp\") is the existing mechanism that gets users onto server code that understands the marker.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/channel-config.ts"
+                },
+                "region": {
+                  "startLine": 248,
+                  "endLine": 254,
+                  "snippet": {
+                    "text": " *  registry, so the main server will continue to see only the v8\n *  entry via the legacy `channel-port` file — `/mcp` reconnect\n *  respawns at v9 and populates the registry.\n *  Users who have the channel registered will see a \"reconnect via `/mcp`\"\n *  prompt when the main server boots with the newer version. */\n// HS-9112 — bumped 16 → 17 in lockstep with `CHANNEL_VERSION` (src/channel.ts)\n// for the new `hotsheet_propose_partition` MCP tool. A running v16 channel prompts"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "assumption"
+            ]
+          },
+          "workItemUris": [
+            "HS-9380"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "db0340786a3ce355d83a1259fbd65c0a"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5e4deaf6cf2b6d7252a9223c4f3a39c666c938be",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

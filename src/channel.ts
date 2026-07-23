@@ -77,7 +77,11 @@ import { getProjectSecret } from './secret-file.js';
 //   preview, docs/101 §101.7): propose a worker partition for owner review in the
 //   UI instead of dispatching directly, gated on the `alwaysPreviewAgentPlans`
 //   setting (24 tools total).
-export const CHANNEL_VERSION = 18;
+// v19 (HS-9380) — registry entries carry a `drive` marker (set from the
+//   `HOTSHEET_DRIVE_SPAWNED=1` env the play/command drives export) so a one-shot
+//   run's own MCP child is excluded from the multi-connection warning count,
+//   leader preference, and "Disconnect all" cleanup.
+export const CHANNEL_VERSION = 19;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -523,6 +527,13 @@ httpServer.listen(0, '127.0.0.1', () => {
       // not as duplicate main connections. (Light readFileSettings check, not the
       // heavier `worktrees.ts::isFollowerWorktree`, to keep the channel bundle lean.)
       worktree: isFollowerCwd() ? process.cwd() : null,
+      // HS-9380 — tag this connection as a play/command DRIVE's when the agent that
+      // spawned us was itself spawned by a Hot Sheet drive (`codex exec` /
+      // `agy --print` / an ACP session). The drives export `HOTSHEET_DRIVE_SPAWNED=1`
+      // into the agent's env, which propagates to its MCP children (us). Lets the
+      // multi-connection warning + leader pick + cleanup treat these expected,
+      // temporary connections like worker connections rather than duplicate mains.
+      drive: process.env.HOTSHEET_DRIVE_SPAWNED === '1' ? true : null,
     };
     // HS-8460 — register our per-pid entry in `<dataDir>/channel-ports.d/`
     // FIRST so the leader-selection below sees us. Then determine the

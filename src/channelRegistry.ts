@@ -63,6 +63,7 @@ export function registerSelf(dataDir: string, info: ChannelInfo): void {
     slug: info.slug,
     startedAt: info.startedAt,
     worktree: info.worktree ?? null, // HS-9038 — worker (follower-worktree) connection marker
+    drive: info.drive ?? null, // HS-9380 — drive-spawned (one-shot play run) connection marker
   });
   writeFileSync(path, body, 'utf-8');
 }
@@ -93,6 +94,7 @@ export function readEntry(path: string): ChannelInfo | null {
       slug: typeof obj.slug === 'string' && obj.slug !== '' ? obj.slug : null,
       startedAt: typeof obj.startedAt === 'string' && obj.startedAt !== '' ? obj.startedAt : null,
       worktree: typeof obj.worktree === 'string' && obj.worktree !== '' ? obj.worktree : null, // HS-9038
+      drive: obj.drive === true ? true : null, // HS-9380
     };
   } catch { return null; }
 }
@@ -135,15 +137,24 @@ export function listAliveEntries(
   return alive;
 }
 
+/** Pure — the MAIN connections among `entries`: not a distributed worker's
+ *  (`worktree` set, HS-9038) and not a drive-spawned one-shot run's (`drive`
+ *  set, HS-9380). These are the only entries the multi-connection warning
+ *  counts and the "Disconnect all" cleanup tears down. */
+export function mainConnections(entries: ChannelInfo[]): ChannelInfo[] {
+  return entries.filter(e => e.worktree == null && e.drive !== true);
+}
+
 /** Pick the leader (oldest alive entry). Returns null when no entries
  *  exist. Pure — callers pass in the list from `listAliveEntries`. */
 export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
   if (entries.length === 0) return null;
   // HS-9038 — prefer the oldest MAIN (non-worktree) connection so triggers / the
-  // play button route to the main agent, never a distributed worker. `entries` is
+  // play button route to the main agent, never a distributed worker. HS-9380 —
+  // likewise never a drive-spawned one-shot run's connection. `entries` is
   // sorted oldest-first; fall back to the oldest overall if (somehow) only worker
-  // connections exist.
-  return entries.find(e => e.worktree == null) ?? entries[0];
+  // / drive connections exist.
+  return mainConnections(entries)[0] ?? entries[0];
 }
 
 /**
@@ -166,7 +177,10 @@ export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
  *
  * Distributed-worker connections (`worktree` set) are EXEMPT — they're expected
  * (one per worktree) and killing one would disrupt in-progress worker work
- * (mirrors the "never kill a worker mid-ticket" principle). Only MAIN
+ * (mirrors the "never kill a worker mid-ticket" principle). Drive-spawned
+ * connections (`drive` set, HS-9380 — a one-shot `codex exec` / `agy --print` /
+ * ACP play run's own MCP child) are exempt for the same reason: killing one
+ * would yank the MCP server out from under an in-flight run. Only MAIN
  * connections are torn down.
  *
  * `kill` + `isPidAlive` are injectable for tests. Best-effort: a kill that
@@ -180,8 +194,9 @@ export function disconnectMainConnections(
   const kill = opts.kill ?? ((pid: number) => { try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ } });
   const entries = listAliveEntries(dataDir, opts.isPidAlive);
   const killed: number[] = [];
-  // Tear down EVERY main connection (no leader survivor); workers are spared.
-  const mains = entries.filter(e => e.worktree == null);
+  // Tear down EVERY main connection (no leader survivor); workers + drive-spawned
+  // runs are spared.
+  const mains = mainConnections(entries);
   for (const entry of mains) {
     if (entry.pid === null) continue;
     try { kill(entry.pid); } catch { /* process already gone / not killable — entry is still removed below */ }

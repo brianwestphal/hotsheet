@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwoi0251smz1yj8",
+          "message": {
+            "text": "**Why an env marker** (`HOTSHEET_DRIVE_SPAWNED=1`) rather than detecting the parent process: the channel server is spawned by the *agent* (codex/agy/opencode), not by Hot Sheet directly, so there is no direct parent-pid relationship to inspect — but env propagates transitively from the drive spawn (`codexDrive.ts:115`, `antigravityDrive.ts`, `acp/acpDrive.ts:105`) through the agent to its MCP children. Mirrors the HS-9038 `worktree` marker one field up. See also `src/channelRegistry.ts` (`mainConnections`).\n",
+            "markdown": "**Why an env marker** (`HOTSHEET_DRIVE_SPAWNED=1`) rather than detecting the parent process: the channel server is spawned by the *agent* (codex/agy/opencode), not by Hot Sheet directly, so there is no direct parent-pid relationship to inspect — but env propagates transitively from the drive spawn (`codexDrive.ts:115`, `antigravityDrive.ts`, `acp/acpDrive.ts:105`) through the agent to its MCP children. Mirrors the HS-9038 `worktree` marker one field up. See also `src/channelRegistry.ts` (`mainConnections`).\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/channel.ts"
+                },
+                "region": {
+                  "startLine": 527,
+                  "endLine": 536,
+                  "snippet": {
+                    "text": "      // not as duplicate main connections. (Light readFileSettings check, not the\n      // heavier `worktrees.ts::isFollowerWorktree`, to keep the channel bundle lean.)\n      worktree: isFollowerCwd() ? process.cwd() : null,\n      // HS-9380 — tag this connection as a play/command DRIVE's when the agent that\n      // spawned us was itself spawned by a Hot Sheet drive (`codex exec` /\n      // `agy --print` / an ACP session). The drives export `HOTSHEET_DRIVE_SPAWNED=1`\n      // into the agent's env, which propagates to its MCP children (us). Lets the\n      // multi-connection warning + leader pick + cleanup treat these expected,\n      // temporary connections like worker connections rather than duplicate mains.\n      drive: process.env.HOTSHEET_DRIVE_SPAWNED === '1' ? true : null,"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9380"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "8ba4f21325c8a13d1bb1463af1f606eb"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5e4deaf6cf2b6d7252a9223c4f3a39c666c938be",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

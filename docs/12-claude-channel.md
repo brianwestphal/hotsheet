@@ -269,6 +269,23 @@ to fix it. Mitigation:
   `/mcp`. Root cause of the duplicates is orphaned MCP children outside Hot
   Sheet's direct lifecycle control.)
 
+**Drive-spawned connections are exempt (HS-9380).** A spawn-drive play run
+(`codex exec`, `agy --print`, an ACP session — [113-multi-ai-tool-support.md](113-multi-ai-tool-support.md))
+launches an agent whose MCP config includes Hot Sheet, so the run starts its own
+channel-server child. That connection is expected and temporary — pre-fix it
+counted as a duplicate MAIN, so clicking play with e.g. an interactive Codex
+terminal open surfaced a bogus "2 Claude connections active" warning. The drives
+export `HOTSHEET_DRIVE_SPAWNED=1` into the agent's env; the channel server reads
+it at startup and registers with `drive: true`. Drive-tagged entries (like
+worker `worktree` entries) are excluded from the warning count + leader
+preference (`mainConnections` / `pickLeader` in `src/channelRegistry.ts`) and
+spared by "Disconnect all" (killing one would yank the MCP server out from
+under an in-flight run). The warning + toast wording is also agent-aware
+(`src/client/multiConnectionWarning.ts`): it names the project's `ai_tool`
+display name, and only the claude-channel transport claims "triggers route to
+the oldest one" / suggests `/mcp` — spawn-drive tools launch a fresh run per
+trigger, so extra connections never misroute a trigger.
+
 ## 12.12 API Endpoints
 
 | Endpoint | Method | Description |

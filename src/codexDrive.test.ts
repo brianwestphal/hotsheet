@@ -65,6 +65,9 @@ describe('spawnCodexRun', () => {
     expect(call?.[1]).toEqual(buildCodexExecArgs('process the worklist'));
     expect(call?.[2].cwd).toBe('/proj'); // <root>/.hotsheet → <root>
     expect(call?.[2].stdio).toEqual(['ignore', 'pipe', 'ignore']); // JSONL consumed
+    // HS-9380 — the drive marker propagates to codex's MCP children so the run's
+    // channel server registers as `drive: true` (not a duplicate main connection).
+    expect(call?.[2].env.HOTSHEET_DRIVE_SPAWNED).toBe('1');
 
     expect(signalDone).not.toHaveBeenCalled();
     proc.emit('exit', 0, null);

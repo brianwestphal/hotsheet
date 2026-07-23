@@ -25,6 +25,13 @@ export interface ChannelInfo {
    *  main connection. Lets the multi-connection warning + leader selection treat
    *  worker connections as expected rather than as duplicate main connections. */
   worktree?: string | null;
+  /** HS-9380 — `true` when this channel server was spawned (transitively) by a Hot
+   *  Sheet play/command drive (`codex exec`, `agy --print`, an ACP session — the
+   *  spawned agent starts its own MCP channel-server child). Detected via the
+   *  `HOTSHEET_DRIVE_SPAWNED=1` env marker the drives set. Like `worktree`, these
+   *  are EXPECTED, temporary connections — excluded from the multi-connection
+   *  warning count, leader preference, and "Disconnect all" cleanup. */
+  drive?: boolean | null;
 }
 
 /** HS-8454 — parse the port file. Accepts BOTH the new JSON shape AND

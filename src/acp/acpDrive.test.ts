@@ -161,6 +161,9 @@ describe('spawnAcpRun', () => {
     expect(spawned.command).toBe('opencode');
     expect(spawned.args).toEqual(['acp']);
     expect(spawned.cwd).toBe(dir); // <root>/.hotsheet → <root>
+    // HS-9380 — the drive marker propagates to the agent's MCP children so the run's
+    // channel server registers as `drive: true` (not a duplicate main connection).
+    expect(spawned.env?.HOTSHEET_DRIVE_SPAWNED).toBe('1');
   });
 
   it('points opencode at the managed permission:ask config via OPENCODE_CONFIG (HS-9341)', () => {

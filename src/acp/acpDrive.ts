@@ -99,6 +99,10 @@ export function spawnAcpRun(dataDir: string, serverPort: number, content: string
   if (resolved.command === 'opencode') {
     env.OPENCODE_CONFIG = ensureOpencodeAcpConfig(dataDir);
   }
+  // HS-9380 — mark the run as drive-spawned; the ACP agent passes its env to the MCP
+  // channel-server child it starts, which then registers with `drive: true` so it
+  // isn't counted as a duplicate MAIN connection.
+  env.HOTSHEET_DRIVE_SPAWNED = '1';
 
   let proc: ChildProcess;
   try {

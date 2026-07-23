@@ -70,6 +70,10 @@ Registered as the second `mcpHooksAgents.ts` descriptor (`aiTool: 'codex'`,
   fallback `/channel/done`. Captured event contract (codex-cli 0.145.0, live):
   `thread.started` / `turn.started` / `item.started` / `item.completed`
   (`item.type`: `mcp_tool_call`, `agent_message`, …) / `turn.completed`.
+  HS-9380 — the spawn env carries `HOTSHEET_DRIVE_SPAWNED=1` (as do the agy and
+  ACP drives), so the run's own MCP channel-server child registers `drive: true`
+  and is not counted as a duplicate main connection
+  ([12-claude-channel.md](12-claude-channel.md) §12.11.1).
 - **Config write (`src/codex.ts`)** — Codex's global config is TOML
   (`$CODEX_HOME`-aware `~/.codex/config.toml`, `[mcp_servers.<name>]`), so unlike
   agy's JSON we never hand-edit it: the shipped `codex mcp add hotsheet-channel

@@ -109,7 +109,10 @@ export function spawnCodexRun(dataDir: string, serverPort: number, content: stri
   try {
     const proc = doSpawn('codex', buildCodexExecArgs(content, { interactivePermissions }), {
       cwd: projectDir,
-      env: { ...process.env },
+      // HS-9380 — mark the run as drive-spawned; codex passes its env to the MCP
+      // channel-server child it starts, which then registers with `drive: true` so
+      // it isn't counted as a duplicate MAIN connection.
+      env: { ...process.env, HOTSHEET_DRIVE_SPAWNED: '1' },
       // stdout is piped for the JSONL event stream; it MUST be consumed (below)
       // so a chatty run can't fill the pipe and stall codex.
       stdio: ['ignore', 'pipe', 'ignore'],

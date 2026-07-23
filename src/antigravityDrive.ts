@@ -72,7 +72,10 @@ export function spawnAgyRun(dataDir: string, serverPort: number, content: string
   try {
     const proc = doSpawn('agy', buildAgyRunArgs(content, { skipPermissions }), {
       cwd: projectDir,
-      env: { ...process.env },
+      // HS-9380 — mark the run as drive-spawned; agy passes its env to the MCP
+      // channel-server child it starts, which then registers with `drive: true` so
+      // it isn't counted as a duplicate MAIN connection.
+      env: { ...process.env, HOTSHEET_DRIVE_SPAWNED: '1' },
       stdio: 'ignore',
     });
     heartbeat(serverPort, secret, 'busy'); // keep the indicator busy from the start

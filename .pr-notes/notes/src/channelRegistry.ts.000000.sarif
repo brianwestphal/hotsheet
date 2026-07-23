@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwoi29dgc70mf94",
+          "message": {
+            "text": "Drive-spawned entries are spared by \"Disconnect all\" for the same reason worker entries are: SIGTERMing one would yank the MCP server out from under an in-flight one-shot play run (the \"never kill a worker mid-ticket\" principle). They are also excluded from `pickLeader`'s main preference so a `codex exec` run's temporary connection can never capture the trigger-routing leadership from a real interactive session.\n",
+            "markdown": "Drive-spawned entries are spared by \"Disconnect all\" for the same reason worker entries are: SIGTERMing one would yank the MCP server out from under an in-flight one-shot play run (the \"never kill a worker mid-ticket\" principle). They are also excluded from `pickLeader`'s main preference so a `codex exec` run's temporary connection can never capture the trigger-routing leadership from a real interactive session.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/channelRegistry.ts"
+                },
+                "region": {
+                  "startLine": 139,
+                  "endLine": 146,
+                  "snippet": {
+                    "text": "\n/** Pure — the MAIN connections among `entries`: not a distributed worker's\n *  (`worktree` set, HS-9038) and not a drive-spawned one-shot run's (`drive`\n *  set, HS-9380). These are the only entries the multi-connection warning\n *  counts and the \"Disconnect all\" cleanup tears down. */\nexport function mainConnections(entries: ChannelInfo[]): ChannelInfo[] {\n  return entries.filter(e => e.worktree == null && e.drive !== true);\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9380"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "29ffbf4d6cd7a8a6a81b8669635a7b32"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5e4deaf6cf2b6d7252a9223c4f3a39c666c938be",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

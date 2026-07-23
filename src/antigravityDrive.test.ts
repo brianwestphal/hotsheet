@@ -61,6 +61,9 @@ describe('spawnAgyRun', () => {
     expect(call?.[0]).toBe('agy');
     expect(call?.[1]).toEqual(['--print', 'process the worklist', '--dangerously-skip-permissions']);
     expect(call?.[2].cwd).toBe('/proj'); // <root>/.hotsheet → <root>
+    // HS-9380 — the drive marker propagates to agy's MCP children so the run's
+    // channel server registers as `drive: true` (not a duplicate main connection).
+    expect(call?.[2].env.HOTSHEET_DRIVE_SPAWNED).toBe('1');
 
     expect(signalDone).not.toHaveBeenCalled();
     proc.emit('exit', 0, null);

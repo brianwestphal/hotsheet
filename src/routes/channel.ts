@@ -5,7 +5,7 @@ import { hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBrid
 import { agentDisplayName } from '../agentDisplayName.js';
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
-import { disconnectMainConnections, listAliveEntries } from '../channelRegistry.js';
+import { disconnectMainConnections, listAliveEntries, mainConnections } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
@@ -126,7 +126,10 @@ channelRoutes.get('/channel/status', async (c) => {
     // workers running there are legitimately many alive servers — that's expected,
     // not a duplicate-connection problem. The warning should fire only on multiple
     // MAIN agents (the actual orphan/duplicate case it was built for).
-    const mains = entries.filter(e => e.worktree == null);
+    // HS-9380 — drive-spawned connections (`drive: true` — a one-shot play run's
+    // own MCP child, e.g. `codex exec`) are likewise expected + temporary, not
+    // duplicate mains. Shared filter: `mainConnections`.
+    const mains = mainConnections(entries);
     aliveCount = mains.length;
     // HS-8948 — when >1 MAIN channel-server is alive, log the roster so a recurring
     // "N connections" can be diagnosed from mcp.log. Deduped per (dataDir →
@@ -135,7 +138,7 @@ channelRoutes.get('/channel/status', async (c) => {
       const signature = mains.map(e => `${String(e.pid)}@${e.startedAt ?? '?'}`).join(',');
       if (lastMultiConnSignature.get(dataDir) !== signature) {
         lastMultiConnSignature.set(dataDir, signature);
-        appendMainServerEvent(dataDir, 'multi-connection', `${String(aliveCount)} main channel servers (${String(entries.length - aliveCount)} worker) — leader pid=${String(mains[0].pid)}; mains=[${signature}]`);
+        appendMainServerEvent(dataDir, 'multi-connection', `${String(aliveCount)} main channel servers (${String(entries.length - aliveCount)} worker/drive) — leader pid=${String(mains[0].pid)}; mains=[${signature}]`);
       }
     } else {
       lastMultiConnSignature.delete(dataDir);

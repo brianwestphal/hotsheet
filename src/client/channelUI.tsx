@@ -8,6 +8,7 @@ import { channelStore } from './channelStore.js';
 import { TIMERS } from './constants/timers.js';
 import { isDemoMode } from './demoMode.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
+import { multiConnectionMessages } from './multiConnectionWarning.js';
 import {
   startPermissionPolling, stopPermissionPolling,
 } from './permissionOverlay.js';
@@ -502,14 +503,14 @@ function showNoUpNextAlert() {
 /** HS-8948 / HS-9225 — disconnect ALL main Claude connections, then tell the
  *  user to reconnect the instance they want via `/mcp`. We disconnect every main
  *  rather than guessing which one to keep — the kept "leader" wasn't reliably
- *  the connection the user was actually using. */
+ *  the connection the user was actually using. HS-9380 — wording follows the
+ *  project's `ai_tool` (agent name + Claude-only `/mcp` hint). */
 async function handleCleanupConnections(btn: HTMLButtonElement): Promise<void> {
   btn.disabled = true;
+  const messages = multiConnectionMessages(state.settings.ai_tool);
   try {
     const { killed } = await cleanupChannelConnections();
-    showToast(killed > 0
-      ? `Disconnected ${String(killed)} Claude connection${killed === 1 ? '' : 's'} — run /mcp in the Claude you want to use to reconnect`
-      : 'No Claude connections to disconnect');
+    showToast(killed > 0 ? messages.disconnectedToast(killed) : messages.noneToast);
     await initChannel(); // re-fetch status → the warning hides once the mains are gone
   } catch (e) {
     showToast(`Disconnect failed: ${getErrorMessage(e)}`);
@@ -603,8 +604,11 @@ export async function initChannel() {
       if (cleanupBtn instanceof HTMLButtonElement) {
         cleanupBtn.addEventListener('click', () => { void handleCleanupConnections(cleanupBtn); });
       }
+      // HS-9380 — agent-aware wording: names the project's actual AI tool, and only
+      // claims trigger-to-leader routing on the claude-channel transport (spawn-drive
+      // tools launch a fresh one-shot run per trigger, so nothing misroutes).
       multiWarning.replaceChildren(
-        toElement(<span>{`${String(count)} Claude connections active — triggers route to the oldest one. Disconnect all, then /mcp to reconnect the one you want.`}</span>),
+        toElement(<span>{multiConnectionMessages(state.settings.ai_tool).warning(count)}</span>),
         cleanupBtn,
       );
       multiWarning.style.display = '';

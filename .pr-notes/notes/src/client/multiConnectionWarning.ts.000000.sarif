@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwoi7cj5icvj99e",
+          "message": {
+            "text": "The user-visible half of HS-9380: the banner said \"N **Claude** connections active — triggers route to the oldest one\" regardless of `ai_tool`. Split by transport because the semantics genuinely differ: on `claude-channel` the FIFO-leader routing claim and the `/mcp` reconnect hint are true; on spawn drives (mcp-hooks/acp) every trigger launches a fresh run (its MCP child is tagged `drive` and excluded from this count), so neither claim applies. Kept pure/no-DOM so the wording is pinned by `multiConnectionWarning.test.ts`.\n",
+            "markdown": "The user-visible half of HS-9380: the banner said \"N **Claude** connections active — triggers route to the oldest one\" regardless of `ai_tool`. Split by transport because the semantics genuinely differ: on `claude-channel` the FIFO-leader routing claim and the `/mcp` reconnect hint are true; on spawn drives (mcp-hooks/acp) every trigger launches a fresh run (its MCP child is tagged `drive` and excluded from this count), so neither claim applies. Kept pure/no-DOM so the wording is pinned by `multiConnectionWarning.test.ts`.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/multiConnectionWarning.ts"
+                },
+                "region": {
+                  "startLine": 22,
+                  "endLine": 43,
+                  "snippet": {
+                    "text": "export function multiConnectionMessages(aiTool: string | undefined): MultiConnectionMessages {\n  const agent = agentDisplayName(aiTool);\n  if (deriveDefaultTransport(aiTool) === 'claude-channel') {\n    // Claude-channel transport: triggers really do route to the FIFO leader, and\n    // `/mcp` in the wanted Claude is the reconnect path.\n    return {\n      warning: (count) => `${String(count)} ${agent} connections active — triggers route to the oldest one. Disconnect all, then /mcp to reconnect the one you want.`,\n      disconnectedToast: (killed) => `Disconnected ${String(killed)} ${agent} connection${killed === 1 ? '' : 's'} — run /mcp in the ${agent} you want to use to reconnect`,\n      noneToast: `No ${agent} connections to disconnect`,\n    };\n  }\n  // Spawn-drive transports (mcp-hooks / acp): the play button launches a fresh\n  // one-shot run each time (its own MCP connection is tagged `drive` and not\n  // counted here), so >1 mains = extra interactive agent sessions holding a Hot\n  // Sheet MCP connection. No trigger misrouting, and `/mcp` is Claude-specific —\n  // drop both claims.\n  return {\n    warning: (count) => `${String(count)} ${agent} sessions hold a Hot Sheet connection for this project. Play runs are unaffected; Disconnect all to clear stale sessions.`,\n    disconnectedToast: (killed) => `Disconnected ${String(killed)} ${agent} connection${killed === 1 ? '' : 's'}`,\n    noneToast: `No ${agent} connections to disconnect`,\n  };\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9380"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "a73a307e4c93c040e74aeb32118fc85b"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5e4deaf6cf2b6d7252a9223c4f3a39c666c938be",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

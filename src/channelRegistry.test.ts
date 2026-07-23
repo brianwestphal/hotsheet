@@ -7,6 +7,7 @@ import {
   disconnectMainConnections,
   entryPath,
   listAliveEntries,
+  mainConnections,
   pickLeader,
   registerSelf,
   registryDir,
@@ -31,6 +32,12 @@ describe('channelRegistry — registerSelf / unregisterSelf', () => {
     expect(all[0].worktree).toBe('/wt/worker-1');
   });
 
+  it('HS-9380 — round-trips a drive-spawned connection\'s drive marker', () => {
+    registerSelf(dataDir, { port: 4174, pid: 999, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', drive: true });
+    const all = listAliveEntries(dataDir, () => true);
+    expect(all[0].drive).toBe(true);
+  });
+
   it('writes an entry file at <dataDir>/channel-ports.d/<pid>.json', () => {
     registerSelf(dataDir, { port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z' });
     const path = entryPath(dataDir, 12345);
@@ -39,7 +46,7 @@ describe('channelRegistry — registerSelf / unregisterSelf', () => {
     // Read it back via listAliveEntries with an always-alive probe.
     const all = listAliveEntries(dataDir, () => true);
     expect(all).toHaveLength(1);
-    expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', worktree: null });
+    expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', worktree: null, drive: null });
     // HS-8713 — build the expected suffix with `join` so the separator is
     // the platform's (`\` on Windows); a hardcoded `/channel-ports.d/...`
     // never matched the backslash path on Windows.
@@ -134,6 +141,29 @@ describe('channelRegistry — listAliveEntries', () => {
   });
 });
 
+describe('channelRegistry — mainConnections (the multi-connection warning count)', () => {
+  it('excludes worker (HS-9038) and drive-spawned (HS-9380) connections, keeping mains', () => {
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-07-23T07:00:00.000Z' },                       // main
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-07-23T07:00:01.000Z', worktree: '/wt/w1' },   // worker
+      { port: 300, pid: 3, slug: 'x', startedAt: '2026-07-23T07:00:02.000Z', drive: true },          // one-shot play run
+      { port: 400, pid: 4, slug: 'x', startedAt: '2026-07-23T07:00:03.000Z', worktree: null, drive: null }, // explicit-null main
+    ];
+    expect(mainConnections(entries).map(e => e.pid)).toEqual([1, 4]);
+  });
+
+  it('HS-9380 regression — one interactive session + one drive-spawned run is NOT a multi-connection state', () => {
+    // The exact HS-9380 report: an interactive codex terminal holds a connection,
+    // then play spawns `codex exec`, whose own MCP child also registers. Pre-fix
+    // both counted as mains → the bogus "2 Claude connections active" warning.
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-07-23T07:00:00.000Z' },              // interactive session
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-07-23T07:00:01.000Z', drive: true }, // play run's MCP child
+    ];
+    expect(mainConnections(entries)).toHaveLength(1);
+  });
+});
+
 describe('channelRegistry — pickLeader', () => {
   it('returns null on an empty list', () => {
     expect(pickLeader([])).toBeNull();
@@ -160,6 +190,23 @@ describe('channelRegistry — pickLeader', () => {
     const entries = [
       { port: 100, pid: 1, slug: 'x', startedAt: '2026-05-19T07:00:00.000Z', worktree: '/wt/w1' },
       { port: 200, pid: 2, slug: 'x', startedAt: '2026-05-19T07:00:01.000Z', worktree: '/wt/w2' },
+    ];
+    expect(pickLeader(entries)?.pid).toBe(1);
+  });
+
+  it('HS-9380 — prefers the oldest MAIN even when an older DRIVE-spawned connection exists', () => {
+    // A one-shot play run's MCP child started before the user's interactive session connected.
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-05-19T07:00:00.000Z', drive: true },
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-05-19T07:00:01.000Z' },
+    ];
+    expect(pickLeader(entries)?.pid).toBe(2); // the main, not the older drive run
+  });
+
+  it('HS-9380 — falls back to the oldest overall when only drive connections exist', () => {
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-05-19T07:00:00.000Z', drive: true },
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-05-19T07:00:01.000Z', drive: true },
     ];
     expect(pickLeader(entries)?.pid).toBe(1);
   });
@@ -256,5 +303,16 @@ describe('disconnectMainConnections (HS-8948 / HS-9225)', () => {
     expect(result).toEqual([1]);
     expect(killed).toEqual([1]);
     expect(listAliveEntries(dataDir, () => true).map(e => e.pid).sort()).toEqual([3]);
+  });
+
+  it('HS-9380 — spares DRIVE-spawned connections (an in-flight one-shot run keeps its MCP server)', () => {
+    registerSelf(dataDir, { port: 100, pid: 1, slug: 'x', startedAt: '2026-06-23T07:00:00.000Z' });                     // main (interactive session)
+    registerSelf(dataDir, { port: 200, pid: 2, slug: 'x', startedAt: '2026-06-23T07:00:05.000Z' });                     // duplicate main
+    registerSelf(dataDir, { port: 300, pid: 3, slug: 'x', startedAt: '2026-06-23T07:00:10.000Z', drive: true });        // drive-spawned run
+    const killed: number[] = [];
+    const result = disconnectMainConnections(dataDir, { kill: (pid) => killed.push(pid), isPidAlive: () => true });
+    expect(killed.sort()).toEqual([1, 2]);
+    expect(result.sort()).toEqual([1, 2]);
+    expect(listAliveEntries(dataDir, () => true).map(e => e.pid)).toEqual([3]);
   });
 });
