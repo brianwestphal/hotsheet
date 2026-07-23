@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrx6cmyicaiuh2cm",
+          "message": {
+            "text": "Attach resolution hooks in at `pickAiCommand` (after the on-PATH check, before returning the bare binary) rather than a codex-specific launch route, so it applies to EVERY `{{aiCommand}}`/`{{claudeCommand}}` codex expansion — the default AI terminal, custom terminal templates, and worker-worktree terminals. Worker worktrees get the right semantics for free: each worktree's own `dataDir` → its own `codex-app-server.json` → attach to its own driven thread. The fallback when `codexTerminalAttachCommand` returns null is the plain `codex` binary (pre-HS-9394 behavior), deliberately NOT a fresh `codex --remote` daemon session — that would be daemon-attached but still not the driven thread, adding daemon-dependence without watch value (docs/123 §123.5). See also `src/codexAppServer.ts` (the condition set).\n",
+            "markdown": "Attach resolution hooks in at `pickAiCommand` (after the on-PATH check, before returning the bare binary) rather than a codex-specific launch route, so it applies to EVERY `{{aiCommand}}`/`{{claudeCommand}}` codex expansion — the default AI terminal, custom terminal templates, and worker-worktree terminals. Worker worktrees get the right semantics for free: each worktree's own `dataDir` → its own `codex-app-server.json` → attach to its own driven thread. The fallback when `codexTerminalAttachCommand` returns null is the plain `codex` binary (pre-HS-9394 behavior), deliberately NOT a fresh `codex --remote` daemon session — that would be daemon-attached but still not the driven thread, adding daemon-dependence without watch value (docs/123 §123.5). See also `src/codexAppServer.ts` (the condition set).\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/terminals/resolveCommand.ts"
+                },
+                "region": {
+                  "startLine": 149,
+                  "endLine": 156,
+                  "snippet": {
+                    "text": "  if (tool === 'codex') {\n    const attach = (options.codexAttachOverride ?? codexTerminalAttachCommand)(options.dataDir);\n    if (attach !== null) return attach;\n  }\n  return bin;\n}\n\n/** Read the project's `ai_tool` setting (default `auto` when absent). */"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9394"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "63371704619af5584e6786b1b12cf1ab"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "47837fcc889c6716e6080d4820e932765d1a4045",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

@@ -64,6 +64,18 @@ export function threadIdFromResponse(result: unknown): string | null {
   return typeof flat === 'string' && flat !== '' ? flat : null;
 }
 
+/** HS-9394 — the rollout file path out of a thread payload (`{ thread: { path } }` —
+ *  the shape shared by `thread/start`/`thread/resume` results AND `thread/started`
+ *  notification params). Null when absent. The rollout's on-disk existence gates the
+ *  TUI attach command (`codex resume` fails "no rollout found" before it exists). */
+export function rolloutPathFromThreadPayload(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const thread = (value as Record<string, unknown>).thread;
+  if (typeof thread !== 'object' || thread === null) return null;
+  const path = (thread as Record<string, unknown>).path;
+  return typeof path === 'string' && path !== '' ? path : null;
+}
+
 /** What a server notification means for the drive's busy/turn lifecycle. */
 export type DriveEvent =
   | { type: 'turn-started'; turnId: string | null }

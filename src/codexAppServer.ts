@@ -23,7 +23,7 @@
 // either way, behind one `CodexTransport` interface.
 
 import { type ChildProcess, spawn } from 'child_process';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { z } from 'zod';
 
@@ -42,10 +42,12 @@ import {
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
+  rolloutPathFromThreadPayload,
   threadIdFromResponse,
   transcriptLineFromItem,
 } from './codexAppServerMapping.js';
 import {
+  codexDaemonSocketPath,
   type CodexTransport,
   type CodexTransportHandlers,
   connectCodexDaemon,
@@ -89,19 +91,31 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 
 /** Per-(project, machine) persisted app-server state (`<dataDir>/codex-app-server.json`).
  *  Thread ids resolve against THIS machine's `~/.codex` rollouts, so the file is
- *  local state, not a shared setting. */
-const StateFileSchema = z.object({ threadId: z.string().min(1) });
+ *  local state, not a shared setting. HS-9394 adds `rolloutPath` (from the thread
+ *  payloads' `thread.path`) — its on-disk EXISTENCE is the "TUI attach will work"
+ *  signal (`thread/resume` fails "no rollout found" until the first turn persists). */
+const StateFileSchema = z.object({ threadId: z.string().min(1), rolloutPath: z.string().min(1).optional() });
 
-export function readPersistedThreadId(dataDir: string): string | null {
+export interface PersistedCodexThread {
+  threadId: string;
+  rolloutPath: string | null;
+}
+
+export function readPersistedCodexThread(dataDir: string): PersistedCodexThread | null {
   try {
     const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'codex-app-server.json'), 'utf-8'));
     const parsed = StateFileSchema.safeParse(raw);
-    return parsed.success ? parsed.data.threadId : null;
+    return parsed.success ? { threadId: parsed.data.threadId, rolloutPath: parsed.data.rolloutPath ?? null } : null;
   } catch { return null; }
 }
 
-function persistThreadId(dataDir: string, threadId: string): void {
-  try { writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId }), 'utf-8'); }
+export function readPersistedThreadId(dataDir: string): string | null {
+  return readPersistedCodexThread(dataDir)?.threadId ?? null;
+}
+
+function persistThreadState(dataDir: string, threadId: string, rolloutPath: string | null): void {
+  const state = rolloutPath !== null ? { threadId, rolloutPath } : { threadId };
+  try { writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify(state), 'utf-8'); }
   catch { /* best-effort — a failed persist just means a fresh thread next boot */ }
 }
 
@@ -153,6 +167,45 @@ interface Session {
 
 /** dataDir → live session. Module-level (one per project per process). */
 const sessions = new Map<string, Session>();
+
+/** HS-9394 — injectables for `codexTerminalAttachCommand` (tests use temp paths). */
+export interface AttachCommandDeps {
+  fileExists?: (path: string) => boolean;
+  socketPath?: string;
+}
+
+/**
+ * HS-9394 (docs/123) — the daemon-attached terminal command for a codex project,
+ * or null when plain `codex` is the right launch. The attached form is only safe
+ * when the DRIVE runs (or would run) on the shared daemon — a TUI-on-daemon
+ * resuming a rollout that a private stdio child is actively writing would be two
+ * cores fighting over one rollout. Conditions, all required:
+ *  1. the app-server drive is enabled (HS-9384 toggle);
+ *  2. a driven thread is persisted WITH a rollout path that exists on disk
+ *     (`thread/resume` fails "no rollout found" before the first turn persists);
+ *  3. the live session (if any) is on the daemon transport; with no live session,
+ *     the daemon socket exists (the next session will prefer it). A live STDIO
+ *     session vetoes the attach (see above).
+ * Interplay is safe (live-verified, codex-cli 0.145.0): codex queues a `turn/start`
+ * that arrives while another client's turn runs, and an unsubmitted TUI draft
+ * survives a driven turn rendering above it.
+ */
+export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {
+  if (!isCodexAppServerEnabled()) return null;
+  const persisted = readPersistedCodexThread(dataDir);
+  if (persisted === null || persisted.rolloutPath === null) return null;
+  const fileExists = deps.fileExists ?? existsSync;
+  if (!fileExists(persisted.rolloutPath)) return null;
+  const socketPath = deps.socketPath ?? codexDaemonSocketPath();
+  const live = sessions.get(dataDir);
+  if (live !== undefined && !live.finished && live.transport !== null) {
+    if (live.transport.kind !== 'daemon') return null; // stdio session owns the rollout
+  } else if (!fileExists(socketPath)) {
+    return null; // no daemon to attach to (the drive would start one on next play)
+  }
+  // Single-quote the URL — home directories can contain spaces.
+  return `codex resume ${persisted.threadId} --remote 'unix://${socketPath}'`;
+}
 
 /**
  * The play/custom-command entry point — the `McpHooksAgent.spawnRun` signature.
@@ -320,7 +373,11 @@ async function bootSession(session: Session): Promise<void> {
   if (persisted !== null) {
     // O3 — auto-fresh ONLY when resume fails (missing/corrupt rollout).
     const resumed = await request(session, 'thread/resume', { threadId: persisted, config }, 60_000).catch(() => null);
-    if (resumed !== null) threadId = persisted;
+    if (resumed !== null) {
+      threadId = persisted;
+      // HS-9394 — backfill/refresh the rollout path (pre-9394 state files lack it).
+      persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(resumed));
+    }
   }
   if (threadId === null) {
     const started = await request(session, 'thread/start', {
@@ -334,7 +391,7 @@ async function bootSession(session: Session): Promise<void> {
     }, 60_000);
     threadId = threadIdFromResponse(started);
     if (threadId === null) throw new Error('thread/start returned no thread id');
-    persistThreadId(session.dataDir, threadId);
+    persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(started));
   }
   session.threadId = threadId;
   session.phase = 'idle';

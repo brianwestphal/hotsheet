@@ -1,0 +1,106 @@
+# 123 — Codex Terminal Attach (Driven-Thread Join)
+
+> **Status: SHIPPED (HS-9394, 2026-07-23).** The user-facing payoff of the docs/121
+> §121.6 daemon transport: a codex terminal Hot Sheet spawns joins the project's
+> **driven** app-server thread instead of running an isolated local core — play-button
+> work renders live in the terminal the user already thinks of as "their codex," and
+> anything typed there shares the same conversation with the drive.
+>
+> Cross-refs: [121-codex-app-server-drive.md](121-codex-app-server-drive.md) (the
+> daemon transport this rides, §121.6), [22-terminal.md](22-terminal.md) (terminal
+> command resolution, §22.5), [113-multi-ai-tool-support.md](113-multi-ai-tool-support.md)
+> (`ai_tool` routing, §113.3).
+
+## 123.1 Problem
+
+With the docs/121 drive, clicking play runs codex work in a persistent app-server
+session — but the codex **terminal** Hot Sheet spawns (`{{aiCommand}}` → `codex`)
+launched its own separate local core. The user's mental model is "that terminal is
+my codex"; driven work happening in a session that terminal can't see reads as
+"working invisibly in the background" (the HS-9380 report, again).
+
+## 123.2 Mechanism (verified, codex-cli 0.145.0)
+
+`codex resume <threadId> --remote unix://<sock>` attaches the TUI as a client of the
+shared app-server daemon, subscribed to the driven thread: history renders, and
+subsequent driven turns appear on the TUI screen **live with no user interaction**
+(docs/121 §121.6 "TUI daemon attach — VERIFIED"). `--remote` is experimental codex
+surface — like the rest of docs/121, behavior is pinned by probes against the
+installed version and drift surfaces as visible launch errors (§123.6).
+
+## 123.3 Command resolution
+
+`pickAiCommand` (`src/terminals/resolveCommand.ts`), for `ai_tool=codex` with the
+binary on PATH, consults **`codexTerminalAttachCommand(dataDir)`**
+(`src/codexAppServer.ts`) and uses its command when non-null; otherwise the plain
+`codex` binary launches exactly as before. This applies wherever `{{aiCommand}}` /
+`{{claudeCommand}}` resolves for a codex project — the default AI terminal, custom
+terminal templates, and worker-worktree terminals (each worktree's own `dataDir` →
+its own driven thread, which is the correct per-worker semantics).
+
+The attached form is emitted only when ALL hold:
+
+1. **Drive enabled** — the §121.7 Experimental toggle (`codexAppServerEnabled`).
+   Toggle off ⇒ plain `codex` (the drive surface is hidden anyway).
+2. **Resumable rollout** — `<dataDir>/codex-app-server.json` carries `threadId` AND
+   `rolloutPath` (HS-9394 addition, captured from the `thread.path` field of
+   `thread/start`/`thread/resume` responses; pre-9394 files backfill on the next
+   play), and the rollout file **exists on disk**. Existence is the exact gate:
+   `codex resume` fails "no rollout found" until the thread's first turn persists.
+3. **Daemon transport in play** — the live drive session (if any) runs on the
+   `daemon` transport; with no live session, the daemon control socket exists (the
+   next session will prefer it). A live **stdio** session vetoes the attach: a
+   TUI-on-daemon resuming a rollout that a private stdio child is actively writing
+   would be two cores fighting over one file.
+
+The socket URL is single-quoted in the command (home directories can contain
+spaces): `codex resume <id> --remote 'unix://<sock>'`.
+
+## 123.4 Shared-thread interplay (live-verified)
+
+Probed on 0.145.0 with a pty-driven TUI + a headless driver on the same thread:
+
+- **Draft safety** — a driven turn arriving while the TUI holds typed-but-unsubmitted
+  input renders above it; the draft is preserved.
+- **Turn serialization** — a `turn/start` sent while another client's turn is in
+  flight is **accepted and queued by codex**, running after the active turn ends.
+  No rejection, no interleaving. (So the drive needs no thread-busy awareness —
+  its queued turn simply waits server-side.)
+- **Transcript parity** — TUI-typed turns stream to the drive's connection and land
+  in the §121.6 Commands Log transcript; the drive's shared-thread guard (HS-9388)
+  keeps them from driving Hot Sheet's busy/done lifecycle.
+- **Approvals** route to the connection that started the turn: the TUI renders its
+  own turns' approvals inline; driven turns' approvals go to the §47 overlay.
+
+## 123.5 Fallback behavior
+
+When any §123.3 condition fails, the terminal launches plain `codex` — today's
+behavior, zero surprise. Notably:
+
+- **Before the first driven turn** (fresh project, or thread reset per §121.5) there
+  is no rollout ⇒ plain `codex`. The terminal does NOT pre-create or pre-attach a
+  daemon session (a fresh `codex --remote` session would be daemon-attached but
+  still not the driven thread — no watch value). See §123.7.
+- **Daemon not running** (e.g. after a machine restart, before the first play) ⇒
+  plain `codex`. The terminal spawn path does not start the daemon itself (§123.7).
+- **Already-open terminals** keep whatever they launched with; a terminal opened
+  before the first play stays unattached until relaunched.
+
+## 123.6 Limitations
+
+- A **thread reset** (§121.5 "New session") strands attached TUIs on the old thread;
+  they keep working as ordinary codex sessions on the old conversation. Relaunching
+  the terminal attaches to the new thread once it has a rollout.
+- If a future codex removes/changes `--remote`, the terminal shows codex's own
+  launch error — visible, not silent; the drive toggle (off ⇒ plain `codex`)
+  is the escape hatch.
+- The attached TUI's session cwd is the **thread's** cwd (the project root),
+  regardless of the terminal config's cwd setting.
+
+## 123.7 Follow-ups
+
+- **HS-9396** — pre-start the daemon (and optionally warm the thread) at terminal
+  launch time, so post-reboot terminals attach without waiting for a play.
+- **HS-9397** — attach/reattach affordance for live terminals: surface "driven
+  session available — reattach" when an open plain-codex terminal's project gains a
+  resumable driven thread (or its thread was reset).

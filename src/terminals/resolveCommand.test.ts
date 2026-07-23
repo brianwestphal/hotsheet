@@ -263,3 +263,55 @@ describe('resolveTerminalCwd (HS-7991)', () => {
     expect(samePath(resolveTerminalCwd('../sibling', PROJECT), '/abs/sibling')).toBe(true);
   });
 });
+
+// HS-9394 (docs/123) — codex terminals join the project's driven app-server thread.
+describe('codex daemon-attach resolution (HS-9394)', () => {
+  const cleanup: string[] = [];
+  afterEach(() => {
+    for (const d of cleanup) rmSync(d, { recursive: true, force: true });
+    cleanup.length = 0;
+  });
+  function dir(settings: Record<string, unknown> = {}): string {
+    const d = makeDataDir(settings);
+    cleanup.push(d);
+    return d;
+  }
+
+  it('uses the attach command when the resolver provides one', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
+    });
+    expect(command).toBe("codex resume th-1 --remote 'unix:///s.sock'");
+  });
+
+  it('expands inside a {{aiCommand}} template as well', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ terminal_command: 'env X=1 {{aiCommand}}', ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
+    });
+    expect(command).toBe("env X=1 codex resume th-1 --remote 'unix:///s.sock'");
+  });
+
+  it('falls back to plain codex when the attach resolver returns null', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexAttachOverride: () => null,
+    });
+    expect(command).toBe('codex');
+  });
+
+  it('never consults the attach resolver for non-codex tools', () => {
+    let called = false;
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'gemini' }),
+      isAiToolOnPath: (b) => b === 'gemini',
+      codexAttachOverride: () => { called = true; return 'nope'; },
+    });
+    expect(command).toBe('gemini');
+    expect(called).toBe(false);
+  });
+});

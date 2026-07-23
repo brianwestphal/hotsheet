@@ -140,6 +140,107 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrx6ceh8pwguk7g8",
+          "message": {
+            "text": "The **live-stdio-session veto** is the load-bearing condition here, not an optimization: codex rollout files are single-writer. If the drive's session runs on the private stdio child (daemon was unreachable at boot), that child's core owns the rollout — a TUI attaching through the *daemon* would resume the same rollout in a second core, and both would append to one JSONL. So the attach is only emitted when the live session is on the daemon transport, or there is no live session and the daemon socket exists (the next session will prefer daemon). The rollout-file-existence check is equally deliberate: `codex resume` fails \"no rollout found\" until the thread's first turn persists (HS-9386 finding), so `existsSync(rolloutPath)` is exactly the \"attach will work\" predicate — not a heuristic.\n",
+            "markdown": "The **live-stdio-session veto** is the load-bearing condition here, not an optimization: codex rollout files are single-writer. If the drive's session runs on the private stdio child (daemon was unreachable at boot), that child's core owns the rollout — a TUI attaching through the *daemon* would resume the same rollout in a second core, and both would append to one JSONL. So the attach is only emitted when the live session is on the daemon transport, or there is no live session and the daemon socket exists (the next session will prefer daemon). The rollout-file-existence check is equally deliberate: `codex resume` fails \"no rollout found\" until the thread's first turn persists (HS-9386 finding), so `existsSync(rolloutPath)` is exactly the \"attach will work\" predicate — not a heuristic.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 193,
+                  "endLine": 207,
+                  "snippet": {
+                    "text": "export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {\n  if (!isCodexAppServerEnabled()) return null;\n  const persisted = readPersistedCodexThread(dataDir);\n  if (persisted === null || persisted.rolloutPath === null) return null;\n  const fileExists = deps.fileExists ?? existsSync;\n  if (!fileExists(persisted.rolloutPath)) return null;\n  const socketPath = deps.socketPath ?? codexDaemonSocketPath();\n  const live = sessions.get(dataDir);\n  if (live !== undefined && !live.finished && live.transport !== null) {\n    if (live.transport.kind !== 'daemon') return null; // stdio session owns the rollout\n  } else if (!fileExists(socketPath)) {\n    return null; // no daemon to attach to (the drive would start one on next play)\n  }\n  // Single-quote the URL — home directories can contain spaces.\n  return `codex resume ${persisted.threadId} --remote 'unix://${socketPath}'`;"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9394"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "79f04b1d7956d3914fe7a54ad1a31a8c"
+          }
+        },
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrx6cenyk137gdjr",
+          "message": {
+            "text": "Shared-thread interplay was live-verified on codex-cli 0.145.0 (pty-driven TUI + headless daemon driver on one thread) before wiring the terminal attach: (1) a `turn/start` sent while another client's turn is in flight is **accepted and queued server-side** by codex — it ran after the active turn with no rejection and no interleaving, so the drive needs no thread-busy awareness; (2) an unsubmitted TUI draft survives a driven turn rendering above it; (3) TUI-typed turns stream to the drive's connection (they land in the Commands Log transcript, and the HS-9388 phase-guard keeps them from flipping Hot Sheet busy/done). See also `src/terminals/resolveCommand.ts` (the consuming resolution) and docs/123 §123.4.\n",
+            "markdown": "Shared-thread interplay was live-verified on codex-cli 0.145.0 (pty-driven TUI + headless daemon driver on one thread) before wiring the terminal attach: (1) a `turn/start` sent while another client's turn is in flight is **accepted and queued server-side** by codex — it ran after the active turn with no rejection and no interleaving, so the drive needs no thread-busy awareness; (2) an unsubmitted TUI draft survives a driven turn rendering above it; (3) TUI-typed turns stream to the drive's connection (they land in the Commands Log transcript, and the HS-9388 phase-guard keeps them from flipping Hot Sheet busy/done). See also `src/terminals/resolveCommand.ts` (the consuming resolution) and docs/123 §123.4.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 209,
+                  "endLine": 215,
+                  "snippet": {
+                    "text": "\n/**\n * The play/custom-command entry point — the `McpHooksAgent.spawnRun` signature.\n * Ensures the per-project session (transport + handshake + thread resume/start on\n * first use), queues the prompt (O1: coalescing exact duplicates), and starts the\n * next turn when idle. Returns false only when the drive toggle is off; transport\n * failures surface asynchronously via the HS-9384 handshake-failed flag (HS-9388 —"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ]
+          },
+          "workItemUris": [
+            "HS-9394"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "45da2bffe0c18059f7ca5bb99f81a11a"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "47837fcc889c6716e6080d4820e932765d1a4045",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

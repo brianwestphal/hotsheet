@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, resolve as resolvePath } from 'path';
 
 import { slugifyDataDir } from '../channel-config.js';
+import { codexTerminalAttachCommand } from '../codexAppServer.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
@@ -93,6 +94,9 @@ export interface ResolveOptions {
   aiToolOverride?: string;
   /** Override for CLI-agent-on-PATH detection. Injected in tests. */
   isAiToolOnPath?: (bin: string) => boolean;
+  /** HS-9394 — override for the codex daemon-attach command resolution. Injected in
+   *  tests. Defaults to `codexTerminalAttachCommand` (null → plain `codex`). */
+  codexAttachOverride?: (dataDir: string) => string | null;
 }
 
 /**
@@ -137,8 +141,16 @@ function pickAiCommand(options: ResolveOptions): string {
   if (!CLI_AGENTS.has(tool)) return pickClaudeCommand(options); // auto / claude / editor tools
   const bin = AGENT_BINARIES[tool] ?? tool; // e.g. antigravity → agy; else id == binary
   const onPath = options.isAiToolOnPath ?? isExecutableOnPath;
-  if (onPath(bin)) return bin;
-  return (options.defaultShellOverride ?? defaultShell)();
+  if (!onPath(bin)) return (options.defaultShellOverride ?? defaultShell)();
+  // HS-9394 (docs/123) — a codex terminal joins the project's DRIVEN app-server
+  // thread when the daemon-attach preconditions hold (drive enabled, resumable
+  // rollout, daemon transport): play-button work then renders live in this
+  // terminal. Falls back to the plain binary otherwise.
+  if (tool === 'codex') {
+    const attach = (options.codexAttachOverride ?? codexTerminalAttachCommand)(options.dataDir);
+    if (attach !== null) return attach;
+  }
+  return bin;
 }
 
 /** Read the project's `ai_tool` setting (default `auto` when absent). */

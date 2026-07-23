@@ -13,9 +13,11 @@ import {
   clearCodexAppServerFailures,
   type CodexAppServerDeps,
   codexInteractivePermissions,
+  codexTerminalAttachCommand,
   hasCodexAppServerHandshakeFailed,
   interruptCodexAppServerTurn,
   isCodexAppServerEnabled,
+  readPersistedCodexThread,
   readPersistedThreadId,
   shutdownCodexAppServers,
   spawnCodexAppServerRun,
@@ -54,7 +56,7 @@ interface FakeServer {
  * (turnId = `turn-<n>`). Turn COMPLETION is manual (`completeTurn`) so tests control
  * queue/coalesce timing.
  */
-function scriptedAppServer(opts: { resumable?: string[]; newThreadId?: string } = {}): FakeServer {
+function scriptedAppServer(opts: { resumable?: string[]; newThreadId?: string; newThreadPath?: string; resumePath?: string } = {}): FakeServer {
   const stdout = new EventEmitter();
   const emit = (obj: unknown): void => { stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n', 'utf-8')); };
   const sent: FakeServer['sent'] = [];
@@ -68,12 +70,12 @@ function scriptedAppServer(opts: { resumable?: string[]; newThreadId?: string } 
     } else if (msg.method === 'thread/resume') {
       const id = (msg.params as { threadId?: string } | undefined)?.threadId;
       if (id !== undefined && (opts.resumable ?? []).includes(id)) {
-        emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id } } });
+        emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id, ...(opts.resumePath !== undefined ? { path: opts.resumePath } : {}) } } });
       } else {
         emit({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `no rollout found for thread id ${String(id)}` } });
       }
     } else if (msg.method === 'thread/start') {
-      emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: opts.newThreadId ?? 'th-new' } } });
+      emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: opts.newThreadId ?? 'th-new', ...(opts.newThreadPath !== undefined ? { path: opts.newThreadPath } : {}) } } });
     } else if (msg.method === 'turn/start') {
       turnCounter += 1;
       const turnId = `turn-${String(turnCounter)}`;
@@ -611,5 +613,87 @@ describe('HS-9395 — MCP tool-call elicitations', () => {
     fake.emit({ jsonrpc: '2.0', id: 'elicit-4', method: 'mcpServer/elicitation/request', params: elicitParams('some-other-server') });
     await flush();
     expect(fake.sent.find(m => m.id === 'elicit-4')?.result).toEqual({ action: 'accept', content: {} });
+  });
+});
+
+describe('HS-9394 — persisted rollout path + terminal attach command', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
+    vi.stubEnv('HOTSHEET_HOME', home);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('persists the rollout path from a thread/start response; readPersistedCodexThread reads both fields', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1', newThreadPath: '/sessions/rollout-th-1.jsonl' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'th-1', rolloutPath: '/sessions/rollout-th-1.jsonl' });
+    expect(readPersistedThreadId(dataDir)).toBe('th-1');
+  });
+
+  it('backfills the rollout path on resume (pre-9394 state files carry only the thread id)', async () => {
+    writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-old' }), 'utf-8');
+    const fake = scriptedAppServer({ resumable: ['th-old'], resumePath: '/sessions/rollout-th-old.jsonl' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'th-old', rolloutPath: '/sessions/rollout-th-old.jsonl' });
+  });
+
+  describe('codexTerminalAttachCommand', () => {
+    const writeState = (rolloutPath?: string): void => {
+      writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-a', ...(rolloutPath !== undefined ? { rolloutPath } : {}) }), 'utf-8');
+    };
+    const allExist = (): boolean => true;
+
+    it('builds the resume --remote command (quoted socket URL) when drive on, rollout exists, and the daemon socket is up', () => {
+      writeState('/sessions/r.jsonl');
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/tmp/a b/s.sock' }))
+        .toBe("codex resume th-a --remote 'unix:///tmp/a b/s.sock'");
+    });
+
+    it('returns null when the drive toggle is off', () => {
+      writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
+      writeState('/sessions/r.jsonl');
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+    });
+
+    it('returns null with no persisted thread, no rollout path, or a rollout that does not exist yet', () => {
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+      writeState(); // thread id only (pre-9394 file)
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+      writeState('/sessions/r.jsonl'); // rollout persisted but not on disk (no turn yet)
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p === '/s.sock', socketPath: '/s.sock' })).toBeNull();
+    });
+
+    it('returns null when no daemon socket exists and no live session is up', () => {
+      writeState('/sessions/r.jsonl');
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p !== '/s.sock', socketPath: '/s.sock' })).toBeNull();
+    });
+
+    it('a live STDIO session vetoes the attach (its private core owns the rollout)', async () => {
+      const fake = scriptedAppServer({ newThreadId: 'th-a', newThreadPath: '/sessions/r.jsonl' });
+      spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+      await flush();
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+    });
+
+    it('a live DAEMON session allows the attach even if the socket-exists probe would fail', async () => {
+      const fake = scriptedAppServer({ newThreadId: 'th-a', newThreadPath: '/sessions/r.jsonl' });
+      const closeSpy = vi.fn();
+      const connectDaemon = (h: CodexTransportHandlers): Promise<{ kind: 'daemon'; send: (json: string) => void; close: () => void }> => {
+        fake.proc.stdout.on('data', (chunk: Buffer) => {
+          for (const line of chunk.toString().split('\n')) if (line.trim() !== '') h.onMessage(line);
+        });
+        return Promise.resolve({ kind: 'daemon' as const, send: (json: string) => { fake.proc.stdin.write(json); }, close: closeSpy });
+      };
+      spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+      await flush();
+      expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p !== '/s.sock', socketPath: '/s.sock' }))
+        .toBe("codex resume th-a --remote 'unix:///s.sock'");
+    });
   });
 });

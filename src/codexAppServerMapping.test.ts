@@ -14,6 +14,7 @@ import {
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
+  rolloutPathFromThreadPayload,
   threadIdFromResponse,
   TRANSCRIPT_TRUNCATION_MARKER,
   transcriptLineFromItem,
@@ -228,5 +229,17 @@ describe('buildThreadMcpOverride (HS-9388)', () => {
         },
       },
     });
+  });
+});
+
+describe('rolloutPathFromThreadPayload (HS-9394)', () => {
+  it('reads thread.path from both response results and thread/started notification params', () => {
+    expect(rolloutPathFromThreadPayload({ thread: { id: 't', path: '/sessions/r.jsonl' } })).toBe('/sessions/r.jsonl');
+  });
+  it('returns null when the path is absent, empty, or the payload is shapeless', () => {
+    expect(rolloutPathFromThreadPayload({ thread: { id: 't' } })).toBeNull();
+    expect(rolloutPathFromThreadPayload({ thread: { path: '' } })).toBeNull();
+    expect(rolloutPathFromThreadPayload({})).toBeNull();
+    expect(rolloutPathFromThreadPayload(null)).toBeNull();
   });
 });
