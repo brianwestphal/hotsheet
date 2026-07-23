@@ -90,7 +90,7 @@ This document lists features that require manual verification before each releas
 - [ ] **Queue + coalesce (O1).** While a turn is running, click play twice more + one custom prompt command → no interleaving; the coalesced trigger runs once at turn end, then the custom prompt, then busy clears (done only after the queue drains).
 - [ ] **Approvals in the overlay (O4, default ON).** With `codex_interactive_permissions` unset/checked, press play and give codex a task needing a sandbox escape (e.g. write outside the workspace) → the **§47 popup appears** (options Allow/Cancel from codex's `availableDecisions`); **Allow** → the command proceeds; dismissing declines. Safe commands (echo/git status) auto-run WITHOUT a popup (`approvalPolicy: untrusted`). Uncheck the setting → everything auto-approves, no popups.
 - [ ] **Legacy hooks (HS-9359) are superseded for the drive** — `.codex/hooks.json` is no longer used by play (only manual `codex --enable hooks` runs); confirm no hook-mediated popups fire during a play turn.
-- [ ] **Experimental toggle (HS-9384).** Settings → Experimental → "Codex app-server drive" is checked by default. Uncheck it → for a codex project the play button AND custom prompt-command buttons disappear (shell-command buttons stay); any running driven session is killed. Re-check → the surface reappears and play works. Non-codex projects are unaffected either way.
+- [ ] **Experimental toggle kills the live session (HS-9384).** With a codex turn RUNNING, uncheck Settings → Experimental → "Codex app-server drive" → the driven session is killed (busy clears). (The surface show/hide half — play + prompt buttons hidden, shell stays, checkbox re-enables, non-codex unaffected — is automated in `e2e/codex-drive-gating.spec.ts`, HS-9390.)
 - [ ] **Commands Log transcript (HS-9385).** Press play and open the Commands Log while the turn runs → a purple `codex` entry appears ("Codex working…"), its detail grows with agent messages and `$ command` lines as codex works, and it finishes as "Codex turn completed (N steps)" (or "interrupted" after stop). The "Codex Turns" filter option isolates these entries.
 
 ### OpenCode (ACP) integration end-to-end (HS-9330/9340/9341/9344/9346) — needs `opencode` on PATH + `opencode auth`
@@ -983,6 +983,7 @@ For reference, here's what IS covered by automated tests (no manual check needed
 - Plugin sync: full field roundtrip, conflict resolution, note/comment sync, attachment sync
 - Plugin config: validation feedback, label colors, enable/disable, uninstall/reinstall
 - Plugin UI extensions: toolbar, detail_top/bottom, context_menu, status_bar, sidebar
+- Codex drive surface gating (HS-9390, `e2e/codex-drive-gating.spec.ts`): toggle off hides play + prompt buttons while shell buttons stay, Experimental checkbox reflects + re-enables live, non-codex projects unaffected
 - Backup create + preview data
 - Settings dialog: tabs, category list, checkbox persistence
 - Terminal command resolution branches (unit tests in `src/terminals/resolveCommand.test.ts`)
