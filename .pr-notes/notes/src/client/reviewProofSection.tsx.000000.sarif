@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwy26cqfkfo4ix4",
+          "message": {
+            "text": "Fix is wire-deep, not CSS-only: `summary` was only ever the FIRST LINE of `message.text` (see `prNotesReader.ts::toReviewProofNote`), so wrapping the head alone could never show the note. The new `body` field carries the full text; it renders in the DETAIL (markdown via the `markdownSetup` escape-html marked config — bodies are markdown per Glassbox docs/20) and the head's ellipsis preview hides while open (`.is-open .review-proof-summary { display: none }`) so line 1 isn't duplicated. `body` is optional on the wire with a summary fallback, so an older server during an upgrade window degrades to exactly the pre-fix behavior rather than a validation failure.\n",
+            "markdown": "Fix is wire-deep, not CSS-only: `summary` was only ever the FIRST LINE of `message.text` (see `prNotesReader.ts::toReviewProofNote`), so wrapping the head alone could never show the note. The new `body` field carries the full text; it renders in the DETAIL (markdown via the `markdownSetup` escape-html marked config — bodies are markdown per Glassbox docs/20) and the head's ellipsis preview hides while open (`.is-open .review-proof-summary { display: none }`) so line 1 isn't duplicated. `body` is optional on the wire with a summary fallback, so an older server during an upgrade window degrades to exactly the pre-fix behavior rather than a validation failure.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/reviewProofSection.tsx"
+                },
+                "region": {
+                  "startLine": 117,
+                  "endLine": 129,
+                  "snippet": {
+                    "text": "  // HS-9387 — the expanded row leads with the FULL note text, markdown-rendered\n  // and wrapping (the head's one-line ellipsis summary hides while open, via\n  // `.is-open` CSS). `body` is optional on the wire (older server) — fall back\n  // to the one-line summary rather than showing nothing.\n  const bodyText = (note.body ?? note.summary).trim();\n  if (bodyText !== '') {\n    detail.appendChild(toElement(\n      <div className=\"review-proof-body\">\n        {/* eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from `marked.parse(...)` (markdownSetup escapes raw HTML). */}\n        {raw(marked.parse(bodyText, { async: false }))}\n      </div>,\n    ));\n  }"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9387"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "5cb4cab9f739387842edf3aa903ec3b9"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5ced74d1a0c364f24d30dd268f6c57df1bfe7da2",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

@@ -48,6 +48,7 @@ describe('readReviewProofForTicket (HS-9223)', () => {
     expect(n.startLine).toBe(42);
     expect(n.endLine).toBe(50);
     expect(n.summary).toBe('Verified the export flow'); // first line only
+    expect(n.body).toBe('Verified the export flow\nsecond line ignored'); // HS-9387 — full text for the expanded view
     expect(n.attachments).toEqual([
       { uri: '.pr-notes/artifacts/shot.png', kind: 'image', description: 'screenshot' },
       { uri: '.pr-notes/artifacts/out.txt', kind: 'text' },

@@ -91,6 +91,14 @@ requirement), while a URL ending in the id still matches.
     (Glassbox renders its `.pr-notes/` note for a file it's showing); it falls back
     to the generic `launchGlassbox()` when the note carries no location. (Line-level
     anchoring would need a Glassbox CLI arg it doesn't expose today.)
+  - **Readable note body (HS-9387):** `ReviewProofNote` carries the FULL
+    `result.message.text` as `body` (optional on the wire — older-server fallback is
+    the one-line `summary`); the expanded row leads with it **markdown-rendered and
+    wrapping** (`.review-proof-body`, `overflow-wrap: anywhere`; `marked` with the
+    `markdownSetup` escape-html config), and the head's one-line ellipsis preview
+    hides while the row is open (`.is-open .review-proof-summary`) instead of
+    duplicating line 1. Pre-fix, only the truncated first line was ever visible —
+    the note text was effectively unreadable in Hot Sheet.
 
 ## 111.5 Non-goals (inherited from docs/110 §110.6)
 

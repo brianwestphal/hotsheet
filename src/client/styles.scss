@@ -4520,6 +4520,36 @@ body.cross-project-stats-active {
   white-space: nowrap;
 }
 
+// HS-9387 — while a row is open, the full note body renders in the detail (below),
+// so the head's one-line ellipsis preview hides instead of duplicating line 1.
+.review-proof-note.is-open .review-proof-summary { display: none; }
+
+// HS-9387 — the full note text, markdown-rendered and WRAPPING (the readability
+// fix: pre-fix only the truncated first line was ever visible).
+.review-proof-body {
+  margin: 2px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  overflow-wrap: anywhere;
+
+  p { margin: 0 0 6px; }
+  p:last-child { margin-bottom: 0; }
+  code {
+    font-size: 11px;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    padding: 0 3px;
+    border-radius: 3px;
+  }
+  pre {
+    overflow-x: auto;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    padding: 6px 8px;
+    border-radius: var(--radius);
+  }
+  ul, ol { margin: 0 0 6px; padding-left: 18px; }
+}
+
 .review-proof-count {
   flex-shrink: 0;
   font-size: 11px;

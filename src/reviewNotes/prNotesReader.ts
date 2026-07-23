@@ -101,6 +101,8 @@ function toReviewProofNote(result: z.infer<typeof ResultSchema>, sourceFile: str
     startLine: loc?.region?.startLine ?? null,
     endLine: loc?.region?.endLine ?? null,
     summary,
+    body: messageText, // HS-9387 — the full note text for the expanded view
+
     rank: result.rank ?? null,
     level: result.level ?? null,
     attachments,

@@ -1,4 +1,9 @@
+import './markdownSetup.js'; // HS-9387 — escape-html marked config for note bodies
+
+import { marked } from 'marked';
+
 import { getReviewProof, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote } from '../api/index.js';
+import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getActiveProject } from './state.js';
 
@@ -108,6 +113,20 @@ function renderNote(note: ReviewProofNote): HTMLElement {
   );
   const head = row.querySelector<HTMLButtonElement>('.review-proof-note-head')!;
   const detail = row.querySelector<HTMLElement>('.review-proof-note-detail')!;
+
+  // HS-9387 — the expanded row leads with the FULL note text, markdown-rendered
+  // and wrapping (the head's one-line ellipsis summary hides while open, via
+  // `.is-open` CSS). `body` is optional on the wire (older server) — fall back
+  // to the one-line summary rather than showing nothing.
+  const bodyText = (note.body ?? note.summary).trim();
+  if (bodyText !== '') {
+    detail.appendChild(toElement(
+      <div className="review-proof-body">
+        {/* eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from `marked.parse(...)` (markdownSetup escapes raw HTML). */}
+        {raw(marked.parse(bodyText, { async: false }))}
+      </div>,
+    ));
+  }
 
   // Build the expanded content imperatively (imgs carry an error→fallback listener;
   // text is lazy-fetched on first expand).

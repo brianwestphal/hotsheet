@@ -34,6 +34,10 @@ export const ReviewProofNoteSchema = z.object({
   endLine: z.number().nullable(),
   /** First line of `result.message.text` — the one-line list summary. */
   summary: z.string(),
+  /** HS-9387 — the FULL `result.message.text` (markdown), rendered wrapped in the
+   *  expanded row. Optional so a response from an older server still validates
+   *  during an upgrade window (the client falls back to `summary`). */
+  body: z.string().optional(),
   /** `result.rank` (0–100) — sort key (most important first). */
   rank: z.number().nullable(),
   /** `result.level` (`warning` for risk notes, else `none`). */

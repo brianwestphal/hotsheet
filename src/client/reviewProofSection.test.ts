@@ -50,6 +50,26 @@ describe('reviewProofSection (HS-9293)', () => {
     expect(container().querySelector('.review-proof-summary')?.textContent).toBe('proved it');
   });
 
+  it('HS-9387 — the expanded row renders the FULL note body, markdown-rendered', async () => {
+    const body = '**Why an env marker** rather than parent-pid detection:\n\nthe channel server is spawned by the *agent*, so env propagates transitively.\n\nSee `codexDrive.ts:115`.';
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: '**Why an env marker** rather than…', body })] });
+    await loadAndRenderReviewProof('HS-1234');
+    const el = container().querySelector<HTMLElement>('.review-proof-body')!;
+    expect(el).not.toBeNull();
+    // Full multi-paragraph text present (not just the truncated first line)...
+    expect(el.textContent).toContain('env propagates transitively');
+    // ...and markdown actually rendered (bold + inline code, no raw asterisks).
+    expect(el.querySelector('strong')?.textContent).toBe('Why an env marker');
+    expect(el.querySelector('code')?.textContent).toBe('codexDrive.ts:115');
+    expect(el.textContent).not.toContain('**');
+  });
+
+  it('HS-9387 — falls back to the one-line summary as the body when `body` is absent (older server)', async () => {
+    getReviewProof.mockResolvedValue({ notes: [note({ body: undefined })] });
+    await loadAndRenderReviewProof('HS-1234');
+    expect(container().querySelector('.review-proof-body')?.textContent).toContain('proved it');
+  });
+
   it('is presence-gated: empty container when there are no notes', async () => {
     getReviewProof.mockResolvedValue({ notes: [] });
     await loadAndRenderReviewProof('HS-1234');
