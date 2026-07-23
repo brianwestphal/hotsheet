@@ -109,13 +109,13 @@ Registered as the second `mcpHooksAgents.ts` descriptor (`aiTool: 'codex'`,
 - **Transport-selection layer / three-way "Agent backend" picker** — today the transport is wired directly off `ai_tool` (`isAntigravityDriven`); a general per-agent capability table (`ai_tool` → A1 MCP+hooks vs A2 ACP) + the Settings "Agent backend" picker (`claude-channel-mcp` / `mcp-hooks:<command>` / `acp:<command>`) is the shared generalization once a *second* MCP+hooks agent or the ACP transport lands. See docs/113 §113.4.
 - ~~**Other MCP-native agents** — if another MCP+hooks CLI agent appears, generalize `antigravity.ts`'s config-writer + `antigravityDrive.ts`'s drive into a per-agent abstraction rather than agy-specific modules.~~ **Done:** the HS-9339 registry + Codex as the second agent (§115.6a) prove the abstraction.
 - ~~**Codex permission hook** — the §47 overlay for codex tool calls.~~ **Done (HS-9359, §115.6a).**
-- **Persistent-mode (`-i` / `--continue`) drive** — the `--print` one-shot is the shipped default; a long-lived session driven by `Stop`/`PreToolUse` hooks per-turn (like Claude's interactive channel) is a possible richer follow-up (the permission hook already exists; the session lifecycle does not).
+- **Persistent-mode drive** — the `--print`/`exec` one-shot is the shipped default. **For codex this is now designed** (HS-9381): the app-server persistent drive ([121-codex-app-server-drive.md](121-codex-app-server-drive.md)) supersedes the §115.6a one-shot at ship. For agy, a long-lived `-i` session driven by `Stop`/`PreToolUse` hooks per-turn remains a possible follow-up (the permission hook already exists; the session lifecycle does not).
 
 ## 115.8 Open decisions
 
 - **O1 — config location.** Shipped as GLOBAL cwd-resolving (§115.5) — one entry serves all projects. Revisit only if a future agy version drops relative-cwd MCP resolution.
 - **O2 — `.gemini` path stability.** `agy` reads Gemini-branded paths (`~/.gemini/`); if a future version changes this, detect the path from `agy` rather than hard-coding.
-- **O3 — persistent mode.** Whether to build the `-i`/hooks session path at all, or keep `--print` one-shot as the only drive model. Deferred until there's a concrete need (`--print` covers the worklist-processing use case).
+- **O3 — persistent mode.** ~~Whether to build the `-i`/hooks session path at all.~~ **Decided for codex (2026-07-23, HS-9381):** persistent drive via its app-server protocol — see [121-codex-app-server-drive.md](121-codex-app-server-drive.md). Still open for agy (no app-server analog; `-i`/hooks would be its path if ever needed).
 
 ## 115.9 Testing
 
