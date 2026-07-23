@@ -17,6 +17,7 @@ export const ALL_FILTER_TYPES = [
   { value: 'done', label: 'Completions' },
   { value: 'permission_request', label: 'Permissions' },
   { value: 'shell_command', label: 'Shell Commands' },
+  { value: 'codex_turn', label: 'Codex Turns' }, // HS-9385
 ];
 
 /** Read the live `Set<string>` of selected filter types from the store. */

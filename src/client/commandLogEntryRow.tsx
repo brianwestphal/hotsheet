@@ -99,6 +99,7 @@ function typeBadgeColor(eventType: string): string {
     case 'done': return '#22c55e';
     case 'permission_request': return '#f97316';
     case 'shell_command': return '#6b7280';
+    case 'codex_turn': return '#8b5cf6'; // HS-9385 — the streamed codex turn transcript
     default: return '#6b7280';
   }
 }
@@ -109,6 +110,7 @@ function typeBadgeLabel(eventType: string): string {
     case 'done': return 'done';
     case 'permission_request': return 'permission';
     case 'shell_command': return 'shell';
+    case 'codex_turn': return 'codex'; // HS-9385
     default: return eventType;
   }
 }

@@ -151,3 +151,40 @@ export function decisionFromReply(reply: { optionId: string } | { cancelled: tru
   if ('cancelled' in reply) return { decision: 'decline' };
   return { decision: reply.optionId };
 }
+
+/**
+ * HS-9385 (docs/121 §121.6 phase 1) — one Commands Log transcript line from an
+ * `item/completed` notification's params, or null for items the transcript skips
+ * (empty/partial agent messages, reasoning, the user's own prompt — already logged
+ * as the trigger). Captured item shapes: `agentMessage {text, phase}`,
+ * `commandExecution {command, aggregatedOutput, exitCode}`.
+ */
+export function transcriptLineFromItem(params: Record<string, unknown>): string | null {
+  const item = typeof params.item === 'object' && params.item !== null ? params.item as Record<string, unknown> : null;
+  if (item === null) return null;
+  if (item.type === 'agentMessage') {
+    const text = typeof item.text === 'string' ? item.text.trim() : '';
+    return text === '' ? null : text;
+  }
+  if (item.type === 'commandExecution') {
+    const command = typeof item.command === 'string' ? item.command : '';
+    if (command === '') return null;
+    const output = typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput.trimEnd() : '';
+    const exit = typeof item.exitCode === 'number' ? item.exitCode : null;
+    const head = `$ ${command}${exit !== null && exit !== 0 ? `  (exit ${String(exit)})` : ''}`;
+    return output === '' ? head : `${head}\n${output}`;
+  }
+  return null; // reasoning / userMessage / unknown — skipped
+}
+
+/** HS-9385 — append a transcript line to the accumulated detail under a size cap.
+ *  Once over the cap, the detail is frozen with a single truncation marker (the
+ *  Commands Log entry stays scannable; the full stream is phase-2 territory). */
+export function appendTranscriptDetail(existing: string, line: string, cap: number): { detail: string; truncated: boolean } {
+  if (existing.endsWith(TRANSCRIPT_TRUNCATION_MARKER)) return { detail: existing, truncated: true };
+  const next = existing === '' ? line : `${existing}\n\n${line}`;
+  if (next.length <= cap) return { detail: next, truncated: false };
+  return { detail: `${next.slice(0, cap)}\n${TRANSCRIPT_TRUNCATION_MARKER}`, truncated: true };
+}
+
+export const TRANSCRIPT_TRUNCATION_MARKER = '…[transcript truncated]';

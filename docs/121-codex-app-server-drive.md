@@ -1,6 +1,6 @@
 # 121 — Codex App-Server Persistent Drive
 
-> **Status: CORE DRIVE (HS-9383) + TOGGLE/GATING (HS-9384) SHIPPED, 2026-07-23; Commands Log transcript (HS-9385) + daemon transport (HS-9388) pending.** Follow-up to HS-9380 — the user-visible half of "clicking play with codex does the work invisibly in a background one-shot." **Maintainer decisions (2026-07-23):** (1) drive codex through its **`app-server` protocol** (a persistent, programmatic session that play/custom commands send user turns into) rather than terminal-PTY models; (2) treat it like the Claude Channel — an **Experimental-tab toggle, enabled by default**; (3) when disabled, **hide the play button and custom codex prompt-command buttons** (no silent fallback to the one-shot drive). §121.10 decisions (2026-07-23): **O1 queue+coalesce**, **O3 manual-only thread reset**, **O4 overlay approvals ON by default**.
+> **Status: CORE DRIVE (HS-9383) + TOGGLE/GATING (HS-9384) + COMMANDS LOG TRANSCRIPT (HS-9385) SHIPPED, 2026-07-23; daemon transport (HS-9388) + phase-2 transcript pane pending.** Follow-up to HS-9380 — the user-visible half of "clicking play with codex does the work invisibly in a background one-shot." **Maintainer decisions (2026-07-23):** (1) drive codex through its **`app-server` protocol** (a persistent, programmatic session that play/custom commands send user turns into) rather than terminal-PTY models; (2) treat it like the Claude Channel — an **Experimental-tab toggle, enabled by default**; (3) when disabled, **hide the play button and custom codex prompt-command buttons** (no silent fallback to the one-shot drive). §121.10 decisions (2026-07-23): **O1 queue+coalesce**, **O3 manual-only thread reset**, **O4 overlay approvals ON by default**.
 >
 > Shipped shape: `src/codexAppServerMapping.ts` (pure protocol core) + `src/codexAppServer.ts` (per-project session manager — lazy spawn, `thread/resume` from `<dataDir>/codex-app-server.json`, queue+coalesce, busy/done, §47 approval bridge via `acpPermissionBridge`, allow-rules auto-allow, `turn/interrupt`, crash/shutdown teardown); the `mcpHooksAgents.ts` codex descriptor now points at it and the §115.6a one-shot exec drive (`codexDrive.ts`) is retired.
 >
@@ -119,9 +119,18 @@ New module `src/codexAppServer.ts` (+ pure protocol core, mirroring the
 
 ## 121.6 Visibility
 
-- **Phase 1 — Commands Log transcript:** stream `item/agentMessage/delta` /
-  `item/completed` summaries into the Commands Log (§14) as the turn runs —
-  the user finally *sees* the work as it happens. Cheap, no new UI surface.
+- **Phase 1 — Commands Log transcript (SHIPPED, HS-9385):** completed items
+  stream into ONE `codex_turn` Commands Log entry per turn, updated in place
+  (the `shell_command` model): created on `turn/started` ("Codex working…"),
+  agent messages + `$ command` lines (with output + non-zero exit codes)
+  append as `item/completed` events arrive (detail capped ~8 KB with a
+  truncation marker; raw `item/agentMessage/delta` token streams are
+  deliberately NOT persisted per-delta — phase-2 territory), final summary
+  "Codex turn completed/interrupted (N steps)". The session manager
+  self-POSTs `/api/channel/codex-transcript` events so the log write happens
+  in project request context (`transcriptLineFromItem` /
+  `appendTranscriptDetail` in the pure core). Badge `codex` (purple) + a
+  "Codex Turns" filter option.
 - **Phase 2 — dedicated transcript pane (open decision O2):** a per-project
   session view (drawer tile or panel) rendering the live turn stream with
   markdown.

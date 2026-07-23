@@ -27,6 +27,7 @@ Indexed on `created_at` for efficient newest-first queries.
 | `done` | incoming | Claude signals completion via /channel/done |
 | `permission_request` | incoming | Claude requests permission for a tool. Updated in-place when user responds (summary changes to "Permission: {tool} — Allowed/Denied"). Logged once per request_id. |
 | `shell_command` | outgoing | Shell command executed. Updated in-place with output when command completes (detail gets separator + stdout/stderr). |
+| `codex_turn` | incoming | HS-9385 ([121-codex-app-server-drive.md](121-codex-app-server-drive.md) §121.6) — a codex app-server turn's live transcript. Created on `turn/started` ("Codex working…"), updated in place as items complete (agent messages + `$ command` lines with output, detail capped ~8 KB with a truncation marker), final summary "Codex turn completed/interrupted (N steps)". Badge label `codex` (purple). |
 
 ## 14.4 UI — Log Button
 

@@ -203,6 +203,16 @@ export const CodexAppServerToggleSchema = z.object({
   enabled: z.boolean(),
 });
 
+/** HS-9385 — one codex turn-transcript event (self-POSTed by the session manager;
+ *  docs/121 §121.6 phase 1). `text` is bounded — a runaway item can't balloon a
+ *  request (§96 spirit); the route additionally caps the accumulated detail. */
+export const CodexTranscriptEventSchema = z.object({
+  phase: z.enum(['start', 'item', 'end']),
+  turnId: z.string().max(128),
+  text: z.string().max(16_000).optional(),
+  status: z.string().max(64).optional(),
+});
+
 export const PermissionRespondSchema = z.object({
   request_id: z.string(),
   behavior: z.enum(['allow', 'deny']),

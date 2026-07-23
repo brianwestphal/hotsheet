@@ -8,6 +8,7 @@ import { appendMainServerEvent } from '../channelLog.js';
 import { disconnectMainConnections, listAliveEntries, mainConnections } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
 import { clearCodexAppServerFailures, hasCodexAppServerHandshakeFailed, isCodexAppServerEnabled, shutdownCodexAppServers } from '../codexAppServer.js';
+import { appendTranscriptDetail } from '../codexAppServerMapping.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
 import { closeOpenTicketIntervalsForProject } from '../db/ticketWorkIntervals.js';
@@ -20,7 +21,7 @@ import { PendingPermissionSchema } from '../schemas.js';
 import { flushPendingSyncs } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
-import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexAppServerToggleSchema, parseBody, PermissionRespondSchema } from './validation.js';
+import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexAppServerToggleSchema, CodexTranscriptEventSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
@@ -164,6 +165,50 @@ channelRoutes.get('/channel/status', async (c) => {
 
 /** HS-9384 — dedup so the polled status route logs a handshake failure once. */
 const loggedCodexHandshakeFailures = new Set<string>();
+
+/**
+ * HS-9385 (docs/121 §121.6 phase 1) — the codex turn transcript in the Commands Log.
+ * The session manager self-POSTs start/item/end events here (project request
+ * context, like the heartbeat/done fallbacks); ONE `codex_turn` log entry per turn
+ * is created on `start` and updated in place as items complete — the same
+ * update-in-place model as `shell_command` entries.
+ */
+interface TranscriptState { logId: number; detail: string; items: number }
+const codexTranscripts = new Map<string, TranscriptState>(); // `${secret}:${turnId}`
+/** Detail size cap — the entry stays scannable; the full stream is phase 2 (§121.6). */
+const TRANSCRIPT_DETAIL_CAP = 8_000;
+/** Stale-turn GC floor so abandoned turns (server restart mid-turn) can't accumulate. */
+const TRANSCRIPT_MAX_TRACKED = 50;
+
+channelRoutes.post('/channel/codex-transcript', async (c) => {
+  const raw: unknown = await c.req.json().catch(() => ({}));
+  const parsed = parseBody(CodexTranscriptEventSchema, raw);
+  if (!parsed.success) return c.json({ error: parsed.error }, 400);
+  const { phase, turnId, text, status } = parsed.data;
+  const key = `${c.get('projectSecret')}:${turnId}`;
+  if (phase === 'start') {
+    if (codexTranscripts.size >= TRANSCRIPT_MAX_TRACKED) {
+      const oldest = codexTranscripts.keys().next().value;
+      if (oldest !== undefined) codexTranscripts.delete(oldest);
+    }
+    const entry = await addLogEntry('codex_turn', 'incoming', 'Codex working…', '');
+    codexTranscripts.set(key, { logId: entry.id, detail: '', items: 0 });
+    return c.json({ ok: true });
+  }
+  const state = codexTranscripts.get(key);
+  if (state === undefined) return c.json({ ok: true }); // unknown turn (restart race) — drop
+  if (phase === 'item' && text !== undefined && text !== '') {
+    const appended = appendTranscriptDetail(state.detail, text, TRANSCRIPT_DETAIL_CAP);
+    state.detail = appended.detail;
+    state.items += 1;
+    await updateLogEntry(state.logId, { detail: state.detail, summary: `Codex working… (${String(state.items)} step${state.items === 1 ? '' : 's'})` });
+  } else if (phase === 'end') {
+    const label = status === 'completed' || status === undefined ? 'Codex turn completed' : `Codex turn ${status}`;
+    await updateLogEntry(state.logId, { summary: `${label} (${String(state.items)} step${state.items === 1 ? '' : 's'})` });
+    codexTranscripts.delete(key);
+  }
+  return c.json({ ok: true });
+});
 
 /**
  * HS-9384 (docs/121 §121.7) — flip the machine-global codex app-server drive toggle.

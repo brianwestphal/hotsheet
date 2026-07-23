@@ -296,6 +296,7 @@ trigger, so extra connections never misroute a trigger.
 | `/api/channel/trigger` | POST | Send a worklist event to Claude via the channel server |
 | `/api/channel/done` | POST | Called by Claude to signal it has finished processing |
 | `/api/channel/codex-app-server` | POST | HS-9384 — flip the machine-global codex app-server drive toggle (`{ enabled }`); disable kills live driven sessions, enable clears handshake-failure flags ([121-codex-app-server-drive.md](121-codex-app-server-drive.md) §121.7) |
+| `/api/channel/codex-transcript` | POST | HS-9385 — codex turn-transcript events (`{ phase: start\|item\|end, turnId, text?, status? }`) self-POSTed by the session manager; maintains one `codex_turn` Commands Log entry per turn ([121-codex-app-server-drive.md](121-codex-app-server-drive.md) §121.6) |
 | `/api/channel/enable` | POST | Enable the channel and register in `.mcp.json` |
 | `/api/channel/disable` | POST | Disable the channel and remove from `.mcp.json` |
 | `/api/channel/permission` | GET | Check for pending permission requests from Claude |

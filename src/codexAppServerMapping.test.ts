@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  appendTranscriptDetail,
   approvalDisplayFromRequest,
   buildNotificationLine,
   buildRequestLine,
@@ -11,6 +12,8 @@ import {
   decisionFromReply,
   driveEventFromNotification,
   threadIdFromResponse,
+  TRANSCRIPT_TRUNCATION_MARKER,
+  transcriptLineFromItem,
 } from './codexAppServerMapping.js';
 
 describe('classifyAppServerLine', () => {
@@ -125,5 +128,43 @@ describe('decisionFromReply', () => {
     expect(decisionFromReply({ optionId: 'accept' })).toEqual({ decision: 'accept' });
     expect(decisionFromReply({ optionId: 'acceptForSession' })).toEqual({ decision: 'acceptForSession' });
     expect(decisionFromReply({ cancelled: true })).toEqual({ decision: 'decline' });
+  });
+});
+
+describe('transcriptLineFromItem (HS-9385)', () => {
+  it('renders an agent message as its text; empty/partial messages are skipped', () => {
+    expect(transcriptLineFromItem({ item: { type: 'agentMessage', text: 'pong', phase: 'final_answer' } })).toBe('pong');
+    expect(transcriptLineFromItem({ item: { type: 'agentMessage', text: '', phase: 'final_answer' } })).toBeNull();
+  });
+
+  it('renders the captured commandExecution shape with output; flags non-zero exits', () => {
+    const item = { type: 'commandExecution', command: "/bin/zsh -lc 'echo hi'", aggregatedOutput: 'hi\n', exitCode: 0 };
+    expect(transcriptLineFromItem({ item })).toBe("$ /bin/zsh -lc 'echo hi'\nhi");
+    expect(transcriptLineFromItem({ item: { ...item, exitCode: 2 } })).toBe("$ /bin/zsh -lc 'echo hi'  (exit 2)\nhi");
+    expect(transcriptLineFromItem({ item: { type: 'commandExecution', command: 'x' } })).toBe('$ x');
+  });
+
+  it('skips reasoning, userMessage (already logged as the trigger), and shapeless params', () => {
+    expect(transcriptLineFromItem({ item: { type: 'reasoning', summary: [] } })).toBeNull();
+    expect(transcriptLineFromItem({ item: { type: 'userMessage', content: [] } })).toBeNull();
+    expect(transcriptLineFromItem({})).toBeNull();
+  });
+});
+
+describe('appendTranscriptDetail (HS-9385)', () => {
+  it('joins lines with blank separators under the cap', () => {
+    const a = appendTranscriptDetail('', 'one', 100);
+    expect(a).toEqual({ detail: 'one', truncated: false });
+    expect(appendTranscriptDetail(a.detail, 'two', 100).detail).toBe('one\n\ntwo');
+  });
+
+  it('caps with a single marker and freezes afterward', () => {
+    const capped = appendTranscriptDetail('x'.repeat(90), 'y'.repeat(30), 100);
+    expect(capped.truncated).toBe(true);
+    expect(capped.detail.endsWith(TRANSCRIPT_TRUNCATION_MARKER)).toBe(true);
+    // Further appends are no-ops — the marker appears exactly once.
+    const frozen = appendTranscriptDetail(capped.detail, 'more', 100);
+    expect(frozen.detail).toBe(capped.detail);
+    expect(frozen.detail.match(/\[transcript truncated\]/g)).toHaveLength(1);
   });
 });

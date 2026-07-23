@@ -64,6 +64,69 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mrwwriu8njqb0zks",
+          "message": {
+            "text": "One `codex_turn` entry per turn, updated in place (the `shell_command` model), NOT one entry per item — a multi-step turn would otherwise flood the log. Raw `item/agentMessage/delta` token streams are deliberately not persisted per-delta: that would mean a DB write per token; per-`item/completed` granularity keeps writes to a handful per turn while the user still sees steps land live (each update rides `notifyChange`). The ~8 KB cap + single freeze marker (`appendTranscriptDetail`) keeps entries scannable; the full stream is the phase-2 transcript pane's job (docs/121 §121.6 O2). The bounded `codexTranscripts` map (50) GCs turns abandoned by a server restart.\n",
+            "markdown": "One `codex_turn` entry per turn, updated in place (the `shell_command` model), NOT one entry per item — a multi-step turn would otherwise flood the log. Raw `item/agentMessage/delta` token streams are deliberately not persisted per-delta: that would mean a DB write per token; per-`item/completed` granularity keeps writes to a handful per turn while the user still sees steps land live (each update rides `notifyChange`). The ~8 KB cap + single freeze marker (`appendTranscriptDetail`) keeps entries scannable; the full stream is the phase-2 transcript pane's job (docs/121 §121.6 O2). The bounded `codexTranscripts` map (50) GCs turns abandoned by a server restart.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/routes/channel.ts"
+                },
+                "region": {
+                  "startLine": 190,
+                  "endLine": 230,
+                  "snippet": {
+                    "text": "    if (codexTranscripts.size >= TRANSCRIPT_MAX_TRACKED) {\n      const oldest = codexTranscripts.keys().next().value;\n      if (oldest !== undefined) codexTranscripts.delete(oldest);\n    }\n    const entry = await addLogEntry('codex_turn', 'incoming', 'Codex working…', '');\n    codexTranscripts.set(key, { logId: entry.id, detail: '', items: 0 });\n    return c.json({ ok: true });\n  }\n  const state = codexTranscripts.get(key);\n  if (state === undefined) return c.json({ ok: true }); // unknown turn (restart race) — drop\n  if (phase === 'item' && text !== undefined && text !== '') {\n    const appended = appendTranscriptDetail(state.detail, text, TRANSCRIPT_DETAIL_CAP);\n    state.detail = appended.detail;\n    state.items += 1;\n    await updateLogEntry(state.logId, { detail: state.detail, summary: `Codex working… (${String(state.items)} step${state.items === 1 ? '' : 's'})` });\n  } else if (phase === 'end') {\n    const label = status === 'completed' || status === undefined ? 'Codex turn completed' : `Codex turn ${status}`;\n    await updateLogEntry(state.logId, { summary: `${label} (${String(state.items)} step${state.items === 1 ? '' : 's'})` });\n    codexTranscripts.delete(key);\n  }\n  return c.json({ ok: true });\n});\n\n/**\n * HS-9384 (docs/121 §121.7) — flip the machine-global codex app-server drive toggle.\n * Disabling kills every live driven session (no one-shot fallback — the client hides\n * the drive surface); enabling clears handshake-failure flags so the next play\n * retries fresh.\n */\nchannelRoutes.post('/channel/codex-app-server', async (c) => {\n  const raw: unknown = await c.req.json().catch(() => ({}));\n  const parsed = parseBody(CodexAppServerToggleSchema, raw);\n  if (!parsed.success) return c.json({ error: parsed.error }, 400);\n  writeGlobalConfig({ codexAppServerEnabled: parsed.data.enabled });\n  if (parsed.data.enabled) {\n    clearCodexAppServerFailures();\n    loggedCodexHandshakeFailures.clear();\n  } else {\n    shutdownCodexAppServers();\n  }\n  notifyChange();"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9385"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "dab4592ecdf57f1637695da55857af50"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "851bf7c96d2e916ec2db6e7ba9df3bb7a7aec3e7",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

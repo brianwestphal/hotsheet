@@ -31,6 +31,7 @@ import {
   decisionFromReply,
   driveEventFromNotification,
   threadIdFromResponse,
+  transcriptLineFromItem,
 } from './codexAppServerMapping.js';
 import { readFileSettings } from './file-settings.js';
 import { readGlobalConfig } from './global-config.js';
@@ -87,6 +88,16 @@ function persistThreadId(dataDir: string, threadId: string): void {
   catch { /* best-effort — a failed persist just means a fresh thread next boot */ }
 }
 
+/** HS-9385 — one transcript event, self-POSTed to `/channel/codex-transcript` so the
+ *  Commands Log write happens in project request context (same reasoning as the
+ *  heartbeat/done fallbacks — the session manager runs outside any request). */
+export interface CodexTranscriptEvent {
+  phase: 'start' | 'item' | 'end';
+  turnId: string;
+  text?: string;
+  status?: string;
+}
+
 export interface CodexAppServerDeps {
   /** Injectable for tests. Defaults to `child_process.spawn`. */
   spawnFn?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; stdio: readonly ['pipe', 'pipe', 'ignore'] }) => ChildProcess;
@@ -94,6 +105,8 @@ export interface CodexAppServerDeps {
   signalDone?: (dataDir: string, serverPort: number) => void;
   /** Injectable for tests. Defaults to the real `/channel/heartbeat` POST. */
   postHeartbeat?: (serverPort: number, secret: string, state: HeartbeatState) => void;
+  /** Injectable for tests. Defaults to the real `/channel/codex-transcript` POST. */
+  postTranscript?: (serverPort: number, secret: string, event: CodexTranscriptEvent) => void;
 }
 
 interface Session {
@@ -101,7 +114,7 @@ interface Session {
   dataDir: string;
   serverPort: number;
   secret: string;
-  deps: Required<Pick<CodexAppServerDeps, 'signalDone' | 'postHeartbeat'>>;
+  deps: Required<Pick<CodexAppServerDeps, 'signalDone' | 'postHeartbeat' | 'postTranscript'>>;
   nextId: number;
   pending: Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   buffered: string;
@@ -205,6 +218,7 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     deps: {
       signalDone: deps.signalDone ?? fallbackSignalDone,
       postHeartbeat: deps.postHeartbeat ?? fallbackHeartbeat,
+      postTranscript: deps.postTranscript ?? fallbackTranscript,
     },
     nextId: 1,
     pending: new Map(),
@@ -325,14 +339,23 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
     void handleServerRequest(session, msg.id, msg.method, msg.params);
     return;
   }
+  // HS-9385 — stream completed items into the Commands Log transcript.
+  if (msg.method === 'item/completed') {
+    const line = transcriptLineFromItem(msg.params);
+    if (line !== null) {
+      session.deps.postTranscript(session.serverPort, session.secret, { phase: 'item', turnId: session.currentTurnId ?? '', text: line });
+    }
+  }
   // Notification → drive lifecycle.
   const event = driveEventFromNotification(msg.method, msg.params);
   if (event === null) return;
   if (event.type === 'turn-started') {
     session.currentTurnId = event.turnId;
+    session.deps.postTranscript(session.serverPort, session.secret, { phase: 'start', turnId: event.turnId ?? '' });
   } else if (event.type === 'activity') {
     if (session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
   } else if (event.type === 'turn-ended') {
+    session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId ?? '', status: event.status ?? 'completed' });
     onTurnEnded(session);
   } else {
     // thread-status active/idle — event-driven busy reassertion (spike finding).
@@ -428,6 +451,16 @@ function fallbackSignalDone(dataDir: string, serverPort: number): void {
     method: 'POST',
     headers: { 'X-Hotsheet-Secret': secret },
   }).catch(() => { /* best-effort — the agent likely already signaled done */ });
+}
+
+/** Best-effort `/channel/codex-transcript` POST — the Commands Log write happens in
+ *  project request context (the standard `X-Hotsheet-Secret` auth resolves it). */
+function fallbackTranscript(serverPort: number, secret: string, event: CodexTranscriptEvent): void {
+  void fetch(`http://localhost:${String(serverPort)}/api/channel/codex-transcript`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret },
+    body: JSON.stringify(event),
+  }).catch(() => { /* best-effort — the transcript is observability, never load-bearing */ });
 }
 
 /** Best-effort `/channel/heartbeat` POST — the project is matched by `secret`. */

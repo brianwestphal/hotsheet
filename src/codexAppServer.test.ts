@@ -335,6 +335,38 @@ describe('interrupt + crash', () => {
   });
 });
 
+describe('HS-9385 — transcript events', () => {
+  it('posts start on turn/started, item lines for completed items, and end with the terminal status', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    const postTranscript = vi.fn();
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn(), postTranscript });
+    await flush(); // turn-1 started
+
+    fake.emit({ jsonrpc: '2.0', method: 'item/completed', params: { item: { type: 'agentMessage', text: 'working on it', phase: 'commentary' }, threadId: 'th-1' } });
+    fake.emit({ jsonrpc: '2.0', method: 'item/completed', params: { item: { type: 'reasoning' }, threadId: 'th-1' } }); // skipped
+    fake.completeTurn('turn-1', 'completed');
+    await flush();
+
+    const events = postTranscript.mock.calls.map(c => c[2] as { phase: string; turnId: string; text?: string; status?: string });
+    expect(events[0]).toEqual({ phase: 'start', turnId: 'turn-1' });
+    expect(events[1]).toEqual({ phase: 'item', turnId: 'turn-1', text: 'working on it' });
+    expect(events[2]).toEqual({ phase: 'end', turnId: 'turn-1', status: 'completed' });
+    expect(events).toHaveLength(3); // the reasoning item produced no event
+    expect(postTranscript.mock.calls.every(c => c[0] === 4174 && c[1] === getProjectSecret(dataDir))).toBe(true);
+  });
+
+  it('an interrupted turn ends the transcript with its status', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    const postTranscript = vi.fn();
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, postHeartbeat: vi.fn(), signalDone: vi.fn(), postTranscript });
+    await flush();
+    fake.completeTurn('turn-1', 'interrupted');
+    await flush();
+    const end = postTranscript.mock.calls.map(c => c[2] as { phase: string; status?: string }).find(e => e.phase === 'end');
+    expect(end?.status).toBe('interrupted');
+  });
+});
+
 describe('HS-9384 — Experimental toggle + handshake-failure degradation', () => {
   let home: string;
   beforeEach(() => {
