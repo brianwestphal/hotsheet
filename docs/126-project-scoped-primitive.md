@@ -147,10 +147,33 @@ flags **88 client files**, overwhelmingly timers, DOM handles, and disposers. An
 false-positive rate trains reflexive allowlisting, at which point the allowlist stops being read and
 the next real violation is waved through with everything else — worse than no rule.
 
-**The gap that leaves:** scalar per-project state (`let lastSeenId = 0`) is NOT covered, and that is
-the shape most of the docs/125 leaks actually had. Closing it needs a custom rule using context a
-selector can't express (does this file import the project-scoped API? is the variable's type a timer
-handle?) — tracked by **HS-9419**. Until then, scalars rely on layers 1–2 plus the §126.2 pointer.
+### The scalar half — `hotsheet/no-unscoped-project-state` (HS-9419, shipped)
+
+A selector can't reach `let lastSeenId = 0`, which is the shape most of the docs/125 leaks actually
+had. `eslint-rules/no-unscoped-project-state.mjs` is a local rule that adds the context a selector
+language lacks:
+
+- **H1** — only files that import `../api/index.js`. A module that never fetches project data has no
+  per-project state to leak.
+- **H3** — skip declarations whose type/initializer/name identifies them as infrastructure: timer
+  handles, DOM elements, observers, sockets, promises, disposers.
+
+Measured effect: **207 declarations across 89 files → 99 across 45.**
+
+**Reported at `warn`, with the 46 then-existing files seeded into an off-list**, so it is silent on
+today's code and speaks only for net-new modules — the same working model as the innerHTML and cache
+allowlists. It stays at `warn` because the remaining set legitimately contains one-time init flags
+(`let wired = false`) that no heuristic separates from per-project data; an error rule at that
+precision gets allowlisted reflexively, and then the allowlist stops being read. Promote to error
+once the seed list is worked down far enough to trust the remainder.
+
+The rule has its own **RuleTester suite** (`no-unscoped-project-state.test.mjs`, 19 cases) covering
+both heuristics in both directions. An unverified lint rule is worse than none: a false negative
+silently removes protection everyone assumes exists.
+
+**HS-9423** tracks triaging the seed list — reading it, several entries are not false positives but
+real per-project data held globally (`settingsScope::layered`, the command/terminal/auto-context
+editor arrays, and `poll::pollVersion`, which is structurally identical to the HS-9412 bug).
 
 **Config note.** The four `no-restricted-syntax` selectors are now hoisted into named consts
 (`BIND_DISPOSER_RULE`, `CORE_RULES`, `PROJECT_SCOPED_CACHE_RULE`) so each block composes the set it

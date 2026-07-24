@@ -5,6 +5,11 @@ import simpleImportSort from "eslint-plugin-simple-import-sort";
 import tsdoc from "eslint-plugin-tsdoc";
 import tseslint from "typescript-eslint";
 
+// HS-9419 (docs/126 §126.6) — local rule for the SCALAR half of the
+// project-scoped guard. Lives in `eslint-rules/` (plain .mjs, no build step);
+// RuleTester coverage sits beside it.
+import noUnscopedProjectState from "./eslint-rules/no-unscoped-project-state.mjs";
+
 // HS-9417 — the `no-restricted-syntax` selectors are hoisted so each override
 // block can COMPOSE the set it wants instead of re-declaring the array. The old
 // shape (three blocks each spelling out their own array) meant adding a fourth
@@ -301,6 +306,83 @@ export default tseslint.config(
     rules: {
       "no-restricted-syntax": ["error", ...CORE_RULES],
     },
+  },
+  // HS-9419 (docs/126 §126.6) — the scalar counterpart to PROJECT_SCOPED_CACHE_RULE.
+  // Reported at **warn**, deliberately: after the H1 (file fetches project data) +
+  // H3 (skip timers/DOM/disposers) heuristics the set is still 99 declarations
+  // across 45 files, and it legitimately contains one-time init flags
+  // (`let wired = false`) that no heuristic can tell from per-project data. An
+  // error rule at that precision gets allowlisted reflexively, and then the
+  // allowlist stops being read — worse than no rule. Promote to error only if the
+  // seeded list below is worked down far enough that the remainder is trustworthy.
+  {
+    files: ["src/client/**/*.ts", "src/client/**/*.tsx"],
+    plugins: { hotsheet: { rules: { "no-unscoped-project-state": noUnscopedProjectState } } },
+    rules: { "hotsheet/no-unscoped-project-state": "warn" },
+  },
+  // HS-9419 — seeded from the files that already had module-level scalars when the
+  // rule landed, so it is SILENT on existing code and speaks only for net-new
+  // modules (same working model as the innerHTML + cache allowlists). Remove a file
+  // once its per-project scalars move to `projectScoped`; several entries here are
+  // genuine suspects rather than false positives — see HS-9420.
+  {
+    files: [
+      "src/client/addRemoteServerDialog.tsx",
+      "src/client/analyticsTelemetrySection.tsx",
+      "src/client/announcerPermissionPref.ts",
+      "src/client/announcerPip.tsx",
+      "src/client/announcerSpeechRate.ts",
+      "src/client/bellPoll.tsx",
+      "src/client/commandLog.tsx",
+      "src/client/crossProjectStatsButton.tsx",
+      "src/client/crossProjectStatsPage.tsx",
+      "src/client/customViews.tsx",
+      "src/client/dashboard.tsx",
+      "src/client/detail.tsx",
+      "src/client/devicesPairing.tsx",
+      "src/client/draftRow.tsx",
+      "src/client/experimentalSettings.tsx",
+      "src/client/feedbackDialog.tsx",
+      "src/client/gitStatusChip.tsx",
+      "src/client/globalDiagnostics.ts",
+      "src/client/inflightPanel.tsx",
+      "src/client/noteRenderer.tsx",
+      "src/client/permissionOverlay.tsx",
+      "src/client/permissionPopupStateMachine.ts",
+      "src/client/persistedHiddenTerminals.ts",
+      "src/client/pluginUI.tsx",
+      "src/client/poll.tsx",
+      "src/client/projectTabs.tsx",
+      "src/client/reviewProofSection.tsx",
+      "src/client/settingsDialog.tsx",
+      "src/client/settingsLoader.tsx",
+      "src/client/settingsScope.tsx",
+      "src/client/share.tsx",
+      "src/client/telemetryCostMode.ts",
+      "src/client/terminalAppearancePopover.tsx",
+      "src/client/terminalDashboardLayout.ts",
+      "src/client/terminalDashboardSlider.ts",
+      "src/client/terminalDefaultAppearanceUI.tsx",
+      "src/client/terminalInstanceLifecycle.tsx",
+      "src/client/terminalTabDragDrop.ts",
+      "src/client/terminalWebgl.ts",
+      "src/client/terminalsSettings.tsx",
+      "src/client/ticketList.tsx",
+      "src/client/ticketRefs.ts",
+      "src/client/ticketTelemetryStats.tsx",
+      "src/client/undo/actions.ts",
+      "src/client/workerAutoMode.ts",
+      "src/client/workerPoolPanel.tsx",
+    ],
+    rules: { "hotsheet/no-unscoped-project-state": "off" },
+  },
+  // HS-9419 — test files are exempt, matching the innerHTML + wire-boundary rules.
+  // A spec legitimately holds fixture state at module level (`let layered = …`
+  // rebuilt in `beforeEach`); there is no project switch in a unit test for it to
+  // leak across.
+  {
+    files: ["**/*.test.ts", "**/*.test.tsx"],
+    rules: { "hotsheet/no-unscoped-project-state": "off" },
   },
   // HS-8466 — `eslint-plugin-kerfjs` recommended preset (flat config).
   // Adds the four kerf AST rules at `error` severity:
