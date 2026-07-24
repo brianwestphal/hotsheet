@@ -113,13 +113,31 @@ const keyFor = (ticketNumber: string) => `${getActiveProject()?.secret ?? ''}::$
 The general rule: **scope the data, composite-key the view state.** Ask what the variable describes —
 a project's data (scope it) or a shared DOM node (make the key include the project).
 
-## 126.6 Layer 3 — the ESLint backstop
+## 126.6 Layer 3 — the ESLint backstop (HS-9417, shipped)
 
-Tracked by HS-9417. A `no-restricted-syntax` rule flagging module-level mutable bindings in
-`src/client/**` that aren't `projectScoped`, allowlisted exactly like the §62 `innerHTML =` rule.
+`PROJECT_SCOPED_CACHE_RULE` in `eslint.config.mjs` flags module-level
+`new Map/Set/WeakMap/WeakSet` in `src/client/**`, allowlisted like the §62 `innerHTML =` rule —
+25 files, each with an inline reason so a reader doesn't have to re-derive why it's exempt.
 
 Layers 1–2 make the right thing easy and automatically tested; **only the lint rule makes the wrong
 thing hard to write**, which is what distinguishes this from the previous ten point fixes.
+
+**Scoped to the cache shape on purpose.** A `Program > VariableDeclaration[kind='let']` selector
+flags **88 client files**, overwhelmingly timers, DOM handles, and disposers. An error rule at that
+false-positive rate trains reflexive allowlisting, at which point the allowlist stops being read and
+the next real violation is waved through with everything else — worse than no rule.
+
+**The gap that leaves:** scalar per-project state (`let lastSeenId = 0`) is NOT covered, and that is
+the shape most of the docs/125 leaks actually had. Closing it needs a custom rule using context a
+selector can't express (does this file import the project-scoped API? is the variable's type a timer
+handle?) — tracked by **HS-9419**. Until then, scalars rely on layers 1–2 plus the §126.2 pointer.
+
+**Config note.** The four `no-restricted-syntax` selectors are now hoisted into named consts
+(`BIND_DISPOSER_RULE`, `CORE_RULES`, `PROJECT_SCOPED_CACHE_RULE`) so each block composes the set it
+wants. Previously every block re-declared the whole array, which meant adding a rule could silently
+re-enable others for allowlisted files. The two allowlists (innerHTML, project-cache) are kept
+**disjoint** on purpose: a file in both would hit flat-config's later-wins merge and get the innerHTML
+rule turned back on.
 
 ## 126.7 Adoption status
 

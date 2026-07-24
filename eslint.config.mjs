@@ -5,6 +5,66 @@ import simpleImportSort from "eslint-plugin-simple-import-sort";
 import tsdoc from "eslint-plugin-tsdoc";
 import tseslint from "typescript-eslint";
 
+// HS-9417 — the `no-restricted-syntax` selectors are hoisted so each override
+// block can COMPOSE the set it wants instead of re-declaring the array. The old
+// shape (three blocks each spelling out their own array) meant adding a fourth
+// rule risked silently re-enabling other rules for allowlisted files.
+const BIND_DISPOSER_RULE = {
+  selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
+  message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
+};
+
+// HS-9417 (docs/126 §126.6) — a module-level Map/Set in client code is almost
+// always a CACHE, and a cache is either per-project (so it must be
+// `projectScoped`, else it leaks the previous project's data across a switch —
+// eleven shipped bugs, docs/125) or genuinely global (say so, and allowlist the
+// file). Deliberately scoped to this shape: top-level `let` would flag 88 files,
+// mostly timers and DOM handles, and a rule that noisy trains reflexive
+// allowlisting. **This therefore does NOT cover scalar per-project state** (the
+// `let lastSeenId = 0` shape most of the docs/125 leaks actually had) — that gap
+// is tracked by HS-9419.
+const PROJECT_SCOPED_CACHE_RULE = {
+  selector: "Program > VariableDeclaration > VariableDeclarator[init.type='NewExpression'][init.callee.name=/^(Map|Set|WeakMap|WeakSet)$/]",
+  message: "Module-level Map/Set in client code: is it PER-PROJECT? If so use `projectScoped(() => new Map(), 'label')` from `src/client/projectScoped.js` — a bare module-level cache leaks the previous project's data across a switch (docs/125; docs/126 §126.2). If it is genuinely global (a constant, a subscriber list, a WeakMap keyed by DOM nodes), add the file to the HS-9417 allowlist in eslint.config.mjs with a one-line reason.",
+};
+
+// HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
+// say exactly which subset they want, instead of re-declaring the array (the old
+// shape, where each block spelled out its own list, is why adding a rule risked
+// silently re-enabling others for allowlisted files).
+const CORE_RULES = [
+  BIND_DISPOSER_RULE,
+  {
+    selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
+    message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",
+  },
+  // HS-8567 — `JSON.parse(...) as X` silently asserts the parsed
+  // shape without checking it (the exact failure mode that hid
+  // HS-8562 — `kerfToElement(...) as HTMLElement` from the kerfjs
+  // 0.12.0 return-type widening). Use the zod helpers in
+  // `src/schemas.ts` instead: `parseJsonOrNull(MySchema, raw)`
+  // for tolerant parsing, `parseJson(MySchema, raw, 'context')`
+  // for throw-on-failure. Exception: `as unknown` (intentional
+  // erasure prior to a follow-up shape check) is still allowed.
+  {
+    selector: "TSAsExpression[expression.type='CallExpression'][expression.callee.object.name='JSON'][expression.callee.property.name='parse']:not([typeAnnotation.type='TSUnknownKeyword'])",
+    message: "`JSON.parse(x) as Y` skips runtime validation. Use `parseJson(YSchema, x)` / `parseJsonOrNull(YSchema, x)` from `src/schemas.ts` instead, or assign to `const raw: unknown = JSON.parse(x)` then narrow with a zod `safeParse`. (HS-8567.)",
+  },
+  // HS-8567 — `await res.json() as X` silently asserts the wire
+  // response shape. Use the `schema` parameter on the
+  // `src/client/api.tsx` helpers (`api<T>(path, { schema })`) or
+  // for raw fetch calls, do `const raw: unknown = await
+  // res.json()` then `MySchema.safeParse(raw)`.
+  {
+    selector: "TSAsExpression[expression.type='CallExpression'][expression.callee.property.name='json']:not([typeAnnotation.type='TSUnknownKeyword'])",
+    message: "`res.json() as Y` skips wire-boundary validation. Use the zod `schema` parameter on the `src/client/api.tsx` helpers, or `const raw: unknown = await res.json()` + `MySchema.safeParse(raw)`. (HS-8567.)",
+  },
+  {
+    selector: "TSAsExpression[expression.type='AwaitExpression'][expression.argument.type='CallExpression'][expression.argument.callee.property.name='json']:not([typeAnnotation.type='TSUnknownKeyword'])",
+    message: "`await res.json() as Y` skips wire-boundary validation. Use the zod `schema` parameter on the `src/client/api.tsx` helpers, or `const raw: unknown = await res.json()` + `MySchema.safeParse(raw)`. (HS-8567.)",
+  },
+];
+
 export default tseslint.config(
   {
     ignores: ["dist/**", "node_modules/**", "scripts/**"],
@@ -69,42 +129,16 @@ export default tseslint.config(
       // those files are touched, no flag-day refactor required. Allowed
       // exceptions inside the allowlisted files are documented in the
       // override config block.
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
-          message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
-        },
-        {
-          selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
-          message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",
-        },
-        // HS-8567 — `JSON.parse(...) as X` silently asserts the parsed
-        // shape without checking it (the exact failure mode that hid
-        // HS-8562 — `kerfToElement(...) as HTMLElement` from the kerfjs
-        // 0.12.0 return-type widening). Use the zod helpers in
-        // `src/schemas.ts` instead: `parseJsonOrNull(MySchema, raw)`
-        // for tolerant parsing, `parseJson(MySchema, raw, 'context')`
-        // for throw-on-failure. Exception: `as unknown` (intentional
-        // erasure prior to a follow-up shape check) is still allowed.
-        {
-          selector: "TSAsExpression[expression.type='CallExpression'][expression.callee.object.name='JSON'][expression.callee.property.name='parse']:not([typeAnnotation.type='TSUnknownKeyword'])",
-          message: "`JSON.parse(x) as Y` skips runtime validation. Use `parseJson(YSchema, x)` / `parseJsonOrNull(YSchema, x)` from `src/schemas.ts` instead, or assign to `const raw: unknown = JSON.parse(x)` then narrow with a zod `safeParse`. (HS-8567.)",
-        },
-        // HS-8567 — `await res.json() as X` silently asserts the wire
-        // response shape. Use the `schema` parameter on the
-        // `src/client/api.tsx` helpers (`api<T>(path, { schema })`) or
-        // for raw fetch calls, do `const raw: unknown = await
-        // res.json()` then `MySchema.safeParse(raw)`.
-        {
-          selector: "TSAsExpression[expression.type='CallExpression'][expression.callee.property.name='json']:not([typeAnnotation.type='TSUnknownKeyword'])",
-          message: "`res.json() as Y` skips wire-boundary validation. Use the zod `schema` parameter on the `src/client/api.tsx` helpers, or `const raw: unknown = await res.json()` + `MySchema.safeParse(raw)`. (HS-8567.)",
-        },
-        {
-          selector: "TSAsExpression[expression.type='AwaitExpression'][expression.argument.type='CallExpression'][expression.argument.callee.property.name='json']:not([typeAnnotation.type='TSUnknownKeyword'])",
-          message: "`await res.json() as Y` skips wire-boundary validation. Use the zod `schema` parameter on the `src/client/api.tsx` helpers, or `const raw: unknown = await res.json()` + `MySchema.safeParse(raw)`. (HS-8567.)",
-        },
-      ],
+      "no-restricted-syntax": ["error", ...CORE_RULES],
+    },
+  },
+  // HS-9417 (docs/126 §126.6) — the module-level Map/Set rule applies to CLIENT
+  // code only: it is about per-project UI state surviving a project switch, which
+  // is a client concern (the server handles one project per request).
+  {
+    files: ["src/client/**/*.ts", "src/client/**/*.tsx"],
+    rules: {
+      "no-restricted-syntax": ["error", ...CORE_RULES, PROJECT_SCOPED_CACHE_RULE],
     },
   },
   // HS-8243 — file-path allowlist for the 35 production client files
@@ -194,13 +228,13 @@ export default tseslint.config(
       "**/*.test.tsx",
     ],
     rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
-          message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
-        },
-      ],
+      // HS-9417 — deliberately NOT adding the module-level Map/Set rule here.
+      // Several of these files have existing caches that would need allowlisting
+      // too, and a file in BOTH allowlists would hit flat-config's later-wins
+      // merge and silently get innerHTML re-enabled. Keeping the two lists
+      // DISJOINT is what makes the composition above safe. These files pick the
+      // rule up as they graduate off the innerHTML list.
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE],
     },
   },
   // HS-8567 — test files are exempt from the wire-/file-boundary
@@ -213,13 +247,49 @@ export default tseslint.config(
   {
     files: ["**/*.test.ts", "**/*.test.tsx"],
     rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "ExpressionStatement > CallExpression[callee.name=/^bind(Text|Attr|List)$/]",
-          message: "bindText/bindAttr/bindList return a disposer; capture it (or use `void` to mark intentional leak).",
-        },
-      ],
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE],
+    },
+  },
+  // HS-9417 (docs/126 §126.6) — allowlist for the module-level Map/Set rule.
+  // Every entry is either genuinely global or ALREADY correctly keyed by project
+  // secret; the reason is recorded inline so a future reader doesn't have to
+  // re-derive it. Same working model as the §62 innerHTML allowlist: new client
+  // modules are NOT on this list, so a net-new unscoped cache gets flagged.
+  // Remove a file once its caches move to `projectScoped` (HS-9418).
+  //
+  // NOTE the deliberate gap: this rule only sees the Map/Set shape, so scalar
+  // per-project state (`let lastSeenId = 0` — what most of the docs/125 leaks
+  // actually were) is NOT covered here. HS-9419 tracks a custom rule for it.
+  {
+    files: [
+      "src/client/agentBackend.ts", // constant tool-name sets
+      "src/client/aiInstructionsNudge.tsx", // Set of secrets — already project-KEYED
+      "src/client/analyticsTelemetrySection.tsx", // keyed by (secret, window) — HS-9418 will fold onto projectScoped
+      "src/client/announcerPermissionSpeech.ts", // cross-project by design (§78)
+      "src/client/bellPoll.tsx", // cross-project by design (§24)
+      "src/client/channelUI.tsx", // project-attention Set is keyed by secret
+      "src/client/commandLogEntryRow.tsx", // in-flight shell ids — request state, not project data
+      "src/client/commandLogStore.ts", // per-entry signals, rebuilt with the list
+      "src/client/crossProjectStatsPage.tsx", // cross-project by design (§70)
+      "src/client/experimentalSettings.tsx", // icon/color lookup constants
+      "src/client/gitStatusChip.tsx", // keyed by secret — HS-9418 will fold onto projectScoped
+      "src/client/noteRenderer.tsx", // markdown render constants
+      "src/client/serverBusyChip.tsx", // global in-flight request set
+      "src/client/settingsScope.tsx", // constant tab-name Set
+      "src/client/state.tsx", // THE per-project session store itself (projectViews/Searches/…), keyed by secret
+      "src/client/terminalAppearance.ts", // keyed by terminal id, not project
+      "src/client/terminalCheckout.tsx", // xterm stack keyed by terminal id; torn down by onProjectSwitch
+      "src/client/terminalFonts.ts", // global font-load cache (machine-level)
+      "src/client/terminalSearch.tsx", // WeakMaps keyed by xterm instances
+      "src/client/terminalTransientNames.ts", // keyed by terminal id
+      "src/client/ticketsStore.ts", // store internals, replaced wholesale on load
+      "src/client/toolPrepNudge.tsx", // Set of secrets — already project-KEYED (HS-9418)
+      "src/client/undo/stack.ts", // keyed by secret (HS-9335)
+      "src/client/visibilityGroupingsStore.ts", // subscriber disposers, not data
+      "src/client/workerPoolPanel.tsx", // in-flight cleanup ids — request state
+    ],
+    rules: {
+      "no-restricted-syntax": ["error", ...CORE_RULES],
     },
   },
   // HS-8466 — `eslint-plugin-kerfjs` recommended preset (flat config).
