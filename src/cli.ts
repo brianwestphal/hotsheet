@@ -16,7 +16,7 @@ import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { setDemoMode } from './demo-mode.js';
-import { startEventLoopWatchdog } from './diagnostics/watchdog.js';
+import { setOpenClusterCounter as setWatchdogClusterCounter, startEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
 import { ensureSecret, migrateLocalScopedKeys, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
@@ -183,7 +183,14 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   // file, paste-ready, lets us see whether the freeze the user reports
   // is in the browser, the Node process, or neither (which would point
   // at the WS / PTY layer the user suspected on 2026-05-04).
-  const { startServerEventLoopHeartbeat, onServerWake } = await import('./diagnostics/freezeLogger.js');
+  const { startServerEventLoopHeartbeat, onServerWake, setFreezeLogClusterCounter } = await import('./diagnostics/freezeLogger.js');
+  // HS-9421 — publish the open-PGLite-cluster count to BOTH diagnostic surfaces
+  // before the heartbeat starts sampling. That one number would have pointed
+  // straight at HS-9420 (18 open clusters x ~180 MB of WASM heap each); it is
+  // injected rather than imported so `diagnostics/` keeps no dependency on `db/`.
+  const { openDatabaseCount } = await import('./db/connection.js');
+  setFreezeLogClusterCounter(openDatabaseCount);
+  setWatchdogClusterCounter(openDatabaseCount);
   startServerEventLoopHeartbeat(dataDir);
   // HS-8726 (load resilience, docs/75 §75.6 Phase 4) — on resume from a system
   // suspend, open the scheduler's post-wake stagger window so every project's

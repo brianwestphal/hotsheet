@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { startEventLoopWatchdog, stopEventLoopWatchdog, watchdogVerdict } from './watchdog.js';
+import { _MAIN_SLOT_INDICES, _readMemorySlotsForTesting, _resetOpenClusterCounterForTesting, _WORKER_SLOT_INDICES, setOpenClusterCounter, startEventLoopWatchdog, stopEventLoopWatchdog, watchdogVerdict } from './watchdog.js';
 
 describe('watchdogVerdict', () => {
   const base = { timeoutMs: 60_000, wakeGapMs: 10_000, armed: true };
@@ -62,5 +62,43 @@ describe('start/stop lifecycle', () => {
       if (prev === undefined) delete process.env.HOTSHEET_DISABLE_WATCHDOG;
       else process.env.HOTSHEET_DISABLE_WATCHDOG = prev;
     }
+  });
+});
+
+/**
+ * HS-9421 — the watchdog lives in a WORKER THREAD, where `process.memoryUsage()`
+ * reports the worker's own V8 isolate, not the wedged main thread's. So the main
+ * thread publishes its memory through the same SharedArrayBuffer the heartbeat
+ * uses — the one channel that still works once the loop is pinned.
+ */
+describe('memory publishing (HS-9421)', () => {
+  afterEach(() => {
+    stopEventLoopWatchdog();
+    _resetOpenClusterCounterForTesting();
+    delete process.env.HOTSHEET_DISABLE_WATCHDOG;
+  });
+
+  it('publishes the main thread\'s memory into the shared slots on start', () => {
+    setOpenClusterCounter(() => 7);
+    startEventLoopWatchdog({});
+    const slots = _readMemorySlotsForTesting();
+    expect(slots, 'watchdog did not start / no view').not.toBeNull();
+    // Real numbers, not placeholders — a test process still has an rss + a limit.
+    expect(slots!.rssMb).toBeGreaterThan(0);
+    expect(slots!.heapLimitMb).toBeGreaterThan(0);
+    expect(slots!.openClusters).toBe(7);
+  });
+
+  it('reports zero clusters when no counter is registered', () => {
+    startEventLoopWatchdog({});
+    expect(_readMemorySlotsForTesting()!.openClusters).toBe(0);
+  });
+
+  // The load-bearing one: the worker's source is a STRING, so it reads these
+  // slots by numeric literal and cannot import the constants. If the two sides
+  // drift, the FATAL line silently reports zeros — losing exactly the diagnostic
+  // this feature exists to provide, at the only moment it matters.
+  it('worker slot literals match the main-thread constants', () => {
+    expect(_WORKER_SLOT_INDICES).toEqual(_MAIN_SLOT_INDICES);
   });
 });

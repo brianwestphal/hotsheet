@@ -36,6 +36,7 @@
 
 import { promises as fsp } from 'fs';
 import { join } from 'path';
+import { getHeapStatistics } from 'v8';
 
 export const FREEZE_LOG_FILENAME = 'freeze.log';
 export const LONG_TASK_THRESHOLD_MS = 100;
@@ -99,6 +100,7 @@ export interface FreezeEntry {
     | 'server-instrument-sync' // wrapped synchronous block
     | 'server-instrument-async' // wrapped async block
     | 'server-wake'            // HS-8726 — process resumed from suspend (gap ≫ a real block)
+    | 'server-memory'          // HS-9421 — periodic memory sample (the trend INTO a wedge)
     | 'freeze.log-truncated';  // HS-8163 — marker for the head-dropped sentinel
   /** Block duration in ms. */
   durationMs: number;
@@ -111,6 +113,65 @@ export interface FreezeEntry {
   clientWallClock?: string;
   /** Optional: arbitrary additional fields the source wants to record. */
   extra?: Record<string, unknown>;
+}
+
+/**
+ * HS-9421 — periodic memory sample interval. Diagnosing the HS-9420 OOM crash
+ * loop needed an inspector attach because `freeze.log` recorded duration +
+ * context only, and during the fatal wedge it recorded NOTHING (the loop never
+ * recovers, so the heartbeat never gets to log) — the file just stops, which
+ * reads like a clean exit. A low-frequency sample gives a memory TREND leading
+ * into a wedge instead of only a post-mortem number.
+ *
+ * One entry a minute is ~250 B, i.e. ~350 KB/day against the 1 MiB cap — small
+ * enough to be free, frequent enough to show a creep (the live measurement saw
+ * +13 MB/min at complete idle).
+ */
+export const MEMORY_SAMPLE_INTERVAL_MS = 60_000;
+
+/** HS-9421 — warn once `heapUsed + external` crosses this share of the V8 heap
+ *  limit. This class of death is silent until it is fatal, so the sample is
+ *  marked at a level a reader will notice while there is still headroom. */
+export const MEMORY_PRESSURE_WARN_RATIO = 0.75;
+
+/** HS-9421 — supplies the count of open PGLite clusters. Injected so
+ *  `diagnostics/` keeps no dependency on `db/`. */
+let openClusterCounter: (() => number) | null = null;
+
+/** HS-9421 — register the open-PGLite-cluster counter (called once at boot).
+ *  That single number is what would have pointed straight at HS-9420. */
+export function setFreezeLogClusterCounter(fn: () => number): void {
+  openClusterCounter = fn;
+}
+
+const MB = 1024 * 1024;
+
+/**
+ * HS-9421 — the memory snapshot recorded alongside a freeze entry.
+ *
+ * `external` is the field that matters and the one nobody looks at: PGLite's
+ * WASM heaps live there, ~180 MB per open cluster, and it does NOT appear in
+ * `rss` (WASM memory is reserved sparsely and largely non-resident). During
+ * HS-9420 `ps` showed a comfortable 1.3 GB RSS while `external` was 3.2 GB
+ * against a 4.1 GB ceiling.
+ */
+export function memorySnapshot(): Record<string, number | boolean> {
+  const mem = process.memoryUsage();
+  const limit = getHeapStatistics().heap_size_limit;
+  const heapUsedMb = Math.round(mem.heapUsed / MB);
+  const externalMb = Math.round(mem.external / MB);
+  const limitMb = Math.round(limit / MB);
+  const usedRatio = limit > 0 ? (mem.heapUsed + mem.external) / limit : 0;
+  return {
+    rssMb: Math.round(mem.rss / MB),
+    heapUsedMb,
+    externalMb,
+    arrayBuffersMb: Math.round(mem.arrayBuffers / MB),
+    heapLimitMb: limitMb,
+    usedPctOfLimit: Math.round(usedRatio * 100),
+    openPGLiteClusters: openClusterCounter === null ? -1 : openClusterCounter(),
+    memoryPressure: usedRatio >= MEMORY_PRESSURE_WARN_RATIO,
+  };
 }
 
 /** Single-flight queue per dataDir so two concurrent `appendFreezeLog`
@@ -274,6 +335,9 @@ function handleHeartbeatGap(blockMs: number): void {
       source: 'server-heartbeat',
       durationMs: Math.round(blockMs),
       context: 'event-loop blocked',
+      // HS-9421 — every block carries the memory picture, so a GC-thrash wedge
+      // is distinguishable from a slow query without an inspector attach.
+      extra: memorySnapshot(),
     });
   }
 }
@@ -282,6 +346,43 @@ function handleHeartbeatGap(blockMs: number): void {
  *  wake-vs-block classification + listener fan-out. */
 export function _simulateHeartbeatGapForTesting(blockMs: number): void {
   handleHeartbeatGap(blockMs);
+}
+
+/** HS-9421 — the periodic memory-sample timer (separate from the 50 ms
+ *  heartbeat, which is far too hot to log on). */
+let memorySampleTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * HS-9421 — start the low-frequency memory sampler. Idempotent. Writes one
+ * `server-memory` entry per `MEMORY_SAMPLE_INTERVAL_MS` so `freeze.log` carries
+ * a memory TREND, not just a post-mortem. Unref'd — diagnostics must never keep
+ * the process alive.
+ */
+export function startMemorySampler(dataDir: string): void {
+  if (memorySampleTimer !== null) return;
+  const sample = (): void => {
+    const snap = memorySnapshot();
+    void appendFreezeLog(dataDir, {
+      ts: new Date().toISOString(),
+      source: 'server-memory',
+      durationMs: 0,
+      context: snap.memoryPressure === true
+        ? `MEMORY PRESSURE: ${String(snap.usedPctOfLimit)}% of the V8 limit with ${String(snap.openPGLiteClusters)} open PGLite clusters (each pins ~180MB of external; external is not visible in rss)`
+        : 'periodic memory sample',
+      extra: snap,
+    });
+  };
+  sample(); // one immediately, so a short-lived process still records something
+  memorySampleTimer = setInterval(sample, MEMORY_SAMPLE_INTERVAL_MS);
+  memorySampleTimer.unref();
+}
+
+/** HS-9421 — stop the memory sampler (graceful shutdown / tests). */
+export function stopMemorySampler(): void {
+  if (memorySampleTimer !== null) {
+    clearInterval(memorySampleTimer);
+    memorySampleTimer = null;
+  }
 }
 
 /**
@@ -298,6 +399,7 @@ export function _simulateHeartbeatGapForTesting(blockMs: number): void {
  */
 export function startServerEventLoopHeartbeat(dataDir: string): void {
   if (heartbeatTimer !== null) return;
+  startMemorySampler(dataDir);
   heartbeatDataDir = dataDir;
   lastHeartbeatNs = process.hrtime.bigint();
   heartbeatTimer = setInterval(() => {
@@ -327,6 +429,7 @@ export function getRecentEventLoopLagMs(): number {
  * timer doesn't outlive the data directory.
  */
 export function stopServerEventLoopHeartbeat(): void {
+  stopMemorySampler();
   if (heartbeatTimer !== null) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
@@ -391,4 +494,8 @@ export function _resetForTesting(): void {
   lastEventLoopLagMs = 0;
   wakeListeners.clear();
   appendQueue.clear();
+  // HS-9421 — the memory sampler is a second timer; a suite that started the
+  // heartbeat would otherwise leak it into the next test.
+  stopMemorySampler();
+  openClusterCounter = null;
 }

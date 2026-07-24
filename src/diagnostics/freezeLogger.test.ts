@@ -18,7 +18,9 @@ import {
   getRecentEventLoopLagMs,
   instrumentAsync,
   instrumentSync,
+  memorySnapshot,
   onServerWake,
+  setFreezeLogClusterCounter,
   startServerEventLoopHeartbeat,
   stopServerEventLoopHeartbeat,
   WAKE_GAP_THRESHOLD_MS,
@@ -292,8 +294,55 @@ describe('startServerEventLoopHeartbeat (HS-8054 v3)', () => {
     stopServerEventLoopHeartbeat();
     const lines = await readFreezeLog();
     expect(lines.length).toBeGreaterThanOrEqual(1);
-    const parsed = JSON.parse(lines[0]) as { source: string; durationMs: number };
-    expect(parsed.source).toBe('server-heartbeat');
-    expect(parsed.durationMs).toBeGreaterThanOrEqual(100);
+    // HS-9421 — select by SOURCE, not by position: the heartbeat now also starts
+    // the memory sampler, which writes a `server-memory` baseline entry first.
+    // Position was always incidental to what this test is checking.
+    const entries = lines.map(l => JSON.parse(l) as { source: string; durationMs: number; extra?: Record<string, unknown> });
+    const block = entries.find(e => e.source === 'server-heartbeat');
+    expect(block, 'no server-heartbeat entry was written for the synthetic block').toBeDefined();
+    expect(block!.durationMs).toBeGreaterThanOrEqual(100);
+    // HS-9421 — a block entry now carries the memory picture, so a GC-thrash
+    // wedge is distinguishable from a slow query without an inspector attach.
+    expect(block!.extra?.externalMb, 'block entry is missing the memory snapshot').toBeTypeOf('number');
+    expect(block!.extra?.heapLimitMb).toBeTypeOf('number');
+    expect(block!.extra?.openPGLiteClusters).toBeTypeOf('number');
+  });
+
+  // HS-9421 — the trend INTO a wedge. During the HS-9420 crash loop freeze.log
+  // recorded nothing at all (the loop never recovers, so the heartbeat never got
+  // to log) and the file just stopped, which reads like a clean exit.
+  it('writes a baseline memory sample as soon as the heartbeat starts', async () => {
+    startServerEventLoopHeartbeat(tmpDir);
+    await new Promise(r => setTimeout(r, 50));
+    stopServerEventLoopHeartbeat();
+    const entries = (await readFreezeLog()).map(l => JSON.parse(l) as { source: string; extra?: Record<string, unknown> });
+    const mem = entries.find(e => e.source === 'server-memory');
+    expect(mem, 'no baseline server-memory entry').toBeDefined();
+    expect(mem!.extra?.rssMb).toBeTypeOf('number');
+    expect(mem!.extra?.externalMb).toBeTypeOf('number');
+    expect(mem!.extra?.memoryPressure).toBeTypeOf('boolean');
+  });
+
+  it('reports the open-PGLite-cluster count when a counter is registered', async () => {
+    setFreezeLogClusterCounter(() => 18); // the HS-9420 number
+    startServerEventLoopHeartbeat(tmpDir);
+    await new Promise(r => setTimeout(r, 50));
+    stopServerEventLoopHeartbeat();
+    const entries = (await readFreezeLog()).map(l => JSON.parse(l) as { source: string; extra?: Record<string, unknown> });
+    const mem = entries.find(e => e.source === 'server-memory');
+    expect(mem!.extra?.openPGLiteClusters).toBe(18);
+  });
+
+  it('reports -1 for the cluster count when no counter is registered', () => {
+    // Distinguishes "nobody wired the counter" from a genuine zero.
+    expect(memorySnapshot().openPGLiteClusters).toBe(-1);
+  });
+
+  it('flags memory pressure only above the warn ratio', () => {
+    const snap = memorySnapshot();
+    // A test process is nowhere near the limit, so this must be false — the flag
+    // has to be quiet in the normal case or it's noise.
+    expect(snap.memoryPressure).toBe(false);
+    expect(snap.usedPctOfLimit).toBeLessThan(75);
   });
 });

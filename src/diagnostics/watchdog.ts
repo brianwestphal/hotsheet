@@ -30,6 +30,7 @@
  * breaking startup. Disable entirely with `HOTSHEET_DISABLE_WATCHDOG=1`; tune
  * the timeout with `HOTSHEET_WATCHDOG_TIMEOUT_MS`.
  */
+import { getHeapStatistics } from 'v8';
 import { Worker } from 'worker_threads';
 
 /** Main thread bumps the shared heartbeat this often. 1 s granularity is ample
@@ -95,9 +96,25 @@ const timer = setInterval(function () {
   if (last === 0) return; // not armed yet
   const age = now - last;
   if (age > timeoutMs) {
+    // HS-9421 — read the MAIN thread's last memory sample out of the shared
+    // slots. Sampling here would report the watchdog worker's own isolate, which
+    // is useless. Without these numbers a GC-thrash death (HS-9420) is
+    // indistinguishable from a slow-query wedge.
+    var rss = Number(Atomics.load(view, 1));
+    var heapUsed = Number(Atomics.load(view, 2));
+    var external = Number(Atomics.load(view, 3));
+    var heapLimit = Number(Atomics.load(view, 4));
+    var clusters = Number(Atomics.load(view, 5));
+    var pct = heapLimit > 0 ? Math.round(((heapUsed + external) / heapLimit) * 100) : 0;
     log('[watchdog] FATAL: event loop blocked for ' + Math.round(age) + 'ms (> ' + timeoutMs +
         'ms); the main thread is wedged and holding the port + project locks. Forcing SIGKILL so the ' +
         'next launch can recover. The last "[+Nms] <phase>" marker above is where startup stalled.');
+    log('[watchdog] memory at wedge: rss=' + rss + 'MB heapUsed=' + heapUsed + 'MB external=' +
+        external + 'MB (heapUsed+external=' + (heapUsed + external) + 'MB = ' + pct + '% of the ' +
+        heapLimit + 'MB V8 limit); openPGLiteClusters=' + clusters +
+        (pct >= 75 ? '  <-- MEMORY PRESSURE: this looks like GC thrash, not a slow query. Each open ' +
+                     'PGLite cluster pins ~180MB of external (WASM heap), and external does NOT ' +
+                     'show up in rss, so a ps check will look fine (HS-9420).' : ''));
     try { process.kill(pid, 'SIGKILL'); } catch (e) { try { process.exit(137); } catch (e2) {} }
   }
 }, checkMs);
@@ -117,9 +134,94 @@ export interface WatchdogOptions {
   logPath?: string;
 }
 
+/**
+ * HS-9421 — SharedArrayBuffer slot layout.
+ *
+ * The watchdog lives in a WORKER THREAD, and `process.memoryUsage()` there
+ * reports the worker's own V8 isolate — `heapUsed`/`external` would be the
+ * watchdog's, not the wedged main thread's. So the main thread samples its own
+ * memory on each heartbeat and publishes it through the same SAB the heartbeat
+ * already uses. That channel is the only one that still works once the loop is
+ * pinned, which is precisely when the numbers matter.
+ *
+ * Values are whole MEGABYTES (BigInt), so a slot can't overflow and the log line
+ * needs no formatting.
+ */
+const SLOT_HEARTBEAT = 0;
+const SLOT_RSS_MB = 1;
+const SLOT_HEAP_USED_MB = 2;
+const SLOT_EXTERNAL_MB = 3;
+const SLOT_HEAP_LIMIT_MB = 4;
+const SLOT_OPEN_CLUSTERS = 5;
+const SAB_SLOTS = 6;
+
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let worker: Worker | null = null;
 let view: BigInt64Array | null = null;
+/** HS-9421 — supplies the open-PGLite-cluster count. Injected (rather than
+ *  imported) so `diagnostics/` keeps no dependency on `db/`, and so tests can
+ *  drive it without a real cluster. */
+let openClusterCounter: (() => number) | null = null;
+
+/**
+ * HS-9421 — publish the count of open PGLite clusters to the watchdog.
+ *
+ * That one number is what would have pointed straight at HS-9420: 18 open
+ * clusters x ~180 MB of WASM heap each. Called once at boot by `cli.ts`.
+ */
+export function setOpenClusterCounter(fn: () => number): void {
+  openClusterCounter = fn;
+}
+
+const BYTES_PER_MB = 1024 * 1024;
+
+/** HS-9421 — sample the MAIN thread's memory into the shared slots. */
+function publishMemorySample(v: BigInt64Array): void {
+  try {
+    const mem = process.memoryUsage();
+    Atomics.store(v, SLOT_RSS_MB, BigInt(Math.round(mem.rss / BYTES_PER_MB)));
+    Atomics.store(v, SLOT_HEAP_USED_MB, BigInt(Math.round(mem.heapUsed / BYTES_PER_MB)));
+    Atomics.store(v, SLOT_EXTERNAL_MB, BigInt(Math.round(mem.external / BYTES_PER_MB)));
+    Atomics.store(v, SLOT_HEAP_LIMIT_MB, BigInt(Math.round(getHeapStatistics().heap_size_limit / BYTES_PER_MB)));
+    if (openClusterCounter !== null) Atomics.store(v, SLOT_OPEN_CLUSTERS, BigInt(openClusterCounter()));
+  } catch { /* diagnostics must never break the heartbeat */ }
+}
+
+/** HS-9421 — TEST ONLY. Drop the registered cluster counter so one test's
+ *  registration can't leak into the next (the counter is module state that
+ *  outlives `stopEventLoopWatchdog`, which only tears down the worker). */
+export function _resetOpenClusterCounterForTesting(): void {
+  openClusterCounter = null;
+}
+
+/**
+ * HS-9421 — TEST ONLY. Read the published memory slots.
+ *
+ * The worker reads these slots by NUMERIC LITERAL (its source is a string, so it
+ * can't import the constants). This seam lets a test assert the two sides agree —
+ * a silent drift would make the FATAL line report zeros, i.e. lose exactly the
+ * diagnostic this exists to provide.
+ */
+export function _readMemorySlotsForTesting(): { rssMb: number; heapUsedMb: number; externalMb: number; heapLimitMb: number; openClusters: number } | null {
+  if (view === null) return null;
+  return {
+    rssMb: Number(Atomics.load(view, SLOT_RSS_MB)),
+    heapUsedMb: Number(Atomics.load(view, SLOT_HEAP_USED_MB)),
+    externalMb: Number(Atomics.load(view, SLOT_EXTERNAL_MB)),
+    heapLimitMb: Number(Atomics.load(view, SLOT_HEAP_LIMIT_MB)),
+    openClusters: Number(Atomics.load(view, SLOT_OPEN_CLUSTERS)),
+  };
+}
+
+/** HS-9421 — TEST ONLY. The slot indices the WORKER hard-codes, so a test can
+ *  pin them against the named constants the main thread writes. */
+export const _WORKER_SLOT_INDICES = { rss: 1, heapUsed: 2, external: 3, heapLimit: 4, openClusters: 5 } as const;
+
+/** HS-9421 — TEST ONLY. The named constants, for the same comparison. */
+export const _MAIN_SLOT_INDICES = {
+  rss: SLOT_RSS_MB, heapUsed: SLOT_HEAP_USED_MB, external: SLOT_EXTERNAL_MB,
+  heapLimit: SLOT_HEAP_LIMIT_MB, openClusters: SLOT_OPEN_CLUSTERS,
+} as const;
 
 /**
  * Start the watchdog. Idempotent (a second call is a no-op). Call once at the
@@ -131,11 +233,12 @@ export function startEventLoopWatchdog(opts: WatchdogOptions = {}): void {
   if (worker !== null) return;
 
   const timeoutMs = resolveTimeoutMs(opts.timeoutMs);
-  const sab = new SharedArrayBuffer(8);
+  const sab = new SharedArrayBuffer(8 * SAB_SLOTS);
   const v = new BigInt64Array(sab);
   // Arm with the start time so an IMMEDIATE wedge (the main thread never reaches
   // its first heartbeat tick) is still caught after `timeoutMs`.
-  Atomics.store(v, 0, BigInt(Date.now()));
+  Atomics.store(v, SLOT_HEARTBEAT, BigInt(Date.now()));
+  publishMemorySample(v);
 
   try {
     worker = new Worker(WORKER_SOURCE, {
@@ -155,7 +258,11 @@ export function startEventLoopWatchdog(opts: WatchdogOptions = {}): void {
   // Main-thread heartbeat. Can't fire while the loop is blocked — which is
   // exactly the staleness the worker keys off.
   heartbeatTimer = setInterval(() => {
-    if (view !== null) Atomics.store(view, 0, BigInt(Date.now()));
+    if (view === null) return;
+    Atomics.store(view, SLOT_HEARTBEAT, BigInt(Date.now()));
+    // HS-9421 — refresh the memory sample on every heartbeat so the numbers the
+    // worker reads at FATAL time are from just before the wedge, not from boot.
+    publishMemorySample(view);
   }, HEARTBEAT_MS);
   heartbeatTimer.unref();
 }
