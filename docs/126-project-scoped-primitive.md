@@ -212,3 +212,41 @@ structure each — `inFlightByKey` (in-flight request promises, for coalescing) 
 `lastPaintedAnalyticsFor` (a WeakMap keyed by DOM nodes, §126.5 paint state). Both stay listed, with
 the reason rewritten to say exactly what is left. Expect that outcome: a file's *data* cache moves to
 the primitive while its request-plumbing and DOM-keyed state legitimately stay put.
+
+## 126.8 Triage of the HS-9419 seed list (HS-9423)
+
+The scalar lint rule was seeded with 46 files, and reading that list several entries looked like
+per-project data held in a module-level `let`. Audited; **no new confirmed bugs**, but the exercise
+produced a rule of thumb worth keeping.
+
+### The distinction that decides it
+
+`reloadAppState()` refreshes most of this state on a project switch — but **how** it calls the
+refresh is what separates safe from transiently-wrong:
+
+- **`await`ed** → safe. Nothing can read the stale value, because the switch doesn't complete until
+  the refresh does. (`loadCustomViews`, `loadSettings`, `loadCategories`.)
+- **`void`-ed (fire-and-forget)** → a real window where the UI paints the PREVIOUS project's data.
+  Self-correcting, usually within a frame or two, but visibly wrong while it lasts.
+
+That is the same shape as the `claimsStore` case fixed in HS-9415, where the fix was to clear
+synchronously and let the refetch repaint.
+
+### Findings
+
+| State | Verdict |
+| --- | --- |
+| `poll::pollVersion` / `pollDataVersion` | **CLEARED — my hypothesis was wrong.** I flagged these as structurally identical to the HS-9412 `lastSeenId` bug. They aren't: `changeVersion`/`dataVersion` in `routes/notify.ts` are **process-global** module state, not per-project, so a client-side global is the *correct* mirror. Recorded so nobody re-investigates. |
+| `experimentalSettings::commandItems` (+ `commandShared`, `editTree`, `commandOverriddenIds`) | **Transient.** Refreshed via `reloadAppState → void initChannel() → reloadCustomCommands()` — fire-and-forget, so the command sidebar can paint the previous project's buttons briefly. Worth converting. |
+| `commandLog::panelOpen`, `activeTab` | **Transient**, same shape (`void applyPerProjectDrawerState()`). |
+| `customViews::viewLayers` | Safe — `await loadCustomViews()` in `reloadAppState`. |
+| `ticketRefs::cachedPrefixes` | Safe — explicitly re-fetched (HS-8053). |
+| `settingsScope::layered`, `settingsDialog::autoContext*`, `terminalsSettings::terminals*` | Safe **in practice**: only read while the settings dialog is open, and repopulated on open. Stale between a switch and the next open, but nothing reads it. Fragile by construction rather than broken. |
+| `feedbackDialog::lastAutoShownKey` | Effectively safe. The key is `ticketId:noteId`; `ticketId` repeats across projects, but `noteId` is a random unique string, so a cross-project collision is not reachable. Project-ambiguous in shape only. |
+
+### Recommendation
+
+Convert the two transient cases, and prefer `projectScoped` over "it gets refreshed" for the
+dialog-scoped ones when those files are next touched — "nothing reads it before the refresh" is a
+runtime-ordering argument, and runtime ordering is exactly what the eleven docs/125 bugs kept
+invalidating. Tracked by HS-9425.
