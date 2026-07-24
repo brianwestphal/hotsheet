@@ -81,14 +81,24 @@ Tuning at creation does nothing for the multi-hundred-MB clusters already on dis
 existing bloated cluster with the tuned budget does **not** reclaim the excess (measured — stays at
 176 MB through reopen + CHECKPOINT + write + CHECKPOINT). There is no in-place shrink.
 
-But telemetry clusters are **rebuildable**: the durable source is the rotating JSONL raw store
-(`<dataDir>/telemetry/*.jsonl`, HS-9280); the cluster only holds derived rollups. So the reclaim path
-is **recreate, not repair** — for a cluster whose `pg_wal` exceeds a threshold (e.g. 256 MB, well
-above the ~64 MB tuned steady state), move the `db/` aside, re-create it tuned, re-derive rollups from
-JSONL, delete the old dir. Off-loop via the §75 scheduler, gated on the cluster not being mid-write
-(HS-9420 `isDbOpenForDir`), move-aside-then-delete so a failed re-derive is recoverable, and **never**
-touch `pg_wal` segments by hand. Tracked by HS-9427; its open question (whether JSONL fully
-reproduces the cluster) needs a maintainer decision before implementation.
+The reclaim path is **recreate, not repair.** But the HS-9427 ticket's original premise — "re-derive
+the cluster's rollups from the JSONL raw store" — is **wrong and would lose data.** The rollup tables
+(`otel_rollup_daily` / `otel_rollup_ticket`, per-ticket cost kept INDEFINITELY) live in the
+SNAPSHOTTED **main** `<dataDir>/db`, not the telemetry cluster (HS-9232 backfill docstring). What the
+telemetry cluster actually holds is a mix — including `announcer_usage` and `ticket_work_intervals`,
+written via `getTelemetryDb`, which are **not in the JSONL at all**. A JSONL re-derive would silently
+drop them.
+
+**The correct mechanism is `dumpDataDir` → `loadDataDir`** (verified against a real cluster while
+scoping HS-9427): dump the bloated cluster to a tarball, load it into a fresh cluster opened with the
+tuned §127.3 params, swap. It preserved every row (80 500 → 80 500) while the WAL fell from 176 MB to
+64 MB. It is **generic** — copies the whole cluster, so it can't miss a table and needs no knowledge
+of what's in there and no JSONL dependency.
+
+Remaining decision (maintainer, HS-9427): the **trigger** — automatic at a `pg_wal` threshold vs a
+manual "reclaim telemetry disk" button (like the §74 clear-telemetry one) vs periodic. Whichever:
+off-loop via the §75 scheduler, gated on the cluster not being mid-write (HS-9420 `isDbOpenForDir`),
+move-aside-then-delete so a failed load is recoverable, and **never** touch `pg_wal` segments by hand.
 
 ## 127.6 Tests
 
