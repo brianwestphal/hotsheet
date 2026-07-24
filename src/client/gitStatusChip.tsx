@@ -2,6 +2,7 @@ import type { FetchResult, GitStatus } from '../api/git.js';
 import { getGitStatus, gitFetch } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { repositionGitStatusPopover, toggleGitStatusPopover } from './gitStatusPopover.js';
+import { projectScoped } from './projectScoped.js';
 import { getActiveProject } from './state.js';
 import { formatRelativeTime as formatRelativeTimeFromTs } from './timeFormat.js';
 
@@ -40,8 +41,16 @@ let lastStatusSecret: string | null = null;
  * project's entry is freshened by every successful API call. Session-only
  * (cleared on full reload) — fine because the worst case is one cold fetch
  * per project at startup.
+ *
+ * HS-9418 (docs/126) — was a hand-rolled `Map<secret, …>`. Moving it onto the
+ * primitive buys three things the hand-rolled version didn't have: automatic
+ * eviction when a project is unregistered (it grew unboundedly before), coverage
+ * by the generic A→B→A isolation harness, and one convention instead of five.
+ * It also made `pickDisplayStatusOnProjectSwitch` redundant — that helper existed
+ * only to turn "no entry for this secret" into `null`, which is exactly what a
+ * cell's initial does.
  */
-const lastStatusBySecret = new Map<string, GitStatus | null>();
+const lastStatusForProject = projectScoped<GitStatus | null>(() => null, 'gitStatusChip.lastStatus');
 /**
  * HS-7993 — coalesce concurrent refreshes WITHIN the same project (e.g.
  * window.focus + a poll-version-bump landing in the same tick). Cross-
@@ -82,21 +91,6 @@ export function refreshGitStatusChip(): void {
   void refresh();
 }
 
-/**
- * Pure: pick the value to display when the active project just switched.
- * Returns the cached status for `newSecret` (or null on first visit), so
- * the chip can repaint synchronously before the async API refresh lands.
- * Exported for testability — the rest of `refresh()` is DOM/network-bound.
- *
- * HS-7993 — see `docs/48-git-status-tracker.md` §48.6.
- */
-export function pickDisplayStatusOnProjectSwitch(
-  newSecret: string | null,
-  cache: ReadonlyMap<string, GitStatus | null>,
-): GitStatus | null {
-  if (newSecret === null) return null;
-  return cache.has(newSecret) ? cache.get(newSecret) ?? null : null;
-}
 
 async function refresh(): Promise<void> {
   if (chipEl === null) return;
@@ -110,7 +104,7 @@ async function refresh(): Promise<void> {
   // update when switching projects" complaint.
   if (currentSecret !== lastStatusSecret) {
     lastStatusSecret = currentSecret;
-    lastStatus = pickDisplayStatusOnProjectSwitch(currentSecret, lastStatusBySecret);
+    lastStatus = lastStatusForProject.get();
     render();
   }
 
@@ -128,7 +122,7 @@ async function refresh(): Promise<void> {
       // Stamp the per-project cache. `api()` captures the active project
       // secret at URL-build time, so even if the user switched mid-flight
       // the response still belongs to `currentSecret`.
-      if (currentSecret !== null) lastStatusBySecret.set(currentSecret, data);
+      if (currentSecret !== null) lastStatusForProject.set(data);
       // Only re-render when the chip is still on the same project — if
       // the user already switched away we'd flicker the new project's
       // chip with the old project's data.

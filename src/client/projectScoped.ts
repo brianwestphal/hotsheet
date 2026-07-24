@@ -53,6 +53,10 @@ export interface ProjectScoped<T> {
   set: (value: T) => void;
   /** Drop this project's value; the next `get()` rebuilds from the initial. */
   clear: () => void;
+  /** Drop EVERY project's value. For a module's own test-reset hook — production
+   *  code wants `clear()` (this project) or `evictProjectScope` (one project,
+   *  every cell). */
+  clearAllScopes: () => void;
   /** Label used in the generic isolation test's failure messages. */
   readonly label: string;
 }
@@ -101,6 +105,7 @@ export function projectScoped<T>(initial: () => T, label = 'anonymous'): Project
     get: () => boxFor(activeScope()).v,
     set: (value: T) => { byScope.set(activeScope(), { v: value }); },
     clear: () => { byScope.delete(activeScope()); },
+    clearAllScopes: () => { byScope.clear(); },
     label,
   };
 

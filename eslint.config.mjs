@@ -255,7 +255,14 @@ export default tseslint.config(
   // secret; the reason is recorded inline so a future reader doesn't have to
   // re-derive it. Same working model as the §62 innerHTML allowlist: new client
   // modules are NOT on this list, so a net-new unscoped cache gets flagged.
-  // Remove a file once its caches move to `projectScoped` (HS-9418).
+  // Remove a file once its caches move to `projectScoped` (HS-9418) — three have
+  // already graduated this way (gitStatusChip, analyticsTelemetrySection,
+  // toolPrepNudge), which is the intended lifecycle for this list.
+  //
+  // `dashboardMode.tsx` is NOT a graduation candidate: its cost cache is written
+  // for EVERY project at once from a bulk response and read for the active one,
+  // which `projectScoped.set()` (active cell only) cannot express. See docs/126
+  // §126.7.
   //
   // NOTE the deliberate gap: this rule only sees the Map/Set shape, so scalar
   // per-project state (`let lastSeenId = 0` — what most of the docs/125 leaks
@@ -264,15 +271,19 @@ export default tseslint.config(
     files: [
       "src/client/agentBackend.ts", // constant tool-name sets
       "src/client/aiInstructionsNudge.tsx", // Set of secrets — already project-KEYED
-      "src/client/analyticsTelemetrySection.tsx", // keyed by (secret, window) — HS-9418 will fold onto projectScoped
       "src/client/announcerPermissionSpeech.ts", // cross-project by design (§78)
+      // HS-9418 — these two GRADUATED their data caches onto `projectScoped`; what
+      // remains is genuinely global, so they stay listed for a narrower reason. That
+      // is the normal end state: an entry usually shrinks in scope rather than
+      // disappearing.
+      "src/client/analyticsTelemetrySection.tsx", // only `lastPaintedAnalyticsFor` left — a WeakMap keyed by DOM nodes (paint state, docs/126 §126.5)
+      "src/client/gitStatusChip.tsx", // only `inFlightByKey` left — in-flight request promises for coalescing, not data
       "src/client/bellPoll.tsx", // cross-project by design (§24)
       "src/client/channelUI.tsx", // project-attention Set is keyed by secret
       "src/client/commandLogEntryRow.tsx", // in-flight shell ids — request state, not project data
       "src/client/commandLogStore.ts", // per-entry signals, rebuilt with the list
       "src/client/crossProjectStatsPage.tsx", // cross-project by design (§70)
       "src/client/experimentalSettings.tsx", // icon/color lookup constants
-      "src/client/gitStatusChip.tsx", // keyed by secret — HS-9418 will fold onto projectScoped
       "src/client/noteRenderer.tsx", // markdown render constants
       "src/client/serverBusyChip.tsx", // global in-flight request set
       "src/client/settingsScope.tsx", // constant tab-name Set
@@ -283,7 +294,6 @@ export default tseslint.config(
       "src/client/terminalSearch.tsx", // WeakMaps keyed by xterm instances
       "src/client/terminalTransientNames.ts", // keyed by terminal id
       "src/client/ticketsStore.ts", // store internals, replaced wholesale on load
-      "src/client/toolPrepNudge.tsx", // Set of secrets — already project-KEYED (HS-9418)
       "src/client/undo/stack.ts", // keyed by secret (HS-9335)
       "src/client/visibilityGroupingsStore.ts", // subscriber disposers, not data
       "src/client/workerPoolPanel.tsx", // in-flight cleanup ids — request state

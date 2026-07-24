@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type ApiTransport, setApiTransport } from '../api/_runner.js';
 import { _testing } from './analyticsTelemetrySection.js';
+import { projectsStore } from './projectsStore.js';
 import type * as StateNS from './state.js';
 import type { CostOverTimePoint } from './telemetryCostOverTimeChart.js';
 import type { RecentPromptRow } from './telemetryRecentPromptsList.js';
@@ -47,6 +48,12 @@ vi.mock('./api.js', () => ({
   api: (path: string): Promise<unknown> => mockApi(path),
 }));
 
+// HS-9418 — the section reads `getActiveProject()` (mocked here), but the
+// `projectScoped` cache cell resolves its scope from `projectsStore` directly (it
+// must, to avoid an import cycle — docs/126 §126.3). In production those are the
+// same source; in a test that mocks only `getActiveProject`, they are NOT. So
+// `activate()` below sets BOTH, and every place that used to poke the mock alone
+// now goes through it.
 const mockGetActiveProject = vi.fn<() => { secret: string } | null>();
 vi.mock('./state.js', async () => {
   const actual = await vi.importActual<typeof StateNS>('./state.js');
@@ -75,12 +82,19 @@ vi.mock('./telemetrySubscriptionDisclaimer.js', () => ({
   renderSubscriptionDisclaimer: () => document.createElement('div'),
 }));
 
+/** Point BOTH the mocked `getActiveProject` and the real `projectsStore` at a
+ *  project, so the module and its `projectScoped` cache agree on the scope. */
+function activate(secret: string): void {
+  mockGetActiveProject.mockReturnValue({ secret });
+  projectsStore.actions.setActive({ secret, name: secret, dataDir: `/tmp/${secret}` });
+}
+
 beforeEach(() => {
   mockApi.mockReset();
   // HS-8632 — the section now fetches via the typed `getProjectRollup`, which
   // routes through the `_runner` transport; point it at `mockApi`.
   setApiTransport((path) => mockApi(path));
-  mockGetActiveProject.mockReturnValue({ secret: 'proj-1' });
+  activate('proj-1');
   _testing.resetHS8572();
   document.body.innerHTML = '';
 });
@@ -107,10 +121,10 @@ describe('fetchAndPopulate — cache behavior', () => {
     document.body.appendChild(bodySlot);
     mockApi.mockResolvedValue(makePayload());
 
-    expect(_testing.hasCachedHS8572('proj-1', 'month')).toBe(false);
+    expect(_testing.hasCachedHS8572('month')).toBe(false);
     await _testing.fetchAndPopulate(bodySlot, 'month');
 
-    expect(_testing.hasCachedHS8572('proj-1', 'month')).toBe(true);
+    expect(_testing.hasCachedHS8572('month')).toBe(true);
     expect(_testing.getCacheSizeHS8572()).toBe(1);
   });
 
@@ -132,17 +146,23 @@ describe('fetchAndPopulate — cache behavior', () => {
     const bodySlot = document.createElement('div');
     document.body.appendChild(bodySlot);
 
-    mockGetActiveProject.mockReturnValue({ secret: 'proj-1' });
+    activate('proj-1');
     mockApi.mockResolvedValueOnce(makePayload());
     await _testing.fetchAndPopulate(bodySlot, 'month');
 
-    mockGetActiveProject.mockReturnValue({ secret: 'proj-2' });
+    activate('proj-2');
     mockApi.mockResolvedValueOnce(makePayload());
     await _testing.fetchAndPopulate(bodySlot, 'month');
 
-    expect(_testing.hasCachedHS8572('proj-1', 'month')).toBe(true);
-    expect(_testing.hasCachedHS8572('proj-2', 'month')).toBe(true);
-    expect(_testing.getCacheSizeHS8572()).toBe(2);
+    // HS-9418 — the cache is per-project now, so assert from inside each scope
+    // rather than counting a shared map. This is a strictly stronger assertion:
+    // it proves project 2 does not SEE project 1's entry, not merely that two
+    // entries coexist under different keys.
+    expect(_testing.hasCachedHS8572('month')).toBe(true); // proj-2 (active)
+    expect(_testing.getCacheSizeHS8572()).toBe(1);
+    activate('proj-1');
+    expect(_testing.hasCachedHS8572('month')).toBe(true);
+    expect(_testing.getCacheSizeHS8572()).toBe(1);
   });
 
   it('keeps cache entries independent across windows', async () => {
@@ -154,8 +174,8 @@ describe('fetchAndPopulate — cache behavior', () => {
     await _testing.fetchAndPopulate(bodySlot, 'week');
     await _testing.fetchAndPopulate(bodySlot, '90d');
 
-    expect(_testing.hasCachedHS8572('proj-1', 'week')).toBe(true);
-    expect(_testing.hasCachedHS8572('proj-1', '90d')).toBe(true);
+    expect(_testing.hasCachedHS8572('week')).toBe(true);
+    expect(_testing.hasCachedHS8572('90d')).toBe(true);
     expect(_testing.getCacheSizeHS8572()).toBe(2);
   });
 
@@ -252,7 +272,7 @@ describe('startAnalyticsPolling + stopAnalyticsPolling', () => {
     mockApi.mockResolvedValue(makePayload());
 
     _testing.startAnalyticsPolling(bodySlot, () => 'month', 'proj-1');
-    mockGetActiveProject.mockReturnValue({ secret: 'proj-2' });
+    activate('proj-2');
     vi.advanceTimersByTime(30_000);
 
     expect(mockApi).not.toHaveBeenCalled();
@@ -308,12 +328,12 @@ describe('startAnalyticsPolling + stopAnalyticsPolling', () => {
 
     await _testing.fetchAndPopulate(bodySlot, 'month');
     _testing.startAnalyticsPolling(bodySlot, () => 'month', 'proj-1');
-    expect(_testing.hasCachedHS8572('proj-1', 'month')).toBe(true);
+    expect(_testing.hasCachedHS8572('month')).toBe(true);
     expect(_testing.isPollingHS8572()).toBe(true);
 
     _testing.resetHS8572();
 
-    expect(_testing.hasCachedHS8572('proj-1', 'month')).toBe(false);
+    expect(_testing.hasCachedHS8572('month')).toBe(false);
     expect(_testing.isPollingHS8572()).toBe(false);
   });
 });

@@ -44,6 +44,7 @@
 
 import { getProjectRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { projectScoped } from './projectScoped.js';
 import { getActiveProject } from './state.js';
 import { type CostOverTimePoint, renderCostOverTimeChart } from './telemetryCostOverTimeChart.js';
 import { formatCost, formatTokens } from './telemetryFormat.js';
@@ -104,9 +105,17 @@ let currentWindow: TelemetryWindow = 'month';
 // the analytics dashboard (closing + re-opening the project's
 // analytics widget) paints the cached payload immediately instead of
 // the "Loading Claude usage…" placeholder. Background fetch refreshes
-// in place. Keyed by `<secret>|<window>` so switching projects or
-// windows picks the right slice.
-const cachedAnalyticsPayloads = new Map<string, ProjectRollupPayload>();
+// in place.
+//
+// HS-9418 (docs/126) — was a hand-rolled `Map<"<secret>|<window>", …>`. The
+// project dimension moved into the primitive, leaving a plain per-window Map
+// inside each project's cell: one convention, automatic eviction when a project
+// is unregistered (it grew unboundedly before), and coverage by the generic
+// A→B→A isolation harness.
+const cachedAnalyticsPayloads = projectScoped(
+  () => new Map<TelemetryWindow, ProjectRollupPayload>(),
+  'analytics.cachedPayloads',
+);
 
 // HS-8572 — track which payload (serialized) is currently painted
 // into each bodySlot so a poll tick on unchanged data does NOT wipe
@@ -120,10 +129,6 @@ const lastPaintedAnalyticsFor = new WeakMap<HTMLElement, string>();
 // surrounding DOM). 30 s cadence matches the cross-project page.
 let analyticsPollIntervalId: ReturnType<typeof setInterval> | null = null;
 const ANALYTICS_POLL_INTERVAL_MS = 30_000;
-
-function cacheKey(projectSecret: string, w: TelemetryWindow): string {
-  return `${projectSecret}|${w}`;
-}
 
 // HS-8566 — see `telemetryFormat.ts`. `formatCost` now hides cents for
 // values >= $1000 with half-up rounding + thousands separators.
@@ -365,8 +370,7 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
   // user doesn't see the "Loading Claude usage…" placeholder on every
   // re-entry. Skip the paint when the cached payload is already on
   // screen (poll tick on unchanged data) — see `lastPaintedAnalyticsFor`.
-  const key = cacheKey(active.secret, w);
-  const cached = cachedAnalyticsPayloads.get(key);
+  const cached = cachedAnalyticsPayloads.get().get(w);
   if (cached !== undefined) {
     const cachedSerialized = JSON.stringify(cached);
     if (lastPaintedAnalyticsFor.get(bodySlot) !== cachedSerialized) {
@@ -388,7 +392,7 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
     // is currently painted into the slot. Avoids 30 s tick re-builds
     // wiping scroll / hover / drilldown state when nothing's changed.
     const fresh = JSON.stringify(payload);
-    cachedAnalyticsPayloads.set(key, payload);
+    cachedAnalyticsPayloads.get().set(w, payload);
     if (lastPaintedAnalyticsFor.get(bodySlot) === fresh) return;
 
     const hasData = payload.windowTotals.allTime.promptCount > 0 || payload.windowTotals.allTime.cost > 0;
@@ -497,15 +501,20 @@ export const _testing = {
   // `resetHS8572()` in `beforeEach`/`afterEach` so a stale cache or a
   // still-running interval from one test can't leak into the next.
   resetHS8572(): void {
-    cachedAnalyticsPayloads.clear();
+    cachedAnalyticsPayloads.clearAllScopes();
     stopAnalyticsPolling();
   },
   fetchAndPopulate,
   startAnalyticsPolling,
   stopAnalyticsPolling,
-  getCacheSizeHS8572(): number { return cachedAnalyticsPayloads.size; },
-  hasCachedHS8572(projectSecret: string, w: TelemetryWindow): boolean {
-    return cachedAnalyticsPayloads.has(cacheKey(projectSecret, w));
+  /** HS-9418 — now the ACTIVE project's cached-window count (the cache is
+   *  per-project). Tests that previously asserted a cross-project total should
+   *  activate each project and assert its own count. */
+  getCacheSizeHS8572(): number { return cachedAnalyticsPayloads.get().size; },
+  /** HS-9418 — answers for the ACTIVE project only; a cell can't be read from
+   *  outside its scope. Activate the project first, then ask. */
+  hasCachedHS8572(w: TelemetryWindow): boolean {
+    return cachedAnalyticsPayloads.get().has(w);
   },
   isPollingHS8572(): boolean { return analyticsPollIntervalId !== null; },
 };

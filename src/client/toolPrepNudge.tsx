@@ -1,7 +1,7 @@
 import { ensureSkills, getFileSettings, getToolPrepStatus, prepareToolConfig, type ToolPrepStatusResp, updateFileSettings } from '../api/index.js';
 import { agentDisplayName } from './agentName.js';
 import { toElement } from './dom.js';
-import { getActiveProject } from './state.js';
+import { projectScoped } from './projectScoped.js';
 
 /**
  * HS-9367 (docs/119) — ask-first preparation of the SELECTED tool's config.
@@ -24,13 +24,16 @@ import { getActiveProject } from './state.js';
  *  to a different tool later re-arms the nudge. */
 const DISMISSED_KEY = 'tool_prep_nudge_dismissed';
 
-/** Per-session guard for the `open` path (mirrors `aiInstructionsNudge`'s
- *  checkedSecrets) — a project is drift-checked once per session. */
-const checkedSecrets = new Set<string>();
+/** Per-session guard for the `open` path — a project is drift-checked once per
+ *  session. HS-9418 (docs/126): was a hand-rolled `Set<secret>`; as a
+ *  `projectScoped` flag it gains automatic eviction when a project is
+ *  unregistered (so a re-added project is re-checked, which is what you want)
+ *  and coverage by the generic isolation harness. */
+const alreadyChecked = projectScoped(() => false, 'toolPrepNudge.alreadyChecked');
 
 /** **TEST ONLY** — clear the per-session checked-projects guard. */
 export function _resetToolPrepCheckedForTesting(): void {
-  checkedSecrets.clear();
+  alreadyChecked.clearAllScopes();
 }
 
 /** E2E force-disable seam — the SAME `__HOTSHEET_DISABLE_AI_NUDGE__` flag the
@@ -77,11 +80,8 @@ export function maybeOfferToolPrep(source: 'switch' | 'open'): void {
     return;
   }
   if (source === 'open') {
-    const secret = getActiveProject()?.secret;
-    if (secret !== undefined) {
-      if (checkedSecrets.has(secret)) return;
-      checkedSecrets.add(secret);
-    }
+    if (alreadyChecked.get()) return;
+    alreadyChecked.set(true);
   }
   void (async () => {
     try {

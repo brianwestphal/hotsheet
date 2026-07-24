@@ -113,6 +113,26 @@ const keyFor = (ticketNumber: string) => `${getActiveProject()?.secret ?? ''}::$
 The general rule: **scope the data, composite-key the view state.** Ask what the variable describes —
 a project's data (scope it) or a shared DOM node (make the key include the project).
 
+## 126.5a Testing a module that uses a cell
+
+The cell resolves its scope from **`projectsStore`** directly (it must, to avoid the
+§126.3 import cycle). Many modules instead read `getActiveProject()` from `state.tsx`.
+In production those are the same source, so this never matters — but **a test that
+mocks only `getActiveProject` will not move the cell's scope**, and every project will
+share one cell, silently defeating the isolation the test is trying to check.
+
+Drive both:
+
+```ts
+function activate(secret: string): void {
+  mockGetActiveProject.mockReturnValue({ secret });
+  projectsStore.actions.setActive({ secret, name: secret, dataDir: `/tmp/${secret}` });
+}
+```
+
+(`analyticsTelemetrySectionCacheAndPoll.test.tsx` is the worked example.) Tests that
+don't mock `getActiveProject` at all just need `projectsStore.actions.setActive`.
+
 ## 126.6 Layer 3 — the ESLint backstop (HS-9417, shipped)
 
 `PROJECT_SCOPED_CACHE_RULE` in `eslint.config.mjs` flags module-level
@@ -145,8 +165,27 @@ Migrated (HS-9412–9415): `commandLog.lastSeenId`, `reviewProof.proofCache`,
 `ticketTelemetry.rollupCache`. Also fixed alongside: `ticketList::buildScopeKey` (project added to
 the key) and `claimsStore` (reset + refetch on switch).
 
-Not yet migrated — the already-safe hand-rolled keyed caches (`gitStatusChip::lastStatusBySecret`,
-`analyticsTelemetrySection::cachedAnalyticsPayloads`, `dashboardMode::stickyCostCache`,
-`toolPrepNudge::checkedSecrets`). They are correct today; folding them in is worth doing so the
-codebase has one convention rather than five spellings of it, and so the harness covers them.
-Tracked by HS-9418.
+**HS-9418** folded in three of the four hand-rolled keyed caches:
+
+| Cache | Outcome |
+| --- | --- |
+| `gitStatusChip::lastStatusBySecret` | → `projectScoped`. Also **deleted `pickDisplayStatusOnProjectSwitch`** — that helper existed only to turn "no entry for this secret" into `null`, which is exactly what a cell's initial does. |
+| `analyticsTelemetrySection::cachedAnalyticsPayloads` | → `projectScoped(() => new Map<TelemetryWindow, …>())`. The two-dimensional `"<secret>|<window>"` key collapses to the project dimension in the cell and the window dimension in a plain Map. |
+| `toolPrepNudge::checkedSecrets` | → `projectScoped(() => false)`. A `Set<secret>` used as a per-project flag is exactly a scoped boolean. |
+
+**`dashboardMode::stickyCostCache` was deliberately NOT converted.** It is written for
+**every** project at once from the bulk `/api/telemetry/today-cost-by-project` response and
+only *read* for the active one. `projectScoped.set()` writes the active cell only, so the
+conversion would silently drop every other project's cached cost. It stays a hand-rolled
+`Map<secret, number>` — a **cross-project write, per-project read** cache, which is a
+different shape from everything else here and correctly outside the primitive's remit.
+
+That distinction is the general test: **`projectScoped` fits state the active project both
+writes and reads.** State written for many projects at once belongs in a plain keyed Map.
+
+**Graduating usually narrows an allowlist entry rather than removing it.** `toolPrepNudge` left the
+HS-9417 list entirely, but `gitStatusChip` and `analyticsTelemetrySection` still hold one global
+structure each — `inFlightByKey` (in-flight request promises, for coalescing) and
+`lastPaintedAnalyticsFor` (a WeakMap keyed by DOM nodes, §126.5 paint state). Both stay listed, with
+the reason rewritten to say exactly what is left. Expect that outcome: a file's *data* cache moves to
+the primitive while its request-plumbing and DOM-keyed state legitimately stay put.
