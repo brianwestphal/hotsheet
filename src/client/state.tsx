@@ -1,5 +1,6 @@
 import type { SafeHtml } from '../jsx-runtime.js';
 import type { TicketPriority, TicketStatus } from '../types.js';
+import { evictProjectScope } from './projectScoped.js';
 import { activeProjectSignal, projectsStore } from './projectsStore.js';
 import { ticketsStore } from './ticketsStore.js';
 import { clearUndoStack } from './undo/stack.js';
@@ -108,6 +109,12 @@ export function clearPerProjectSessionState(secret: string): void {
   // HS-9335 — drop the removed project's undo/redo history so a re-added project at
   // the same secret doesn't resurrect the prior tab's undo stack.
   clearUndoStack(secret);
+  // HS-9416 (docs/126) — drop every `projectScoped` cell's value for this secret.
+  // ONE call covers every cell that exists now or is ever added; a cell author
+  // writes no cleanup. (Import direction is state.tsx → projectScoped.ts only —
+  // the primitive reads the active project from `projectsStore`, never from here,
+  // so there's no cycle.)
+  evictProjectScope(secret);
 }
 
 /** HS-8374 — read the saved scroll position for a `(secret, view, mode)`

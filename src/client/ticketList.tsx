@@ -707,6 +707,13 @@ function updateBatchToolbar() {
  *  so loadTickets keeps the grown window. */
 function buildScopeKey(): string {
   return [
+    // HS-9415 (docs/125 §125.3d) — the project MUST be part of the key. Without
+    // it, switching to a project whose view/search/sort happened to match left
+    // `lastScopeKey` equal, so the HS-8337 pagination reset was skipped and the
+    // new project inherited however far the user had scrolled in the previous
+    // one. `computeScrollKey()` above already includes the secret, which is why
+    // scroll restoration never had this bug.
+    getActiveProject()?.secret ?? '',
     state.view, state.search, state.sortBy, state.sortDir, state.layout,
     state.includeBacklogInSearch ? '1' : '0',
     state.includeArchiveInSearch ? '1' : '0',

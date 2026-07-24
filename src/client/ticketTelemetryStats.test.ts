@@ -20,6 +20,8 @@ vi.mock('../api/index.js', () => ({
 // eslint-disable-next-line import/first
 import { getPerTicketRollup, type TicketRollup } from '../api/index.js';
 // eslint-disable-next-line import/first
+import { projectsStore } from './projectsStore.js';
+// eslint-disable-next-line import/first
 import {
   _testing,
   clearTicketTelemetryStats,
@@ -208,5 +210,55 @@ describe('telemetry value formatters (_testing)', () => {
 
   it('formatCost — two-decimal dollars', () => {
     expect(_testing.formatCost(10.98)).toBe('$10.98');
+  });
+});
+
+// HS-9414 (docs/125 §125.3c) — the cross-project cache collision. `rollupCache`
+// was keyed by ticket number ALONE, so with two projects on the default `HS-`
+// prefix, opening HS-42 in project B painted project A's cost/token numbers.
+describe('project isolation (HS-9414)', () => {
+  const activate = (secret: string) =>
+    projectsStore.actions.setActive({ secret, name: secret, dataDir: `/tmp/${secret}` });
+
+  it('does not show project A\'s rollup for the same ticket number in project B', async () => {
+    activate('secret-A');
+    vi.mocked(getPerTicketRollup).mockResolvedValue(mockRollup({ totalCost: 999.99 }));
+    await loadAndRenderTicketTelemetry('HS-42');
+    expect(container().textContent).toContain('999');
+
+    activate('secret-B');
+    vi.mocked(getPerTicketRollup).mockResolvedValue(mockRollup({ totalCost: 1.23 }));
+    await loadAndRenderTicketTelemetry('HS-42');
+    expect(container().textContent).not.toContain('999');
+  });
+
+  // The sticky case: the catch block deliberately keeps whatever's shown, so a
+  // leaked cache entry would persist while the receiver is down.
+  it('shows nothing from project A when project B\'s fetch fails', async () => {
+    activate('secret-A');
+    vi.mocked(getPerTicketRollup).mockResolvedValue(mockRollup({ totalCost: 999.99 }));
+    await loadAndRenderTicketTelemetry('HS-42');
+    expect(container().textContent).toContain('999');
+
+    activate('secret-B');
+    vi.mocked(getPerTicketRollup).mockRejectedValue(new Error('receiver down'));
+    await loadAndRenderTicketTelemetry('HS-42');
+    expect(container().textContent).not.toContain('999');
+  });
+
+  it('still has project A\'s rollup on the way back', async () => {
+    activate('secret-A');
+    vi.mocked(getPerTicketRollup).mockResolvedValue(mockRollup({ totalCost: 999.99 }));
+    await loadAndRenderTicketTelemetry('HS-42');
+
+    activate('secret-B');
+    vi.mocked(getPerTicketRollup).mockResolvedValue(mockRollup({ totalCost: 1.23 }));
+    await loadAndRenderTicketTelemetry('HS-42');
+
+    activate('secret-A');
+    vi.mocked(getPerTicketRollup).mockRejectedValue(new Error('receiver down'));
+    await loadAndRenderTicketTelemetry('HS-42');
+    // Fetch failed, but A's own cached value repaints — not B's.
+    expect(container().textContent).toContain('999');
   });
 });

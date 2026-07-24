@@ -145,6 +145,9 @@ async function reloadAppState() {
   void applyPerProjectDrawerState();
   // Refresh sidebar stats widget for the new project
   void refreshDashboardWidget();
+  // HS-9415 (docs/125) — claims are per-project; without this the claimed-by
+  // chips showed the previous project's claims until the next 5 s poll tick.
+  void import('./claimsStore.js').then(({ resetClaimsForProjectSwitch }) => resetClaimsForProjectSwitch());
   // Re-init channel for the new project context, then reflect this project's
   // Auto-worker-pool switch (HS-9039) once the play section's visibility settles.
   void initChannel().then(() => syncWorkerAutoModeUI());

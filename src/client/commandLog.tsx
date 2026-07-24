@@ -30,13 +30,22 @@ import { TIMERS } from './constants/timers.js';
 import { byId, byIdOrNull } from './dom.js';
 import { chooseDrawerActiveTab, claudeTabIdFromConfigs } from './drawerActiveTab.js';
 import { recordInteraction } from './longTaskObserver.js';
+import { projectScoped } from './projectScoped.js';
 import { delegate } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import { getActiveProject } from './state.js';
 
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let lastSeenId = 0;
+// HS-9412 (docs/125 §125.3a / docs/126) — PROJECT-SCOPED. This is a cursor into
+// `command_log.id`, which is a SERIAL PRIMARY KEY in EACH PROJECT'S OWN database,
+// so ids restart per project. As a bare module `let` it leaked: switching from a
+// 500-entry project to a 20-entry one left the cursor at 500, so `entries[0].id`
+// was never greater and the unread badge NEVER appeared for the new project.
+// Note this is scoped, not reset-on-switch — zeroing it would re-enter the
+// `=== 0` baseline branch on every switch and silently swallow genuinely-new
+// entries when switching back.
+const lastSeenId = projectScoped(() => 0, 'commandLog.lastSeenId');
 
 // HS-9246 — project secrets opened since app launch (in-memory, so it naturally
 // resets on relaunch). Drives the "default to the Claude tab on the first open
@@ -192,8 +201,8 @@ async function loadEntries() {
   mountEntriesBindList();
 
   // Track latest seen ID for badge
-  if (entries.length > 0 && entries[0].id > lastSeenId) {
-    lastSeenId = entries[0].id;
+  if (entries.length > 0 && entries[0].id > lastSeenId.get()) {
+    lastSeenId.set(entries[0].id);
   }
 }
 
@@ -539,16 +548,16 @@ function updateBadge(hasNew: boolean) {
 export async function refreshLogBadge() {
   if (panelOpen) return; // No badge when panel is open
   try {
-    if (lastSeenId === 0) {
+    if (lastSeenId.get() === 0) {
       // First load: set baseline without showing badge
       const entries = await getCommandLog({ limit: 1 });
-      if (entries.length > 0) lastSeenId = entries[0].id;
+      if (entries.length > 0) lastSeenId.set(entries[0].id);
       return;
     }
     // We approximate unread by total count vs. a stored count.
     // For simplicity, just show total count if there are new entries.
     const entries = await getCommandLog({ limit: 1 });
-    if (entries.length > 0 && entries[0].id > lastSeenId) {
+    if (entries.length > 0 && entries[0].id > lastSeenId.get()) {
       updateBadge(true);
     }
   } catch { /* ignore */ }

@@ -144,7 +144,8 @@ describe('computeScrollKey', () => {
 });
 
 describe('buildScopeKey', () => {
-  it('builds a stable key from the 7 scope-affecting state fields', () => {
+  it('builds a stable key from the project + the 7 scope-affecting state fields', () => {
+    mockGetActiveProject.mockReturnValue({ name: 'p', dataDir: '/d', secret: 'abc123' });
     stateMod.state.view = 'open';
     stateMod.state.search = 'foo';
     stateMod.state.sortBy = 'priority';
@@ -153,10 +154,29 @@ describe('buildScopeKey', () => {
     stateMod.state.includeBacklogInSearch = false;
     stateMod.state.includeArchiveInSearch = false;
 
-    expect(_testing.buildScopeKey()).toBe('open|foo|priority|asc|list|0|0');
+    expect(_testing.buildScopeKey()).toBe('abc123|open|foo|priority|asc|list|0|0');
+  });
+
+  // HS-9415 (docs/125 §125.3d) — the project MUST be part of the key, or a switch
+  // between projects whose filter state matches skips the pagination reset and the
+  // new project inherits the previous one's scroll depth.
+  it('changes when the PROJECT changes, with every other field identical', () => {
+    stateMod.state.view = 'all';
+    stateMod.state.search = '';
+    stateMod.state.sortBy = 'created';
+    stateMod.state.sortDir = 'desc';
+    stateMod.state.layout = 'list';
+    stateMod.state.includeBacklogInSearch = false;
+    stateMod.state.includeArchiveInSearch = false;
+
+    mockGetActiveProject.mockReturnValue({ name: 'a', dataDir: '/a', secret: 'secret-A' });
+    const keyA = _testing.buildScopeKey();
+    mockGetActiveProject.mockReturnValue({ name: 'b', dataDir: '/b', secret: 'secret-B' });
+    expect(_testing.buildScopeKey()).not.toBe(keyA);
   });
 
   it('changes when any of the 7 fields changes', () => {
+    mockGetActiveProject.mockReturnValue({ name: 'p', dataDir: '/d', secret: 'abc123' });
     stateMod.state.view = 'all';
     stateMod.state.search = '';
     stateMod.state.sortBy = 'created';

@@ -5,6 +5,7 @@ import { marked } from 'marked';
 import { type CommitGroup, getReviewProof, getTicketCommits, type GlassboxReviewReq, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote, type TicketCommitsResponse } from '../api/index.js';
 import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { projectScoped } from './projectScoped.js';
 import { getActiveProject } from './state.js';
 
 /**
@@ -31,8 +32,26 @@ import { getActiveProject } from './state.js';
  *  content immediately (or clears when unseen), so the previous ticket's section
  *  can never linger under the new ticket. */
 interface CachedProof { sig: string; notes: ReviewProofNote[]; commits: TicketCommitsResponse | null }
-const proofCache = new Map<string, CachedProof>();
-let currentTicket: string | null = null;
+// HS-9413 (docs/125 §125.3b / docs/126) — both cells are PROJECT-SCOPED. Keyed
+// by ticket number alone, `proofCache` collided across projects: ticket numbers
+// repeat whenever two projects share a prefix, and `HS-` is the default. Opening
+// HS-42 in project B painted project A's review notes + commits immediately, and
+// the deliberate keep-what's-shown-on-fetch-failure path below made that
+// permanent.
+const proofCache = projectScoped(() => new Map<string, CachedProof>(), 'reviewProof.proofCache');
+
+/** HS-9413 — what the (single, global) `#detail-review-proof` node currently
+ *  shows, as `secret::ticketNumber`. Deliberately NOT `projectScoped`: it
+ *  describes the shared DOM element, so it is global by nature — and scoping it
+ *  actively broke things. With a per-project `currentTicket`, switching back to
+ *  project A found its stale `HS-42` and reported "not switching", so the
+ *  unchanged-signature guard below (`prev?.sig === sig && childElementCount > 0`)
+ *  accepted project B's DOM as already-painted and left B's review notes on
+ *  screen. Including the secret makes a project switch a switch even when the
+ *  ticket number is identical — the same reasoning as HS-9402, one level up. */
+let paintedKey: string | null = null;
+
+const keyFor = (ticketNumber: string): string => `${getActiveProject()?.secret ?? ''}::${ticketNumber}`;
 
 /** Basename of an artifact URI (`.pr-notes/artifacts/shot.png` → `shot.png`). */
 function artifactName(uri: string): string {
@@ -309,15 +328,16 @@ function render(container: HTMLElement, notes: ReviewProofNote[], commits: Ticke
 export async function loadAndRenderReviewProof(ticketNumber: string): Promise<void> {
   const container = byIdOrNull('detail-review-proof');
   if (container === null) return;
-  const switching = currentTicket !== ticketNumber;
-  currentTicket = ticketNumber;
+  const key = keyFor(ticketNumber);
+  const switching = paintedKey !== key;
+  paintedKey = key;
   if (switching) {
     // HS-9402 — a direct ticket→ticket switch never goes through clearReviewProof,
     // so the container may still hold the PREVIOUS ticket's section. Repaint the
     // new ticket's cached content immediately when we have it, else clear — the
     // old `childElementCount > 0` unchanged-guard below would otherwise accept the
     // stale DOM as "already painted" and leave the wrong ticket's section showing.
-    const cached = proofCache.get(ticketNumber);
+    const cached = proofCache.get().get(ticketNumber);
     if (cached !== undefined) render(container, cached.notes, cached.commits);
     else container.replaceChildren();
   }
@@ -332,11 +352,11 @@ export async function loadAndRenderReviewProof(ticketNumber: string): Promise<vo
   ]);
   if (proof === null && commits === null) return; // transient failure — keep whatever's shown
   const notes: ReviewProofNote[] = proof?.notes ?? [];
-  if (currentTicket !== ticketNumber) return; // switched away mid-fetch
+  if (paintedKey !== key) return; // switched away mid-fetch (different ticket OR project)
 
   const sig = JSON.stringify({ notes, commits });
-  const prev = proofCache.get(ticketNumber);
-  proofCache.set(ticketNumber, { sig, notes, commits });
+  const prev = proofCache.get().get(ticketNumber);
+  proofCache.get().set(ticketNumber, { sig, notes, commits });
   if (prev?.sig === sig && container.childElementCount > 0) return; // unchanged — preserve expansions
   render(container, notes, commits);
 }
@@ -346,11 +366,11 @@ export async function loadAndRenderReviewProof(ticketNumber: string): Promise<vo
  *  instantly without a flash. */
 export function clearReviewProof(): void {
   byIdOrNull('detail-review-proof')?.replaceChildren();
-  currentTicket = null;
+  paintedKey = null;
 }
 
 /** Test hook — reset module state. */
 export function _resetReviewProofForTests(): void {
-  proofCache.clear();
-  currentTicket = null;
+  proofCache.get().clear();
+  paintedKey = null;
 }

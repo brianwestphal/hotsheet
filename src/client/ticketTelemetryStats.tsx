@@ -1,5 +1,7 @@
 import { getPerTicketRollup, type TicketRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { projectScoped } from './projectScoped.js';
+import { getActiveProject } from './state.js';
 // HS-8566 — shared cost formatter (the $1000-cutoff + half-up rule).
 // HS-8670 — shared token formatter (was duplicated here + 3 other surfaces).
 import { formatCost, formatTokens } from './telemetryFormat.js';
@@ -35,7 +37,13 @@ function formatDuration(seconds: number): string {
  * successful fetch, so a same-ticket reload re-paints the LAST value immediately
  * and only updates once the fresh value lands.
  */
-const rollupCache = new Map<string, TicketRollup>();
+// HS-9414 (docs/125 §125.3c / docs/126) — PROJECT-SCOPED. Keyed by ticket number
+// alone this collided across projects (ticket numbers repeat whenever two share a
+// prefix, and `HS-` is the default), so opening HS-42 in project B painted project
+// A's cost/token numbers — and the keep-the-cached-value-on-fetch-failure path
+// below made that stick while the telemetry receiver was down. Showing another
+// project's spend is a trust problem out of proportion to the size of this fix.
+const rollupCache = projectScoped(() => new Map<string, TicketRollup>(), 'ticketTelemetry.rollupCache');
 
 /**
  * The ticket the block currently represents. Lets a switch clear a stale block
@@ -43,7 +51,16 @@ const rollupCache = new Map<string, TicketRollup>();
  * in-flight fetch detect that the user moved to another ticket before it resolved
  * (so it doesn't clobber the newer ticket's block).
  */
-let currentTicket: string | null = null;
+/** HS-9414 — what the (single, global) `#detail-telemetry-stats` node currently
+ *  shows, as `secret::ticketNumber`. Deliberately NOT `projectScoped`: it
+ *  describes the shared DOM element, so it is global by nature. The secret is in
+ *  the key so a project switch counts as a switch even when the ticket number is
+ *  identical — otherwise an in-flight fetch from project A could repaint over
+ *  project B's panel (same reasoning as the sibling guard in
+ *  `reviewProofSection.tsx`). */
+let paintedKey: string | null = null;
+
+const keyFor = (ticketNumber: string): string => `${getActiveProject()?.secret ?? ''}::${ticketNumber}`;
 
 /** Paint one rollup into the container, or hide the block (empty container) when
  *  the ticket has zero attributed prompts. `replaceChildren` keeps it idempotent. */
@@ -93,10 +110,11 @@ export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promis
   const container = byIdOrNull('detail-telemetry-stats');
   if (container === null) return;
 
-  const switching = currentTicket !== ticketNumber;
-  currentTicket = ticketNumber;
+  const key = keyFor(ticketNumber);
+  const switching = paintedKey !== key;
+  paintedKey = key;
 
-  const cached = rollupCache.get(ticketNumber);
+  const cached = rollupCache.get().get(ticketNumber);
   if (cached !== undefined) {
     // Same-ticket reload OR a revisit — show the cached value immediately so the
     // block never blanks while the fresh fetch is in flight.
@@ -116,11 +134,11 @@ export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promis
     return;
   }
 
-  rollupCache.set(ticketNumber, rollup);
+  rollupCache.get().set(ticketNumber, rollup);
 
   // The user switched tickets while this fetch was in flight — the block now
   // belongs to another ticket. Keep the cache warm, but don't repaint over it.
-  if (currentTicket !== ticketNumber) return;
+  if (paintedKey !== key) return;
 
   renderRollup(container, rollup);
 }
@@ -133,7 +151,7 @@ export async function loadAndRenderTicketTelemetry(ticketNumber: string): Promis
 export function clearTicketTelemetryStats(): void {
   const container = byIdOrNull('detail-telemetry-stats');
   if (container !== null) container.replaceChildren();
-  currentTicket = null;
+  paintedKey = null;
 }
 
 /** HS-8152 — exported for tests. HS-9249 — `resetCache` clears the module-level
@@ -142,5 +160,5 @@ export const _testing = {
   formatCost,
   formatTokens,
   formatDuration,
-  resetCache(): void { rollupCache.clear(); currentTicket = null; },
+  resetCache(): void { rollupCache.get().clear(); paintedKey = null; },
 };

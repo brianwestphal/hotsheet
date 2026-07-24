@@ -22,6 +22,7 @@ vi.mock('../api/index.js', () => ({
 }));
 
 const { loadAndRenderReviewProof, clearReviewProof, _resetReviewProofForTests, aggregateReviewAction } = await import('./reviewProofSection.js');
+const { projectsStore } = await import('./projectsStore.js');
 
 /** No-commit discovery result (the pre-HS-9393 baseline). */
 const noCommits = (over: Partial<TicketCommitsResponse> = {}): TicketCommitsResponse => ({
@@ -340,3 +341,80 @@ describe('HS-9398 — notes-fetch failure keeps the commits-only view', () => {
     expect(document.getElementById('detail-review-proof')!.childElementCount).toBe(0);
   });
 });
+
+// HS-9413 (docs/125 §125.3b) — the cross-project cache collision. `proofCache`
+// was keyed by ticket number ALONE, and ticket numbers repeat across projects
+// whenever two share a prefix (`HS-` is the default). Opening the same number in
+// another project painted the FIRST project's notes + commits.
+describe('project isolation (HS-9413)', () => {
+  const activate = (secret: string) =>
+    projectsStore.actions.setActive({ secret, name: secret, dataDir: `/tmp/${secret}` });
+
+  // The primary user-visible symptom is a FLASH: the cached value is painted
+  // synchronously, before the fetch resolves. Asserting only the post-await state
+  // misses it, because a successful fetch corrects the panel a moment later.
+  it('never flashes project A\'s proof while project B\'s fetch is in flight', async () => {
+    activate('secret-A');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'PROJECT-A-SECRET-NOTE' })] });
+    getTicketCommits.mockResolvedValue(noCommits());
+    await loadAndRenderReviewProof('HS-42');
+
+    activate('secret-B');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'project-B-note' })] });
+    const inFlight = loadAndRenderReviewProof('HS-42');
+    // Synchronous check, before any await resolves — this is the frame the user
+    // actually sees.
+    expect(container().textContent).not.toContain('PROJECT-A-SECRET-NOTE');
+    await inFlight;
+  });
+
+  it('does not paint project A\'s cached proof for the same ticket number in project B', async () => {
+    // Project A caches HS-42 with a distinctive note.
+    activate('secret-A');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'PROJECT-A-SECRET-NOTE' })] });
+    getTicketCommits.mockResolvedValue(noCommits());
+    await loadAndRenderReviewProof('HS-42');
+    expect(container().textContent).toContain('PROJECT-A-SECRET-NOTE');
+
+    // Project B, same ticket number, its own data.
+    activate('secret-B');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'project-B-note' })] });
+    await loadAndRenderReviewProof('HS-42');
+    expect(container().textContent).toContain('project-B-note');
+    expect(container().textContent).not.toContain('PROJECT-A-SECRET-NOTE');
+  });
+
+  // The worst case: with BOTH fetches failing the code deliberately keeps what's
+  // shown, so a leaked cache entry would persist indefinitely rather than being
+  // corrected a moment later.
+  it('shows nothing from project A when project B\'s fetches both fail', async () => {
+    activate('secret-A');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'PROJECT-A-SECRET-NOTE' })] });
+    getTicketCommits.mockResolvedValue(noCommits());
+    await loadAndRenderReviewProof('HS-42');
+    expect(container().textContent).toContain('PROJECT-A-SECRET-NOTE');
+
+    activate('secret-B');
+    getReviewProof.mockRejectedValue(new Error('offline'));
+    getTicketCommits.mockRejectedValue(new Error('offline'));
+    await loadAndRenderReviewProof('HS-42');
+    expect(container().textContent).not.toContain('PROJECT-A-SECRET-NOTE');
+  });
+
+  it('still has project A\'s cached proof when switching back', async () => {
+    activate('secret-A');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'PROJECT-A-SECRET-NOTE' })] });
+    getTicketCommits.mockResolvedValue(noCommits());
+    await loadAndRenderReviewProof('HS-42');
+
+    activate('secret-B');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'project-B-note' })] });
+    await loadAndRenderReviewProof('HS-42');
+
+    activate('secret-A');
+    getReviewProof.mockResolvedValue({ notes: [note({ summary: 'PROJECT-A-SECRET-NOTE' })] });
+    await loadAndRenderReviewProof('HS-42');
+    expect(container().textContent).toContain('PROJECT-A-SECRET-NOTE');
+  });
+});
+

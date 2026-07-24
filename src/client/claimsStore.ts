@@ -31,6 +31,19 @@ export function applyClaims(claims: readonly ClaimRow[]): void {
   claimsSignal.value = claims;
 }
 
+/**
+ * HS-9415 (docs/125) — drop the current claim set and re-fetch, for a project
+ * switch. Claims are per-project, and `reloadAppState` didn't refresh them, so
+ * the claimed-by chips showed the PREVIOUS project's claims until the 5 s poll
+ * fired. Clearing synchronously first means the chip blanks rather than showing
+ * another project's claims during the fetch — a blank chip is honest, a stale
+ * one isn't.
+ */
+export function resetClaimsForProjectSwitch(): void {
+  applyClaims([]);
+  void refreshClaims();
+}
+
 /** Fetch the current claims from the server and apply them. Best-effort —
  *  a transient failure just leaves the last-known set until the next poll. */
 export async function refreshClaims(): Promise<void> {
