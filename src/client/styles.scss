@@ -4077,6 +4077,26 @@ body.cross-project-stats-active {
   font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
   font-size: 13px;
   color: var(--accent);
+
+  // HS-9408 — the copy confirmation is an OVERLAY, not a text swap, so the
+  // element's `textContent` is always the real ticket number. That's what makes
+  // a double-click copy the number instead of the literal string "Copied!", and
+  // what stops a pending restore from clobbering the next ticket's number.
+  // `position: relative` + absolute `::after` means the flash also can't shift
+  // the header layout the way replacing the text did.
+  &.is-copied {
+    position: relative;
+    color: transparent;
+
+    &::after {
+      content: 'Copied!';
+      position: absolute;
+      left: 0;
+      top: 0;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+  }
 }
 
 .detail-close {

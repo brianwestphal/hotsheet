@@ -18,18 +18,40 @@ import { bindDetailUpNext } from './upNext.js';
 export function bindDetailPanel(): void {
   byId('detail-close').addEventListener('click', closeDetail);
 
-  // Click ticket number to copy to clipboard
+  // Click ticket number to copy to clipboard.
+  //
+  // HS-9408 — the "Copied!" confirmation is a CSS overlay (`.is-copied` → a
+  // `::after`), NOT a `textContent` swap. Pre-fix the handler wrote 'Copied!'
+  // INTO the element and read the number back out of it on the next click, so
+  // the element was both the display and the source of truth. Two bugs fell out:
+  //
+  //   1. Clicking twice inside the 1 s window copied the literal string
+  //      "Copied!" to the clipboard (the reported symptom), and
+  //   2. the second click captured 'Copied!' as `original`, so the restore left
+  //      the header permanently reading "Copied!" until the panel re-rendered.
+  //
+  // A pending restore was also a landmine across ticket switches: `detail.tsx`
+  // rewrites this element on load, and a timer from the previous ticket would
+  // clobber the new number ~1 s later.
+  //
+  // Keeping `textContent` always equal to the real ticket number removes the
+  // whole class — there is no state to restore and nothing to race.
   const ticketNumEl = byId('detail-ticket-number');
   ticketNumEl.style.cursor = 'pointer';
   ticketNumEl.title = 'Click to copy';
+  let copiedFlashTimer: ReturnType<typeof setTimeout> | null = null;
   ticketNumEl.addEventListener('click', () => {
     const num = ticketNumEl.textContent;
-    if (num !== '') {
-      void navigator.clipboard.writeText(num);
-      const original = ticketNumEl.textContent;
-      ticketNumEl.textContent = 'Copied!';
-      setTimeout(() => { ticketNumEl.textContent = original; }, 1000);
-    }
+    if (num === '') return;
+    void navigator.clipboard.writeText(num);
+    ticketNumEl.classList.add('is-copied');
+    // Restart the flash on a repeat click rather than letting the first timer
+    // clear it out from under the second.
+    if (copiedFlashTimer !== null) clearTimeout(copiedFlashTimer);
+    copiedFlashTimer = setTimeout(() => {
+      ticketNumEl.classList.remove('is-copied');
+      copiedFlashTimer = null;
+    }, 1000);
   });
 
   bindDetailAutoSave();

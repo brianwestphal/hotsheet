@@ -47,9 +47,60 @@ describe('bindDetailPanel', () => {
     const el = document.getElementById('detail-ticket-number')!;
     el.click();
     expect(h.writeText).toHaveBeenCalledWith('HS-42');
-    expect(el.textContent).toBe('Copied!');
+    // HS-9408 — the flash is a CSS overlay; the label itself is never rewritten.
+    expect(el.classList.contains('is-copied')).toBe(true);
+    expect(el.textContent).toBe('HS-42');
     vi.advanceTimersByTime(1000);
-    expect(el.textContent).toBe('HS-42'); // restored
+    expect(el.classList.contains('is-copied')).toBe(false);
+    expect(el.textContent).toBe('HS-42');
+  });
+
+  // HS-9408 — the reported bug: a second click inside the 1 s confirmation window
+  // used to read the label back out of the DOM, which by then said "Copied!".
+  it('a second click within the flash window still copies the NUMBER, not "Copied!"', () => {
+    const el = document.getElementById('detail-ticket-number')!;
+    el.click();
+    vi.advanceTimersByTime(200); // still flashing
+    el.click();
+    expect(h.writeText).toHaveBeenCalledTimes(2);
+    expect(h.writeText).toHaveBeenNthCalledWith(2, 'HS-42');
+    expect(h.writeText).not.toHaveBeenCalledWith('Copied!');
+  });
+
+  // HS-9408 — the second failure mode: the repeat click captured 'Copied!' as the
+  // value to restore, permanently corrupting the header.
+  it('the label is intact after the flash from a double click expires', () => {
+    const el = document.getElementById('detail-ticket-number')!;
+    el.click();
+    vi.advanceTimersByTime(200);
+    el.click();
+    // The second click restarts the timer, so the flash outlives the first one.
+    vi.advanceTimersByTime(900);
+    expect(el.classList.contains('is-copied')).toBe(true);
+    vi.advanceTimersByTime(200);
+    expect(el.classList.contains('is-copied')).toBe(false);
+    expect(el.textContent).toBe('HS-42');
+  });
+
+  // HS-9408 — a pending restore used to be a landmine across ticket switches:
+  // `detail.tsx` rewrites this element on load, and the old timer would clobber
+  // the new number ~1 s later.
+  it('does not clobber the next ticket\'s number when the panel re-renders mid-flash', () => {
+    const el = document.getElementById('detail-ticket-number')!;
+    el.click();
+    el.textContent = 'HS-99'; // detail.tsx loading a different ticket
+    vi.advanceTimersByTime(1000);
+    expect(el.textContent).toBe('HS-99');
+  });
+
+  it('repeated clicks over time keep copying the number', () => {
+    const el = document.getElementById('detail-ticket-number')!;
+    for (let i = 0; i < 5; i++) {
+      el.click();
+      vi.advanceTimersByTime(1500); // let each flash fully expire
+    }
+    expect(h.writeText).toHaveBeenCalledTimes(5);
+    for (const call of h.writeText.mock.calls) expect(call[0]).toBe('HS-42');
   });
 
   it('does not copy when the ticket number is empty', () => {
