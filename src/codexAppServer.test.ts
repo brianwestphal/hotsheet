@@ -23,8 +23,9 @@ import {
   shutdownCodexAppServers,
   spawnCodexAppServerRun,
 } from './codexAppServer.js';
-import type { CodexTransportHandlers } from './codexDaemonTransport.js';
+import { codexDaemonSocketPath, type CodexTransportHandlers } from './codexDaemonTransport.js';
 import { getProjectSecret } from './secret-file.js';
+import { resolveTerminalCommand } from './terminals/resolveCommand.js';
 
 type SpawnFn = NonNullable<CodexAppServerDeps['spawnFn']>;
 
@@ -696,6 +697,73 @@ describe('HS-9394 — persisted rollout path + terminal attach command', () => {
       expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p !== '/s.sock', socketPath: '/s.sock' }))
         .toBe("codex resume th-a --remote 'unix:///s.sock'");
     });
+  });
+});
+
+// HS-9403 — the END-TO-END seam the maintainer hit: a user-created `{{aiCommand}}`
+// terminal (ai_tool=codex) resolving through the REAL `codexTerminalAttachCommand`
+// (no injected `codexAttachOverride` / `socketPath` / `fileExists`), driven by real
+// on-disk state (persisted thread + a rollout file that actually exists) and a real
+// codex app-server session. The prior HS-9394 tests all injected the attach
+// resolver, so this integration path — where the bug actually lives — was untested.
+describe('HS-9403 — {{aiCommand}} terminal resolves the codex attach end-to-end', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
+    vi.stubEnv('HOTSHEET_HOME', home);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  /** Persist a real thread + on-disk rollout via a live session (the "attach will
+   *  work" precondition). `connect` picks the transport: a daemon transport allows
+   *  the attach, `noDaemon` forces the stdio fallback that vetoes it. */
+  const seedLiveSession = async (mode: 'daemon' | 'stdio'): Promise<void> => {
+    const rolloutPath = join(dir, 'rollout-th-a.jsonl');
+    writeFileSync(rolloutPath, '{}', 'utf-8'); // on-disk existence = the attach signal
+    const fake = scriptedAppServer({ newThreadId: 'th-a', newThreadPath: rolloutPath });
+    const connect: CodexAppServerDeps['connectDaemon'] = mode === 'stdio'
+      ? noDaemon
+      : (h: CodexTransportHandlers) => {
+          // Wire the scripted child's stdout into the daemon handlers so boot completes.
+          fake.proc.stdout.on('data', (chunk: Buffer) => {
+            for (const line of chunk.toString().split('\n')) if (line.trim() !== '') h.onMessage(line);
+          });
+          return Promise.resolve({ kind: 'daemon' as const, send: (json: string) => { fake.proc.stdin.write(json); }, close: vi.fn() });
+        };
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: connect, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    // Confirm the precondition the resolver depends on is really on disk.
+    expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'th-a', rolloutPath });
+  };
+
+  const resolveAiTerminal = (): string => resolveTerminalCommand({
+    dataDir,
+    configOverride: { id: 'ai', command: '{{aiCommand}}' },
+    aiToolOverride: 'codex',
+    isAiToolOnPath: (b) => b === 'codex', // codex "on PATH" — environmental, not the bug
+  }).command;
+
+  it('resolves to `codex resume … --remote unix://<real socket>` when the drive runs on the DAEMON', async () => {
+    // A daemon-transport session is live → the attach is allowed even though the real
+    // daemon socket file doesn't exist in the test (the live-daemon branch of
+    // codexTerminalAttachCommand bypasses the socket-exists probe). This exercises
+    // the REAL codexTerminalAttachCommand through resolveTerminalCommand — no
+    // injected attach override — which is the seam the HS-9394 tests never covered.
+    await seedLiveSession('daemon');
+    expect(resolveAiTerminal()).toBe(`codex resume th-a --remote 'unix://${codexDaemonSocketPath()}'`);
+  });
+
+  it('resolves to PLAIN `codex` when the drive runs on STDIO — the attach is vetoed by design (two cores cannot share one rollout)', async () => {
+    // The maintainer-visible symptom when the shared daemon is NOT available: the
+    // drive falls back to a private stdio child that OWNS the rollout, so the terminal
+    // correctly launches plain `codex` and driven work never appears in it. This is
+    // intended behavior — the fix for that case is daemon availability, not the
+    // resolution (see the completion note / docs/123 §123.7).
+    await seedLiveSession('stdio');
+    expect(resolveAiTerminal()).toBe('codex');
   });
 });
 
