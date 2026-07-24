@@ -43,7 +43,8 @@ const { mockReadProjectList } = vi.hoisted(() => ({ mockReadProjectList: vi.fn<(
 vi.mock('../project-list.js', () => ({ readProjectList: mockReadProjectList }));
 
 const {
-  decideVacuumMode, dirSizeBytes, isExpectedVacuumLimitation, isVacuumFreezeError,
+  clusterSizeBreakdown, decideVacuumMode, dirSizeBytes, formatReclaimMessage,
+  isExpectedVacuumLimitation, isVacuumFreezeError,
   isVacuumFullCatalogError, maintainTelemetryDb,
   performVacuum, scheduleTelemetryMaintenance, scheduleTelemetryReclaim, telemetryDbDir,
 } = await import('./telemetryVacuum.js');
@@ -377,5 +378,75 @@ describe('scheduleTelemetryMaintenance / scheduleTelemetryReclaim (HS-8884)', ()
       maintain: (dir) => { seen.push(dir); return Promise.resolve(); },
     });
     expect(seen).toEqual(['/proj/cleared']);
+  });
+});
+
+/**
+ * HS-9422 — the reclaim message used to print `reclaimed <dir> (was 1031 MB)`
+ * over a directory that was still 1031 MB afterwards, on every launch. It
+ * reported the PRE size and never checked whether a byte was freed.
+ */
+describe('formatReclaimMessage (HS-9422)', () => {
+  const size = (dataMb: number, walMb: number) => ({
+    totalBytes: (dataMb + walMb) * 1024 * 1024,
+    dataBytes: dataMb * 1024 * 1024,
+    walBytes: walMb * 1024 * 1024,
+  });
+
+  it('says "no bytes reclaimed" when the directory did not shrink', () => {
+    const same = size(22, 1009);
+    const msg = formatReclaimMessage('/x/db', 'full', same, same);
+    expect(msg).toContain('no bytes reclaimed');
+    expect(msg).not.toContain('reclaimed 0 MB from');
+  });
+
+  // The observed shape: 1.0 GB cluster = 22 MB data + 1.0 GB WAL. Calling that a
+  // successful reclaim every launch is what made the real problem invisible.
+  it('names pg_wal as the unreclaimable bulk when WAL dominates', () => {
+    const same = size(22, 1009);
+    const msg = formatReclaimMessage('/x/db', 'full', same, same);
+    expect(msg).toContain('pg_wal');
+    expect(msg).toContain('max_wal_size');
+  });
+
+  it('does not blame WAL when the data files are the bulk', () => {
+    const same = size(500, 16);
+    expect(formatReclaimMessage('/x/db', 'plain', same, same)).not.toContain('pg_wal');
+  });
+
+  it('reports the ACTUAL delta when bytes were freed', () => {
+    const msg = formatReclaimMessage('/x/db', 'full', size(500, 16), size(100, 16));
+    expect(msg).toContain('reclaimed 400 MB');
+    expect(msg).toContain('now 116 MB');
+  });
+
+  it('breaks the remaining size into data + WAL either way', () => {
+    const msg = formatReclaimMessage('/x/db', 'full', size(500, 16), size(100, 32));
+    expect(msg).toContain('100 MB data');
+    expect(msg).toContain('32 MB WAL');
+  });
+});
+
+describe('clusterSizeBreakdown (HS-9422)', () => {
+  it('separates pg_wal from the data files', async () => {
+    const dir = await setupTestDb();
+    try {
+      // Use the MAIN cluster: `setupTestDb` creates it, whereas the telemetry
+      // sibling isn't materialized until something opens it. Either is fine —
+      // the function is about splitting WAL from data in any PGLite cluster.
+      const dbDir = join(dir, 'db');
+      const b = clusterSizeBreakdown(dbDir);
+      // A real cluster always has both; the point is that they are counted apart,
+      // because only `dataBytes` is reclaimable by any VACUUM mode.
+      expect(b.totalBytes).toBeGreaterThan(0);
+      expect(b.walBytes).toBeGreaterThan(0);
+      expect(b.dataBytes).toBe(b.totalBytes - b.walBytes);
+    } finally {
+      await cleanupTestDb(dir);
+    }
+  });
+
+  it('reports zeros for a directory that does not exist', () => {
+    expect(clusterSizeBreakdown('/nope/does/not/exist')).toEqual({ totalBytes: 0, walBytes: 0, dataBytes: 0 });
   });
 });

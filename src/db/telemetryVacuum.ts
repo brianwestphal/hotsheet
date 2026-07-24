@@ -259,6 +259,55 @@ export interface MaintainResult {
 }
 
 /**
+ * HS-9422 — the size a reclaim pass can actually influence, split from the part
+ * it cannot.
+ *
+ * `VACUUM` / `VACUUM FULL` only ever shrink the DATA files (`base/`). They do not
+ * touch `pg_wal/`, which on this codebase's telemetry clusters is where nearly
+ * all the bulk lives: a measured cluster was 1.0 GB total = 22 MB of `base/`
+ * plus 1.0 GB of WAL (65 x 16 MB segments, most of them three weeks old).
+ *
+ * That WAL is NOT a leak — it is `max_wal_size` (Postgres default 1 GB) doing
+ * exactly what it says. Empirically (probed against PGLite 0.3.x while fixing
+ * this ticket): an explicit `CHECKPOINT` does NOT return those segments, and
+ * `VACUUM FULL` slightly *grows* WAL because rewriting the tables is itself
+ * logged. So the reclaim message must not count WAL as reclaimable, or it will
+ * keep reporting a triumphant "reclaimed" over a directory that never shrinks.
+ */
+export function clusterSizeBreakdown(dbDir: string): { totalBytes: number; walBytes: number; dataBytes: number } {
+  const totalBytes = dirSizeBytes(dbDir);
+  const walBytes = dirSizeBytes(join(dbDir, 'pg_wal'));
+  return { totalBytes, walBytes, dataBytes: Math.max(0, totalBytes - walBytes) };
+}
+
+const MB_DIVISOR = 1024 * 1024;
+const mb = (bytes: number): string => String(Math.round(bytes / MB_DIVISOR));
+
+/**
+ * HS-9422 — the honest reclaim line.
+ *
+ * The old message read `reclaimed <dir> (was 1031 MB)` and printed on every
+ * launch over a directory that was still 1031 MB afterwards: it reported the
+ * PRE size and never checked whether a single byte was freed. Now we measure
+ * after, report the actual delta, and break out the WAL that no VACUUM mode can
+ * return — so "nothing was freed" is visible instead of being dressed up as a
+ * success.
+ */
+export function formatReclaimMessage(dbDir: string, mode: string, before: { totalBytes: number; walBytes: number; dataBytes: number }, after: { totalBytes: number; walBytes: number; dataBytes: number }): string {
+  const freed = before.totalBytes - after.totalBytes;
+  const label = `  Telemetry VACUUM${mode === 'full' ? ' FULL' : ''}:`;
+  const where = `${dbDir} (now ${mb(after.totalBytes)} MB: ${mb(after.dataBytes)} MB data + ${mb(after.walBytes)} MB WAL)`;
+  if (freed <= 0) {
+    // WAL-dominated is the common case and the one that used to read as success.
+    const walNote = after.walBytes > after.dataBytes
+      ? ' — the bulk is pg_wal, which VACUUM cannot reclaim (bounded by max_wal_size, not a leak)'
+      : '';
+    return `${label} no bytes reclaimed from ${where}${walNote}.`;
+  }
+  return `${label} reclaimed ${mb(freed)} MB from ${where}.`;
+}
+
+/**
  * HS-9420 — release the WASM heap for a telemetry cluster THIS pass opened.
  *
  * The `databases` cache in `connection.ts` is unbounded, so every cluster opened
@@ -314,6 +363,8 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
   // already had open may have a query in flight.
   const clusterDataDir = telemetryClusterDataDir(dataDir);
   const wasAlreadyOpen = isDbOpenForDir(clusterDataDir);
+  // HS-9422 — captured before the pass so the log can report an actual delta.
+  const beforeBreakdown = clusterSizeBreakdown(dbDir);
   try {
     // Return the result OUT of the DB context (rather than mutating closure vars)
     // so the post-context `if (fullAttempted)` keeps its real `boolean` type.
@@ -340,7 +391,10 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
     // A soft skip already logged its own calm warning in `performVacuum`; only
     // announce a real reclaim here.
     if (execMode !== 'skipped') {
-      console.log(`  Telemetry VACUUM${execMode === 'full' ? ' FULL' : ''}: reclaimed ${dbDir} (was ${String(Math.round(sizeBytes / (1024 * 1024)))} MB).`);
+      // HS-9422 — measure AFTER, and report the real delta. The old line reported
+      // the pre-size as if it were reclaimed, so a cluster that cannot shrink
+      // looked like a successful reclaim on every single launch.
+      console.log(formatReclaimMessage(dbDir, execMode, beforeBreakdown, clusterSizeBreakdown(dbDir)));
     }
   } catch (err) {
     console.error(`Telemetry VACUUM (${mode}) failed for ${dbDir}:`, err);
