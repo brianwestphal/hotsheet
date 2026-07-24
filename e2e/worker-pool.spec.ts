@@ -16,10 +16,23 @@ test.describe('Worker pool + in-flight panels (HS-9136)', () => {
     const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
     const secret = projects[0]?.secret ?? '';
     headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret };
+    // HS-9411 (docs/124) — the whole worker surface is behind the
+    // `dev_parallel_workers` In Development gate, which defaults OFF. These tests
+    // exercise the feature itself, so opt in; `e2e/in-development-gates.spec.ts`
+    // owns the gate-off assertions.
+    await request.patch('/api/file-settings/layer', {
+      headers, data: { layer: 'local', settings: { dev_parallel_workers: true } },
+    });
   });
 
   test.afterAll(async ({ request }) => {
     try { await request.post('/api/channel/disable', { headers }); } catch { /* ignore */ }
+    // Restore the default so later specs see the shipped (gated-off) state.
+    try {
+      await request.patch('/api/file-settings/layer', {
+        headers, data: { layer: 'local', settings: { dev_parallel_workers: false } },
+      });
+    } catch { /* ignore */ }
   });
 
   test('worker-action buttons are hidden until the channel is enabled, then visible', async ({ page, request }) => {

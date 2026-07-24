@@ -76,14 +76,19 @@ Usage:
 
 Options:
   --port <number>          Port to run on (default: 4174)
-  --bind <address>         Interface to listen on (default: 127.0.0.1, loopback only).
-                           Use 0.0.0.0 or a specific IP to expose off-box — then GET
-                           requests from untrusted origins require the secret and you
+  --bind <address>         [ALPHA] Interface to listen on (default: 127.0.0.1, loopback
+                           only). Use 0.0.0.0 or a specific IP to expose off-box — then
+                           GET requests from untrusted origins require the secret and you
                            must list remote origins in config.json:trustedOrigins.
+                           Off-box serving is ALPHA: mutual-TLS enforcement is tested but
+                           has had no real off-box deployment, and the client half (using
+                           a remote server from another machine's UI) is unfinished. See
+                           docs/97 + docs/feature-health.md before relying on it.
   --server <mode>          Run the SERVER only — don't auto-launch a client (browser).
                            mode = localhost  (loopback bind, like the default) or
-                                  remote-access  (binds 0.0.0.0 by default — override
-                                  with --bind; an exposed bind requires mutual TLS).
+                                  remote-access  [ALPHA] (binds 0.0.0.0 by default —
+                                  override with --bind; an exposed bind requires mutual
+                                  TLS). Same alpha caveats as --bind above.
   --data-dir <path>        Store data in an alternative location (default: .hotsheet/)
   --no-open                Don't open the browser on startup
   --strict-port            Fail if the requested port is in use (don't auto-select)

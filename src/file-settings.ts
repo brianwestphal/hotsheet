@@ -61,6 +61,17 @@ const FileSettingsSchema = z.object({
   antigravity_interactive_permissions: z.boolean().optional(),
   // HS-9359 — route codex tool calls through the §47 permission overlay.
   codex_interactive_permissions: z.boolean().optional(),
+  // HS-9411 (docs/124) — the "In Development" gates. Declared here so the layered
+  // settings API carries them; the authoritative list + labels live in
+  // `src/devFeatures.ts`. All are `dev_`-prefixed ⇒ routed to the LOCAL layer by
+  // `defaultScope` below, and all default to FALSE (absent = off).
+  dev_parallel_workers: z.boolean().optional(),
+  dev_tool_codex: z.boolean().optional(),
+  dev_tool_antigravity: z.boolean().optional(),
+  dev_tool_opencode: z.boolean().optional(),
+  dev_tool_gemini: z.boolean().optional(),
+  dev_tool_goose: z.boolean().optional(),
+  dev_remote_access: z.boolean().optional(),
 }).loose();
 
 /** Keys reserved for server/infrastructure use — not project settings. */
@@ -206,6 +217,13 @@ const LOCAL_SCOPE_KEYS = new Set([
 /** Key suffixes that default to the `local` layer (e.g. `ai_instructions_nudge_dismissed`). */
 const LOCAL_SCOPE_SUFFIXES = ['_nudge_dismissed'];
 
+/** HS-9411 (docs/124) — key PREFIXES that default to the `local` layer. `dev_` is
+ *  the "In Development" feature gates (`src/devFeatures.ts`): opting a machine into
+ *  a half-built surface is a personal, per-device decision and must never be
+ *  committed for the team. Enforcing it by prefix (rather than listing each key in
+ *  `LOCAL_SCOPE_KEYS`) means a NEW gate cannot accidentally ship as shared. */
+const LOCAL_SCOPE_PREFIXES = ['dev_'];
+
 /**
  * HS-9002 — the DEFAULT layer for a setting key. The `secret`/`secretPathHash`
  * sidecar (HS-8999) and the `authoritativeDataDir` worktree pointer are handled
@@ -216,6 +234,7 @@ const LOCAL_SCOPE_SUFFIXES = ['_nudge_dismissed'];
 export function defaultScope(key: string): SettingsLayer {
   if (LOCAL_SCOPE_KEYS.has(key)) return 'local';
   if (LOCAL_SCOPE_SUFFIXES.some(suffix => key.endsWith(suffix))) return 'local';
+  if (LOCAL_SCOPE_PREFIXES.some(prefix => key.startsWith(prefix))) return 'local';
   return 'shared';
 }
 

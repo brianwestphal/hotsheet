@@ -8,6 +8,7 @@ import { channelStore } from './channelStore.js';
 import { shouldHideCodexDriveSurface } from './codexDriveGate.js';
 import { TIMERS } from './constants/timers.js';
 import { isDemoMode } from './demoMode.js';
+import { isDevEnabled } from './devFeatures.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { multiConnectionMessages } from './multiConnectionWarning.js';
 import {
@@ -587,8 +588,13 @@ export async function initChannel() {
     return;
   }
   section.style.display = '';
-  if (autoRow) autoRow.style.display = '';
-  if (workerActionsRow) workerActionsRow.style.display = '';
+  // HS-9411 (docs/124) — the worker surfaces are ALSO behind the "Parallel agent
+  // workers" In Development gate. The channel being enabled is necessary but no
+  // longer sufficient; `style.display` is set here rather than left to
+  // `applyDevFeatureGates` because this function owns these two rows' visibility.
+  const workersAllowed = isDevEnabled('dev_parallel_workers');
+  if (autoRow) autoRow.style.display = workersAllowed ? '' : 'none';
+  if (workerActionsRow) workerActionsRow.style.display = workersAllowed ? '' : 'none';
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling(channelBusyTimeout, (t) => { channelBusyTimeout = t; });

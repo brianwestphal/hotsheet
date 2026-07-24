@@ -17,6 +17,15 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
     const readTool = async (): Promise<string | undefined> => (await readSettings()).ai_tool;
     const readFlag = async (): Promise<boolean | undefined> => (await readSettings()).antigravity_interactive_permissions;
 
+    // HS-9411 (docs/124) — `antigravity` is hidden from the AI-tool dropdown until
+    // its In Development gate is on. This spec drives that dropdown, so opt in
+    // first; `e2e/in-development-gates.spec.ts` owns the gate-off assertions.
+    const projects = await request.get('/api/projects').then(r => r.json()) as { secret: string }[];
+    const gateHeaders = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+    await request.patch('/api/file-settings/layer', {
+      headers: gateHeaders, data: { layer: 'local', settings: { dev_tool_antigravity: true } },
+    });
+
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
@@ -59,5 +68,9 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
     await page.locator('#settings-antigravity-interactive-permissions').uncheck();
     await expect.poll(readFlag, { timeout: 5000 }).toBe(false);
     await page.locator('#ai-tool-select').selectOption('auto');
+    // Restore the shipped default (gate off) so later specs see it.
+    await request.patch('/api/file-settings/layer', {
+      headers: gateHeaders, data: { layer: 'local', settings: { dev_tool_antigravity: false } },
+    });
   });
 });

@@ -2,6 +2,10 @@
 
 **Snapshot date: 2026-07-24.** Regenerate with **`/feature-health`**.
 
+> **Gated since HS-9411 (docs/124):** the worst offenders below — parallel agent workers, each
+> non-Claude AI tool, and remote access — are now **off by default** behind Settings → Experimental →
+> **In Development**. Their status here is unchanged; they are simply no longer reachable by accident.
+
 This doc answers one question for every feature: **does it actually work?**
 
 That is deliberately NOT the question [`ai/requirements-summary.md`](ai/requirements-summary.md)

@@ -7,6 +7,7 @@ import { refreshLogBadge } from './commandLog.js';
 import { getCommandLastRun, recordCommandRun } from './commandRunTimes.js';
 import { hideCommandTooltip, showCommandTooltip } from './commandTooltip.js';
 import { confirmDialog } from './confirm.js';
+import { isDevEnabled } from './devFeatures.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { closeAllMenus, createDropdown, type DropdownItem, positionDropdown } from './dropdown.js';
 import { CMD_COLORS, CMD_ICONS, contrastColor, type CustomCommand, getCommandItems,isGroup } from './experimentalSettings.js';
@@ -150,7 +151,10 @@ function renderButton(cmd: CustomCommand) {
     wireClaudeButtonPress(btn, cmd);
     // HS-9083 (docs/103) — opt-in "Run on…" chevron → the target picker (Main /
     // a worker / All workers). Single-click on the button body stays Main.
-    appendClaudeTargetChevron(btn, cmd);
+    // HS-9411 (docs/124) — worker targets only exist when the "Parallel agent
+    // workers" gate is on; without it the chevron would open a picker whose only
+    // entry is Main.
+    if (isDevEnabled('dev_parallel_workers')) appendClaudeTargetChevron(btn, cmd);
   }
   return btn;
 }

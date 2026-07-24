@@ -2,16 +2,19 @@ import { z } from 'zod';
 
 import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
+import { IN_DEVELOPMENT_OPTION_SUFFIX, isAiToolSelectable } from '../devFeatures.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from './agentBackend.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindViewsTab } from './customViews.js';
+import { isAiToolDevEnabled } from './devFeatures.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
 import { isDiagnosticsEnabled, setDiagnosticsEnabled } from './globalDiagnostics.js';
 import { ICON_UNDO_2 } from './icons.js';
+import { bindInDevelopmentSettings } from './inDevelopmentSettings.js';
 import { bindKeysSettings } from './keysSettings.js';
 import { watchHorizontalOverflow } from './scrollbarPref.js';
 import { bindCategorySettings } from './settingsCategories.js';
@@ -28,6 +31,27 @@ import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.
 import { isTerminalWebglOptOut, isWebgl2Available, setTerminalWebglOptOut } from './terminalWebgl.js';
 import { showToast } from './toast.js';
 import { maybeOfferToolPrep } from './toolPrepNudge.js';
+
+/**
+ * HS-9411 (docs/124) — hide `ai_tool` options whose In Development gate is off.
+ *
+ * An ungated tool (auto / claude / the Tier-B editor tools) is always offered. A
+ * gated one is offered when its gate is on, OR when `currentTool` already equals
+ * it — in which case the label gets an "— in development" suffix so the state is
+ * legible rather than mysterious. Hiding the SELECTED option would make the
+ * `<select>` render blank and the next change silently rewrite a working project.
+ */
+function applyAiToolDevGating(select: HTMLSelectElement, currentTool: string): void {
+  for (const option of Array.from(select.options)) {
+    const base = option.dataset.baseLabel ?? option.textContent;
+    option.dataset.baseLabel = base; // remember the pristine label across re-opens
+    const enabled = isAiToolDevEnabled(option.value);
+    const selectable = isAiToolSelectable(option.value, enabled, currentTool);
+    option.hidden = !selectable;
+    option.disabled = !selectable;
+    option.textContent = selectable && !enabled ? base + IN_DEVELOPMENT_OPTION_SUFFIX : base;
+  }
+}
 
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindTabSwitching();
@@ -50,6 +74,7 @@ export function bindSettingsDialog(rebuildCategoryUI: () => void) {
     void import('./pluginSettings.js').then(({ bindPluginSettings }) => bindPluginSettings());
   }
   bindExperimentalSettings();
+  bindInDevelopmentSettings(); // HS-9411 (docs/124) — the In Development gates
   bindCategorySettings(rebuildCategoryUI);
   bindViewsTab(); // HS-9093 — Custom Views management tab
   bindCliToolSettings();
@@ -213,6 +238,11 @@ function bindGeneralTab() {
       worklistPreambleInput.value = fs.worklist_preamble ?? '';
       integrationGateInput.value = fs.integrationGate ?? '';
       const tool = typeof fs.ai_tool === 'string' && fs.ai_tool !== '' ? fs.ai_tool : 'auto';
+      // HS-9411 (docs/124) — hide the options for in-development tools whose gate
+      // is off. MUST run before assigning `.value`: a hidden-but-present option is
+      // still assignable, and the already-selected tool is deliberately kept
+      // visible so an existing working project is never silently switched.
+      if (aiToolSelect !== null) applyAiToolDevGating(aiToolSelect, tool);
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       if (agyPermsCheckbox !== null) agyPermsCheckbox.checked = fs.antigravity_interactive_permissions === true;
       // HS-9359 / HS-9383 (docs/121 O4) — default flipped ON for the app-server

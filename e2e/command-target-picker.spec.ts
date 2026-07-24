@@ -50,12 +50,25 @@ test.describe('Command-button target picker (HS-9083)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    // HS-9411 (docs/124) — the chevron only renders when the `dev_parallel_workers`
+    // In Development gate is on (worker targets don't exist otherwise). Opt in, then
+    // reload so the client picks the gate up. The gate-off case lives in
+    // `e2e/in-development-gates.spec.ts`.
+    await page.request.patch('/api/file-settings/layer', {
+      headers: await projectHeaders(page),
+      data: { layer: 'local', settings: { dev_parallel_workers: true } },
+    });
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
   });
 
   test.afterEach(async ({ page }) => {
     try {
       const headers = await projectHeaders(page);
       await page.request.post('/api/channel/disable', { headers });
+      await page.request.patch('/api/file-settings/layer', {
+        headers, data: { layer: 'local', settings: { dev_parallel_workers: false } },
+      });
     } catch { /* ignore */ }
   });
 

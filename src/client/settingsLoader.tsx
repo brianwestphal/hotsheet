@@ -2,6 +2,7 @@ import { getCategories, getLayeredFileSettings, getSettings } from '../api/index
 import { suppressAnimation } from './animate.js';
 import { setAppTitleFromActiveProject } from './appTitle.js';
 import { applyDetailPosition, applyDetailSize, updateDetailCategory } from './detail.js';
+import { applyDevFeatureGates, hydrateDevFeatures } from './devFeatures.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { DEFAULT_LAYOUT, DEFAULT_SETTINGS, DEFAULT_SORT_BY, DEFAULT_SORT_DIR, state } from './state.js';
 import { loadTickets } from './ticketList.js';
@@ -36,6 +37,12 @@ export async function loadSettings() {
       state.settings.ai_tool = typeof fileResolved.ai_tool === 'string' && fileResolved.ai_tool !== ''
         ? fileResolved.ai_tool
         : 'auto';
+      // HS-9411 (docs/124) — hydrate the In Development gates for this project.
+      // `hydrateDevFeatures` REPLACES the cache (every gate defaults to false), so
+      // a project that never enabled one can't inherit the previous project's
+      // `true` — the HS-9407 rule applied to the newest per-project state.
+      hydrateDevFeatures(fileResolved);
+      applyDevFeatureGates();
     } catch { /* file-settings fetch failed — keep DB values */ }
     // HS-9407 — every per-project value below is assigned UNCONDITIONALLY,
     // falling back to its `DEFAULT_SETTINGS` (or `DEFAULT_LAYOUT` / `DEFAULT_SORT_*`)

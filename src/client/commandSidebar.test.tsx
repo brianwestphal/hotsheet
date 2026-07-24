@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelTriggerTarget, WorkerSlotView } from '../api/index.js';
 import { _resetRunningButtonsForTesting, _runningButtonsForTesting,buildTargetMenuItems, commandKey, renderChannelCommands, runClaudeCommandOnTarget, runningKey } from './commandSidebar.js';
+import { hydrateDevFeatures } from './devFeatures.js';
 import { toElement } from './dom.js';
 import type { CustomCommand } from './experimentalSettings.js';
 import type * as experimentalSettings from './experimentalSettings.js';
@@ -215,7 +216,10 @@ describe('renderButton running-state branch (HS-8060)', () => {
   });
 
   // HS-9083 (docs/103) — opt-in "Run on…" target picker on Claude command buttons.
+  // HS-9411 (docs/124) — the chevron is behind the `dev_parallel_workers` In
+  // Development gate, so these enable it first; the gate-off case is asserted below.
   it('a Claude command button gets a target chevron; a shell button does not', () => {
+    hydrateDevFeatures({ dev_parallel_workers: true });
     isChannelAliveMock.mockReturnValue(true);
     getCommandItemsMock.mockReturnValue([makeClaudeCommand('Ask')]);
     document.getElementById('channel-play-section')!.style.display = '';
@@ -225,6 +229,18 @@ describe('renderButton running-state branch (HS-8060)', () => {
     setupSidebarDOM();
     getCommandItemsMock.mockReturnValue([makeShellCommand('Build')]);
     renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn .cmd-target-chevron')).toBeNull();
+  });
+
+  // HS-9411 — worker targets don't exist without the gate, so the chevron would
+  // open a picker whose only entry is Main. Default-off must hide it.
+  it('no target chevron when the parallel-workers gate is off (HS-9411)', () => {
+    hydrateDevFeatures({});
+    isChannelAliveMock.mockReturnValue(true);
+    getCommandItemsMock.mockReturnValue([makeClaudeCommand('Ask')]);
+    document.getElementById('channel-play-section')!.style.display = '';
+    renderChannelCommands();
+    expect(document.querySelector('.channel-command-btn')).not.toBeNull();
     expect(document.querySelector('.channel-command-btn .cmd-target-chevron')).toBeNull();
   });
 
@@ -240,6 +256,7 @@ describe('renderButton running-state branch (HS-8060)', () => {
   });
 
   it('clicking the chevron opens the picker menu without triggering Main', async () => {
+    hydrateDevFeatures({ dev_parallel_workers: true }); // HS-9411 — gate the chevron on
     isChannelAliveMock.mockReturnValue(true);
     triggerBusyMock.mockReset();
     apiMock.mockResolvedValue({ targetN: 0, workers: [], readyCount: 0 });

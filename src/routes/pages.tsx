@@ -219,7 +219,7 @@ pageRoutes.get('/', (c) => {
                 on a single row, sitting just above the "Auto worker pool" switch.
                 Follows the same visibility as the switch (hidden until the
                 channel is enabled); wired in `app.tsx::initWorkerActionButtons`. */}
-            <div className="sidebar-worker-actions" id="sidebar-worker-actions" style="display:none">
+            <div className="sidebar-worker-actions" id="sidebar-worker-actions" style="display:none" data-dev-feature="dev_parallel_workers">
               {/* HS-9113 — iconic only (no labels); lucide `bolt` for the worker
                   pool and lucide `radio` for in-flight work. The `title` tooltips
                   carry the meaning now that the text spans are gone. */}
@@ -235,7 +235,7 @@ pageRoutes.get('/', (c) => {
                 lets them self-claim the work (no manual stepper/partition). Shown
                 alongside the play section (hidden until the channel is enabled);
                 bound + state-synced by `workerAutoMode.ts`. */}
-            <div className="sidebar-worker-auto" id="sidebar-worker-auto" style="display:none">
+            <div className="sidebar-worker-auto" id="sidebar-worker-auto" style="display:none" data-dev-feature="dev_parallel_workers">
               <label className="worker-auto-toggle" title="Automatically size a pool of parallel worktree workers to the current Up Next set, and let them self-claim the work">
                 <input type="checkbox" id="worker-auto-checkbox" className="worker-auto-checkbox" />
                 <span className="worker-auto-switch" aria-hidden="true"></span>
@@ -614,7 +614,7 @@ pageRoutes.get('/', (c) => {
                 install it on the remote machine, revoke when needed. HS-9218 —
                 moved here (just before Plugins) + given a machine-local note,
                 grouping it with the other machine-local tabs. */}
-            <button className="settings-tab" data-tab="devices" id="settings-tab-devices">
+            <button className="settings-tab" data-tab="devices" id="settings-tab-devices" data-dev-feature="dev_remote_access">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
               <span>Remote Access</span>
             </button>
@@ -1202,6 +1202,21 @@ pageRoutes.get('/', (c) => {
                   <label><input type="checkbox" id="settings-diagnostics-enabled" /> Enable diagnostic UI surfaces (slow-server banner + UI-hang toast)</label>
                   <span className="settings-hint">When on, the slow-server banner (HS-8175 / HS-8226) surfaces when an HTTP request stays in flight past 3 s, and the HS-8054 longtask observer emits a small toast for each ≥ 500 ms UI hang (rate-limited to once every 10 s). Off by default — both surfaces are primarily useful when actively investigating event-loop blocks. Freezes are always logged to <code>&lt;dataDir&gt;/freeze.log</code> for diagnostics regardless of this setting.</span>
                 </div>
+              </div>
+              {/* HS-9411 (docs/124) — In Development gates. The checkbox rows are
+                  rendered client-side from the shared `DEV_FEATURES` list
+                  (`src/devFeatures.ts`) so adding a gate is a one-file change.
+                  Every key is `dev_`-prefixed ⇒ routed to settings.local.json by
+                  `defaultScope`, and defaults to OFF. */}
+              <div className="settings-section settings-section-in-development" style="margin-top:24px" data-scope-complex="local-only">
+                <div className="settings-section-header">
+                  <h3>In Development <span className="experimental-badge">Experimental</span></h3>
+                </div>
+                <p className="settings-in-development-note">
+                  <span>{'⚠'} The following features are in active development and are disabled by default. They are likely incomplete and/or not well tested — <strong>enable them at your own risk.</strong></span>
+                </p>
+                <p className="settings-local-note"><span><strong>Local to this machine.</strong> These toggles live in <code>settings.local.json</code> (gitignored) — they apply to this project on this machine only and are never committed or shared with your team.</span></p>
+                <div id="settings-in-development-list"></div>
               </div>
             </div>
             <div className="settings-tab-panel" data-panel="terminal" id="settings-terminal-panel">
