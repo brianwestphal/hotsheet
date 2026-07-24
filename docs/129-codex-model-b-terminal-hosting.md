@@ -60,23 +60,32 @@ default OFF). `bootSession` tries discovery FIRST (daemon-only, gated) → `thre
 discovered id, else the existing model-A resume-persisted/`thread/start` fallback. Dormant until
 Phase 2 gives it a daemon-hosted terminal to discover.
 
-## 129.4 Phase 2 — terminal daemon-hosted (THIS, HS-9429)
+## 129.4 Phase 2 — terminal daemon-hosted (SHIPPED, HS-9429)
 
-Make the codex `{{aiCommand}}` terminal launch daemon-hosted so it owns a discoverable thread:
+The codex `{{aiCommand}}` terminal launches daemon-hosted so it owns a discoverable thread:
 
-- **Command**: `codex --remote 'unix://<sock>' -C <projectDir>` (fresh) or `codex resume --last
-  --remote 'unix://<sock>' -C <projectDir>` (continue) instead of standalone `codex` / the model-A
-  `codex resume <driveId> --remote` chase. `-C <projectDir>` fixes the thread's cwd to the project so
-  the drive's `pickThreadForCwd` matches it. Resolved in `terminals/resolveCommand.ts::pickAiCommand`
-  (codex branch), replacing the `codexTerminalAttachCommand` chase for model-B.
-- **Daemon readiness**: `codex --remote` needs the daemon up at launch. `ensureCodexDaemonRunning`
-  (HS-9388/9396) starts it; the open question (§129.7 Q2) is whether to **await** it in the spawn
-  path (async refactor of the currently-synchronous resolve) or keep spawn instant and only go
-  daemon-hosted when the socket already exists (fall back to plain codex otherwise).
-- **Gate**: reuse `HOTSHEET_CODEX_DISCOVER_THREAD` (Phase-1) so terminal-hosting + drive-discovery
+- **Command** (`codexAppServer.ts::codexTerminalRemoteCommand`): `codex --remote 'unix://<sock>'
+  -C '<projectDir>'` — **fresh** per open (maintainer decision Q1=a; users run `/resume` inside codex
+  to continue a prior session). `-C <projectDir>` (= `dirname(dataDir)`) pins the session cwd so the
+  drive's `pickThreadForCwd` matches. `terminals/resolveCommand.ts::pickAiCommand` uses it (codex
+  branch) when the model-B gate is on, else the model-A `codexTerminalAttachCommand`; both fall
+  through to plain `codex` when their precondition isn't met.
+- **Daemon readiness** (maintainer decision Q2=a — await): the terminal spawn AWAITS the daemon so
+  `codex --remote` reliably connects. Rather than rippling async through the whole registry,
+  `spawnIntoSession` (`registry/lifecycle.ts`) checks `codexTerminalNeedsDaemonEnsure` (gate on +
+  `ai_tool=codex` + socket not up) and, only in that rare cold case, `await`s `ensureCodexDaemonRunning`
+  then spawns; **every other spawn stays synchronous** (so `attach`'s synchronous pty read is
+  untouched). A failed ensure resolves to plain `codex` (the socket-absent fallback).
+- **Gate**: reuses `HOTSHEET_CODEX_DISCOVER_THREAD` (Phase-1) so terminal-hosting + drive-discovery
   flip on together; Phase 3 promotes it to a real setting.
 - **Fallback**: daemon unreachable at spawn → plain `codex` (works standalone; the drive then uses
   model-A). The play button always works.
+- **Known gate-on quirk (resolved by Phase 3):** with the gate on, the model-A "↻ Rejoin codex" chip
+  (`codexReattachAvailable`, keyed off `codexTerminalAttachCommand`) can still evaluate against the
+  now-unused attach command. Harmless while experimental; HS-9430 removes the chip.
+- **Remaining before default-on:** the live interplay check (real `codex --remote` terminal + a drive
+  `turn/start` on its thread rendering in the terminal) is manual (§129.8) — the automated tests cover
+  the resolution + ensure-decision, not a real codex binary.
 
 ## 129.5 Phase 3 — retire the chase (PLANNED, HS-9430)
 
@@ -95,19 +104,14 @@ starts its own thread) so cron/worker/no-UI runs never regress.
 | Daemon unreachable at terminal spawn | Terminal launches plain `codex`; drive uses model-A |
 | Gate off (default, pre–Phase 3) | Entirely model-A — no discovery, no `--remote` |
 
-## 129.7 Open decisions (maintainer)
+## 129.7 Decisions (RESOLVED, HS-9429 maintainer)
 
-- **Q1 — continuity.** On terminal open, a **fresh** codex conversation (`codex --remote`) every
-  time, or **continue** the most recent for that cwd (`codex resume --last --remote -C <dir>`)?
-  Fresh = a clean session each open; continue = the conversation persists across restarts. (Recommend
-  continue, falling back to fresh when there's no prior session.)
-- **Q2 — daemon readiness vs spawn latency.** To launch daemon-hosted reliably the daemon must be up
-  first. Option (a) **await `ensureCodexDaemonRunning`** in the spawn path (an async refactor of the
-  synchronous `resolveTerminalCommand`; adds a one-time ~1–2 s to terminal open when the daemon is
-  cold), or (b) keep spawn instant and go daemon-hosted **only when the socket already exists**,
-  relying on prestart + plain-codex fallback otherwise (simpler, but a cold first open still lands on
-  plain codex — a smaller version of the race we're removing). (Recommend (a) — the whole point of B
-  is to kill the race.)
+- **Q1 — continuity → (a) FRESH.** Each terminal open is a new `codex --remote` conversation; users
+  run `/resume` inside codex to continue a prior session. (No `--last`, no id tracking.)
+- **Q2 — daemon readiness → (a) AWAIT.** The spawn awaits `ensureCodexDaemonRunning` before launching
+  daemon-hosted. Implemented as a *scoped defer* in `spawnIntoSession` (only the cold codex-model-B
+  case awaits; all other spawns stay synchronous) rather than an async refactor of the whole
+  registry — same guarantee, minimal surface (§129.4).
 
 ## 129.8 Testing
 

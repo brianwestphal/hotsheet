@@ -267,6 +267,51 @@ export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandD
 }
 
 /**
+ * HS-9429 (docs/129 §129.4, model-B Phase 2) — the DAEMON-HOSTED terminal launch
+ * for a codex project: `codex --remote 'unix://<sock>' -C '<projectDir>'`. Unlike
+ * the model-A attach (`codexTerminalAttachCommand`, which *resumes the drive's*
+ * thread), this launches a FRESH daemon-hosted session that OWNS its own live
+ * thread — the drive then DISCOVERS it by cwd (HS-9428) and drives it in place.
+ * `-C <projectDir>` pins the session cwd to the project (= `dirname(dataDir)`) so
+ * the drive's `pickThreadForCwd` matches it.
+ *
+ * Returns null (→ caller falls back to plain `codex`) when the model-B gate is off,
+ * the drive is disabled, or the daemon socket isn't up yet. Sync — the daemon is
+ * ensured BEFORE this resolves (see `codexTerminalNeedsDaemonEnsure` +
+ * `spawnIntoSession`), so a null here means "daemon genuinely unavailable".
+ *
+ * Continuity is deliberately per-open FRESH (maintainer decision HS-9429): a new
+ * conversation each terminal open; users run `/resume` inside codex to continue a
+ * prior session.
+ */
+export function codexTerminalRemoteCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {
+  if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return null;
+  const socketPath = deps.socketPath ?? codexDaemonSocketPath();
+  const fileExists = deps.fileExists ?? existsSync;
+  if (!fileExists(socketPath)) return null; // daemon not up → plain codex fallback
+  // Single-quote the URL + cwd — home/project dirs can contain spaces.
+  return `codex --remote 'unix://${socketPath}' -C '${dirname(dataDir)}'`;
+}
+
+/**
+ * HS-9429 (docs/129 §129.4) — should the terminal spawn AWAIT the daemon before
+ * launching? True only when model-B is on for a codex project AND the daemon socket
+ * isn't up yet — i.e. the one cold case where `codex --remote` would otherwise have
+ * nothing to connect to. `spawnIntoSession` uses this to defer the (rare) cold spawn
+ * behind `ensureCodexDaemonRunning`; every other spawn stays synchronous.
+ */
+export function codexTerminalNeedsDaemonEnsure(dataDir: string, deps: AttachCommandDeps = {}): boolean {
+  // Env gate first (cheap) — short-circuits without the config/settings reads on the
+  // default (gate-off) path, since this runs on every terminal spawn.
+  if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return false;
+  const tool = readFileSettings(dataDir).ai_tool;
+  if (typeof tool !== 'string' || tool.trim().toLowerCase() !== 'codex') return false;
+  const socketPath = deps.socketPath ?? codexDaemonSocketPath();
+  const fileExists = deps.fileExists ?? existsSync;
+  return !fileExists(socketPath); // only when the daemon isn't already up
+}
+
+/**
  * The play/custom-command entry point — the `McpHooksAgent.spawnRun` signature.
  * Ensures the per-project session (transport + handshake + thread resume/start on
  * first use), queues the prompt (O1: coalescing exact duplicates), and starts the

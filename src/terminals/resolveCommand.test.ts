@@ -315,3 +315,54 @@ describe('codex daemon-attach resolution (HS-9394)', () => {
     expect(called).toBe(false);
   });
 });
+
+// HS-9429 (docs/129 model-B) — with the discovery gate on, a codex terminal
+// launches DAEMON-HOSTED (`codex --remote … -C`) instead of the model-A attach.
+describe('codex model-B daemon-hosted resolution (HS-9429)', () => {
+  const cleanup: string[] = [];
+  const dir = (settings: Record<string, unknown>): string => { const d = makeDataDir(settings); cleanup.push(d); return d; };
+  afterEach(() => { for (const d of cleanup.splice(0)) rmSync(dirname(d), { recursive: true, force: true }); });
+
+  it('uses the model-B remote command when the gate is on and the resolver provides one', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexModelB: true,
+      codexRemoteOverride: () => "codex --remote 'unix:///s.sock' -C '/proj'",
+      // If model-B is picked, the attach resolver must NOT be consulted.
+      codexAttachOverride: () => { throw new Error('attach should not run under model-B'); },
+    });
+    expect(command).toBe("codex --remote 'unix:///s.sock' -C '/proj'");
+  });
+
+  it('expands inside a {{aiCommand}} template', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ terminal_command: 'env X=1 {{aiCommand}}', ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexModelB: true,
+      codexRemoteOverride: () => "codex --remote 'unix:///s.sock' -C '/proj'",
+    });
+    expect(command).toBe("env X=1 codex --remote 'unix:///s.sock' -C '/proj'");
+  });
+
+  it('falls back to plain codex when the daemon is not up (remote resolver returns null)', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexModelB: true,
+      codexRemoteOverride: () => null,
+    });
+    expect(command).toBe('codex');
+  });
+
+  it('uses the model-A attach (not the remote command) when the gate is OFF', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'codex' }),
+      isAiToolOnPath: (b) => b === 'codex',
+      codexModelB: false,
+      codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
+      codexRemoteOverride: () => { throw new Error('remote should not run under model-A'); },
+    });
+    expect(command).toBe("codex resume th-1 --remote 'unix:///s.sock'");
+  });
+});

@@ -14,6 +14,8 @@ import {
   type CodexAppServerDeps,
   codexInteractivePermissions,
   codexTerminalAttachCommand,
+  codexTerminalNeedsDaemonEnsure,
+  codexTerminalRemoteCommand,
   hasCodexAppServerHandshakeFailed,
   interruptCodexAppServerTurn,
   isCodexAppServerEnabled,
@@ -862,6 +864,64 @@ describe('HS-9403 — {{aiCommand}} terminal resolves the codex attach end-to-en
     // resolution (see the completion note / docs/123 §123.7).
     await seedLiveSession('stdio');
     expect(resolveAiTerminal()).toBe('codex');
+  });
+});
+
+describe('HS-9429 — codexTerminalRemoteCommand + codexTerminalNeedsDaemonEnsure (model-B)', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
+    vi.stubEnv('HOTSHEET_HOME', home);
+  });
+  afterEach(() => { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); });
+
+  const allExist = (): boolean => true;
+  const noneExist = (): boolean => false;
+
+  describe('codexTerminalRemoteCommand', () => {
+    it('builds `codex --remote unix://<sock> -C <projectDir>` when the gate is on + the daemon socket is up', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+      // dataDir = <dir>/.hotsheet → projectDir = dir
+      expect(codexTerminalRemoteCommand(dataDir, { fileExists: allExist, socketPath: '/tmp/a b/s.sock' }))
+        .toBe(`codex --remote 'unix:///tmp/a b/s.sock' -C '${dir}'`);
+    });
+
+    it('returns null when the gate is OFF (default — pre-Phase-3)', () => {
+      expect(codexTerminalRemoteCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+    });
+
+    it('returns null when the daemon socket is not up (→ plain codex fallback)', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+      expect(codexTerminalRemoteCommand(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBeNull();
+    });
+
+    it('returns null when the drive toggle is off', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+      writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
+      expect(codexTerminalRemoteCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+    });
+  });
+
+  describe('codexTerminalNeedsDaemonEnsure', () => {
+    it('true only when gate on + ai_tool=codex + socket NOT up (the cold case)', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1'); // dataDir settings.json has ai_tool: codex
+      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(true);
+    });
+
+    it('false when the daemon socket is already up (spawn stays synchronous)', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBe(false);
+    });
+
+    it('false when the gate is off', () => {
+      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(false);
+    });
+
+    it('false for a non-codex project even with the gate on', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+      writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'claude' }), 'utf-8');
+      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(false);
+    });
   });
 });
 

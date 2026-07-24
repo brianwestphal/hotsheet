@@ -4,6 +4,8 @@ import type { IPty } from 'node-pty';
 import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
+import { codexTerminalNeedsDaemonEnsure } from '../../codexAppServer.js';
+import { ensureCodexDaemonRunning } from '../../codexDaemonTransport.js';
 import { containsClaudeSpinner } from '../claudeSpinner.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from '../config.js';
 import { scanPtyChunk } from '../oscScanner.js';
@@ -71,7 +73,31 @@ export function createSession(
   };
 }
 
+/**
+ * Spawn a PTY into the session. Synchronous in the common case.
+ *
+ * HS-9429 (docs/129 §129.4, model-B) — the ONE exception: a cold codex-model-B
+ * terminal (discovery gate on, `ai_tool=codex`, daemon socket not up yet) must
+ * launch daemon-hosted (`codex --remote`), which needs the daemon running. So we
+ * `ensureCodexDaemonRunning` FIRST and defer the actual spawn until it resolves —
+ * the maintainer's "await the daemon" choice (HS-9429), scoped to just that case so
+ * every other spawn (and `attach`'s synchronous pty read) is unaffected. If the
+ * ensure fails, the deferred spawn resolves to plain `codex` (the socket-absent
+ * fallback in `codexTerminalRemoteCommand`), so the terminal always works.
+ */
 export function spawnIntoSession(session: SessionState, dataDir: string): void {
+  if (codexTerminalNeedsDaemonEnsure(dataDir)) {
+    void ensureCodexDaemonRunning()
+      .catch(() => false)
+      // Re-check the guard after the await: the session may have been spawned by
+      // another path or torn down while we waited (~1-2s on a cold daemon).
+      .finally(() => { if (session.pty === null && session.exitCode === null) doSpawnIntoSession(session, dataDir); });
+    return;
+  }
+  doSpawnIntoSession(session, dataDir);
+}
+
+function doSpawnIntoSession(session: SessionState, dataDir: string): void {
   const resolved = resolveTerminalCommand({
     dataDir,
     terminalId: session.terminalId,

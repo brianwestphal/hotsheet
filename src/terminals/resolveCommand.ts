@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, resolve as resolvePath } from 'path';
 
 import { slugifyDataDir } from '../channel-config.js';
-import { codexTerminalAttachCommand } from '../codexAppServer.js';
+import { codexDriveDiscoverEnabled, codexTerminalAttachCommand, codexTerminalRemoteCommand } from '../codexAppServer.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
@@ -97,6 +97,12 @@ export interface ResolveOptions {
   /** HS-9394 — override for the codex daemon-attach command resolution. Injected in
    *  tests. Defaults to `codexTerminalAttachCommand` (null → plain `codex`). */
   codexAttachOverride?: (dataDir: string) => string | null;
+  /** HS-9429 — override for the model-B daemon-HOSTED command (`codex --remote`).
+   *  Injected in tests. Defaults to `codexTerminalRemoteCommand`. */
+  codexRemoteOverride?: (dataDir: string) => string | null;
+  /** HS-9429 — force the model-B branch on/off (default: the `codexDriveDiscoverEnabled`
+   *  env gate). Injected in tests so they don't touch process.env. */
+  codexModelB?: boolean;
 }
 
 /**
@@ -142,13 +148,21 @@ function pickAiCommand(options: ResolveOptions): string {
   const bin = AGENT_BINARIES[tool] ?? tool; // e.g. antigravity → agy; else id == binary
   const onPath = options.isAiToolOnPath ?? isExecutableOnPath;
   if (!onPath(bin)) return (options.defaultShellOverride ?? defaultShell)();
-  // HS-9394 (docs/123) — a codex terminal joins the project's DRIVEN app-server
-  // thread when the daemon-attach preconditions hold (drive enabled, resumable
-  // rollout, daemon transport): play-button work then renders live in this
-  // terminal. Falls back to the plain binary otherwise.
   if (tool === 'codex') {
-    const attach = (options.codexAttachOverride ?? codexTerminalAttachCommand)(options.dataDir);
-    if (attach !== null) return attach;
+    // HS-9429 (docs/129 model-B) — when the discovery gate is on, launch the
+    // terminal DAEMON-HOSTED (`codex --remote … -C <projectDir>`) so it owns its own
+    // live thread and the drive discovers + drives it in place. Else (model-A, the
+    // default) fall back to HS-9394's attach that resumes the DRIVE's thread. Both
+    // fall through to plain `codex` when their precondition (daemon up / rollout on
+    // disk) isn't met.
+    const modelB = options.codexModelB ?? codexDriveDiscoverEnabled();
+    if (modelB) {
+      const remote = (options.codexRemoteOverride ?? codexTerminalRemoteCommand)(options.dataDir);
+      if (remote !== null) return remote;
+    } else {
+      const attach = (options.codexAttachOverride ?? codexTerminalAttachCommand)(options.dataDir);
+      if (attach !== null) return attach;
+    }
   }
   return bin;
 }
