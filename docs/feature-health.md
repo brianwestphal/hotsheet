@@ -43,7 +43,7 @@ a feature with nothing wrong that we know of.
 
 **The shortlist — what to fix or verify first:**
 
-1. **Project-switch state reset** — seven bugs of one identical class (HS-8451, HS-8053, HS-8062, HS-7993, HS-8737/8738, HS-9406, HS-9407). Structural, will recur.
+1. **Project-switch state reset** — **audited (HS-9409, `docs/125`)**: now *eleven* bugs of one identical class, four of them found by the audit itself — including two that render **another project's data** (code-review notes HS-9413, per-ticket cost stats HS-9414). Guard designed in `docs/125` §125.5; fixes HS-9412–9415, structural guard HS-9416 + HS-9417.
 2. **Worker pool** — the manager is session-only in memory; no test runs an actual worker.
 3. **Non-Claude AI tools** — a very large surface where only Codex has had real use, and it is days old.
 4. **Remote-access client** — foundation only; the server half has never had a real off-box deployment.
