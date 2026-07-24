@@ -14,7 +14,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { GlobalConfig } from '../routes/validation.js';
 import { createBackgroundScheduler } from '../scheduler/backgroundScheduler.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDbForDir, isDbOpenForDir } from './connection.js';
 
 // Isolate the central store to a temp dir (mirrors cleanupTelemetry.test.ts).
 let centralOverrideDir: string;
@@ -284,6 +284,65 @@ describe('maintainTelemetryDb (HS-8884)', () => {
     configStore.value = { telemetryVacuumFullAt: { [telemetryDbDir(tempDir)]: new Date(now).toISOString() } };
     const res = await maintainTelemetryDb(tempDir, { now: () => now + 1000, force: true });
     expect(res.mode).toBe('full');
+  });
+
+  /**
+   * HS-9420 — the OOM crash loop. This pass fans out over EVERY registered
+   * project, and each telemetry cluster it opens pins ~180 MB of `external`
+   * (WASM heap) for the life of the process because `databases` is an unbounded
+   * cache. On a 10-project install that alone reached ~2 GB against V8's ~4 GB
+   * ceiling. These pin "close what you opened, keep what you didn't".
+   */
+  describe('cluster lifetime (HS-9420)', () => {
+    const clusterDir = (dir: string) => telemetryDbDir(dir).replace(/[\\/]db$/, '');
+
+    it('closes a telemetry cluster it opened itself', async () => {
+      await closeDbForDir(clusterDir(tempDir)); // ensure a cold start
+      expect(isDbOpenForDir(clusterDir(tempDir))).toBe(false);
+
+      await maintainTelemetryDb(tempDir, { plainMinBytes: 0, fullMinBytes: 0, now: () => 1 });
+
+      expect(isDbOpenForDir(clusterDir(tempDir)), 'the vacuum leaked the cluster it opened').toBe(false);
+    });
+
+    it('does not leak clusters across many projects (the actual OOM shape)', async () => {
+      const dirs = [await setupTestDb(), await setupTestDb(), await setupTestDb()];
+      try {
+        // Count only TELEMETRY clusters — `setupTestDb` opens each project's main
+        // cluster, which is a different (legitimate) thing and would mask the leak.
+        const openTelemetry = () => dirs.filter(d => isDbOpenForDir(clusterDir(d))).length;
+        for (const d of dirs) await closeDbForDir(clusterDir(d));
+        expect(openTelemetry()).toBe(0);
+
+        for (const d of dirs) {
+          await maintainTelemetryDb(d, { plainMinBytes: 0, fullMinBytes: 0, now: () => 1 });
+        }
+
+        // Pre-fix this was 3 — one pinned ~180 MB WASM heap per project, which on
+        // a 10-project install is what filled `external` and OOM'd the process.
+        expect(openTelemetry(), 'the vacuum pass leaked one cluster per project').toBe(0);
+      } finally {
+        for (const d of dirs) await cleanupTestDb(d);
+      }
+    });
+
+    it('leaves a cluster that was ALREADY open alone', async () => {
+      // Somebody else (an OTLP write, a dashboard read) has it open — closing it
+      // under them would break an in-flight query.
+      await getDbForDir(clusterDir(tempDir));
+      expect(isDbOpenForDir(clusterDir(tempDir))).toBe(true);
+
+      await maintainTelemetryDb(tempDir, { plainMinBytes: 0, fullMinBytes: 0, now: () => 1 });
+
+      expect(isDbOpenForDir(clusterDir(tempDir)), 'the vacuum closed a cluster it did not open').toBe(true);
+    });
+
+    // NOTE: the catch-path release (`releaseIfWeOpenedIt` in the error branch) is
+    // deliberately NOT unit-tested here. Every way of forcing the vacuum to throw
+    // from outside also prevents the cluster from opening, so the assertion would
+    // pass trivially whether or not the release existed — a test green for the
+    // wrong reason. The branch is 3 lines calling the same helper the success
+    // path uses, which the cases above do cover.
   });
 });
 

@@ -27,7 +27,7 @@ import { join } from 'path';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
 import { type BackgroundScheduler, getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
-import { centralTelemetryDataDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getTelemetryDb, isDbOpenForDir, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
 /** Below this the DB is small enough that bloat doesn't matter — skip entirely.
  *  An EMPTY PGLite cluster is already ~38 MB on disk (the Postgres system
@@ -259,6 +259,32 @@ export interface MaintainResult {
 }
 
 /**
+ * HS-9420 — release the WASM heap for a telemetry cluster THIS pass opened.
+ *
+ * The `databases` cache in `connection.ts` is unbounded, so every cluster opened
+ * pins ~180 MB of `external` for the life of the process. This maintenance pass
+ * fans out over every registered project, so on a 10-project install it alone
+ * pinned ~2 GB against V8's ~4 GB ceiling — the direct cause of the 2026-07-24
+ * OOM crash loop (the JS heap was a trivial 132 MB; `external` was 3.2 GB, and
+ * `external` doesn't show in RSS, which is why it went undiagnosed).
+ *
+ * Only closes what we opened: `wasAlreadyOpen` means another surface (an OTLP
+ * write, a dashboard read) may have a query in flight, and closing under it
+ * would break that query. Telemetry clusters are needed only during maintenance
+ * + dashboard reads, so the reopen cost lands rarely and on a path that already
+ * does I/O. Best-effort — a failed close must never turn a background vacuum
+ * into an error.
+ */
+async function releaseIfWeOpenedIt(clusterDataDir: string, wasAlreadyOpen: boolean): Promise<void> {
+  if (wasAlreadyOpen) return;
+  try {
+    await closeDbForDir(clusterDataDir);
+  } catch (err) {
+    console.debug('[telemetry-vacuum] close after maintenance failed:', err);
+  }
+}
+
+/**
  * Run the appropriate VACUUM (if any) for one telemetry DB. Computes the on-disk
  * size WITHOUT opening the cluster, so a small/cold DB returns `'none'` cheaply
  * and never instantiates PGLite. Only when a VACUUM is warranted does it open
@@ -279,6 +305,15 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
 
   let execMode: VacuumExecResult['ranMode'] = mode;
   let fullAttempted = false;
+  // HS-9420 — was this cluster already in use before we touched it? The
+  // `databases` cache is unbounded, so opening a cluster pins its ~180 MB WASM
+  // heap for the life of the process. This pass fans out over EVERY registered
+  // project, so on a 10-project install it alone used to pin ~2 GB of `external`
+  // against V8's ~4 GB ceiling — the direct cause of the 2026-07-24 OOM crash
+  // loop. We close what we opened (below), but only that: a cluster someone else
+  // already had open may have a query in flight.
+  const clusterDataDir = telemetryClusterDataDir(dataDir);
+  const wasAlreadyOpen = isDbOpenForDir(clusterDataDir);
   try {
     // Return the result OUT of the DB context (rather than mutating closure vars)
     // so the post-context `if (fullAttempted)` keeps its real `boolean` type.
@@ -309,8 +344,12 @@ export async function maintainTelemetryDb(dataDir: string, opts: MaintainOptions
     }
   } catch (err) {
     console.error(`Telemetry VACUUM (${mode}) failed for ${dbDir}:`, err);
+    // Release on the failure path too — a vacuum that throws still opened the
+    // cluster, and leaking it here is exactly the HS-9420 leak.
+    await releaseIfWeOpenedIt(clusterDataDir, wasAlreadyOpen);
     return { mode: 'none', sizeBytes };
   }
+  await releaseIfWeOpenedIt(clusterDataDir, wasAlreadyOpen);
   // 'skipped' means nothing was reclaimed — report it as 'none' to callers.
   return { mode: execMode === 'skipped' ? 'none' : execMode, sizeBytes };
 }

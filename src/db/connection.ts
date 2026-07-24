@@ -297,6 +297,30 @@ export async function closeDb(): Promise<void> {
   }
 }
 
+/**
+ * HS-9420 — is a dataDir's cluster ALREADY open?
+ *
+ * The `databases` map is an unbounded cache, so anything that opens a cluster
+ * pins its ~180 MB WASM heap for the life of the process. Callers that open a
+ * cluster purely to do maintenance use this to tell "I opened it" from "it was
+ * already in use", so they only close what they themselves brought in — closing
+ * a cluster somebody else is mid-query on would break that query.
+ */
+export function isDbOpenForDir(dataDir: string): boolean {
+  return databases.has(join(dataDir, 'db'));
+}
+
+/**
+ * HS-9420 — how many PGLite clusters are currently open. Each one costs roughly
+ * 180 MB of `external` (WASM heap) against V8's ~4 GB ceiling, and `external`
+ * does NOT show up in RSS — which is why the 2026-07-24 OOM crash loop went
+ * undiagnosed. Exposed for the diagnostics surfaces (HS-9421) so a wedge report
+ * can name this number.
+ */
+export function openDatabaseCount(): number {
+  return databases.size;
+}
+
 export async function closeDbForDir(dataDir: string): Promise<void> {
   const dbDir = join(dataDir, 'db');
   const db = databases.get(dbDir);
