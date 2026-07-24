@@ -2,7 +2,9 @@
 
 HS-7933 spike result. Companion to [45. PGLite Robustness](45-pglite-robustness.md) §45.6.
 
-> **Verdict:** Cannot ship. PGLite 0.3.16 exposes **no mechanism** for overriding `checkpoint_timeout` / `max_wal_size`. The benchmark question collapses to a configuration-availability question, and the answer is "the option doesn't exist". Recommend filing an upstream issue against `@electric-sql/pglite` and re-visiting once a config-passing API lands. Filed as **HS-7936** to track the upstream ask.
+> **Verdict (0.3.16):** Cannot ship. PGLite 0.3.16 exposes **no mechanism** for overriding `checkpoint_timeout` / `max_wal_size`.
+>
+> **⚠ SUPERSEDED for `max_wal_size` as of PGLite 0.4.6 — see the UPDATE at the bottom (HS-9424).** The `startParams` constructor option now forwards `-c` flags to the runtime, so `max_wal_size` / `min_wal_size` CAN be set at cluster creation. The rest of this spike (checkpoint_timeout, the benchmark) is still worth re-running. The benchmark question collapses to a configuration-availability question, and the answer is "the option doesn't exist". Recommend filing an upstream issue against `@electric-sql/pglite` and re-visiting once a config-passing API lands. Filed as **HS-7936** to track the upstream ask.
 
 ## What the design (§45.6) hoped for
 
@@ -86,3 +88,67 @@ The methodology in §45.6 assumes there's a way to apply the tweak. With every o
 ## Probe scripts
 
 The three probe scripts (`ALTER SYSTEM verify`, `SET try`, `postgresql.conf round-trip`) are preserved as code blocks above. Re-run any of them by saving the relevant block to `<repo>/probe.mjs` and `node ./probe.mjs`. Identical results (no values change) confirm the gap; any value that flips would indicate PGLite has shipped a fix.
+
+---
+
+## UPDATE 2026-07-24 (HS-9424): the config-passing API landed — `startParams`
+
+The verdict above ("the option doesn't exist") was correct for **0.3.16**. Re-probed on **PGLite 0.4.6**
+while investigating the telemetry WAL bloat (HS-9422/9424), and the gap the recommendation was waiting
+on has closed. `PGliteOptions` now includes:
+
+```ts
+startParams?: string[];        // extra postgres `-c` args
+initDbStartParams?: string[];
+postgresqlconf?: string[] | string;
+```
+
+`startParams` with `-c` flags **works** — it is the "config-passing API" recommendation #1 above asked
+upstream for. Verified: a cluster created with
+
+```ts
+await PGlite.create(dbDir, { startParams: [...DEFAULT_START_PARAMS, '-c', 'max_wal_size=64MB', '-c', 'min_wal_size=32MB'] });
+```
+
+reports `max_wal_size=64MB` from `SHOW`, and its WAL directory settles to ~48–64 MB across a
+close/reopen cycle instead of the default 176 MB+ (default budget is 1 GB / 80 MB).
+
+### Four traps that cost real time — record them
+
+1. **`startParams` REPLACES PGLite's `defaultStartParams`, it does not append.** Passing only your
+   `-c` flags drops `--single -F -O -j` and the `search_path` / `max_*_workers` defaults, and the
+   cluster **fails to initialize** (`PGlite failed to initialize properly`). You must prepend the full
+   default array. That array is an internal PGLite constant **not exported** from the package:
+   ```
+   ["--single","-F","-O","-j","-c","search_path=public","-c","exit_on_error=false",
+    "-c","log_checkpoints=false","-c","max_worker_processes=0","-c","max_parallel_workers=0",
+    "-c","max_parallel_workers_per_gather=0"]
+   ```
+   Hard-coding it means it can **drift on a PGLite upgrade** — the single biggest risk in adopting
+   this. Any implementation must pin this with a startup assertion/test that fails loudly if the
+   bundled defaults change (grep the dist for `defaultStartParams`).
+
+2. **`postgresqlconf` OVERWRITES the whole `postgresql.conf`** (it is not a delta). PGLite writes your
+   array/string as the entire file, so a two-line override drops every other required setting and
+   bricks the cluster — exactly the "postgresql.conf editing bricks the cluster" symptom in HS-9424.
+   Use `startParams`, not `postgresqlconf`.
+
+3. **`min_wal_size` has a floor.** `16MB` fails init; `32MB` works. Keep `min_wal_size ≥ 32MB`
+   (≥ 2 × 16 MB segments).
+
+4. **`max_wal_size` is a soft target, not a hard cap.** WAL still peaks to ~176 MB during a heavy
+   write burst; the budget governs the STEADY-STATE size it recycles back down to on the next
+   checkpoint/restart. Fine for telemetry (append-mostly, bursty), but don't promise a hard ceiling.
+
+### The migration limit
+
+Tuning only helps **new** clusters. Reopening an **existing** 176 MB-WAL cluster with the tuned
+`startParams` does **not** reclaim the excess (measured: stays at 176 MB across reopen + explicit
+CHECKPOINT + write + CHECKPOINT). Existing bloated telemetry clusters must be **recreated** from the
+JSONL raw store, not repaired in place.
+
+### So the §45.6 benchmark is now runnable
+
+Recommendation #3 above — "re-evaluate post-upstream" — is unblocked. The checkpoint-cadence /
+WAL-budget tuning the original spike wanted can now be applied and measured for real. Tracked for the
+live-cluster case as a fresh evaluation; the telemetry-cluster tuning is HS-9426, and reclaiming existing bloat by recreation is HS-9427.
