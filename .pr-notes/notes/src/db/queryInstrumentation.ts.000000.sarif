@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mryk8hefov5y9h5m",
+          "message": {
+            "text": "The proxy is now ALWAYS applied (was: raw instance when `HOTSHEET_DISABLE_QUERY_INSTRUMENTATION=1`) specifically so `beginClusterQuery`/`endClusterQuery` run regardless of the env flag. The eviction safety invariant — never close a cluster mid-query — must not become disable-able, or a user who set that flag to escape freeze-timing would silently re-open the exact mid-query-eviction race the invariant exists to prevent. The env flag now only skips `instrumentAsync` (freeze timing), not the in-flight bookkeeping.",
+            "markdown": "The proxy is now ALWAYS applied (was: raw instance when `HOTSHEET_DISABLE_QUERY_INSTRUMENTATION=1`) specifically so `beginClusterQuery`/`endClusterQuery` run regardless of the env flag. The eviction safety invariant — never close a cluster mid-query — must not become disable-able, or a user who set that flag to escape freeze-timing would silently re-open the exact mid-query-eviction race the invariant exists to prevent. The env flag now only skips `instrumentAsync` (freeze timing), not the in-flight bookkeeping."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/db/queryInstrumentation.ts"
+                },
+                "region": {
+                  "startLine": 79,
+                  "endLine": 79,
+                  "snippet": {
+                    "text": "          beginClusterQuery(dbPath);"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9420"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "3305127c75c169a13d44996a26e6eaf4"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "4e90565831b79f095ab209f280e448b26d1d06db",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

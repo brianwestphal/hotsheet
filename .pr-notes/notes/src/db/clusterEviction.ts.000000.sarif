@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mryk92sdqwtkue87",
+          "message": {
+            "text": "`>= 0`, not `> 0`: 0 is a MEANINGFUL value for the guard thresholds (`minIdleMs`/`idleMs`/`headroomFloorBytes` = 'disable this guard'). The original `> 0` silently rejected 0 and fell back to the 30s default — which masked the cap-eviction test failure (a just-opened cluster stayed inside the recency guard). `maxOpen` is clamped to a floor of 2 and the sweep interval to 1s separately, since 0 is nonsensical for those.",
+            "markdown": "`>= 0`, not `> 0`: 0 is a MEANINGFUL value for the guard thresholds (`minIdleMs`/`idleMs`/`headroomFloorBytes` = 'disable this guard'). The original `> 0` silently rejected 0 and fell back to the 30s default — which masked the cap-eviction test failure (a just-opened cluster stayed inside the recency guard). `maxOpen` is clamped to a floor of 2 and the sweep interval to 1s separately, since 0 is nonsensical for those."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/db/clusterEviction.ts"
+                },
+                "region": {
+                  "startLine": 214,
+                  "endLine": 214,
+                  "snippet": {
+                    "text": "  return Number.isFinite(n) && n >= 0 ? n : fallback;"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9420"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "d47c683ebd71b0b5bdbf777899afb5b8"
+          }
+        },
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mryk92xw8yrf4inx",
+          "message": {
+            "text": "Two-tier safety, deliberately asymmetric. The **in-flight** guard (`c.inFlight === 0`) is HARD — applied in every mode, never dropped — because closing a cluster with a running query rejects the caller's promise. The **recency** guard (`minIdleMs`) is SOFT — cap/idle honor it to avoid churn-evicting a just-touched cluster, but the headroom mode DROPS it: under memory pressure a reopen is cheaper than an OOM. Losing this distinction (e.g. making headroom respect recency) would let `external` reach the ceiling during a large cross-project fan-out with nothing evictable.",
+            "markdown": "Two-tier safety, deliberately asymmetric. The **in-flight** guard (`c.inFlight === 0`) is HARD — applied in every mode, never dropped — because closing a cluster with a running query rejects the caller's promise. The **recency** guard (`minIdleMs`) is SOFT — cap/idle honor it to avoid churn-evicting a just-touched cluster, but the headroom mode DROPS it: under memory pressure a reopen is cheaper than an OOM. Losing this distinction (e.g. making headroom respect recency) would let `external` reach the ceiling during a large cross-project fan-out with nothing evictable."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/db/clusterEviction.ts"
+                },
+                "region": {
+                  "startLine": 95,
+                  "endLine": 113,
+                  "snippet": {
+                    "text": "    return evictable\n      .filter((c) => input.now - c.lastAccess >= input.idleMs)\n      .map((c) => c.dbPath);\n  }\n\n  // cap + headroom both evict in LRU order (oldest access first).\n  const byLru = [...evictable].sort((a, b) => a.lastAccess - b.lastAccess);\n\n  if (input.mode === 'cap') {\n    const overBy = input.clusters.length - input.maxOpen;\n    if (overBy <= 0) return [];\n    // Only evict clusters aged past the recency guard, so a burst that opened\n    // many clusters at once doesn't immediately churn-evict a just-touched one.\n    const aged = byLru.filter((c) => input.now - c.lastAccess >= input.minIdleMs);\n    return aged.slice(0, overBy).map((c) => c.dbPath);\n  }\n\n  // headroom (critical): free `targetEvictions` LRU clusters, dropping the\n  // recency guard (memory pressure outweighs a reopen) but NEVER the in-flight"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9420"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "91703863ef6bc1e9f1e01eb507670475"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "4e90565831b79f095ab209f280e448b26d1d06db",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

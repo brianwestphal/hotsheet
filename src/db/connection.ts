@@ -7,6 +7,17 @@ import { z } from 'zod';
 
 import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import {
+  chooseEvictions,
+  currentExternalBytes,
+  type EvictionMode,
+  forgetCluster,
+  headroomEvictionCount,
+  heapSizeLimitBytes,
+  noteClusterAccess,
+  resolveEvictionConfig,
+  snapshotClusters,
+} from './clusterEviction.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
 import { instrumentDbQueries } from './queryInstrumentation.js';
 
@@ -293,6 +304,7 @@ export async function closeDb(): Promise<void> {
     if (db) {
       await db.close();
       databases.delete(defaultDbPath);
+      forgetCluster(defaultDbPath);
     }
   }
 }
@@ -321,12 +333,118 @@ export function openDatabaseCount(): number {
   return databases.size;
 }
 
+// ── HS-9420 (docs/128) — bounded cluster cache: LRU cap + idle-close + headroom
+// guard. The policy is pure in `clusterEviction.ts`; this section owns the
+// PGLite handles and performs the closes the planner selects.
+
+/**
+ * Clusters eviction must never close. The launch/default project is always
+ * pinned so the primary interaction surface never pays a reopen; every other
+ * active project is protected implicitly by being the most-recently-used (LRU)
+ * and by the recency guard.
+ */
+function pinnedClusterPaths(): Set<string> {
+  const pinned = new Set<string>();
+  if (defaultDbPath !== null) pinned.add(defaultDbPath);
+  return pinned;
+}
+
+/**
+ * Close one cluster on behalf of the evictor. Deletes it from the cache + drops
+ * its bookkeeping BEFORE awaiting `close()` so a concurrent `getDbByPath` for
+ * the same path opens a fresh instance rather than handing out one that's
+ * mid-close. Never throws — a failed close is logged and the entry stays gone.
+ */
+async function closeClusterForEviction(dbPath: string): Promise<void> {
+  const db = databases.get(dbPath);
+  if (db === undefined) return;
+  databases.delete(dbPath);
+  forgetCluster(dbPath);
+  try {
+    await db.close();
+  } catch (err) {
+    console.error(`[db] eviction close failed for ${dbPath}:`, getErrorMessage(err));
+  }
+}
+
+/** Snapshot the live clusters, ask the planner what to close for `mode`, and
+ *  close them serially. Returns the number actually evicted. */
+async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<number> {
+  const cfg = resolveEvictionConfig();
+  const victims = chooseEvictions({
+    clusters: snapshotClusters(databases.keys()),
+    pinnedPaths: pinnedClusterPaths(),
+    now: Date.now(),
+    mode,
+    maxOpen: cfg.maxOpen,
+    minIdleMs: cfg.minIdleMs,
+    idleMs: cfg.idleMs,
+    targetEvictions,
+  });
+  for (const dbPath of victims) await closeClusterForEviction(dbPath);
+  return victims.length;
+}
+
+/** After opening a new cluster, evict the LRU cluster(s) if we're over the cap. */
+async function enforceClusterCapAfterOpen(): Promise<void> {
+  await runEviction('cap');
+}
+
+/** Before opening a new cluster, free memory if `external` is near the ceiling. */
+async function evictForHeadroomBeforeOpen(): Promise<void> {
+  const cfg = resolveEvictionConfig();
+  const count = headroomEvictionCount(
+    currentExternalBytes(),
+    heapSizeLimitBytes(),
+    cfg.headroomFloorBytes,
+  );
+  if (count === 0) return;
+  const freed = await runEviction('headroom', count);
+  if (freed > 0) {
+    console.error(`[db] headroom guard evicted ${String(freed)} idle cluster(s) before opening a new one (external near heap ceiling).`);
+  }
+}
+
+/**
+ * HS-9420 — close every non-pinned cluster untouched for `idleMs`. Driven by the
+ * sweep timer (and exported for the scheduler / tests). This is what reclaims a
+ * telemetry cluster that an OTLP ingest burst opened and then left idle — the
+ * "creep" the ticket describes.
+ */
+export async function evictIdleClusters(): Promise<number> {
+  return runEviction('idle');
+}
+
+let evictionTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * HS-9420 — start the periodic idle-close sweep. Called once at startup
+ * (`cli.ts`), after project restore. The timer is `unref`'d so it never keeps
+ * the process alive, and idempotent so a double-call is a no-op. Not started by
+ * tests (they call `evictIdleClusters()` directly), so it can't leak a handle.
+ */
+export function startClusterEvictionTimer(): void {
+  if (evictionTimer !== null) return;
+  const cfg = resolveEvictionConfig();
+  evictionTimer = setInterval(() => { void evictIdleClusters(); }, cfg.sweepIntervalMs);
+  evictionTimer.unref();
+}
+
+/** Stop the idle-close sweep (graceful shutdown / tests). Idempotent. */
+export function stopClusterEvictionTimer(): void {
+  if (evictionTimer !== null) {
+    clearInterval(evictionTimer);
+    evictionTimer = null;
+  }
+}
+
 export async function closeDbForDir(dataDir: string): Promise<void> {
   const dbDir = join(dataDir, 'db');
   const db = databases.get(dbDir);
   if (db) {
     await db.close();
     databases.delete(dbDir);
+    forgetCluster(dbDir);
   }
 }
 
@@ -357,6 +475,7 @@ export async function closeAllDatabases(): Promise<void> {
   // `await` for free correctness is the right shape).
   const { fsyncDirAsync } = await import('./fsyncWrap.js');
   for (const [dbPath, db] of entries) {
+    forgetCluster(dbPath);
     try {
       await db.close();
     } catch (err) {
@@ -375,6 +494,9 @@ export function adoptDb(instance: PGlite): void {
   if (defaultDbPath !== null) {
     // HS-9239 — instrument adopted (recovered/restored) instances too.
     databases.set(defaultDbPath, instrumentDbQueries(instance, defaultDbPath));
+    // HS-9420 — record the access so the bookkeeping matches the cache (the
+    // default is pinned regardless, but keep the maps in lockstep).
+    noteClusterAccess(defaultDbPath);
   }
 }
 
@@ -487,7 +609,12 @@ export async function getDbForDir(dataDir: string): Promise<PGlite> {
 
 async function getDbByPath(dbPath: string): Promise<PGlite> {
   const existing = databases.get(dbPath);
-  if (existing) return existing;
+  if (existing) {
+    // HS-9420 — a cache hit is an access; keep the cluster warm so the LRU/idle
+    // eviction sees it as recently used (the hot path never pays a reopen).
+    noteClusterAccess(dbPath);
+    return existing;
+  }
 
   // HS-8717 — complete any recovery a previous launch had to defer because it
   // couldn't move the corrupt `db/` aside in-process (Windows handle lock). This
@@ -513,6 +640,7 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
     const m = getErrorMessage(probeErr);
     console.error('[db] integrity probe failed after open:', m);
     databases.delete(dbPath);
+    forgetCluster(dbPath);
     try { await db.close(); } catch { /* already broken */ }
     return await recoverFromOpenFailure(dbPath, probeErr, true);
   }
@@ -590,6 +718,12 @@ export async function rebuildTelemetryClusterFromDump(clusterDataDir: string): P
 }
 
 async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlite> {
+  // HS-9420 — before allocating another ~180 MB WASM heap, evict LRU clusters if
+  // `external` is close to the V8 heap ceiling (the headroom guard). Runs on the
+  // single open chokepoint so every construction path (first open, restore,
+  // rebuild) is protected. No-op when there's comfortable headroom.
+  await evictForHeadroomBeforeOpen();
+
   // HS-9426 — telemetry clusters get a small WAL budget so pg_wal can't balloon
   // to the default 1 GB (HS-9422). Project clusters keep PGLite's defaults: they
   // hold live ticket data and the checkpoint-cadence trade-off (docs/45 §45.6)
@@ -614,6 +748,11 @@ async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlit
   // isn't logged — only live request/sync/backup queries are.
   const instrumented = instrumentDbQueries(db, dbPath);
   databases.set(dbPath, instrumented);
+  // HS-9420 — record the open as an access, then enforce the LRU cap. The
+  // just-opened cluster is the most-recently-used (and within the recency
+  // guard), so cap enforcement never evicts the cluster we just created.
+  noteClusterAccess(dbPath);
+  await enforceClusterCapAfterOpen();
   return instrumented;
 }
 
@@ -660,7 +799,7 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
       console.error(`[db] restore source ${src.label} did not load: ${m}`);
       // Un-cache + wipe the partial dir before trying the next source.
       const bad = databases.get(dbPath);
-      if (bad) { databases.delete(dbPath); try { await bad.close(); } catch { /* ignore */ } }
+      if (bad) { databases.delete(dbPath); forgetCluster(dbPath); try { await bad.close(); } catch { /* ignore */ } }
       try { rmSync(dbPath, { recursive: true, force: true }); } catch { /* ignore */ }
     }
   }
@@ -769,7 +908,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
       const retryMessage = getErrorMessage(retryErr);
       console.error('Retry after stale postmaster.pid removal also failed:', retryMessage);
       const bad = databases.get(dbPath);
-      if (bad) { databases.delete(dbPath); try { await bad.close(); } catch { /* ignore */ } }
+      if (bad) { databases.delete(dbPath); forgetCluster(dbPath); try { await bad.close(); } catch { /* ignore */ } }
     }
   }
 

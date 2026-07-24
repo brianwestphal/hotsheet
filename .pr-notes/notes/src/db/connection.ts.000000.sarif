@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mryk92mxegokvz13",
+          "message": {
+            "text": "Delete from the cache + `forgetCluster` BEFORE awaiting `close()` (not after) so a concurrent `getDbByPath` for the same path opens a fresh instance rather than handing out one that's mid-close. A close/reopen race on the exact evicting cluster is still possible but vanishingly rare (evictions target clusters idle > 30s and never in-flight) and self-heals via the existing stale-`postmaster.pid` recovery — no data loss. See docs/128 §128.4.",
+            "markdown": "Delete from the cache + `forgetCluster` BEFORE awaiting `close()` (not after) so a concurrent `getDbByPath` for the same path opens a fresh instance rather than handing out one that's mid-close. A close/reopen race on the exact evicting cluster is still possible but vanishingly rare (evictions target clusters idle > 30s and never in-flight) and self-heals via the existing stale-`postmaster.pid` recovery — no data loss. See docs/128 §128.4."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/db/connection.ts"
+                },
+                "region": {
+                  "startLine": 359,
+                  "endLine": 370,
+                  "snippet": {
+                    "text": "  const db = databases.get(dbPath);\n  if (db === undefined) return;\n  databases.delete(dbPath);\n  forgetCluster(dbPath);\n  try {\n    await db.close();\n  } catch (err) {\n    console.error(`[db] eviction close failed for ${dbPath}:`, getErrorMessage(err));\n  }\n}\n\n/** Snapshot the live clusters, ask the planner what to close for `mode`, and"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9420"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "a6dbffe4bd554c3e8fc2995b120316e7"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "4e90565831b79f095ab209f280e448b26d1d06db",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

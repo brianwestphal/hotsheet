@@ -232,6 +232,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   await runStep('destroyTerminals', destroyTerminals);
   await runStep('disposeGitWatchers', disposeGitWatchers);
   await runStep('terminateHashWorker', terminateHashWorkerStep);
+  await runStep('stopClusterEvictionTimer', stopClusterEvictionTimerStep);
   await runStep('snapshotDatabases', snapshotDatabases);
   await runStep('closeDatabases', closeDatabases);
   await runStep('stopFreezeHeartbeat', stopFreezeHeartbeat);
@@ -263,6 +264,17 @@ async function stopTelemetryRetentionTimerStep(): Promise<void> {
   try {
     const { stopTelemetryRetentionTimer } = await import('./telemetryRetentionTimer.js');
     stopTelemetryRetentionTimer();
+  } catch { /* never started — nothing to stop */ }
+}
+
+/** HS-9420 — stop the periodic cluster-eviction (idle-close) sweep before the
+ *  databases are snapshotted/closed, so a sweep can't race the shutdown close on
+ *  the same cluster. Unref'd; explicit cleanup keeps it from outliving the data
+ *  dir in tests. */
+async function stopClusterEvictionTimerStep(): Promise<void> {
+  try {
+    const { stopClusterEvictionTimer } = await import('./db/connection.js');
+    stopClusterEvictionTimer();
   } catch { /* never started — nothing to stop */ }
 }
 

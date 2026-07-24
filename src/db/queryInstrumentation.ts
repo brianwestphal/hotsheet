@@ -22,14 +22,19 @@
  * - Only the three heavy DB methods are timed; everything else (`transaction`,
  *   `listen`, `waitReady`, `close`, …) passes straight through.
  *
- * Disable with `HOTSHEET_DISABLE_QUERY_INSTRUMENTATION=1` (escape hatch if the
- * wrapper is ever suspected — `getDb` then returns the raw instance).
+ * Disable the FREEZE TIMING with `HOTSHEET_DISABLE_QUERY_INSTRUMENTATION=1`
+ * (escape hatch if the timing wrapper is ever suspected). HS-9420 note: the
+ * proxy is now ALWAYS applied even when timing is disabled, because it also
+ * tracks in-flight queries for the cluster-eviction safety invariant (a cluster
+ * with an in-flight query is never evicted). The env var only skips the
+ * freeze-log timing (`instrumentAsync` + label building), not the proxy itself.
  */
 
 import { type PGlite } from '@electric-sql/pglite';
 import { dirname } from 'path';
 
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
+import { beginClusterQuery, endClusterQuery } from './clusterEviction.js';
 
 /** Methods whose wall-clock we time (the ones that run WASM on the loop). */
 const TIMED_METHODS = new Set(['query', 'exec', 'dumpDataDir']);
@@ -50,12 +55,15 @@ export function isQueryInstrumentationEnabled(): boolean {
 }
 
 /**
- * Wrap `db` so its heavy methods log to `<dataDir>/freeze.log` when slow.
- * `dbPath` is `<dataDir>/db`, so the dataDir is its parent. No-op (returns the
- * raw instance) when instrumentation is disabled.
+ * Wrap `db` so its heavy methods (a) track in-flight query count for the
+ * HS-9420 eviction safety invariant and (b) log to `<dataDir>/freeze.log` when
+ * slow. `dbPath` is `<dataDir>/db`, so the dataDir is its parent. The proxy is
+ * ALWAYS applied; `HOTSHEET_DISABLE_QUERY_INSTRUMENTATION=1` only skips the
+ * freeze-timing wrapper (the in-flight tracking always runs — eviction
+ * correctness must not depend on an env flag).
  */
 export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
-  if (!isQueryInstrumentationEnabled()) return db;
+  const timingEnabled = isQueryInstrumentationEnabled();
   const dataDir = dirname(dbPath);
   return new Proxy(db, {
     get(target, prop) {
@@ -64,9 +72,28 @@ export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
       if (typeof value !== 'function') return value;
       const fn = value as (...args: unknown[]) => unknown;
       if (typeof prop === 'string' && TIMED_METHODS.has(prop)) {
-        return (...args: unknown[]): unknown =>
-          instrumentAsync(dataDir, methodLabel(prop, args[0]), () =>
-            Promise.resolve(fn.call(target, ...args)));
+        return (...args: unknown[]): unknown => {
+          // Count this query as in-flight for the whole call so a concurrent
+          // eviction can't close the cluster mid-query. `endClusterQuery` runs
+          // on both resolve and reject.
+          beginClusterQuery(dbPath);
+          const settle = <T>(p: Promise<T>): Promise<T> => {
+            const done = (): void => endClusterQuery(dbPath);
+            p.then(done, done);
+            return p;
+          };
+          try {
+            const run = (): Promise<unknown> => Promise.resolve(fn.call(target, ...args));
+            const result = timingEnabled
+              ? instrumentAsync(dataDir, methodLabel(prop, args[0]), run)
+              : run();
+            return settle(result);
+          } catch (err) {
+            // Synchronous throw before a promise existed — release immediately.
+            endClusterQuery(dbPath);
+            throw err;
+          }
+        };
       }
       // Everything else: bind to the real instance so private fields resolve.
       return fn.bind(target);

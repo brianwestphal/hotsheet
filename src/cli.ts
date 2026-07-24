@@ -347,6 +347,18 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     } catch (e: unknown) {
       console.warn(`[startup] Starting telemetry retention timer failed (non-fatal): ${getErrorMessage(e)}`);
     }
+    // HS-9420 (docs/128) — periodic idle-close sweep for the bounded PGLite
+    // cluster cache. Reclaims telemetry (and other) clusters that went idle after
+    // a burst, so `external` (WASM heap) can't creep to the OOM ceiling over a
+    // long session. Off-loop, `unref`'d, cleared on shutdown; complements the
+    // on-open LRU cap + headroom guard in `db/connection.ts`.
+    startupMark('post-startup: starting cluster-eviction sweep');
+    try {
+      const { startClusterEvictionTimer } = await import('./db/connection.js');
+      startClusterEvictionTimer();
+    } catch (e: unknown) {
+      console.warn(`[startup] Starting cluster-eviction sweep failed (non-fatal): ${getErrorMessage(e)}`);
+    }
     // HS-8862 — periodic claim-lease expiry sweep (docs/90 §90.2.2). Surfaces +
     // tidies dead-worker claims; correctness already holds via lazy reclaim.
     try {
