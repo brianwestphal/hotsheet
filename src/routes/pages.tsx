@@ -712,17 +712,6 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint" id="cli-install-hint">Installs the <code>hotsheet</code> command to /usr/local/bin.</span>
                 </div>
               </div>
-              {/* HS-8488 — terminal renderer opt-out. Hidden by default;
-                  `bindGeneralTab` reveals it only when WebGL2 is available in
-                  this browser (no point showing an inert toggle where the
-                  renderer can't be used). */}
-              <div id="terminal-webgl-section" style="display:none">
-                <div className="settings-divider"></div>
-                <div className="settings-field settings-field-checkbox">
-                  <label><input type="checkbox" id="settings-terminal-webgl-opt-out" /> Use software rendering for terminals <span className="global-setting-badge">Global Setting</span></label>
-                  <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward. Demo mode always uses CPU rendering regardless of this setting.</span>
-                </div>
-              </div>
               {/* HS-8009 — the project's preferred AI tool (docs/113 §113.3). */}
               <div className="settings-divider"></div>
               <div className="settings-field">
@@ -1263,6 +1252,18 @@ pageRoutes.get('/', (c) => {
                   <label htmlFor="settings-terminal-scrollback">Scrollback (bytes)</label>
                   <input type="number" id="settings-terminal-scrollback" min="65536" max="16777216" placeholder="1048576" />
                   <span className="settings-hint">Server-side ring buffer for reattach replay. 65 536–16 777 216 bytes. Takes effect on next terminal restart.</span>
+                </div>
+                {/* HS-8488 — terminal renderer opt-out. Hidden by default;
+                    `bindTerminalTab` reveals it only when WebGL2 is available in
+                    this browser (no point showing an inert toggle where the
+                    renderer can't be used). HS-9404 — moved here from the General
+                    tab: it is a terminal setting and belongs beside the other
+                    terminal rendering/perf controls. */}
+                <div id="terminal-webgl-section" style="display:none">
+                  <div className="settings-field settings-field-checkbox">
+                    <label><input type="checkbox" id="settings-terminal-webgl-opt-out" /> Use software rendering for terminals <span className="global-setting-badge">Global Setting</span></label>
+                    <span className="settings-hint">Hot Sheet uses your GPU to render terminals for smoother output during heavy activity (long <code>claude</code> sessions, full-screen TUIs like <code>top</code>, fast log spam). Tick this if you see graphical glitches, dropped characters, or excessive battery use — Hot Sheet will fall back to slower CPU rendering. Takes effect on terminals you open afterward. Demo mode always uses CPU rendering regardless of this setting.</span>
+                  </div>
                 </div>
                 <div className="settings-field">
                   <label><input type="checkbox" id="settings-shell-integration-ui" /> Enable shell integration UI <span className="experimental-badge" title="This feature is still experimental and off by default.">Experimental</span></label>

@@ -182,10 +182,6 @@ function bindGeneralTab() {
   // `~/.hotsheet/config.json` under `diagnosticsEnabled` (was the
   // per-project `diagnostics_freeze_toast_enabled` key pre-HS-8446).
   const diagnosticsEnabledCheckbox = byId<HTMLInputElement>('settings-diagnostics-enabled');
-  // HS-8488 — "use software rendering for terminals" opt-out + its row (hidden
-  // unless WebGL2 is available in this browser).
-  const webglOptOutCheckbox = byIdOrNull<HTMLInputElement>('settings-terminal-webgl-opt-out');
-  const webglSection = byIdOrNull('terminal-webgl-section');
   const notifyPermSelect = byId<HTMLSelectElement>('settings-notify-permission');
   const notifyCompSelect = byId<HTMLSelectElement>('settings-notify-completed');
   const appNameInput = byId<HTMLInputElement>('settings-app-name');
@@ -223,13 +219,6 @@ function bindGeneralTab() {
     // HS-8446 — global diagnostics opt-in (read from the in-memory
     // cache hydrated at app boot by `loadGlobalDiagnostics`).
     diagnosticsEnabledCheckbox.checked = isDiagnosticsEnabled();
-    // HS-8488 — reveal the renderer row only when WebGL2 is available in this
-    // browser (hide the inert toggle otherwise); populate from the cached
-    // global opt-out hydrated at boot.
-    if (webglSection !== null && webglOptOutCheckbox !== null) {
-      webglSection.style.display = isWebgl2Available() ? '' : 'none';
-      webglOptOutCheckbox.checked = isTerminalWebglOptOut();
-    }
     notifyPermSelect.value = state.settings.notify_permission;
     notifyCompSelect.value = state.settings.notify_completed;
     void getFileSettings().then((fs) => {
@@ -333,15 +322,6 @@ function bindGeneralTab() {
   diagnosticsEnabledCheckbox.addEventListener('change', () => {
     void setDiagnosticsEnabled(diagnosticsEnabledCheckbox.checked);
   });
-
-  // HS-8488 — persist the renderer opt-out globally. Updates the cache
-  // synchronously so the next terminal `createEntry` honors it; existing
-  // terminals keep their current renderer until re-created (per the hint).
-  if (webglOptOutCheckbox !== null) {
-    webglOptOutCheckbox.addEventListener('change', () => {
-      void setTerminalWebglOptOut(webglOptOutCheckbox.checked);
-    });
-  }
 
   // HS-8009 — the project's preferred AI tool (docs/113 §113.3). A shared, scoped
   // string setting; `persistScopedSetting` writes it to the active layer.
@@ -559,6 +539,18 @@ function bindTerminalTab() {
     void import('./terminalsSettings.js').then(({ addTerminalEntry }) => addTerminalEntry());
   });
 
+  // HS-8488 — "use software rendering for terminals" opt-out + its row (hidden
+  // unless WebGL2 is available in this browser). HS-9404 — moved here from
+  // `bindGeneralTab` along with the markup: it is a terminal setting.
+  const webglOptOutCheckbox = byIdOrNull<HTMLInputElement>('settings-terminal-webgl-opt-out');
+  const webglSection = byIdOrNull('terminal-webgl-section');
+  // Persist globally. Updates the cache synchronously so the next terminal
+  // `createEntry` honors it; existing terminals keep their current renderer
+  // until re-created (per the hint).
+  webglOptOutCheckbox?.addEventListener('change', () => {
+    void setTerminalWebglOptOut(webglOptOutCheckbox.checked);
+  });
+
   const termScrollbackInput = byId<HTMLInputElement>('settings-terminal-scrollback');
   let termScrollbackTimeout: ReturnType<typeof setTimeout> | null = null;
   termScrollbackInput.addEventListener('input', () => {
@@ -576,6 +568,13 @@ function bindTerminalTab() {
   });
 
   settingsBtn.addEventListener('click', () => {
+    // HS-8488 / HS-9404 — reveal the renderer row only when WebGL2 is available
+    // in this browser (hide the inert toggle otherwise); populate from the cached
+    // global opt-out hydrated at boot.
+    if (webglSection !== null && webglOptOutCheckbox !== null) {
+      webglSection.style.display = isWebgl2Available() ? '' : 'none';
+      webglOptOutCheckbox.checked = isTerminalWebglOptOut();
+    }
     void getFileSettings().then((fs) => {
       const scrollback = fs.terminal_scrollback_bytes;
       termScrollbackInput.value = scrollback === undefined || scrollback === '' ? '' : String(scrollback);
