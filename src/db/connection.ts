@@ -1,13 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { type PGlite } from '@electric-sql/pglite';
+import { type PGlite, type PGliteOptions } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import { z } from 'zod';
 
 import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
-import { createPglite } from './pglite.js';
+import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
 import { instrumentDbQueries } from './queryInstrumentation.js';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
@@ -518,8 +518,31 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
   }
 }
 
+/**
+ * HS-9426 (docs/127) — is `dbPath` a telemetry cluster's `db/` dir?
+ *
+ * `telemetryClusterDataDir` guarantees every telemetry cluster lives under a
+ * `telemetry` segment (`<dataDir>/telemetry` for projects, `~/.hotsheet/telemetry`
+ * for the central store); `getDbForDir` then appends `db`. So a telemetry cluster's
+ * db dir is exactly `…/telemetry/db` and nothing else is — a project's own cluster
+ * is `<dataDir>/db` where `<dataDir>` is always a `.hotsheet` dir. Detecting by path
+ * here (rather than threading a flag) means EVERY construction path — first open,
+ * recovery, snapshot restore — tunes consistently, since they all funnel through
+ * `openAndCacheDb`.
+ */
+export function isTelemetryClusterDbPath(dbPath: string): boolean {
+  return basename(dirname(dbPath)) === 'telemetry';
+}
+
 async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlite> {
-  const db = createPglite(dbPath, loadDataDir !== undefined ? { loadDataDir } : {});
+  // HS-9426 — telemetry clusters get a small WAL budget so pg_wal can't balloon
+  // to the default 1 GB (HS-9422). Project clusters keep PGLite's defaults: they
+  // hold live ticket data and the checkpoint-cadence trade-off (docs/45 §45.6)
+  // hasn't been benchmarked for them.
+  const opts: PGliteOptions = {};
+  if (loadDataDir !== undefined) opts.loadDataDir = loadDataDir;
+  if (isTelemetryClusterDbPath(dbPath)) opts.startParams = [...TELEMETRY_START_PARAMS];
+  const db = createPglite(dbPath, opts);
   try {
     await db.waitReady;
     await initSchema(db);
