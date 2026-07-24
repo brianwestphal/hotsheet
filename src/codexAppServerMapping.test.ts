@@ -14,6 +14,8 @@ import {
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
+  loadedThreadIdsFromResponse,
+  pickThreadForCwd,
   rolloutPathFromThreadPayload,
   threadIdFromResponse,
   TRANSCRIPT_TRUNCATION_MARKER,
@@ -229,6 +231,45 @@ describe('buildThreadMcpOverride (HS-9388)', () => {
         },
       },
     });
+  });
+});
+
+describe('loadedThreadIdsFromResponse (HS-9428)', () => {
+  it('extracts the string ids from { data: [...] }', () => {
+    expect(loadedThreadIdsFromResponse({ data: ['a', 'b'], nextCursor: null })).toEqual(['a', 'b']);
+  });
+  it('drops non-strings/empties and tolerates shapeless input', () => {
+    expect(loadedThreadIdsFromResponse({ data: ['a', '', 3, null] })).toEqual(['a']);
+    expect(loadedThreadIdsFromResponse({})).toEqual([]);
+    expect(loadedThreadIdsFromResponse(null)).toEqual([]);
+    expect(loadedThreadIdsFromResponse({ data: 'nope' })).toEqual([]);
+  });
+});
+
+describe('pickThreadForCwd (HS-9428 model-B selection)', () => {
+  const list = {
+    data: [
+      { id: 'old-cwd', cwd: '/proj', recencyAt: 100 },
+      { id: 'new-cwd', sessionId: 'new-cwd', cwd: '/proj', recencyAt: 200 }, // sessionId fallback
+      { id: 'other-cwd', cwd: '/elsewhere', recencyAt: 999 },
+      { id: 'not-loaded', cwd: '/proj', recencyAt: 999 },
+    ],
+  };
+  it('picks the loaded thread matching the cwd, most-recent by recencyAt', () => {
+    // Both old-cwd + new-cwd are loaded & match /proj → newest (new-cwd) wins.
+    expect(pickThreadForCwd(list, ['old-cwd', 'new-cwd', 'other-cwd'], '/proj')).toBe('new-cwd');
+  });
+  it('ignores threads that are not loaded even if they match the cwd + are newest', () => {
+    // not-loaded (recencyAt 999) matches /proj but isn't in the loaded set.
+    expect(pickThreadForCwd(list, ['old-cwd'], '/proj')).toBe('old-cwd');
+  });
+  it('ignores loaded threads whose cwd differs', () => {
+    expect(pickThreadForCwd(list, ['other-cwd'], '/proj')).toBeNull();
+  });
+  it('returns null when nothing loaded matches (→ caller falls back to model-A)', () => {
+    expect(pickThreadForCwd(list, [], '/proj')).toBeNull();
+    expect(pickThreadForCwd({ data: [] }, ['x'], '/proj')).toBeNull();
+    expect(pickThreadForCwd(null, ['x'], '/proj')).toBeNull();
   });
 });
 

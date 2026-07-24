@@ -76,6 +76,65 @@ export function rolloutPathFromThreadPayload(value: unknown): string | null {
   return typeof path === 'string' && path !== '' ? path : null;
 }
 
+/**
+ * HS-9428 (docs/121 model-B) — the LIVE (in-memory) thread ids from a
+ * `thread/loaded/list` response. Captured shape: `{ data: string[] }`. Returns
+ * `[]` for any other shape so a missing/older method degrades to "nothing live".
+ */
+export function loadedThreadIdsFromResponse(result: unknown): string[] {
+  if (typeof result !== 'object' || result === null) return [];
+  const data = (result as Record<string, unknown>).data;
+  if (!Array.isArray(data)) return [];
+  return data.filter((x): x is string => typeof x === 'string' && x !== '');
+}
+
+/** One entry of a `thread/list` response's `data` array, narrowed to the fields
+ *  model-B selection needs (captured 0.145.0 shape has these plus more). */
+export interface ThreadListEntry {
+  id: string;
+  cwd: string | null;
+  recencyAt: number;
+}
+
+function parseThreadListEntries(result: unknown): ThreadListEntry[] {
+  if (typeof result !== 'object' || result === null) return [];
+  const data = (result as Record<string, unknown>).data;
+  if (!Array.isArray(data)) return [];
+  const out: ThreadListEntry[] = [];
+  for (const raw of data) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const obj = raw as Record<string, unknown>;
+    const id = obj.id ?? obj.sessionId;
+    if (typeof id !== 'string' || id === '') continue;
+    out.push({
+      id,
+      cwd: typeof obj.cwd === 'string' ? obj.cwd : null,
+      // recencyAt / updatedAt are epoch-seconds in the captured shape; default 0
+      // so an entry without one just sorts oldest.
+      recencyAt: typeof obj.recencyAt === 'number' ? obj.recencyAt
+        : (typeof obj.updatedAt === 'number' ? obj.updatedAt : 0),
+    });
+  }
+  return out;
+}
+
+/**
+ * HS-9428 (docs/121 model-B) — pick THE thread the drive should join for a
+ * project, from a `thread/list` response, the set of currently-loaded thread ids,
+ * and the project cwd. Decision (baked in): the **loaded** thread whose **cwd
+ * matches**, tie-broken by most-recent `recencyAt`. Returns null when none
+ * qualifies → the caller falls back to model-A (start/resume its own thread).
+ *
+ * Pure over its inputs so the selection policy is unit-tested without a daemon.
+ */
+export function pickThreadForCwd(listResult: unknown, loadedIds: readonly string[], cwd: string): string | null {
+  const loaded = new Set(loadedIds);
+  const candidates = parseThreadListEntries(listResult)
+    .filter((e) => loaded.has(e.id) && e.cwd === cwd)
+    .sort((a, b) => b.recencyAt - a.recencyAt);
+  return candidates.length > 0 ? candidates[0].id : null;
+}
+
 /** What a server notification means for the drive's busy/turn lifecycle. */
 export type DriveEvent =
   | { type: 'turn-started'; turnId: string | null }

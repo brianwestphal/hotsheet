@@ -42,6 +42,8 @@ import {
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
+  loadedThreadIdsFromResponse,
+  pickThreadForCwd,
   rolloutPathFromThreadPayload,
   threadIdFromResponse,
   transcriptLineFromItem,
@@ -218,6 +220,35 @@ export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps 
  * that arrives while another client's turn runs, and an unsubmitted TUI draft
  * survives a driven turn rendering above it.
  */
+/**
+ * HS-9428 (docs/121 model-B) — opt-in while proven out. When ON, the drive tries to
+ * DISCOVER and join the terminal's own live daemon thread (by cwd) before falling
+ * back to starting/resuming its own (model-A). Default OFF so nothing changes until
+ * the flip; env-gated to avoid a config-schema change during the proving phase.
+ */
+export function codexDriveDiscoverEnabled(): boolean {
+  return process.env.HOTSHEET_CODEX_DISCOVER_THREAD === '1';
+}
+
+/**
+ * HS-9428 (docs/121 model-B) — discover the live daemon thread the drive should join
+ * for `cwd`: intersect `thread/loaded/list` (the in-memory thread ids) with
+ * `thread/list { cwd }` (threads recorded for that cwd), and pick the loaded one with
+ * the most recent `recencyAt` (`pickThreadForCwd`). Returns null when nothing
+ * qualifies (no live terminal session for this project) so the caller falls back to
+ * model-A. Never throws — a rejected/absent method resolves to null.
+ */
+async function discoverLiveThreadForCwd(session: Session, cwd: string): Promise<string | null> {
+  try {
+    const loaded = loadedThreadIdsFromResponse(await request(session, 'thread/loaded/list', {}, 10_000));
+    if (loaded.length === 0) return null; // nothing live → model-A
+    const list = await request(session, 'thread/list', { cwd, limit: 25 }, 10_000);
+    return pickThreadForCwd(list, loaded, cwd);
+  } catch {
+    return null;
+  }
+}
+
 export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {
   if (!isCodexAppServerEnabled()) return null;
   const persisted = readPersistedCodexThread(dataDir);
@@ -396,8 +427,26 @@ async function bootSession(session: Session): Promise<void> {
   const config = session.transport?.kind === 'daemon'
     ? buildThreadMcpOverride(CODEX_MCP_KEY, getChannelServerPath(), session.dataDir)
     : undefined;
-  const persisted = readPersistedThreadId(session.dataDir);
   let threadId: string | null = null;
+
+  // HS-9428 (docs/121 model-B) — prefer an EXISTING live thread for this project's
+  // cwd (the terminal's own daemon session), so driven turns land in the window the
+  // user is watching instead of a separate drive-owned thread. Daemon-only (a stdio
+  // child has no shared thread to discover) and opt-in while proven out. On any
+  // failure — older daemon without the list methods, resume error — fall through to
+  // model-A below, so the play button always works.
+  if (codexDriveDiscoverEnabled() && session.transport?.kind === 'daemon') {
+    const discovered = await discoverLiveThreadForCwd(session, dirname(session.dataDir)).catch(() => null);
+    if (discovered !== null) {
+      const resumed = await request(session, 'thread/resume', { threadId: discovered, config }, 60_000).catch(() => null);
+      if (resumed !== null) {
+        threadId = discovered;
+        persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(resumed));
+      }
+    }
+  }
+
+  const persisted = threadId === null ? readPersistedThreadId(session.dataDir) : null;
   if (persisted !== null) {
     // O3 — auto-fresh ONLY when resume fails (missing/corrupt rollout).
     const resumed = await request(session, 'thread/resume', { threadId: persisted, config }, 60_000).catch(() => null);

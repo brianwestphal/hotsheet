@@ -270,3 +270,36 @@ Treated like the Claude Channel (§12):
 - **Manual (`docs/manual-test-plan.md`):** real end-to-end — play → visible
   turn in the Commands Log → `hotsheet_*` calls → done; approval round-trip
   through the §47 overlay; disabled toggle hides play + prompt buttons.
+
+## 121.12 Model-B — terminal owns the thread, drive discovers it (HS-9428)
+
+The shipped model (§121, "model-A") has the DRIVE own a thread (`thread/start`)
+and the `{{aiCommand}}` terminal *chase* it with `codex resume <id> --remote`
+(docs/123). That chase is fragile — a cold-start race leaves the terminal on
+plain `codex`, needing the "↻ Rejoin codex" chip (HS-9403). **Model-B flips it:**
+the terminal owns a live daemon thread and the drive DISCOVERS it by cwd, so
+driven turns land in the window the user is already watching (the Claude feel).
+
+**Verified feasible (live, 2026-07-24)** against codex-cli 0.145.0's app-server
+protocol: `thread/loaded/list` returns the in-memory thread ids; `thread/list
+{ cwd }` returns threads for a cwd with `{ id, cwd, path, status, recencyAt }`.
+`ThreadStartParams` has no id field (codex mints ids), but discovery makes id
+coordination unnecessary. Also present: `turn/steer`, `thread/injectItems`,
+`thread/read`.
+
+**Selection (decided):** the *loaded* thread whose *cwd matches*, tie-broken by
+`recencyAt` (`codexAppServerMapping.ts::pickThreadForCwd`). No live/loaded match
+→ fall back to model-A so play always works headless. Drive-while-typing →
+`turn/start` queues (default), never `turn/steer` (which would clobber a user
+turn).
+
+**Phasing.** *Phase 1 (SHIPPED, HS-9428):* the discovery helper
+(`discoverLiveThreadForCwd` = `thread/loaded/list` ∩ `thread/list{cwd}` →
+`pickThreadForCwd`) + `bootSession` joins the discovered thread (`thread/resume`)
+ahead of the model-A resume/start, daemon-only, behind the
+`HOTSHEET_CODEX_DISCOVER_THREAD=1` env gate (default OFF — dormant until Phase 2
+gives it something to discover, so nothing regresses). *Phase 2 (follow-up):* the
+codex `{{aiCommand}}` terminal launches daemon-hosted (`codex --remote`) so it
+owns a discoverable live thread (daemon pre-started before the eager spawn).
+*Phase 3 (follow-up):* retire the terminal-attach / `codexReattach` chase
+(HS-9394/9397) once B is proven; promote the env gate to a real setting.
