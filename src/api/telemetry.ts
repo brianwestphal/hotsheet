@@ -246,6 +246,23 @@ const EnabledAnywhereRespSchema = z.object({ enabled: z.boolean() });
 const ClearResultSchema = z.object({ deleted: z.number() });
 export type ClearTelemetryResult = z.infer<typeof ClearResultSchema>;
 
+// HS-9427 (docs/127 §127.5) — "Reclaim telemetry disk" result.
+const ReclaimWalResultSchema = z.object({
+  reclaimed: z.number(),
+  skipped: z.number(),
+  failed: z.number(),
+  freedBytes: z.number(),
+  results: z.array(z.object({
+    clusterDataDir: z.string(),
+    status: z.enum(['reclaimed', 'skipped', 'failed']),
+    beforeBytes: z.number(),
+    afterBytes: z.number(),
+    freedBytes: z.number(),
+    error: z.string().optional(),
+  })),
+});
+export type ReclaimWalResult = z.infer<typeof ReclaimWalResultSchema>;
+
 // --- Typed callers ---
 
 /** GET `/telemetry/today-cost` → today's total cost for the active project. */
@@ -291,6 +308,12 @@ export async function getProjectRollup(window: DashboardWindow, tz: string): Pro
 /** DELETE `/telemetry/project-data` → wipe the active project's telemetry. */
 export async function clearProjectTelemetry(): Promise<ClearTelemetryResult> {
   return apiCall(ClearResultSchema, '/telemetry/project-data', { method: 'DELETE' });
+}
+
+/** POST `/telemetry/reclaim-wal` → rebuild every bloated telemetry cluster
+ *  (machine-wide), reclaiming pg_wal. `skipProjectScope` — it's not per-project. */
+export async function reclaimTelemetryWal(): Promise<ReclaimWalResult> {
+  return apiCall(ReclaimWalResultSchema, '/telemetry/reclaim-wal', { method: 'POST', skipProjectScope: true });
 }
 
 /** GET `/telemetry/_debug` → ingest/marker diagnostic (HS-8639 / HS-8537). */

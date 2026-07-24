@@ -1040,6 +1040,17 @@ pageRoutes.get('/', (c) => {
                 </div>
                 <span className="settings-hint">Permanently deletes every metric, event, and trace recorded for <strong>this project</strong> (all time). Other projects are unaffected. This cannot be undone.</span>
               </div>
+              {/* HS-9427 / docs/127 §127.5 — reclaim telemetry cluster pg_wal
+                  bloat that no VACUUM can reach (rebuild-from-dump). Machine-wide,
+                  no data loss. */}
+              <div className="settings-field">
+                <label>Reclaim telemetry disk</label>
+                <div className="settings-inline-row">
+                  <button type="button" className="btn btn-sm" id="settings-telemetry-reclaim-btn">Reclaim Telemetry Disk…</button>
+                  <span className="settings-status" id="settings-telemetry-reclaim-status" role="status" aria-live="polite"></span>
+                </div>
+                <span className="settings-hint">Rebuilds each project's telemetry database to reclaim write-ahead-log disk that ordinary cleanup can't (this can accumulate to hundreds of MB per project). Keeps all your telemetry — nothing is deleted.</span>
+              </div>
             </div>
             {/* HS-8777 / §78 — Announcer. Promoted from a section under
                 Experimental to its own tab. Per-project opt-in narration of

@@ -75,7 +75,7 @@ array, and asserts our copy matches. **That test is the guard** — it fails lou
 drift, which is the moment to re-copy the array. A runtime assertion was deliberately avoided: a
 mismatch that *throws* at startup would be a worse failure than the WAL bloat it guards against.
 
-## 127.5 Reclaiming EXISTING bloat (HS-9427, not yet built)
+## 127.5 Reclaiming EXISTING bloat (HS-9427, shipped)
 
 Tuning at creation does nothing for the multi-hundred-MB clusters already on disk: reopening an
 existing bloated cluster with the tuned budget does **not** reclaim the excess (measured — stays at
@@ -95,10 +95,27 @@ tuned §127.3 params, swap. It preserved every row (80 500 → 80 500) while the
 64 MB. It is **generic** — copies the whole cluster, so it can't miss a table and needs no knowledge
 of what's in there and no JSONL dependency.
 
-Remaining decision (maintainer, HS-9427): the **trigger** — automatic at a `pg_wal` threshold vs a
-manual "reclaim telemetry disk" button (like the §74 clear-telemetry one) vs periodic. Whichever:
-off-loop via the §75 scheduler, gated on the cluster not being mid-write (HS-9420 `isDbOpenForDir`),
-move-aside-then-delete so a failed load is recoverable, and **never** touch `pg_wal` segments by hand.
+**Trigger (maintainer decision, HS-9427 option a): a manual button.** Settings → Telemetry →
+**"Reclaim telemetry disk"** rebuilds every telemetry cluster (machine-wide — the bloat spans
+projects) whose `pg_wal` exceeds `RECLAIM_WAL_THRESHOLD_BYTES` (256 MB, well above the tuned ~64 MB
+steady state, so a healthy cluster is skipped). Kept manual, not automatic, so a delete-and-rebuild
+of a cluster stays opt-in.
+
+- `POST /api/telemetry/reclaim-wal` → `reclaimBloatedTelemetryClusters` (`src/db/telemetryReclaim.ts`),
+  which iterates the telemetry dirs, gates each on `walBytes > threshold`, calls the connection
+  primitive, and reports `{reclaimed, skipped, failed, freedBytes, results}` (honest — a failed
+  rebuild is reported, not hidden).
+- `rebuildTelemetryClusterFromDump` (`connection.ts`) is telemetry-only (asserted), and the swap is
+  crash-safe: dump → evict+close → `db/` → `db.reclaim-old` → load the dump into a fresh `db/` → delete
+  the aside dir; a load failure renames the aside dir back so the original survives intact.
+- **Small write-loss window (documented):** telemetry writes landing between the dump snapshot and the
+  swap go to the old cluster and are discarded — a few metric rows for a rare manual cleanup on a
+  lossy-tolerant store. Not used for ticket data.
+- **Never** touches `pg_wal` segments by hand.
+
+The client button mirrors the §74 Clear-Telemetry one (`src/client/telemetryReclaimUI.tsx`): a
+confirm → POST → status binder plus a pure `formatReclaimResult`. Unlike Clear, it is **lossless** —
+the confirm copy says so — and it is not `danger`-styled.
 
 ## 127.6 Tests
 
@@ -107,3 +124,9 @@ move-aside-then-delete so a failed load is recoverable, and **never** touch `pg_
 - `connection.telemetryWal.test.ts` — against a real cluster: a telemetry cluster opens at
   `max_wal_size=64MB` / `min_wal_size=32MB`, a project cluster stays at `1GB`, `isTelemetryClusterDbPath`
   agrees with `telemetryClusterDataDir`, and the budget re-applies on a cold reopen.
+- `telemetryReclaim.test.ts` — the real dump→reload against a genuinely bloated cluster (rows
+  preserved, WAL shrunk, tuned budget on the rebuild, non-telemetry cluster refused) + the pure
+  threshold / report / summarize logic with the rebuild seam mocked.
+- `telemetryReclaimUI.test.tsx` — the pure `formatReclaimResult` (nothing-to-do / success / partial
+  failure / all-failed). `e2e/telemetry-reclaim.spec.ts` drives the real button → confirm → POST →
+  status round-trip.

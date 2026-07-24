@@ -534,6 +534,61 @@ export function isTelemetryClusterDbPath(dbPath: string): boolean {
   return basename(dirname(dbPath)) === 'telemetry';
 }
 
+/**
+ * HS-9427 (docs/127 §127.5) — reclaim a bloated telemetry cluster's `pg_wal` by
+ * DUMP → LOAD into a fresh (tuned) cluster.
+ *
+ * PGLite never returns WAL to the OS below `max_wal_size`, and a cluster created
+ * under the old 1 GB budget keeps that WAL forever (HS-9422). The only reclaim is
+ * to rebuild: `dumpDataDir` is a consistent, generic snapshot of the WHOLE cluster
+ * (so it can't miss a table — the cluster holds `announcer_usage` /
+ * `ticket_work_intervals` that are NOT in the JSONL raw store, which is why a
+ * JSONL re-derive would lose data), and `openAndCacheDb(dbPath, dump)` rebuilds it
+ * with the small HS-9426 WAL budget.
+ *
+ * **Telemetry-only** — asserted, because the blast radius is a delete-and-rebuild
+ * of the cluster's `db/` dir. On a project (ticket-data) cluster this would be
+ * unacceptable; telemetry clusters are the un-snapshotted siblings (HS-9230).
+ *
+ * **Crash-safe swap:** dump, evict+close, `db/` → `db.reclaim-old`, load the dump
+ * into a fresh `db/`, then delete the aside dir. If the load throws, the aside dir
+ * is renamed back so the original cluster survives intact.
+ *
+ * **Small write-loss window (documented, acceptable):** telemetry writes
+ * (OTLP ingest) that land AFTER the dump snapshot but before the swap go to the
+ * old cluster and are discarded — a few metric rows at most, for a rare
+ * user-initiated cleanup on a lossy-tolerant store. Not used for ticket data.
+ */
+export async function rebuildTelemetryClusterFromDump(clusterDataDir: string): Promise<void> {
+  const dbDir = join(clusterDataDir, 'db');
+  if (!isTelemetryClusterDbPath(dbDir)) {
+    throw new Error(`rebuildTelemetryClusterFromDump refuses a non-telemetry cluster: ${dbDir}`);
+  }
+
+  // Consistent snapshot of the live cluster (PGLite serializes this against any
+  // in-flight query), uncompressed so the reload is a straight file materialize.
+  const live = await getDbForDir(clusterDataDir);
+  const dump = await live.dumpDataDir('none');
+  await closeDbForDir(clusterDataDir);
+
+  const asideDir = `${dbDir}.reclaim-old`;
+  rmSync(asideDir, { recursive: true, force: true }); // clear any leftover from a prior aborted run
+  renameSync(dbDir, asideDir);
+
+  try {
+    // Rebuild from the dump; `openAndCacheDb` applies the HS-9426 telemetry WAL
+    // budget (dbDir ends `…/telemetry/db`) and caches the new instance so the next
+    // `getTelemetryDb` uses it.
+    await openAndCacheDb(dbDir, dump);
+  } catch (err) {
+    // Load failed — restore the original cluster so nothing is lost.
+    rmSync(dbDir, { recursive: true, force: true });
+    renameSync(asideDir, dbDir);
+    throw err;
+  }
+  rmSync(asideDir, { recursive: true, force: true });
+}
+
 async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlite> {
   // HS-9426 — telemetry clusters get a small WAL budget so pg_wal can't balloon
   // to the default 1 GB (HS-9422). Project clusters keep PGLite's defaults: they

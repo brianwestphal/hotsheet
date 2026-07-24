@@ -281,3 +281,27 @@ telemetryRoutes.get('/telemetry/_debug', async (c) => {
   // otel_* tables (dropped once the rollup + JSONL migration completes).
   return c.json({ ...info, loadedProjects });
 });
+
+/**
+ * HS-9427 (docs/127 §127.5) — "Reclaim telemetry disk" button. Rebuilds every
+ * telemetry cluster whose `pg_wal` exceeds the threshold (dump → reload into a
+ * fresh cluster under the HS-9426 WAL budget), reclaiming WAL that no VACUUM or
+ * CHECKPOINT can (HS-9422). Machine-wide: it sweeps every loaded project's
+ * telemetry sibling + the central store, not just the active project — the bloat
+ * spans projects and this is a rare manual cleanup.
+ *
+ * Mutation, so the `/api/*` middleware already enforces the secret. No project
+ * scoping needed: it touches only telemetry clusters (asserted in
+ * `rebuildTelemetryClusterFromDump`), never ticket data.
+ */
+telemetryRoutes.post('/telemetry/reclaim-wal', async (c) => {
+  const { reclaimBloatedTelemetryClusters, summarizeReclaim, telemetryDirsForProjects } =
+    await import('../db/telemetryReclaim.js');
+  const { centralTelemetryDataDir } = await import('../db/connection.js');
+  const clusterDataDirs = telemetryDirsForProjects(
+    getAllProjects().map(p => p.dataDir),
+    centralTelemetryDataDir(),
+  );
+  const results = await reclaimBloatedTelemetryClusters({ clusterDataDirs });
+  return c.json({ ...summarizeReclaim(results), results });
+});

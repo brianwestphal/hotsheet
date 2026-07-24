@@ -28,6 +28,7 @@ import { state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
 import { bindClearTelemetryButton, resetClearTelemetryStatus } from './telemetryClearUI.js';
 import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
+import { bindReclaimTelemetryButton } from './telemetryReclaimUI.js';
 import { isTerminalWebglOptOut, isWebgl2Available, setTerminalWebglOptOut } from './terminalWebgl.js';
 import { showToast } from './toast.js';
 import { maybeOfferToolPrep } from './toolPrepNudge.js';
@@ -1123,6 +1124,7 @@ function bindTelemetryTab() {
   // sub-toggle guard below so it works even if a sub-toggle element is
   // somehow absent; it has its own internal null check.
   bindClearTelemetryButton();
+  bindReclaimTelemetryButton(); // HS-9427 — reclaim telemetry pg_wal disk
   if (masterEl === null || metricsEl === null || logsEl === null || tracesEl === null || retentionEl === null) return;
 
   // Per-checkbox change → PATCH the matching file-settings key. The
