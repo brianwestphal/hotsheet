@@ -65,10 +65,10 @@ function scriptedAppServer(opts: {
   newThreadId?: string;
   newThreadPath?: string;
   resumePath?: string;
-  // HS-9428 — model-B discovery: live thread ids (thread/loaded/list) + the
-  // thread/list catalog (filtered by the requested cwd).
+  // HS-9428/HS-9431 — model-B discovery: live thread ids (thread/loaded/list) +
+  // per-thread cwd/recency served by thread/read (keyed by id).
   loaded?: string[];
-  listThreads?: { id: string; cwd: string; recencyAt?: number }[];
+  threads?: { id: string; cwd: string; recencyAt?: number }[];
 } = {}): FakeServer {
   const stdout = new EventEmitter();
   const emit = (obj: unknown): void => { stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n', 'utf-8')); };
@@ -98,12 +98,11 @@ function scriptedAppServer(opts: {
       emit({ jsonrpc: '2.0', id: msg.id, result: {} });
     } else if (msg.method === 'thread/loaded/list') {
       emit({ jsonrpc: '2.0', id: msg.id, result: { data: opts.loaded ?? [], nextCursor: null } });
-    } else if (msg.method === 'thread/list') {
-      const cwd = (msg.params as { cwd?: string } | undefined)?.cwd;
-      const data = (opts.listThreads ?? [])
-        .filter(t => cwd === undefined || t.cwd === cwd)
-        .map(t => ({ id: t.id, sessionId: t.id, cwd: t.cwd, recencyAt: t.recencyAt ?? 0, status: { type: 'idle' } }));
-      emit({ jsonrpc: '2.0', id: msg.id, result: { data, nextCursor: null } });
+    } else if (msg.method === 'thread/read') {
+      const id = (msg.params as { threadId?: string } | undefined)?.threadId;
+      const t = (opts.threads ?? []).find(x => x.id === id);
+      if (t !== undefined) emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: t.id, cwd: t.cwd, recencyAt: t.recencyAt ?? 0 } } });
+      else emit({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `no such thread ${String(id)}` } });
     }
   };
   const proc = Object.assign(new EventEmitter(), {
@@ -596,7 +595,7 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
     const fake = scriptedAppServer({
       loaded: ['disc-1'],
-      listThreads: [{ id: 'disc-1', cwd: dir, recencyAt: 5 }], // dir = dirname(dataDir), the project cwd
+      threads: [{ id: 'disc-1', cwd: dir, recencyAt: 5 }], // dir = dirname(dataDir), the project cwd
       resumable: ['disc-1'],
       resumePath: '/sessions/disc-1.jsonl',
     });
@@ -605,7 +604,7 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
 
     const methods = fake.sent.map(m => m.method);
     expect(methods).toContain('thread/loaded/list');
-    expect(methods).toContain('thread/list');
+    expect(methods).toContain('thread/read');
     expect(methods).toContain('thread/resume');
     expect(methods).not.toContain('thread/start'); // joined an existing thread — did NOT create one
     expect(fake.sent.find(m => m.method === 'thread/resume')?.params?.threadId).toBe('disc-1');
@@ -613,7 +612,7 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     expect(readPersistedThreadId(dataDir)).toBe('disc-1');
   });
 
-  it('falls back to model-A (thread/start) when discovery is on but nothing is loaded — and short-circuits before thread/list', async () => {
+  it('falls back to model-A (thread/start) when discovery is on but nothing is loaded — and short-circuits before thread/read', async () => {
     vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
     const fake = scriptedAppServer({ loaded: [], newThreadId: 'th-a' });
     spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
@@ -621,7 +620,7 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
 
     const methods = fake.sent.map(m => m.method);
     expect(methods).toContain('thread/loaded/list');
-    expect(methods).not.toContain('thread/list'); // empty loaded set → no point listing
+    expect(methods).not.toContain('thread/read'); // empty loaded set → no point reading
     expect(methods).toContain('thread/start');
     expect(fake.sent.find(m => m.method === 'turn/start')?.params?.threadId).toBe('th-a');
   });
@@ -630,20 +629,20 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
     const fake = scriptedAppServer({
       loaded: ['other'],
-      listThreads: [{ id: 'other', cwd: '/some/other/project', recencyAt: 9 }],
+      threads: [{ id: 'other', cwd: '/some/other/project', recencyAt: 9 }],
       newThreadId: 'th-a',
     });
     spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     const methods = fake.sent.map(m => m.method);
-    expect(methods).toContain('thread/list');
+    expect(methods).toContain('thread/read'); // read the loaded thread, saw a different cwd
     expect(methods).not.toContain('thread/resume');
     expect(methods).toContain('thread/start');
   });
 
   it('never attempts discovery on the stdio transport (no shared thread to join) even with the flag on', async () => {
     vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
-    const fake = scriptedAppServer({ loaded: ['x'], listThreads: [{ id: 'x', cwd: dir }], newThreadId: 'th-a' });
+    const fake = scriptedAppServer({ loaded: ['x'], threads: [{ id: 'x', cwd: dir }], newThreadId: 'th-a' });
     spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     const methods = fake.sent.map(m => m.method);
@@ -652,12 +651,12 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
   });
 
   it('does nothing new when the flag is off (default): no discovery calls, model-A as before', async () => {
-    const fake = scriptedAppServer({ loaded: ['x'], listThreads: [{ id: 'x', cwd: dir }], newThreadId: 'th-a' });
+    const fake = scriptedAppServer({ loaded: ['x'], threads: [{ id: 'x', cwd: dir }], newThreadId: 'th-a' });
     spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
     const methods = fake.sent.map(m => m.method);
     expect(methods).not.toContain('thread/loaded/list');
-    expect(methods).not.toContain('thread/list');
+    expect(methods).not.toContain('thread/read');
     expect(methods).toContain('thread/start');
   });
 });

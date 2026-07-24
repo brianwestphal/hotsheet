@@ -38,8 +38,11 @@ Confirmed against the running daemon (read-only, on video-studio, 2026-07-24) an
 JSON-schema (`codex app-server generate-json-schema`):
 
 - `thread/loaded/list` → `{ data: string[] }` — the thread ids currently **loaded in memory** on
-  the daemon.
-- `thread/list { cwd, … }` → threads for a cwd, each with `{ id, cwd, path, status, recencyAt }`.
+  the daemon (includes fresh, no-turn threads).
+- `thread/read { threadId, includeTurns:false }` → `{ thread: { cwd, recencyAt, … } }` — resolves a
+  **loaded** thread's cwd, INCLUDING a fresh one with no on-disk rollout. This is the discovery
+  read (HS-9431). (`thread/list { cwd }` returns only threads **persisted to the on-disk session
+  store** — it misses a just-launched terminal thread, so it is NOT used for discovery.)
 - `ThreadStartParams` has **no id field** — codex mints thread ids; a client cannot supply one. But
   `thread/start` returns the id immediately, and the two list methods make discovery first-class, so
   **no id coordination is needed**.
@@ -50,15 +53,22 @@ JSON-schema (`codex app-server generate-json-schema`):
   token/pairing flavor for *networked* remote control — not used here.)
 - Also available for later polish: `turn/steer`, `thread/injectItems`, `thread/read`.
 
-## 129.3 Phase 1 — drive-side discovery (SHIPPED, HS-9428)
+## 129.3 Phase 1 — drive-side discovery (SHIPPED, HS-9428; corrected HS-9431)
 
-`codexAppServerMapping.ts`: pure `loadedThreadIdsFromResponse` + `pickThreadForCwd(listResult,
-loadedIds, cwd)` — pick the **loaded** thread whose **cwd matches**, tie-broken by newest
-`recencyAt`. `codexAppServer.ts`: `discoverLiveThreadForCwd` (`thread/loaded/list` ∩
-`thread/list{cwd}`) + `codexDriveDiscoverEnabled()` (env gate `HOTSHEET_CODEX_DISCOVER_THREAD=1`,
-default OFF). `bootSession` tries discovery FIRST (daemon-only, gated) → `thread/resume` the
-discovered id, else the existing model-A resume-persisted/`thread/start` fallback. Dormant until
-Phase 2 gives it a daemon-hosted terminal to discover.
+`codexAppServerMapping.ts`: pure `loadedThreadIdsFromResponse` + `threadReadEntry(id, readResult)` +
+`pickThreadForCwd(entries, cwd)` — pick the **loaded** thread whose **cwd matches**, tie-broken by
+newest `recencyAt`. `codexAppServer.ts`: `discoverLiveThreadForCwd` + `codexDriveDiscoverEnabled()`
+(env gate `HOTSHEET_CODEX_DISCOVER_THREAD=1`, default OFF). `bootSession` tries discovery FIRST
+(daemon-only, gated) → `thread/resume` the discovered id, else the existing model-A
+resume-persisted/`thread/start` fallback. Dormant until Phase 2 gives it a daemon-hosted terminal to
+discover.
+
+**HS-9431 correction (found by a live test against the real daemon):** discovery is
+`thread/loaded/list` → **`thread/read {threadId, includeTurns:false}` per loaded id** — NOT
+`thread/list{cwd}`. A just-launched `codex --remote` terminal has a thread that is **loaded
+in-memory but has no on-disk rollout yet** (no turn), so `thread/list` (which reads the on-disk
+session store) returns it EMPTY — the exact model-B case. `thread/read` resolves a live in-memory
+thread and returns its cwd. cwds are compared **realpath-normalized** (`/var/…` vs `/private/var/…`).
 
 ## 129.4 Phase 2 — terminal daemon-hosted (SHIPPED, HS-9429)
 
@@ -115,8 +125,15 @@ starts its own thread) so cron/worker/no-UI runs never regress.
 
 ## 129.8 Testing
 
-- **Unit** (shipped Phase 1): pure selection matrix (`pickThreadForCwd`) + drive discover/join vs
-  fallback against the scripted fake app-server (`codexAppServer.test.ts`).
+- **Unit** (shipped Phase 1): pure selection matrix (`pickThreadForCwd` / `threadReadEntry`) + drive
+  discover/join vs fallback against the scripted fake app-server (`codexAppServer.test.ts`).
+- **Live, local-only** (`src/codexModelBLive.test.ts`, HS-9431): drives the REAL codex daemon
+  (skips via `describe.skipIf` when the daemon socket isn't present, so CI skips it) — starts a
+  fresh daemon thread in a temp cwd and asserts the discovery sequence (`thread/loaded/list` →
+  `thread/read` → `pickThreadForCwd`) finds it. Cost-free (no LLM turn); deletes the throwaway
+  thread. This is the regression that would have caught the `thread/list` bug. The turn fan-out
+  (a driven `turn/start` rendering in the terminal client) was verified by hand against the real
+  daemon and is codex's own multi-client behavior.
 - **Phase 2**: resolve-command tests for the `codex --remote`/`resume --last --remote` forms +
   daemon-ready vs fallback; the daemon-readiness path per Q2.
 - **Manual (`docs/manual-test-plan.md`)**: real end-to-end on codex 0.145.0 — open a `{{aiCommand}}`

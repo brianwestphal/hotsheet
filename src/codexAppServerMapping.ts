@@ -88,49 +88,48 @@ export function loadedThreadIdsFromResponse(result: unknown): string[] {
   return data.filter((x): x is string => typeof x === 'string' && x !== '');
 }
 
-/** One entry of a `thread/list` response's `data` array, narrowed to the fields
- *  model-B selection needs (captured 0.145.0 shape has these plus more). */
-export interface ThreadListEntry {
+/** One loaded thread's identity for model-B selection, from a `thread/read`
+ *  response (HS-9431). `cwd` is compared realpath-normalized by the caller. */
+export interface LoadedThreadEntry {
   id: string;
   cwd: string | null;
   recencyAt: number;
 }
 
-function parseThreadListEntries(result: unknown): ThreadListEntry[] {
-  if (typeof result !== 'object' || result === null) return [];
-  const data = (result as Record<string, unknown>).data;
-  if (!Array.isArray(data)) return [];
-  const out: ThreadListEntry[] = [];
-  for (const raw of data) {
-    if (typeof raw !== 'object' || raw === null) continue;
-    const obj = raw as Record<string, unknown>;
-    const id = obj.id ?? obj.sessionId;
-    if (typeof id !== 'string' || id === '') continue;
-    out.push({
-      id,
-      cwd: typeof obj.cwd === 'string' ? obj.cwd : null,
-      // recencyAt / updatedAt are epoch-seconds in the captured shape; default 0
-      // so an entry without one just sorts oldest.
-      recencyAt: typeof obj.recencyAt === 'number' ? obj.recencyAt
-        : (typeof obj.updatedAt === 'number' ? obj.updatedAt : 0),
-    });
-  }
-  return out;
+/**
+ * HS-9431 (docs/129 model-B) — extract `{cwd, recencyAt}` from a `thread/read`
+ * response (`{ thread: { cwd, recencyAt|updatedAt } }`). Unlike `thread/list`,
+ * `thread/read` resolves a **fresh in-memory** thread (a just-launched
+ * `codex --remote` terminal with no turn yet) — which is exactly the model-B case
+ * `thread/list` misses (it only lists persisted-to-disk sessions). Returns null for
+ * a shapeless payload.
+ */
+export function threadReadEntry(id: string, result: unknown): LoadedThreadEntry | null {
+  if (typeof result !== 'object' || result === null) return null;
+  const thread = (result as Record<string, unknown>).thread;
+  if (typeof thread !== 'object' || thread === null) return null;
+  const t = thread as Record<string, unknown>;
+  return {
+    id,
+    cwd: typeof t.cwd === 'string' ? t.cwd : null,
+    // recencyAt / updatedAt are epoch-seconds in the captured shape; default 0
+    // so an entry without one just sorts oldest.
+    recencyAt: typeof t.recencyAt === 'number' ? t.recencyAt
+      : (typeof t.updatedAt === 'number' ? t.updatedAt : 0),
+  };
 }
 
 /**
- * HS-9428 (docs/121 model-B) — pick THE thread the drive should join for a
- * project, from a `thread/list` response, the set of currently-loaded thread ids,
- * and the project cwd. Decision (baked in): the **loaded** thread whose **cwd
- * matches**, tie-broken by most-recent `recencyAt`. Returns null when none
- * qualifies → the caller falls back to model-A (start/resume its own thread).
- *
- * Pure over its inputs so the selection policy is unit-tested without a daemon.
+ * HS-9428/HS-9431 (docs/129 model-B) — pick THE loaded thread the drive should join
+ * for a project cwd. Decision (baked in): the loaded thread whose **cwd matches**,
+ * tie-broken by most-recent `recencyAt`. Entries come from `thread/read` per
+ * `thread/loaded/list` id; `cwd` and each `entry.cwd` are expected already
+ * realpath-normalized by the caller (`discoverLiveThreadForCwd`). Returns null when
+ * none qualifies → caller falls back to model-A. Pure — unit-tested without a daemon.
  */
-export function pickThreadForCwd(listResult: unknown, loadedIds: readonly string[], cwd: string): string | null {
-  const loaded = new Set(loadedIds);
-  const candidates = parseThreadListEntries(listResult)
-    .filter((e) => loaded.has(e.id) && e.cwd === cwd)
+export function pickThreadForCwd(entries: readonly LoadedThreadEntry[], cwd: string): string | null {
+  const candidates = entries
+    .filter((e) => e.cwd === cwd)
     .sort((a, b) => b.recencyAt - a.recencyAt);
   return candidates.length > 0 ? candidates[0].id : null;
 }

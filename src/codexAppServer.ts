@@ -23,7 +23,7 @@
 // either way, behind one `CodexTransport` interface.
 
 import { type ChildProcess, spawn } from 'child_process';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { z } from 'zod';
 
@@ -42,10 +42,12 @@ import {
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
+  type LoadedThreadEntry,
   loadedThreadIdsFromResponse,
   pickThreadForCwd,
   rolloutPathFromThreadPayload,
   threadIdFromResponse,
+  threadReadEntry,
   transcriptLineFromItem,
 } from './codexAppServerMapping.js';
 import {
@@ -242,11 +244,27 @@ async function discoverLiveThreadForCwd(session: Session, cwd: string): Promise<
   try {
     const loaded = loadedThreadIdsFromResponse(await request(session, 'thread/loaded/list', {}, 10_000));
     if (loaded.length === 0) return null; // nothing live → model-A
-    const list = await request(session, 'thread/list', { cwd, limit: 25 }, 10_000);
-    return pickThreadForCwd(list, loaded, cwd);
+    // HS-9431 — read each LOADED thread's cwd via `thread/read` (not `thread/list`,
+    // which misses a fresh terminal thread that has no on-disk rollout yet). Compare
+    // realpath-normalized so `/var/…` vs `/private/var/…` (and any symlinked project
+    // path) still matches.
+    const target = realpathOrSelf(cwd);
+    const entries: LoadedThreadEntry[] = [];
+    for (const id of loaded) {
+      const read = await request(session, 'thread/read', { threadId: id, includeTurns: false }, 10_000).catch(() => null);
+      const entry = threadReadEntry(id, read);
+      if (entry !== null) entries.push({ ...entry, cwd: entry.cwd !== null ? realpathOrSelf(entry.cwd) : null });
+    }
+    return pickThreadForCwd(entries, target);
   } catch {
     return null;
   }
+}
+
+/** realpath a path, falling back to the input if it can't be resolved (e.g. it no
+ *  longer exists). Used to canonicalize cwds before the model-B match (HS-9431). */
+function realpathOrSelf(p: string): string {
+  try { return realpathSync.native(p); } catch { return p; }
 }
 
 export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {

@@ -18,6 +18,7 @@ import {
   pickThreadForCwd,
   rolloutPathFromThreadPayload,
   threadIdFromResponse,
+  threadReadEntry,
   TRANSCRIPT_TRUNCATION_MARKER,
   transcriptLineFromItem,
 } from './codexAppServerMapping.js';
@@ -246,30 +247,37 @@ describe('loadedThreadIdsFromResponse (HS-9428)', () => {
   });
 });
 
-describe('pickThreadForCwd (HS-9428 model-B selection)', () => {
-  const list = {
-    data: [
-      { id: 'old-cwd', cwd: '/proj', recencyAt: 100 },
-      { id: 'new-cwd', sessionId: 'new-cwd', cwd: '/proj', recencyAt: 200 }, // sessionId fallback
-      { id: 'other-cwd', cwd: '/elsewhere', recencyAt: 999 },
-      { id: 'not-loaded', cwd: '/proj', recencyAt: 999 },
-    ],
-  };
-  it('picks the loaded thread matching the cwd, most-recent by recencyAt', () => {
-    // Both old-cwd + new-cwd are loaded & match /proj → newest (new-cwd) wins.
-    expect(pickThreadForCwd(list, ['old-cwd', 'new-cwd', 'other-cwd'], '/proj')).toBe('new-cwd');
+describe('threadReadEntry (HS-9431)', () => {
+  it('extracts {id, cwd, recencyAt} from a thread/read response', () => {
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj', recencyAt: 42 } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 42 });
   });
-  it('ignores threads that are not loaded even if they match the cwd + are newest', () => {
-    // not-loaded (recencyAt 999) matches /proj but isn't in the loaded set.
-    expect(pickThreadForCwd(list, ['old-cwd'], '/proj')).toBe('old-cwd');
+  it('falls back updatedAt → recencyAt, defaults recency to 0, tolerates missing cwd', () => {
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj', updatedAt: 7 } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 7 });
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj' } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 0 });
+    expect(threadReadEntry('t1', { thread: {} })).toEqual({ id: 't1', cwd: null, recencyAt: 0 });
   });
-  it('ignores loaded threads whose cwd differs', () => {
-    expect(pickThreadForCwd(list, ['other-cwd'], '/proj')).toBeNull();
+  it('returns null for a shapeless payload', () => {
+    expect(threadReadEntry('t1', {})).toBeNull();
+    expect(threadReadEntry('t1', null)).toBeNull();
+    expect(threadReadEntry('t1', { thread: 'nope' })).toBeNull();
   });
-  it('returns null when nothing loaded matches (→ caller falls back to model-A)', () => {
-    expect(pickThreadForCwd(list, [], '/proj')).toBeNull();
-    expect(pickThreadForCwd({ data: [] }, ['x'], '/proj')).toBeNull();
-    expect(pickThreadForCwd(null, ['x'], '/proj')).toBeNull();
+});
+
+describe('pickThreadForCwd (HS-9428/HS-9431 model-B selection)', () => {
+  const entries = [
+    { id: 'old-cwd', cwd: '/proj', recencyAt: 100 },
+    { id: 'new-cwd', cwd: '/proj', recencyAt: 200 },
+    { id: 'other-cwd', cwd: '/elsewhere', recencyAt: 999 },
+  ];
+  it('picks the entry matching the cwd, most-recent by recencyAt', () => {
+    expect(pickThreadForCwd(entries, '/proj')).toBe('new-cwd');
+  });
+  it('ignores entries whose cwd differs', () => {
+    expect(pickThreadForCwd([{ id: 'other-cwd', cwd: '/elsewhere', recencyAt: 999 }], '/proj')).toBeNull();
+  });
+  it('returns null when nothing matches (→ caller falls back to model-A)', () => {
+    expect(pickThreadForCwd([], '/proj')).toBeNull();
+    expect(pickThreadForCwd([{ id: 'x', cwd: null, recencyAt: 1 }], '/proj')).toBeNull();
   });
 });
 
