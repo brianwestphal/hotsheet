@@ -48,6 +48,18 @@ export const CMD_COLORS = [
   { value: '#6b7280', label: 'Gray' },
 ];
 
+// HS-9425 — these command-tree arrays are per-project data held at module scope,
+// so they LOOK like docs/125 leak candidates (HS-9419 flagged them). Investigated
+// and deliberately NOT converted to `projectScoped`: the only reader,
+// `renderChannelCommands`, runs solely after an AWAITED `reloadCustomCommands`
+// (in `channelUI.tsx::initChannel`) or an awaited editor save — nothing
+// re-renders the command sidebar mid-switch (the poll does not call it), so a
+// stale read is unreachable. What briefly persists on a project switch is the
+// PREVIOUS render's DOM until the awaited reload repaints; `projectScoped`
+// wouldn't change that (the DOM persists regardless), and this module's
+// mutation-epoch guard (`commandItemsMutationEpoch`) already handles the
+// stale-reload race these arrays could otherwise have. So they stay module
+// globals + on the HS-9419 seed off-list. See docs/126 §126.8.
 let commandItems: CommandItem[] = [];
 
 // HS-9014 (docs/95 §95.3) — scope-aware editing state. `commandItems` is the

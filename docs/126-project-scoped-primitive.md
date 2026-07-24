@@ -237,8 +237,8 @@ synchronously and let the refetch repaint.
 | State | Verdict |
 | --- | --- |
 | `poll::pollVersion` / `pollDataVersion` | **CLEARED — my hypothesis was wrong.** I flagged these as structurally identical to the HS-9412 `lastSeenId` bug. They aren't: `changeVersion`/`dataVersion` in `routes/notify.ts` are **process-global** module state, not per-project, so a client-side global is the *correct* mirror. Recorded so nobody re-investigates. |
-| `experimentalSettings::commandItems` (+ `commandShared`, `editTree`, `commandOverriddenIds`) | **Transient.** Refreshed via `reloadAppState → void initChannel() → reloadCustomCommands()` — fire-and-forget, so the command sidebar can paint the previous project's buttons briefly. Worth converting. |
-| `commandLog::panelOpen`, `activeTab` | **Transient**, same shape (`void applyPerProjectDrawerState()`). |
+| `experimentalSettings::commandItems` (+ `commandShared`, `editTree`, `commandOverriddenIds`) | **Safe by await (HS-9425).** Looked transient, but the only reader `renderChannelCommands` runs solely after an AWAITED `reloadCustomCommands`; nothing re-renders the sidebar mid-switch. What persists is the previous render's DOM, which `projectScoped` wouldn't change. Kept global; the module's mutation-epoch guard already covers the reload race. |
+| `commandLog::panelOpen`, `activeTab` | **Global by §126.5 (HS-9425).** These describe the SINGLE shared drawer element (one drawer; its open/tab state can't differ per project). The per-project *preference* is in settings.json, restored by `applyPerProjectDrawerState`. Scoping them would be the §126.5 mistake. Kept global. |
 | `customViews::viewLayers` | Safe — `await loadCustomViews()` in `reloadAppState`. |
 | `ticketRefs::cachedPrefixes` | Safe — explicitly re-fetched (HS-8053). |
 | `settingsScope::layered`, `settingsDialog::autoContext*`, `terminalsSettings::terminals*` | Safe **in practice**: only read while the settings dialog is open, and repopulated on open. Stale between a switch and the next open, but nothing reads it. Fragile by construction rather than broken. |
@@ -246,7 +246,11 @@ synchronously and let the refetch repaint.
 
 ### Recommendation
 
-Convert the two transient cases, and prefer `projectScoped` over "it gets refreshed" for the
-dialog-scoped ones when those files are next touched — "nothing reads it before the refresh" is a
-runtime-ordering argument, and runtime ordering is exactly what the eleven docs/125 bugs kept
-invalidating. Tracked by HS-9425.
+HS-9425 investigated the two "transient" candidates and **converted neither** — the command list is
+safe by await (no mid-switch re-render path exists) and the drawer state is shared-DOM-node state
+(§126.5). Both got an explaining comment at the declaration so they aren't re-flagged, and both stay
+on the HS-9419 seed off-list. The lesson generalizes: **an awaited refresh is genuinely safe**, and
+"it looks per-project" is not enough — check whether a stale *read* is reachable and whether the
+state describes data or a shared DOM node before reaching for `projectScoped`. For the dialog-scoped
+editor arrays (settings-dialog-only, repopulated on open), prefer the primitive when those files are
+next touched, but they are not leaking today.

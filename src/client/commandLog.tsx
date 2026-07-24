@@ -35,6 +35,14 @@ import { delegate } from './reactive.js';
 import { bindList } from './reactive-bind.js';
 import { getActiveProject } from './state.js';
 
+// HS-9425 — `panelOpen` and `activeTab` (below) describe the SINGLE shared drawer
+// element, not per-project data. There is one drawer; its current open/closed
+// state and active tab can't differ per project, so they are correctly global
+// (docs/126 §126.5 — "scope the data, keep shared-DOM-node state global"). The
+// per-project SAVED preference is separate: it lives in settings.json and is
+// restored on switch by `applyPerProjectDrawerState`. HS-9419 flagged these;
+// investigated and deliberately kept global — converting them to `projectScoped`
+// would be the §126.5 mistake caught during HS-9416. See docs/126 §126.8.
 let panelOpen = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 // HS-9412 (docs/125 §125.3a / docs/126) — PROJECT-SCOPED. This is a cursor into
