@@ -113,6 +113,31 @@ const keyFor = (ticketNumber: string) => `${getActiveProject()?.secret ?? ''}::$
 The general rule: **scope the data, composite-key the view state.** Ask what the variable describes —
 a project's data (scope it) or a shared DOM node (make the key include the project).
 
+## 126.5b The third case: DOM that outlives the switch (HS-9441)
+
+A related-but-distinct leak: not stale *state*, stale *DOM*. Hover- and anchor-based overlays (the
+command tooltip, the git-status popover, context menus, the tag autocomplete) are dismissed by an
+event on their **anchor** — `mouseleave`, `blur`, an outside `click`. A project switch rebuilds the UI
+those anchors live in, and removing an element fires **none** of those events:
+
+- removing a hovered element does not fire `mouseleave` (the button leaves the mouse, not vice versa);
+- removing a focused element does not reliably fire `blur`;
+- a keyboard switch (`Cmd/Ctrl+Shift+←/→`) produces no `click` at all, so outside-click handlers never run.
+
+The overlay is orphaned: on screen, anchored to nothing, and showing the **previous project's** data
+(the git popover's branch + dirty count, a command's last-run time). `projectScoped` does not apply —
+per §126.5 these singletons describe shared DOM position, so they stay global. The fix is an explicit
+dismissal at the switch boundary: **`src/client/transientOverlays.ts::dismissTransientOverlays()`**,
+called at the top of `projectTabs.tsx::switchProject` (the one choke point every switch path goes
+through) before the rebuild.
+
+**Adding an overlay?** If it is dismissed by an anchor event rather than by an explicit user action,
+register it there — its own dismiss function (preferred: that resets the owning module's state too;
+a DOM-only sweep leaves the owner believing it is still open, so the next click refuses to reopen it)
+or, when the owner keeps the element in a closure, its class in `ORPHAN_SELECTORS`. **Modal dialogs
+are deliberately excluded** — a confirm, the settings dialog, and the §47 permission overlay await an
+explicit decision, and a project switch must not cancel one.
+
 ## 126.5a Testing a module that uses a cell
 
 The cell resolves its scope from **`projectsStore`** directly (it must, to avoid the

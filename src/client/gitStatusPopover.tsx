@@ -7,7 +7,10 @@ import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentC
 import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
-import { openWorktreesPanel } from './worktreesPanel.js';
+// HS-9441 — `worktreesPanel` is imported LAZILY (at click time). Statically it drags
+// in `terminal.tsx` → `commandLog.tsx` → … → `projectTabs.tsx`, so any module that
+// wants this file's dismiss function inherits a cycle back to the project tabs. The
+// panel is only ever opened from a click handler, so a dynamic import costs nothing.
 
 /**
  * HS-7956 — Phase 3 expanded popover for the sidebar git status chip.
@@ -59,6 +62,16 @@ function closePopover(): void {
   activeAnchor = null;
 }
 
+/**
+ * HS-9441 — dismiss an open popover from outside (a project switch). This popover
+ * has NO outside-click dismissal by design (it's a click-toggle with an explicit
+ * close button), so without this it survives a switch while showing the PREVIOUS
+ * project's branch, ahead/behind, and dirty files. Idempotent.
+ */
+export function dismissGitStatusPopover(): void {
+  closePopover();
+}
+
 async function openPopover(anchor: HTMLElement): Promise<void> {
   activeAnchor = anchor;
 
@@ -80,7 +93,9 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
     </div>
   );
   popover.querySelector('.git-popover-close')!.addEventListener('click', closePopover);
-  popover.querySelector('.git-popover-worktrees-btn')!.addEventListener('click', () => { openWorktreesPanel(); });
+  popover.querySelector('.git-popover-worktrees-btn')!.addEventListener('click', () => {
+    void import('./worktreesPanel.js').then(({ openWorktreesPanel }) => { openWorktreesPanel(); });
+  });
   document.body.appendChild(popover);
   activePopover = popover;
   positionPopover(popover, anchor);

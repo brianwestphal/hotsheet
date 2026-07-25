@@ -417,7 +417,10 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   }, 0);
 }
 
-function closeContextMenu() {
+/** HS-9441 — exported so `transientOverlays.ts` can dismiss an open menu on a
+ *  project switch (a keyboard switch fires no outside `click`, so the
+ *  document-level handler below never runs and the menu is orphaned). */
+export function closeContextMenu() {
   document.querySelectorAll('.context-menu').forEach(m => m.remove());
   document.removeEventListener('click', closeContextMenu);
   document.removeEventListener('contextmenu', closeContextMenu);

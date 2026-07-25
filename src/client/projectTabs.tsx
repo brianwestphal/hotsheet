@@ -15,6 +15,7 @@ import { clearPerProjectSessionState, getActiveProject, setActiveProject, state 
 import { draggedTicketIds, setDraggedTicketIds } from './ticketListState.js';
 import { transferTicketsToProject } from './ticketTransfer.js';
 import { showToast } from './toast.js';
+import { dismissTransientOverlays } from './transientOverlays.js';
 
 /** Callback to reload all app data after switching projects. Set by app.tsx during init. */
 let reloadCallback: (() => Promise<void>) | null = null;
@@ -158,6 +159,13 @@ export async function initProjectTabs(): Promise<void> {
 /** Switch to a different project. */
 export async function switchProject(project: ProjectInfo): Promise<void> {
   if (getActiveProject()?.secret === project.secret) return;
+  // HS-9441 — dismiss transient overlays FIRST. Hover/anchor-based overlays (the
+  // command tooltip, the git popover, context menus, the tag autocomplete) are
+  // dismissed by an event on their anchor, and the rebuild below removes those
+  // anchors without firing one — orphaning the overlay on screen, still showing the
+  // previous project's data. Before the rebuild, not after, so nothing is briefly
+  // pointing at the new project's UI. See `transientOverlays.ts`.
+  dismissTransientOverlays();
   // HS-8054 — record the interaction so any subsequent main-thread
   // longtask observation includes the project switch in its context
   // line.
