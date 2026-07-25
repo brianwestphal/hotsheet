@@ -336,6 +336,11 @@ export const GlobalConfigSchema = z.object({
   /** HS-9384 (docs/121 §121.7) — the codex app-server drive toggle. Absent ⇒ ENABLED
    *  (default ON, like an experimental feature the user hasn't turned off). */
   codexAppServerEnabled: z.boolean().optional(),
+  /** HS-9430 (docs/129, model-B) — codex terminals own a daemon thread (`codex --remote`)
+   *  the drive discovers by cwd, instead of the model-A "terminal chases the drive's
+   *  thread" attach. Absent ⇒ ENABLED (default ON, verified end-to-end HS-9429/9431).
+   *  `HOTSHEET_CODEX_DISCOVER_THREAD=0` force-disables (reverts to model-A); `=1` forces on. */
+  codexModelBTerminals: z.boolean().optional(),
   shareTotalSeconds: z.number().optional(),
   shareLastPrompted: z.string().optional(),
   shareAccepted: z.boolean().optional(),

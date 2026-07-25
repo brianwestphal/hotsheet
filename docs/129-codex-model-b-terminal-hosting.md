@@ -57,11 +57,15 @@ JSON-schema (`codex app-server generate-json-schema`):
 
 `codexAppServerMapping.ts`: pure `loadedThreadIdsFromResponse` + `threadReadEntry(id, readResult)` +
 `pickThreadForCwd(entries, cwd)` — pick the **loaded** thread whose **cwd matches**, tie-broken by
-newest `recencyAt`. `codexAppServer.ts`: `discoverLiveThreadForCwd` + `codexDriveDiscoverEnabled()`
-(env gate `HOTSHEET_CODEX_DISCOVER_THREAD=1`, default OFF). `bootSession` tries discovery FIRST
-(daemon-only, gated) → `thread/resume` the discovered id, else the existing model-A
-resume-persisted/`thread/start` fallback. Dormant until Phase 2 gives it a daemon-hosted terminal to
-discover.
+newest `recencyAt`. `codexAppServer.ts`: `discoverLiveThreadForCwd` + `codexDriveDiscoverEnabled()`.
+`bootSession` tries discovery FIRST (daemon-only, gated) → `thread/resume` the discovered id, else
+the existing model-A resume-persisted/`thread/start` fallback.
+
+**Gate (HS-9430): now DEFAULT ON** — the `codexModelBTerminals` global-config flag (absent ⇒ enabled,
+like `codexAppServerEnabled`); `HOTSHEET_CODEX_DISCOVER_THREAD` env force-overrides (`1` on / `0` off)
+for tests + a quick revert. Verified end-to-end against real codex 0.145.0 (§129.4). model-A stays the
+fallback (daemon down → plain codex; no live terminal thread → the drive starts its own), so a config
+flip fully reverts without touching code.
 
 **HS-9431 correction (found by a live test against the real daemon):** discovery is
 `thread/loaded/list` → **`thread/read {threadId, includeTurns:false}` per loaded id** — NOT
@@ -86,24 +90,35 @@ The codex `{{aiCommand}}` terminal launches daemon-hosted so it owns a discovera
   `ai_tool=codex` + socket not up) and, only in that rare cold case, `await`s `ensureCodexDaemonRunning`
   then spawns; **every other spawn stays synchronous** (so `attach`'s synchronous pty read is
   untouched). A failed ensure resolves to plain `codex` (the socket-absent fallback).
-- **Gate**: reuses `HOTSHEET_CODEX_DISCOVER_THREAD` (Phase-1) so terminal-hosting + drive-discovery
-  flip on together; Phase 3 promotes it to a real setting.
+- **Gate**: the same `codexDriveDiscoverEnabled()` gate as the drive, so terminal-hosting +
+  drive-discovery flip together. **Default ON** since HS-9430 (`codexModelBTerminals` config,
+  env-overridable) — see §129.3.
 - **Fallback**: daemon unreachable at spawn → plain `codex` (works standalone; the drive then uses
   model-A). The play button always works.
 - **Known gate-on quirk (resolved by Phase 3):** with the gate on, the model-A "↻ Rejoin codex" chip
   (`codexReattachAvailable`, keyed off `codexTerminalAttachCommand`) can still evaluate against the
   now-unused attach command. Harmless while experimental; HS-9430 removes the chip.
-- **Remaining before default-on:** the live interplay check (real `codex --remote` terminal + a drive
-  `turn/start` on its thread rendering in the terminal) is manual (§129.8) — the automated tests cover
-  the resolution + ensure-decision, not a real codex binary.
+- **Live verification (DONE, HS-9430):** proven end-to-end against real codex 0.145.0 — a real
+  `codex --remote -C <cwd>` TUI registers a loaded daemon thread with that cwd **on launch, before any
+  input** (so the drive can discover it the instant play is pressed), the discovery finds it by cwd,
+  and a two-client `turn/start` fans out to the attached terminal client. This is what unblocked the
+  default-on flip.
 
-## 129.5 Phase 3 — retire the chase (PLANNED, HS-9430)
+## 129.5 Phase 3 — promote the gate (DONE) + retire the chase (PLANNED, HS-9430)
 
-Once B is proven end-to-end: remove `codexTerminalAttachCommand`, `terminals/codexReattach.ts` +
-`codexReattachAvailable`, the `codexReattach` field on `GET /terminal/list`, and the "↻ Rejoin
-codex" chip (HS-9394/9397 — deletes the HS-9403 class). Promote the env gate to a real
-config/setting. Keep model-A as the documented **headless fallback** (no live terminal → the drive
-starts its own thread) so cron/worker/no-UI runs never regress.
+**Gate promoted + default-ON (DONE, HS-9430):** the `codexModelBTerminals` global-config flag
+(env-overridable) defaults ON; model-A stays the fallback so a config flip fully reverts. **Still
+planned** — deferred until model-B has real-world miles, since it's the one irreversible part: remove
+`codexTerminalAttachCommand`, `terminals/codexReattach.ts` + `codexReattachAvailable`, the
+`codexReattach` field on `GET /terminal/list`, and the "↻ Rejoin codex" chip (HS-9394/9397 — deletes
+the HS-9403 class), plus a UI toggle for the flag. Keep model-A as the documented **headless
+fallback** (no live terminal → the drive starts its own thread) so cron/worker/no-UI runs never
+regress.
+
+**Known transient quirk until the deletion lands:** with model-B on, the model-A "↻ Rejoin codex" chip
+(`codexReattachAvailable`, keyed off `codexTerminalAttachCommand`) can still evaluate against the
+now-unused attach command. Harmless; the chip's action (restart the terminal) just re-resolves to the
+model-B `codex --remote` command anyway.
 
 ## 129.6 Fallback matrix (nothing regresses)
 

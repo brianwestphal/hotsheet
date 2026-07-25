@@ -223,13 +223,22 @@ export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps 
  * survives a driven turn rendering above it.
  */
 /**
- * HS-9428 (docs/121 model-B) — opt-in while proven out. When ON, the drive tries to
- * DISCOVER and join the terminal's own live daemon thread (by cwd) before falling
- * back to starting/resuming its own (model-A). Default OFF so nothing changes until
- * the flip; env-gated to avoid a config-schema change during the proving phase.
+ * HS-9428/HS-9430 (docs/129 model-B) — is model-B on? When ON, a codex terminal
+ * launches daemon-hosted (`codex --remote`) and the drive DISCOVERS + joins that
+ * thread by cwd, instead of the model-A "terminal chases the drive's thread" attach.
+ *
+ * **Default ON** (HS-9430) — verified end-to-end against real codex 0.145.0
+ * (HS-9429/9431): the model-A path stays as the fallback (daemon down → plain
+ * codex; no live terminal thread → the drive starts its own), so nothing hard-breaks
+ * if the daemon is unavailable. The `codexModelBTerminals` global-config flag can
+ * turn it off; the `HOTSHEET_CODEX_DISCOVER_THREAD` env var force-overrides either
+ * way (`1` on / `0` off) for tests + a quick revert.
  */
 export function codexDriveDiscoverEnabled(): boolean {
-  return process.env.HOTSHEET_CODEX_DISCOVER_THREAD === '1';
+  const env = process.env.HOTSHEET_CODEX_DISCOVER_THREAD;
+  if (env === '1') return true;
+  if (env === '0') return false;
+  return readGlobalConfig().codexModelBTerminals !== false;
 }
 
 /**

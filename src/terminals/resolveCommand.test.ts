@@ -61,6 +61,7 @@ describe('resolveTerminalCommand', () => {
     const { command } = resolveTerminalCommand({
       dataDir: dir({ terminal_command: 'env X=1 {{aiCommand}} --acp', ai_tool: 'codex' }),
       isAiToolOnPath: (b) => b === 'codex',
+      codexModelB: false, // this case is about the bare binary; force model-A off the daemon socket
     });
     expect(command).toBe('env X=1 codex --acp');
   });
@@ -282,6 +283,7 @@ describe('codex daemon-attach resolution (HS-9394)', () => {
       dataDir: dir({ ai_tool: 'codex' }),
       isAiToolOnPath: (b) => b === 'codex',
       codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
+      codexModelB: false,
     });
     expect(command).toBe("codex resume th-1 --remote 'unix:///s.sock'");
   });
@@ -291,6 +293,7 @@ describe('codex daemon-attach resolution (HS-9394)', () => {
       dataDir: dir({ terminal_command: 'env X=1 {{aiCommand}}', ai_tool: 'codex' }),
       isAiToolOnPath: (b) => b === 'codex',
       codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
+      codexModelB: false,
     });
     expect(command).toBe("env X=1 codex resume th-1 --remote 'unix:///s.sock'");
   });
@@ -300,6 +303,7 @@ describe('codex daemon-attach resolution (HS-9394)', () => {
       dataDir: dir({ ai_tool: 'codex' }),
       isAiToolOnPath: (b) => b === 'codex',
       codexAttachOverride: () => null,
+      codexModelB: false,
     });
     expect(command).toBe('codex');
   });

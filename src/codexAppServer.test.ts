@@ -650,7 +650,8 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     expect(methods).toContain('thread/start');
   });
 
-  it('does nothing new when the flag is off (default): no discovery calls, model-A as before', async () => {
+  it('does no discovery when explicitly disabled (HOTSHEET_CODEX_DISCOVER_THREAD=0): model-A as before', async () => {
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0'); // model-B is now default-on; force it off
     const fake = scriptedAppServer({ loaded: ['x'], threads: [{ id: 'x', cwd: dir }], newThreadId: 'th-a' });
     spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
     await flush();
@@ -843,6 +844,7 @@ describe('HS-9403 — {{aiCommand}} terminal resolves the codex attach end-to-en
     configOverride: { id: 'ai', command: '{{aiCommand}}' },
     aiToolOverride: 'codex',
     isAiToolOnPath: (b) => b === 'codex', // codex "on PATH" — environmental, not the bug
+    codexModelB: false, // HS-9403 is about the model-A attach; model-B is now the default
   }).command;
 
   it('resolves to `codex resume … --remote unix://<real socket>` when the drive runs on the DAEMON', async () => {
@@ -885,7 +887,8 @@ describe('HS-9429 — codexTerminalRemoteCommand + codexTerminalNeedsDaemonEnsur
         .toBe(`codex --remote 'unix:///tmp/a b/s.sock' -C '${dir}'`);
     });
 
-    it('returns null when the gate is OFF (default — pre-Phase-3)', () => {
+    it('returns null when the gate is explicitly OFF (HOTSHEET_CODEX_DISCOVER_THREAD=0)', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0'); // model-B is now default-on
       expect(codexTerminalRemoteCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
     });
 
@@ -912,7 +915,8 @@ describe('HS-9429 — codexTerminalRemoteCommand + codexTerminalNeedsDaemonEnsur
       expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBe(false);
     });
 
-    it('false when the gate is off', () => {
+    it('false when the gate is explicitly off (HOTSHEET_CODEX_DISCOVER_THREAD=0)', () => {
+      vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0'); // model-B is now default-on
       expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(false);
     });
 
