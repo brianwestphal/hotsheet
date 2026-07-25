@@ -42,6 +42,25 @@ describe('channel-bundle zod-external contract (HS-8706)', () => {
     expect(channelBlock).not.toMatch(/noExternal:\s*\[\/\.\*\/\]/);
   });
 
+  // HS-9442 — the SECOND way the bundled channel server dies at load: esbuild
+  // rewrites a bundled CJS dependency's `require(…)` into its `__require` shim,
+  // which throws "Dynamic require of X is not supported" unless a real `require`
+  // exists in ESM scope. `ws` (CJS, `require('events')`) reached the channel
+  // bundle via HS-9388's `codexDaemonTransport.ts`, so packaged installs got a
+  // channel.js that could not even load — while `tsx` dev was fine.
+  //
+  // `bundleBoot.test.ts` is the behavioral guard (it spawns the real bundle);
+  // this pins the config so the banner can't be dropped while looking harmless.
+  it('tsup.config.ts gives the channel bundle a createRequire banner for bundled CJS deps', () => {
+    const tsup = read('tsup.config.ts');
+    const channelIdx = tsup.indexOf("entry: ['src/channel.ts']");
+    const nextEntryIdx = tsup.indexOf("entry: ['src/client/app.tsx']", channelIdx);
+    const channelBlock = tsup.slice(channelIdx, nextEntryIdx > 0 ? nextEntryIdx : undefined);
+    expect(channelBlock).toMatch(/banner:\s*\{/);
+    expect(channelBlock).toMatch(/createRequire/);
+    expect(channelBlock).toMatch(/const require = /);
+  });
+
   it('build-sidecar.sh ships zod in the runtime node_modules so the external import resolves', () => {
     const sh = read('scripts', 'build-sidecar.sh');
     // zod must be in REQUIRED_DEPS (not OPTIONAL — channel.js cannot start

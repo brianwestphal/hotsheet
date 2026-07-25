@@ -71,6 +71,24 @@ export default defineConfig([
     sourcemap: false,
     noExternal: [/^(?!zod($|\/))/],
     external: ['zod'],
+    banner: {
+      // HS-9442 — a real `require` in ESM scope, same as the cli.js banner
+      // (HS-9032). esbuild rewrites a bundled CJS dependency's `require(…)` into
+      // its `__require` shim, which only works when `require` is defined —
+      // otherwise it throws "Dynamic require of X is not supported" the moment
+      // that module initializes, i.e. at channel.js LOAD.
+      //
+      // What made this live: HS-9388 added `src/codexDaemonTransport.ts` →
+      // `ws` (CJS), reached from channel.ts via
+      // `skills.ts` → `mcpHooksAgents.ts` → `codexAppServer.ts`. `ws` does
+      // `require('events')`, so the bundled MCP server died on boot in PACKAGED
+      // installs only (dev runs `npx tsx src/channel.ts` through Node's real
+      // loader, so it never saw the shim). This banner fixes the whole class,
+      // not just `ws`: any future CJS edge into the channel bundle now resolves.
+      // Guarded by `src/bundleBoot.test.ts` (spawns the real bundle) and pinned
+      // by `src/channelBundle.test.ts`.
+      js: "import { createRequire as __hsCreateRequire } from 'module';\nconst require = __hsCreateRequire(import.meta.url);",
+    },
   },
   // Client bundle (browser JS + SCSS)
   {
