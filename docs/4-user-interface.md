@@ -26,7 +26,7 @@ The interface is divided into:
   - Close Tab, Close Other Tabs, Close Tabs to the Left, Close Tabs to the Right (disabled when not applicable). Each entry carries a Lucide icon (HS-7835): `x` for Close Tab, `between-horizontal-end` for Close Other Tabs, `arrow-left-from-line` / `arrow-right-from-line` for the directional close items.
   - A separator, then "Show in Finder" with a folder icon. Opens the project's root folder (parent of `.hotsheet/`) using the OS file manager.
 - Keyboard shortcuts for tab management:
-  - Cmd/Ctrl+Shift+[ or ] — Switch to previous/next tab (works even in text fields).
+  - Cmd/Ctrl+Shift+[ or ] — Switch to previous/next tab (works even in text fields). The matcher accepts the shifted characters `{` / `}` as well as `[` / `]`: a browser's `KeyboardEvent.key` carries the character the chord *produces*, so with Shift held these keys arrive as `{` / `}`. Matching only the unshifted form made both chords unreachable (HS-9443) — and since the Arrow variant below deliberately ignores text fields, that left no working keyboard tab switch from the draft input. Matching the character rather than the physical `e.code` is deliberate: `BracketRight` is a US-layout position that carries a different character elsewhere.
   - Cmd/Ctrl+Shift+Arrow Left/Right — Switch to previous/next tab (ignored when focus is in a text field, to preserve native text selection). When focus is inside an embedded terminal, this shortcut cycles terminal tabs instead — hold Alt/Option to force project-tab navigation. See [22-terminal.md §22.18](22-terminal.md).
   - Cmd/Ctrl+Alt+W — Close active tab.
 - Tabs can be reordered by drag-and-drop. A drop indicator shows the insertion point. Order is persisted to the server.

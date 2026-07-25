@@ -55,7 +55,7 @@ export interface KeyContext {
  *  by chords with native-passthrough semantics like Cmd+C / Cmd+X. */
 type ShortcutResult = 'handled' | 'continue';
 
-interface KeyboardShortcut {
+export interface KeyboardShortcut {
   /** Human-readable label — appears in dev tools / logs, never user-facing. */
   readonly label: string;
   /** Predicate matching the chord. Should cover key + modifiers but stop
@@ -98,7 +98,33 @@ export function shouldPreventHistoryBackKey(e: KeyboardEvent, ctx: KeyContext): 
   return true;
 }
 
-const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
+/**
+ * HS-9443 — does `key` name the `[` or `]` bracket, as a browser ACTUALLY reports it
+ * while Shift is held?
+ *
+ * `KeyboardEvent.key` carries the character the chord PRODUCES, so `Cmd+Shift+]`
+ * arrives as `}`, not `]`. The original matchers compared against `[` / `]` only, so
+ * both tab-cycling chords could never fire — measured in Chromium:
+ * `key=} code=BracketRight meta=true ctrl=false shift=true`.
+ *
+ * Matching the character in BOTH forms (rather than the physical `e.code`) keeps
+ * layout semantics: `e.code === 'BracketRight'` is the physical US position, which on
+ * a German layout is `+`/`*` — that would fire the shortcut on a key with no bracket
+ * printed on it. The trade-off is the reverse case (a layout where `[` needs AltGr
+ * has no reachable chord at all); see the HS-9443 note for that open question.
+ */
+function isBracketKey(key: string, side: 'left' | 'right'): boolean {
+  return side === 'left' ? (key === '[' || key === '{') : (key === ']' || key === '}');
+}
+
+/**
+ * Exported for tests ONLY (`shortcutsMatchers.test.ts`). HS-9443 — the bug lived in
+ * the half no test could reach: the existing coverage exercises the `run` sinks
+ * (`cycleTabForBracket`, `decideShiftArrowTabAction`) while `match` — the trigger —
+ * was never asserted, so two shortcuts that could never fire looked fully tested.
+ * Exporting the table lets a test walk every matcher generically.
+ */
+export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   {
     // HS-8656 — Cmd/Ctrl+Shift+[ / ] cycle tabs, matching macOS Terminal.app
     // (which supports both the brackets AND the arrows). These are ALIASES for
@@ -109,12 +135,12 @@ const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
     // brackets are never a text-selection chord, so there's no input-
     // fallthrough — a regular-input focus still cycles the project tab.
     label: 'Cmd/Ctrl+Shift+[: previous tab (terminal-aware)',
-    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && isBracketKey(e.key, 'left'),
     run: (e, ctx) => { e.preventDefault(); cycleTabForBracket(-1, e, ctx); return 'handled'; },
   },
   {
     label: 'Cmd/Ctrl+Shift+]: next tab (terminal-aware)',
-    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']',
+    match: (e) => (e.metaKey || e.ctrlKey) && e.shiftKey && isBracketKey(e.key, 'right'),
     run: (e, ctx) => { e.preventDefault(); cycleTabForBracket(1, e, ctx); return 'handled'; },
   },
   {
