@@ -1,6 +1,18 @@
 # 123 — Codex Terminal Attach (Driven-Thread Join)
 
-> **Status: SHIPPED (HS-9394, 2026-07-23).** The user-facing payoff of the docs/121
+> **Status: SHIPPED (HS-9394, 2026-07-23) — but SUPERSEDED AS THE DEFAULT by model-B
+> (HS-9430, 2026-07-25).** This doc describes **model-A**: the DRIVE owns the thread and
+> the terminal *chases* it with `codex resume <id> --remote`, decided at launch time —
+> which caused the cold-start-race/rejoin-chip class (HS-9403). **[129-codex-model-b-terminal-hosting.md](129-codex-model-b-terminal-hosting.md)
+> flips it and is now the default** (`codexModelBTerminals` config, default ON): the
+> TERMINAL owns a `codex --remote` daemon thread and the drive DISCOVERS it by cwd — no
+> chase, no chip. Model-A (this doc) remains the **fallback** (daemon down → plain codex;
+> no live terminal thread → the drive starts its own), and is force-selectable via
+> `HOTSHEET_CODEX_DISCOVER_THREAD=0`. The model-A chase machinery (`codexTerminalAttachCommand`,
+> `codexReattach`, the "↻ Rejoin codex" chip) is slated for removal once model-B has
+> real-world miles (HS-9430). Read docs/129 for the current design.
+>
+> Original intent below: the user-facing payoff of the docs/121
 > §121.6 daemon transport: a codex terminal Hot Sheet spawns joins the project's
 > **driven** app-server thread instead of running an isolated local core — play-button
 > work renders live in the terminal the user already thinks of as "their codex," and
