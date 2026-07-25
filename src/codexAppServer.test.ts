@@ -68,7 +68,7 @@ function scriptedAppServer(opts: {
   // HS-9428/HS-9431 — model-B discovery: live thread ids (thread/loaded/list) +
   // per-thread cwd/recency served by thread/read (keyed by id).
   loaded?: string[];
-  threads?: { id: string; cwd: string; recencyAt?: number }[];
+  threads?: { id: string; cwd: string; recencyAt?: number; path?: string }[];
 } = {}): FakeServer {
   const stdout = new EventEmitter();
   const emit = (obj: unknown): void => { stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n', 'utf-8')); };
@@ -101,7 +101,7 @@ function scriptedAppServer(opts: {
     } else if (msg.method === 'thread/read') {
       const id = (msg.params as { threadId?: string } | undefined)?.threadId;
       const t = (opts.threads ?? []).find(x => x.id === id);
-      if (t !== undefined) emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: t.id, cwd: t.cwd, recencyAt: t.recencyAt ?? 0 } } });
+      if (t !== undefined) emit({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: t.id, cwd: t.cwd, recencyAt: t.recencyAt ?? 0, ...(t.path !== undefined ? { path: t.path } : {}) } } });
       else emit({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `no such thread ${String(id)}` } });
     }
   };
@@ -659,6 +659,137 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     expect(methods).not.toContain('thread/loaded/list');
     expect(methods).not.toContain('thread/read');
     expect(methods).toContain('thread/start');
+  });
+
+  // HS-9438 — the live failure this fixes: a freshly launched `codex --remote` terminal
+  // session has NO rollout on disk until its first turn persists one, so
+  // `thread/resume` answers `-32600 no rollout found`. Adoption must not depend on it.
+  it('adopts a discovered live thread whose resume fails (no rollout yet) instead of falling back to its own thread', async () => {
+    const fake = scriptedAppServer({
+      loaded: ['term-1'],
+      threads: [{ id: 'term-1', cwd: dir, recencyAt: 5, path: '/sessions/term-1.jsonl' }],
+      resumable: [], // the fresh terminal thread cannot be resumed
+      newThreadId: 'th-mine',
+    });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+
+    const methods = fake.sent.map(m => m.method);
+    expect(methods).toContain('thread/resume'); // tried to subscribe…
+    expect(methods).not.toContain('thread/start'); // …and still joined the terminal's thread
+    expect(fake.sent.find(m => m.method === 'turn/start')?.params?.threadId).toBe('term-1');
+    expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'term-1', rolloutPath: '/sessions/term-1.jsonl' });
+  });
+
+  it('ends the turn on thread/status/changed idle for an adopted-unsubscribed thread (no turn/completed arrives)', async () => {
+    const postHeartbeat = vi.fn();
+    const signalDone = vi.fn();
+    const fake = scriptedAppServer({
+      loaded: ['term-1'],
+      threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }],
+      resumable: [],
+    });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat, signalDone });
+    await flush();
+    expect(signalDone).not.toHaveBeenCalled();
+
+    fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'active' } } });
+    await flush();
+    expect(signalDone).not.toHaveBeenCalled(); // active is a busy reassertion, not an end
+
+    fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+    await flush();
+    expect(heartbeats(postHeartbeat)).toContain('idle');
+    expect(signalDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT double-end a SUBSCRIBED thread that reports idle just before turn/completed', async () => {
+    const signalDone = vi.fn();
+    const fake = scriptedAppServer({
+      loaded: ['term-1'],
+      threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }],
+      resumable: ['term-1'], // resume succeeds → subscribed → turn/completed will arrive
+    });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone });
+    await flush();
+    // The daemon's real order for a subscribed thread: status idle, THEN turn/completed.
+    fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+    await flush();
+    expect(signalDone).not.toHaveBeenCalled();
+    fake.completeTurn('turn-1');
+    await flush();
+    expect(signalDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('excludes the drive-owned model-A thread from discovery even when it is loaded and more recent', async () => {
+    writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-mine', rolloutPath: '/sessions/mine.jsonl' }), 'utf-8');
+    const fake = scriptedAppServer({
+      loaded: ['th-mine', 'term-1'],
+      threads: [
+        { id: 'th-mine', cwd: dir, recencyAt: 900 }, // the drive's own turns keep bumping this
+        { id: 'term-1', cwd: dir, recencyAt: 100 },
+      ],
+      resumable: ['th-mine', 'term-1'],
+    });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    expect(fake.sent.find(m => m.method === 'turn/start')?.params?.threadId).toBe('term-1');
+    // …and it never even reads the excluded thread (the reads here are boot + the
+    // turn-boundary re-check, both for term-1 only).
+    expect(new Set(fake.sent.filter(m => m.method === 'thread/read').map(m => m.params?.threadId))).toEqual(new Set(['term-1']));
+  });
+
+  it('rejoins at the next turn boundary when the terminal is opened AFTER the first play', async () => {
+    // Boot with nothing live → model-A thread/start. Then a terminal thread appears.
+    const opts: Parameters<typeof scriptedAppServer>[0] = { loaded: [], threads: [], newThreadId: 'th-mine', resumable: [] };
+    const fake = scriptedAppServer(opts);
+    const deps = { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() };
+    spawnCodexAppServerRun(dataDir, 4174, 'first', deps);
+    await flush();
+    expect(fake.sent.find(m => m.method === 'turn/start')?.params?.threadId).toBe('th-mine');
+    fake.completeTurn('turn-1');
+    await flush();
+
+    opts.loaded = ['th-mine', 'term-late'];
+    opts.threads = [{ id: 'th-mine', cwd: dir, recencyAt: 900 }, { id: 'term-late', cwd: dir, recencyAt: 100 }];
+    spawnCodexAppServerRun(dataDir, 4174, 'second', deps);
+    await flush();
+
+    const turnStarts = fake.sent.filter(m => m.method === 'turn/start');
+    expect(turnStarts).toHaveLength(2);
+    expect(turnStarts[1].params?.threadId).toBe('term-late'); // migrated to the terminal's thread
+    expect(readPersistedThreadId(dataDir)).toBe('term-late');
+  });
+
+  it('upgrades an adopted-unsubscribed thread to a real subscription once its rollout exists', async () => {
+    const opts: Parameters<typeof scriptedAppServer>[0] = {
+      loaded: ['term-1'],
+      threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }],
+      resumable: [], // first play: no rollout yet
+    };
+    const fake = scriptedAppServer(opts);
+    const deps = { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() };
+    spawnCodexAppServerRun(dataDir, 4174, 'first', deps);
+    await flush();
+    fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+    await flush();
+
+    // The driven turn persisted a rollout, so the resume now succeeds.
+    opts.resumable = ['term-1'];
+    opts.resumePath = '/sessions/term-1.jsonl';
+    spawnCodexAppServerRun(dataDir, 4174, 'second', deps);
+    await flush();
+
+    // Every resume targets the terminal's thread — the drive keeps retrying the
+    // subscription while unsubscribed, and the last one (post-rollout) succeeds.
+    const resumes = fake.sent.filter(m => m.method === 'thread/resume');
+    expect(resumes.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(resumes.map(m => m.params?.threadId))).toEqual(new Set(['term-1']));
+    expect(readPersistedCodexThread(dataDir)?.rolloutPath).toBe('/sessions/term-1.jsonl');
+    // Subscribed now: turn/completed drives the end, and status-idle no longer double-fires.
+    fake.completeTurn('turn-2');
+    await flush();
+    expect(deps.signalDone).toHaveBeenCalledTimes(2); // once per turn, not twice for the second
   });
 });
 

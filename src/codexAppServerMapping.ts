@@ -89,11 +89,15 @@ export function loadedThreadIdsFromResponse(result: unknown): string[] {
 }
 
 /** One loaded thread's identity for model-B selection, from a `thread/read`
- *  response (HS-9431). `cwd` is compared realpath-normalized by the caller. */
+ *  response (HS-9431). `cwd` is compared realpath-normalized by the caller.
+ *  `rolloutPath` (HS-9438) is the thread's reported rollout JSONL — the daemon
+ *  reports it before the file exists, so its ON-DISK existence (not this field)
+ *  is what decides whether `thread/resume` can subscribe to the thread. */
 export interface LoadedThreadEntry {
   id: string;
   cwd: string | null;
   recencyAt: number;
+  rolloutPath: string | null;
 }
 
 /**
@@ -116,6 +120,7 @@ export function threadReadEntry(id: string, result: unknown): LoadedThreadEntry 
     // so an entry without one just sorts oldest.
     recencyAt: typeof t.recencyAt === 'number' ? t.recencyAt
       : (typeof t.updatedAt === 'number' ? t.updatedAt : 0),
+    rolloutPath: typeof t.path === 'string' && t.path !== '' ? t.path : null,
   };
 }
 
@@ -126,12 +131,21 @@ export function threadReadEntry(id: string, result: unknown): LoadedThreadEntry 
  * `thread/loaded/list` id; `cwd` and each `entry.cwd` are expected already
  * realpath-normalized by the caller (`discoverLiveThreadForCwd`). Returns null when
  * none qualifies → caller falls back to model-A. Pure — unit-tested without a daemon.
+ *
+ * HS-9438 — `excludeId` drops the drive's OWN model-A thread from the candidates.
+ * Without it a drive-owned thread wins on recency as soon as it runs a turn (its
+ * `recencyAt` is bumped by the driven turn itself), so the drive would keep
+ * re-electing its own off-screen thread over the terminal's live one.
  */
-export function pickThreadForCwd(entries: readonly LoadedThreadEntry[], cwd: string): string | null {
+export function pickThreadForCwd(
+  entries: readonly LoadedThreadEntry[],
+  cwd: string,
+  excludeId: string | null = null,
+): LoadedThreadEntry | null {
   const candidates = entries
-    .filter((e) => e.cwd === cwd)
+    .filter((e) => e.cwd === cwd && e.id !== excludeId)
     .sort((a, b) => b.recencyAt - a.recencyAt);
-  return candidates.length > 0 ? candidates[0].id : null;
+  return candidates.length > 0 ? candidates[0] : null;
 }
 
 /** What a server notification means for the drive's busy/turn lifecycle. */

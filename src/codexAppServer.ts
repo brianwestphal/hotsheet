@@ -159,6 +159,16 @@ interface Session {
   pending: Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   buffered: string;
   threadId: string | null;
+  /** HS-9438 — do we hold a `thread/resume` SUBSCRIPTION for `threadId`? True ⇒ the
+   *  full `turn/*` + `item/*` stream arrives. False ⇒ an adopted live thread whose
+   *  rollout doesn't exist yet: drivable via `turn/start`, but only
+   *  `thread/status/changed` arrives, so that is what ends the turn. */
+  subscribed: boolean;
+  /** HS-9438 — the model-A thread id read from `codex-app-server.json` at boot,
+   *  BEFORE any adoption. Excluded from every later discovery so a drive-owned
+   *  thread (whose `recencyAt` its own driven turns keep bumping) can't out-recency
+   *  the terminal's live thread. Null when the project had no persisted thread. */
+  modelAThreadId: string | null;
   currentTurnId: string | null;
   /** 'booting' until the handshake + thread setup completes; then idle/active. */
   phase: 'booting' | 'idle' | 'active';
@@ -243,13 +253,13 @@ export function codexDriveDiscoverEnabled(): boolean {
 
 /**
  * HS-9428 (docs/121 model-B) — discover the live daemon thread the drive should join
- * for `cwd`: intersect `thread/loaded/list` (the in-memory thread ids) with
- * `thread/list { cwd }` (threads recorded for that cwd), and pick the loaded one with
- * the most recent `recencyAt` (`pickThreadForCwd`). Returns null when nothing
- * qualifies (no live terminal session for this project) so the caller falls back to
- * model-A. Never throws — a rejected/absent method resolves to null.
+ * for `cwd`: list the in-memory threads (`thread/loaded/list`), read each one's cwd,
+ * and pick the match with the most recent `recencyAt` (`pickThreadForCwd`). Returns
+ * null when nothing qualifies (no live terminal session for this project) so the
+ * caller falls back to model-A. Never throws — a rejected/absent method resolves to
+ * null. `excludeId` drops the drive's own model-A thread (HS-9438).
  */
-async function discoverLiveThreadForCwd(session: Session, cwd: string): Promise<string | null> {
+async function discoverLiveThreadForCwd(session: Session, cwd: string, excludeId: string | null): Promise<LoadedThreadEntry | null> {
   try {
     const loaded = loadedThreadIdsFromResponse(await request(session, 'thread/loaded/list', {}, 10_000));
     if (loaded.length === 0) return null; // nothing live → model-A
@@ -260,14 +270,69 @@ async function discoverLiveThreadForCwd(session: Session, cwd: string): Promise<
     const target = realpathOrSelf(cwd);
     const entries: LoadedThreadEntry[] = [];
     for (const id of loaded) {
+      if (id === excludeId) continue; // no point reading a thread we won't pick
       const read = await request(session, 'thread/read', { threadId: id, includeTurns: false }, 10_000).catch(() => null);
       const entry = threadReadEntry(id, read);
       if (entry !== null) entries.push({ ...entry, cwd: entry.cwd !== null ? realpathOrSelf(entry.cwd) : null });
     }
-    return pickThreadForCwd(entries, target);
+    return pickThreadForCwd(entries, target, excludeId);
   } catch {
     return null;
   }
+}
+
+/**
+ * HS-9438 (docs/129 §129.3a) — ADOPT a discovered live thread as the drive's own.
+ *
+ * `thread/resume` serves two purposes on the daemon: it loads a cold thread, and it
+ * SUBSCRIBES this connection to the thread's `turn/*` + `item/*` notifications
+ * (live-verified: without it only `thread/status/changed` arrives). A discovered
+ * thread is by definition already loaded, so resume is only needed for the
+ * subscription — and it **fails** (`-32600 no rollout found`) on a freshly launched
+ * `codex --remote` session, because the rollout JSONL isn't written until that
+ * session's first turn completes. That failure used to abandon the discovered thread
+ * and fall back to the drive's own off-screen thread, which is exactly the model-B
+ * cold start (HS-9403) this whole design exists to fix.
+ *
+ * So: try to subscribe, but adopt EITHER WAY. Unsubscribed, `turn/start` still drives
+ * the thread (live-verified) and `thread/status/changed` carries the busy/idle
+ * lifecycle; `maybeRejoinLiveThread` upgrades to the full stream at the next turn
+ * boundary, by which point the first driven turn has persisted a rollout.
+ */
+async function adoptLiveThread(session: Session, entry: LoadedThreadEntry, config: unknown): Promise<void> {
+  const resumed = await request(session, 'thread/resume', { threadId: entry.id, config }, 60_000).catch(() => null);
+  session.threadId = entry.id;
+  session.subscribed = resumed !== null;
+  persistThreadState(session.dataDir, entry.id, resumed !== null ? rolloutPathFromThreadPayload(resumed) : entry.rolloutPath);
+}
+
+/** The per-thread MCP override the drive pins on threads it resumes/starts itself
+ *  (daemon only — see `bootSession`). Undefined on the stdio transport, whose child
+ *  already inherits our cwd + env.
+ *
+ *  NOT needed for an ADOPTED terminal thread: the daemon spawns a thread's MCP
+ *  children with THAT THREAD's cwd (live-verified via `lsof` on the channel-server
+ *  child), and the global `hotsheet-channel` entry resolves its data dir from cwd —
+ *  so a terminal launched with `-C <projectDir>` already reaches the right project. */
+function threadConfigOverride(session: Session): unknown {
+  return session.transport?.kind === 'daemon'
+    ? buildThreadMcpOverride(CODEX_MCP_KEY, getChannelServerPath(), session.dataDir)
+    : undefined;
+}
+
+/**
+ * HS-9438 — re-run model-B discovery at a turn boundary, so the drive joins the
+ * terminal's thread even when the terminal was opened AFTER the first play (boot-time
+ * discovery is a single shot, and the session lives for the whole server process).
+ * Also upgrades an adopted-but-unsubscribed thread to the full event stream once its
+ * rollout exists. Best-effort: any failure leaves the current thread in place.
+ */
+async function maybeRejoinLiveThread(session: Session): Promise<void> {
+  if (!codexDriveDiscoverEnabled() || session.transport?.kind !== 'daemon') return;
+  const entry = await discoverLiveThreadForCwd(session, dirname(session.dataDir), session.modelAThreadId).catch(() => null);
+  if (entry === null) return;
+  if (entry.id === session.threadId && session.subscribed) return; // already joined + subscribed
+  await adoptLiveThread(session, entry, threadConfigOverride(session));
 }
 
 /** realpath a path, falling back to the input if it can't be resolved (e.g. it no
@@ -415,6 +480,8 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     pending: new Map(),
     buffered: '',
     threadId: null,
+    subscribed: false,
+    modelAThreadId: readPersistedThreadId(dataDir),
     currentTurnId: null,
     phase: 'booting',
     queue: [],
@@ -496,34 +563,33 @@ async function bootSession(session: Session): Promise<void> {
   // HS-9388 — in daemon mode, pin the hotsheet-channel MCP server to THIS project
   // per-thread: the shared daemon's cwd/env are not ours, so the override carries an
   // absolute `--data-dir` + the HS-9380 drive marker (live-verified honored).
-  const config = session.transport?.kind === 'daemon'
-    ? buildThreadMcpOverride(CODEX_MCP_KEY, getChannelServerPath(), session.dataDir)
-    : undefined;
+  const config = threadConfigOverride(session);
   let threadId: string | null = null;
 
   // HS-9428 (docs/121 model-B) — prefer an EXISTING live thread for this project's
   // cwd (the terminal's own daemon session), so driven turns land in the window the
   // user is watching instead of a separate drive-owned thread. Daemon-only (a stdio
-  // child has no shared thread to discover) and opt-in while proven out. On any
-  // failure — older daemon without the list methods, resume error — fall through to
-  // model-A below, so the play button always works.
+  // child has no shared thread to discover). On any failure — older daemon without
+  // the list methods, nothing live — fall through to model-A below, so the play
+  // button always works. HS-9438: adoption no longer requires a successful
+  // `thread/resume` (see `adoptLiveThread`).
+  let adopted = false;
   if (codexDriveDiscoverEnabled() && session.transport?.kind === 'daemon') {
-    const discovered = await discoverLiveThreadForCwd(session, dirname(session.dataDir)).catch(() => null);
+    const discovered = await discoverLiveThreadForCwd(session, dirname(session.dataDir), session.modelAThreadId).catch(() => null);
     if (discovered !== null) {
-      const resumed = await request(session, 'thread/resume', { threadId: discovered, config }, 60_000).catch(() => null);
-      if (resumed !== null) {
-        threadId = discovered;
-        persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(resumed));
-      }
+      await adoptLiveThread(session, discovered, config);
+      threadId = session.threadId;
+      adopted = true;
     }
   }
 
-  const persisted = threadId === null ? readPersistedThreadId(session.dataDir) : null;
+  const persisted = threadId === null ? session.modelAThreadId : null;
   if (persisted !== null) {
     // O3 — auto-fresh ONLY when resume fails (missing/corrupt rollout).
     const resumed = await request(session, 'thread/resume', { threadId: persisted, config }, 60_000).catch(() => null);
     if (resumed !== null) {
       threadId = persisted;
+      session.subscribed = true;
       // HS-9394 — backfill/refresh the rollout path (pre-9394 state files lack it).
       persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(resumed));
     }
@@ -540,12 +606,26 @@ async function bootSession(session: Session): Promise<void> {
     }, 60_000);
     threadId = threadIdFromResponse(started);
     if (threadId === null) throw new Error('thread/start returned no thread id');
+    session.subscribed = true; // a thread we started ourselves is subscribed
     persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(started));
   }
   session.threadId = threadId;
+  // HS-9438 — when boot fell back to model-A (resumed the persisted thread, or started
+  // a fresh one), THAT thread is drive-owned: record it so later discoveries exclude
+  // it. Without this a drive-started thread wins every rejoin on recency, since each
+  // driven turn bumps its `recencyAt` past the terminal's. An ADOPTED thread is the
+  // terminal's, not ours — leave the exclusion alone.
+  if (!adopted) session.modelAThreadId = threadId;
   session.phase = 'idle';
   handshakeFailed.delete(session.dataDir); // a healthy boot clears any stale failure flag
   if (session.queue.length > 0) void startNextTurn(session);
+}
+
+/** Can a turn still be started? Read through a call deliberately: the checks straddle
+ *  an `await`, and the narrowing from the caller's earlier guard would otherwise make
+ *  them look statically dead — while a teardown really can land mid-turn. */
+function isSessionDrivable(session: Session): boolean {
+  return !session.finished && session.threadId !== null;
 }
 
 async function startNextTurn(session: Session): Promise<void> {
@@ -560,6 +640,13 @@ async function startNextTurn(session: Session): Promise<void> {
     }, HEARTBEAT_INTERVAL_MS);
     session.heartbeatTimer.unref();
   }
+  // HS-9438 — re-check model-B discovery at the turn boundary (a terminal opened
+  // after the first play; an adopted thread whose rollout now exists and can be
+  // subscribed). Deliberately AFTER `phase = 'active'`: that assignment is what makes
+  // a concurrent play queue instead of starting a second turn, so it must stay
+  // synchronous with respect to this function's entry.
+  await maybeRejoinLiveThread(session);
+  if (!isSessionDrivable(session)) { onTurnEnded(session); return; }
   // Spike finding: the response is an immediate ack (turn inProgress) — completion
   // arrives via `turn/completed`. A rejected turn/start (e.g. thread unloaded)
   // falls back to ending the "turn" so busy can't stick.
@@ -646,9 +733,17 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
     // started (phase 'active') drives the busy/done lifecycle.
     if (session.phase === 'active') onTurnEnded(session);
     else session.currentTurnId = null;
-  } else {
-    // thread-status active/idle — event-driven busy reassertion (spike finding).
-    if (event.active && session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
+  } else if (event.active) {
+    // thread-status active — event-driven busy reassertion (spike finding).
+    if (session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
+  } else if (!session.subscribed && session.phase === 'active') {
+    // HS-9438 — thread-status IDLE ends the turn on an adopted-but-unsubscribed
+    // thread, where `turn/completed` never arrives (live-verified: without a
+    // `thread/resume` subscription the daemon sends only `thread/status/changed`).
+    // Gated on `!subscribed` because a subscribed session gets idle-then-completed
+    // for the SAME turn, and ending it twice would double-fire done/transcript.
+    session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId ?? '', status: 'completed' });
+    onTurnEnded(session);
   }
 }
 

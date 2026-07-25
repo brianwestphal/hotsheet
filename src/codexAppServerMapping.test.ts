@@ -14,6 +14,7 @@ import {
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
+  type LoadedThreadEntry,
   loadedThreadIdsFromResponse,
   pickThreadForCwd,
   rolloutPathFromThreadPayload,
@@ -248,13 +249,21 @@ describe('loadedThreadIdsFromResponse (HS-9428)', () => {
 });
 
 describe('threadReadEntry (HS-9431)', () => {
-  it('extracts {id, cwd, recencyAt} from a thread/read response', () => {
-    expect(threadReadEntry('t1', { thread: { cwd: '/proj', recencyAt: 42 } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 42 });
+  it('extracts {id, cwd, recencyAt, rolloutPath} from a thread/read response', () => {
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj', recencyAt: 42, path: '/sessions/r.jsonl' } }))
+      .toEqual({ id: 't1', cwd: '/proj', recencyAt: 42, rolloutPath: '/sessions/r.jsonl' });
   });
   it('falls back updatedAt → recencyAt, defaults recency to 0, tolerates missing cwd', () => {
-    expect(threadReadEntry('t1', { thread: { cwd: '/proj', updatedAt: 7 } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 7 });
-    expect(threadReadEntry('t1', { thread: { cwd: '/proj' } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 0 });
-    expect(threadReadEntry('t1', { thread: {} })).toEqual({ id: 't1', cwd: null, recencyAt: 0 });
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj', updatedAt: 7 } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 7, rolloutPath: null });
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj' } })).toEqual({ id: 't1', cwd: '/proj', recencyAt: 0, rolloutPath: null });
+    expect(threadReadEntry('t1', { thread: {} })).toEqual({ id: 't1', cwd: null, recencyAt: 0, rolloutPath: null });
+  });
+  it('HS-9438 — reports a rollout path the daemon names even before the file exists', () => {
+    // The daemon reports `thread.path` for a fresh `codex --remote` session whose
+    // rollout has NOT been written yet; existence is checked separately (on disk).
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj', path: '/sessions/not-yet.jsonl' } })?.rolloutPath)
+      .toBe('/sessions/not-yet.jsonl');
+    expect(threadReadEntry('t1', { thread: { cwd: '/proj', path: '' } })?.rolloutPath).toBeNull();
   });
   it('returns null for a shapeless payload', () => {
     expect(threadReadEntry('t1', {})).toBeNull();
@@ -264,20 +273,31 @@ describe('threadReadEntry (HS-9431)', () => {
 });
 
 describe('pickThreadForCwd (HS-9428/HS-9431 model-B selection)', () => {
+  const entry = (id: string, cwd: string | null, recencyAt: number): LoadedThreadEntry =>
+    ({ id, cwd, recencyAt, rolloutPath: `/sessions/${id}.jsonl` });
   const entries = [
-    { id: 'old-cwd', cwd: '/proj', recencyAt: 100 },
-    { id: 'new-cwd', cwd: '/proj', recencyAt: 200 },
-    { id: 'other-cwd', cwd: '/elsewhere', recencyAt: 999 },
+    entry('old-cwd', '/proj', 100),
+    entry('new-cwd', '/proj', 200),
+    entry('other-cwd', '/elsewhere', 999),
   ];
   it('picks the entry matching the cwd, most-recent by recencyAt', () => {
-    expect(pickThreadForCwd(entries, '/proj')).toBe('new-cwd');
+    expect(pickThreadForCwd(entries, '/proj')?.id).toBe('new-cwd');
+  });
+  it('returns the whole entry so the caller can persist its rollout path', () => {
+    expect(pickThreadForCwd(entries, '/proj')?.rolloutPath).toBe('/sessions/new-cwd.jsonl');
   });
   it('ignores entries whose cwd differs', () => {
-    expect(pickThreadForCwd([{ id: 'other-cwd', cwd: '/elsewhere', recencyAt: 999 }], '/proj')).toBeNull();
+    expect(pickThreadForCwd([entry('other-cwd', '/elsewhere', 999)], '/proj')).toBeNull();
   });
   it('returns null when nothing matches (→ caller falls back to model-A)', () => {
     expect(pickThreadForCwd([], '/proj')).toBeNull();
-    expect(pickThreadForCwd([{ id: 'x', cwd: null, recencyAt: 1 }], '/proj')).toBeNull();
+    expect(pickThreadForCwd([entry('x', null, 1)], '/proj')).toBeNull();
+  });
+  it('HS-9438 — excludes the drive-owned model-A thread even when it is the most recent', () => {
+    // The drive's own turns bump its thread's recencyAt, so without the exclusion it
+    // would keep re-electing its own off-screen thread over the terminal's live one.
+    expect(pickThreadForCwd(entries, '/proj', 'new-cwd')?.id).toBe('old-cwd');
+    expect(pickThreadForCwd([entry('only-mine', '/proj', 500)], '/proj', 'only-mine')).toBeNull();
   });
 });
 

@@ -9,6 +9,10 @@
  * couldn't reproduce the daemon's real persisted-vs-loaded distinction. This test
  * drives the ACTUAL daemon and would have caught it.
  *
+ * HS-9438 extends it with the other half of the same real-daemon asymmetry: a fresh
+ * loaded thread is discoverable but NOT resumable (`no rollout found`), which is why
+ * the drive must adopt a discovered thread without depending on `thread/resume`.
+ *
  * Cost-free + side-effect-bounded: it only runs when the daemon socket ALREADY
  * exists (it never starts one, and never runs an LLM turn — the turn fan-out is
  * codex's own multi-client feature, separately verified by hand). It creates a
@@ -101,7 +105,19 @@ describe.skipIf(!daemonUp)('model-B live discovery against the real codex daemon
         if (entry !== null) entries.push({ ...entry, cwd: entry.cwd !== null ? canon(entry.cwd) : null });
       }
       // The fix: pick by realpath-normalized cwd → finds the fresh thread.
-      expect(pickThreadForCwd(entries, canon(cwd))).toBe(threadId);
+      expect(pickThreadForCwd(entries, canon(cwd))?.id).toBe(threadId);
+
+      // HS-9438 — the SECOND half of the bug, and the reason discovery alone wasn't
+      // enough: `thread/resume` on that same fresh thread FAILS, because the rollout
+      // JSONL isn't written until the thread's first turn completes. The drive used to
+      // treat that failure as "discovery didn't work" and fall back to its own
+      // off-screen thread. Pin both facts so a codex change in either direction shows up.
+      const reported = ((started.result as { thread?: { path?: string } } | undefined)?.thread)?.path ?? null;
+      expect(reported).toBeTruthy(); // the daemon names a rollout path…
+      expect(existsSync(reported as string)).toBe(false); // …before the file exists
+      const resumed = await c.req('thread/resume', { threadId, config: undefined });
+      expect(resumed.error).toBeTruthy();
+      expect(JSON.stringify(resumed.error)).toContain('no rollout found');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

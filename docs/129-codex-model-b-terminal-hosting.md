@@ -1,6 +1,6 @@
 # 129 — Codex model-B: terminal owns the thread, drive discovers it
 
-Status: **Phase 1 shipped (HS-9428); Phase 2 in design (HS-9429); Phase 3 planned (HS-9430).**
+Status: **Phases 1 + 2 shipped (HS-9428/9429/9431); adoption fix shipped (HS-9438); Phase 3 chase-retirement still planned (HS-9430).**
 
 Companion to [121-codex-app-server-drive.md](121-codex-app-server-drive.md) (the drive) and
 [123-codex-terminal-attach.md](123-codex-terminal-attach.md) (the terminal attach this supersedes).
@@ -39,10 +39,24 @@ JSON-schema (`codex app-server generate-json-schema`):
 
 - `thread/loaded/list` → `{ data: string[] }` — the thread ids currently **loaded in memory** on
   the daemon (includes fresh, no-turn threads).
-- `thread/read { threadId, includeTurns:false }` → `{ thread: { cwd, recencyAt, … } }` — resolves a
-  **loaded** thread's cwd, INCLUDING a fresh one with no on-disk rollout. This is the discovery
-  read (HS-9431). (`thread/list { cwd }` returns only threads **persisted to the on-disk session
-  store** — it misses a just-launched terminal thread, so it is NOT used for discovery.)
+- `thread/read { threadId, includeTurns:false }` → `{ thread: { cwd, recencyAt, path, … } }` —
+  resolves a **loaded** thread's cwd, INCLUDING a fresh one with no on-disk rollout. This is the
+  discovery read (HS-9431). (`thread/list { cwd }` returns only threads **persisted to the on-disk
+  session store** — it misses a just-launched terminal thread, so it is NOT used for discovery.)
+- `thread/resume { threadId }` does **two** things, and the distinction is the whole of HS-9438:
+  it loads a cold thread, **and it SUBSCRIBES the calling connection** to that thread's
+  `turn/*` + `item/*` notifications. A connection that never resumed can still
+  `turn/start` on a loaded thread, but receives **only `thread/status/changed`**
+  (active/idle) — no `turn/started`, `item/*`, or `turn/completed`. Both directions verified live.
+- `thread/resume` **FAILS** (`-32600 no rollout found for thread id …`) for a thread whose rollout
+  JSONL hasn't been written yet — which is every `codex --remote` session before its first turn
+  completes. `thread.path` names the file before it exists, so **on-disk existence**, not the
+  field, is the signal.
+- `turn/start { threadId, input }` needs no `config` and no prior resume: a loaded thread is
+  already in memory. MCP is unaffected — the daemon spawns a thread's MCP children with **that
+  thread's cwd** (verified with `lsof`), and Hot Sheet's global `hotsheet-channel` entry resolves
+  its data dir from cwd, so a terminal launched with `-C <projectDir>` reaches the right project
+  without the drive's per-thread override.
 - `ThreadStartParams` has **no id field** — codex mints thread ids; a client cannot supply one. But
   `thread/start` returns the id immediately, and the two list methods make discovery first-class, so
   **no id coordination is needed**.
@@ -66,6 +80,31 @@ like `codexAppServerEnabled`); `HOTSHEET_CODEX_DISCOVER_THREAD` env force-overri
 for tests + a quick revert. Verified end-to-end against real codex 0.145.0 (§129.4). model-A stays the
 fallback (daemon down → plain codex; no live terminal thread → the drive starts its own), so a config
 flip fully reverts without touching code.
+
+### 129.3a Adoption ≠ resume (HS-9438 — the fix that made model-B actually fire)
+
+Phase 1 shipped discovery that only **adopted a discovered thread if `thread/resume` succeeded**.
+Against real codex that meant model-B never engaged in its primary case: a just-opened
+`codex --remote` terminal has no rollout, resume answers `no rollout found`, and the drive
+silently fell back to its own off-screen thread. Reported live (video-studio, 2026-07-25): play and
+custom-command buttons drove turns the user never saw. Four changes:
+
+1. **Adopt either way** (`adoptLiveThread`). Resume is still attempted — it's the event
+   subscription, and it's how the per-thread MCP override gets pinned — but a failure no longer
+   abandons the thread. `turn/start` drives a loaded thread regardless (live-verified).
+2. **Unsubscribed lifecycle.** With no subscription, `thread/status/changed` → `idle` is what ends
+   the turn (busy → idle → done). Gated on `!subscribed`, because a subscribed session gets
+   idle-then-`turn/completed` for the same turn and would otherwise double-fire done/transcript.
+   Cost while unsubscribed: no per-item Commands Log transcript detail for that first turn.
+3. **Rejoin at the turn boundary** (`maybeRejoinLiveThread`, called from `startNextTurn`).
+   Boot-time discovery is one shot but the drive session lives for the whole server process, so a
+   terminal opened *after* the first play used to be invisible forever. Re-checking per turn also
+   upgrades an adopted-unsubscribed thread to the full stream once its rollout exists. Deliberately
+   runs *after* `phase = 'active'` — that assignment is what makes a concurrent play queue instead
+   of starting a second turn.
+4. **Exclude the drive's own thread** (`pickThreadForCwd(…, excludeId)`, `session.modelAThreadId`).
+   A drive-owned thread's `recencyAt` is bumped by its own driven turns, so without the exclusion it
+   out-recencies the terminal's live thread and the drive keeps re-electing its own.
 
 **HS-9431 correction (found by a live test against the real daemon):** discovery is
 `thread/loaded/list` → **`thread/read {threadId, includeTurns:false}` per loaded id** — NOT
@@ -125,9 +164,11 @@ model-B `codex --remote` command anyway.
 | Situation | Behavior |
 | --- | --- |
 | Daemon-hosted terminal live for the cwd | Drive discovers + `turn/start`s on it (model-B) |
+| …and its rollout doesn't exist yet (fresh terminal) | Adopted anyway; lifecycle from `thread/status/changed`; subscription retried next turn (HS-9438) |
+| Terminal opened AFTER the first play | Joined at the next turn boundary (`maybeRejoinLiveThread`, HS-9438) |
 | No live terminal (headless / worker / no UI) | Drive starts/resumes its own thread (model-A) |
 | Daemon unreachable at terminal spawn | Terminal launches plain `codex`; drive uses model-A |
-| Gate off (default, pre–Phase 3) | Entirely model-A — no discovery, no `--remote` |
+| Gate off (`codexModelBTerminals: false` / `HOTSHEET_CODEX_DISCOVER_THREAD=0`) | Entirely model-A — no discovery, no `--remote` |
 
 ## 129.7 Decisions (RESOLVED, HS-9429 maintainer)
 
@@ -142,11 +183,16 @@ model-B `codex --remote` command anyway.
 
 - **Unit** (shipped Phase 1): pure selection matrix (`pickThreadForCwd` / `threadReadEntry`) + drive
   discover/join vs fallback against the scripted fake app-server (`codexAppServer.test.ts`).
+  HS-9438 adds, in the same fake: adopt-when-resume-fails, status-idle ends an unsubscribed turn,
+  a subscribed turn does NOT double-end, the model-A exclusion, rejoin-when-the-terminal-arrives-late,
+  and the unsubscribed→subscribed upgrade.
 - **Live, local-only** (`src/codexModelBLive.test.ts`, HS-9431): drives the REAL codex daemon
   (skips via `describe.skipIf` when the daemon socket isn't present, so CI skips it) — starts a
   fresh daemon thread in a temp cwd and asserts the discovery sequence (`thread/loaded/list` →
   `thread/read` → `pickThreadForCwd`) finds it. Cost-free (no LLM turn); deletes the throwaway
-  thread. This is the regression that would have caught the `thread/list` bug. The turn fan-out
+  thread. HS-9438 adds the resume half to the same test: the fresh thread's reported `thread.path`
+  does not exist on disk, and `thread/resume` on it errors `no rollout found` — the two facts the
+  adoption fix rests on. This is the regression that would have caught the `thread/list` bug. The turn fan-out
   (a driven `turn/start` rendering in the terminal client) was verified by hand against the real
   daemon and is codex's own multi-client behavior.
 - **Phase 2**: resolve-command tests for the `codex --remote`/`resume --last --remote` forms +
