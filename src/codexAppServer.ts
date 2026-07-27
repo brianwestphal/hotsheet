@@ -194,6 +194,10 @@ interface Session {
   turnEndsOnStatus: boolean;
   /** HS-9439 — pending mid-turn `thread/resume` retry, cleared on teardown. */
   midTurnSubscribeTimer: ReturnType<typeof setTimeout> | null;
+  /** HS-9448 — true from just before we send `turn/start` until its response lands.
+   *  While set, a `thread/status/changed` idle is NOT ours to act on (see
+   *  `handleNotification`). */
+  turnStartPending: boolean;
   /** 'booting' until the handshake + thread setup completes; then idle/active. */
   phase: 'booting' | 'idle' | 'active';
   /** O1 — queued prompts; identical content coalesces (no duplicate entries). */
@@ -493,6 +497,7 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     currentTurnId: null,
     turnEndsOnStatus: false,
     midTurnSubscribeTimer: null,
+    turnStartPending: false,
     phase: 'booting',
     queue: [],
     heartbeatTimer: null,
@@ -660,13 +665,21 @@ async function startNextTurn(session: Session): Promise<void> {
   if (!isSessionDrivable(session)) { onTurnEnded(session); return; }
   // HS-9439 — pin this turn's ending rule BEFORE sending it (see `turnEndsOnStatus`).
   session.turnEndsOnStatus = !session.subscribed;
+  // HS-9448 — arm the guard before the send: until the ack lands, any `idle` we see
+  // belongs to somebody else's turn, not ours (docs/129 §129.10).
+  session.turnStartPending = true;
   // Spike finding: the response is an immediate ack (turn inProgress) — completion
   // arrives via `turn/completed`. A rejected turn/start (e.g. thread unloaded)
   // falls back to ending the "turn" so busy can't stick.
-  await request(session, 'turn/start', {
+  const acked = await request(session, 'turn/start', {
     threadId: session.threadId,
     input: [{ type: 'text', text: content }],
-  }, 120_000).catch(() => { onTurnEnded(session); });
+  }, 120_000).then(() => true).catch(() => false);
+  // Disarm BEFORE `onTurnEnded`: it can drain the queue straight back into
+  // `startNextTurn`, and that re-entrant call must not have its own arm clobbered by
+  // this one's disarm.
+  session.turnStartPending = false;
+  if (!acked) onTurnEnded(session);
   scheduleMidTurnSubscribe(session, 0);
 }
 
@@ -811,7 +824,7 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
   } else if (event.active) {
     // thread-status active — event-driven busy reassertion (spike finding).
     if (session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
-  } else if (session.turnEndsOnStatus && session.phase === 'active') {
+  } else if (session.turnEndsOnStatus && session.phase === 'active' && !session.turnStartPending) {
     // HS-9438 — thread-status IDLE ends the turn on an adopted-but-unsubscribed
     // thread, where `turn/completed` never arrives (live-verified: without a
     // `thread/resume` subscription the daemon sends only `thread/status/changed`).
@@ -822,6 +835,12 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
     // in flight ends. (It does add a `turn/completed` for that turn, but idle arrives
     // first — measured — so this branch ends it and the later `turn-ended` sees
     // phase !== 'active' and no-ops.)
+    // HS-9448 — `turnStartPending` closes the premature-idle race: between
+    // `phase = 'active'` and our `turn/start` landing (the `maybeRejoinLiveThread`
+    // discovery round-trip) a FOREIGN turn's idle would otherwise end a turn we
+    // haven't even sent yet. Waiting on a response we always get, rather than on an
+    // `active` transition codex may never emit, is why this guard can't stick busy —
+    // the failure mode that got the HS-9438 candidate rejected (docs/129 §129.10).
     session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId ?? '', status: 'completed' });
     onTurnEnded(session);
   }

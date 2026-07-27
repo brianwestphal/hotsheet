@@ -51,6 +51,8 @@ interface FakeServer {
   emit: (obj: unknown) => void;
   /** Complete the CURRENT turn (turn/started must have been emitted by the script). */
   completeTurn: (turnId: string, status?: string) => void;
+  /** HS-9448 — with `deferTurnStart`, send the withheld `turn/start` response now. */
+  releaseTurnStart: () => void;
 }
 
 /**
@@ -69,11 +71,15 @@ function scriptedAppServer(opts: {
   // per-thread cwd/recency served by thread/read (keyed by id).
   loaded?: string[];
   threads?: { id: string; cwd: string; recencyAt?: number; path?: string }[];
+  /** HS-9448 — withhold the `turn/start` response until `releaseTurnStart()`, so a
+   *  test can deliver events inside the window where the turn is sent-but-unacked. */
+  deferTurnStart?: boolean;
 } = {}): FakeServer {
   const stdout = new EventEmitter();
   const emit = (obj: unknown): void => { stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n', 'utf-8')); };
   const sent: FakeServer['sent'] = [];
   let turnCounter = 0;
+  let withheldTurnStart: (() => void) | null = null;
   const respond = (line: string): void => {
     let msg: { id?: unknown; method?: string; params?: Record<string, unknown>; result?: unknown };
     try { msg = JSON.parse(line) as typeof msg; } catch { return; }
@@ -92,8 +98,12 @@ function scriptedAppServer(opts: {
     } else if (msg.method === 'turn/start') {
       turnCounter += 1;
       const turnId = `turn-${String(turnCounter)}`;
-      emit({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
-      emit({ jsonrpc: '2.0', method: 'turn/started', params: { turn: { id: turnId, status: 'inProgress' } } });
+      const ack = (): void => {
+        emit({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
+        emit({ jsonrpc: '2.0', method: 'turn/started', params: { turn: { id: turnId, status: 'inProgress' } } });
+      };
+      if (opts.deferTurnStart === true) withheldTurnStart = ack;
+      else ack();
     } else if (msg.method === 'turn/interrupt') {
       emit({ jsonrpc: '2.0', id: msg.id, result: {} });
     } else if (msg.method === 'thread/loaded/list') {
@@ -120,6 +130,7 @@ function scriptedAppServer(opts: {
     completeTurn: (turnId, status = 'completed') => {
       emit({ jsonrpc: '2.0', method: 'turn/completed', params: { turn: { id: turnId, status } } });
     },
+    releaseTurnStart: () => { const ack = withheldTurnStart; withheldTurnStart = null; ack?.(); },
   };
 }
 
@@ -719,6 +730,59 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     fake.completeTurn('turn-1');
     await flush();
     expect(signalDone).toHaveBeenCalledTimes(1);
+  });
+
+  // HS-9448 (docs/129 §129.10) — the premature-idle race. `thread/status/changed` is
+  // broadcast to EVERY connection, so while our `turn/start` is still in flight a
+  // FOREIGN turn's idle would end a turn we haven't even sent yet.
+  describe('HS-9448 — idle arriving before our turn/start ack', () => {
+    const idle = (fake: FakeServer): void => {
+      fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+    };
+
+    it('ignores an idle while the turn/start is unacked, and still ends on the next one', async () => {
+      const signalDone = vi.fn();
+      const postHeartbeat = vi.fn();
+      const fake = scriptedAppServer({
+        loaded: ['term-1'],
+        threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }],
+        resumable: [], // adopted unsubscribed → this turn ends on thread-status
+        deferTurnStart: true,
+      });
+      spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat, signalDone });
+      await flush();
+      expect(fake.sent.some(m => m.method === 'turn/start')).toBe(true); // sent…
+      expect(heartbeats(postHeartbeat)).toContain('busy');
+
+      // …but unacked. Someone else's turn finishing here is NOT our turn ending.
+      idle(fake);
+      await flush();
+      expect(signalDone).not.toHaveBeenCalled();
+      expect(heartbeats(postHeartbeat)).not.toContain('idle');
+
+      fake.releaseTurnStart(); // our turn is now really running
+      await flush();
+      expect(signalDone).not.toHaveBeenCalled();
+
+      idle(fake);
+      await flush();
+      expect(signalDone).toHaveBeenCalledTimes(1); // …and this one is ours
+    });
+
+    it('disarms even when turn/start FAILS, so the turn still ends exactly once', async () => {
+      const signalDone = vi.fn();
+      // No `loaded` threads and an unresumable persisted id → boot falls through to
+      // thread/start; then a turn/start against an unknown method-shape still acks.
+      const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable: [] });
+      spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone });
+      await flush();
+      idle(fake); // acked by now → this legitimately ends the turn
+      await flush();
+      expect(signalDone).toHaveBeenCalledTimes(1);
+      idle(fake); // already idle — must not double-fire
+      await flush();
+      expect(signalDone).toHaveBeenCalledTimes(1);
+    });
   });
 
   // HS-9439 (docs/129 §129.9 fact 5) — the rollout lands ~1s INTO the first turn, so

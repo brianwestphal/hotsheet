@@ -337,7 +337,14 @@ The window is the discovery round-trip: `startNextTurn` sets `phase = 'active'`,
 first driven turn after a terminal opens (the `!subscribed` gate closes the path afterward), and both
 the agent's own `hotsheet_signal_done` and the client's 60 s fallback already bound the damage.
 
-**Recommended guard (HS-9448):** don't arm the idle-ends-turn path until our `turn/start` has been
-acknowledged. That covers exactly the window and — unlike the "saw active since turn start" guard
-rejected during HS-9438 — has no stick-forever failure mode, because it waits on a response we always
-get rather than on a transition codex may never emit.
+**Guard (HS-9448, SHIPPED):** `Session.turnStartPending` is armed just before we send `turn/start`
+and disarmed when its response lands; while set, a `thread/status/changed` idle is ignored. That
+covers exactly the window and — unlike the "saw active since turn start" guard rejected during
+HS-9438 — has no stick-forever failure mode, because it waits on a response we always get rather than
+on a transition codex may never emit.
+
+Two implementation details worth keeping: the disarm happens **before** `onTurnEnded` on a failed
+`turn/start`, because that call can drain the queue straight back into `startNextTurn` and the
+re-entrant arm must not be clobbered by the outer disarm; and the test pins the race by having the
+scripted fake **withhold** the `turn/start` response (`deferTurnStart` / `releaseTurnStart`) so an
+idle can be delivered inside the sent-but-unacked window. Removing the guard fails that test.
