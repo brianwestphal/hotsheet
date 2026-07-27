@@ -1,4 +1,5 @@
 import { clearLocalSettingOverride, getLayeredFileSettings, updateFileSettingsLayer, updateTicket } from '../api/index.js';
+import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { type ArrayDelta, isArrayDelta } from '../settingsDelta.js';
 import { suppressAnimation } from './animate.js';
 import { confirmDialog } from './confirm.js';
@@ -127,7 +128,7 @@ export function renderSidebarViews() {
         className={`sidebar-item sidebar-custom-view${state.view === `custom:${view.id}` ? ' active' : ''}`}
         data-view={`custom:${view.id}`}
         data-cv-index={String(i)}
-        draggable="true"
+        {...DRAGGABLE_TRUE}
       >
         {view.tag !== undefined && view.tag !== '' ? <span className="sidebar-view-tag-icon">{ICON_TAG}</span> : null}
         <span className="sidebar-view-name">{view.name}</span>

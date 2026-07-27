@@ -59,7 +59,7 @@ function render(): void {
     const isSelected = theme.id === (current.theme ?? DEFAULT_THEME_ID);
     themeSel.appendChild(toElement(
       isSelected
-        ? <option value={theme.id} selected="selected">{theme.name}</option>
+        ? <option value={theme.id} selected>{theme.name}</option>
         : <option value={theme.id}>{theme.name}</option>
     ));
   }
@@ -69,7 +69,7 @@ function render(): void {
     const isSelected = font.id === (current.fontFamily ?? DEFAULT_FONT_ID);
     fontSel.appendChild(toElement(
       isSelected
-        ? <option value={font.id} selected="selected">{font.name}</option>
+        ? <option value={font.id} selected>{font.name}</option>
         : <option value={font.id}>{font.name}</option>
     ));
   }

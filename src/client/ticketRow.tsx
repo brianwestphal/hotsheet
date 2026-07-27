@@ -377,7 +377,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
       </button>
       {renderTicketRowSyncIcon(ticket)}
       {getIndicatorDotType(ticket) != null ? <span className={`ticket-unread-dot${getIndicatorDotType(ticket) === 'feedback' ? ' feedback' : ''}`} title={getIndicatorDotType(ticket) === 'feedback' ? 'Feedback needed' : 'Unread changes'}></span> : null}
-      <input type="text" className="ticket-title-input" value={ticket.title} spellCheck="true" />
+      <input type="text" className="ticket-title-input" value={ticket.title} spellcheck="true" />
       {parseTags(ticket.tags).length > 0 ? (
         <div className="ticket-row-tags">
           {parseTags(ticket.tags).map(tag => (

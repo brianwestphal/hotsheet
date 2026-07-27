@@ -1,5 +1,6 @@
 import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, getRemotes, listProjects, reorderProjects, revealProject } from '../api/index.js';
 import type { SafeHtml } from '../jsx-runtime.js';
+import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -931,7 +932,7 @@ function tearDownMultiTabState(): void {
  *  closure doesn't go stale across reorder. */
 function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
   const row = toElement(
-    <div className="project-tab" data-secret={p.secret} draggable="true">
+    <div className="project-tab" data-secret={p.secret} {...DRAGGABLE_TRUE}>
       <span className="project-tab-dot"></span>
       <span className="project-tab-name">{p.name}</span>
       <span className="project-tab-bell"></span>

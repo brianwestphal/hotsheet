@@ -368,7 +368,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 <div className="detail-field detail-field-full">
                   <label>Title</label>
-                  <input type="text" id="detail-title" spellCheck="true" />
+                  <input type="text" id="detail-title" spellcheck="true" />
                 </div>
                 <div className="detail-field detail-field-full">
                   {/* HS-7957 — Details label is a flex row so the right-side
@@ -392,7 +392,7 @@ pageRoutes.get('/', (c) => {
                       so a brand-new ticket still reads as click-to-edit. */}
                   <div className="detail-details-wrap">
                     <div id="detail-details-rendered" className="detail-details-rendered note-markdown" tabIndex={0}></div>
-                    <textarea id="detail-details" rows={6} placeholder="Add details..." spellCheck="true"></textarea>
+                    <textarea id="detail-details" rows={6} placeholder="Add details..." spellcheck="true"></textarea>
                   </div>
                 </div>
                 {/* HS-9336 (docs/116) — free-text "what is this waiting on" note. Non-empty
@@ -400,7 +400,7 @@ pageRoutes.get('/', (c) => {
                     structured blocked-by dependency gate. */}
                 <div className="detail-field detail-field-full">
                   <label>Blocked reason</label>
-                  <textarea id="detail-blocked-reason" rows={2} placeholder="What is this waiting on? (leave blank if not blocked)" spellCheck="true"></textarea>
+                  <textarea id="detail-blocked-reason" rows={2} placeholder="What is this waiting on? (leave blank if not blocked)" spellcheck="true"></textarea>
                 </div>
                 <div className="detail-field detail-field-full">
                   <label>Tags</label>
@@ -1103,7 +1103,7 @@ pageRoutes.get('/', (c) => {
                     endpoint reports. Both are Global Settings. */}
                 <div className="settings-field" style="margin-top:12px;display:none" id="settings-announcer-local-field">
                   <label>Local model endpoint <span className="global-setting-badge">Global Setting</span></label>
-                  <input type="text" id="settings-announcer-local-endpoint" placeholder="http://localhost:11434/v1" autoComplete="off" spellCheck="false" style="max-width:340px;width:100%;box-sizing:border-box;font-size:13px" />
+                  <input type="text" id="settings-announcer-local-endpoint" placeholder="http://localhost:11434/v1" autoComplete="off" spellcheck="false" style="max-width:340px;width:100%;box-sizing:border-box;font-size:13px" />
                   <label style="margin-top:8px">Local model</label>
                   <select id="settings-announcer-local-model" style="max-width:340px"></select>
                   <span className="settings-hint" id="settings-announcer-local-status">An OpenAI-compatible endpoint (Ollama, LM Studio, llama.cpp, vLLM). Runs on-device — free + private, no key. Start your local server, then pick a model.</span>

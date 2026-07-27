@@ -40,8 +40,8 @@ export function renderCategoryList(_rebuildCategoryUI: () => void) {
       <div className="category-row" data-index={i}>
         <input type="color" className="category-color-input" value={cat.color} title="Color" />
         <input type="text" className="category-label-input" value={cat.label} placeholder="Label" title="Display name" />
-        <input type="text" className="category-short-input" value={cat.shortLabel} placeholder="ABR" title="Short label (3 chars)" maxlength="4" />
-        <input type="text" className="category-key-input" value={cat.shortcutKey} placeholder="k" title="Keyboard shortcut" maxlength="1" />
+        <input type="text" className="category-short-input" value={cat.shortLabel} placeholder="ABR" title="Short label (3 chars)" maxLength={4} />
+        <input type="text" className="category-key-input" value={cat.shortcutKey} placeholder="k" title="Keyboard shortcut" maxLength={1} />
         <input type="text" className="category-desc-input" value={cat.description} placeholder="Description..." title="Description (for AI tools)" />
         <button className="category-delete-btn" title="Remove">{'\u00d7'}</button>
       </div>

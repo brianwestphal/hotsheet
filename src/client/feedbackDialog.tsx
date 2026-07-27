@@ -740,7 +740,7 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
               Self-reference is INTENTIONAL here — the whole point of the
               affordance is "let me re-open the originating ticket for
               reference while I'm composing a response". */}
-          <span>{'Feedback Needed — '}<a className="ticket-ref" data-ticket-number={ticketNumber} href="javascript:void(0)">{ticketNumber}</a></span>
+          <span>{'Feedback Needed — '}<a className="ticket-ref" data-ticket-number={ticketNumber} href={raw('javascript:void(0)')}>{ticketNumber}</a></span>
           {/* HS-8836 — prev/next chevrons page a read-only view through the
               ticket's [Details + previous notes] while the response box stays
               pinned below. Rendered only when there's prior context to page to. */}
@@ -793,7 +793,7 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
           </div>
           <div className="settings-field feedback-catchall">
             <label>{blocks.length === 0 ? 'Your response' : 'Or respond below (catch-all)'}</label>
-            <textarea id="feedback-catchall-text" className="settings-textarea" rows={4} placeholder="Type your response..." style="width:100%;resize:vertical" spellCheck="true"></textarea>
+            <textarea id="feedback-catchall-text" className="settings-textarea" rows={4} placeholder="Type your response..." style="width:100%;resize:vertical" spellcheck="true"></textarea>
           </div>
           <div className="settings-field" style="margin-top:12px">
             <label>Attachments</label>
@@ -818,7 +818,7 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
 function buildInlineResponse(): HTMLElement {
   const el = toElement(
     <div className="feedback-inline-response">
-      <textarea className="settings-textarea feedback-inline-textarea" rows={3} placeholder="Your response..." spellCheck="true"></textarea>
+      <textarea className="settings-textarea feedback-inline-textarea" rows={3} placeholder="Your response..." spellcheck="true"></textarea>
       <button className="feedback-inline-remove" type="button" title="Remove this response">{'×'}</button>
     </div>
   );

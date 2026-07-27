@@ -543,7 +543,7 @@ function showNotWorkingDialog(ticket: Ticket) {
         <div className="custom-view-editor-body">
           <div className="settings-field">
             <label>What's wrong?</label>
-            <textarea id="not-working-text" className="settings-textarea" rows={4} placeholder="Describe the issue..." style="width:100%;resize:vertical" spellCheck="true"></textarea>
+            <textarea id="not-working-text" className="settings-textarea" rows={4} placeholder="Describe the issue..." style="width:100%;resize:vertical" spellcheck="true"></textarea>
           </div>
           <div className="settings-field" style="margin-top:12px">
             <label>Attachments</label>

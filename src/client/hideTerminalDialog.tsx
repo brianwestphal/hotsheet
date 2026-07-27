@@ -1,3 +1,4 @@
+import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import {
   addGrouping,
@@ -163,7 +164,7 @@ function buildTab(
       type="button"
       className={`hide-terminal-tab${isActive ? ' is-active' : ''}`}
       data-grouping-id={grouping.id}
-      draggable="true"
+      {...DRAGGABLE_TRUE}
       title={grouping.id === DEFAULT_GROUPING_ID ? 'Default grouping (cannot be deleted)' : 'Right-click to rename or delete'}
     >
       <span className="hide-terminal-tab-label">{grouping.name}</span>

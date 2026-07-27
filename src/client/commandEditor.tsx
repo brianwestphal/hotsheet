@@ -1,3 +1,4 @@
+import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { agentDisplayName } from './agentName.js';
 import { byIdOrNull, toElement } from './dom.js';
 import {
@@ -306,7 +307,7 @@ function renderCommandOutlineRow(ref: ItemRef, ctx: ScopeCtx): HTMLElement {
   // delegated once at `#settings-commands-list` (`ensureCommandRowDelegationBound`),
   // reading the `ItemRef` back from `data-ref`. HS-9014 adds the scope tag + move btn.
   return toElement(
-    <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} draggable="true" data-ref={JSON.stringify(ref)}>
+    <div className={`cmd-outline-row${isChild ? ' cmd-outline-indented' : ''}`} {...DRAGGABLE_TRUE} data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-icon" style={`background:${currentColor};color:${textColor}`}>{renderIconSvg(currentIcon.svg, 12, textColor)}</span>
       <span className="cmd-outline-name">{cmd.name !== '' ? cmd.name : '(untitled)'}</span>
@@ -344,7 +345,7 @@ function renderGroupOutlineRow(topIndex: number, ctx: ScopeCtx): HTMLElement {
   // is only read here for the markup; the handlers re-fetch it via
   // `getEditTree()` so they always see the live array.
   return toElement(
-    <div className="cmd-outline-row cmd-outline-group-row" draggable="true" data-ref={JSON.stringify(ref)}>
+    <div className="cmd-outline-row cmd-outline-group-row" {...DRAGGABLE_TRUE} data-ref={JSON.stringify(ref)}>
       <span className="command-drag-handle" title="Drag to reorder">{'\u2630'}</span>
       <span className="cmd-outline-group-name" contentEditable="true">{group.name}</span>
       {/* HS-9216 — canonical action order: [tag] reset → (delete if empty) → move. */}
