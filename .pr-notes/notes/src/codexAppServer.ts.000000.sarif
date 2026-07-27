@@ -304,6 +304,107 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms2xabyroqli7wsf",
+          "message": {
+            "text": "turnEndsOnStatus is a per-TURN snapshot rather than a live read of session.subscribed, and that distinction is the whole reason the mid-turn resubscribe is safe.\n\nThe obvious implementation — leave the idle branch gated on !session.subscribed — breaks on a specific interleave. The mid-turn resume can land after the daemon broadcast turn/completed (which we didn't receive, being unsubscribed at the time) but before the idle that follows it. With a live read, we'd then ignore that idle because we're now \"subscribed\", and nothing else would end the turn: busy sticks until the client's 60s fallback.\n\nSnapshotting at turn start makes the resubscribe purely additive. The turn ends the way it was always going to end; the turn/completed the new subscription also delivers finds phase !== 'active' and no-ops. Measured ordering that this relies on: the daemon emits idle before turn/completed (docs/129 §129.9).\n",
+            "markdown": "`turnEndsOnStatus` is a per-TURN snapshot rather than a live read of `session.subscribed`, and that distinction is the whole reason the mid-turn resubscribe is safe.\n\nThe obvious implementation — leave the idle branch gated on `!session.subscribed` — breaks on a specific interleave. The mid-turn resume can land *after* the daemon broadcast `turn/completed` (which we didn't receive, being unsubscribed at the time) but *before* the `idle` that follows it. With a live read, we'd then ignore that idle because we're now \"subscribed\", and nothing else would end the turn: busy sticks until the client's 60s fallback.\n\nSnapshotting at turn start makes the resubscribe purely additive. The turn ends the way it was always going to end; the `turn/completed` the new subscription also delivers finds `phase !== 'active'` and no-ops. Measured ordering that this relies on: the daemon emits `idle` *before* `turn/completed` (docs/129 §129.9).\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 178,
+                  "endLine": 190,
+                  "snippet": {
+                    "text": "  currentTurnId: string | null;\n  /** HS-9439 — how the CURRENT turn ends, decided when it starts: true ⇒ from\n   *  `thread/status/changed` idle (we were unsubscribed at turn start, so no\n   *  `turn/completed` was coming). Deliberately a per-TURN snapshot rather than a\n   *  live read of `subscribed`: the mid-turn resubscribe below can flip `subscribed`\n   *  while this turn runs, and switching the ending rule mid-flight opens a window\n   *  where the turn ends by neither rule (subscribed just after `turn/completed` was\n   *  broadcast, but before the idle we'd then ignore) and busy sticks. */\n  turnEndsOnStatus: boolean;\n  /** HS-9439 — pending mid-turn `thread/resume` retry, cleared on teardown. */\n  midTurnSubscribeTimer: ReturnType<typeof setTimeout> | null;\n  /** 'booting' until the handshake + thread setup completes; then idle/active. */\n  phase: 'booting' | 'idle' | 'active';"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9439"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "7b7d0eb8a517bf307cea06a58909c08e"
+          }
+        },
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms2xac4m2l84bvzv",
+          "message": {
+            "text": "The 1.5/3/6 s ladder comes from a measurement, not a guess — and the whole approach was only viable because of what that measurement showed.\n\nAgainst the real daemon (codex-cli 0.145.0), on a fresh --remote thread's first turn:\n\nturn/start sent            +0 ms\nrollout JSONL appears   +1058 ms\nthread/resume SUCCEEDS  +1063 ms   ← mid-turn, and non-disruptive\nfirst item/started      +4108 ms   ← so the drive captured every item\nturn/completed          +6069 ms\n\nTwo things had to be true and both were: the rollout exists ~1 s in (not at turn end, which is what the HS-9438 write-up assumed), and resuming while a turn is running doesn't disturb it. The later ladder steps cover a slower first turn without turning this into a poll — after the third attempt it gives up, and the existing turn-boundary rejoin still catches it next turn.\n\nEnd-to-end live check of the shipped path (drive + a separate thread-owning client, real daemon): the first driven turn's transcript now carries its agent-message detail, where before it was empty.\n",
+            "markdown": "The 1.5/3/6 s ladder comes from a measurement, not a guess — and the whole approach was only viable because of what that measurement showed.\n\nAgainst the real daemon (codex-cli 0.145.0), on a fresh `--remote` thread's first turn:\n\n```\nturn/start sent            +0 ms\nrollout JSONL appears   +1058 ms\nthread/resume SUCCEEDS  +1063 ms   ← mid-turn, and non-disruptive\nfirst item/started      +4108 ms   ← so the drive captured every item\nturn/completed          +6069 ms\n```\n\nTwo things had to be true and both were: the rollout exists ~1 s in (not at turn end, which is what the HS-9438 write-up assumed), and resuming while a turn is running doesn't disturb it. The later ladder steps cover a slower first turn without turning this into a poll — after the third attempt it gives up, and the existing turn-boundary rejoin still catches it next turn.\n\nEnd-to-end live check of the shipped path (drive + a separate thread-owning client, real daemon): the first driven turn's transcript now carries its agent-message detail, where before it was empty.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 660,
+                  "endLine": 675,
+                  "snippet": {
+                    "text": "\n/** HS-9439 — retry delays (ms after the `turn/start` ack) for the mid-turn subscribe.\n *  Measured once at ~1.06 s (docs/129 §129.9 fact 5); the later attempts cover a\n *  slower first turn without turning this into a poll. */\nconst MID_TURN_SUBSCRIBE_DELAYS_MS = [1_500, 3_000, 6_000];\n\n/**\n * HS-9439 (docs/129 §129.9 fact 5) — subscribe to a turn that is ALREADY RUNNING.\n *\n * An adopted terminal thread can't be subscribed at adoption time: `thread/resume`\n * answers \"no rollout found\" until a rollout JSONL exists (§129.3a). But the rollout\n * is written ~1 s INTO the first turn, not at the end (measured: file at +1058 ms,\n * resume OK at +1063 ms, turn still running until +6069 ms) — and resuming mid-turn is\n * non-disruptive: the turn completes normally and we start receiving its `item/*`\n * stream. So instead of waiting for the next turn boundary, retry shortly after the\n * turn starts. That buys two things for the FIRST driven turn after a terminal opens:"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ]
+          },
+          "workItemUris": [
+            "HS-9439"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "7182daeabb0994e32901794788805e97"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "d963799d47b8609ac3cf8d4f6a70d98d138e2f2c",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

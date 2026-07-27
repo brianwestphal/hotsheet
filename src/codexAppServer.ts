@@ -176,6 +176,16 @@ interface Session {
    *  the terminal's live thread. Null when the project had no persisted thread. */
   modelAThreadId: string | null;
   currentTurnId: string | null;
+  /** HS-9439 — how the CURRENT turn ends, decided when it starts: true ⇒ from
+   *  `thread/status/changed` idle (we were unsubscribed at turn start, so no
+   *  `turn/completed` was coming). Deliberately a per-TURN snapshot rather than a
+   *  live read of `subscribed`: the mid-turn resubscribe below can flip `subscribed`
+   *  while this turn runs, and switching the ending rule mid-flight opens a window
+   *  where the turn ends by neither rule (subscribed just after `turn/completed` was
+   *  broadcast, but before the idle we'd then ignore) and busy sticks. */
+  turnEndsOnStatus: boolean;
+  /** HS-9439 — pending mid-turn `thread/resume` retry, cleared on teardown. */
+  midTurnSubscribeTimer: ReturnType<typeof setTimeout> | null;
   /** 'booting' until the handshake + thread setup completes; then idle/active. */
   phase: 'booting' | 'idle' | 'active';
   /** O1 — queued prompts; identical content coalesces (no duplicate entries). */
@@ -446,6 +456,7 @@ export function shutdownCodexAppServers(): void {
 export function _resetCodexAppServersForTesting(): void {
   for (const session of sessions.values()) {
     if (session.heartbeatTimer !== null) clearInterval(session.heartbeatTimer);
+    if (session.midTurnSubscribeTimer !== null) clearTimeout(session.midTurnSubscribeTimer);
     for (const [, p] of session.pending) clearTimeout(p.timer);
   }
   sessions.clear();
@@ -469,6 +480,8 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     subscribed: false,
     modelAThreadId: readPersistedThreadId(dataDir),
     currentTurnId: null,
+    turnEndsOnStatus: false,
+    midTurnSubscribeTimer: null,
     phase: 'booting',
     queue: [],
     heartbeatTimer: null,
@@ -633,6 +646,8 @@ async function startNextTurn(session: Session): Promise<void> {
   // synchronous with respect to this function's entry.
   await maybeRejoinLiveThread(session);
   if (!isSessionDrivable(session)) { onTurnEnded(session); return; }
+  // HS-9439 — pin this turn's ending rule BEFORE sending it (see `turnEndsOnStatus`).
+  session.turnEndsOnStatus = !session.subscribed;
   // Spike finding: the response is an immediate ack (turn inProgress) — completion
   // arrives via `turn/completed`. A rejected turn/start (e.g. thread unloaded)
   // falls back to ending the "turn" so busy can't stick.
@@ -640,6 +655,56 @@ async function startNextTurn(session: Session): Promise<void> {
     threadId: session.threadId,
     input: [{ type: 'text', text: content }],
   }, 120_000).catch(() => { onTurnEnded(session); });
+  scheduleMidTurnSubscribe(session, 0);
+}
+
+/** HS-9439 — retry delays (ms after the `turn/start` ack) for the mid-turn subscribe.
+ *  Measured once at ~1.06 s (docs/129 §129.9 fact 5); the later attempts cover a
+ *  slower first turn without turning this into a poll. */
+const MID_TURN_SUBSCRIBE_DELAYS_MS = [1_500, 3_000, 6_000];
+
+/**
+ * HS-9439 (docs/129 §129.9 fact 5) — subscribe to a turn that is ALREADY RUNNING.
+ *
+ * An adopted terminal thread can't be subscribed at adoption time: `thread/resume`
+ * answers "no rollout found" until a rollout JSONL exists (§129.3a). But the rollout
+ * is written ~1 s INTO the first turn, not at the end (measured: file at +1058 ms,
+ * resume OK at +1063 ms, turn still running until +6069 ms) — and resuming mid-turn is
+ * non-disruptive: the turn completes normally and we start receiving its `item/*`
+ * stream. So instead of waiting for the next turn boundary, retry shortly after the
+ * turn starts. That buys two things for the FIRST driven turn after a terminal opens:
+ *  - per-item Commands Log transcript detail (this ticket), and
+ *  - approvals, which codex routes by SUBSCRIPTION rather than to whoever started the
+ *    turn (§129.9 fact 2) — unsubscribed, the §47 overlay never sees them and the
+ *    `codex_interactive_permissions: false` auto-accept can't apply.
+ *
+ * `config` is deliberately omitted: HS-9438 established the per-thread MCP override
+ * isn't needed for an adopted thread (the daemon spawns a thread's MCP children with
+ * THAT thread's cwd), and re-sending it mid-turn provokes MCP server restarts while a
+ * tool call may be in flight. Best-effort throughout — a failure just leaves the turn
+ * ending the way it already was (`turnEndsOnStatus`).
+ */
+function scheduleMidTurnSubscribe(session: Session, attempt: number): void {
+  if (session.midTurnSubscribeTimer !== null) { clearTimeout(session.midTurnSubscribeTimer); session.midTurnSubscribeTimer = null; }
+  if (session.subscribed || session.finished || session.phase !== 'active') return;
+  if (session.transport?.kind !== 'daemon') return; // stdio owns its own thread — always subscribed
+  if (attempt >= MID_TURN_SUBSCRIBE_DELAYS_MS.length) return; // ladder exhausted — not a poll
+  const delay = MID_TURN_SUBSCRIBE_DELAYS_MS[attempt];
+  const timer = setTimeout(() => {
+    session.midTurnSubscribeTimer = null;
+    if (session.subscribed || session.finished || session.phase !== 'active' || session.threadId === null) return;
+    const threadId = session.threadId;
+    void request(session, 'thread/resume', { threadId }, 30_000)
+      .then((resumed) => {
+        // Guard again: the turn (or the session) can end while the resume is in flight.
+        if (session.finished || session.threadId !== threadId) return;
+        session.subscribed = true;
+        persistThreadState(session.dataDir, threadId, rolloutPathFromThreadPayload(resumed));
+      })
+      .catch(() => { scheduleMidTurnSubscribe(session, attempt + 1); });
+  }, delay);
+  timer.unref();
+  session.midTurnSubscribeTimer = timer;
 }
 
 function onTurnEnded(session: Session): void {
@@ -713,7 +778,14 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
   } else if (event.type === 'activity') {
     if (session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
   } else if (event.type === 'turn-ended') {
-    session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId ?? '', status: event.status ?? 'completed' });
+    // HS-9439 — a turn already closed by the thread-status path (adopted-unsubscribed)
+    // leaves `currentTurnId` null, and the daemon still delivers `turn/completed` for it
+    // once a mid-turn resubscribe lands. The Commands Log entry is already closed, so
+    // don't post a second 'end' for it (the server drops an unknown turn id anyway).
+    // A FOREIGN turn (an attached TUI's) does have an id here and must still be posted.
+    if (session.currentTurnId !== null) {
+      session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId, status: event.status ?? 'completed' });
+    }
     // HS-9388/HS-9394 — on a SHARED thread another client (an attached TUI) can run
     // turns too; those still stream to the transcript above, but only a turn WE
     // started (phase 'active') drives the busy/done lifecycle.
@@ -722,12 +794,17 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
   } else if (event.active) {
     // thread-status active — event-driven busy reassertion (spike finding).
     if (session.phase === 'active') session.deps.postHeartbeat(session.serverPort, session.secret, 'heartbeat');
-  } else if (!session.subscribed && session.phase === 'active') {
+  } else if (session.turnEndsOnStatus && session.phase === 'active') {
     // HS-9438 — thread-status IDLE ends the turn on an adopted-but-unsubscribed
     // thread, where `turn/completed` never arrives (live-verified: without a
     // `thread/resume` subscription the daemon sends only `thread/status/changed`).
-    // Gated on `!subscribed` because a subscribed session gets idle-then-completed
-    // for the SAME turn, and ending it twice would double-fire done/transcript.
+    // Gated because a SUBSCRIBED session gets idle-then-completed for the same turn,
+    // and ending it twice would double-fire done/transcript.
+    // HS-9439 — the gate is the per-turn `turnEndsOnStatus` snapshot, not a live
+    // `!subscribed` read: a mid-turn resubscribe must not change how the turn already
+    // in flight ends. (It does add a `turn/completed` for that turn, but idle arrives
+    // first — measured — so this branch ends it and the later `turn-ended` sees
+    // phase !== 'active' and no-ops.)
     session.deps.postTranscript(session.serverPort, session.secret, { phase: 'end', turnId: session.currentTurnId ?? '', status: 'completed' });
     onTurnEnded(session);
   }
@@ -830,6 +907,7 @@ function teardown(session: Session, _reason: string): void {
   if (session.finished) return;
   session.finished = true;
   if (session.heartbeatTimer !== null) { clearInterval(session.heartbeatTimer); session.heartbeatTimer = null; }
+  if (session.midTurnSubscribeTimer !== null) { clearTimeout(session.midTurnSubscribeTimer); session.midTurnSubscribeTimer = null; }
   for (const [, entry] of session.pending) { clearTimeout(entry.timer); entry.reject(new Error('codex app-server session ended')); }
   session.pending.clear();
   for (const id of session.pendingPermissionIds) dismissAcpPermission(id);

@@ -721,6 +721,121 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
     expect(signalDone).toHaveBeenCalledTimes(1);
   });
 
+  // HS-9439 (docs/129 §129.9 fact 5) — the rollout lands ~1s INTO the first turn, so
+  // the drive can subscribe to the turn it just started instead of waiting for the
+  // next turn boundary. Fake timers cover only setTimeout/clearTimeout so `flush()`'s
+  // setImmediate keeps working.
+  describe('HS-9439 — mid-turn resubscribe on an adopted thread', () => {
+    const withFakeTimers = async (body: () => Promise<void>): Promise<void> => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try { await body(); } finally { vi.useRealTimers(); }
+    };
+    const resumeCount = (fake: FakeServer): number => fake.sent.filter(m => m.method === 'thread/resume').length;
+
+    it('retries thread/resume after the turn starts and adopts the subscription once the rollout exists', async () => {
+      await withFakeTimers(async () => {
+        const resumable: string[] = []; // no rollout at adoption time
+        const fake = scriptedAppServer({
+          loaded: ['term-1'],
+          threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }],
+          resumable,
+          resumePath: '/sessions/term-1.jsonl',
+        });
+        spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+        await flush();
+        // Two failed attempts before any retry: adoption at boot, then the HS-9438
+        // turn-boundary rejoin — neither can succeed before the turn writes a rollout.
+        expect(resumeCount(fake)).toBe(2);
+
+        resumable.push('term-1'); // the turn writes its rollout ~1s in
+        await vi.advanceTimersByTimeAsync(1_600);
+        await flush();
+
+        expect(resumeCount(fake)).toBe(3);
+        // No `config` — re-sending the per-thread MCP override mid-turn would restart
+        // MCP servers while a tool call may be in flight (HS-9438: it isn't needed).
+        expect(fake.sent.filter(m => m.method === 'thread/resume')[2].params).toEqual({ threadId: 'term-1' });
+        // The subscription's rollout path is persisted for the next boot.
+        expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'term-1', rolloutPath: '/sessions/term-1.jsonl' });
+      });
+    });
+
+    it('does NOT change how the in-flight turn ends: status idle still ends it, exactly once', async () => {
+      await withFakeTimers(async () => {
+        const signalDone = vi.fn();
+        const resumable: string[] = [];
+        const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable });
+        spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone });
+        await flush();
+        resumable.push('term-1');
+        await vi.advanceTimersByTimeAsync(1_600);
+        await flush();
+        expect(resumeCount(fake)).toBe(3); // boot + turn-boundary rejoin + the retry that stuck
+
+        // This turn was STARTED unsubscribed, so it must still end on status idle —
+        // switching rules mid-flight would leave a window where neither rule fires.
+        fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+        await flush();
+        expect(signalDone).toHaveBeenCalledTimes(1);
+        // …and the `turn/completed` the new subscription also delivers is a no-op.
+        fake.completeTurn('turn-1');
+        await flush();
+        expect(signalDone).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('the NEXT turn, started subscribed, ends on turn/completed and ignores a foreign idle', async () => {
+      await withFakeTimers(async () => {
+        const signalDone = vi.fn();
+        const resumable: string[] = [];
+        const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable });
+        spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone });
+        await flush();
+        resumable.push('term-1');
+        await vi.advanceTimersByTimeAsync(1_600);
+        await flush();
+        fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+        await flush();
+        expect(signalDone).toHaveBeenCalledTimes(1);
+
+        spawnCodexAppServerRun(dataDir, 4174, 'second', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone });
+        await flush();
+        fake.emit({ jsonrpc: '2.0', method: 'thread/status/changed', params: { threadId: 'term-1', status: { type: 'idle' } } });
+        await flush();
+        expect(signalDone).toHaveBeenCalledTimes(1); // subscribed ⇒ idle is not our end
+        fake.completeTurn('turn-2');
+        await flush();
+        expect(signalDone).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('backs off and gives up (3 attempts) when the rollout never appears', async () => {
+      await withFakeTimers(async () => {
+        const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable: [] });
+        spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+        await flush();
+        expect(resumeCount(fake)).toBe(2); // adoption + turn-boundary rejoin
+        for (const step of [1_600, 3_100, 6_100]) { await vi.advanceTimersByTimeAsync(step); await flush(); }
+        expect(resumeCount(fake)).toBe(5); // …+ 3 retries, then the ladder is exhausted
+        await vi.advanceTimersByTimeAsync(30_000); // and it stops — this is not a poll
+        await flush();
+        expect(resumeCount(fake)).toBe(5);
+      });
+    });
+
+    it('never fires when the thread was already subscribed at turn start', async () => {
+      await withFakeTimers(async () => {
+        const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable: ['term-1'] });
+        spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+        await flush();
+        expect(resumeCount(fake)).toBe(1);
+        await vi.advanceTimersByTimeAsync(10_000);
+        await flush();
+        expect(resumeCount(fake)).toBe(1);
+      });
+    });
+  });
+
   it('excludes the drive-owned model-A thread from discovery even when it is loaded and more recent', async () => {
     writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-mine', rolloutPath: '/sessions/mine.jsonl' }), 'utf-8');
     const fake = scriptedAppServer({

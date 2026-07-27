@@ -226,6 +226,13 @@ that thread at launch) is gone.
   daemon and is codex's own multi-client behavior.
 - **Phase 2**: resolve-command tests for the `codex --remote` form + daemon-ready vs fallback; the
   daemon-readiness path per Q2.
+- **HS-9439** (mid-turn resubscribe): unit tests against the scripted fake — the retry fires only
+  when the turn started unsubscribed, carries no `config`, persists the rollout path, backs off
+  three times and then stops; the in-flight turn still ends on status idle *exactly once* even
+  though `turn/completed` now also arrives; and the NEXT turn (started subscribed) ends on
+  `turn/completed` while ignoring a foreign idle. Fake timers are scoped to
+  `setTimeout`/`clearTimeout` so the suite's `setImmediate`-based flush still works. Verified live
+  against the real daemon as well (first-turn transcript detail present).
 - **Phase 3** (HS-9430): `codexDriveDiscoverEnabled` against a real config file (default-on with the
   key absent, explicit `false`/`true`, env override winning in both directions); an **end-to-end**
   `{{aiCommand}}` resolution through the REAL `codexTerminalRemoteCommand` — no injected resolver —
@@ -280,8 +287,24 @@ be echoed back.
 rollout JSONL appeared at **+1058 ms** and `thread/resume` succeeded at **+1063 ms**, while the turn
 ran to +6069 ms. The mid-turn resume was non-disruptive — the turn completed normally and D then
 received the full `item/*` + `turn/completed` stream. This is the key finding: the drive does **not**
-have to wait for the next turn boundary to subscribe, which is what would close both the
-approval-routing gap (fact 2) and the missing first-turn transcript detail (HS-9439).
+have to wait for the next turn boundary to subscribe.
+
+**SHIPPED as HS-9439** — `scheduleMidTurnSubscribe` in `codexAppServer.ts` retries `thread/resume`
+at 1.5 s / 3 s / 6 s after the `turn/start` ack whenever the turn began unsubscribed, then stops (a
+bounded ladder, not a poll). It sends no `config`: HS-9438 established the per-thread MCP override
+isn't needed for an adopted thread, and re-sending it mid-turn provokes MCP server restarts while a
+tool call may be in flight. That closes both open gaps for the first driven turn — per-item
+transcript detail, and approvals reaching the §47 overlay instead of only the TUI.
+
+One subtlety the implementation has to respect: **how a turn ends is pinned when it starts**
+(`Session.turnEndsOnStatus`), not read live from `subscribed`. Flipping the rule mid-flight opens a
+window where the turn ends by *neither* rule — subscribing just after `turn/completed` was broadcast
+(so we never saw it) but before the idle we would then start ignoring — and busy sticks until the
+client's 60 s fallback. With the snapshot, a mid-turn subscribe is purely additive: this turn still
+ends on idle, and the `turn/completed` the new subscription also delivers is a no-op.
+
+Live-verified end-to-end against the real daemon: driving a thread owned by a separate client, the
+first turn's Commands Log entry now carries its agent-message detail (it was empty before).
 
 ## 129.10 Premature-idle race — measured scope (HS-9440)
 
