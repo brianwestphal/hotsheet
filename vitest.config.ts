@@ -13,6 +13,12 @@ export default defineConfig({
   },
   test: {
     pool: 'forks',
+    // HS-9449 — kerf 3.0 no longer infers dev mode, so its diagnostics (notably
+    // `defineStore`'s read-only `get()` snapshot) are off unless a consumer imports
+    // `kerfjs/dev`. The browser bundle deliberately doesn't; the suite does, so the
+    // guard the store consumers were audited against still applies where it can
+    // catch something. See `vitest.setup.ts`.
+    setupFiles: ['./vitest.setup.ts'],
     // HS-9141 — retry in CI only. The heavy spawn/timing suites (real `tsx`
     // child boots, PGLite teardown, worker-pool server tests) flake under the
     // full parallel coverage run (200+ files + V8 instrumentation) from CPU

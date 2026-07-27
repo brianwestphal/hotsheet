@@ -144,13 +144,45 @@ describe('reactive — delegate / delegateCapture re-exports (HS-8613/HS-8614)',
     root.remove();
   });
 
-  it('delegateCapture matches the target element directly (strict, no walk-up)', () => {
+  it('delegateCapture fires on the element itself', () => {
     const root = document.createElement('div');
     root.innerHTML = '<input class="field" />';
     document.body.appendChild(root);
     let fired = 0;
     const dispose = delegateCapture<HTMLInputElement>(root, 'focus', '.field', () => { fired += 1; });
     root.querySelector<HTMLInputElement>('.field')!.dispatchEvent(new FocusEvent('focus'));
+    expect(fired).toBe(1);
+    dispose();
+    root.remove();
+  });
+
+  // HS-9449 — kerf 2.0 changed `delegateCapture` from strict target matching to
+  // `delegate()`-style `closest()` walk-up, handing the handler the matched ANCESTOR
+  // rather than the raw target. The test that used to live here asserted only that a
+  // direct hit fires, which is true under both semantics — so it would have gone on
+  // passing while its name ("strict, no walk-up") became false. These two pin the
+  // actual behavior in both directions.
+  it('delegateCapture walks up to the matched ancestor by default (kerf 2.0 semantics)', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<div class="row" data-idx="4"><span class="inner">x</span></div>';
+    document.body.appendChild(root);
+    let idx = '';
+    const dispose = delegateCapture<HTMLElement>(root, 'click', '.row', (_e, matched) => { idx = matched.dataset.idx ?? ''; });
+    root.querySelector<HTMLElement>('.inner')!.click();
+    expect(idx).toBe('4'); // the ancestor, not the clicked <span>
+    dispose();
+    root.remove();
+  });
+
+  it('delegateCapture with { match: "direct" } restores strict target matching', () => {
+    const root = document.createElement('div');
+    root.innerHTML = '<div class="row" data-idx="4"><span class="inner">x</span></div>';
+    document.body.appendChild(root);
+    let fired = 0;
+    const dispose = delegateCapture<HTMLElement>(root, 'click', '.row', () => { fired += 1; }, { match: 'direct' });
+    root.querySelector<HTMLElement>('.inner')!.click(); // descendant — must NOT fire
+    expect(fired).toBe(0);
+    root.querySelector<HTMLElement>('.row')!.click(); // the element itself — fires
     expect(fired).toBe(1);
     dispose();
     root.remove();

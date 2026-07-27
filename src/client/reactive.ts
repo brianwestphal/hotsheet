@@ -92,6 +92,46 @@
  * is inappropriate for a lint gate (and errors here on the write-denied
  * `.claude/skills`), so it's disabled in `eslint.config.mjs`; the four kerf AST
  * hard-rules from the preset stay on.
+ *
+ * HS-9449 — bumped kerfjs `^0.16.0` → `^3.0.0-beta.1` (2026-07-27), plus
+ * `eslint-plugin-kerfjs` to match. THREE majors in one step (1.0 / 2.0 / 3.0), but
+ * the blast radius is small because Hot Sheet's kerf surface is narrow: this
+ * module's re-exports plus `toElement` in `dom.ts`. Everything kerf broke lives in
+ * parts we don't use. Specifically:
+ *
+ *  - **1.0 JSX hardening** (attribute-name validation now THROWS, `on*` attributes
+ *    rejected as function OR string in any case, hardened `javascript:`/`data:` URL
+ *    screen, and signals passed into JSX now BIND instead of throwing) all lives in
+ *    kerf's JSX runtime. Hot Sheet compiles JSX through its own `src/jsx-runtime.ts`
+ *    (`#jsx`, §62) and only hands kerf a finished HTML **string** via `toElement`,
+ *    so none of it is on our path.
+ *  - **2.0 `delegateCapture()`** switched from strict target matching to
+ *    `delegate()`-style `closest()` walk-up, handing the handler the matched
+ *    ANCESTOR. We re-export it but no production call site uses it — only
+ *    `reactive.test.ts`, whose test asserted just that a direct hit fires (true
+ *    under both semantics), so it would have kept passing while its name became a
+ *    lie. Rewritten to pin the walk-up AND the `{ match: 'direct' }` opt-out.
+ *  - **3.0 dev-mode inference removed.** kerf used to read
+ *    `globalThis.process?.env?.NODE_ENV`, which is `undefined` in a browser, so
+ *    every production browser build silently took the DEV path. Now diagnostics
+ *    require an explicit `import 'kerfjs/dev'`. The client bundle deliberately does
+ *    NOT import it — those warnings never actually ran in a browser anyway (same
+ *    `globalThis.process` read), and their absence is verified: no `KERF_DEV*` /
+ *    `enableWarnings` strings in `dist/client/app.global.js`. NOTE the changelog's
+ *    headline "~4.7 KB min+gzip smaller" does NOT apply to us, and we measured
+ *    rather than assumed: 690,264 → 690,423 bytes gzipped, i.e. **+159 bytes**. The
+ *    dev modules used to be pulled in unconditionally *by `mount()`/`each()`* — the
+ *    two functions Hot Sheet doesn't use — so they were already tree-shaken out of
+ *    our 0.16 bundle and there was nothing to reclaim. But the same switch drops
+ *    `defineStore`'s
+ *    read-only `get()` snapshot, which is the guard the store consumers were
+ *    audited against in HS-8444 — so `vitest.setup.ts` installs `kerfjs/dev` for
+ *    the unit suite, where it still works and can still catch a mutation. Pinned
+ *    both ways during the upgrade: without the setup file a `get().nested.x = 1`
+ *    silently succeeds; with it, it throws.
+ *
+ * `@preact/signals-core ^1.14.1` was already the 0.16 dependency, so no new
+ * transitive dep. tsc + lint + the full unit suite + both client bundles pass.
  */
 export type { ReadonlySignal, Signal, Store } from 'kerfjs';
 export { batch, computed, defineStore, delegate, delegateCapture, effect, morph, resetAllStores, signal } from 'kerfjs';

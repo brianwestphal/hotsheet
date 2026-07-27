@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms32cm1w88unei54",
+          "message": {
+            "text": "This file exists because the kerf 3.0 upgrade silently removes a guard we were relying on, and tests are the only place left where it can still work.\n\nkerf 3.0 stopped inferring dev mode, so without an explicit import 'kerfjs/dev' every consumer gets production shape — including no read-only defineStore get() snapshot. That snapshot is what makes mutating a store snapshot throw instead of quietly desyncing every reactive consumer, and it was the stated safety net when the store consumers were audited in HS-8444.\n\nDeliberately NOT added to the client bundle. Two reasons: those diagnostics never actually ran in a browser before 3.0 anyway (they read globalThis.process.env, which doesn't exist in a browser realm), and kerf's own guidance is that only an app entry or a test harness should install the hooks, since they're process-global.\n\nPinned in both directions during the upgrade rather than assumed: with the setup file, get().nested.x = 1 inside a store action throws; with setupFiles commented out, the same mutation silently succeeds.\n",
+            "markdown": "This file exists because the kerf 3.0 upgrade silently removes a guard we were relying on, and tests are the only place left where it can still work.\n\nkerf 3.0 stopped inferring dev mode, so without an explicit `import 'kerfjs/dev'` every consumer gets production shape — including no read-only `defineStore` `get()` snapshot. That snapshot is what makes mutating a store snapshot throw instead of quietly desyncing every reactive consumer, and it was the stated safety net when the store consumers were audited in HS-8444.\n\nDeliberately NOT added to the client bundle. Two reasons: those diagnostics never actually ran in a browser before 3.0 anyway (they read `globalThis.process.env`, which doesn't exist in a browser realm), and kerf's own guidance is that only an *app entry* or a *test harness* should install the hooks, since they're process-global.\n\nPinned in both directions during the upgrade rather than assumed: with the setup file, `get().nested.x = 1` inside a store action throws; with `setupFiles` commented out, the same mutation silently succeeds.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "vitest.setup.ts"
+                },
+                "region": {
+                  "startLine": 1,
+                  "endLine": 32,
+                  "snippet": {
+                    "text": "/**\n * HS-9449 — install kerf's development diagnostics for the unit suite.\n *\n * kerf 3.0 stopped inferring dev mode: without an explicit `import 'kerfjs/dev'`\n * every consumer gets the PRODUCTION shape. For the browser bundle that is exactly\n * what we want (the diagnostics never actually ran in a browser before 3.0 — they\n * read `globalThis.process.env` — and leaving them out sheds ~4.7 KB min+gzip). But\n * it silently removed a guard we HAD been relying on: in dev mode `defineStore`'s\n * `get()` returned a deep read-only proxy, so mutating a store snapshot threw a\n * `TypeError` instead of quietly desyncing every reactive consumer. That guard was\n * the stated safety net when the store consumers were audited (HS-8444).\n *\n * Tests are where it can still catch something, and they run in Node where kerf's\n * diagnostics work. So: production stays lean, the suite keeps the net.\n *\n * This must be the FIRST import — kerf picks a signal's machinery when the signal is\n * CREATED, so module-scope signals in modules imported before this one are outside\n * the diagnostics' coverage. A setup file runs before the test module graph loads,\n * which is the earliest hook available.\n */\nimport { enableWarnings } from 'kerfjs/dev';\n\nenableWarnings({\n  // Hot Sheet's own surface: stores + `morph()` + `delegate()`. We don't use kerf's\n  // `mount()`/`each()`, so the list-reconcile diagnostics have nothing to report —\n  // `invariants` is on anyway because it costs nothing when no list exists and would\n  // catch a kerf-side regression at the render that caused it.\n  invariants: 'throw',\n  delegateInEffect: true,\n  narrowSet: true,\n});\n"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9449"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "46dc542429a082b718fb4b39abd718d7"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "9ac5b2a622d6aba9f4b9f49615f39b560479ee27",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

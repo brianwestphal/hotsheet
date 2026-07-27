@@ -138,6 +138,25 @@ describe('toElement (HS-8241 — kerf swap)', () => {
     expect(circle!.getAttribute('r')).toBe('40');
   });
 
+  // HS-9449 — kerf 1.0 hardened its JSX runtime: attribute names are validated
+  // (malformed ones THROW), `on*` attributes are rejected as a function OR a string
+  // in any case, and the `javascript:`/`data:` URL screen drops dangerous values.
+  // None of that is on Hot Sheet's path — we compile JSX through our own
+  // `#jsx` runtime (§62) and hand kerf a finished HTML STRING, so `toElement` is
+  // pure parsing. These pin that, because "it can't reach us" is exactly the kind
+  // of assumption a future kerf upgrade could quietly invalidate: if kerf ever moves
+  // the screen into the parser, these flip and we find out here instead of in the UI.
+  it('toElement parses rather than screens: an on* attribute in the HTML string is preserved, not rejected (HS-9449)', () => {
+    const el = toElement(new SafeHtml('<div onclick="alert(1)">x</div>'));
+    expect(el.tagName.toLowerCase()).toBe('div');
+    expect(el.getAttribute('onclick')).toBe('alert(1)');
+  });
+
+  it('toElement does not apply kerf\'s dangerous-URL screen to string input (HS-9449)', () => {
+    const el = toElement(new SafeHtml('<a href="javascript:alert(1)">x</a>'));
+    expect(el.getAttribute('href')).toBe('javascript:alert(1)');
+  });
+
   it('SVG fragment without an <svg> wrapper (e.g. raw <path>) produces a properly-namespaced SVG element (HS-8241 / §62 bug-class fix)', () => {
     // Previously `<path .../>` through innerHTML became an
     // HTMLUnknownElement; kerf wraps it with an svg root + parses + unwraps

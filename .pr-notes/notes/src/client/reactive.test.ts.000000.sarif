@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "warning",
+          "guid": "ms32cm9isoe9kd3j",
+          "message": {
+            "text": "The test that used to sit here is why this deserves a note: it would have survived the upgrade while becoming false.\n\nkerf 2.0 changed delegateCapture() from strict target.matches() to delegate()-style closest() walk-up, handing the handler the matched ancestor. The old test was named \"matches the target element directly (strict, no walk-up)\" but only asserted that a direct hit fires — true under both semantics. So a green suite would have reported that we'd verified strict matching we no longer had.\n\nThe replacements assert the discriminating cases: a click on a descendant now reports the ancestor, and { match: 'direct' } refuses that same descendant while still firing on the element itself.\n\nWorth knowing for the next kerf bump: no production code calls delegateCapture today, so this test file is the only thing pinning the behavior of a re-export we ship.\n",
+            "markdown": "The test that used to sit here is why this deserves a note: it would have survived the upgrade while becoming false.\n\nkerf 2.0 changed `delegateCapture()` from strict `target.matches()` to `delegate()`-style `closest()` walk-up, handing the handler the matched ancestor. The old test was named \"matches the target element directly (strict, no walk-up)\" but only asserted that a *direct* hit fires — true under both semantics. So a green suite would have reported that we'd verified strict matching we no longer had.\n\nThe replacements assert the discriminating cases: a click on a descendant now reports the ancestor, and `{ match: 'direct' }` refuses that same descendant while still firing on the element itself.\n\nWorth knowing for the next kerf bump: no production code calls `delegateCapture` today, so this test file is the only thing pinning the behavior of a re-export we ship.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/reactive.test.ts"
+                },
+                "region": {
+                  "startLine": 147,
+                  "endLine": 190,
+                  "snippet": {
+                    "text": "  it('delegateCapture fires on the element itself', () => {\n    const root = document.createElement('div');\n    root.innerHTML = '<input class=\"field\" />';\n    document.body.appendChild(root);\n    let fired = 0;\n    const dispose = delegateCapture<HTMLInputElement>(root, 'focus', '.field', () => { fired += 1; });\n    root.querySelector<HTMLInputElement>('.field')!.dispatchEvent(new FocusEvent('focus'));\n    expect(fired).toBe(1);\n    dispose();\n    root.remove();\n  });\n\n  // HS-9449 — kerf 2.0 changed `delegateCapture` from strict target matching to\n  // `delegate()`-style `closest()` walk-up, handing the handler the matched ANCESTOR\n  // rather than the raw target. The test that used to live here asserted only that a\n  // direct hit fires, which is true under both semantics — so it would have gone on\n  // passing while its name (\"strict, no walk-up\") became false. These two pin the\n  // actual behavior in both directions.\n  it('delegateCapture walks up to the matched ancestor by default (kerf 2.0 semantics)', () => {\n    const root = document.createElement('div');\n    root.innerHTML = '<div class=\"row\" data-idx=\"4\"><span class=\"inner\">x</span></div>';\n    document.body.appendChild(root);\n    let idx = '';\n    const dispose = delegateCapture<HTMLElement>(root, 'click', '.row', (_e, matched) => { idx = matched.dataset.idx ?? ''; });\n    root.querySelector<HTMLElement>('.inner')!.click();\n    expect(idx).toBe('4'); // the ancestor, not the clicked <span>\n    dispose();\n    root.remove();\n  });\n\n  it('delegateCapture with { match: \"direct\" } restores strict target matching', () => {\n    const root = document.createElement('div');\n    root.innerHTML = '<div class=\"row\" data-idx=\"4\"><span class=\"inner\">x</span></div>';\n    document.body.appendChild(root);\n    let fired = 0;\n    const dispose = delegateCapture<HTMLElement>(root, 'click', '.row', () => { fired += 1; }, { match: 'direct' });\n    root.querySelector<HTMLElement>('.inner')!.click(); // descendant — must NOT fire\n    expect(fired).toBe(0);\n    root.querySelector<HTMLElement>('.row')!.click(); // the element itself — fires\n    expect(fired).toBe(1);\n    dispose();\n    root.remove();\n  });\n});"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "risk"
+            ]
+          },
+          "workItemUris": [
+            "HS-9449"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "a2561be5e38f773568e372730b67f54a"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "9ac5b2a622d6aba9f4b9f49615f39b560479ee27",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}
