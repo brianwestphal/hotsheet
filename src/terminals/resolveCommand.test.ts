@@ -265,63 +265,10 @@ describe('resolveTerminalCwd (HS-7991)', () => {
   });
 });
 
-// HS-9394 (docs/123) — codex terminals join the project's driven app-server thread.
-describe('codex daemon-attach resolution (HS-9394)', () => {
-  const cleanup: string[] = [];
-  afterEach(() => {
-    for (const d of cleanup) rmSync(d, { recursive: true, force: true });
-    cleanup.length = 0;
-  });
-  function dir(settings: Record<string, unknown> = {}): string {
-    const d = makeDataDir(settings);
-    cleanup.push(d);
-    return d;
-  }
-
-  it('uses the attach command when the resolver provides one', () => {
-    const { command } = resolveTerminalCommand({
-      dataDir: dir({ ai_tool: 'codex' }),
-      isAiToolOnPath: (b) => b === 'codex',
-      codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
-      codexModelB: false,
-    });
-    expect(command).toBe("codex resume th-1 --remote 'unix:///s.sock'");
-  });
-
-  it('expands inside a {{aiCommand}} template as well', () => {
-    const { command } = resolveTerminalCommand({
-      dataDir: dir({ terminal_command: 'env X=1 {{aiCommand}}', ai_tool: 'codex' }),
-      isAiToolOnPath: (b) => b === 'codex',
-      codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
-      codexModelB: false,
-    });
-    expect(command).toBe("env X=1 codex resume th-1 --remote 'unix:///s.sock'");
-  });
-
-  it('falls back to plain codex when the attach resolver returns null', () => {
-    const { command } = resolveTerminalCommand({
-      dataDir: dir({ ai_tool: 'codex' }),
-      isAiToolOnPath: (b) => b === 'codex',
-      codexAttachOverride: () => null,
-      codexModelB: false,
-    });
-    expect(command).toBe('codex');
-  });
-
-  it('never consults the attach resolver for non-codex tools', () => {
-    let called = false;
-    const { command } = resolveTerminalCommand({
-      dataDir: dir({ ai_tool: 'gemini' }),
-      isAiToolOnPath: (b) => b === 'gemini',
-      codexAttachOverride: () => { called = true; return 'nope'; },
-    });
-    expect(command).toBe('gemini');
-    expect(called).toBe(false);
-  });
-});
-
-// HS-9429 (docs/129 model-B) — with the discovery gate on, a codex terminal
-// launches DAEMON-HOSTED (`codex --remote … -C`) instead of the model-A attach.
+// HS-9429 (docs/129 model-B, default ON) — a codex terminal launches
+// DAEMON-HOSTED (`codex --remote … -C`) so it owns the thread the drive joins.
+// HS-9430 deleted the model-A attach (`codex resume <driveThread> --remote`) this
+// replaced, so "model-B off" now means plain `codex`, not a second resolver.
 describe('codex model-B daemon-hosted resolution (HS-9429)', () => {
   const cleanup: string[] = [];
   const dir = (settings: Record<string, unknown>): string => { const d = makeDataDir(settings); cleanup.push(d); return d; };
@@ -333,8 +280,6 @@ describe('codex model-B daemon-hosted resolution (HS-9429)', () => {
       isAiToolOnPath: (b) => b === 'codex',
       codexModelB: true,
       codexRemoteOverride: () => "codex --remote 'unix:///s.sock' -C '/proj'",
-      // If model-B is picked, the attach resolver must NOT be consulted.
-      codexAttachOverride: () => { throw new Error('attach should not run under model-B'); },
     });
     expect(command).toBe("codex --remote 'unix:///s.sock' -C '/proj'");
   });
@@ -359,14 +304,25 @@ describe('codex model-B daemon-hosted resolution (HS-9429)', () => {
     expect(command).toBe('codex');
   });
 
-  it('uses the model-A attach (not the remote command) when the gate is OFF', () => {
+  // HS-9430 — with the chase deleted, the gate-OFF branch is plain `codex`: the
+  // terminal hosts nothing and the drive keeps its own headless thread.
+  it('resolves to plain codex — never consulting the remote resolver — when the gate is OFF', () => {
     const { command } = resolveTerminalCommand({
       dataDir: dir({ ai_tool: 'codex' }),
       isAiToolOnPath: (b) => b === 'codex',
       codexModelB: false,
-      codexAttachOverride: () => "codex resume th-1 --remote 'unix:///s.sock'",
-      codexRemoteOverride: () => { throw new Error('remote should not run under model-A'); },
+      codexRemoteOverride: () => { throw new Error('remote should not run with model-B off'); },
     });
-    expect(command).toBe("codex resume th-1 --remote 'unix:///s.sock'");
+    expect(command).toBe('codex');
+  });
+
+  it('never consults the remote resolver for non-codex tools', () => {
+    const { command } = resolveTerminalCommand({
+      dataDir: dir({ ai_tool: 'gemini' }),
+      isAiToolOnPath: (b) => b === 'gemini',
+      codexModelB: true,
+      codexRemoteOverride: () => { throw new Error('remote should not run for a non-codex tool'); },
+    });
+    expect(command).toBe('gemini');
   });
 });

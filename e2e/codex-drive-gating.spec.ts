@@ -25,6 +25,7 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
     // Reset shared-server state so later specs aren't affected.
     try {
       await request.post('/api/channel/codex-app-server', { headers, data: { enabled: true } });
+      await request.patch('/api/global-config', { headers, data: { codexModelBTerminals: true } });
       await request.patch('/api/file-settings', { headers, data: { ai_tool: '' } });
       await request.patch('/api/settings', { headers, data: { custom_commands: '[]' } });
       await request.post('/api/channel/disable', { headers });
@@ -91,6 +92,42 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
       await expect(promptBtn).toBeVisible();
     }
     await expect(shellBtn).toBeVisible();
+  });
+
+  // HS-9430 (docs/129 §129.6) — the model-B terminal-hosting toggle. Unlike the
+  // drive toggle it has no live surface to re-render (it's read when a terminal
+  // spawns), so the contract under test is: default ON, and a flip round-trips
+  // through `PATCH /global-config` as `codexModelBTerminals`.
+  test('model-B toggle defaults ON and persists both ways to global config', async ({ page, request }) => {
+    const readFlag = async (): Promise<boolean | undefined> => {
+      const config = await (await request.get('/api/global-config', { headers })).json() as { codexModelBTerminals?: boolean };
+      return config.codexModelBTerminals;
+    };
+
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+
+    const checkbox = page.locator('#settings-codex-model-b-terminals');
+    await expect(checkbox).toBeVisible();
+    // Absent from config ⇒ checked (default ON), matching `codexDriveDiscoverEnabled`.
+    await expect(checkbox).toBeChecked();
+
+    await checkbox.uncheck();
+    await expect.poll(readFlag, { timeout: 5000 }).toBe(false);
+
+    // A reload re-seeds the checkbox from the persisted config — the OFF state sticks.
+    await page.reload();
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await expect(checkbox).not.toBeChecked();
+
+    await checkbox.check();
+    await expect.poll(readFlag, { timeout: 5000 }).toBe(true);
+    await page.locator('#settings-close').click();
   });
 
   test('non-codex projects are unaffected by the toggle', async ({ page, request }) => {

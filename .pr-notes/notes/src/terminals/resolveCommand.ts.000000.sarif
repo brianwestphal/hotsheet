@@ -64,6 +64,82 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms2w05vmu6cdpf3i",
+          "message": {
+            "text": "\"Model-B off\" now resolves to plain codex — the else-branch that used to fall back to the model-A attach is gone, and that changes what the toggle means.\n\nBefore: gate off ⇒ the terminal chased the drive's thread with codex resume <id> --remote (0). After: gate off ⇒ the terminal hosts nothing and the drive keeps its own headless thread. Same net effect for the user (driven turns don't render in the terminal), one fewer moving part.\n\nThe codexModelB option is kept rather than collapsing into codexTerminalRemoteCommand's own internal gate, because tests inject codexRemoteOverride, which bypasses that internal check — without the outer flag there'd be no way to exercise the gate-off branch through the resolver.\n",
+            "markdown": "\"Model-B off\" now resolves to plain `codex` — the else-branch that used to fall back to the model-A attach is gone, and that changes what the toggle means.\n\nBefore: gate off ⇒ the terminal *chased* the drive's thread with [`codex resume <id> --remote`](0). After: gate off ⇒ the terminal hosts nothing and the drive keeps its own headless thread. Same net effect for the user (driven turns don't render in the terminal), one fewer moving part.\n\nThe `codexModelB` option is kept rather than collapsing into `codexTerminalRemoteCommand`'s own internal gate, because tests inject `codexRemoteOverride`, which bypasses that internal check — without the outer flag there'd be no way to exercise the gate-off branch through the resolver.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/terminals/resolveCommand.ts"
+                },
+                "region": {
+                  "startLine": 149,
+                  "endLine": 160,
+                  "snippet": {
+                    "text": "  if (tool === 'codex') {\n    // HS-9429 (docs/129 model-B, default ON) — launch the terminal DAEMON-HOSTED\n    // (`codex --remote … -C <projectDir>`) so it owns its own live thread and the\n    // drive discovers + drives it in place. Falls through to plain `codex` when the\n    // daemon isn't up, or when model-B is switched off (then the drive keeps its own\n    // headless thread — HS-9430 deleted the model-A attach that used to chase it).\n    const modelB = options.codexModelB ?? codexDriveDiscoverEnabled();\n    if (modelB) {\n      const remote = (options.codexRemoteOverride ?? codexTerminalRemoteCommand)(options.dataDir);\n      if (remote !== null) return remote;\n    }\n  }"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 359
+                }
+              }
+            }
+          ],
+          "workItemUris": [
+            "HS-9430"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "46c519cafbf497f958ace5718174225d"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "cdf0c9fc0e8e2813a70763f81ecd48033afc16c4",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

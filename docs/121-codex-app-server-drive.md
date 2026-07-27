@@ -273,9 +273,16 @@ Treated like the Claude Channel (§12):
 
 ## 121.12 Model-B — terminal owns the thread, drive discovers it (HS-9428)
 
-The shipped model (§121, "model-A") has the DRIVE own a thread (`thread/start`)
+> **Status: SHIPPED and DEFAULT ON** (HS-9428/9429/9431/9438, chase retirement
+> HS-9430). The full architecture lives in
+> [129-codex-model-b-terminal-hosting.md](129-codex-model-b-terminal-hosting.md);
+> this section is the drive-side summary. "Model-A" now names only the drive's
+> **headless fallback** (nothing discoverable → resume/start its own thread) — the
+> terminal-side chase it used to include was deleted in HS-9430.
+
+The original model ("model-A") had the DRIVE own a thread (`thread/start`)
 and the `{{aiCommand}}` terminal *chase* it with `codex resume <id> --remote`
-(docs/123). That chase is fragile — a cold-start race leaves the terminal on
+(docs/123). That chase was fragile — a cold-start race left the terminal on
 plain `codex`, needing the "↻ Rejoin codex" chip (HS-9403). **Model-B flips it:**
 the terminal owns a live daemon thread and the drive DISCOVERS it by cwd, so
 driven turns land in the window the user is already watching (the Claude feel).
@@ -293,13 +300,14 @@ coordination unnecessary. Also present: `turn/steer`, `thread/injectItems`,
 `turn/start` queues (default), never `turn/steer` (which would clobber a user
 turn).
 
-**Phasing.** *Phase 1 (SHIPPED, HS-9428):* the discovery helper
-(`discoverLiveThreadForCwd` = `thread/loaded/list` ∩ `thread/list{cwd}` →
-`pickThreadForCwd`) + `bootSession` joins the discovered thread (`thread/resume`)
-ahead of the model-A resume/start, daemon-only, behind the
-`HOTSHEET_CODEX_DISCOVER_THREAD=1` env gate (default OFF — dormant until Phase 2
-gives it something to discover, so nothing regresses). *Phase 2 (follow-up):* the
-codex `{{aiCommand}}` terminal launches daemon-hosted (`codex --remote`) so it
-owns a discoverable live thread (daemon pre-started before the eager spawn).
-*Phase 3 (follow-up):* retire the terminal-attach / `codexReattach` chase
-(HS-9394/9397) once B is proven; promote the env gate to a real setting.
+**Phasing (all shipped).** *Phase 1 (HS-9428, corrected HS-9431):* the discovery
+helper (`discoverLiveThreadForCwd` = `thread/loaded/list` → `thread/read` per id →
+`pickThreadForCwd`) + `bootSession` joins the discovered thread ahead of the
+model-A resume/start, daemon-only. *HS-9438:* adoption no longer depends on
+`thread/resume` succeeding (docs/129 §129.3a) — the fix that made discovery
+actually fire. *Phase 2 (HS-9429):* the codex `{{aiCommand}}` terminal launches
+daemon-hosted (`codex --remote`) so it owns a discoverable live thread (daemon
+pre-started before the eager spawn). *Phase 3 (HS-9430):* the gate became the
+`codexModelBTerminals` setting (Settings → Experimental → "Codex terminals host the
+driven session", default ON, `HOTSHEET_CODEX_DISCOVER_THREAD` overrides), and the
+terminal-attach / `codexReattach` chase (HS-9394/9397) was deleted.

@@ -1,16 +1,26 @@
 # 123 — Codex Terminal Attach (Driven-Thread Join)
 
-> **Status: SHIPPED (HS-9394, 2026-07-23) — but SUPERSEDED AS THE DEFAULT by model-B
-> (HS-9430, 2026-07-25).** This doc describes **model-A**: the DRIVE owns the thread and
-> the terminal *chases* it with `codex resume <id> --remote`, decided at launch time —
-> which caused the cold-start-race/rejoin-chip class (HS-9403). **[129-codex-model-b-terminal-hosting.md](129-codex-model-b-terminal-hosting.md)
-> flips it and is now the default** (`codexModelBTerminals` config, default ON): the
+> **Status: HISTORICAL — shipped HS-9394 (2026-07-23), superseded as the default by
+> model-B (HS-9430, 2026-07-25), and DELETED from the codebase (HS-9430, 2026-07-27).**
+> **Read [129-codex-model-b-terminal-hosting.md](129-codex-model-b-terminal-hosting.md)
+> for the current design.** This doc describes **model-A**: the DRIVE owned the thread and
+> the terminal *chased* it with `codex resume <id> --remote`, decided at launch time —
+> which caused the cold-start-race/rejoin-chip class (HS-9403). Model-B flips it: the
 > TERMINAL owns a `codex --remote` daemon thread and the drive DISCOVERS it by cwd — no
-> chase, no chip. Model-A (this doc) remains the **fallback** (daemon down → plain codex;
-> no live terminal thread → the drive starts its own), and is force-selectable via
-> `HOTSHEET_CODEX_DISCOVER_THREAD=0`. The model-A chase machinery (`codexTerminalAttachCommand`,
-> `codexReattach`, the "↻ Rejoin codex" chip) is slated for removal once model-B has
-> real-world miles (HS-9430). Read docs/129 for the current design.
+> chase, no chip.
+>
+> **What no longer exists:** `codexTerminalAttachCommand`, `terminals/codexReattach.ts` /
+> `codexReattachAvailable`, the `codexReattach` field on `GET /terminal/list`, the
+> "↻ Rejoin codex" chip, and `SessionState.resolvedCommand` (docs/129 §129.5). So §123.3's
+> command resolution, all of §123.8, and the reattach half of §123.5 are **descriptions of
+> deleted code**, kept for the reasoning trail (why the attach existed, what the daemon
+> transport buys, the live-verified shared-thread interplay in §123.4 — which model-B still
+> relies on). What survives in code: the daemon pre-start (§123.5, now gated on model-B and
+> no longer requiring a rollout on disk) and the `rolloutPath` persistence.
+>
+> The name "model-A" now means only the DRIVE-side fallback — the drive resuming/starting
+> its own thread when no daemon-hosted terminal is discoverable (headless / worker / no-UI
+> runs, daemon down, or the toggle off). Its terminal half is gone.
 >
 > Original intent below: the user-facing payoff of the docs/121
 > §121.6 daemon transport: a codex terminal Hot Sheet spawns joins the project's
@@ -41,6 +51,11 @@ surface — like the rest of docs/121, behavior is pinned by probes against the
 installed version and drift surfaces as visible launch errors (§123.6).
 
 ## 123.3 Command resolution
+
+> **DELETED by HS-9430.** `codexTerminalAttachCommand` and its `pickAiCommand` branch
+> are gone; `pickAiCommand` now resolves `codexTerminalRemoteCommand` (model-B,
+> docs/129 §129.4) or plain `codex`. Kept for the reasoning behind each precondition —
+> conditions 1 and 3 carry over to the model-B resolver almost unchanged.
 
 `pickAiCommand` (`src/terminals/resolveCommand.ts`), for `ai_tool=codex` with the
 binary on PATH, consults **`codexTerminalAttachCommand(dataDir)`**
@@ -86,8 +101,10 @@ Probed on 0.145.0 with a pty-driven TUI + a headless driver on the same thread:
 
 ## 123.5 Fallback behavior
 
-When any §123.3 condition fails, the terminal launches plain `codex` — today's
-behavior, zero surprise. Notably:
+> **Model-A history**, except the daemon pre-start bullet, which survives (rewritten
+> below for model-B).
+
+When any §123.3 condition failed, the terminal launched plain `codex`. Notably:
 
 - **Before the first driven turn** (fresh project, or thread reset per §121.5) there
   is no rollout ⇒ plain `codex`. The terminal does NOT pre-create or pre-attach a
@@ -99,18 +116,27 @@ behavior, zero surprise. Notably:
   (`codexAppServer.ts`) fires — fire-and-forget — at **project registration**
   (inside `eagerSpawnTerminals`), on an **`ai_tool` settings change**, and on
   **drive re-enable** (`POST /channel/codex-app-server`). It acts only when the
-  attach is exactly one missing daemon away (drive on + `ai_tool=codex` +
-  resumable rollout on disk + socket absent), calling
+  daemon-hosted launch is exactly one missing daemon away. **HS-9430 updated its
+  conditions to model-B** — model-B on + drive on + `ai_tool=codex` + socket absent;
+  the "resumable rollout on disk" requirement is gone (that was the model-A
+  `codex resume` precondition; `codex --remote` only needs the socket, so a brand-new
+  codex project now gets a warm daemon too). It calls
   `ensureCodexDaemonRunning()` (`codexDaemonTransport.ts` — socket check →
   `codex app-server daemon start` → poll; concurrent callers share one
   in-flight start). So after a machine restart, the daemon is typically up long
   before any terminal attaches. No thread warming is needed: a freshly started
   daemon loads a thread's rollout from disk on `thread/resume` (live-verified,
   0.145.0).
-- **Already-open terminals** keep whatever they launched with until relaunched —
-  the §123.8 reattach chip surfaces when a relaunch would join the driven thread.
+- **Already-open terminals** keep whatever they launched with until relaunched. Under
+  model-B this is a non-issue in the common case (the terminal it launched with IS the
+  thread the drive joins, and a terminal opened after the first play is joined at the
+  next turn boundary — docs/129 §129.3a); if a terminal did launch plain `codex`
+  because the daemon was down, restarting it re-resolves to the daemon-hosted form.
 
-## 123.8 Reattach affordance (SHIPPED, HS-9397)
+## 123.8 Reattach affordance (HS-9397 — DELETED by HS-9430)
+
+> **This entire section describes removed code.** Under model-B there is no attach to
+> drift from, so the chip and its detection/transport were deleted (docs/129 §129.5).
 
 Live codex terminals whose launch no longer matches the current attach resolution
 get a **"↻ Rejoin codex"** pill in the terminal pane header (accent-outlined,
@@ -135,9 +161,9 @@ driven thread, and an attached terminal stranded on an old thread after a
 
 ## 123.6 Limitations
 
-- A **thread reset** (§121.5 "New session") strands attached TUIs on the old thread;
-  they keep working as ordinary codex sessions on the old conversation. Once the new
-  thread has a rollout, the §123.8 chip offers the relaunch that attaches to it.
+- A **thread reset** (§121.5 "New session") stranded attached TUIs on the old thread;
+  they kept working as ordinary codex sessions on the old conversation. (Model-A only —
+  under model-B the terminal owns the thread, so a drive-side reset doesn't strand it.)
 - If a future codex removes/changes `--remote`, the terminal shows codex's own
   launch error — visible, not silent; the drive toggle (off ⇒ plain `codex`)
   is the escape hatch.
@@ -148,4 +174,5 @@ driven thread, and an attached terminal stranded on an old thread after a
 
 - **HS-9396 — SHIPPED** (daemon pre-start; folded into §123.5). Thread warming
   was investigated and found unnecessary.
-- **HS-9397 — SHIPPED** (reattach affordance; §123.8).
+- **HS-9397 — SHIPPED, then DELETED by HS-9430** (reattach affordance; §123.8). Model-B
+  removed the drift class it existed to surface.

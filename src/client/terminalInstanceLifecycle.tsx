@@ -194,12 +194,6 @@ function buildPaneEl(config: TerminalTabConfig, tabName: string): HTMLElement {
         {/* HS-8286 — per-pane "Server slow" chip removed. Stall detection
             now feeds the global server-slow banner via the per-entry
             watcher in `terminalCheckout.tsx::createEntry`. */}
-        {/* HS-9397 (docs/123 §123.7) — rejoin the project's driven codex
-            session. Hidden unless the server's /terminal/list flags
-            `codexReattach` (restarting would attach this terminal). */}
-        <button className="terminal-header-btn terminal-reattach-btn" title="Rejoin driven codex session (restarts this terminal)" style="display:none">
-          ↻ Rejoin codex
-        </button>
         {/* HS-7268 — copy-last-output, hidden until first OSC 133 escape. */}
         <button className="terminal-header-btn terminal-copy-output-btn" title="Copy last command output" style="display:none">
           {CLIPBOARD_ICON}
@@ -275,10 +269,6 @@ function bindPaneHeaderHandlers(inst: TerminalInstance, pane: HTMLElement): void
   pane.querySelector<HTMLButtonElement>('.terminal-copy-output-btn')
     ?.addEventListener('click', () => { void copyLastOutput(inst); });
 
-  // HS-9397 — "Rejoin codex" chip (hidden unless the server flags reattach).
-  pane.querySelector<HTMLButtonElement>('.terminal-reattach-btn')
-    ?.addEventListener('click', () => { void onReattachClick(inst); });
-
   // HS-7262 — CWD chip click reveals the folder via /api/terminal/open-cwd.
   pane.querySelector<HTMLButtonElement>('.terminal-cwd-chip')?.addEventListener('click', () => {
     if (inst.runtimeCwd === null || inst.runtimeCwd === '') return;
@@ -319,7 +309,6 @@ export function createInstance(config: TerminalTabConfig): TerminalInstance {
     runtimeTitle: '',
     runtimeCwd: null,
     hasBell: false,
-    codexReattach: false,
     shellIntegration: freshShellIntegrationState(),
   };
 
@@ -381,9 +370,8 @@ async function onPowerClick(inst: TerminalInstance): Promise<void> {
   await restartInstance(inst);
 }
 
-/** Kill + respawn the PTY and reset per-process client state. Shared by the
- *  power button's start path and the HS-9397 "Rejoin codex" chip (the server's
- *  restart re-resolves the command, which is what makes the rejoin work). */
+/** Kill + respawn the PTY and reset per-process client state. Used by the power
+ *  button's start path; the server re-resolves the launch command on respawn. */
 async function restartInstance(inst: TerminalInstance): Promise<void> {
   try {
     await restartTerminal(inst.id);
@@ -402,26 +390,6 @@ async function restartInstance(inst: TerminalInstance): Promise<void> {
     // new shell rebuilds its own A/B/C/D cycle.
     resetShellIntegration(inst);
   } catch { /* ignore */ }
-}
-
-/** HS-9397 — show/hide the "Rejoin codex" header chip from `inst.codexReattach`. */
-export function updateReattachButton(inst: TerminalInstance): void {
-  const btn = inst.header.querySelector<HTMLButtonElement>('.terminal-reattach-btn');
-  if (btn) btn.style.display = inst.codexReattach ? '' : 'none';
-}
-
-async function onReattachClick(inst: TerminalInstance): Promise<void> {
-  const confirmed = await confirmDialog({
-    title: 'Rejoin driven codex session?',
-    message: 'This restarts the terminal and reopens codex attached to the project’s driven session. The current terminal process will be stopped.',
-    confirmLabel: 'Rejoin',
-  });
-  if (!confirmed) return;
-  // Optimistically clear the chip — the next /terminal/list refresh is the
-  // authoritative re-check (post-restart the commands should now match).
-  inst.codexReattach = false;
-  updateReattachButton(inst);
-  await restartInstance(inst);
 }
 
 export function teardown(inst: TerminalInstance): void {

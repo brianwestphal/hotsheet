@@ -241,6 +241,69 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms2w014pk4xauhcm",
+          "message": {
+            "text": "Dropping the \"rollout exists on disk\" precondition here is a deliberate behavior change, not collateral of the deletion.\n\nThat check was a model-A precondition: the terminal used to launch codex resume <driveThreadId> --remote, and codex resume fails -32600 no rollout found until a turn has persisted a rollout JSONL — so pre-starting the daemon before that point bought nothing.\n\nModel-B's launch is codex --remote … -C <projectDir>, which mints a fresh thread and only needs the socket. Keeping the rollout gate would have meant a brand-new codex project never pre-starts the daemon, so its first terminal open pays the cold start (codexTerminalNeedsDaemonEnsure awaits ensureCodexDaemonRunning inline). Now it doesn't.\n\nThe gate that replaces it is codexDriveDiscoverEnabled() — with model-B off there is no daemon-hosted launch to serve, so the pre-start correctly no-ops and the drive starts the daemon itself at play time, exactly as before.\n",
+            "markdown": "Dropping the \"rollout exists on disk\" precondition here is a deliberate behavior change, not collateral of the deletion.\n\nThat check was a **model-A** precondition: the terminal used to launch `codex resume <driveThreadId> --remote`, and `codex resume` fails `-32600 no rollout found` until a turn has persisted a rollout JSONL — so pre-starting the daemon before that point bought nothing.\n\nModel-B's launch is `codex --remote … -C <projectDir>`, which mints a **fresh** thread and only needs the socket. Keeping the rollout gate would have meant a brand-new codex project never pre-starts the daemon, so its first terminal open pays the cold start (`codexTerminalNeedsDaemonEnsure` awaits `ensureCodexDaemonRunning` inline). Now it doesn't.\n\nThe gate that replaces it is `codexDriveDiscoverEnabled()` — with model-B off there is no daemon-hosted launch to serve, so the pre-start correctly no-ops and the drive starts the daemon itself at play time, exactly as before.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 220,
+                  "endLine": 227,
+                  "snippet": {
+                    "text": "export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps = {}): void {\n  if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return;\n  const tool = readFileSettings(dataDir).ai_tool;\n  if (typeof tool !== 'string' || tool.trim().toLowerCase() !== 'codex') return;\n  const fileExists = deps.fileExists ?? existsSync;\n  if (fileExists(deps.socketPath ?? codexDaemonSocketPath())) return; // already up\n  void (deps.ensureDaemon ?? ensureCodexDaemonRunning)().catch(() => { /* best-effort — plain codex fallback stands */ });\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9430"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "ad042bdf24999190b36b99e487dab5e6"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "cdf0c9fc0e8e2813a70763f81ecd48033afc16c4",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

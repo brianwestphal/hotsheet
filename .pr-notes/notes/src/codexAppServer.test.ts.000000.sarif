@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms2w0gw4vjh7g1hw",
+          "message": {
+            "text": "This replaces the HS-9403 end-to-end test, which proved the (now deleted) model-A attach through the REAL resolver rather than an injected one — the seam where that bug actually lived. Deleting the attach without re-pointing that coverage would have left model-B's resolution proven only against injected overrides.\n\nThe $HOME stub is load-bearing and worth not \"simplifying\" away. codexDaemonSocketPath() is join(os.homedir(), '.codex', …) and ignores HOTSHEET_HOME, so the \"daemon up\" case has to create a stand-in socket file at that exact path. A first cut wrote to the real path and (a) failed — EUNKNOWN -102, because a real live socket already existed on the dev machine — and (b) would have littered a developer's actual ~/.codex on a machine where it didn't. Node's os.homedir() reads $HOME on POSIX, so stubbing it redirects the probe into the per-test temp dir and makes the assertion hermetic instead of dependent on whether the developer happens to be running codex.\n\nVerified: 96 tests pass across codexAppServer.test.ts + resolveCommand.test.ts, including the daemon-up / daemon-absent / toggle-off triple.\n",
+            "markdown": "This replaces the HS-9403 end-to-end test, which proved the (now deleted) model-A attach through the REAL resolver rather than an injected one — the seam where that bug actually lived. Deleting the attach without re-pointing that coverage would have left model-B's resolution proven only against injected overrides.\n\nThe `$HOME` stub is load-bearing and worth not \"simplifying\" away. `codexDaemonSocketPath()` is `join(os.homedir(), '.codex', …)` and ignores `HOTSHEET_HOME`, so the \"daemon up\" case has to create a stand-in socket file at that exact path. A first cut wrote to the real path and (a) failed — `EUNKNOWN -102`, because a real live socket already existed on the dev machine — and (b) would have littered a developer's actual `~/.codex` on a machine where it didn't. Node's `os.homedir()` reads `$HOME` on POSIX, so stubbing it redirects the probe into the per-test temp dir and makes the assertion hermetic instead of dependent on whether the developer happens to be running codex.\n\nVerified: 96 tests pass across `codexAppServer.test.ts` + `resolveCommand.test.ts`, including the daemon-up / daemon-absent / toggle-off triple.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.test.ts"
+                },
+                "region": {
+                  "startLine": 885,
+                  "endLine": 923,
+                  "snippet": {
+                    "text": "  let home: string;\n  beforeEach(() => {\n    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));\n    vi.stubEnv('HOTSHEET_HOME', home);\n    // `codexDaemonSocketPath()` is derived from `os.homedir()`, which honors $HOME\n    // on POSIX — point it at the temp home so the \"daemon up\" case can create a\n    // stand-in socket file WITHOUT touching the developer's real ~/.codex.\n    vi.stubEnv('HOME', home);\n  });\n  afterEach(() => {\n    vi.unstubAllEnvs();\n    rmSync(home, { recursive: true, force: true });\n  });\n\n  const resolveAiTerminal = (): string => resolveTerminalCommand({\n    dataDir,\n    configOverride: { id: 'ai', command: '{{aiCommand}}' },\n    aiToolOverride: 'codex',\n    isAiToolOnPath: (b) => b === 'codex', // codex \"on PATH\" — environmental, not under test\n  }).command;\n\n  it('resolves to `codex --remote unix://<real socket> -C <projectDir>` when the daemon socket is up', () => {\n    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');\n    // The real resolver probes the real socket path — create it so the \"daemon up\"\n    // branch is the one exercised (an empty file is enough for the existsSync probe).\n    const sock = codexDaemonSocketPath();\n    mkdirSync(dirname(sock), { recursive: true });\n    writeFileSync(sock, '', 'utf-8');\n    expect(resolveAiTerminal()).toBe(`codex --remote 'unix://${sock}' -C '${dir}'`);\n  });\n\n  it('resolves to PLAIN `codex` when the daemon socket is absent (nothing to host the thread)', () => {\n    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');\n    expect(resolveAiTerminal()).toBe('codex');\n  });\n\n  it('resolves to PLAIN `codex` when model-B is switched off, even with the daemon up', () => {\n    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0');\n    const sock = codexDaemonSocketPath();"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ]
+          },
+          "workItemUris": [
+            "HS-9430"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "ba2bdd2eeaad253105c517db8a07be23"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "cdf0c9fc0e8e2813a70763f81ecd48033afc16c4",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

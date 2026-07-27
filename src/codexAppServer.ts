@@ -17,10 +17,16 @@
 //
 // HS-9388 (docs/121 §121.6) — transport: the session prefers the SHARED daemon
 // (UDS WebSocket via `codexDaemonTransport.ts`, started if absent) so external
-// codex UIs — including a `codex resume <threadId> --remote`-attached TUI
-// (HS-9394) — can watch the driven thread live; the private stdio child is the
+// codex UIs can watch the driven thread live; the private stdio child is the
 // automatic fallback when the daemon can't be reached. Same JSON-RPC protocol
 // either way, behind one `CodexTransport` interface.
+//
+// HS-9428/9429/9430 (docs/129, "model-B", default ON) — which thread gets driven:
+// a Hot Sheet codex terminal launches daemon-hosted (`codex --remote … -C <proj>`)
+// and OWNS a live thread, which this drive DISCOVERS by cwd and drives in place, so
+// turns render in the window the user is watching. With nothing discoverable (no
+// terminal open, headless cron/worker run, or the model-B toggle off) the drive
+// resumes/starts its own thread — the "model-A" fallback.
 
 import { type ChildProcess, spawn } from 'child_process';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
@@ -97,8 +103,8 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 /** Per-(project, machine) persisted app-server state (`<dataDir>/codex-app-server.json`).
  *  Thread ids resolve against THIS machine's `~/.codex` rollouts, so the file is
  *  local state, not a shared setting. HS-9394 adds `rolloutPath` (from the thread
- *  payloads' `thread.path`) — its on-disk EXISTENCE is the "TUI attach will work"
- *  signal (`thread/resume` fails "no rollout found" until the first turn persists). */
+ *  payloads' `thread.path`); `thread/resume` fails "no rollout found" until the
+ *  first turn persists it, which is why adoption never depends on resume (§129.3a). */
 const StateFileSchema = z.object({ threadId: z.string().min(1), rolloutPath: z.string().min(1).optional() });
 
 export interface PersistedCodexThread {
@@ -183,66 +189,58 @@ interface Session {
 /** dataDir → live session. Module-level (one per project per process). */
 const sessions = new Map<string, Session>();
 
-/** HS-9394 — injectables for `codexTerminalAttachCommand` (tests use temp paths). */
-export interface AttachCommandDeps {
+/** HS-9394/HS-9429 — injectables for the codex terminal-command resolvers
+ *  (`codexTerminalRemoteCommand`, `codexTerminalNeedsDaemonEnsure`) and the
+ *  daemon pre-start. Tests use temp paths. */
+export interface CodexCommandDeps {
   fileExists?: (path: string) => boolean;
   socketPath?: string;
 }
 
 /** HS-9396 — injectables for `prestartCodexDaemonIfNeeded`. */
-export interface PrestartDeps extends AttachCommandDeps {
+export interface PrestartDeps extends CodexCommandDeps {
   ensureDaemon?: () => Promise<boolean>;
 }
 
 /**
- * HS-9396 (docs/123 §123.5) — fire-and-forget daemon pre-start so codex
- * terminals can launch ATTACHED without waiting for a play. Called at project
- * registration, on an `ai_tool` settings change, and on drive re-enable. Only
- * acts when the attach would otherwise be one missing daemon away: drive
- * enabled + `ai_tool=codex` + a resumable rollout persisted on disk + the
- * daemon socket absent. The resolver (`codexTerminalAttachCommand`) stays
- * side-effect-free — this is the async spawn-adjacent path. No thread warming:
- * a fresh daemon loads rollouts on `thread/resume` (live-verified).
+ * HS-9396 (docs/123 §123.5) — fire-and-forget daemon pre-start so a codex
+ * terminal can launch DAEMON-HOSTED without waiting on a cold daemon start.
+ * Called at project registration, on an `ai_tool` settings change, and on drive
+ * re-enable. Acts when the model-B launch is one missing daemon away: model-B
+ * on + drive enabled + `ai_tool=codex` + the daemon socket absent.
+ *
+ * HS-9430 — no longer requires a persisted rollout on disk. That was the model-A
+ * precondition (the terminal RESUMED the drive's thread, which needs a rollout);
+ * model-B's `codex --remote` only needs the socket, so a brand-new codex project
+ * gets a warm daemon on its first terminal open. The resolver
+ * (`codexTerminalRemoteCommand`) stays side-effect-free — this is the async
+ * spawn-adjacent path, and `codexTerminalNeedsDaemonEnsure` still covers the
+ * cold spawn if the pre-start hasn't finished.
  */
 export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps = {}): void {
-  if (!isCodexAppServerEnabled()) return;
+  if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return;
   const tool = readFileSettings(dataDir).ai_tool;
   if (typeof tool !== 'string' || tool.trim().toLowerCase() !== 'codex') return;
-  const persisted = readPersistedCodexThread(dataDir);
-  if (persisted === null || persisted.rolloutPath === null) return;
   const fileExists = deps.fileExists ?? existsSync;
-  if (!fileExists(persisted.rolloutPath)) return;
   if (fileExists(deps.socketPath ?? codexDaemonSocketPath())) return; // already up
   void (deps.ensureDaemon ?? ensureCodexDaemonRunning)().catch(() => { /* best-effort — plain codex fallback stands */ });
 }
 
-/**
- * HS-9394 (docs/123) — the daemon-attached terminal command for a codex project,
- * or null when plain `codex` is the right launch. The attached form is only safe
- * when the DRIVE runs (or would run) on the shared daemon — a TUI-on-daemon
- * resuming a rollout that a private stdio child is actively writing would be two
- * cores fighting over one rollout. Conditions, all required:
- *  1. the app-server drive is enabled (HS-9384 toggle);
- *  2. a driven thread is persisted WITH a rollout path that exists on disk
- *     (`thread/resume` fails "no rollout found" before the first turn persists);
- *  3. the live session (if any) is on the daemon transport; with no live session,
- *     the daemon socket exists (the next session will prefer it). A live STDIO
- *     session vetoes the attach (see above).
- * Interplay is safe (live-verified, codex-cli 0.145.0): codex queues a `turn/start`
- * that arrives while another client's turn runs, and an unsubmitted TUI draft
- * survives a driven turn rendering above it.
- */
 /**
  * HS-9428/HS-9430 (docs/129 model-B) — is model-B on? When ON, a codex terminal
  * launches daemon-hosted (`codex --remote`) and the drive DISCOVERS + joins that
  * thread by cwd, instead of the model-A "terminal chases the drive's thread" attach.
  *
  * **Default ON** (HS-9430) — verified end-to-end against real codex 0.145.0
- * (HS-9429/9431): the model-A path stays as the fallback (daemon down → plain
- * codex; no live terminal thread → the drive starts its own), so nothing hard-breaks
- * if the daemon is unavailable. The `codexModelBTerminals` global-config flag can
- * turn it off; the `HOTSHEET_CODEX_DISCOVER_THREAD` env var force-overrides either
- * way (`1` on / `0` off) for tests + a quick revert.
+ * (HS-9429/9431). Model-A survives as the HEADLESS fallback on the DRIVE side
+ * (nothing discoverable for this cwd → the drive resumes/starts its own thread),
+ * so cron/worker/no-UI runs never regress; the terminal falls back to plain
+ * `codex` when the daemon is unavailable.
+ *
+ * Off (Settings → Experimental → "Codex terminals host the driven session", the
+ * `codexModelBTerminals` global-config flag) means: terminals launch plain `codex`
+ * and the drive always owns its own thread. `HOTSHEET_CODEX_DISCOVER_THREAD`
+ * force-overrides either way (`1` on / `0` off) for tests + a quick revert.
  */
 export function codexDriveDiscoverEnabled(): boolean {
   const env = process.env.HOTSHEET_CODEX_DISCOVER_THREAD;
@@ -341,31 +339,19 @@ function realpathOrSelf(p: string): string {
   try { return realpathSync.native(p); } catch { return p; }
 }
 
-export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {
-  if (!isCodexAppServerEnabled()) return null;
-  const persisted = readPersistedCodexThread(dataDir);
-  if (persisted === null || persisted.rolloutPath === null) return null;
-  const fileExists = deps.fileExists ?? existsSync;
-  if (!fileExists(persisted.rolloutPath)) return null;
-  const socketPath = deps.socketPath ?? codexDaemonSocketPath();
-  const live = sessions.get(dataDir);
-  if (live !== undefined && !live.finished && live.transport !== null) {
-    if (live.transport.kind !== 'daemon') return null; // stdio session owns the rollout
-  } else if (!fileExists(socketPath)) {
-    return null; // no daemon to attach to (the drive would start one on next play)
-  }
-  // Single-quote the URL — home directories can contain spaces.
-  return `codex resume ${persisted.threadId} --remote 'unix://${socketPath}'`;
-}
-
 /**
  * HS-9429 (docs/129 §129.4, model-B Phase 2) — the DAEMON-HOSTED terminal launch
- * for a codex project: `codex --remote 'unix://<sock>' -C '<projectDir>'`. Unlike
- * the model-A attach (`codexTerminalAttachCommand`, which *resumes the drive's*
- * thread), this launches a FRESH daemon-hosted session that OWNS its own live
- * thread — the drive then DISCOVERS it by cwd (HS-9428) and drives it in place.
+ * for a codex project: `codex --remote 'unix://<sock>' -C '<projectDir>'`. This
+ * launches a FRESH daemon-hosted session that OWNS its own live thread — the drive
+ * then DISCOVERS it by cwd (HS-9428) and drives it in place.
  * `-C <projectDir>` pins the session cwd to the project (= `dirname(dataDir)`) so
  * the drive's `pickThreadForCwd` matches it.
+ *
+ * HS-9430 retired the model-A counterpart this replaced (`codexTerminalAttachCommand`
+ * — `codex resume <driveThreadId> --remote`, where the terminal chased the drive's
+ * thread at launch time and needed a "↻ Rejoin codex" affordance whenever that race
+ * was lost). Under model-B there is nothing to chase: the terminal's own thread is
+ * the driven one.
  *
  * Returns null (→ caller falls back to plain `codex`) when the model-B gate is off,
  * the drive is disabled, or the daemon socket isn't up yet. Sync — the daemon is
@@ -376,7 +362,7 @@ export function codexTerminalAttachCommand(dataDir: string, deps: AttachCommandD
  * conversation each terminal open; users run `/resume` inside codex to continue a
  * prior session.
  */
-export function codexTerminalRemoteCommand(dataDir: string, deps: AttachCommandDeps = {}): string | null {
+export function codexTerminalRemoteCommand(dataDir: string, deps: CodexCommandDeps = {}): string | null {
   if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return null;
   const socketPath = deps.socketPath ?? codexDaemonSocketPath();
   const fileExists = deps.fileExists ?? existsSync;
@@ -392,7 +378,7 @@ export function codexTerminalRemoteCommand(dataDir: string, deps: AttachCommandD
  * nothing to connect to. `spawnIntoSession` uses this to defer the (rare) cold spawn
  * behind `ensureCodexDaemonRunning`; every other spawn stays synchronous.
  */
-export function codexTerminalNeedsDaemonEnsure(dataDir: string, deps: AttachCommandDeps = {}): boolean {
+export function codexTerminalNeedsDaemonEnsure(dataDir: string, deps: CodexCommandDeps = {}): boolean {
   // Env gate first (cheap) — short-circuits without the config/settings reads on the
   // default (gate-off) path, since this runs on every terminal spawn.
   if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return false;

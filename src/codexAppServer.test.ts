@@ -4,7 +4,7 @@ import { type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _resetAcpPermissionsForTesting, pendingAcpPermissionForSecret, resolveAcpPermission } from './acp/acpPermissionBridge.js';
@@ -12,8 +12,8 @@ import {
   _resetCodexAppServersForTesting,
   clearCodexAppServerFailures,
   type CodexAppServerDeps,
+  codexDriveDiscoverEnabled,
   codexInteractivePermissions,
-  codexTerminalAttachCommand,
   codexTerminalNeedsDaemonEnsure,
   codexTerminalRemoteCommand,
   hasCodexAppServerHandshakeFailed,
@@ -849,7 +849,7 @@ describe('HS-9395 — MCP tool-call elicitations', () => {
   });
 });
 
-describe('HS-9394 — persisted rollout path + terminal attach command', () => {
+describe('HS-9394 — persisted rollout path', () => {
   let home: string;
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
@@ -875,127 +875,92 @@ describe('HS-9394 — persisted rollout path + terminal attach command', () => {
     await flush();
     expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'th-old', rolloutPath: '/sessions/rollout-th-old.jsonl' });
   });
-
-  describe('codexTerminalAttachCommand', () => {
-    const writeState = (rolloutPath?: string): void => {
-      writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-a', ...(rolloutPath !== undefined ? { rolloutPath } : {}) }), 'utf-8');
-    };
-    const allExist = (): boolean => true;
-
-    it('builds the resume --remote command (quoted socket URL) when drive on, rollout exists, and the daemon socket is up', () => {
-      writeState('/sessions/r.jsonl');
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/tmp/a b/s.sock' }))
-        .toBe("codex resume th-a --remote 'unix:///tmp/a b/s.sock'");
-    });
-
-    it('returns null when the drive toggle is off', () => {
-      writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
-      writeState('/sessions/r.jsonl');
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
-    });
-
-    it('returns null with no persisted thread, no rollout path, or a rollout that does not exist yet', () => {
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
-      writeState(); // thread id only (pre-9394 file)
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
-      writeState('/sessions/r.jsonl'); // rollout persisted but not on disk (no turn yet)
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p === '/s.sock', socketPath: '/s.sock' })).toBeNull();
-    });
-
-    it('returns null when no daemon socket exists and no live session is up', () => {
-      writeState('/sessions/r.jsonl');
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p !== '/s.sock', socketPath: '/s.sock' })).toBeNull();
-    });
-
-    it('a live STDIO session vetoes the attach (its private core owns the rollout)', async () => {
-      const fake = scriptedAppServer({ newThreadId: 'th-a', newThreadPath: '/sessions/r.jsonl' });
-      spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
-      await flush();
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
-    });
-
-    it('a live DAEMON session allows the attach even if the socket-exists probe would fail', async () => {
-      const fake = scriptedAppServer({ newThreadId: 'th-a', newThreadPath: '/sessions/r.jsonl' });
-      const closeSpy = vi.fn();
-      const connectDaemon = (h: CodexTransportHandlers): Promise<{ kind: 'daemon'; send: (json: string) => void; close: () => void }> => {
-        fake.proc.stdout.on('data', (chunk: Buffer) => {
-          for (const line of chunk.toString().split('\n')) if (line.trim() !== '') h.onMessage(line);
-        });
-        return Promise.resolve({ kind: 'daemon' as const, send: (json: string) => { fake.proc.stdin.write(json); }, close: closeSpy });
-      };
-      spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
-      await flush();
-      expect(codexTerminalAttachCommand(dataDir, { fileExists: (p) => p !== '/s.sock', socketPath: '/s.sock' }))
-        .toBe("codex resume th-a --remote 'unix:///s.sock'");
-    });
-  });
 });
 
-// HS-9403 — the END-TO-END seam the maintainer hit: a user-created `{{aiCommand}}`
-// terminal (ai_tool=codex) resolving through the REAL `codexTerminalAttachCommand`
-// (no injected `codexAttachOverride` / `socketPath` / `fileExists`), driven by real
-// on-disk state (persisted thread + a rollout file that actually exists) and a real
-// codex app-server session. The prior HS-9394 tests all injected the attach
-// resolver, so this integration path — where the bug actually lives — was untested.
-describe('HS-9403 — {{aiCommand}} terminal resolves the codex attach end-to-end', () => {
+// HS-9430 — the end-to-end seam that used to prove the model-A attach (HS-9403),
+// re-pointed at model-B: a user-created `{{aiCommand}}` terminal (ai_tool=codex)
+// resolving through the REAL `codexTerminalRemoteCommand` — no injected
+// `codexRemoteOverride` — so the integration path, not just the unit, is covered.
+describe('HS-9430 — {{aiCommand}} terminal resolves the model-B launch end-to-end', () => {
   let home: string;
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
     vi.stubEnv('HOTSHEET_HOME', home);
+    // `codexDaemonSocketPath()` is derived from `os.homedir()`, which honors $HOME
+    // on POSIX — point it at the temp home so the "daemon up" case can create a
+    // stand-in socket file WITHOUT touching the developer's real ~/.codex.
+    vi.stubEnv('HOME', home);
   });
   afterEach(() => {
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   });
 
-  /** Persist a real thread + on-disk rollout via a live session (the "attach will
-   *  work" precondition). `connect` picks the transport: a daemon transport allows
-   *  the attach, `noDaemon` forces the stdio fallback that vetoes it. */
-  const seedLiveSession = async (mode: 'daemon' | 'stdio'): Promise<void> => {
-    const rolloutPath = join(dir, 'rollout-th-a.jsonl');
-    writeFileSync(rolloutPath, '{}', 'utf-8'); // on-disk existence = the attach signal
-    const fake = scriptedAppServer({ newThreadId: 'th-a', newThreadPath: rolloutPath });
-    const connect: CodexAppServerDeps['connectDaemon'] = mode === 'stdio'
-      ? noDaemon
-      : (h: CodexTransportHandlers) => {
-          // Wire the scripted child's stdout into the daemon handlers so boot completes.
-          fake.proc.stdout.on('data', (chunk: Buffer) => {
-            for (const line of chunk.toString().split('\n')) if (line.trim() !== '') h.onMessage(line);
-          });
-          return Promise.resolve({ kind: 'daemon' as const, send: (json: string) => { fake.proc.stdin.write(json); }, close: vi.fn() });
-        };
-    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: connect, postHeartbeat: vi.fn(), signalDone: vi.fn() });
-    await flush();
-    // Confirm the precondition the resolver depends on is really on disk.
-    expect(readPersistedCodexThread(dataDir)).toEqual({ threadId: 'th-a', rolloutPath });
-  };
-
   const resolveAiTerminal = (): string => resolveTerminalCommand({
     dataDir,
     configOverride: { id: 'ai', command: '{{aiCommand}}' },
     aiToolOverride: 'codex',
-    isAiToolOnPath: (b) => b === 'codex', // codex "on PATH" — environmental, not the bug
-    codexModelB: false, // HS-9403 is about the model-A attach; model-B is now the default
+    isAiToolOnPath: (b) => b === 'codex', // codex "on PATH" — environmental, not under test
   }).command;
 
-  it('resolves to `codex resume … --remote unix://<real socket>` when the drive runs on the DAEMON', async () => {
-    // A daemon-transport session is live → the attach is allowed even though the real
-    // daemon socket file doesn't exist in the test (the live-daemon branch of
-    // codexTerminalAttachCommand bypasses the socket-exists probe). This exercises
-    // the REAL codexTerminalAttachCommand through resolveTerminalCommand — no
-    // injected attach override — which is the seam the HS-9394 tests never covered.
-    await seedLiveSession('daemon');
-    expect(resolveAiTerminal()).toBe(`codex resume th-a --remote 'unix://${codexDaemonSocketPath()}'`);
+  it('resolves to `codex --remote unix://<real socket> -C <projectDir>` when the daemon socket is up', () => {
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+    // The real resolver probes the real socket path — create it so the "daemon up"
+    // branch is the one exercised (an empty file is enough for the existsSync probe).
+    const sock = codexDaemonSocketPath();
+    mkdirSync(dirname(sock), { recursive: true });
+    writeFileSync(sock, '', 'utf-8');
+    expect(resolveAiTerminal()).toBe(`codex --remote 'unix://${sock}' -C '${dir}'`);
   });
 
-  it('resolves to PLAIN `codex` when the drive runs on STDIO — the attach is vetoed by design (two cores cannot share one rollout)', async () => {
-    // The maintainer-visible symptom when the shared daemon is NOT available: the
-    // drive falls back to a private stdio child that OWNS the rollout, so the terminal
-    // correctly launches plain `codex` and driven work never appears in it. This is
-    // intended behavior — the fix for that case is daemon availability, not the
-    // resolution (see the completion note / docs/123 §123.7).
-    await seedLiveSession('stdio');
+  it('resolves to PLAIN `codex` when the daemon socket is absent (nothing to host the thread)', () => {
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
     expect(resolveAiTerminal()).toBe('codex');
+  });
+
+  it('resolves to PLAIN `codex` when model-B is switched off, even with the daemon up', () => {
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0');
+    const sock = codexDaemonSocketPath();
+    mkdirSync(dirname(sock), { recursive: true });
+    writeFileSync(sock, '', 'utf-8');
+    expect(resolveAiTerminal()).toBe('codex');
+  });
+});
+
+// HS-9430 — `codexDriveDiscoverEnabled` is now backed by a real setting
+// (`codexModelBTerminals`, Settings → Experimental), not just an env gate.
+describe('HS-9430 — codexDriveDiscoverEnabled setting + env override', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
+    vi.stubEnv('HOTSHEET_HOME', home);
+  });
+  afterEach(() => { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true }); });
+
+  const writeConfig = (config: Record<string, unknown>): void => {
+    writeFileSync(join(home, 'config.json'), JSON.stringify(config), 'utf-8');
+  };
+
+  it('defaults ON with no config file and with the key absent', () => {
+    expect(codexDriveDiscoverEnabled()).toBe(true);
+    writeConfig({ channelEnabled: true });
+    expect(codexDriveDiscoverEnabled()).toBe(true);
+  });
+
+  it('an explicit `codexModelBTerminals: false` turns it off; `true` turns it back on', () => {
+    writeConfig({ codexModelBTerminals: false });
+    expect(codexDriveDiscoverEnabled()).toBe(false);
+    writeConfig({ codexModelBTerminals: true });
+    expect(codexDriveDiscoverEnabled()).toBe(true);
+  });
+
+  it('the env var force-overrides the setting in BOTH directions', () => {
+    writeConfig({ codexModelBTerminals: false });
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+    expect(codexDriveDiscoverEnabled()).toBe(true);
+    writeConfig({ codexModelBTerminals: true });
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0');
+    expect(codexDriveDiscoverEnabled()).toBe(false);
   });
 });
 
@@ -1070,12 +1035,7 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  const withRollout = (): void => {
-    writeFileSync(join(dataDir, 'codex-app-server.json'), JSON.stringify({ threadId: 'th-a', rolloutPath: '/sessions/r.jsonl' }), 'utf-8');
-  };
-
-  it('starts the daemon when codex + drive on + rollout on disk + socket missing', async () => {
-    withRollout();
+  it('starts the daemon when codex + drive on + model-B on + socket missing', async () => {
     const ensureDaemon = vi.fn().mockResolvedValue(true);
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
     await flush();
@@ -1083,19 +1043,22 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
   });
 
   it('no-ops when the socket is already up', () => {
-    withRollout();
     const ensureDaemon = vi.fn();
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: () => true });
     expect(ensureDaemon).not.toHaveBeenCalled();
   });
 
-  it('no-ops for non-codex projects, when the drive is off, or without a resumable rollout', () => {
-    const ensureDaemon = vi.fn();
-    // no state file at all
+  // HS-9430 — a persisted rollout is NO LONGER required (that was the model-A
+  // attach precondition); a brand-new codex project pre-starts the daemon too.
+  it('starts the daemon for a codex project with NO persisted thread at all', async () => {
+    const ensureDaemon = vi.fn().mockResolvedValue(true);
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
-    // rollout persisted but missing on disk
-    withRollout();
-    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: () => false });
+    await flush();
+    expect(ensureDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it('no-ops for non-codex projects, when the drive is off, and when model-B is off', () => {
+    const ensureDaemon = vi.fn();
     // non-codex tool
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'gemini' }), 'utf-8');
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
@@ -1103,11 +1066,13 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'codex' }), 'utf-8');
     writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    // model-B off (the daemon-hosted launch it exists to serve isn't happening)
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexModelBTerminals: false }), 'utf-8');
+    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
     expect(ensureDaemon).not.toHaveBeenCalled();
   });
 
   it('a rejecting ensure never throws out of the fire-and-forget path', async () => {
-    withRollout();
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon: () => Promise.reject(new Error('boom')), socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
     await flush(); // unhandled rejection would fail the test run
   });

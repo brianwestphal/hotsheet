@@ -41,7 +41,6 @@ import {
   setStatus,
   shortCommandName,
   teardown,
-  updateReattachButton,
 } from './terminalInstanceLifecycle.js';
 import { cacheHomeDir } from './terminalOsc7.js';
 import {
@@ -195,10 +194,6 @@ type ListEntry = TerminalTabConfig & {
   // `annotate` helper (see src/routes/terminal.ts).
   state?: 'alive' | 'exited' | 'not_spawned';
   exitCode?: number | null;
-  // HS-9397 (docs/123 §123.7) — restarting this live codex terminal would
-  // join the project's driven app-server thread; drives the "Rejoin codex"
-  // header chip.
-  codexReattach?: boolean;
 };
 type ListResponse = { configured: ListEntry[]; dynamic: ListEntry[]; home?: string };
 
@@ -244,13 +239,6 @@ function ensureInstanceForEntry(entry: ListEntry): TerminalInstance {
   if (entry.bellPending === true && !inst.hasBell) {
     inst.hasBell = true;
     updateTabLabel(inst);
-  }
-  // HS-9397 — seed/refresh the "Rejoin codex" chip from the server's
-  // per-terminal reattach flag (authoritative on every list refresh).
-  const reattach = entry.codexReattach === true;
-  if (reattach !== inst.codexReattach) {
-    inst.codexReattach = reattach;
-    updateReattachButton(inst);
   }
   return inst;
 }

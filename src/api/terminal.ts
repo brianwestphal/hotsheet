@@ -76,10 +76,6 @@ export const AnnotatedTerminalSchema = TerminalConfigSchema.extend({
   exitCode: z.number().nullable().optional(),
   lastSpinnerAtMs: z.number().nullable().optional(),
   lastOutputAtMs: z.number().nullable().optional(),
-  /** HS-9397 (docs/123 §123.7) — restarting this LIVE codex terminal would join
-   *  the project's driven app-server thread (plain terminal gained a resumable
-   *  thread, or an attached one is stranded on a reset thread). */
-  codexReattach: z.boolean().optional(),
 });
 export type AnnotatedTerminal = z.infer<typeof AnnotatedTerminalSchema>;
 

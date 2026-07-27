@@ -1,9 +1,11 @@
 # 129 — Codex model-B: terminal owns the thread, drive discovers it
 
-Status: **Phases 1 + 2 shipped (HS-9428/9429/9431); adoption fix shipped (HS-9438); Phase 3 chase-retirement still planned (HS-9430).**
+Status: **SHIPPED — Phases 1 + 2 (HS-9428/9429/9431), the adoption fix (HS-9438), and Phase 3's
+gate-promotion + chase-retirement (HS-9430). Model-B is the shipped model, on by default.**
 
 Companion to [121-codex-app-server-drive.md](121-codex-app-server-drive.md) (the drive) and
-[123-codex-terminal-attach.md](123-codex-terminal-attach.md) (the terminal attach this supersedes).
+[123-codex-terminal-attach.md](123-codex-terminal-attach.md) (the terminal attach this superseded and,
+as of HS-9430, deleted — that doc is now historical).
 This doc is the home for the model-B *architecture* — the reframe of how a codex terminal and the
 play-button drive share one conversation.
 
@@ -143,21 +145,44 @@ The codex `{{aiCommand}}` terminal launches daemon-hosted so it owns a discovera
   and a two-client `turn/start` fans out to the attached terminal client. This is what unblocked the
   default-on flip.
 
-## 129.5 Phase 3 — promote the gate (DONE) + retire the chase (PLANNED, HS-9430)
+## 129.5 Phase 3 — promote the gate + retire the chase (SHIPPED, HS-9430)
 
-**Gate promoted + default-ON (DONE, HS-9430):** the `codexModelBTerminals` global-config flag
-(env-overridable) defaults ON; model-A stays the fallback so a config flip fully reverts. **Still
-planned** — deferred until model-B has real-world miles, since it's the one irreversible part: remove
-`codexTerminalAttachCommand`, `terminals/codexReattach.ts` + `codexReattachAvailable`, the
-`codexReattach` field on `GET /terminal/list`, and the "↻ Rejoin codex" chip (HS-9394/9397 — deletes
-the HS-9403 class), plus a UI toggle for the flag. Keep model-A as the documented **headless
-fallback** (no live terminal → the drive starts its own thread) so cron/worker/no-UI runs never
-regress.
+Landed in two steps, deliberately: the reversible half first (a flag flip reverts it), the
+irreversible half only once the maintainer had confirmed model-B in real use (2026-07-27 — "codex is
+working as expected when clicking play / custom command buttons using aiCommand terminals").
 
-**Known transient quirk until the deletion lands:** with model-B on, the model-A "↻ Rejoin codex" chip
-(`codexReattachAvailable`, keyed off `codexTerminalAttachCommand`) can still evaluate against the
-now-unused attach command. Harmless; the chip's action (restart the terminal) just re-resolves to the
-model-B `codex --remote` command anyway.
+**Step 1 — gate promoted + default-ON.** The `codexModelBTerminals` global-config flag
+(env-overridable via `HOTSHEET_CODEX_DISCOVER_THREAD`) defaults ON.
+
+**Step 2 — the model-A chase is DELETED.** Removed outright:
+
+- `codexTerminalAttachCommand` (`codex resume <driveThreadId> --remote …`) and its branch in
+  `pickAiCommand` — with it the `codexAttachOverride` resolve option;
+- `src/terminals/codexReattach.ts` + `codexReattachAvailable` (and its test file);
+- the `codexReattach` annotation on `GET /terminal/list` (`AnnotatedTerminalSchema`) and its
+  per-request computation in `routes/terminal.ts`;
+- the client "↻ Rejoin codex" chip — markup, `updateReattachButton`, `onReattachClick`,
+  `TerminalInstance.codexReattach`, and its accent-pill SCSS;
+- `SessionState.resolvedCommand`, the pre-shell-history-rewrite launch string that existed ONLY as
+  the reattach comparison basis.
+
+That deletes the HS-9403 cold-start-race class by construction: there is no longer a launch-time
+decision that can be raced, because the terminal's own thread *is* the driven one.
+
+Two behavior changes fall out of it:
+
+- **`codexTerminalNeedsDaemonEnsure` / `prestartCodexDaemonIfNeeded` no longer require a persisted
+  rollout on disk.** That was a model-A precondition (`codex resume` fails "no rollout found" until a
+  turn has persisted one). Model-B's `codex --remote` only needs the socket, so a brand-new codex
+  project now gets a warm daemon on its first terminal open instead of paying a cold start.
+- **Gate OFF now means plain `codex`**, not "fall back to the attach": terminals host nothing and the
+  drive keeps its own headless thread. See the matrix in §129.6.
+
+**Settings surface.** Settings → Experimental → **"Codex terminals host the driven session"**
+(`#settings-codex-model-b-terminals`), machine-global, default ON, next to the §121.7 drive toggle.
+It writes `codexModelBTerminals` through the generic `PATCH /global-config` (no bespoke endpoint — the
+flag is read at terminal-spawn and drive-boot time, so nothing needs a live re-init). The env var
+still force-overrides in both directions, which is what tests use.
 
 ## 129.6 Fallback matrix (nothing regresses)
 
@@ -166,9 +191,13 @@ model-B `codex --remote` command anyway.
 | Daemon-hosted terminal live for the cwd | Drive discovers + `turn/start`s on it (model-B) |
 | …and its rollout doesn't exist yet (fresh terminal) | Adopted anyway; lifecycle from `thread/status/changed`; subscription retried next turn (HS-9438) |
 | Terminal opened AFTER the first play | Joined at the next turn boundary (`maybeRejoinLiveThread`, HS-9438) |
-| No live terminal (headless / worker / no UI) | Drive starts/resumes its own thread (model-A) |
+| No live terminal (headless / worker / no UI) | Drive starts/resumes its own thread (**model-A, the surviving headless fallback**) |
 | Daemon unreachable at terminal spawn | Terminal launches plain `codex`; drive uses model-A |
-| Gate off (`codexModelBTerminals: false` / `HOTSHEET_CODEX_DISCOVER_THREAD=0`) | Entirely model-A — no discovery, no `--remote` |
+| Toggle off (`codexModelBTerminals: false` / `HOTSHEET_CODEX_DISCOVER_THREAD=0`) | Terminal launches plain `codex`; drive owns its own thread. No discovery, no `--remote` — and since HS-9430, no attach either |
+
+**Model-A survives as the DRIVE-side fallback only.** "Model-A" now names one thing: the drive
+resuming/starting its own thread when nothing is discoverable. The terminal half of model-A (chasing
+that thread at launch) is gone.
 
 ## 129.7 Decisions (RESOLVED, HS-9429 maintainer)
 
@@ -195,8 +224,16 @@ model-B `codex --remote` command anyway.
   adoption fix rests on. This is the regression that would have caught the `thread/list` bug. The turn fan-out
   (a driven `turn/start` rendering in the terminal client) was verified by hand against the real
   daemon and is codex's own multi-client behavior.
-- **Phase 2**: resolve-command tests for the `codex --remote`/`resume --last --remote` forms +
-  daemon-ready vs fallback; the daemon-readiness path per Q2.
+- **Phase 2**: resolve-command tests for the `codex --remote` form + daemon-ready vs fallback; the
+  daemon-readiness path per Q2.
+- **Phase 3** (HS-9430): `codexDriveDiscoverEnabled` against a real config file (default-on with the
+  key absent, explicit `false`/`true`, env override winning in both directions); an **end-to-end**
+  `{{aiCommand}}` resolution through the REAL `codexTerminalRemoteCommand` — no injected resolver —
+  covering daemon-up, daemon-absent, and toggle-off (this replaces the HS-9403 end-to-end that pinned
+  the deleted attach; it stubs `$HOME` so the socket probe never touches the developer's `~/.codex`);
+  the prestart matrix reworked for the dropped rollout precondition; and a browser E2E
+  (`e2e/codex-drive-gating.spec.ts`) that the Experimental checkbox defaults ON and round-trips
+  `codexModelBTerminals` through `PATCH /global-config` across a reload.
 - **Manual (`docs/manual-test-plan.md`)**: real end-to-end on codex 0.145.0 — open a `{{aiCommand}}`
   terminal (daemon-hosted), press play, confirm the driven turn renders **in that terminal**; type a
   turn yourself and confirm it shares the thread + transcript.
