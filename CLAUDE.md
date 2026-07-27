@@ -211,7 +211,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 56. `56-magnified-grid-nav.md` — Shift+Cmd/Ctrl+Arrow magnified-tile navigation
 57. `57-shell-command-button-spinner.md` — running shell-command button spinner + stop
 59. `59-reader-note-navigation.md` — reader-mode prev/next note navigation
-60. `60-reactivity-primitive.md` — fine-grained reactivity primitive (`kerfjs`, on `^3.0.0-beta.1` since HS-9449; kerf 3.0 no longer infers dev mode, so its diagnostics are opt-in by importing `kerfjs/dev` — the client bundle deliberately doesn't, `vitest.setup.ts` does)
+60. `60-reactivity-primitive.md` — fine-grained reactivity primitive (`kerfjs`, on `^3.0.0` since HS-9449; kerf 3.0 no longer infers dev mode, so its diagnostics are opt-in by importing `kerfjs/dev` — the client bundle deliberately doesn't, `vitest.setup.ts` does)
 61. `61-composable-stores.md` — composable testable stores (`defineStore`)
 62. `62-unified-jsx-render-targets.md` — shared AST: `astToHtml` (server) + `astToDom` (client)
 63. `63-mcp-tools.md` — MCP tool surface for AI agents (`tools/list` + `tools/call`)

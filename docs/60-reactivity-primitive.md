@@ -36,7 +36,7 @@ The signals primitive only takes over the WHEN-to-re-mount question for the view
 recommended `@preact/signals-core` direct. While shipping HS-8235 we
 re-evaluated and landed on `kerfjs` (sister project at
 `~/Documents/kerf`, published as `kerfjs` on npm — initially pinned at
-`^0.3.1`, bumped to `^0.5.0` under HS-8316 on 2026-05-10, and to **`^3.0.0-beta.1` under HS-9449 on 2026-07-27** — three majors absorbed in one step; see the bump-history comment at the top of `src/client/reactive.ts` for what each major broke and why almost none of it reaches us) instead. `kerfjs` re-exports
+`^0.3.1`, bumped to `^0.5.0` under HS-8316 on 2026-05-10, and to **`^3.0.0` under HS-9449 on 2026-07-27** — three majors absorbed in one step; see the bump-history comment at the top of `src/client/reactive.ts` for what each major broke and why almost none of it reaches us) instead. `kerfjs` re-exports
 `@preact/signals-core` verbatim for the four primitive functions, AND
 ships `defineStore` / `resetAllStores` (the §61 deliverable) PLUS
 `mount` / `each` / `toElement` / `SafeHtml` / `raw` / `Fragment`

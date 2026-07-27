@@ -93,7 +93,7 @@
  * `.claude/skills`), so it's disabled in `eslint.config.mjs`; the four kerf AST
  * hard-rules from the preset stay on.
  *
- * HS-9449 — bumped kerfjs `^0.16.0` → `^3.0.0-beta.1` (2026-07-27), plus
+ * HS-9449 — bumped kerfjs `^0.16.0` → `^3.0.0` (2026-07-27), plus
  * `eslint-plugin-kerfjs` to match. THREE majors in one step (1.0 / 2.0 / 3.0), but
  * the blast radius is small because Hot Sheet's kerf surface is narrow: this
  * module's re-exports plus `toElement` in `dom.ts`. Everything kerf broke lives in
@@ -132,6 +132,13 @@
  *
  * `@preact/signals-core ^1.14.1` was already the 0.16 dependency, so no new
  * transitive dep. tsc + lint + the full unit suite + both client bundles pass.
+ *
+ * Landed on `3.0.0-beta.1` first, then moved to the `3.0.0` stable release the same
+ * day. Verified rather than assumed to be a no-op: every shipped `dist/*.js` in the
+ * kerfjs tarball is BYTE-IDENTICAL between the two (index / jsx-runtime / dev /
+ * testing / array-signal / html), and `eslint-plugin-kerfjs` differs only in its
+ * `package.json` version field — the beta was promoted unchanged, so everything
+ * checked above carries over.
  */
 export type { ReadonlySignal, Signal, Store } from 'kerfjs';
 export { batch, computed, defineStore, delegate, delegateCapture, effect, morph, resetAllStores, signal } from 'kerfjs';
