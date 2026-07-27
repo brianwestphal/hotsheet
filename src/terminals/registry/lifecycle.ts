@@ -4,9 +4,11 @@ import type { IPty } from 'node-pty';
 import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
-import { codexTerminalNeedsDaemonEnsure } from '../../codexAppServer.js';
+import { codexDriveDiscoverEnabled, codexTerminalNeedsDaemonEnsure, isCodexAppServerEnabled } from '../../codexAppServer.js';
 import { ensureCodexDaemonRunning } from '../../codexDaemonTransport.js';
+import { readFileSettings } from '../../file-settings.js';
 import { containsClaudeSpinner } from '../claudeSpinner.js';
+import { noteUnhostedCodexLaunch } from '../codexHostedWarning.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from '../config.js';
 import { scanPtyChunk } from '../oscScanner.js';
 import { killProcessTreeBestEffort } from '../processInspect.js';
@@ -101,6 +103,16 @@ function doSpawnIntoSession(session: SessionState, dataDir: string): void {
     dataDir,
     terminalId: session.terminalId,
     configOverride: session.configOverride ?? undefined,
+  });
+  const aiTool: unknown = readFileSettings(dataDir).ai_tool;
+  // HS-9446 — model-B expects this terminal to host the driven thread. If it resolved
+  // to plain `codex`, the daemon was unreachable and driven turns will run off-screen;
+  // say so once in the Commands Log rather than letting it be silent (the HS-9403 class).
+  noteUnhostedCodexLaunch(dataDir, session.terminalId, {
+    modelB: codexDriveDiscoverEnabled(),
+    driveEnabled: isCodexAppServerEnabled(),
+    aiTool: typeof aiTool === 'string' ? aiTool : '',
+    command: resolved.command,
   });
   // HS-7965 — generate per-terminal shell init files + collect env / command
   // overrides so up-arrow recall is scoped per (project, terminal id) rather

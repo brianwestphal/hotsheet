@@ -192,8 +192,20 @@ still force-overrides in both directions, which is what tests use.
 | …and its rollout doesn't exist yet (fresh terminal) | Adopted anyway; lifecycle from `thread/status/changed`; subscription retried next turn (HS-9438) |
 | Terminal opened AFTER the first play | Joined at the next turn boundary (`maybeRejoinLiveThread`, HS-9438) |
 | No live terminal (headless / worker / no UI) | Drive starts/resumes its own thread (**model-A, the surviving headless fallback**) |
-| Daemon unreachable at terminal spawn | Terminal launches plain `codex`; drive uses model-A |
+| Daemon unreachable at terminal spawn | Terminal launches plain `codex`; drive uses model-A — and **says so once in the Commands Log** (HS-9446) |
 | Toggle off (`codexModelBTerminals: false` / `HOTSHEET_CODEX_DISCOVER_THREAD=0`) | Terminal launches plain `codex`; drive owns its own thread. No discovery, no `--remote` — and since HS-9430, no attach either |
+
+**The one silent case, now audible (HS-9446).** A terminal that launches plain `codex` because the
+daemon was unreachable owns a thread the drive can never discover, so driven turns run off-screen for
+as long as it stays open — the HS-9403 shape, which cost days of misdiagnosis when nothing surfaced
+it. `terminals/codexHostedWarning.ts` writes ONE Commands Log entry per (project, terminal) when a
+codex project with model-B + the drive on resolves a codex launch without `--remote`. Deliberately a
+log line rather than a rebuilt chip: the cold spawn already awaits `ensureCodexDaemonRunning` and the
+daemon is pre-started at registration, so this should be rare — the log is how we find out whether it
+happens at all before paying for an affordance. The command check (whole-word `codex`, no `--remote`)
+is what keeps it per-terminal; the daemon-ensure gate is per-project and would also fire for a `btop`
+terminal. The write goes through `runWithDataDir` because an eager spawn happens outside any request,
+where `getDb()` would file the entry under the default project.
 
 **Model-A survives as the DRIVE-side fallback only.** "Model-A" now names one thing: the drive
 resuming/starting its own thread when nothing is discoverable. The terminal half of model-A (chasing
