@@ -90,14 +90,21 @@ Probed on 0.145.0 with a pty-driven TUI + a headless driver on the same thread:
 - **Draft safety** — a driven turn arriving while the TUI holds typed-but-unsubmitted
   input renders above it; the draft is preserved.
 - **Turn serialization** — a `turn/start` sent while another client's turn is in
-  flight is **accepted and queued by codex**, running after the active turn ends.
-  No rejection, no interleaving. (So the drive needs no thread-busy awareness —
-  its queued turn simply waits server-side.)
+  flight is **accepted**, not rejected, and the drive needs no thread-busy awareness.
+  **Corrected by HS-9440's measurement (docs/129 §129.9 fact 4):** it is not queued as
+  a second turn — the prompt is **absorbed into the running turn** (one `turn/started`
+  /`turn/completed` pair, one status cycle, both prompts answered). The response still
+  carries a fresh turn id, but that id is never echoed back in any notification, so a
+  caller waiting on it would wait forever.
 - **Transcript parity** — TUI-typed turns stream to the drive's connection and land
   in the §121.6 Commands Log transcript; the drive's shared-thread guard (HS-9388)
   keeps them from driving Hot Sheet's busy/done lifecycle.
-- **Approvals** route to the connection that started the turn: the TUI renders its
-  own turns' approvals inline; driven turns' approvals go to the §47 overlay.
+- **Approvals** — **this bullet was WRONG and is corrected by HS-9440** (docs/129
+  §129.9 fact 2). Approvals do *not* route to the connection that started the turn;
+  they route to the connection(s) holding a `thread/resume` **subscription**. An
+  unsubscribed client gets no approval request even for a turn it started itself, and
+  when several clients are subscribed **all** of them are asked with the same request
+  id. Consequences for model-B are in docs/129 §129.9 and HS-9439 / HS-9447.
 
 ## 123.5 Fallback behavior
 

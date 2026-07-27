@@ -237,3 +237,68 @@ that thread at launch) is gone.
 - **Manual (`docs/manual-test-plan.md`)**: real end-to-end on codex 0.145.0 — open a `{{aiCommand}}`
   terminal (daemon-hosted), press play, confirm the driven turn renders **in that terminal**; type a
   turn yourself and confirm it shares the thread + transcript.
+
+## 129.9 Multi-client protocol facts (MEASURED, HS-9440, codex-cli 0.145.0)
+
+Model-B always has **two clients on one thread** — the terminal that owns it and the drive that
+adopted it — so who-gets-what stops being an implementation detail. Measured directly against the
+real daemon with two independent connections (T = thread owner/subscribed, D = adopter). These are
+observations of codex's behavior, not our contract, so re-measure on a codex upgrade.
+
+**1. `thread/status/changed` is broadcast to EVERY connection, subscribed or not.** D saw
+`active` → `idle` for a turn T started and D knew nothing about. This is *why* the HS-9438
+unsubscribed lifecycle works at all — and equally why a foreign turn's `idle` can end ours (§129.10).
+
+**2. Approvals are routed by SUBSCRIPTION, not by who started the turn.**
+
+| Drive state | Who receives `item/commandExecution/requestApproval` |
+| --- | --- |
+| Unsubscribed (first turn on a fresh adopted thread) | **The TUI only** — even for a turn the DRIVE started |
+| Subscribed (turn 2 onward) | **Both**, same request id; `serverRequest/resolved` fires when either answers |
+
+Two consequences. The first driven turn's approvals surface in the terminal, not Hot Sheet's §47
+overlay — including for users who set `codex_interactive_permissions: false`, whose auto-accept the
+drive never gets to apply. And once both are subscribed, an approval answered in the TUI leaves the
+overlay standing, because the drive ignores `serverRequest/resolved`.
+
+**3. Waiting for approval is `active`, not `idle`.** The status is
+`{ type: 'active', activeFlags: ['waitingOnApproval'] }`. So the unsubscribed idle-ends-the-turn path
+does **not** misfire mid-turn on an approval — the risk that looked most likely before measuring.
+Other observed values: `activeFlags: []` and `{ type: 'notLoaded' }` (thread unloaded/deleted, which
+correctly ends an unsubscribed turn since anything but `active` does).
+
+**4. A concurrent `turn/start` is ABSORBED into the running turn, not queued as a second one.** D
+firing `turn/start` mid-turn got a normal `{ turn: { id, status: 'inProgress' } }` result with a
+*fresh* turn id — but that id never produced its own `turn/started`/`turn/completed`, and the thread
+ran ONE turn (`thread/read` shows a single turn containing **both** prompts, both answered). Refines
+docs/121's "codex queues a mid-turn `turn/start`": the prompt lands, but a caller waiting on *its*
+turn id waits forever. The drive is unaffected today (it matches on thread, not turn id, and its own
+O1 queue prevents self-overlap), but anything keying off the returned turn id must not assume it will
+be echoed back.
+
+**5. A fresh thread becomes resumable ~1 second INTO its first turn, not at the end.** Measured: the
+rollout JSONL appeared at **+1058 ms** and `thread/resume` succeeded at **+1063 ms**, while the turn
+ran to +6069 ms. The mid-turn resume was non-disruptive — the turn completed normally and D then
+received the full `item/*` + `turn/completed` stream. This is the key finding: the drive does **not**
+have to wait for the next turn boundary to subscribe, which is what would close both the
+approval-routing gap (fact 2) and the missing first-turn transcript detail (HS-9439).
+
+## 129.10 Premature-idle race — measured scope (HS-9440)
+
+The race HS-9438 left open: while unsubscribed, the drive ends its turn on `idle`, so a *foreign*
+turn's `idle` arriving between our `phase = 'active'` and our `turn/start` landing ends our turn
+before it starts. Fact 1 confirms the premise (foreign idles do reach us). Fact 4 narrows the damage:
+if our prompt is absorbed into the running turn, the shared `idle` at the end is a *correct* end —
+our work was done in that turn. The genuinely wrong case is only when the foreign turn ends inside
+that window, so our prompt starts a NEW turn whose idle we've already consumed.
+
+The window is the discovery round-trip: `startNextTurn` sets `phase = 'active'`, then awaits
+`maybeRejoinLiveThread` (`thread/loaded/list` + one `thread/read` per loaded thread) before sending
+`turn/start`. Milliseconds locally, but it grows with the number of loaded threads. Exposure is the
+first driven turn after a terminal opens (the `!subscribed` gate closes the path afterward), and both
+the agent's own `hotsheet_signal_done` and the client's 60 s fallback already bound the damage.
+
+**Recommended guard (HS-9448):** don't arm the idle-ends-turn path until our `turn/start` has been
+acknowledged. That covers exactly the window and — unlike the "saw active since turn start" guard
+rejected during HS-9438 — has no stick-forever failure mode, because it waits on a response we always
+get rather than on a transition codex may never emit.
