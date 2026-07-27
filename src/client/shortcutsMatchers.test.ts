@@ -57,6 +57,33 @@ describe('Cmd/Ctrl+Shift+[ / ] tab cycling matchers (HS-9443)', () => {
     expect(matching(key(']', { metaKey: true }))).not.toContain('Cmd/Ctrl+Shift+]: next tab (terminal-aware)');
   });
 
+  /**
+   * HS-9444 — the matcher must NOT reject `altKey`.
+   *
+   * On layouts where the brackets live behind Option / AltGr, the alt-modified
+   * keystroke is the ONLY one that produces the character, so a `&& !e.altKey`
+   * "tightening" would take the chord away from those users entirely. Measured from
+   * macOS itself (TIS + `UCKeyTranslate` against the installed layouts) rather than
+   * assumed:
+   *
+   *     French  digit-5:  plain=(  shift=5  opt=open-brace   opt+shift=open-bracket
+   *     German  digit-5:  plain=5  shift=%  opt=open-bracket opt+shift=ﬁ
+   *
+   * So French reaches `[` as Cmd+Option+Shift+5 — with Shift held, which is what
+   * this matcher needs. German cannot: every bracket there is Option WITHOUT Shift
+   * (`[`=⌥5, `]`=⌥6, `{`=⌥8, `}`=⌥9), so no German keystroke produces a bracket
+   * while Shift is down. That gap needs a different chord, not a matcher change —
+   * it is the open half of HS-9444.
+   */
+  it('tolerates altKey — the only route on layouts where brackets need Option/AltGr', () => {
+    // French macOS: Cmd+Option+Shift+5 → `[`.
+    expect(matching(key('[', { metaKey: true, shiftKey: true, altKey: true })))
+      .toContain('Cmd/Ctrl+Shift+[: previous tab (terminal-aware)');
+    // Windows AltGr reports as Ctrl+Alt, so the same keystroke carries ctrlKey too.
+    expect(matching(key(']', { ctrlKey: true, shiftKey: true, altKey: true })))
+      .toContain('Cmd/Ctrl+Shift+]: next tab (terminal-aware)');
+  });
+
   it('keeps the two directions distinct', () => {
     expect(matching(key('{', { metaKey: true, shiftKey: true }))).not.toContain('Cmd/Ctrl+Shift+]: next tab (terminal-aware)');
     expect(matching(key('}', { metaKey: true, shiftKey: true }))).not.toContain('Cmd/Ctrl+Shift+[: previous tab (terminal-aware)');
