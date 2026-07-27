@@ -823,6 +823,51 @@ describe('HS-9428 — model-B: drive discovers + joins the terminal\'s live thre
       });
     });
 
+    // HS-9445 — the user-visible payoff, and the bug that reported it: codex routes
+    // approvals/elicitations to SUBSCRIBED connections (docs/129 §129.9 fact 2), so
+    // while the drive was unsubscribed a driven turn's permission prompt appeared only
+    // in the terminal TUI — including for hotsheet's OWN tools, which the drive is
+    // supposed to auto-accept invisibly. The routing itself is codex's behavior (proven
+    // live), so what this pins is OUR half: on an adopted thread, once the subscribe
+    // lands mid-turn, permission requests are handled exactly as on a drive-owned
+    // thread — no gate on `subscribed`/`phase` creeping into `handleServerRequest`.
+    it('handles permission requests on an adopted thread once the mid-turn subscribe lands', async () => {
+      await withFakeTimers(async () => {
+        const resumable: string[] = [];
+        const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable });
+        spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: daemonize(fake), postHeartbeat: vi.fn(), signalDone: vi.fn() });
+        await flush();
+        resumable.push('term-1');
+        await vi.advanceTimersByTimeAsync(1_600);
+        await flush();
+        expect(resumeCount(fake)).toBe(3); // subscribed mid-turn — codex will now route to us
+
+        const elicit = (id: string, serverName: string): void => {
+          fake.emit({
+            jsonrpc: '2.0', id, method: 'mcpServer/elicitation/request',
+            params: {
+              threadId: 'term-1', turnId: 'turn-1', serverName, mode: 'form',
+              _meta: { codex_approval_kind: 'mcp_tool_call', tool_params: {} },
+              message: `Allow the ${serverName} MCP server to run tool "hotsheet_signal_done"?`,
+              requestedSchema: { type: 'object', properties: {} },
+            },
+          });
+        };
+
+        // Hot Sheet's own control surface: auto-accepted, no popup. This is the exact
+        // request the maintainer's screenshot showed the TUI asking about.
+        elicit('elicit-adopted-1', 'hotsheet-channel');
+        await flush();
+        expect(fake.sent.find(m => m.id === 'elicit-adopted-1')?.result).toEqual({ action: 'accept', content: {} });
+        expect(pendingAcpPermissionForSecret(getProjectSecret(dataDir))).toBeNull();
+
+        // Any other server still reaches the §47 overlay.
+        elicit('elicit-adopted-2', 'some-other-server');
+        await flush();
+        expect(pendingAcpPermissionForSecret(getProjectSecret(dataDir))).not.toBeNull();
+      });
+    });
+
     it('never fires when the thread was already subscribed at turn start', async () => {
       await withFakeTimers(async () => {
         const fake = scriptedAppServer({ loaded: ['term-1'], threads: [{ id: 'term-1', cwd: dir, recencyAt: 5 }], resumable: ['term-1'] });
@@ -928,6 +973,46 @@ describe('HS-9395 — MCP tool-call elicitations', () => {
     expect(fake.sent.find(m => m.id === 'elicit-1')?.result).toEqual({ action: 'accept', content: {} });
     // No popup was rendered for our own control surface.
     expect(pendingAcpPermissionForSecret(getProjectSecret(dataDir))).toBeNull();
+  });
+
+  // HS-9447 — codex asks EVERY subscribed client about the same approval (measured,
+  // docs/129 §129.9 fact 2) and broadcasts `serverRequest/resolved` when one answers.
+  // Under model-B the other client is the terminal TUI the user is watching, so
+  // answering there must take our overlay down with it.
+  it('dismisses the §47 overlay when another client answers first (serverRequest/resolved)', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    const secret = getProjectSecret(dataDir);
+
+    fake.emit({ jsonrpc: '2.0', id: 77, method: 'mcpServer/elicitation/request', params: elicitParams('some-other-server') });
+    await flush();
+    expect(pendingAcpPermissionForSecret(secret)).not.toBeNull(); // popup is up
+
+    // The TUI answers → codex closes the request and tells every client.
+    fake.emit({ jsonrpc: '2.0', method: 'serverRequest/resolved', params: { threadId: 'th-1', requestId: 77 } });
+    await flush();
+    expect(pendingAcpPermissionForSecret(secret)).toBeNull();
+    // …and we do NOT reply to a request codex has already closed.
+    expect(fake.sent.find(m => m.id === 77)).toBeUndefined();
+  });
+
+  it('ignores a serverRequest/resolved for an unknown id, and still answers our own popups normally', async () => {
+    const fake = scriptedAppServer({ newThreadId: 'th-1' });
+    spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() });
+    await flush();
+    const secret = getProjectSecret(dataDir);
+
+    fake.emit({ jsonrpc: '2.0', method: 'serverRequest/resolved', params: { threadId: 'th-1', requestId: 'nobody' } });
+    await flush();
+
+    fake.emit({ jsonrpc: '2.0', id: 78, method: 'mcpServer/elicitation/request', params: elicitParams('some-other-server') });
+    await flush();
+    const pending = pendingAcpPermissionForSecret(secret);
+    expect(pending).not.toBeNull();
+    resolveAcpPermission(pending!.request_id, { optionId: 'accept' });
+    await flush();
+    expect(fake.sent.find(m => m.id === 78)?.result).toEqual({ action: 'accept', content: {} });
   });
 
   it("routes OTHER servers' elicitations to the §47 overlay; an accepted popup accepts, a dismissed one declines", async () => {

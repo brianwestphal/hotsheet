@@ -154,6 +154,14 @@ export interface CodexAppServerDeps {
   postTranscript?: (serverPort: number, secret: string, event: CodexTranscriptEvent) => void;
 }
 
+/** HS-9447 — one overlay the drive is awaiting a decision on. `externallyResolved`
+ *  flips when codex reports the request was answered elsewhere (the terminal TUI), so
+ *  the awaiting handler skips writing a reply to a request that is already closed. */
+interface PendingPermissionEntry {
+  bridgeId: string;
+  externallyResolved: boolean;
+}
+
 interface Session {
   /** Null until `establishTransport` resolves (daemon connect or stdio spawn). */
   transport: CodexTransport | null;
@@ -193,6 +201,9 @@ interface Session {
   heartbeatTimer: ReturnType<typeof setInterval> | null;
   /** Overlay request_ids currently pending for this session (dismissed on turn end / exit). */
   pendingPermissionIds: Set<string>;
+  /** HS-9447 — codex request id → the overlay it opened, so a `serverRequest/resolved`
+   *  (someone ELSE answered — see below) can dismiss the popup we're still showing. */
+  pendingPermissionByCodexId: Map<string, PendingPermissionEntry>;
   finished: boolean;
 }
 
@@ -486,6 +497,7 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     queue: [],
     heartbeatTimer: null,
     pendingPermissionIds: new Set(),
+    pendingPermissionByCodexId: new Map(),
     finished: false,
   };
   void establishTransport(session, deps)
@@ -769,6 +781,11 @@ function handleIncoming(session: Session, msg: AppServerIncoming): void {
       session.deps.postTranscript(session.serverPort, session.secret, { phase: 'item', turnId: session.currentTurnId ?? '', text: line });
     }
   }
+  // HS-9447 — another client answered a shared approval; drop our popup for it.
+  if (msg.method === 'serverRequest/resolved') {
+    handleServerRequestResolved(session, msg.params);
+    return;
+  }
   // Notification → drive lifecycle.
   const event = driveEventFromNotification(msg.method, msg.params);
   if (event === null) return;
@@ -832,12 +849,12 @@ async function handleServerRequest(session: Session, id: number | string, method
       input_preview: elicitation.input_preview,
       options: elicitation.options,
     });
-    session.pendingPermissionIds.add(request_id);
+    const entry = trackPendingPermission(session, id, request_id);
     try {
       const reply = await promise;
-      write(session, buildResponseLine(id, elicitationResponseFromReply(reply)));
+      if (!entry.externallyResolved) write(session, buildResponseLine(id, elicitationResponseFromReply(reply)));
     } finally {
-      session.pendingPermissionIds.delete(request_id);
+      forgetPendingPermission(session, id, request_id);
     }
     return;
   }
@@ -873,13 +890,48 @@ async function handleServerRequest(session: Session, id: number | string, method
     input_preview: display.input_preview,
     options: display.options,
   });
-  session.pendingPermissionIds.add(request_id);
+  const entry = trackPendingPermission(session, id, request_id);
   try {
     const reply = await promise;
-    write(session, buildResponseLine(id, decisionFromReply(reply)));
+    if (!entry.externallyResolved) write(session, buildResponseLine(id, decisionFromReply(reply)));
   } finally {
-    session.pendingPermissionIds.delete(request_id);
+    forgetPendingPermission(session, id, request_id);
   }
+}
+
+/** HS-9447 — register an open overlay under BOTH keys: the bridge id (for the
+ *  dismiss-everything paths) and codex's request id (for the targeted dismissal). */
+function trackPendingPermission(session: Session, codexId: number | string, bridgeId: string): PendingPermissionEntry {
+  session.pendingPermissionIds.add(bridgeId);
+  const entry: PendingPermissionEntry = { bridgeId, externallyResolved: false };
+  session.pendingPermissionByCodexId.set(String(codexId), entry);
+  return entry;
+}
+
+function forgetPendingPermission(session: Session, codexId: number | string, bridgeId: string): void {
+  session.pendingPermissionIds.delete(bridgeId);
+  session.pendingPermissionByCodexId.delete(String(codexId));
+}
+
+/**
+ * HS-9447 (docs/129 §129.9 fact 2) — codex asks EVERY subscribed client about the same
+ * approval, with the same request id, and broadcasts a `serverRequest/resolved`
+ * notification (`{ threadId, requestId }`) as soon as one of them answers. Under model-B that other
+ * client is the terminal TUI the user is looking at, so answering there used to leave
+ * Hot Sheet's §47 overlay standing — asking about a decision already made, and sending
+ * a reply for a request codex had closed.
+ *
+ * Dismiss the overlay and mark the entry so the awaiting handler skips its write. Our
+ * OWN reply also produces this notification, but by then the entry is gone (the finally
+ * block ran), so it is a no-op — no need to distinguish who answered.
+ */
+function handleServerRequestResolved(session: Session, params: Record<string, unknown>): void {
+  const raw = params.requestId;
+  if (typeof raw !== 'string' && typeof raw !== 'number') return;
+  const entry = session.pendingPermissionByCodexId.get(String(raw));
+  if (entry === undefined) return;
+  entry.externallyResolved = true;
+  dismissAcpPermission(entry.bridgeId);
 }
 
 function request(session: Session, method: string, params: unknown, timeoutMs: number): Promise<unknown> {

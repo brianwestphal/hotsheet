@@ -405,6 +405,69 @@
           "branch": "main"
         }
       ]
+    },
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms2z0f609txnttwk",
+          "message": {
+            "text": "The requestId field name and its type were captured from the real daemon, not guessed — the ticket explicitly flagged the payload shape as unverified.\n\nLive capture (codex-cli 0.145.0), immediately after a client answered an elicitation:\n\nserverRequest/resolved PARAMS: {\"threadId\":\"019fa2ac-...\",\"requestId\":14}\n\nSo it is codex's JSON-RPC request id, arriving as a number while our overlay map is keyed by string — hence the String(...) normalization on both the store and the lookup, and the typeof guard accepting either.\n\nEnd-to-end check of the shipped path against the real daemon: the drive raised its §47 overlay, the terminal answered (denied), and the overlay cleared 365 ms later. The denied command never executed.\n",
+            "markdown": "The `requestId` field name and its type were captured from the real daemon, not guessed — the ticket explicitly flagged the payload shape as unverified.\n\nLive capture (codex-cli 0.145.0), immediately after a client answered an elicitation:\n\n```\nserverRequest/resolved PARAMS: {\"threadId\":\"019fa2ac-...\",\"requestId\":14}\n```\n\nSo it is codex's JSON-RPC request id, arriving as a **number** while our overlay map is keyed by string — hence the `String(...)` normalization on both the store and the lookup, and the `typeof` guard accepting either.\n\nEnd-to-end check of the shipped path against the real daemon: the drive raised its §47 overlay, the terminal answered (denied), and the overlay cleared 365 ms later. The denied command never executed.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/codexAppServer.ts"
+                },
+                "region": {
+                  "startLine": 916,
+                  "endLine": 935,
+                  "snippet": {
+                    "text": "/**\n * HS-9447 (docs/129 §129.9 fact 2) — codex asks EVERY subscribed client about the same\n * approval, with the same request id, and broadcasts a `serverRequest/resolved`\n * notification (`{ threadId, requestId }`) as soon as one of them answers. Under model-B that other\n * client is the terminal TUI the user is looking at, so answering there used to leave\n * Hot Sheet's §47 overlay standing — asking about a decision already made, and sending\n * a reply for a request codex had closed.\n *\n * Dismiss the overlay and mark the entry so the awaiting handler skips its write. Our\n * OWN reply also produces this notification, but by then the entry is gone (the finally\n * block ran), so it is a no-op — no need to distinguish who answered.\n */\nfunction handleServerRequestResolved(session: Session, params: Record<string, unknown>): void {\n  const raw = params.requestId;\n  if (typeof raw !== 'string' && typeof raw !== 'number') return;\n  const entry = session.pendingPermissionByCodexId.get(String(raw));\n  if (entry === undefined) return;\n  entry.externallyResolved = true;\n  dismissAcpPermission(entry.bridgeId);\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ]
+          },
+          "workItemUris": [
+            "HS-9447"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "9804e5bc01bbbd64c2ab9ff13025e135"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "1c563e193bf5d3777fba0e45fa2d075a3669a26e",
+          "branch": "main"
+        }
+      ]
     }
   ]
 }

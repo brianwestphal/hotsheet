@@ -263,10 +263,26 @@ unsubscribed lifecycle works at all — and equally why a foreign turn's `idle` 
 | Unsubscribed (first turn on a fresh adopted thread) | **The TUI only** — even for a turn the DRIVE started |
 | Subscribed (turn 2 onward) | **Both**, same request id; `serverRequest/resolved` fires when either answers |
 
-Two consequences. The first driven turn's approvals surface in the terminal, not Hot Sheet's §47
-overlay — including for users who set `codex_interactive_permissions: false`, whose auto-accept the
-drive never gets to apply. And once both are subscribed, an approval answered in the TUI leaves the
-overlay standing, because the drive ignores `serverRequest/resolved`.
+Two consequences, **both since fixed**:
+
+- The first driven turn's approvals surfaced in the terminal, not Hot Sheet's §47 overlay —
+  including for users who set `codex_interactive_permissions: false`, whose auto-accept the drive
+  never got to apply. **Fixed by the mid-turn resubscribe (HS-9439, fact 5).** This was the
+  user-reported bug **HS-9445**: codex asked, in the TUI, *"Allow the hotsheet-channel MCP server to
+  run tool `hotsheet_signal_done`?"* — a request the drive is supposed to auto-accept invisibly,
+  which it never saw because it held no subscription.
+- Once both are subscribed, an approval answered in the TUI left our overlay standing, because the
+  drive ignored `serverRequest/resolved`. **Fixed by HS-9447:** the notification carries
+  `{ threadId, requestId }` (the request id is the JSON-RPC id, numeric — captured live), and the
+  drive now dismisses the matching overlay and skips replying to a request codex has already closed.
+  Our own reply produces the same notification, but the entry is gone by then, so it no-ops.
+  Live-verified: the drive's overlay came down 365 ms after the TUI answered, and the denied command
+  never ran.
+
+**What raises an MCP elicitation at all** (worth knowing when reproducing): codex's per-tool
+`[mcp_servers.<name>.tools.<tool>] approval_mode`. Measured on 0.145.0 — `"prompt"` **asks**;
+`"approve"` **auto-allows** (it is what codex persists when a user picks *Always allow*). Hot Sheet
+does not write this key, so a project's behavior here is the user's own codex config.
 
 **3. Waiting for approval is `active`, not `idle`.** The status is
 `{ type: 'active', activeFlags: ['waitingOnApproval'] }`. So the unsubscribed idle-ends-the-turn path
