@@ -196,8 +196,41 @@ Two things had to change for it to get there, and both were silent failures:
    `ignoreBenignMigrationError`, which rethrows a storage failure so it reaches the
    recovery path; a unit test pins that no eighth hand-rolled swallow can appear.
 
-Note the scope: this fires at **open**. A cluster that develops the fault while the
-server is already running still 500s until the next restart (see §73.8).
+### 73.5.2 The same class MID-SESSION (HS-9460)
+
+§73.5.1 fires at **open**. But the fault can appear while the server is already running:
+the cluster opened healthy, then something (plausibly the [docs/128](128-cluster-cache-bounding.md)
+OOM crash loop) killed it mid-write, and from that moment every write fails. Nothing reopens,
+so none of the machinery above ran — the server just 500'd until a human noticed, and
+restarting landed on the same corrupt cluster.
+
+**Detection** is at the live query choke point: the `instrumentDbQueries` proxy (the same one
+docs/128 uses for in-flight tracking) tests each rejection with `isClusterStorageFailure`. The
+predicate moved to its own `src/db/storageFailure.ts` so both the open path and the query proxy
+can use it — `connection.ts` imports the proxy, so importing it back would be a cycle.
+`connection.ts` re-exports it, so existing importers are unchanged.
+
+**Response is restart-scoped, deliberately.** `handleLiveStorageFailure` writes the
+**pending-recovery marker** (`.db-pending-recovery.json`) and logs one actionable line. On the
+next start, `completeDeferredRecovery` — already in the `getDbByPath` path, and already tested,
+since it is the HS-8717 Windows handle-lock mechanism — preserves the corrupt `db/` aside,
+restores from the newest snapshot/backup, and writes the §73.4 recovery marker that prompts the
+user. The marker now carries a `reason` (`handle-lock` | `live-storage-failure`) so the
+user-facing text names the real cause; markers written before this default to `handle-lock`.
+
+**Not an in-place self-heal.** Recovering live would mean closing and swapping the cluster out
+from under in-flight requests — against docs/128's hard invariant that a cluster with an
+in-flight query is never closed — in order to recover from a state where every subsequent write
+fails anyway. The restart path reuses tested machinery and cannot tear a live request.
+
+**Reporting is deduped per dataDir** (`storageFailureReported`): the class fails *every* write,
+so an un-deduped handler would rewrite the marker and spam the log in a tight loop for as long
+as the server ran.
+
+**And this session's errors say so.** `apiErrorHandler` maps the class to
+`code: 'database_needs_recovery'` with a plain-language message, instead of returning
+`xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0` on every action.
+Since the cluster is already marked, "restart Hot Sheet" is not a suggestion — it heals.
 
 ## 73.6 Settings
 
@@ -255,11 +288,11 @@ first snapshot both are null and the line says so rather than rendering a bogus
    snapshot does NOT serialize (it dumps only the `<dataDir>/db` cluster), so the project
    snapshot drops to a few MB. The threadpool-async / debounce / dirty-gate mitigations
    still apply to whatever remains in `db/`.
-4. **Recovery is open-time only.** Every path in §73.4 hangs off `getDbByPath`, so a
-   cluster that goes bad *while the server is running* — the §73.5.1 WAL class can start
-   mid-session — keeps failing every query until someone restarts. There is no live
-   re-probe and no in-flight remediation. Tracked by HS-9460 (detect + recover from a
-   mid-session storage failure, not just at open).
+4. **Recovery is restart-scoped for a mid-session failure.** Every path in §73.4 hangs off
+   `getDbByPath`. A cluster that goes bad *while the server is running* is now DETECTED at
+   the query layer and marked so the next start restores it (§73.5.2), and this session's
+   API errors say so — but the running process still cannot serve that project until it is
+   restarted. That is a deliberate trade (see §73.5.2), not an oversight.
 
 ## 73.9 Testing strategy
 

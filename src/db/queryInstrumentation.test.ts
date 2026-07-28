@@ -8,7 +8,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { clusterInFlight, resetEvictionTrackingForTests } from './clusterEviction.js';
-import { instrumentDbQueries, isClosedInstanceError, isQueryInstrumentationEnabled, setClusterReopener } from './queryInstrumentation.js';
+import { instrumentDbQueries, isClosedInstanceError, isQueryInstrumentationEnabled, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
 
 describe('instrumentDbQueries (HS-9239)', () => {
   afterEach(() => { delete process.env.HOTSHEET_DISABLE_QUERY_INSTRUMENTATION; resetEvictionTrackingForTests(); });
@@ -207,5 +207,84 @@ describe('stale-handle healing after eviction (HS-9461)', () => {
       expect(res.rows).toEqual([{ id: 3 }]);
       await fresh.close();
     } finally { restore(); }
+  });
+});
+
+/**
+ * HS-9460 — the storage-corruption class (docs/73 §73.5.1) appearing on a LIVE
+ * query, not at open. Unlike the closed-instance case above this is NOT
+ * retryable: the cluster is broken on disk and every write fails identically
+ * until the process restarts. The proxy's job is only to notice it and report.
+ */
+describe('live storage-failure detection (HS-9460)', () => {
+  afterEach(() => {
+    setClusterReopener(null);
+    setStorageFailureHandler(null);
+    resetEvictionTrackingForTests();
+  });
+
+  const walError = (): Error =>
+    new Error('xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0');
+
+  it('reports a storage failure and propagates the error unchanged', async () => {
+    const dbPath = '/tmp/hs-instr-storage/db';
+    const seen: Array<{ dbPath: string; message: string }> = [];
+    setStorageFailureHandler((p, err) => { seen.push({ dbPath: p, message: (err as Error).message }); });
+    const fake = { query: (): Promise<unknown> => Promise.reject(walError()) } as unknown as PGlite;
+    const wrapped = instrumentDbQueries(fake, dbPath);
+
+    await expect(wrapped.query('INSERT INTO t VALUES (1)')).rejects.toThrow(/xlog flush request/);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].dbPath).toBe(dbPath);
+    expect(clusterInFlight(dbPath)).toBe(0);
+  });
+
+  it('does NOT try to reopen/retry a storage failure', async () => {
+    // Reopening cannot help — the corruption is on disk, so a retry would just
+    // fail again while masking the real failure behind a second one.
+    const dbPath = '/tmp/hs-instr-storage-noretry/db';
+    let reopens = 0;
+    setClusterReopener(async () => { reopens += 1; return await Promise.resolve(null); });
+    setStorageFailureHandler(() => { /* noticed */ });
+    let calls = 0;
+    const fake = {
+      query: (): Promise<unknown> => { calls += 1; return Promise.reject(walError()); },
+    } as unknown as PGlite;
+    const wrapped = instrumentDbQueries(fake, dbPath);
+
+    await expect(wrapped.query('SELECT 1')).rejects.toThrow(/xlog flush request/);
+    expect(calls).toBe(1);   // ran once
+    expect(reopens).toBe(0); // reopener never consulted
+  });
+
+  it('does not fire for a closed instance or an ordinary query error', async () => {
+    // The two classes must stay separate: a closed instance HEALS (HS-9461), an
+    // ordinary error is just an error. Neither should mark a cluster corrupt.
+    const dbPath = '/tmp/hs-instr-storage-negative/db';
+    let reports = 0;
+    setStorageFailureHandler(() => { reports += 1; });
+
+    const closed = { query: (): Promise<unknown> => Promise.reject(new Error('PGlite is closed')) } as unknown as PGlite;
+    await expect(instrumentDbQueries(closed, dbPath).query('SELECT 1')).rejects.toThrow('PGlite is closed');
+    expect(reports).toBe(0);
+
+    const ordinary = { query: (): Promise<unknown> => Promise.reject(new Error('relation "t" does not exist')) } as unknown as PGlite;
+    await expect(instrumentDbQueries(ordinary, dbPath).query('SELECT 1')).rejects.toThrow(/does not exist/);
+    expect(reports).toBe(0);
+  });
+
+  it('reports every failing query (dedup is the handler\'s job, not the proxy\'s)', async () => {
+    // The class fails EVERY write, so the proxy would otherwise need to know
+    // about per-cluster state. It stays dumb; `connection.ts` dedups per dataDir
+    // so the marker is written and logged once.
+    const dbPath = '/tmp/hs-instr-storage-repeat/db';
+    let reports = 0;
+    setStorageFailureHandler(() => { reports += 1; });
+    const fake = { query: (): Promise<unknown> => Promise.reject(walError()) } as unknown as PGlite;
+    const wrapped = instrumentDbQueries(fake, dbPath);
+    for (let i = 0; i < 3; i += 1) {
+      await expect(wrapped.query('SELECT 1')).rejects.toThrow(/xlog/);
+    }
+    expect(reports).toBe(3);
   });
 });

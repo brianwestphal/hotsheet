@@ -1,6 +1,7 @@
 import type { ErrorHandler } from 'hono';
 import { Hono } from 'hono';
 
+import { isClusterStorageFailure } from '../db/storageFailure.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -38,6 +39,19 @@ export const apiErrorHandler: ErrorHandler<AppEnv> = (err, c) => {
   // The STACK stays server-side; only the message is sent. Enough for the user to
   // say what happened, without shipping internals to a (possibly remote, §94) client.
   console.error(`[api error ${ref}] ${c.req.method} ${c.req.path} —`, err);
+  // HS-9460 — the storage-corruption class (docs/73 §73.5.1) fails EVERY write
+  // until the process restarts, so `xlog flush request 0/3BA18488 is not
+  // satisfied --- flushed only to 0/3BA175E0` is what the user would otherwise
+  // see on every action. Replace it with the one thing they can act on. The
+  // cluster is already marked for recovery by `handleLiveStorageFailure`, so the
+  // restart is not just a suggestion — it heals.
+  if (isClusterStorageFailure(err)) {
+    return c.json({
+      error: 'The database stopped accepting writes (storage corruption). Restart Hot Sheet — it will restore this project from the newest snapshot automatically.',
+      code: 'database_needs_recovery',
+      ref,
+    }, 500);
+  }
   return c.json({ error: getErrorMessage(err), code: 'internal_error', ref }, 500);
 };
 

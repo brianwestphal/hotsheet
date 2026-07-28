@@ -35,6 +35,7 @@ import { dirname } from 'path';
 
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { beginClusterQuery, endClusterQuery } from './clusterEviction.js';
+import { isClusterStorageFailure } from './storageFailure.js';
 
 /** Methods whose wall-clock we time (the ones that run WASM on the loop). */
 const TIMED_METHODS = new Set(['query', 'exec', 'dumpDataDir']);
@@ -83,6 +84,24 @@ let reopenCluster: ClusterReopener | null = null;
 /** Register the reopener. Called once by `connection.ts` at module init. */
 export function setClusterReopener(fn: ClusterReopener | null): void {
   reopenCluster = fn;
+}
+
+/**
+ * HS-9460 — notified when a LIVE query hits the storage-corruption class
+ * (docs/73 §73.5.1: `xlog flush request … is not satisfied` and friends).
+ *
+ * Distinct from the reopener above, and deliberately NOT a retry: a closed
+ * instance heals by reopening, but a cluster whose pages are ahead of its WAL is
+ * broken on disk and will fail identically forever. All we can usefully do is
+ * arrange for the next start to restore it, and make this session's error say
+ * so. Injected by `connection.ts` for the same no-cycle reason as the reopener.
+ */
+type StorageFailureHandler = (dbPath: string, err: unknown) => void;
+let onStorageFailure: StorageFailureHandler | null = null;
+
+/** Register the storage-failure handler. Called once by `connection.ts`. */
+export function setStorageFailureHandler(fn: StorageFailureHandler | null): void {
+  onStorageFailure = fn;
 }
 
 /**
@@ -136,6 +155,14 @@ export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
             // during shutdown and for deliberately-closed clusters, so this can
             // never resurrect one we meant to close.
             return settle(result.catch(async (err: unknown) => {
+              // HS-9460 — a live query hit the storage-corruption class. Not
+              // retryable (the cluster is broken on disk, not merely closed), so
+              // report it and let the error propagate; `connection.ts` arranges
+              // for the next start to restore from snapshot.
+              if (onStorageFailure !== null && isClusterStorageFailure(err)) {
+                onStorageFailure(dbPath, err);
+                throw err;
+              }
               if (!isClosedInstanceError(err) || reopenCluster === null) throw err;
               const fresh = await reopenCluster(dbPath);
               if (fresh === null) throw err;

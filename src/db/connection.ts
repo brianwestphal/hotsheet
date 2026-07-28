@@ -19,7 +19,10 @@ import {
   snapshotClusters,
 } from './clusterEviction.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
-import { instrumentDbQueries, setClusterReopener } from './queryInstrumentation.js';
+import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
+import { isClusterStorageFailure } from './storageFailure.js';
+
+export { isClusterStorageFailure } from './storageFailure.js';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
  *  Bump this manually whenever `initSchema` adds/removes/renames a column,
@@ -90,45 +93,6 @@ export function isRecoverableOpenError(err: unknown): boolean {
   return false;
 }
 
-/**
- * HS-9458 — is this the "the cluster's storage is inconsistent" class?
- *
- * The reported failure was an endless 500 on every request, from a project cluster
- * whose data pages had been written ahead of the WAL:
- *
- *     xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0
- *     code: 'XX000', file: 'xlog.c', routine: 'XLogFlush',
- *     where: 'writing block 5 of relation base/1/461145'
- *
- * That is the classic signature of a cluster killed mid-write (plausibly the docs/128
- * OOM crash loop): Postgres is asked to flush WAL up to an LSN that was never durably
- * written, so it refuses every subsequent write. It is unrecoverable in place — the
- * cluster has to be replaced from a snapshot/backup, which is exactly what
- * `recoverFromOpenFailure` does.
- *
- * Before this, the class matched NONE of the patterns above, so recovery never ran:
- * the error propagated out of `getDb` untouched and every request 500'd, forever,
- * across restarts. The user had no signal beyond the raw stack trace — not even the
- * §73 restore prompt, which is gated on the recovery marker this unblocks.
- *
- * Matched by message substring, like the rest of the classifier, because the message
- * is what survives PGLite's error wrapping and what gets logged. Deliberately narrow:
- * `XX000` alone is Postgres's generic internal-error code and would over-match, so we
- * key on the specific phrases instead. Only the `xlog flush request` variant is
- * MEASURED (from the report); the two page-level phrases are long-standing Postgres
- * corruption messages in the same "storage is bad, replace the cluster" family and
- * never appear on a healthy cluster. Over-matching is low-risk anyway — recovery
- * preserves the old `db/` aside rather than deleting it.
- *
- * Pure: takes only the thrown value, returns a boolean. Exported for the unit test.
- */
-export function isClusterStorageFailure(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
-  if (message === '') return false;
-  return message.includes('xlog flush request')
-    || message.includes('invalid page in block')
-    || message.includes('could not read block');
-}
 
 /** HS-7899: written into a marker file when `recoverFromOpenFailure`
  *  falls all the way through to the rename-as-corrupt + fresh-cluster
@@ -227,21 +191,37 @@ function pendingRecoveryPath(dataDir: string): string {
 /** Read the pending-recovery marker (or null). A present-but-unparseable marker
  *  still counts as "pending" (attempts=1) — better to attempt recovery than to
  *  ignore a known-corrupt cluster. */
-function readPendingRecovery(dataDir: string): { attempts: number } | null {
+function readPendingRecovery(dataDir: string): { attempts: number; reason: PendingRecoveryReason } | null {
   const path = pendingRecoveryPath(dataDir);
   if (!existsSync(path)) return null;
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    const result = z.object({ attempts: z.number() }).loose().safeParse(parsed);
-    return { attempts: result.success ? result.data.attempts : 1 };
+    const result = z.object({ attempts: z.number(), reason: z.enum(['handle-lock', 'live-storage-failure']).optional() }).loose().safeParse(parsed);
+    return {
+      attempts: result.success ? result.data.attempts : 1,
+      // Markers written before HS-9460 have no `reason`; they were all the
+      // Windows handle-lock case, which is the safe default.
+      reason: result.success ? result.data.reason ?? 'handle-lock' : 'handle-lock',
+    };
   } catch {
-    return { attempts: 1 };
+    return { attempts: 1, reason: 'handle-lock' };
   }
 }
 
-function writePendingRecovery(dataDir: string, attempts: number): void {
+/** HS-9460 — why the marker was written. `handle-lock`: recovery ran but could
+ *  not move `db/` aside in-process (Windows handles). `live-storage-failure`: a
+ *  running server's cluster went corrupt mid-session, so recovery never started.
+ *  Only the user-facing wording differs — the recovery steps are identical. */
+type PendingRecoveryReason = 'handle-lock' | 'live-storage-failure';
+
+const PENDING_RECOVERY_CAUSE: Record<PendingRecoveryReason, string> = {
+  'handle-lock': 'Database was corrupt and could not be preserved in-process (Windows handle lock); recovered on the next restart.',
+  'live-storage-failure': 'The database stopped accepting writes while Hot Sheet was running (storage/WAL corruption); it was restored on this restart.',
+};
+
+function writePendingRecovery(dataDir: string, attempts: number, reason: PendingRecoveryReason = 'handle-lock'): void {
   try {
-    writeFileSync(pendingRecoveryPath(dataDir), JSON.stringify({ attempts, requestedAt: new Date().toISOString() }, null, 2));
+    writeFileSync(pendingRecoveryPath(dataDir), JSON.stringify({ attempts, reason, requestedAt: new Date().toISOString() }, null, 2));
   } catch (writeErr: unknown) {
     console.error('Could not write pending-recovery marker:', getErrorMessage(writeErr));
   }
@@ -474,6 +454,52 @@ async function reopenEvictedCluster(dbPath: string): Promise<PGlite | null> {
 }
 
 setClusterReopener(reopenEvictedCluster);
+
+/** HS-9460 — dataDirs already marked for recovery this process, so a failing
+ *  cluster logs + writes the marker ONCE rather than on every query it rejects
+ *  (the class fails every write, so this fires in a tight loop otherwise). */
+const storageFailureReported = new Set<string>();
+
+/**
+ * HS-9460 — a LIVE query hit the storage-corruption class (docs/73 §73.5.1).
+ *
+ * HS-9458 made this class recoverable at OPEN. But it can start mid-session: the
+ * cluster opened healthy, then something (plausibly the docs/128 OOM crash loop)
+ * killed it mid-write, and from that moment every write fails. Nothing reopens,
+ * so none of the docs/73 machinery ran — the server just 500'd until a human
+ * noticed and restarted, then hit the same corrupt cluster again.
+ *
+ * The response is to arrange recovery for the NEXT start rather than attempt it
+ * here. Writing the pending-recovery marker makes `completeDeferredRecovery`
+ * (already in the `getDbByPath` path, and already tested — it is the HS-8717
+ * Windows deferred-recovery mechanism) preserve the corrupt `db/` aside and
+ * restore from the newest snapshot/backup before anything opens it, then write
+ * the recovery marker that prompts the user.
+ *
+ * Deliberately NOT an in-place self-heal. That would mean closing and swapping
+ * the live cluster out from under in-flight requests — against docs/128's hard
+ * invariant that a cluster with an in-flight query is never closed — to recover
+ * from a state where every subsequent write fails anyway. The restart-scoped
+ * path reuses machinery that already exists and is already covered.
+ */
+export function handleLiveStorageFailure(dbPath: string, err: unknown): void {
+  const dataDir = dbPath.replace(/[\\/]db$/, '');
+  if (storageFailureReported.has(dataDir)) return;
+  storageFailureReported.add(dataDir);
+  writePendingRecovery(dataDir, 1, 'live-storage-failure');
+  console.error(
+    `[db] storage corruption on a LIVE cluster (${dbPath}): ${getErrorMessage(err)}\n` +
+    '[db] this database cannot accept further writes. It has been marked for recovery — ' +
+    'RESTART Hot Sheet and it will be preserved aside and restored from the newest snapshot/backup automatically.',
+  );
+}
+
+setStorageFailureHandler(handleLiveStorageFailure);
+
+/** Test seam — clear the per-process "already reported" dedup set. */
+export function resetStorageFailureReportingForTests(): void {
+  storageFailureReported.clear();
+}
 
 /** Snapshot the live clusters, ask the planner what to close for `mode`, and
  *  close them serially. Returns the number actually evicted. */
@@ -969,12 +995,14 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
   }
   if (!existsSync(dbPath)) { clearPendingRecovery(dataDir); return null; }
 
-  console.error('[db] completing deferred recovery — a prior launch could not move the corrupt database aside in-process (Windows handle lock)…');
+  console.error(pending.reason === 'live-storage-failure'
+    ? '[db] completing deferred recovery — a previous run\'s database stopped accepting writes (storage/WAL corruption)…'
+    : '[db] completing deferred recovery — a prior launch could not move the corrupt database aside in-process (Windows handle lock)…');
   const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
   try {
     await renameDirWithRetry(dbPath, corruptPath);
   } catch (renameErr: unknown) {
-    writePendingRecovery(dataDir, pending.attempts + 1);
+    writePendingRecovery(dataDir, pending.attempts + 1, pending.reason);
     console.error(`[db] deferred recovery could not move db/ yet: ${getErrorMessage(renameErr)}`);
     return null;
   }
@@ -983,7 +1011,7 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
   writeRecoveryMarker(dataDir, {
     corruptPath,
     recoveredAt: new Date().toISOString(),
-    errorMessage: 'Database was corrupt and could not be preserved in-process (Windows handle lock); recovered on the next restart.',
+    errorMessage: PENDING_RECOVERY_CAUSE[pending.reason],
     ...(restored !== null ? { restoredFrom: restored.label, restoredTicketCount: restored.ticketCount } : {}),
   });
   clearPendingRecovery(dataDir);

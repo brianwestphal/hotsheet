@@ -4,7 +4,7 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isInsideHotSheetTerminal } from '../test-helpers.js';
-import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, ignoreBenignMigrationError, isClusterStorageFailure, isRecoverableOpenError, readRecoveryMarker, setDataDir } from './connection.js';
+import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, handleLiveStorageFailure, ignoreBenignMigrationError, isClusterStorageFailure, isRecoverableOpenError, readRecoveryMarker, resetStorageFailureReportingForTests, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
 
 let dataDir: string;
@@ -406,5 +406,101 @@ describe.skipIf(isInsideHotSheetTerminal())('closeAllDatabases (HS-7931)', () =>
       errorSpy.mockRestore();
       rmSync(dataDir1, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * HS-9460 — the storage-corruption class appearing on a LIVE cluster, which
+ * HS-9458 did not cover: nothing reopens mid-session, so none of the docs/73
+ * recovery ran and the server 500'd until someone restarted into the same
+ * corrupt cluster. The response is to mark it so the NEXT start restores it.
+ */
+describe('live storage-failure handling (HS-9460)', () => {
+  let liveDir: string;
+  let logged: string[];
+  let restoreConsole: () => void;
+
+  beforeEach(() => {
+    liveDir = join(tmpdir(), `hs-live-fail-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(liveDir, { recursive: true });
+    resetStorageFailureReportingForTests();
+    logged = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map((a) => String(a)).join(' '));
+    });
+    restoreConsole = () => { spy.mockRestore(); };
+  });
+  afterEach(() => {
+    restoreConsole();
+    resetStorageFailureReportingForTests();
+    rmSync(liveDir, { recursive: true, force: true });
+  });
+
+  const markerPath = (dir: string): string => join(dir, '.db-pending-recovery.json');
+  const wal = (): Error => new Error('xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0');
+
+  it('writes a pending-recovery marker naming the live-storage cause', () => {
+    expect(existsSync(markerPath(liveDir))).toBe(false);
+    handleLiveStorageFailure(join(liveDir, 'db'), wal());
+
+    expect(existsSync(markerPath(liveDir))).toBe(true);
+    const marker: unknown = JSON.parse(readFileSync(markerPath(liveDir), 'utf8'));
+    expect(marker).toMatchObject({ attempts: 1, reason: 'live-storage-failure' });
+  });
+
+  it('tells the user the ONE thing that helps — restart', () => {
+    // The class fails every write, so without this the user only ever sees the
+    // raw `xlog flush request …` text and has no idea a restart now heals it.
+    handleLiveStorageFailure(join(liveDir, 'db'), wal());
+    const all = logged.join('\n');
+    expect(all).toMatch(/RESTART Hot Sheet/);
+    expect(all).toMatch(/restored from the newest snapshot/);
+  });
+
+  it('reports ONCE per dataDir however many queries fail', () => {
+    // Every write fails, so an un-deduped handler would rewrite the marker and
+    // spam the log in a tight loop for as long as the server runs.
+    for (let i = 0; i < 5; i += 1) handleLiveStorageFailure(join(liveDir, 'db'), wal());
+    expect(logged.filter((l) => l.includes('storage corruption on a LIVE cluster'))).toHaveLength(1);
+  });
+
+  it('marks each affected cluster separately', () => {
+    const otherDir = join(tmpdir(), `hs-live-fail-other-${Date.now()}`);
+    mkdirSync(otherDir, { recursive: true });
+    try {
+      handleLiveStorageFailure(join(liveDir, 'db'), wal());
+      handleLiveStorageFailure(join(otherDir, 'db'), wal());
+      expect(existsSync(markerPath(liveDir))).toBe(true);
+      expect(existsSync(markerPath(otherDir))).toBe(true);
+    } finally {
+      rmSync(otherDir, { recursive: true, force: true });
+    }
+  });
+
+  it('the marker drives recovery on the NEXT open, and says why', async () => {
+    // The whole point: healthy → poisoned → (restart) → recovered. Open a real
+    // cluster, mark it as HS-9460 would, then reopen — `completeDeferredRecovery`
+    // must preserve the old `db/` aside and leave a recovery marker whose text
+    // names the live-storage cause, not the Windows handle-lock one.
+    setDataDir(liveDir);
+    const db = await getDb();
+    await db.exec('CREATE TABLE IF NOT EXISTS live_probe (id int)');
+    await closeDb();
+
+    handleLiveStorageFailure(join(liveDir, 'db'), wal());
+    expect(existsSync(markerPath(liveDir))).toBe(true);
+
+    setDataDir(liveDir);
+    await getDb();
+
+    // Pending marker consumed, corrupt cluster preserved (never deleted), and the
+    // user-facing marker explains the real cause.
+    expect(existsSync(markerPath(liveDir))).toBe(false);
+    expect(readdirSync(liveDir).some((n) => n.startsWith('db-corrupt-'))).toBe(true);
+    const recovery = readRecoveryMarker(liveDir);
+    expect(recovery).not.toBeNull();
+    expect(recovery!.errorMessage).toMatch(/stopped accepting writes/);
+    expect(recovery!.errorMessage).not.toMatch(/Windows handle lock/);
+    await closeDb();
   });
 });
