@@ -99,6 +99,31 @@ describe('showAiInstructionsNudgeDialog', () => {
     expect(patch!.opts.body).toMatchObject({ ai_instructions_nudge_dismissed: true });
   });
 
+  // HS-9452 — a backdrop click must NOT dismiss. `close()` also PERSISTS the
+  // dismissal, so an accidental click beside the dialog used to suppress the
+  // nudge permanently for the project — invisibly, and with nothing to undo it.
+  it('a backdrop click leaves the dialog open and persists nothing', () => {
+    showAiInstructionsNudgeDialog();
+    const overlay = document.querySelector<HTMLElement>('.ai-instructions-nudge-overlay')!;
+    overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.querySelector('.ai-instructions-nudge-overlay')).not.toBeNull();
+    expect(calls.find(c => c.path === '/file-settings')).toBeUndefined();
+  });
+
+  it('a click INSIDE the dialog does not dismiss either', () => {
+    showAiInstructionsNudgeDialog();
+    document.querySelector<HTMLElement>('.ai-instructions-nudge-dialog')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.querySelector('.ai-instructions-nudge-overlay')).not.toBeNull();
+  });
+
+  it('the X button still dismisses (the explicit affordance)', () => {
+    showAiInstructionsNudgeDialog();
+    document.querySelector<HTMLButtonElement>('.ai-instructions-nudge-close')!.click();
+    expect(document.querySelector('.ai-instructions-nudge-overlay')).toBeNull();
+    expect(calls.find(c => c.path === '/file-settings')).toBeDefined();
+  });
+
   it('the CTA applies the instructions then dismisses', async () => {
     vi.useFakeTimers();
     try {

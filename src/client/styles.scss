@@ -7217,6 +7217,17 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     margin-bottom: 16px;
   }
 
+  // HS-9453 — the failing request + the server-log correlation ref. Secondary to
+  // the message: it's for reporting the problem, not for reading at a glance.
+  .error-popup-detail {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    color: var(--text-tertiary, var(--text-secondary));
+    opacity: 0.8;
+    margin-top: -8px;
+    word-break: break-all;
+  }
+
   button {
     padding: 6px 16px;
     border: 1px solid var(--border);

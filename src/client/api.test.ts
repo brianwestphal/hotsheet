@@ -123,6 +123,43 @@ describe('api() — skipProjectScope option (HS-8563)', () => {
  * fails; pre-fix the popup flashed (blurred) behind the "Shutting Down" overlay
  * on every quit.
  */
+describe('showErrorPopup — what it actually tells you (HS-9453)', () => {
+  afterEach(() => { document.getElementById('network-error-popup')?.remove(); });
+
+  it('defaults to "Connection Error" — the transport-failure case', () => {
+    showErrorPopup('Unable to reach the server.');
+    expect(document.querySelector('#network-error-popup strong')!.textContent).toBe('Connection Error');
+  });
+
+  // A 500 means the connection WORKED and the server failed. Calling that a
+  // connection error sent people looking at their network instead of the log.
+  it('a server fault is titled "Server Error" and names the failing request + ref', () => {
+    showErrorPopup('Maximum call stack size exceeded', {
+      title: 'Server Error',
+      context: '/tickets/42',
+      ref: 'a1b2c3',
+    });
+    const popup = document.getElementById('network-error-popup')!;
+    expect(popup.querySelector('strong')!.textContent).toBe('Server Error');
+    expect(popup.textContent).toContain('Maximum call stack size exceeded');
+    const detail = popup.querySelector('.error-popup-detail')!.textContent;
+    expect(detail).toContain('/tickets/42');
+    expect(detail).toContain('ref a1b2c3');
+  });
+
+  it('omits the detail line entirely when there is no context or ref', () => {
+    showErrorPopup('Something broke');
+    expect(document.querySelector('#network-error-popup .error-popup-detail')).toBeNull();
+  });
+
+  it('replaces a previous popup rather than stacking', () => {
+    showErrorPopup('first');
+    showErrorPopup('second');
+    expect(document.querySelectorAll('#network-error-popup')).toHaveLength(1);
+    expect(document.getElementById('network-error-popup')!.textContent).toContain('second');
+  });
+});
+
 describe('showErrorPopup — shutdown suppression (HS-9029)', () => {
   afterEach(() => {
     _resetShutdownStateForTesting();

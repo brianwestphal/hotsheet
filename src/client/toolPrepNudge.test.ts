@@ -95,6 +95,26 @@ describe('showToolPrepDialog + maybeOfferToolPrep', () => {
     expect(write).toBeDefined();
   });
 
+  // HS-9452 — the same defect the §86 nudge had: a backdrop click called
+  // `close(true)`, which persists the PER-TOOL dismissal, so a stray click beside
+  // the dialog silently suppressed the prep prompt for that tool.
+  it('a backdrop click leaves the dialog open and persists no dismissal', () => {
+    responses['/file-settings'] = {};
+    showToolPrepDialog(status({}));
+    document.querySelector<HTMLElement>('.tool-prep-nudge-overlay')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(document.querySelector('.tool-prep-nudge-overlay')).not.toBeNull();
+    expect(calls.find(c => c.method !== undefined && c.path === '/file-settings')).toBeUndefined();
+  });
+
+  it('the X button still dismisses (the explicit affordance)', () => {
+    responses['/file-settings'] = {};
+    showToolPrepDialog(status({}));
+    document.querySelector<HTMLButtonElement>('.ai-instructions-nudge-close')!.click();
+    expect(document.querySelector('.tool-prep-nudge-overlay')).toBeNull();
+    expect(calls.find(c => c.method !== undefined && c.path === '/file-settings')).toBeDefined();
+  });
+
   it('maybeOfferToolPrep(open): dialog when needed; checked once per session', async () => {
     responses['/ai-instructions/tool-prep'] = status({});
     responses['/file-settings'] = {};

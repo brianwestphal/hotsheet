@@ -19,7 +19,7 @@ import { getActiveProject } from './state.js';
 // call THAT — do not reintroduce inline `api<{ … }>(path)` type literals here.
 //
 
-interface ParsedErrorBody extends ClaimConflictInfo { message: string; code?: string }
+interface ParsedErrorBody extends ClaimConflictInfo { message: string; code?: string; ref?: string }
 
 /**
  * HS-8567 / HS-9287 — parse a non-OK response body once (JSON can only be read
@@ -34,6 +34,7 @@ function parseErrorBody(raw: unknown, status: number): ParsedErrorBody {
   const o = raw as Record<string, unknown>;
   if (typeof o.error === 'string' && o.error !== '') out.message = o.error;
   if (typeof o.code === 'string') out.code = o.code;
+  if (typeof o.ref === 'string') out.ref = o.ref; // HS-9453 — server-log correlation id
   if (typeof o.claimed_by === 'string') out.claimedBy = o.claimed_by;
   out.workerLabel = typeof o.worker_label === 'string' ? o.worker_label : null;
   if (Array.isArray(o.conflicts)) {
@@ -67,7 +68,13 @@ async function handleNotOk(res: Response, path: string): Promise<Error> {
   if (res.status === 409 && body.code === 'claimed_by_other') {
     showClaimConflictToast(body, ticketIdFromPath(path));
   } else if (res.status >= 500) {
-    showErrorPopup(body.message);
+    // HS-9453 — name the failing request and carry the server's `ref`, and don't
+    // call a server-side fault a connection problem.
+    showErrorPopup(body.message, {
+      title: 'Server Error',
+      context: `${res.status === 500 ? '' : `${String(res.status)} · `}${path}`,
+      ref: body.ref,
+    });
   }
   return new Error(body.message);
 }
@@ -95,17 +102,36 @@ async function parseResponseBody<T>(res: Response, schema: z.ZodType<T> | undefi
   return result.data;
 }
 
-export function showErrorPopup(message: string) {
+/** HS-9453 — what the popup is reporting. A server-side fault is NOT a
+ *  "Connection Error": the connection worked fine, the request reached the server
+ *  and it failed there. Labelling both the same way sent people looking at their
+ *  network when the answer was in the server log. */
+export interface ErrorPopupOptions {
+  /** Heading. Defaults to "Connection Error" (the transport-failure case). */
+  title?: string;
+  /** The request that failed, e.g. `PATCH /tickets/42` — shown under the message
+   *  so the popup says WHAT broke, not just that something did. */
+  context?: string;
+  /** Server-side correlation id (`ref` from the API's error body); shown so a
+   *  screenshot can be matched to the stack trace in the server log. */
+  ref?: string;
+}
+
+export function showErrorPopup(message: string, opts: ErrorPopupOptions = {}) {
   // HS-9029 — once the app is shutting down the server is intentionally closing,
   // so the in-flight requests that fail are expected. Suppress the "Connection
   // Error" popup that would otherwise flash behind the "Shutting Down" overlay.
   if (isShuttingDown()) return;
   byIdOrNull('network-error-popup')?.remove();
+  const detail = [opts.context, opts.ref !== undefined ? `ref ${opts.ref}` : null]
+    .filter((x): x is string => typeof x === 'string' && x !== '')
+    .join(' · ');
   const popup = toElement(
     <div id="network-error-popup" className="error-popup">
       <div className="error-popup-content">
-        <strong>Connection Error</strong>
+        <strong>{opts.title ?? 'Connection Error'}</strong>
         <p>{message}</p>
+        {detail !== '' ? <p className="error-popup-detail">{detail}</p> : null}
         <button>Dismiss</button>
       </div>
     </div>

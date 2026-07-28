@@ -161,9 +161,12 @@ export function showToolPrepDialog(status: ToolPrepStatusResp): void {
       .catch(() => { ctaBtn.textContent = 'Failed — try again from Settings'; })
       .finally(() => { setTimeout(() => close(false), 700); });
   });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close(true);
-  });
+  // HS-9452 — no backdrop dismissal here either. This one called `close(true)`,
+  // which persists the per-tool dismissal, so a stray click beside the dialog
+  // silently suppressed the prep prompt for that tool. Same reasoning as
+  // `aiInstructionsNudge`: dismissal that PERSISTS needs an explicit button.
+  // (`upgradeNudge`'s backdrop is deliberately left alone — it closes with
+  // `close(false)`, i.e. "maybe later", and re-prompts in 30 days.)
 
   document.body.appendChild(overlay);
 }

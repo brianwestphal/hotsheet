@@ -15,7 +15,7 @@ import { maybeOfferToolPrep } from './toolPrepNudge.js';
  *     them — no prompt. The user already opted in; we just keep the text current.
  *   - If NONE of our sections are present, prompt once per project (gated on
  *     Claude being detected, and on a per-project "dismissed" flag in
- *     settings.json). Any dismissal — Set up, Not now, X, or backdrop — sets the
+ *     settings.json). Any dismissal — Set up, Not now, or X — sets the
  *     flag, so the prompt is genuinely once per project. The Settings → General
  *     button is the re-entry point afterward.
  *
@@ -169,9 +169,11 @@ export function showAiInstructionsNudgeDialog(): void {
       .catch(() => { ctaBtn.textContent = 'Failed — try Settings'; })
       .finally(() => { setTimeout(close, 700); });
   });
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close();
-  });
+  // HS-9452 — a backdrop click deliberately does NOT dismiss. `close()` also
+  // PERSISTS the dismissal, so an accidental click beside the dialog used to
+  // suppress the nudge permanently for the project, with nothing to undo it and
+  // no indication it had happened. Dismissal now requires an explicit button:
+  // Set up, Not now, or the X.
 
   document.body.appendChild(overlay);
 }

@@ -102,8 +102,14 @@ Three ways the sections get into `CLAUDE.md`:
      being detected for the project (`isClaudeProject` — `claude` on PATH, a
      `.claude/` dir, or an existing `CLAUDE.md`) **and** a per-project
      `ai_instructions_nudge_dismissed` flag in `settings.json`. Any dismissal
-     (Set up / Not now / X / backdrop) sets the flag, so the prompt is genuinely
-     once per project (and persists across sessions).
+     (Set up / Not now / X) sets the flag, so the prompt is genuinely once per
+     project (and persists across sessions). **A backdrop click does NOT dismiss**
+     (HS-9452): because dismissal persists, a stray click beside the dialog used to
+     suppress the prompt permanently with no indication it had happened and nothing
+     to undo it. Dismissing something that sticks requires an explicit button. The
+     same reasoning applies to the §119 tool-prep nudge, which shares this surface
+     and had the same defect; `upgradeNudge`'s backdrop is deliberately left as-is,
+     since it closes with "maybe later" and re-prompts in 30 days.
 2. **Settings → General → "Update CLAUDE.md"** button — installs or updates the
    sections on demand, always available (even after the nudge is dismissed).
 3. **README copy-paste** — for manual adoption.
