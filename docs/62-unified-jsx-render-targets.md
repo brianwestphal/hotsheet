@@ -4,6 +4,8 @@ HS-8168. Follow-up to the HS-8165 investigation. Independent of [§60](60-reacti
 
 > **Status:** Re-scoped under HS-8315 (2026-05-09). Phase 1 (HS-8241) shipped 2026-05-09 via a much simpler path than the original plan; Phase 2 (HS-8242) merged into Phase 1; Phase 3 (HS-8243) shipped 2026-05-10 in its reduced rule-only-with-allowlist form.
 > **Verdict (updated 2026-05-09):** Original plan was **Option B — build a `JsxNode` AST + `astToHtml` / `astToDom` consumers + 50-case equivalence corpus** (~1.5–2 days). Post-kerf-adoption (HS-8315) the much simpler path is to route Hot Sheet's `toElement` through `kerfjs::toElement`, which already implements the SVG-namespace fix the original plan cared about (same `SVG_FRAGMENT_TAGS` set, same `DOMParser('image/svg+xml')` for SVG fragments, same `<template>.innerHTML` fallback for HTML — byte-for-byte equivalent for HTML JSX). The §62 bug class is closed by the kerf swap; the dual-consumer AST is no longer needed.
+>
+> **Closed out by HS-9450 (2026-07-27).** The half this doc left standing — Hot Sheet still owning a hand-rolled `jsx-runtime.ts` while consuming kerf's `toElement` — is gone: `src/jsx-runtime.ts` is now a re-export of kerf's runtime, so BOTH render targets are kerf's and the divergence class this doc was written about cannot recur by construction. The **~50-case equivalence corpus** the original plan scoped, and which the cheaper path skipped, was finally built as `src/jsxRuntimeCorpus.test.ts` — written against the old local runtime, then required to pass verbatim against kerf's (all 79 did; the swap changed no rendered byte). It stays as a permanent guard on kerf bumps. Remaining tail: HS-9454 (drop the `#jsx` seam and import `kerfjs` directly).
 
 ## 62.1 Problem statement
 

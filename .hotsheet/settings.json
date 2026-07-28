@@ -1,5 +1,6 @@
 {
   "appName": "Hot Sheet",
+  "aiReviewNotes": true,
   "appIcon": "variant-4",
   "trash_cleanup_days": "3",
   "completed_cleanup_days": "30",
@@ -19,6 +20,11 @@
       "type": "category",
       "key": "bug",
       "text": "Read docs/ai/code-summary.md and docs/ai/requirements-summary.md if you haven't yet or if you feel you might be out-of-date.\n\nEvaluate current tests and add unit tests or test automation to protected against this kind of bug going forward, if applicable.\n"
+    },
+    {
+      "type": "tag",
+      "key": "fable",
+      "text": "Use a subagent running the Fable model for this ticket."
     }
   ],
   "categories": [
@@ -125,6 +131,13 @@
           "icon": "slice",
           "color": "#f97316",
           "id": "15d9f030-6184-489f-8ffe-d5d1429fa30d"
+        },
+        {
+          "name": "Feature Health",
+          "prompt": "/feature-health",
+          "icon": "heart-pulse",
+          "color": "#14b8a6",
+          "id": "f9e1c0a7-6b2d-4e83-9a15-3d7c8b41e206"
         }
       ],
       "id": "18556f13-1273-43ff-88aa-8cf54b99bce8"
@@ -165,12 +178,11 @@
   "terminals": [
     {
       "id": "default",
-      "command": "{{claudeCommand}}",
+      "command": "{{aiCommand}}",
       "name": "Claude",
       "lazy": false
     }
   ],
   "hotsheet_skill_clear_context": true,
-  "custom_views": [],
-  "aiReviewNotes": true
+  "custom_views": []
 }

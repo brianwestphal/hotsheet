@@ -9,7 +9,7 @@ A lightweight, locally-running project management tool for developers. Launched 
 - **Runtime**: Node.js 20+ · **Language**: TypeScript (strict mode)
 - **Server**: Hono framework with `@hono/node-server`
 - **Database**: PGLite (embedded PostgreSQL), raw SQL (no ORM) — data in `.hotsheet/`
-- **Rendering**: Custom JSX runtime (no React) — produces HTML strings via `SafeHtml`, shared by server and client
+- **Rendering**: kerf's JSX runtime (no React) — produces HTML strings via `SafeHtml`, shared by server and client
 - **Build**: tsup (server CLI + client JS) + sass (SCSS → CSS) · **Dev**: tsx (client assets pre-built)
 
 ## Architecture
@@ -26,14 +26,16 @@ Single-entry CLI (`src/cli.ts`) that: (1) creates `.hotsheet/`, (2) initializes 
 - `src/sync/markdown.ts` — syncs worklist.md and open-tickets.md on ticket changes
 - `src/cleanup.ts` — auto-cleanup of old trash/completed tickets + orphaned attachments
 - `src/gitignore.ts` — ensures `.hotsheet/` is gitignored
-- `src/jsx-runtime.ts` — custom JSX runtime (shared by server + client)
+- `src/jsx-runtime.ts` — the `#jsx` seam: a re-export of kerf's JSX runtime (shared by server + client)
 - `src/types.ts` — shared types (Ticket, TicketCategory, TicketPriority, AppEnv)
 
 **Client** (`src/client/`): `app.ts` (entry, binds UI), `state.ts` (shared state/settings), `dom.ts` (`toElement()` JSX→DOM), `api.tsx` (API helper, upload, network error popup), `ticketList.tsx` (list rendering), `dropdown.tsx` (context menus), `detail.tsx` (detail panel), `styles.scss` (all styles).
 
 ### JSX Runtime
 
-Custom JSX runtime (`src/jsx-runtime.ts`) instead of React — renders JSX to HTML strings via `SafeHtml`, shared server + client. Configured via `tsconfig.json` (`"jsx": "react-jsx"`, `"jsxImportSource": "#jsx"`), the `package.json` imports map (`#jsx/jsx-runtime`), and a `tsup.config.ts` esbuild alias.
+**kerf's** JSX runtime instead of React — renders JSX to HTML strings via `SafeHtml`, shared server + client. Configured via `tsconfig.json` (`"jsx": "react-jsx"`, `"jsxImportSource": "#jsx"`), a `tsconfig` path mapping `#jsx/jsx-runtime` → `src/jsx-runtime.ts`, and matching `tsup.config.ts` / `vitest.config.ts` aliases.
+
+`src/jsx-runtime.ts` used to BE a hand-rolled runtime (~230 lines incl. a camelCase→kebab SVG alias table); **HS-9450 replaced it with a re-export of kerf's**, keeping the file only as the `#jsx` swap seam. That bought kerf's XSS hardening (attribute-name validation, `on*` rejection, `javascript:`/`data:` URL screening) and real typed JSX intrinsics — the old `IntrinsicElements` was `[elemName: string]: Record<string, unknown>`, so every tag and attribute typechecked vacuously. Equivalence is pinned by `src/jsxRuntimeCorpus.test.ts` (the §62 corpus: written against the old runtime, required to pass verbatim against kerf's). Two consequences to know about: custom elements / untyped attributes now need declaration merging into `'kerfjs/jsx-runtime'` (`src/jsx-augment.d.ts`), and `draggable` must be written via the `DRAGGABLE_TRUE` spread — kerf types it as a boolean but it's an enumerated attribute, and the boolean renders markup that *disables* dragging (KF-436).
 
 TSX components return `SafeHtml` (= `JSX.Element`). Use `raw()` to inject pre-escaped HTML; all string children are auto-escaped. In client code, convert to DOM with `toElement()`, or to string for `innerHTML` with `.toString()`.
 

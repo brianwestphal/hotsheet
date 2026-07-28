@@ -23,7 +23,7 @@ A reactive value (`signal`) auto-notifies subscribers when it changes. A reactiv
 
 Everything we already have keeps working:
 
-- `jsx-runtime.ts` still produces `SafeHtml`. Server-rendered pages are unchanged.
+- `jsx-runtime.ts` still produces `SafeHtml`. Server-rendered pages are unchanged. (As of HS-9450 that module is a re-export of kerf's JSX runtime rather than a local implementation — the `SafeHtml` contract is identical, which `src/jsxRuntimeCorpus.test.ts` pins.)
 - `toElement(<jsx />)` still parses to DOM via `innerHTML`. No churn for the 99% of callsites that mount once and stay.
 - The defensive "JSX: DOM elements cannot be passed as children" throw (HS-6341 / HS-6342) stays.
 - `raw(html)` for pre-rendered SVG icons is unaffected.
