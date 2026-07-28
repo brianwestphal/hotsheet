@@ -322,10 +322,25 @@ step_release_notes() {
   # difference left is the `last_tag` ANCHOR above. No `--title` is passed: the
   # release version isn't chosen until the NEXT step (step_version), and
   # step_update_changelog already wraps these notes under `## [version] - date`.
-  # `--provider auto` (the default) uses the signed-in `claude` CLI when present
-  # (no API key), else the Anthropic API (`$ANTHROPIC_API_KEY`), else the
-  # on-device Apple helper. With no prior tag, gitgist summarizes from the latest
-  # tag (or full history) to HEAD on its own, so the empty-range case is fine.
+  # With no prior tag, gitgist summarizes from the latest tag (or full history)
+  # to HEAD on its own, so the empty-range case is fine.
+  #
+  # HS-9457 — the settings that used to live here as flags (or as gitgist's own
+  # defaults) are now pinned in `gitgist.config.json` at the repo root, so
+  # `release-beta-auto.sh` and any hand-run `npx gitgist` get the same treatment:
+  #   - `provider: claude-cli` — was `auto`, which resolved to the signed-in
+  #     `claude` CLI here anyway. Pinning makes release runs predictable. NOTE
+  #     the trade-off: a CI run holding only `$ANTHROPIC_API_KEY` (no signed-in
+  #     CLI) now FAILS instead of falling back to the API — deliberate, because
+  #     release notes are drafted locally.
+  #   - `linkCommits: true` — every bullet cites its commit, URL derived from
+  #     the `origin` remote. This flows into BOTH the CHANGELOG entry and the
+  #     annotated-tag body, because `ask_multiline` produces ONE edited string
+  #     that `step_update_changelog` and all three tag steps share.
+  #   - `exclude` — the `docs/ai/*` summaries and `.hotsheet/settings.json`, the
+  #     two biggest sources of churn that aren't code, so they don't eat the
+  #     diff budget that 1.2.0's diff-grounded generation spends on real changes.
+  # Explicit flags still win over the file; `--no-config` ignores it entirely.
   local generated=""
   if command -v npx &>/dev/null; then
     info "Drafting release notes with gitgist (${range:-latest tag..HEAD})..."

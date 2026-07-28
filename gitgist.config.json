@@ -1,0 +1,8 @@
+{
+  "exclude": [
+    "docs/ai/*",
+    ".hotsheet/settings.json"
+  ],
+  "provider": "claude-cli",
+  "linkCommits": true
+}
