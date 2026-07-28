@@ -5,6 +5,7 @@ import { getBackupTimers, initBackupScheduler } from './backup.js';
 import { getDbForDir, runWithDataDir } from './db/connection.js';
 import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
+import { defaultProjectName } from './defaultProjectName.js';
 import { ensureSecret, migrateLocalScopedKeys, readFileSettings, resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { acquireLock } from './lock.js';
@@ -113,7 +114,7 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
 
   // Use appName from settings if set, otherwise derive from directory name
   const fileSettings = readFileSettings(absDataDir);
-  const dirName = absDataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? absDataDir;
+  const dirName = defaultProjectName(absDataDir);
   const name = (fileSettings.appName !== undefined && fileSettings.appName !== '') ? fileSettings.appName : dirName;
 
   const syncState = getSyncState(absDataDir);
@@ -196,7 +197,7 @@ export function registerExistingProject(dataDir: string, secret: string, db: PGl
   }
 
   const fileSettings = readFileSettings(absDataDir);
-  const dirName = absDataDir.replace(/\/.hotsheet\/?$/, '').split('/').pop() ?? absDataDir;
+  const dirName = defaultProjectName(absDataDir);
   const name = (fileSettings.appName !== undefined && fileSettings.appName !== '') ? fileSettings.appName : dirName;
   const syncState = getSyncState(absDataDir);
   const backupTimers = getBackupTimers(absDataDir);

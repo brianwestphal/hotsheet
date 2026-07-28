@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { ANNOUNCER_MODELS } from '../announcer/models.js';
 import { Layout } from '../components/layout.js';
 import { PairPage } from '../components/pairPage.js';
+import { defaultProjectName } from '../defaultProjectName.js';
 import { isDemoMode } from '../demo-mode.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { isTestMode } from '../test-mode.js';
@@ -654,7 +655,7 @@ pageRoutes.get('/', (c) => {
             <div className="settings-tab-panel active" data-panel="general">
               <div className="settings-field">
                 <label>Project name</label>
-                <input type="text" id="settings-app-name" placeholder="Hot Sheet" />
+                <input type="text" id="settings-app-name" placeholder={defaultProjectName(c.get('dataDir'))} />
                 <span className="settings-hint" id="settings-app-name-hint">Custom name shown in the title bar and project tab. Leave empty for default.</span>
               </div>
               <div className="settings-field">

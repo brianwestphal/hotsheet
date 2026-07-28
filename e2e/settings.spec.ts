@@ -50,6 +50,37 @@ test.describe('Settings dialog', () => {
     await expect(page.locator('.project-tab.active .project-tab-name')).toHaveText('My Project Board', { timeout: 5000 });
   });
 
+  test('HS-9459: the Project name placeholder is the real default, not "Hot Sheet"', async ({ page }) => {
+    // The placeholder is what you get by leaving the field empty. It was
+    // hardcoded to "Hot Sheet", which is wrong for every project — the real
+    // default is the project DIRECTORY's basename.
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible({ timeout: 3000 });
+
+    const appNameInput = page.locator('#settings-app-name');
+    await appNameInput.waitFor({ state: 'visible' });
+    const placeholder = await appNameInput.getAttribute('placeholder');
+
+    expect(placeholder).not.toBe('Hot Sheet');
+    // It must match the tail of the temp project dir this server was started
+    // with — a real basename, not a fixed string and not a full path.
+    expect(placeholder).toBeTruthy();
+    expect(placeholder!).not.toContain('/');
+    expect(placeholder!).not.toContain('\\');
+
+    // And it must be the ACTUAL default: clearing a custom name falls back to it.
+    await page.locator('.scope-seg-btn.scope-seg-shared').click();
+    await page.waitForTimeout(500);
+    await appNameInput.clear();
+    await appNameInput.type('Temporarily Renamed');
+    await expect(page.locator('.project-tab.active .project-tab-name'))
+      .toHaveText('Temporarily Renamed', { timeout: 10000 });
+
+    await appNameInput.clear();
+    await expect(page.locator('.project-tab.active .project-tab-name'))
+      .toHaveText(placeholder!, { timeout: 10000 });
+  });
+
   test('HS-9115: dialog height stays constant across tabs', async ({ page }) => {
     await page.locator('#settings-btn').click();
     const dialog = page.locator('.settings-dialog');

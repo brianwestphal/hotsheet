@@ -32,7 +32,7 @@
 ### 2.3 File-Based Settings
 
 - A `settings.json` file in the data directory stores all **shareable** project configuration. This makes settings easy to copy between projects, inspect, and back up, and (per §2.8) it is the one file under `.hotsheet/` that is intentionally **committed to git** so a team can version it. Fields:
-  - `appName` — Display name for the project (shown in UI title bar and tabs).
+  - `appName` — Display name for the project (shown in UI title bar and tabs). **Optional**: when unset or empty the name falls back to the project DIRECTORY's basename (`~/Documents/hotsheet` → `hotsheet`). That fallback is `defaultProjectName()` (`src/defaultProjectName.ts`, HS-9459) — one pure function shared by `projects.ts` (which resolves the real name), the server-rendered Settings placeholder, and the client's placeholder refresh on project switch, so the three can't drift. They had: the Settings → Project name field hardcoded `placeholder="Hot Sheet"`, which was wrong for every project and told users the wrong thing about what leaving the field empty would do.
   - `ticketPrefix` — Custom prefix for ticket numbers (default: `HS`). The dash separator is added automatically.
   - `authoritativeDataDir` — git-worktree follower pointer (HS-8934, §89.1); structural, stays in `settings.json`.
   - All shareable UI and behavior settings are stored as flat keys at the root level (e.g., `layout`, `sort_by`, `sort_dir`, `categories`, `custom_views`, `custom_commands`, `terminals`, `trash_cleanup_days`, `verified_cleanup_days`, `auto_order`, etc.).

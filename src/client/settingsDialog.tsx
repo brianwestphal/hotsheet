@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
+import { defaultProjectName } from '../defaultProjectName.js';
 import { IN_DEVELOPMENT_OPTION_SUFFIX, isAiToolSelectable } from '../devFeatures.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from './agentBackend.js';
@@ -24,7 +25,7 @@ import { restoreLastSettingsTab, setLastSettingsTab } from './settingsLastTab.js
 import { initSettingsScope, loadAndApplyScope, persistScopedSetting, resetScopeMode, setActiveSettingsTab } from './settingsScope.js';
 import { loadScopedList, renderScopeListHint, saveScopedList } from './settingsScopeList.js';
 import type { NotifyLevel } from './state.js';
-import { state } from './state.js';
+import { getActiveProject, state } from './state.js';
 import { getTauriInvoke, showUpdateBanner } from './tauriIntegration.js';
 import { bindClearTelemetryButton, resetClearTelemetryStatus } from './telemetryClearUI.js';
 import { getTelemetryCostMode, setTelemetryCostMode } from './telemetryCostMode.js';
@@ -222,6 +223,15 @@ function bindGeneralTab() {
     diagnosticsEnabledCheckbox.checked = isDiagnosticsEnabled();
     notifyPermSelect.value = state.settings.notify_permission;
     notifyCompSelect.value = state.settings.notify_completed;
+    // HS-9459 — the placeholder must show what leaving the field empty ACTUALLY
+    // gives you: the project directory's basename. It was hardcoded to
+    // "Hot Sheet", which was wrong for every project (and stayed wrong after a
+    // project switch, since the dialog is shared across tabs). Derived with the
+    // same `defaultProjectName` the server uses, so the two can't drift again.
+    // A remote project (docs/112) has no local `dataDir` — leave the markup's
+    // placeholder alone rather than inventing one from an empty path.
+    const activeDataDir = getActiveProject()?.dataDir ?? '';
+    if (activeDataDir !== '') appNameInput.placeholder = defaultProjectName(activeDataDir);
     void getFileSettings().then((fs) => {
       appNameInput.value = fs.appName ?? '';
       prefixInput.value = fs.ticketPrefix ?? '';
