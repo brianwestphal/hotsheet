@@ -129,6 +129,14 @@ The app ships in Tauri's WKWebView, which silently no-ops several standard dialo
 
 **E2E tests for any prompt flow** must click the in-app overlay's buttons. Do NOT use Playwright's `page.on('dialog')` handler — it masks the exact Tauri-silent-no-op regression class this rule exists to catch.
 
+### Spreading an array into a call (`f(...arr)`)
+
+`f(...arr)` passes every element as a separate **argument**, and argument count is bounded by the call stack. Past the bound V8 throws `RangeError: Maximum call stack size exceeded` — the same message runaway recursion gives, which is why this is so hard to read: there is no recursion in the trace, and the line has usually worked for months. It starts failing only when the data crosses the limit, and then it fails *every* time. Measured on this project's Node (22.14/arm64): fine at 100k, throws at 125k.
+
+**For any array that can grow unbounded** — telemetry spans/events, tickets, sync records, anything read from a file or table — use the helpers in `src/utils/largeArray.ts` instead: `pushAll(target, source)`, `maxOf(values)`, `minOf(values)`. Spreading a fixed-size constant (`sections.push(...HEADER_LINES)`) is fine and stays.
+
+This is HS-9451: `readAllOtelJsonl` accumulated day files with `out.push(...day)`, so once a day's spans crossed ~100k the prompt drill-down 500'd every time. `otelJsonlStore.test.ts` pins it with a 130k-row day file.
+
 ### Type assertions (`as`) and runtime validation
 
 The `as` operator is an unchecked assertion — the compiler trusts it and forgets to check at runtime, so an upstream shape change ships a runtime crash while everything still compiles (HS-8567).

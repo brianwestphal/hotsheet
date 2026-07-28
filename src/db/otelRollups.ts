@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { getAllProjects } from '../projects.js';
+import { maxOf, minOf } from '../utils/largeArray.js';
 import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.js';
 import { clearOtelJsonl, listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
@@ -666,7 +667,11 @@ export async function getRecentPrompts(
 
     // Duration over ALL the prompt's events (always ≥1 — the user_prompt itself).
     const times = all.map(e => new Date(evTs(e)).getTime()).filter(t => Number.isFinite(t));
-    const durationMs = times.length > 0 ? Math.max(...times) - Math.min(...times) : null;
+    // HS-9451 — spreading blows the stack past ~100k args; a long agent session's
+    // event count is not bounded by anything that guarantees it stays under.
+    const hi = maxOf(times);
+    const lo = minOf(times);
+    const durationMs = hi !== null && lo !== null ? hi - lo : null;
 
     const upModel = typeof evAttrs(up).model === 'string' ? evAttrs(up).model as string : null;
     return {

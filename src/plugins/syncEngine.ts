@@ -10,6 +10,7 @@ import { createTicket, getTicket, updateTicket } from '../db/tickets.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import type { Ticket } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { maxOf } from '../utils/largeArray.js'; // HS-9451 — records grow with ticket count
 import { getAllBackends, getBackendForPlugin, reactivatePlugin } from './loader.js';
 // HS-8679 — comment + attachment sync extracted into sibling modules.
 import { syncAttachments, syncTicketAttachments } from './syncEngine/attachments.js';
@@ -259,7 +260,7 @@ export async function getPendingSyncCounts(backend: TicketingBackend): Promise<P
   try {
     const records = await getSyncRecordsForPlugin(backend.id);
     const since = records.length > 0
-      ? new Date(Math.max(...records.map(r => new Date(r.last_synced_at).getTime())))
+      ? new Date(maxOf(records.map(r => new Date(r.last_synced_at).getTime())) ?? 0)
       : null;
     const changes = await backend.pullChanges(since);
     for (const change of changes) {
@@ -379,7 +380,7 @@ async function pullFromRemote(backend: TicketingBackend, fullPull = false): Prom
   // sync) passes since=null to reconcile the entire remote, surfacing those items.
   const lastSyncDate = fullPull || records.length === 0
     ? null
-    : new Date(Math.max(...records.map(r => new Date(r.last_synced_at).getTime())));
+    : new Date(maxOf(records.map(r => new Date(r.last_synced_at).getTime())) ?? 0);
 
   const changes = await backend.pullChanges(lastSyncDate);
   let applied = 0;

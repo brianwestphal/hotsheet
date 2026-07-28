@@ -214,3 +214,48 @@ describe('clearOtelJsonl (HS-9280)', () => {
     expect(await clearOtelJsonl(`${dir}/nope`)).toBe(0);
   });
 });
+
+// HS-9451 — the actual bug the maintainer kept hitting. `readAllOtelJsonl` and
+// `readOtelJsonlRange` accumulated each day with `out.push(...day)`, which throws
+// `RangeError: Maximum call stack size exceeded` once a day file crosses ~100k
+// records. Spans are capped at ~500k (docs/85), so a busy day sailed past it and the
+// prompt drill-down 500'd every single time — and, because the message names a call
+// stack, it read like runaway recursion rather than an argument-count limit.
+//
+// 130k rows is over the measured boundary on Node 22.14/arm64 while still writing in
+// a second or so.
+describe('HS-9451 — a day file larger than the spread limit', () => {
+  const OVER_LIMIT = 130_000;
+
+  /** Write one day file directly; `appendOtelJsonl` 130k times would be needlessly slow. */
+  async function writeBigDay(kind: 'events' | 'spans', day: string): Promise<void> {
+    const line = (i: number): string => JSON.stringify({ id: i, prompt_id: 'p1', ts: '2026-07-28T00:00:00Z' });
+    const rows: string[] = [];
+    for (let i = 0; i < OVER_LIMIT; i++) rows.push(line(i));
+    await fsp.writeFile(otelJsonlPath(dir, kind, day), rows.join('\n') + '\n', 'utf-8');
+  }
+
+  it('readAllOtelJsonl reads it instead of throwing RangeError', async () => {
+    await writeBigDay('spans', '2026-07-28');
+    const rows = await readAllOtelJsonl(dir, 'spans');
+    expect(rows).toHaveLength(OVER_LIMIT);
+    expect(rows[0]).toMatchObject({ id: 0, prompt_id: 'p1' });
+    expect(rows[OVER_LIMIT - 1]).toMatchObject({ id: OVER_LIMIT - 1 });
+  });
+
+  it('readOtelJsonlRange reads it instead of throwing RangeError', async () => {
+    await writeBigDay('events', '2026-07-28');
+    const rows = await readOtelJsonlRange(dir, 'events', '2026-07-28', '2026-07-28');
+    expect(rows).toHaveLength(OVER_LIMIT);
+  });
+
+  it('still concatenates MULTIPLE days in order across the limit', async () => {
+    await writeBigDay('spans', '2026-07-27');
+    await appendOtelJsonl(dir, 'spans', new Date('2026-07-28T10:00:00Z'), { id: 'day2-only' });
+    const rows = await readAllOtelJsonl(dir, 'spans');
+    expect(rows.length).toBe(OVER_LIMIT + 1);
+    // Day order preserved: the big 07-27 file first, the later day's row last.
+    expect(rows[0]).toMatchObject({ id: 0 });
+    expect(rows[rows.length - 1]).toMatchObject({ id: 'day2-only' });
+  });
+});

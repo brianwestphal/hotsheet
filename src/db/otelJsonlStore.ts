@@ -31,6 +31,7 @@
 import { promises as fsp } from 'fs';
 import { join } from 'path';
 
+import { pushAll } from '../utils/largeArray.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
 /** The three raw OTLP row families, each its own daily file. */
@@ -150,7 +151,9 @@ export async function readOtelJsonlRange(
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   for (const day of dayRange(fromDay, toDay)) {
-    out.push(...await readOtelJsonlDay(telemetryDir, kind, day));
+    // HS-9451 — `push(...day)` throws RangeError once a day file exceeds ~100k
+    // records (spans are capped at ~500k, docs/85), so it must not be spread.
+    pushAll(out, await readOtelJsonlDay(telemetryDir, kind, day));
   }
   return out;
 }
@@ -186,7 +189,7 @@ export async function listOtelJsonlDays(telemetryDir: string, kind: OtelJsonlKin
 export async function readAllOtelJsonl(telemetryDir: string, kind: OtelJsonlKind): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   for (const day of await listOtelJsonlDays(telemetryDir, kind)) {
-    out.push(...await readOtelJsonlDay(telemetryDir, kind, day));
+    pushAll(out, await readOtelJsonlDay(telemetryDir, kind, day)); // HS-9451 — see above
   }
   return out;
 }
