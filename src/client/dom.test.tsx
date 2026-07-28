@@ -7,9 +7,9 @@
  * drift surfaces at the click handler's wiring time rather than as a
  * useless `Cannot read properties of null` deeper in the call stack.
  */
+import { raw, SafeHtml } from 'kerfjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { raw, SafeHtml } from '../jsx-runtime.js';
 import { byId, byIdOrNull, requireChild, toElement } from './dom.js';
 
 beforeEach(() => { document.body.innerHTML = ''; });

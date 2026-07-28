@@ -18,7 +18,8 @@
  *   columns, `loadTickets()` called.
  */
 
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_ARCHIVE, ICON_CALENDAR } from './icons.js';
 import { state } from './state.js';

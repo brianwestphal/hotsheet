@@ -1,4 +1,5 @@
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import type { TicketPriority, TicketStatus } from '../types.js';
 import { evictProjectScope } from './projectScoped.js';
 import { activeProjectSignal, projectsStore } from './projectsStore.js';

@@ -1,10 +1,11 @@
+import type { SafeHtml } from 'kerfjs';
+import { raw } from 'kerfjs';
+
 import {
   disablePlugin, disablePluginEverywhere, enablePlugin, enablePluginEverywhere,
   getBundledPlugins, getPlugin, getSyncConflicts, installBundledPlugin, installPlugin, listPlugins,
   type PluginInfo, resolveSyncConflict, revealPlugin, type SyncConflict, uninstallPlugin,
 } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { ICON_FOLDER_OPEN, ICON_GLOBE, ICON_POWER, ICON_SETTINGS, ICON_UNINSTALL } from './icons.js';
 import { createPreferenceRow, renderConfigLayout } from './pluginConfigDialog.js';

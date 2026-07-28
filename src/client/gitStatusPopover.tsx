@@ -1,10 +1,10 @@
 import './markdownSetup.js'; // side-effecting: switches `marked` into escape-raw-HTML mode
 
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import type { GitStatusFiles, GitStatusWithFiles, PendingCommit, RecentCommitsRes } from '../api/git.js';
 import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
 // HS-9441 — `worktreesPanel` is imported LAZILY (at click time). Statically it drags

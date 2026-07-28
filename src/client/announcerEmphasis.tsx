@@ -10,7 +10,8 @@
  * Split out from `announcerPip.tsx` so the range math is unit-testable without
  * dragging in the PIP's client-only dependencies.
  */
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { toElement } from './dom.js';
 
 /** Non-overlapping `[start, end)` ranges in `script` covered by any emphasis

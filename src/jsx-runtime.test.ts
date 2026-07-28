@@ -15,9 +15,8 @@
  * `toString()` is the documented contract and the one a future implementation is
  * obliged to keep.
  */
+import { Fragment,jsx, jsxs, raw, SafeHtml } from 'kerfjs/jsx-runtime';
 import { describe, expect, it } from 'vitest';
-
-import { Fragment,jsx, jsxs, raw, SafeHtml } from './jsx-runtime.js';
 
 describe('SafeHtml', () => {
   it('stores raw HTML string', () => {

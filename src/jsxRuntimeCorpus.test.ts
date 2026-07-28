@@ -23,10 +23,9 @@
  * opposite (see `DRAGGABLE_TRUE` in `jsx-runtime.ts`). That is guarded by
  * `projectTabs.test.ts`, which asserts the rendered attribute value.
  */
+import type { SafeHtml } from 'kerfjs';
+import { Fragment, jsx, jsxs, raw } from 'kerfjs/jsx-runtime';
 import { describe, expect, it } from 'vitest';
-
-import type { SafeHtml } from './jsx-runtime.js';
-import { Fragment, jsx, jsxs, raw } from './jsx-runtime.js';
 
 /** Render an intrinsic element the way the compiled JSX transform would. */
 const el = (tag: string, props: Record<string, unknown> = {}): string =>

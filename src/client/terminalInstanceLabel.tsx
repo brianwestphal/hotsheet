@@ -16,7 +16,8 @@
  *   toolbar based on `runtimeCwd`.
  */
 
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { toElement } from './dom.js';
 import type { TerminalInstance, TerminalTabConfig } from './terminal.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';

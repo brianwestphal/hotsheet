@@ -1,5 +1,5 @@
-import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { agentDisplayName } from './agentName.js';
+import { DRAGGABLE_TRUE } from './attrs.js';
 import { byIdOrNull, toElement } from './dom.js';
 import {
   CMD_COLORS,

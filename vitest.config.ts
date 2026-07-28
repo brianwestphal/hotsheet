@@ -1,16 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  // HS-7331 — alias both `#jsx/jsx-runtime` and `#jsx/jsx-dev-runtime` to the
-  // project's custom JSX runtime so vitest can compile .tsx files. The build
-  // pipeline (esbuild) only needs the non-dev alias; vitest's dev-mode
-  // transform imports `-dev-runtime` and fails without this mapping.
-  resolve: {
-    alias: {
-      '#jsx/jsx-runtime': '/src/jsx-runtime.ts',
-      '#jsx/jsx-dev-runtime': '/src/jsx-runtime.ts',
-    },
-  },
   test: {
     pool: 'forks',
     // HS-9449 — kerf 3.0 no longer infers dev mode, so its diagnostics (notably

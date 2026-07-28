@@ -26,16 +26,18 @@ Single-entry CLI (`src/cli.ts`) that: (1) creates `.hotsheet/`, (2) initializes 
 - `src/sync/markdown.ts` — syncs worklist.md and open-tickets.md on ticket changes
 - `src/cleanup.ts` — auto-cleanup of old trash/completed tickets + orphaned attachments
 - `src/gitignore.ts` — ensures `.hotsheet/` is gitignored
-- `src/jsx-runtime.ts` — the `#jsx` seam: a re-export of kerf's JSX runtime (shared by server + client)
+- (JSX comes straight from `kerfjs` — there is no local runtime module; see the JSX Runtime section)
 - `src/types.ts` — shared types (Ticket, TicketCategory, TicketPriority, AppEnv)
 
 **Client** (`src/client/`): `app.ts` (entry, binds UI), `state.ts` (shared state/settings), `dom.ts` (`toElement()` JSX→DOM), `api.tsx` (API helper, upload, network error popup), `ticketList.tsx` (list rendering), `dropdown.tsx` (context menus), `detail.tsx` (detail panel), `styles.scss` (all styles).
 
 ### JSX Runtime
 
-**kerf's** JSX runtime instead of React — renders JSX to HTML strings via `SafeHtml`, shared server + client. Configured via `tsconfig.json` (`"jsx": "react-jsx"`, `"jsxImportSource": "#jsx"`), a `tsconfig` path mapping `#jsx/jsx-runtime` → `src/jsx-runtime.ts`, and matching `tsup.config.ts` / `vitest.config.ts` aliases.
+**kerf's** JSX runtime instead of React — renders JSX to HTML strings via `SafeHtml`, shared server + client. Configured via `tsconfig.json` (`"jsx": "react-jsx"`, `"jsxImportSource": "kerfjs"`) plus the matching `esbuildOptions.jsxImportSource` in `tsup.config.ts` and `scripts/build-client.mjs`. Import `raw` / `SafeHtml` / `Fragment` / `isSafeHtml` from **`kerfjs`**; `jsx` / `jsxs` live on `kerfjs/jsx-runtime` (the compiler's entry).
 
-`src/jsx-runtime.ts` used to BE a hand-rolled runtime (~230 lines incl. a camelCase→kebab SVG alias table); **HS-9450 replaced it with a re-export of kerf's**, keeping the file only as the `#jsx` swap seam. That bought kerf's XSS hardening (attribute-name validation, `on*` rejection, `javascript:`/`data:` URL screening) and real typed JSX intrinsics — the old `IntrinsicElements` was `[elemName: string]: Record<string, unknown>`, so every tag and attribute typechecked vacuously. Equivalence is pinned by `src/jsxRuntimeCorpus.test.ts` (the §62 corpus: written against the old runtime, required to pass verbatim against kerf's). Two consequences to know about: custom elements / untyped attributes now need declaration merging into `'kerfjs/jsx-runtime'` (`src/jsx-augment.d.ts`), and `draggable` must be written via the `DRAGGABLE_TRUE` spread — kerf types it as a boolean but it's an enumerated attribute, and the boolean renders markup that *disables* dragging (KF-436).
+History worth knowing: this used to be a hand-rolled `src/jsx-runtime.ts` (~230 lines incl. a camelCase→kebab SVG alias table). **HS-9450** replaced its body with a re-export of kerf's, and **HS-9454** deleted the file and the `#jsx` alias entirely. The swap bought kerf's XSS hardening (attribute-name validation, `on*` rejection, `javascript:`/`data:` URL screening) and real typed JSX intrinsics — the old `IntrinsicElements` was `[elemName: string]: Record<string, unknown>`, so every tag and attribute typechecked vacuously. Equivalence is pinned by `src/jsxRuntimeCorpus.test.ts` (the §62 corpus: written against the old runtime, required to pass verbatim against kerf's).
+
+Two consequences to know about: custom elements / untyped attributes need declaration merging into `'kerfjs/jsx-runtime'` (`src/jsx-augment.d.ts`), and `draggable` must be written via the `DRAGGABLE_TRUE` spread from `src/client/attrs.ts` — kerf types it as a boolean but it's an enumerated attribute, and the boolean renders markup that *disables* dragging (KF-436).
 
 TSX components return `SafeHtml` (= `JSX.Element`). Use `raw()` to inject pre-escaped HTML; all string children are auto-escaped. In client code, convert to DOM with `toElement()`, or to string for `innerHTML` with `.toString()`.
 

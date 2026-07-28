@@ -1,8 +1,8 @@
 import './markdownSetup.js';
 
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
-import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { morph } from './reactive.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';

@@ -19,8 +19,9 @@
  * imports (channelStore.ts, channelUI.tsx, the test file) keep working.
  */
 
+import type { SafeHtml } from 'kerfjs';
+
 import { respondChannelPermission } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
 import { announcePermission } from './announcerPermissionSpeech.js';
 import { buildBashPermissionPreview } from './bashPermissionPreview.js';

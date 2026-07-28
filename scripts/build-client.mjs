@@ -27,8 +27,7 @@ await esbuild.build({
   outfile: join(clientDist, 'app.global.js'),
   target: 'es2020',
   jsx: 'automatic',
-  jsxImportSource: '#jsx',
-  alias: { '#jsx/jsx-runtime': join(root, 'src', 'jsx-runtime.ts') },
+  jsxImportSource: 'kerfjs',
   // `__PLUGINS_ENABLED__` is replaced with the raw token `true`/`false`
   // (a JS boolean literal), exactly like `--define:__PLUGINS_ENABLED__=true`.
   define: { __PLUGINS_ENABLED__: pluginsEnabled },
@@ -45,8 +44,7 @@ await esbuild.build({
   outfile: join(clientDist, 'pair.global.js'),
   target: 'es2020',
   jsx: 'automatic',
-  jsxImportSource: '#jsx',
-  alias: { '#jsx/jsx-runtime': join(root, 'src', 'jsx-runtime.ts') },
+  jsxImportSource: 'kerfjs',
   define: { __PLUGINS_ENABLED__: pluginsEnabled },
   sourcemap: true,
 });

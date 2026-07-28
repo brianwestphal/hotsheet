@@ -1,4 +1,5 @@
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { suppressAnimation } from './animate.js';
 import { renderClaimedByChip } from './claimedByChip.js';
 import { claimsByTicketId, nowTick } from './claimsStore.js';

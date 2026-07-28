@@ -1,7 +1,7 @@
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import type { SafeHtml } from 'kerfjs';
 
 import { restartTerminal } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { openExternalUrl } from './tauriIntegration.js';
 import {

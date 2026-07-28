@@ -31,10 +31,7 @@ export default defineConfig([
     },
     esbuildOptions(options) {
       options.jsx = 'automatic';
-      options.jsxImportSource = '#jsx';
-      options.alias = {
-        '#jsx/jsx-runtime': './src/jsx-runtime.ts',
-      };
+      options.jsxImportSource = 'kerfjs';
     },
     banner: {
       // Shebang first. Then a real `require` in ESM scope: esbuild's generated
@@ -106,10 +103,7 @@ export default defineConfig([
     },
     esbuildOptions(options) {
       options.jsx = 'automatic';
-      options.jsxImportSource = '#jsx';
-      options.alias = {
-        '#jsx/jsx-runtime': './src/jsx-runtime.ts',
-      };
+      options.jsxImportSource = 'kerfjs';
     },
     onSuccess: async () => {
       mkdirSync('dist/client/assets', { recursive: true });
@@ -143,10 +137,7 @@ export default defineConfig([
     minify: true,
     esbuildOptions(options) {
       options.jsx = 'automatic';
-      options.jsxImportSource = '#jsx';
-      options.alias = {
-        '#jsx/jsx-runtime': './src/jsx-runtime.ts',
-      };
+      options.jsxImportSource = 'kerfjs';
     },
   },
   // Bundled plugins

@@ -10,7 +10,8 @@
  * (HS-8149) for the clicked row.
  */
 
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { toElement } from './dom.js';
 import { delegate } from './reactive.js';
 import { formatCost, formatDuration, formatTokens } from './telemetryFormat.js';

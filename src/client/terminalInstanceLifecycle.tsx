@@ -27,9 +27,10 @@
  * back through `terminal.tsx`'s re-exports).
  */
 
+import type { SafeHtml } from 'kerfjs';
+
 import { destroyTerminal, killTerminal, openTerminalCwd, restartTerminal } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
-import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
+import { DRAGGABLE_TRUE } from './attrs.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';

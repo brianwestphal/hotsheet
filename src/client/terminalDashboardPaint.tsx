@@ -27,8 +27,8 @@
  */
 
 import type { Terminal } from '@xterm/xterm';
+import type { SafeHtml } from 'kerfjs';
 
-import type { SafeHtml } from '../jsx-runtime.js';
 import { DASHBOARD_SCOPE, filterVisible as filterVisibleEntriesScoped } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { switchProject } from './projectTabs.js';

@@ -22,8 +22,8 @@
  */
 
 import type { IDecoration, IMarker, Terminal as XTerm } from '@xterm/xterm';
+import type { SafeHtml } from 'kerfjs';
 
-import type { SafeHtml } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import { state } from './state.js';
 import type { TerminalInstance } from './terminal.js';

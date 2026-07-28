@@ -1,5 +1,6 @@
+import type { SafeHtml } from 'kerfjs';
+
 import { getQuitSummary, updateFileSettings } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { showShutdownOverlay } from './shutdownOverlay.js';

@@ -45,9 +45,9 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal as XTerm } from '@xterm/xterm';
+import type { SafeHtml } from 'kerfjs';
 import { z } from 'zod';
 
-import type { SafeHtml } from '../jsx-runtime.js';
 import { getOrCreateDeviceId } from './deviceId.js';
 import { toElement } from './dom.js';
 import { httpOriginToWs } from './remoteOrigin.js';

@@ -16,8 +16,9 @@
  *    (Anthropic-only today, HS-8774) plus full-width Name + Value fields
  *    (HS-8761; HS-8773 renamed the button/title from "Add a key").
  */
+import type { SafeHtml } from 'kerfjs';
+
 import { createKey, deleteKey, type KeyType, listKeys, type SecretKeyMeta, updateKey } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';
 import { timeAgo } from './timeAgo.js';

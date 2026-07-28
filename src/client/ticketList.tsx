@@ -1,5 +1,6 @@
+import { raw } from 'kerfjs';
+
 import { batchTickets, emptyTrash, getSyncedTickets, getTicketSearchCounts, listTickets, queryTickets } from '../api/index.js';
-import { raw } from '../jsx-runtime.js';
 import { isExactTicketIdSearch } from '../ticketNumber.js';
 import { captureSnapshot, flipAnimate } from './animate.js';
 import { renderColumnView, renderPreviewColumnView, unmountColumnView, updateColumnSelectionClasses } from './columnView.js';

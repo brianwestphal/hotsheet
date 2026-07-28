@@ -1,5 +1,6 @@
+import type { SafeHtml } from 'kerfjs';
+
 import { deleteTicket, updateTicket,type UpdateTicketReq } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { renderClaimedByChip } from './claimedByChip.js';
 import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';

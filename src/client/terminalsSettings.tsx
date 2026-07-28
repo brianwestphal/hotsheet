@@ -1,6 +1,6 @@
 import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
-import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { agentDisplayName } from './agentName.js';
+import { DRAGGABLE_TRUE } from './attrs.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2 } from './icons.js';

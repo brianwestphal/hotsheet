@@ -1,5 +1,6 @@
+import type { SafeHtml } from 'kerfjs';
+
 import { type DashboardData, getDashboard } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getCategoryColor, state } from './state.js';

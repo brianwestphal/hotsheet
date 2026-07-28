@@ -1,6 +1,5 @@
+import type { SafeHtml } from 'kerfjs';
 import { toElement as kerfToElement } from 'kerfjs';
-
-import type { SafeHtml } from '../jsx-runtime.js';
 
 /** Convert a JSX SafeHtml result to a DOM element.
  *

@@ -1,4 +1,4 @@
-import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
+import { DRAGGABLE_TRUE } from './attrs.js';
 import { confirmDialog } from './confirm.js';
 import {
   addGrouping,

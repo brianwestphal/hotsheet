@@ -7,8 +7,9 @@
 // plugin has unresolved sync conflicts in the active project. Clicking it opens
 // Settings → Plugins and scrolls to the conflicts section. Generic across plugins
 // — driven by `GET /sync/conflicts/summary`, not special-cased to GitHub.
+import { raw } from 'kerfjs';
+
 import { getSyncConflictsSummary, type SyncConflictSummaryEntry } from '../api/index.js';
-import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 minute, per the active tab

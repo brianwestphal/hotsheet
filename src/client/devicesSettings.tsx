@@ -15,8 +15,9 @@
  * HS-9026 adds the "Pair a device" QR flow to this same panel (see
  * `devicesPairing.tsx`, wired from `bindDevicesSettings`).
  */
+import type { SafeHtml } from 'kerfjs';
+
 import { type EnrolledDevice, listEnrolledDevices, mintDeviceP12, revokeEnrolledDevice } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { confirmDialog } from './confirm.js';
 import { bindDevicesPairing } from './devicesPairing.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';

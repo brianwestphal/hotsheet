@@ -1,7 +1,7 @@
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { getTicketByNumber } from '../api/index.js';
-import { raw } from '../jsx-runtime.js';
 import { openDetail } from './detail.js';
 import { toElement } from './dom.js';
 import { state, type Ticket } from './state.js';

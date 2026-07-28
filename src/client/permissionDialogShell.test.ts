@@ -171,7 +171,7 @@ describe('openPermissionDialogShell — body slot (HS-8066)', () => {
   });
 
   it('mounts pre-rendered bodyHtml when bodyElement is omitted', async () => {
-    const { raw } = await import('../jsx-runtime.js');
+    const { raw } = await import('kerfjs');
     openPermissionDialogShell({
       rootClassName: 'test-shell', ariaLabel: 'T', title: 't',
       bodyHtml: raw('<pre class="my-preview">cmd output</pre>'),

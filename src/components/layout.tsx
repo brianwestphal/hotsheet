@@ -1,4 +1,4 @@
-import { raw } from '../jsx-runtime.js';
+import { raw } from 'kerfjs';
 
 export function Layout({ title, children, demoMode, scriptSrc }: { title: string; children?: unknown; demoMode?: boolean; scriptSrc?: string }) {
   return (

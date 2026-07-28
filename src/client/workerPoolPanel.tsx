@@ -8,12 +8,13 @@
 // Live updates are poll-based for now (the §90.8 / HS-7945 event bus once it
 // ships); dispatch drop targets (HS-8961) + the richer claimed-by chip (HS-8864)
 // layer onto these tiles later.
+import type { SafeHtml } from 'kerfjs';
+
 import {
   drainAllPoolWorkers, drainPoolWorker, getGlassboxStatus, getTags, getTicketClaims, getTicketPartition,
   getWorkerPool, launchWorker, type PartitionAssignment, type PoolState, registerPoolWorker, releaseTicket,
   removePoolWorker, removeWorktree, reviewInGlassbox, setPoolTarget, setQueueOnlyWorker, type WorkerSlotView,
 } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { checkPendingPartitionProposal } from './agentPartitionProposal.js';
 import { isChannelAlive, isChannelBusy, triggerChannelAndMarkBusy } from './channelUI.js';

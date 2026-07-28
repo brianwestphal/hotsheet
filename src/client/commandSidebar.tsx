@@ -1,5 +1,6 @@
+import type { SafeHtml } from 'kerfjs';
+
 import { type ChannelTriggerTarget, createTicket, ensureSkills, execShellCommand, getCommandLog, getRunningShellCommands, getWorkerPool, killShellCommand, type WorkerSlotView } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { workerTargetWarning } from '../workers/triggerTarget.js';
 import { isChannelAlive, requiresLiveClaudeChannel, setShellBusy, triggerChannelAndMarkBusy } from './channelUI.js';
 import { isGroupCollapsed, setGroupCollapsed } from './commandGroupCollapse.js';

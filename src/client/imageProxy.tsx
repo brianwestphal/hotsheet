@@ -1,4 +1,5 @@
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { TIMERS } from './constants/timers.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';

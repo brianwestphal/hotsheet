@@ -1,6 +1,6 @@
 /** Shared types for plugin settings UI modules. */
 
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
 
 // HS-8637 — the plugin data shapes now live in the typed API layer
 // (`src/api/plugins.ts`) as the wire SSOT. Re-exported here so existing

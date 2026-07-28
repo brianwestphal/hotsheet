@@ -1,10 +1,10 @@
 import './markdownSetup.js';
 
+import type { SafeHtml } from 'kerfjs';
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
 import { renderClaimedByChip } from './claimedByChip.js';
 import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { byId, byIdOrNull, toElement } from './dom.js';

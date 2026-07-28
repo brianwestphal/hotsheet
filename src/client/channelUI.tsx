@@ -1,5 +1,6 @@
+import type { SafeHtml } from 'kerfjs';
+
 import { type ChannelTriggerTarget, cleanupChannelConnections, ensureSkills, getChannelStatus, getStats, listTerminals, triggerChannel } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { busyStaleDecision, shouldShowDegradedBusy } from '../terminals/claudeSpinner.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { deriveDefaultTransport } from './agentBackend.js';

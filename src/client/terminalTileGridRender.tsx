@@ -1,4 +1,5 @@
-import type { SafeHtml } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+
 import { channelStore } from './channelStore.js';
 import { toElement } from './dom.js';
 import { projectsByIdSignal } from './projectsStore.js';

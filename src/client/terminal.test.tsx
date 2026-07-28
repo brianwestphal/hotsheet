@@ -397,7 +397,7 @@ describe('loadAndRenderTerminalTabs — drawer bindList identity (HS-8312)', () 
   // halfway through a downstream DOM mutation.
   it('toElement throws when JSX renders multi-root HTML (HS-8562 hardening)', async () => {
     const { toElement } = await import('./dom.js');
-    const { raw } = await import('../jsx-runtime.js');
+    const { raw } = await import('kerfjs');
     // Force a multi-root HTML output by handing the runtime two top-
     // level elements via `raw()` — happy-dom's template parser keeps
     // both as siblings (unlike the nested-button case, which happy-dom

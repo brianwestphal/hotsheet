@@ -1,9 +1,9 @@
 import './markdownSetup.js'; // HS-9387 — escape-html marked config for note bodies
 
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { type CommitGroup, getReviewProof, getTicketCommits, type GlassboxReviewReq, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote, type TicketCommitsResponse } from '../api/index.js';
-import { raw } from '../jsx-runtime.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { projectScoped } from './projectScoped.js';
 import { getActiveProject } from './state.js';

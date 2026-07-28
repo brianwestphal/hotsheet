@@ -1,8 +1,9 @@
+import type { SafeHtml } from 'kerfjs';
+import { raw } from 'kerfjs';
+
 import {
   getPluginConfigLabels, getPluginGlobalConfig, getSettings, runPluginAction, setPluginGlobalConfig, updateSettings, validatePluginField,
 } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
 import { TIMERS } from './constants/timers.js';
 import { byIdOrNull, toElement } from './dom.js';
 import type { ConfigLayoutItem, PluginPreference } from './pluginTypes.js';

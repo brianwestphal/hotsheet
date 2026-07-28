@@ -1,9 +1,10 @@
+import { raw } from 'kerfjs';
+
 import {
   createFeedbackDraft, deleteAttachment, deleteFeedbackDraft, getFeedbackDrafts,
   promoteFeedbackDraftAttachments, updateFeedbackDraft, updateTicket,
   uploadDraftAttachment as uploadDraftAttachmentToServer,
 } from '../api/index.js';
-import { raw } from '../jsx-runtime.js';
 import { lastMeaningfulNoteIndex } from '../systemNotes.js';
 import { choiceDialog } from './confirm.js';
 import { byIdOrNull, requireChild, toElement } from './dom.js';

@@ -14,8 +14,8 @@
  * `kerfjs/no-raw-with-dynamic-arg` rule.)
  */
 
-import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+import { raw } from 'kerfjs';
 
 const LUCIDE_14 = {
   xmlns: 'http://www.w3.org/2000/svg',

@@ -1,5 +1,6 @@
-import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
+import type { SafeHtml } from 'kerfjs';
+import { raw } from 'kerfjs';
+
 import { toElement } from './dom.js';
 
 export interface DropdownItem {

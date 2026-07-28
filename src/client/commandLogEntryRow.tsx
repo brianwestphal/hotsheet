@@ -13,8 +13,9 @@
  *   reactive effects (shape, selected-class, expanded-class).
  */
 
+import type { SafeHtml } from 'kerfjs';
+
 import { killShellCommand } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
 import { commandLogSelectionStore } from './commandLogSelectionStore.js';
 import {
   type AnnotatedEntry,

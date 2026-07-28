@@ -1,7 +1,8 @@
+import type { SafeHtml } from 'kerfjs';
+
 import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, getRemotes, listProjects, reorderProjects, revealProject } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
-import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
+import { DRAGGABLE_TRUE } from './attrs.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';

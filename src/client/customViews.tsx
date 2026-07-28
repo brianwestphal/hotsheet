@@ -1,7 +1,7 @@
 import { clearLocalSettingOverride, getLayeredFileSettings, updateFileSettingsLayer, updateTicket } from '../api/index.js';
-import { DRAGGABLE_TRUE } from '../jsx-runtime.js';
 import { type ArrayDelta, isArrayDelta } from '../settingsDelta.js';
 import { suppressAnimation } from './animate.js';
+import { DRAGGABLE_TRUE } from './attrs.js';
 import { confirmDialog } from './confirm.js';
 import {
   addLocalView,

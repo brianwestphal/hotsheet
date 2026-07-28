@@ -17,9 +17,9 @@
  * (no preceding mousedown) still flips into edit mode.
  */
 // @vitest-environment happy-dom
+import { raw } from 'kerfjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { raw } from '../jsx-runtime.js';
 import { toElement } from './dom.js';
 import type * as StateModule from './state.js';
 

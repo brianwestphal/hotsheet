@@ -1,6 +1,7 @@
+import type { SafeHtml } from 'kerfjs';
+import { raw } from 'kerfjs';
+
 import { duplicateTickets, getBackends, getWorkerPool, pushTicketToBackend, releaseTicket, updateTicket, uploadAttachment } from '../api/index.js';
-import type { SafeHtml } from '../jsx-runtime.js';
-import { raw } from '../jsx-runtime.js';
 import { claimForTicket } from './claimsStore.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
