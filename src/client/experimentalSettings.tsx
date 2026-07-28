@@ -18,6 +18,7 @@ import {
   resolveCommandTreeDelta,
   stripCommandTreeIds,
 } from '../settingsCommandDelta.js';
+import { pushAll } from '../utils/largeArray.js';
 import { initChannel } from './channelUI.js';
 import { renderCustomCommandSettings } from './commandEditor.js';
 import { renderChannelCommands } from './commandSidebar.js';
@@ -561,7 +562,7 @@ export async function pasteCustomCommands(): Promise<void> {
     showToast('No new custom commands to add', { variant: 'info' });
     return;
   }
-  editTree.push(...backfillCommandIds(stripCommandTreeIds(toAdd)).items);
+  pushAll(editTree, backfillCommandIds(stripCommandTreeIds(toAdd)).items);
   await saveCommandItems();
   renderCustomCommandSettings();
   showToast(`Added ${String(toAdd.length)} custom command${toAdd.length === 1 ? '' : 's'}`, { variant: 'success' });

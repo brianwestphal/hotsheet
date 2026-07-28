@@ -4,6 +4,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { maxOf } from './utils/largeArray.js';
+
 // HS-8706 — REGRESSION GUARD for the whole "the BUNDLE crashes on boot" class.
 //
 // The installed app's MCP channel server "wouldn't connect" because the bundled
@@ -46,7 +48,7 @@ function ensureBundlesBuilt(): void {
     join(repoRoot, 'src', 'cli.ts'),
     join(repoRoot, 'tsup.config.ts'),
   ];
-  const newestSource = Math.max(...sources.filter(existsSync).map(s => statSync(s).mtimeMs));
+  const newestSource = maxOf(sources.filter(existsSync).map(s => statSync(s).mtimeMs)) ?? 0;
   const fresh = [cliBundle, channelBundle].every(b => existsSync(b) && statSync(b).mtimeMs >= newestSource);
   if (fresh) return;
   // HS-8713 — `shell: true` so Windows resolves `npx` to `npx.cmd` via the

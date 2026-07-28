@@ -20,6 +20,7 @@ import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArr
 import { getProjectSecret } from '../secret-file.js';
 import { isArrayDelta } from '../settingsDelta.js';
 import type { Ticket } from '../types.js';
+import { pushAll } from '../utils/largeArray.js';
 
 interface SyncState {
   dataDir: string;
@@ -429,9 +430,9 @@ async function syncWorklist(state: SyncState): Promise<void> {
     // HS-8917 — optional per-project preamble, injected near the top BEFORE the
     // protocol sections (Workflow / Creating Tickets / …) so user customization
     // can't break the channel/skill/MCP contract. See docs/6-markdown-sync.md.
-    sections.push(...buildPreambleSection(settings.worklist_preamble));
+    pushAll(sections, buildPreambleSection(settings.worklist_preamble));
 
-    sections.push(...await buildWorkflowInstructions(port, secretHeader));
+    pushAll(sections, await buildWorkflowInstructions(port, secretHeader));
 
     // HS-9221 (docs/110) — when this project opts into Glassbox `.pr-notes/`
     // review notes (`aiReviewNotes`), inject the inducement section: Hot Sheet's
@@ -439,7 +440,7 @@ async function syncWorklist(state: SyncState): Promise<void> {
     // failure-mode-specific fallback nudge — CLI absent vs. too old; HS-9371).
     // Off by default → `buildReviewNotesSection` returns [] and nothing is added.
     const aiReviewNotes = settings.aiReviewNotes === true;
-    sections.push(...buildReviewNotesSection(aiReviewNotes, aiReviewNotes ? getGlassboxNoteInstructions() : null));
+    pushAll(sections, buildReviewNotesSection(aiReviewNotes, aiReviewNotes ? getGlassboxNoteInstructions() : null));
 
     // HS-9112 (docs/101 §101.7) — when this project opts into "always preview agent
     // plans" (`alwaysPreviewAgentPlans`), tell the agent to PROPOSE a worker
@@ -453,7 +454,7 @@ async function syncWorklist(state: SyncState): Promise<void> {
     }
 
     if (tickets.length === 0) {
-      sections.push(...await buildAutoPrioritizeSection(port, secretHeader));
+      pushAll(sections, await buildAutoPrioritizeSection(port, secretHeader));
     } else {
       const autoContext = await loadAutoContext();
       // HS-9337 — batch-resolve the statuses of every ticket referenced by an Up Next

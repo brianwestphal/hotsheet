@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { BLOCKED_TICKET_IDS_SQL } from '../db/blockedBy.js';
 import { getDb } from '../db/connection.js';
 import { parseJsonOrNull, TagsArraySchema } from '../schemas.js';
+import { pushAll } from '../utils/largeArray.js';
 import { callAnnouncerJson } from './announcerJson.js';
 import { buildSuggestDigest, type PendingTicketDigest } from './suggestN.js';
 
@@ -145,7 +146,7 @@ export function clusterPartition(rows: readonly PendingTicketRow[], workers: rea
     const arr = byRoot.get(root);
     if (arr === undefined) byRoot.set(root, [r]); else arr.push(r);
   }
-  clusters.push(...byRoot.values());
+  pushAll(clusters, [...byRoot.values()]);
 
   // Greedy balance: assign the largest clusters first to the least-loaded worker
   // (stable: ties broken by the cluster's original order, then the lowest worker

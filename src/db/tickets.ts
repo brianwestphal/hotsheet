@@ -3,6 +3,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { readFileSettings } from '../file-settings.js';
 import { isExactTicketIdSearch, splitSearchTerms } from '../ticketNumber.js';
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
+import { pushAll } from '../utils/largeArray.js';
 import { getDataDir, getDb } from './connection.js';
 import { generateNoteId, normalizeNotesAppend, parseNotes } from './notes.js';
 import { recordTicketWorkTransition } from './ticketWorkIntervals.js';
@@ -261,7 +262,7 @@ export async function updateTicket(id: number, updates: Partial<{
 
   // Status transitions: see `buildStatusTransitionSets`.
   if (updates.status !== undefined) {
-    sets.push(...buildStatusTransitionSets(updates.status));
+    pushAll(sets, buildStatusTransitionSets(updates.status));
   }
 
   values.push(id);

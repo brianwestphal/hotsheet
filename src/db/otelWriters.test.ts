@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
+import { pushAll } from '../utils/largeArray.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { readOtelJsonlDay } from './otelJsonlStore.js';
 import {
@@ -172,7 +173,7 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
     try { files = (await fsp.readdir(dir)).filter(f => f.startsWith(prefix) && f.endsWith('.jsonl')); }
     catch { return []; }
     const out: Record<string, unknown>[] = [];
-    for (const f of files) out.push(...await readOtelJsonlDay(dir, kind, f.slice(prefix.length, -'.jsonl'.length)));
+    for (const f of files) pushAll(out, await readOtelJsonlDay(dir, kind, f.slice(prefix.length, -'.jsonl'.length)));
     const tsKey = kind === 'spans' ? 'start_ts' : 'ts';
     out.sort((a, b) => String(a[tsKey]).localeCompare(String(b[tsKey])));
     return out;

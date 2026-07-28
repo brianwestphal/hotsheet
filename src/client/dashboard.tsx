@@ -1,6 +1,7 @@
 import type { SafeHtml } from 'kerfjs';
 
 import { type DashboardData, getDashboard } from '../api/index.js';
+import { maxOf } from '../utils/largeArray.js';
 import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { getCategoryColor, state } from './state.js';
@@ -256,7 +257,7 @@ function renderBarChart(data: { date: string; completed: number }[]): SafeHtml {
 
 function renderDualLineChart(data: { date: string; completed: number; created: number }[]): SafeHtml {
   if (data.length < 2) return <div className="chart-empty">Not enough data</div>;
-  const max = Math.max(...data.map(d => Math.max(d.completed, d.created)), 1);
+  const max = Math.max(maxOf(data.map(d => Math.max(d.completed, d.created))) ?? 1, 1);
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
 
@@ -290,7 +291,7 @@ function renderCFD(snapshots: { date: string; data: { not_started: number; start
     });
   });
 
-  const max = Math.max(...stacked.map(s => s[s.length - 1]), 1);
+  const max = Math.max(maxOf(stacked.map(s => s[s.length - 1])) ?? 1, 1);
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
   const n = snapshots.length;
@@ -528,7 +529,7 @@ export async function renderSidebarWidget(): Promise<HTMLElement> {
     const arrow = change > 0 ? '\u2191' : change < 0 ? '\u2193' : '';
 
     const last7 = data.throughput.slice(-7);
-    const max = Math.max(...last7.map(d => d.completed), 1);
+    const max = Math.max(maxOf(last7.map(d => d.completed)) ?? 1, 1);
     const barRects = last7.map((d, i) => {
       const barH = (d.completed / max) * 20;
       return <rect x={String(i * 14)} y={String(20 - barH)} width="10" height={String(barH)} fill="#3b82f6" rx="1" opacity="0.7"/>;

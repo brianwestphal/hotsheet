@@ -29,6 +29,7 @@ import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { hasGlassboxReviewableChanges } from './glassboxReview.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
+import { installGlobalErrorHandler } from './globalErrorHandler.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
 import { bindOpenFolder } from './openFolder.js';
 import { bindPasteAttachmentListener } from './pasteAttachments.js';
@@ -361,6 +362,9 @@ function initDrawerAndDashboard(): void {
 }
 
 async function init() {
+  // HS-9455 — install FIRST, so a crash during the rest of init is reported rather
+  // than leaving a half-built UI with only a console message.
+  installGlobalErrorHandler();
   try {
     // HS-8522 — wire the typed API layer (`src/api/*`, `apis.*`) to the
     // client `api()` runtime before any typed caller can run. Routes through

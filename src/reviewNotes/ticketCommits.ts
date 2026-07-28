@@ -13,6 +13,7 @@
 // `workers/integrate.ts` (async spawn — load-resilience P1); the pure matching +
 // grouping logic is exported for direct unit tests.
 
+import { pushAll } from '../utils/largeArray.js';
 import { defaultGit, type GitRunner } from '../worktrees.js';
 
 /** One commit as discovered from `git log` (order: as emitted, newest first). */
@@ -184,7 +185,7 @@ export async function discoverTicketCommits(
       const branchEntries = parseLogOutput(await git(repoRoot, ['log', '-n', String(LOG_WINDOW), `--format=%H${FIELD_SEP}%s${FIELD_SEP}%cI`, branchTip]));
       const headShas = new Set(headEntries.map(e => e.sha));
       const branchOnly = matchTicketCommits(branchEntries, ticketNumber).filter(e => !headShas.has(e.sha));
-      groups.push(...groupLinearCommits(branchEntries, branchOnly, opts.integrationBranch ?? undefined));
+      pushAll(groups, groupLinearCommits(branchEntries, branchOnly, opts.integrationBranch ?? undefined));
     }
 
     const result: TicketCommitsResult = { groups, span, dirty: await isDirty(repoRoot, git) };

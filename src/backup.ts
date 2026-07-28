@@ -17,6 +17,7 @@ import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from 
 import { getRecentEventLoopLagMs, instrumentAsync, onServerWake } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
 import { _resetDefaultSchedulerForTests, getBackgroundScheduler, PRIORITY } from './scheduler/backgroundScheduler.js';
+import { maxOf } from './utils/largeArray.js';
 
 export interface BackupInfo {
   tier: '5min' | 'hourly' | 'daily';
@@ -685,7 +686,7 @@ export function findOverdueTiers(backups: BackupInfo[], now: number): Tier[] {
     const inTier = backups.filter(b => b.tier === tier);
     const lastTime = inTier.length === 0
       ? 0
-      : Math.max(...inTier.map(b => new Date(b.createdAt).getTime()));
+      : (maxOf(inTier.map(b => new Date(b.createdAt).getTime())) ?? 0);
     if (now - lastTime >= TIERS[tier].intervalMs) overdue.push(tier);
   }
   return overdue;

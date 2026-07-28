@@ -33,12 +33,46 @@ const PROJECT_SCOPED_CACHE_RULE = {
   message: "Module-level Map/Set in client code: is it PER-PROJECT? If so use `projectScoped(() => new Map(), 'label')` from `src/client/projectScoped.js` — a bare module-level cache leaks the previous project's data across a switch (docs/125; docs/126 §126.2). If it is genuinely global (a constant, a subscriber list, a WeakMap keyed by DOM nodes), add the file to the HS-9417 allowlist in eslint.config.mjs with a one-line reason.",
 };
 
+// HS-9455 (HS-9451 root cause) — `f(...arr)` passes every element as a separate
+// ARGUMENT, and argument count is bounded by the call stack. Past the bound V8
+// throws `RangeError: Maximum call stack size exceeded` — the message runaway
+// recursion gives, which is why the real bug (a telemetry day file spread into
+// `push`) read as recursion and took three reports to place. Measured on Node
+// 22.14/arm64: fine at 100k elements, throws at 125k.
+//
+// Deliberately NARROW. It fires only when the spread argument is a CALL or an
+// `await` — i.e. a value whose size the reader cannot see, which is the shape the
+// actual bug had (`push(...await readOtelJsonlDay(...))`). Spreading a named
+// constant or a plain identifier (`push(...HEADER_LINES)`) is left alone: a blanket
+// rule would flag ~29 sites, nearly all of them bounded, and a rule that gets
+// disabled 29 times just teaches people to disable it. Use `pushAll` / `maxOf` /
+// `minOf` from `src/utils/largeArray.ts`.
+const SPREAD_ARG_LIMIT_RULES = [
+  {
+    selector: "CallExpression[callee.property.name='push'] > SpreadElement > CallExpression",
+    message: "`push(...someCall())` throws RangeError once the array exceeds ~100k elements (HS-9451). Use `pushAll(target, someCall())` from `src/utils/largeArray.ts`.",
+  },
+  {
+    selector: "CallExpression[callee.property.name='push'] > SpreadElement > AwaitExpression",
+    message: "`push(...await f())` throws RangeError once the array exceeds ~100k elements — this is exactly the HS-9451 bug. Use `pushAll(target, await f())` from `src/utils/largeArray.ts`.",
+  },
+  {
+    selector: "CallExpression[callee.object.name='Math'][callee.property.name=/^(max|min)$/] > SpreadElement > CallExpression",
+    message: "`Math.max(...someCall())` throws RangeError once the array exceeds ~100k elements (HS-9451). Use `maxOf` / `minOf` from `src/utils/largeArray.ts` (they return null for an empty input rather than ±Infinity).",
+  },
+  {
+    selector: "CallExpression[callee.object.name='Math'][callee.property.name=/^(max|min)$/] > SpreadElement > AwaitExpression",
+    message: "`Math.max(...await f())` throws RangeError once the array exceeds ~100k elements (HS-9451). Use `maxOf` / `minOf` from `src/utils/largeArray.ts`.",
+  },
+];
+
 // HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
 // say exactly which subset they want, instead of re-declaring the array (the old
 // shape, where each block spelled out its own list, is why adding a rule risked
 // silently re-enabling others for allowlisted files).
 const CORE_RULES = [
   BIND_DISPOSER_RULE,
+  ...SPREAD_ARG_LIMIT_RULES,
   {
     selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
     message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",
@@ -239,7 +273,12 @@ export default tseslint.config(
       // merge and silently get innerHTML re-enabled. Keeping the two lists
       // DISJOINT is what makes the composition above safe. These files pick the
       // rule up as they graduate off the innerHTML list.
-      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE],
+      // HS-9455 — the spread-argument-limit rules DO apply here. This allowlist is
+      // about `innerHTML`, and narrowing to `BIND_DISPOSER_RULE` alone would have
+      // silently switched them off for ~35 client files — the same "adding a rule
+      // doesn't reach the override blocks" trap the HS-9417 note at the top warns
+      // about, in the opposite direction.
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES],
     },
   },
   // HS-8567 — test files are exempt from the wire-/file-boundary
@@ -252,7 +291,9 @@ export default tseslint.config(
   {
     files: ["**/*.test.ts", "**/*.test.tsx"],
     rules: {
-      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE],
+      // HS-9455 — spread-argument-limit rules stay on in tests too: a test is where
+      // you are most likely to build a large fixture array and hit the limit.
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES],
     },
   },
   // HS-9417 (docs/126 §126.6) — allowlist for the module-level Map/Set rule.
