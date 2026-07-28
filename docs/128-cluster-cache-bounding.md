@@ -64,13 +64,58 @@ naturally safe: each cluster's query fully settles before the next opens.
 **The launch/default project is always pinned** (`defaultDbPath`), so the primary interaction
 surface never pays a reopen; every other active project is protected implicitly by LRU recency.
 
+### 128.3.1 The gap the invariant does NOT close — stale handles (HS-9461)
+
+Both mechanisms above protect a cluster for the duration of **one query**. But callers hold a
+handle across **many**: `persistLogsPayload` (an OTLP ingest) resolves `mainDb` once and then
+awaits a dozen writes. In the gaps `inFlight` is 0, and the headroom guard deliberately drops
+the recency guard — so it can close a cluster a live request is midway through using. The next
+query on that now-stale handle threw:
+
+```
+[db] headroom guard evicted 1 idle cluster(s) before opening a new one (external near heap ceiling).
+[otel] daily-seen prompt update failed: Error: PGlite is closed
+```
+
+which reached the user as the app going "disconnected". (§128.4 previously predicted this race
+would "self-heal via the existing stale-`postmaster.pid` recovery" — it does not; that recovery
+is for a *reopen*, and nothing was reopening. Corrected below.)
+
+**The fix is healing, not prevention.** The query proxy catches `PGlite is closed` / `PGlite is
+closing`, asks `connection.ts` to reopen the cluster, and re-runs the call once on the fresh
+instance. Three facts make the retry safe, all verified rather than assumed:
+
+- PGLite raises both messages from `_checkReady`, a **pre-flight** check — the statement
+  provably never ran, so a retry cannot double-write.
+- Nothing in `src/` uses `db.transaction()`, so there is no multi-statement unit a retry
+  could tear in half.
+- The reopener **declines** (and the original error propagates unchanged) during
+  `closeAllDatabases`, and for a cluster closed deliberately by `closeDb`/`closeDbForDir` —
+  only paths marked by `closeClusterForEviction` may heal. Otherwise a late request could
+  resurrect a cluster we meant to be rid of, which is the very leak this doc exists to fix.
+
+The subtle part is that a **live cached instance outranks the evicted-marker**, because the
+marker is consumed by the first reopen while the caller keeps using the same stale handle for
+every remaining write. Checking the marker first heals the first query and fails all the
+rest — half a fix. Pinned by the "keeps working for EVERY later query on the same stale
+handle" and "heals repeatedly" transition tests.
+
+Healing is a safety net, not a substitute for not evicting an in-use cluster: the eviction
+still wasted a close + ~180 MB reopen. Extending the protected window to a whole request is
+tracked as **HS-9462**.
+
 ## 128.4 Accepted trade-off
 
 A switch to a **cold** (evicted) project pays a PGLite reopen (the `getDbForDir` time the
 startup log already measures; it warns above 500 ms). This is the deliberate cost of making
-memory independent of project count. A close/reopen race on the exact cluster being evicted is
-possible but vanishingly rare (evictions target idle clusters aged past 30 s) and self-heals via
-the existing stale-`postmaster.pid` recovery — no data loss.
+memory independent of project count.
+
+**Corrected by HS-9461.** This section used to claim a close/reopen race on the cluster being
+evicted was "vanishingly rare … and self-heals via the existing stale-`postmaster.pid`
+recovery — no data loss." Both halves were wrong. It is not rare: the headroom guard drops the
+recency guard, so it fires on exactly the busy clusters an ingest burst is using. And it did
+not self-heal — the stale-pid recovery runs on *open*, and nothing was reopening; the caller
+just got `PGlite is closed`. See §128.3.1 for what actually happens now.
 
 ## 128.5 Tuning knobs (env, production defaults in parens)
 

@@ -55,6 +55,37 @@ export function isQueryInstrumentationEnabled(): boolean {
 }
 
 /**
+ * HS-9461 — did this query fail because its PGLite instance is already closed?
+ *
+ * PGLite's `_checkReady` throws `PGlite is closed` / `PGlite is closing` as a
+ * PRE-FLIGHT check, before the statement runs. That detail is what makes the
+ * retry below safe: a query that fails this way provably did not partially
+ * apply, so re-running it on a fresh instance cannot double-write.
+ *
+ * Pure: takes only the thrown value. Exported for the unit test.
+ */
+export function isClosedInstanceError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  return message.includes('PGlite is closed') || message.includes('PGlite is closing');
+}
+
+/**
+ * Reopen an evicted cluster so a stale handle can heal. Injected by
+ * `connection.ts` (which owns the `databases` map) to avoid a static
+ * `queryInstrumentation → connection` cycle — connection.ts already imports
+ * this module. Returns the fresh instance, or null when healing is NOT
+ * appropriate (shutdown in progress, or the cluster was closed deliberately
+ * rather than evicted).
+ */
+type ClusterReopener = (dbPath: string) => Promise<PGlite | null>;
+let reopenCluster: ClusterReopener | null = null;
+
+/** Register the reopener. Called once by `connection.ts` at module init. */
+export function setClusterReopener(fn: ClusterReopener | null): void {
+  reopenCluster = fn;
+}
+
+/**
  * Wrap `db` so its heavy methods (a) track in-flight query count for the
  * HS-9420 eviction safety invariant and (b) log to `<dataDir>/freeze.log` when
  * slow. `dbPath` is `<dataDir>/db`, so the dataDir is its parent. The proxy is
@@ -87,7 +118,32 @@ export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
             const result = timingEnabled
               ? instrumentAsync(dataDir, methodLabel(prop, args[0]), run)
               : run();
-            return settle(result);
+            // HS-9461 — heal a query issued against an EVICTED cluster.
+            //
+            // The in-flight guard keeps a cluster alive for the duration of one
+            // query, but callers hold a handle across many: `persistLogsPayload`
+            // (an OTLP ingest) resolves `mainDb` once and then awaits a dozen
+            // writes. In the gaps `inFlight` is 0, and the headroom guard
+            // deliberately ignores the recency guard under memory pressure — so
+            // it can close a cluster a live request is midway through using. The
+            // next call on that now-stale handle threw `PGlite is closed`, which
+            // surfaced to the user as the app going "disconnected".
+            //
+            // Reopen once and re-run on the fresh instance. Safe because the
+            // error comes from a pre-flight check (see `isClosedInstanceError`)
+            // and nothing in `src/` uses `db.transaction()`, so there is no
+            // multi-statement unit a retry could tear. The reopener declines
+            // during shutdown and for deliberately-closed clusters, so this can
+            // never resurrect one we meant to close.
+            return settle(result.catch(async (err: unknown) => {
+              if (!isClosedInstanceError(err) || reopenCluster === null) throw err;
+              const fresh = await reopenCluster(dbPath);
+              if (fresh === null) throw err;
+              const method = (fresh as unknown as Record<string, unknown>)[prop];
+              if (typeof method !== 'function') throw err;
+              console.error(`[db] reopened evicted cluster ${dbPath} to retry a ${prop} from a stale handle.`);
+              return await (method as (...a: unknown[]) => Promise<unknown>).call(fresh, ...args);
+            }));
           } catch (err) {
             // Synchronous throw before a promise existed — release immediately.
             endClusterQuery(dbPath);

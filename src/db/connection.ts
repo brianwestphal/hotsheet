@@ -19,7 +19,7 @@ import {
   snapshotClusters,
 } from './clusterEviction.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
-import { instrumentDbQueries } from './queryInstrumentation.js';
+import { instrumentDbQueries, setClusterReopener } from './queryInstrumentation.js';
 
 /** HS-7893: schema version stamp written into JSON-format backup files.
  *  Bump this manually whenever `initSchema` adds/removes/renames a column,
@@ -348,6 +348,9 @@ export async function closeDb(): Promise<void> {
       databases.delete(defaultDbPath);
       forgetCluster(defaultDbPath);
     }
+    // HS-9461 — a deliberate close is not an eviction: drop any stale
+    // evicted-marker so a late stale handle can't reopen what we just closed.
+    evictedClusterPaths.delete(defaultDbPath);
   }
 }
 
@@ -402,12 +405,75 @@ async function closeClusterForEviction(dbPath: string): Promise<void> {
   if (db === undefined) return;
   databases.delete(dbPath);
   forgetCluster(dbPath);
+  // HS-9461 — remember that THIS close was an eviction, so a stale handle still
+  // held by an in-flight request can heal (see `reopenEvictedCluster`). Only
+  // evictions are marked: a deliberate `closeDb`/`closeDbForDir` must stay
+  // closed, or a late request would resurrect a cluster we meant to be rid of —
+  // exactly the unbounded-growth leak docs/128 exists to prevent.
+  evictedClusterPaths.add(dbPath);
   try {
     await db.close();
   } catch (err) {
     console.error(`[db] eviction close failed for ${dbPath}:`, getErrorMessage(err));
   }
 }
+
+/**
+ * HS-9461 — clusters closed by the EVICTION policy (not by a deliberate close),
+ * and therefore safe to reopen when a stale handle queries them. A path is
+ * removed on reopen or on any deliberate close, so this holds at most the
+ * currently-evicted set (bounded by how many clusters have ever been open).
+ */
+const evictedClusterPaths = new Set<string>();
+
+/** HS-9461 — set once `closeAllDatabases` starts, so the stale-handle healing
+ *  below can't reopen a cluster while the process is shutting down. */
+let closingAllDatabases = false;
+
+/**
+ * HS-9461 — reopen a cluster that eviction closed out from under a live request.
+ *
+ * The eviction invariant protects a cluster for the duration of a single query,
+ * but a request holds its handle across many (an OTLP ingest resolves `mainDb`
+ * once, then awaits a dozen writes). In the gaps `inFlight` is 0, and the
+ * headroom guard deliberately ignores the recency guard under memory pressure —
+ * so it can close a cluster mid-request. The next query on the stale handle
+ * threw `PGlite is closed`, which reached the user as the app going
+ * "disconnected".
+ *
+ * Declines (returns null, so the original error propagates unchanged) when:
+ *   - shutdown is in progress — resurrecting a cluster there would fight
+ *     `closeAllDatabases` and re-dirty a cluster it just CHECKPOINTed;
+ *   - the path was never evicted — a deliberate `closeDb`/`closeDbForDir` must
+ *     stay closed.
+ *
+ * Note the tension worth naming: the headroom guard evicts because `external`
+ * is near the heap ceiling, and reopening re-allocates that ~180 MB WASM heap.
+ * That is the right trade anyway — the guard picked a cluster that turned out
+ * to still be in use, and failing the user's request to save memory is the
+ * behavior this ticket was filed about. The guard still had its effect on every
+ * cluster it evicted that nobody came back for.
+ */
+async function reopenEvictedCluster(dbPath: string): Promise<PGlite | null> {
+  if (closingAllDatabases) return null;
+  // A LIVE cached instance wins over the marker, and this check must come FIRST.
+  // The marker is consumed by the reopen, but the caller keeps using the same
+  // stale handle: an OTLP ingest resolves `mainDb` once and then does a dozen
+  // writes. Checking the marker first meant the first stale write healed and
+  // every later one failed, because by then the marker was gone even though the
+  // cluster was open again — i.e. the reported bug would only have been half
+  // fixed. (Caught by the "heals repeatedly" transition test.)
+  const live = databases.get(dbPath);
+  if (live !== undefined) {
+    evictedClusterPaths.delete(dbPath);
+    return live;
+  }
+  if (!evictedClusterPaths.has(dbPath)) return null;
+  evictedClusterPaths.delete(dbPath);
+  return await openAndCacheDb(dbPath);
+}
+
+setClusterReopener(reopenEvictedCluster);
 
 /** Snapshot the live clusters, ask the planner what to close for `mode`, and
  *  close them serially. Returns the number actually evicted. */
@@ -488,6 +554,8 @@ export async function closeDbForDir(dataDir: string): Promise<void> {
     databases.delete(dbDir);
     forgetCluster(dbDir);
   }
+  // HS-9461 — deliberate close, see `closeDb`.
+  evictedClusterPaths.delete(dbDir);
 }
 
 /**
@@ -507,6 +575,14 @@ export async function closeDbForDir(dataDir: string): Promise<void> {
  * being flushed to physical disk. The wrap closes that durability gap.
  */
 export async function closeAllDatabases(): Promise<void> {
+  // HS-9461 — block stale-handle healing for the duration. A reopen here would
+  // fight this loop and re-dirty a cluster we just closed (and CHECKPOINTed).
+  // Clearing the evicted set closes the window AFTER we return too: healing
+  // additionally requires a live evicted-marker, and only a fresh eviction (which
+  // needs a fresh open) can set one again. The flag itself is reset so a test
+  // that closes everything in cleanup doesn't disable healing for the next case.
+  closingAllDatabases = true;
+  evictedClusterPaths.clear();
   const entries = Array.from(databases.entries());
   databases.clear();
   // Lazy-import the fsync helper so test files that mock the module don't
@@ -530,6 +606,7 @@ export async function closeAllDatabases(): Promise<void> {
       console.error(`[db] fsync failed for ${dbPath}:`, err);
     }
   }
+  closingAllDatabases = false;
 }
 
 export function adoptDb(instance: PGlite): void {

@@ -151,3 +151,138 @@ describe('bounded cluster cache — connection.ts integration (HS-9420)', () => 
     expect(clusterLastAccess(dbPathOf(p1))).toBeGreaterThanOrEqual(before);
   });
 });
+
+/**
+ * HS-9461 — the gap the cap/idle/in-flight rules above do NOT cover: a request
+ * holds its handle across MANY queries, and between them `inFlight` is 0. The
+ * headroom guard deliberately ignores the recency guard under memory pressure,
+ * so it can close a cluster a live request is midway through using; the next
+ * query on that stale handle threw `PGlite is closed` and the app went
+ * "disconnected". These walk the real transitions — evicted vs deliberately
+ * closed vs shutting down — because the whole point of the fix is that only the
+ * FIRST of the three may heal.
+ */
+describe('stale-handle healing vs deliberate close (HS-9461)', () => {
+  let anchor: string;
+  const saved: Record<string, string | undefined> = {};
+  const created: string[] = [];
+  const tempDir = (): string => { const d = createTempDir(); created.push(d); return d; };
+
+  beforeEach(async () => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    process.env.HOTSHEET_MAX_OPEN_CLUSTERS = '2';
+    process.env.HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS = '0';
+    process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = '1';
+    anchor = tempDir();
+    setDataDir(anchor);
+    await getDbForDir(anchor);
+  });
+
+  afterEach(async () => {
+    await closeAllDatabases();
+    resetEvictionTrackingForTests();
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+    created.length = 0;
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) Reflect.deleteProperty(process.env, k);
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('a query on a handle whose cluster was EVICTED transparently heals', async () => {
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE heal_probe (id int)');
+    await stale.query('INSERT INTO heal_probe VALUES (1)');
+
+    // Evict it out from under the holder — exactly what the headroom guard did.
+    await getDbForDir(tempDir()); // over cap → p1 is the LRU non-pinned
+    expect(isDbOpenForDir(p1)).toBe(false);
+
+    // The holder still has the OLD handle. Before HS-9461 this threw
+    // "PGlite is closed"; now it reopens and the row is still there (the data
+    // was on disk all along — only the in-process instance went away).
+    const res = await stale.query<{ id: number }>('SELECT id FROM heal_probe');
+    expect(res.rows).toEqual([{ id: 1 }]);
+    expect(isDbOpenForDir(p1)).toBe(true); // reopened + re-cached
+  });
+
+  it('does NOT heal a handle whose cluster was closed deliberately', async () => {
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE t (id int)');
+
+    await closeDbForDir(p1); // deliberate — a closed project, not memory pressure
+    expect(isDbOpenForDir(p1)).toBe(false);
+
+    // Healing here would resurrect a cluster we meant to be rid of — the
+    // unbounded-growth leak docs/128 exists to prevent.
+    await expect(stale.query('SELECT 1')).rejects.toThrow(/PGlite is clos/);
+    expect(isDbOpenForDir(p1)).toBe(false);
+  });
+
+  it('a deliberate close AFTER an eviction still does not heal', async () => {
+    // The evicted-marker must not outlive the eviction: evict p1, then close it
+    // deliberately (a no-op close on an already-evicted path), and the stale
+    // handle must stay dead.
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE t (id int)');
+    await getDbForDir(tempDir()); // evict p1
+    expect(isDbOpenForDir(p1)).toBe(false);
+
+    await closeDbForDir(p1); // clears the evicted-marker
+
+    await expect(stale.query('SELECT 1')).rejects.toThrow(/PGlite is clos/);
+    expect(isDbOpenForDir(p1)).toBe(false);
+  });
+
+  it('does not heal after closeAllDatabases (shutdown)', async () => {
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE t (id int)');
+    await getDbForDir(tempDir()); // evict p1 → marker set
+
+    await closeAllDatabases(); // shutdown clears the marker set
+
+    await expect(stale.query('SELECT 1')).rejects.toThrow(/PGlite is clos/);
+    expect(isDbOpenForDir(p1)).toBe(false);
+  });
+
+  it('keeps working for EVERY later query on the same stale handle', async () => {
+    // The production shape: an OTLP ingest resolves `mainDb` ONCE and then does a
+    // dozen writes. The eviction lands between two of them, so the handle is
+    // stale for all the rest — not just the one that noticed. An earlier draft
+    // healed the first and failed the second (the reopen consumes the
+    // evicted-marker), which would have left the reported bug half fixed.
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE t (id int)');
+
+    await getDbForDir(tempDir()); // evict p1 out from under the holder
+    expect(isDbOpenForDir(p1)).toBe(false);
+
+    for (let i = 1; i <= 5; i += 1) await stale.query('INSERT INTO t VALUES ($1)', [i]);
+    const res = await stale.query<{ c: number }>('SELECT count(*)::int AS c FROM t');
+    expect(res.rows[0].c).toBe(5);
+  });
+
+  it('heals repeatedly — evict, heal, evict again, heal again', async () => {
+    // The marker is consumed on reopen, so a SECOND eviction has to set it
+    // again. A one-shot heal would pass the first assertion and fail here.
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE t (id int)');
+
+    await getDbForDir(tempDir());                       // evict #1
+    await stale.query('INSERT INTO t VALUES (1)');      // heal #1
+    expect(isDbOpenForDir(p1)).toBe(true);
+
+    await getDbForDir(tempDir());                       // evict #2
+    expect(isDbOpenForDir(p1)).toBe(false);
+    await stale.query('INSERT INTO t VALUES (2)');      // heal #2
+
+    const res = await stale.query<{ c: number }>('SELECT count(*)::int AS c FROM t');
+    expect(res.rows[0].c).toBe(2);
+  });
+});
