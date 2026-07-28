@@ -31,7 +31,14 @@ const HOTSHEET_SUFFIX = /[/\\]\.hotsheet[/\\]?$/;
  * unchanged when there's no separator to split on, matching the previous
  * `?? absDataDir` fallback.
  */
-export function defaultProjectName(dataDir: string): string {
+export function defaultProjectName(dataDir: string | undefined): string {
+  // Tolerates undefined on purpose. `AppEnv` types the Hono `dataDir` var as
+  // `string`, but it is only set by middleware — a page render that runs without
+  // it (as the `pages.test.tsx` shell tests do) hands us undefined despite the
+  // type, and an unguarded `.replace` there took down the WHOLE page with a 500
+  // just to compute a placeholder. A missing name is worth an empty placeholder,
+  // never a broken render.
+  if (typeof dataDir !== 'string' || dataDir === '') return '';
   const projectDir = dataDir.replace(HOTSHEET_SUFFIX, '');
   // Ignore any trailing separator so `/a/b/` yields `b`, not ''.
   const trimmed = projectDir.replace(/[/\\]+$/, '');

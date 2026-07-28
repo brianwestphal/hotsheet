@@ -48,6 +48,14 @@ describe('defaultProjectName (HS-9459)', () => {
     expect(defaultProjectName('/Users/me/проект')).toBe('проект');
   });
 
+  it('tolerates a missing dataDir instead of throwing', () => {
+    // `AppEnv` types the Hono `dataDir` var as `string`, but it is only set by
+    // middleware — a page render without it gets undefined despite the type, and
+    // an unguarded `.replace` there 500'd the entire page to compute a placeholder.
+    expect(defaultProjectName(undefined)).toBe('');
+    expect(() => defaultProjectName(undefined)).not.toThrow();
+  });
+
   it('falls back to the input when there is nothing to split', () => {
     // Matches the previous `?? absDataDir` fallback rather than returning ''.
     expect(defaultProjectName('hotsheet')).toBe('hotsheet');
