@@ -85,7 +85,49 @@ export function isRecoverableOpenError(err: unknown): boolean {
   // aside is non-destructive, so treating an init failure as recoverable is
   // safe even in the rare non-corruption init failure.
   if (message.includes('failed to initialize properly')) return true;
+  // HS-9458 — WAL / storage-level corruption (see `isClusterStorageFailure`).
+  if (isClusterStorageFailure(err)) return true;
   return false;
+}
+
+/**
+ * HS-9458 — is this the "the cluster's storage is inconsistent" class?
+ *
+ * The reported failure was an endless 500 on every request, from a project cluster
+ * whose data pages had been written ahead of the WAL:
+ *
+ *     xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0
+ *     code: 'XX000', file: 'xlog.c', routine: 'XLogFlush',
+ *     where: 'writing block 5 of relation base/1/461145'
+ *
+ * That is the classic signature of a cluster killed mid-write (plausibly the docs/128
+ * OOM crash loop): Postgres is asked to flush WAL up to an LSN that was never durably
+ * written, so it refuses every subsequent write. It is unrecoverable in place — the
+ * cluster has to be replaced from a snapshot/backup, which is exactly what
+ * `recoverFromOpenFailure` does.
+ *
+ * Before this, the class matched NONE of the patterns above, so recovery never ran:
+ * the error propagated out of `getDb` untouched and every request 500'd, forever,
+ * across restarts. The user had no signal beyond the raw stack trace — not even the
+ * §73 restore prompt, which is gated on the recovery marker this unblocks.
+ *
+ * Matched by message substring, like the rest of the classifier, because the message
+ * is what survives PGLite's error wrapping and what gets logged. Deliberately narrow:
+ * `XX000` alone is Postgres's generic internal-error code and would over-match, so we
+ * key on the specific phrases instead. Only the `xlog flush request` variant is
+ * MEASURED (from the report); the two page-level phrases are long-standing Postgres
+ * corruption messages in the same "storage is bad, replace the cluster" family and
+ * never appear on a healthy cluster. Over-matching is low-risk anyway — recovery
+ * preserves the old `db/` aside rather than deleting it.
+ *
+ * Pure: takes only the thrown value, returns a boolean. Exported for the unit test.
+ */
+export function isClusterStorageFailure(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  if (message === '') return false;
+  return message.includes('xlog flush request')
+    || message.includes('invalid page in block')
+    || message.includes('could not read block');
 }
 
 /** HS-7899: written into a marker file when `recoverFromOpenFailure`
@@ -979,6 +1021,40 @@ function tryRemoveStalePostmasterPid(dbPath: string): boolean {
   }
 }
 
+/**
+ * HS-9458 — the `.catch()` for one of `initSchema`'s idempotent migration steps.
+ *
+ * These steps re-run on every open, so a step that has already been applied throws a
+ * benign "already exists" / "does not exist" that must be swallowed. The bug: the
+ * filter swallowed EVERYTHING else too, logging it as a routine `Migration error (…)`
+ * and continuing as though the step had worked. When the cluster's storage was broken,
+ * that turned the first two symptoms into noise —
+ *
+ *     Migration error (TIMESTAMPTZ): xlog flush request 0/3BA18488 is not satisfied …
+ *     Migration error (attachments.draft_id): xlog flush request 0/3BA18690 is not …
+ *
+ * — and only the next step that happened to lack a `.catch()` threw for real. So the
+ * cluster was known to be unwritable two steps earlier, and we kept going anyway.
+ *
+ * Now a storage failure is rethrown. It propagates out of `initSchema` to
+ * `openAndCacheDb`'s caller, which routes it to `recoverFromOpenFailure` — restore
+ * from snapshot/backup, write the recovery marker, prompt the user — instead of
+ * leaving the server to 500 on every request.
+ *
+ * `benign` is the per-step substring list, kept per-site because it genuinely differs:
+ * the DDL steps ignore "already exists", the DROP/ALTER steps ignore "does not exist".
+ *
+ * Exported for the unit test.
+ */
+export function ignoreBenignMigrationError(label: string, benign: readonly string[] = ['already exists']): (e: unknown) => void {
+  return (e: unknown) => {
+    if (isClusterStorageFailure(e)) throw e;
+    if (e instanceof Error && !benign.some((b) => e.message.includes(b))) {
+      console.error(`Migration error (${label}):`, e.message);
+    }
+  };
+}
+
 async function initSchema(db: PGlite): Promise<void> {
   await db.exec(`
     CREATE SEQUENCE IF NOT EXISTS ticket_seq START 1;
@@ -1048,7 +1124,7 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ALTER COLUMN deleted_at TYPE TIMESTAMPTZ;
     ALTER TABLE attachments ALTER COLUMN created_at TYPE TIMESTAMPTZ;
     ALTER TABLE command_log ALTER COLUMN created_at TYPE TIMESTAMPTZ;
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists') && !e.message.includes('already')) console.error('Migration error (TIMESTAMPTZ):', e.message); });
+  `).catch(ignoreBenignMigrationError('TIMESTAMPTZ', ['already']));
 
   // Migrations for existing databases
   await db.exec(`
@@ -1056,7 +1132,7 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ;
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (columns):', e.message); });
+  `).catch(ignoreBenignMigrationError('columns'));
 
   // HS-8862 — distributed-execution claim/lease columns (docs/90 §90.2.1).
   // Orthogonal to status/up_next: NULL claimed_by ⇒ unclaimed ⇒ behavior
@@ -1083,7 +1159,7 @@ async function initSchema(db: PGlite): Promise<void> {
     -- gate; drives the dark-gray "blocked" row border. Nullable, no default (usually absent).
     ALTER TABLE tickets ADD COLUMN IF NOT EXISTS blocked_reason TEXT;
     CREATE INDEX IF NOT EXISTS idx_tickets_claimed_by ON tickets(claimed_by);
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (claim columns):', e.message); });
+  `).catch(ignoreBenignMigrationError('claim columns'));
 
   // HS-8865 — flat `blocked_by` dependency gate (docs/90 §90.6). A peer edge: a
   // ticket is blocked while any ticket it `blocks_on` is not completed/verified.
@@ -1098,7 +1174,7 @@ async function initSchema(db: PGlite): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_blocked_by_ticket ON ticket_blocked_by(ticket_id);
     CREATE INDEX IF NOT EXISTS idx_blocked_by_blocker ON ticket_blocked_by(blocks_on_ticket_id);
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (ticket_blocked_by):', e.message); });
+  `).catch(ignoreBenignMigrationError('ticket_blocked_by'));
 
   // HS-8428 — draft-scoped attachments. A nullable `draft_id` lets the
   // server distinguish attachments that belong to an in-flight feedback
@@ -1113,7 +1189,7 @@ async function initSchema(db: PGlite): Promise<void> {
   await db.exec(`
     ALTER TABLE attachments ADD COLUMN IF NOT EXISTS draft_id TEXT;
     CREATE INDEX IF NOT EXISTS idx_attachments_draft ON attachments(draft_id);
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('already exists')) console.error('Migration error (attachments.draft_id):', e.message); });
+  `).catch(ignoreBenignMigrationError('attachments.draft_id'));
 
   // Plugin sync tables
   await db.exec(`
@@ -1408,7 +1484,7 @@ async function initSchema(db: PGlite): Promise<void> {
   // only `announcer_usage` still needs this.
   await db.exec(`
     ALTER TABLE announcer_usage ALTER COLUMN project_secret DROP NOT NULL;
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('does not exist')) console.error('Migration error (telemetry project_secret nullable):', e.message); });
+  `).catch(ignoreBenignMigrationError('telemetry project_secret nullable', ['does not exist']));
 
   // HS-9259 — drop the now-vestigial rollup columns on EXISTING dbs (removed from
   // the CREATE above; `IF EXISTS` makes it a no-op on fresh dbs). Superseded by the
@@ -1419,7 +1495,7 @@ async function initSchema(db: PGlite): Promise<void> {
     ALTER TABLE otel_rollup_daily DROP COLUMN IF EXISTS prompt_count;
     ALTER TABLE otel_rollup_daily DROP COLUMN IF EXISTS session_count;
     ALTER TABLE otel_rollup_ticket DROP COLUMN IF EXISTS duration_seconds;
-  `).catch((e: unknown) => { if (e instanceof Error && !e.message.includes('does not exist')) console.error('Migration error (drop vestigial rollup columns):', e.message); });
+  `).catch(ignoreBenignMigrationError('drop vestigial rollup columns', ['does not exist']));
 
   // Migration: ensure all existing notes have stable persisted IDs
   await migrateNoteIds(db);

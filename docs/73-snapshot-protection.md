@@ -159,6 +159,46 @@ A pass means the live cluster is trusted and used directly (the common path — 
 no snapshot read). The probe deliberately does **not** validate every table; the goal is
 to catch the corruption class we actually see, not to run a full `amcheck`.
 
+### 73.5.1 Storage-level (WAL) corruption (HS-9458)
+
+A third corruption class, distinct from both the WASM open failure and the catalog
+inconsistency above: the cluster opens fine and the catalog is intact, but its data pages
+were written **ahead of the WAL**, so Postgres refuses every subsequent write:
+
+```
+xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0
+code: 'XX000', file: 'xlog.c', routine: 'XLogFlush',
+where: 'writing block 5 of relation base/1/461145'
+```
+
+That's the signature of a cluster killed mid-write — plausibly the
+[docs/128](128-cluster-cache-bounding.md) OOM crash loop, which this doc's recovery path
+is the backstop for. It is not repairable in place; the cluster has to be replaced from a
+snapshot/backup, which is exactly what §73.4 does.
+
+Two things had to change for it to get there, and both were silent failures:
+
+1. **`isRecoverableOpenError` didn't match it.** The class hit none of the four patterns
+   in §73.4, so recovery never ran — the error propagated out of `getDb` untouched and
+   the server returned a raw **500 on every request, across restarts**. The user got a
+   stack trace and no restore prompt, because the prompt is gated on the recovery marker
+   that only the recovery path writes. `isClusterStorageFailure` (`src/db/connection.ts`)
+   now recognizes it and feeds `isRecoverableOpenError`. It matches by message substring
+   (`xlog flush request`, plus the page-level `invalid page in block` / `could not read
+   block` in the same family) and deliberately **not** on `XX000` alone — that's
+   Postgres's generic internal-error code and would preserve-aside healthy clusters.
+2. **`initSchema` swallowed it, twice, before anything threw.** Each idempotent migration
+   step has a `.catch()` that ignores the benign "already exists" of an
+   already-applied step — but the filter swallowed *everything* it didn't recognize,
+   logging it as a routine `Migration error (…)` and carrying on. So the first two
+   symptoms of an unwritable cluster were reduced to log noise, and only the next step
+   that happened to lack a `.catch()` failed for real. All seven sites now route through
+   `ignoreBenignMigrationError`, which rethrows a storage failure so it reaches the
+   recovery path; a unit test pins that no eighth hand-rolled swallow can appear.
+
+Note the scope: this fires at **open**. A cluster that develops the fault while the
+server is already running still 500s until the next restart (see §73.8).
+
 ## 73.6 Settings
 
 - **`db_snapshot_protection: boolean`** (per-project file-setting, **default `true`** —
@@ -215,6 +255,11 @@ first snapshot both are null and the line says so rather than rendering a bogus
    snapshot does NOT serialize (it dumps only the `<dataDir>/db` cluster), so the project
    snapshot drops to a few MB. The threadpool-async / debounce / dirty-gate mitigations
    still apply to whatever remains in `db/`.
+4. **Recovery is open-time only.** Every path in §73.4 hangs off `getDbByPath`, so a
+   cluster that goes bad *while the server is running* — the §73.5.1 WAL class can start
+   mid-session — keeps failing every query until someone restarts. There is no live
+   re-probe and no in-flight remediation. Tracked by HS-9460 (detect + recover from a
+   mid-session storage failure, not just at open).
 
 ## 73.9 Testing strategy
 

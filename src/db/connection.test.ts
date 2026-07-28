@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isInsideHotSheetTerminal } from '../test-helpers.js';
-import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, isRecoverableOpenError, readRecoveryMarker, setDataDir } from './connection.js';
+import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, ignoreBenignMigrationError, isClusterStorageFailure, isRecoverableOpenError, readRecoveryMarker, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
 
 let dataDir: string;
@@ -199,6 +199,19 @@ describe('isRecoverableOpenError (HS-8426)', () => {
     expect(isRecoverableOpenError(new Error('pg_attribute catalog is missing 3 attribute(s) for relation OID 24578'))).toBe(true);
   });
 
+  it('matches the WAL-flush storage corruption from the HS-9458 report', () => {
+    // Verbatim from the reported failure: data pages written ahead of the WAL,
+    // so every write after it fails. Before HS-9458 this matched nothing here,
+    // so recovery never ran and the server 500'd on every request, forever.
+    expect(isRecoverableOpenError(new Error(
+      'xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0',
+    ))).toBe(true);
+    // Same family, different LSNs (they vary per cluster and per failure).
+    expect(isRecoverableOpenError(new Error(
+      'xlog flush request 0/1A2B3C4D is not satisfied --- flushed only to 0/1A2B0000',
+    ))).toBe(true);
+  });
+
   it('does NOT match benign FS errors that should propagate', () => {
     const enospc = new Error('ENOSPC: no space left on device');
     expect(isRecoverableOpenError(enospc)).toBe(false);
@@ -221,6 +234,108 @@ describe('isRecoverableOpenError (HS-8426)', () => {
     expect(isRecoverableOpenError(42)).toBe(false);
     // A plain string with the catalog phrase still matches via String(err).
     expect(isRecoverableOpenError('pg_attribute catalog is missing 1 attribute(s)')).toBe(true);
+  });
+});
+
+/** HS-9458: the storage-corruption class + the migration `.catch()` that used to
+ *  swallow it. Both pure — no filesystem / DB. */
+describe('isClusterStorageFailure (HS-9458)', () => {
+  it('matches the reported WAL-flush failure', () => {
+    expect(isClusterStorageFailure(new Error(
+      'xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0',
+    ))).toBe(true);
+  });
+
+  it('matches the page-level corruption phrases in the same family', () => {
+    expect(isClusterStorageFailure(new Error('invalid page in block 5 of relation base/1/461145'))).toBe(true);
+    expect(isClusterStorageFailure(new Error('could not read block 3 in file "base/1/461145"'))).toBe(true);
+  });
+
+  it('does NOT match on the XX000 code alone', () => {
+    // XX000 is Postgres's generic internal_error — keying on it would pull in
+    // unrelated failures and preserve-aside a healthy cluster.
+    const generic = Object.assign(new Error('some internal error'), { code: 'XX000' });
+    expect(isClusterStorageFailure(generic)).toBe(false);
+  });
+
+  it('does NOT match benign errors', () => {
+    expect(isClusterStorageFailure(new Error('relation "tickets" already exists'))).toBe(false);
+    expect(isClusterStorageFailure(new Error('ENOSPC: no space left on device'))).toBe(false);
+    expect(isClusterStorageFailure(null)).toBe(false);
+    expect(isClusterStorageFailure(undefined)).toBe(false);
+    expect(isClusterStorageFailure(new Error(''))).toBe(false);
+  });
+});
+
+describe('ignoreBenignMigrationError (HS-9458)', () => {
+  let logged: string[];
+  let restoreConsole: () => void;
+
+  beforeEach(() => {
+    logged = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map((a) => String(a)).join(' '));
+    });
+    restoreConsole = () => { spy.mockRestore(); };
+  });
+  afterEach(() => { restoreConsole(); });
+
+  it('RETHROWS a storage failure instead of swallowing it', () => {
+    // The core of the bug: the old filter logged this as a routine
+    // `Migration error (…)` and let init continue on an unwritable cluster, so
+    // the failure never reached `recoverFromOpenFailure`.
+    const wal = new Error('xlog flush request 0/3BA18488 is not satisfied --- flushed only to 0/3BA175E0');
+    expect(() => { ignoreBenignMigrationError('TIMESTAMPTZ', ['already'])(wal); }).toThrow(wal);
+    expect(logged).toEqual([]);
+  });
+
+  it('rethrows a storage failure from every step, whatever its benign list', () => {
+    const wal = new Error('xlog flush request 0/3BA18690 is not satisfied --- flushed only to 0/3BA176E8');
+    // Both real shapes in initSchema: the "already exists" DDL steps and the
+    // "does not exist" DROP/ALTER steps. Two of these swallowed the reported
+    // failure before the first un-caught step finally threw.
+    expect(() => { ignoreBenignMigrationError('attachments.draft_id')(wal); }).toThrow(wal);
+    expect(() => { ignoreBenignMigrationError('drop vestigial rollup columns', ['does not exist'])(wal); }).toThrow(wal);
+  });
+
+  it('still swallows the benign already-applied errors silently', () => {
+    const handler = ignoreBenignMigrationError('ticket_blocked_by');
+    expect(() => { handler(new Error('relation "ticket_blocked_by" already exists')); }).not.toThrow();
+    expect(logged).toEqual([]);
+  });
+
+  it('honors the per-step benign list', () => {
+    // The DROP/ALTER steps ignore "does not exist", not "already exists".
+    const drop = ignoreBenignMigrationError('drop vestigial rollup columns', ['does not exist']);
+    expect(() => { drop(new Error('column "foo" of relation "bar" does not exist')); }).not.toThrow();
+    expect(logged).toEqual([]);
+    // ...and the TIMESTAMPTZ step's broader 'already' covers more than 'already exists'.
+    const tz = ignoreBenignMigrationError('TIMESTAMPTZ', ['already']);
+    expect(() => { tz(new Error('column "created_at" is already of type timestamptz')); }).not.toThrow();
+    expect(logged).toEqual([]);
+  });
+
+  it('is the ONLY place initSchema swallows a migration error', () => {
+    // The defect was a hand-rolled `.catch()` repeated at seven migration steps,
+    // each swallowing everything it didn't recognize. They now all route through
+    // the helper; this pins that, because the failure mode of adding an eighth
+    // hand-rolled one is invisible until a cluster is already corrupt.
+    const source = readFileSync(new URL('./connection.ts', import.meta.url), 'utf8');
+    const handRolled = source.split('\n').filter((l) =>
+      l.includes('.catch(') && l.includes('console.error') && !l.includes('ignoreBenignMigrationError'));
+    expect(handRolled).toEqual([]);
+    // Every migration `.catch()` uses the helper.
+    const catches = source.split('\n').filter((l) => /\)\.catch\(/.test(l) && l.includes('Migration'));
+    expect(catches.length).toBeGreaterThan(0);
+    for (const line of catches) expect(line).toContain('ignoreBenignMigrationError');
+  });
+
+  it('logs (but does not throw on) an unrecognized non-fatal error', () => {
+    // Unchanged behavior for the middle ground: a migration step can fail for a
+    // reason that is neither benign nor fatal, and init should carry on.
+    const handler = ignoreBenignMigrationError('columns');
+    expect(() => { handler(new Error('syntax error at or near "ALTER"')); }).not.toThrow();
+    expect(logged).toEqual(['Migration error (columns): syntax error at or near "ALTER"']);
   });
 });
 
