@@ -430,6 +430,50 @@ GC cannot reclaim what is still reachable. HS-9461 deliberately made stale handl
 nothing discourages code from keeping one, and any long-lived holder silently costs ~190 MB that
 HS-9479 cannot recover. Auditing for those is **HS-9483**.
 
+### 128.5.6 Forcing the collection (HS-9479) — the fix the rest of this doc depends on
+
+Every layer above assumes that closing a cluster returns its memory. §128.5.4/§128.5.5 showed
+that it does not, because a WASM heap lives in `external` and `external` creates no heap
+pressure, so V8 has no reason to collect. `db/forceGc.ts` supplies the missing collection after
+any eviction pass that closed something.
+
+**No launcher flag.** `--expose-gc` would need adding to the npm bin, the Tauri sidecar spawn
+and the dev command separately, and would be easy to lose. `v8.setFlagsFromString('--expose-gc')`
+plus `vm.runInNewContext('gc')` obtains the same function at runtime — one code path, every
+launcher, verified to actually collect.
+
+**Two passes, and this is load-bearing.** Measured with ~200 MB of off-heap buffers dropped
+immediately beforehand:
+
+```
+1 call  -> 194 MB -> 194 MB   (freed NOTHING)
+2 calls -> 202 MB ->  10 MB   (freed everything, 10 ms)
+3 calls ->            10 MB   (no better, slower)
+```
+
+The first collection makes the wrappers unreachable and queues their external-memory finalizers;
+the second runs them. **Writing the obvious single `gc()` ships a fix that does nothing at all,
+and looks correct in review.** `gc({ type: 'major', execution: 'sync' })` is accepted on this
+Node and is *not* a substitute — measured, it freed nothing in one call.
+
+**Rate-limited** (`HOTSHEET_FORCED_GC_MIN_INTERVAL_MS`, default 30 s) because a forced major GC
+is stop-the-world, and this project treats a 6.7 s `dumpDataDir` block as a serious defect
+(HS-9239). The pause is timed into `freeze.log` as `gc.forced`, so if it ever becomes expensive
+it shows up where every other blocking operation does.
+
+**End-to-end, through the real eviction path:**
+
+```
+baseline                      428 MB
+opened 4 clusters            1193 MB
+after a pressure eviction     194 MB    <- before HS-9479 this stayed at ~1197 MB
+```
+
+`forceGcNow` returns `collected | throttled | unavailable` rather than nothing, because "did not
+run" and "ran and freed nothing" are the two states this area keeps conflating. If no collector
+can be obtained, `connection.ts` says so once, loudly — a build where eviction cannot reclaim is
+one that will climb until the watchdog restarts it, and that should not be silent.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →

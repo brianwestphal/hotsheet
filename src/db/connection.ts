@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { type PGlite, type PGliteOptions } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { z } from 'zod';
 
 import { globalHotsheetDir } from '../global-dir.js';
@@ -26,6 +26,7 @@ import {
   resolveEvictionConfig,
   snapshotClusters,
 } from './clusterEviction.js';
+import { forceGcNow } from './forceGc.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
 import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
 import { isClusterStorageFailure } from './storageFailure.js';
@@ -620,7 +621,33 @@ async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<num
     targetEvictions,
   });
   for (const dbPath of victims) await closeClusterForEviction(dbPath, mode);
+  // HS-9479 — closing drops the last reference but frees NOTHING until V8
+  // collects, and a WASM heap in `external` creates no heap pressure to make it.
+  // Without this the eviction above is theatre: `external` stays put, the headroom
+  // guard sees it and evicts harder, and each reopen adds another ~180 MB
+  // (docs/128 §128.5.4). Rate-limited inside `forceGcNow` — a forced major GC is
+  // stop-the-world, so it must not run once per closed cluster.
+  if (victims.length > 0) {
+    const result = forceGcNow(dirname(victims[0]));
+    if (result === 'unavailable') {
+      // Worth saying once: without a collector, eviction cannot reclaim anything
+      // and the process will climb until the watchdog kills it.
+      warnForcedGcUnavailable();
+    }
+  }
   return victims.length;
+}
+
+/** HS-9479 — log the no-collector case ONCE; it would otherwise repeat per sweep. */
+let warnedNoGc = false;
+function warnForcedGcUnavailable(): void {
+  if (warnedNoGc) return;
+  warnedNoGc = true;
+  console.error(
+    '[db] no forced-GC available: evicting a PGLite cluster will not reclaim its WASM heap '
+    + '(external memory creates no GC pressure), so memory may climb until the watchdog restarts '
+    + 'the server. See docs/128 §128.5.6.',
+  );
 }
 
 /** After opening a new cluster, evict the LRU cluster(s) if we're over the cap. */
@@ -650,7 +677,7 @@ async function evictForHeadroom(): Promise<void> {
   if (count === 0) return;
   const freed = await runEviction('headroom', count);
   if (freed > 0) {
-    console.error(`[db] headroom guard evicted ${String(freed)} idle cluster(s) before opening a new one (external near heap ceiling).`);
+    console.error(`[db] headroom guard evicted ${String(freed)} idle cluster(s) (external near heap ceiling).`);
   }
 }
 

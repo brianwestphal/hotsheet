@@ -548,6 +548,24 @@ describe('pressure-driven eviction runs off the sweep, not just on open (HS-9477
     }
   });
 
+  it('RECLAIMS the memory — eviction without a collection frees nothing (HS-9479)', async () => {
+    // The behavior the whole memory workstream turned out to hinge on. Before
+    // HS-9479 this exact sequence left `external` untouched: closing a cluster
+    // drops the reference but a WASM heap creates no heap pressure, so V8 never
+    // collected and the guard just evicted harder (docs/128 §128.5.4).
+    process.env.HOTSHEET_FORCED_GC_MIN_INTERVAL_MS = '0'; // no throttle in-test
+    const dirs = [tempDir(), tempDir(), tempDir()];
+    for (const d of dirs) await getDbForDir(d);
+    const opened = process.memoryUsage().external;
+
+    process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = String(1024 ** 4);
+    await evictForHeadroomForTests();
+
+    expect(dirs.filter((d) => isDbOpenForDir(d)).length).toBe(0);
+    const after = process.memoryUsage().external;
+    expect(after, `external should fall after eviction (was ${String(opened)})`).toBeLessThan(opened);
+  });
+
   it('does nothing when there is comfortable headroom', async () => {
     // The guard must stay silent in the normal case — an always-on evictor would
     // trade one failure (dying) for another (constant reopen churn).
