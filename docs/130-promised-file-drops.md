@@ -1,9 +1,13 @@
 # 130. Promised-file drops (unsaved macOS screen captures)
 
-HS-9466. Status: **detection shipped (HS-9465); fulfillment not built, and gated on a
-measurement that has not been taken.** This doc exists to record why a drag that visibly
-works everywhere else fails here, what was done about it, and the one experiment that
-decides whether to build the rest.
+HS-9466. Status: **SHIPPED — the drag works.** Materializing the dropped file (a full
+`arrayBuffer()` read) turned out to *fulfill* the promise, not merely detect that it was
+unfulfilled, so an unsaved capture now attaches by dragging. The native route in §130.5 is
+**not needed and was never built**; it is kept below as the record of an alternative that
+the measurement ruled out.
+
+This doc records why a drag that visibly works everywhere else failed here, and why the
+fix landed a layer lower than everyone expected.
 
 Companion to [5-attachments.md](5-attachments.md) §5.2.2 (the detection) and
 [77-paste-attachments.md](77-paste-attachments.md) (the paste path that already works).
@@ -24,10 +28,15 @@ seconds before writing it to disk. During that window the capture **is not a fil
 the thumbnail puts an `NSFilePromise` on the dragging pasteboard: a commitment to produce bytes
 when a receiver asks for them, at a destination the receiver names.
 
-The web layer never gets to ask. A browser — and the WKWebView the Tauri build runs in —
-surfaces the promise as an ordinary `File` in `dataTransfer.files`. It has a name, a MIME type,
-and often a plausible `size`. Nothing about it is distinguishable from a real file **until
-something reads it**, and there is no web API to request fulfillment.
+The web layer surfaces the promise as an ordinary `File` in `dataTransfer.files`. It has a
+name, a MIME type, and often a plausible `size`. Nothing about it is distinguishable from a
+real file **until something reads it**.
+
+**The part that was assumed and turned out to be wrong:** that the web layer can never get
+the bytes. It can — a full `arrayBuffer()` read fulfills the promise (§130.3.2). What
+fails is `fetch`'s **lazy, streaming** read of the same `File`. There is no web API to
+*explicitly* request fulfillment, which is what made "impossible without native code" a
+reasonable-sounding conclusion; the read itself turns out to be enough.
 
 That is why the failure was so confusing: it looked like a normal upload right up to the point
 where `fetch` streamed the body, discovered the backing store was absent, and sent a truncated
@@ -39,7 +48,7 @@ working as designed but can only report a generic crash.
 **`size` is not a usable check.** On a promised file it is populated and plausible. Only a read
 tells the truth.
 
-## 130.3 What shipped (HS-9465) — detect, explain, don't crash
+## 130.3 What shipped — materialize, which also fulfills
 
 `src/client/dropFiles.ts::screenDroppedFiles` **materializes** every dropped file — reads its
 bytes and hands back an in-memory copy — before anything is created or uploaded. A file whose
@@ -76,9 +85,56 @@ dropping a large video doesn't double its memory.
 - The drop listener now has a `catch`, so any other failure reports as "Could not attach the
   file" rather than as a crash.
 
-This is honest but incomplete: it explains the failure, it does not remove it.
+### 130.3.2 The measurement — it works (HS-9466, maintainer-verified 2026-07-29)
 
-## 130.4 The gate — one drag settles it
+The change above was built as a *better failure*: read the bytes so a truncated upload is
+impossible, and refuse honestly when they aren't there. It did something else as well.
+
+Dragging an unsaved capture onto a ticket now **attaches it**. Confirmed by the maintainer
+on a real drag, which is the only instrument that could answer this.
+
+The read is the fulfillment. `fetch` streams a `File` lazily and gets nothing; a full
+`arrayBuffer()` is a different request to the OS and macOS honors it by delivering the
+promised bytes. So the capability was there the whole time — the original failure was never
+"the browser cannot get these bytes", it was "the one code path we used asks for them in the
+way that doesn't work."
+
+Two things worth keeping from this:
+
+- **The reasoning that pointed at native code was sound and still wrong.** Every source
+  agrees a browser has no API to fulfill an `NSFilePromise`, and that is true as stated —
+  there is no *explicit* fulfillment call. It does not follow that the bytes are
+  unreachable. A plan that would have cost days of Rust/Objective-C work was retired by a
+  read call and one physical drag.
+- **The fix was a byproduct of making the failure honest.** Materializing was adopted to
+  stop uploading files we hadn't verified; that it also solved the problem was not the
+  intent. Refusing to send data you haven't actually read is worth doing on its own terms.
+
+## 130.4 The gate — settled, and how
+
+Before the §130.5 native work, the open question was whether the drag carried any other
+usable representation. `describeDragPayload` (`dropFiles.ts`) was added to answer it,
+logged by the drop handler on **either** failure path — when screening rejects a file, and
+when an upload fails after screening passed. (Its first version logged only the former,
+i.e. only the failure that was expected; when the other one happened instead, the report
+came back with no diagnostic at all.) Failure paths only, so it costs nothing in normal
+use:
+
+```
+[hotsheet] drop had 1 unreadable file(s). Drag payload:
+types: Files, …
+items:
+  [0] kind=file type=image/png
+  …
+```
+
+**It never needed to fire.** The drag started succeeding, which answers the gate more
+directly than any payload dump: the promised file itself delivers, so there is no need to
+prefer another representation over it. The diagnostic stays — it is free unless a drop
+fails, and it is the right first evidence for the next drag-and-drop failure of any kind.
+
+<details>
+<summary>The original gate, kept for the record</summary>
 
 Before any native work, the question is whether the drag carries **any other representation**
 alongside the broken promised file. Nobody has looked. If it offers an `image/png` item with
@@ -108,7 +164,14 @@ answer may differ — and there, also record what the native drag-drop event rep
 - **If the only representation is the promised file** → that is the evidence that §130.5 is the
   only route, and the cost/benefit below applies.
 
-## 130.5 The native route (Tauri only), if the gate says so
+</details>
+
+## 130.5 The native route — NOT BUILT, not needed
+
+**Retired by §130.3.2.** The plan below was the expected shape of the fix right up until a
+full read made it unnecessary. It is kept because the reasoning is worth having on record,
+and because the same pasteboard question may come back for a drag type that genuinely
+doesn't deliver.
 
 A native drag handler on the WKWebView inspects the dragging pasteboard, resolves the promise
 via `NSFilePromiseReceiver` / `receivePromisedFiles(atDestination:)` into a temp directory, and
@@ -129,12 +192,15 @@ None of that makes it wrong to build — dragging is the natural gesture and bei
 different one is a papercut. It makes it a **judgment call that should be made with the §130.4
 data in hand**, not before.
 
+That judgment never had to be made: the papercut is gone, and it stayed desktop-and-browser
+both, which the native route could never have managed.
+
 ## 130.6 Cross-references
 
-- [5-attachments.md](5-attachments.md) §5.1 (upload), §5.2 (drag-and-drop), §5.2.2 (this
-  detection).
-- [77-paste-attachments.md](77-paste-attachments.md) — the clipboard path, which handles this
-  case today and is what the error message recommends.
+- [5-attachments.md](5-attachments.md) §5.1 (upload), §5.2 (drag-and-drop), §5.2.2 (the
+  materialization).
+- [77-paste-attachments.md](77-paste-attachments.md) — the clipboard path, which handled this
+  case while the drag didn't, and which the failure message still points at.
 - HS-9455 — the global client error handler whose generic popup this failure surfaced through;
   the fix is that the drop path no longer reaches it.
 - HS-9227 — the `400 Malformed upload body` guard that correctly caught the truncated body.
