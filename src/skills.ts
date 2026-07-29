@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
@@ -180,6 +180,116 @@ export function updateFile(path: string, content: string): boolean {
   }
   writeFileSync(path, content, 'utf-8');
   return true;
+}
+
+// --- Orphan sweep (HS-9476) ---
+
+/**
+ * Which generated ticket-skill names on disk no longer have a category?
+ *
+ * `SKILL_VERSION` is the mechanism for pushing a correction to every generated
+ * file, and it iterates the skills we WOULD generate — so it silently skips a
+ * file whose category was removed. Those orphans freeze at whatever the
+ * generator wrote long ago and every future fix misses them: `hs-m` (marketing,
+ * a category that no longer exists) and `hs-req-change` (superseded by
+ * `hs-requirement-change`) both had to be scrubbed by hand TWICE, once for a
+ * baked-in secret and again for a baked-in port. They are not inert either —
+ * Claude Code lists a skill from the file on disk, not from the category list,
+ * so `/hs-m` was still offered and would have created a ticket in a category
+ * that doesn't exist.
+ *
+ * Pure so the decision is testable without a filesystem. Only `hs-` prefixed
+ * names are ever considered: `hotsheet` / `hotsheet-worker` are always
+ * generated, and anything else in the directory belongs to the user.
+ */
+export function orphanedSkillNames(present: string[], expected: string[]): string[] {
+  const keep = new Set(expected);
+  return present.filter(name => name.startsWith('hs-') && !keep.has(name));
+}
+
+/** Did WE write this file? The version header is the ownership marker — an
+ *  orphan still carries one (just an old number), while a hand-written skill
+ *  that happens to be named `hs-…` has none and is left alone. */
+function isGeneratedFile(path: string): boolean {
+  try {
+    return parseVersionHeader(readFileSync(path, 'utf-8')) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function listDirNames(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Remove orphaned `<skillsDir>/<name>/SKILL.md` files. The directory itself is
+ * removed only when the delete leaves it empty — if the user dropped anything
+ * else in there, that is theirs and stays.
+ */
+function sweepOrphanedSkillTree(skillsDir: string, expected: string[]): string[] {
+  const removed: string[] = [];
+  for (const name of orphanedSkillNames(listDirNames(skillsDir), expected)) {
+    const dir = join(skillsDir, name);
+    const file = join(dir, 'SKILL.md');
+    if (!existsSync(file) || !isGeneratedFile(file)) continue;
+    try {
+      rmSync(file);
+      if (readdirSync(dir).length === 0) rmdirSync(dir);
+      removed.push(name);
+    } catch { /* best-effort — never block skill generation on a cleanup */ }
+  }
+  return removed;
+}
+
+/** The flat-file layouts: Cursor `.mdc`, Copilot `.prompt.md`, Windsurf `.md`. */
+function sweepOrphanedFlatFiles(dir: string, suffix: string, expected: string[]): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true }).filter(e => e.isFile()).map(e => e.name);
+  } catch {
+    return [];
+  }
+  const present = entries.filter(f => f.endsWith(suffix)).map(f => f.slice(0, -suffix.length));
+  const removed: string[] = [];
+  for (const name of orphanedSkillNames(present, expected)) {
+    const file = join(dir, `${name}${suffix}`);
+    if (!isGeneratedFile(file)) continue;
+    try {
+      rmSync(file);
+      removed.push(name);
+    } catch { /* best-effort */ }
+  }
+  return removed;
+}
+
+/**
+ * Sweep every generated location under `projectRoot`. Returns the removed names
+ * (deduped) so the caller can log what it did.
+ *
+ * Swept regardless of the project's `ai_tool`: the HS-9311 narrowing deliberately
+ * stops REFRESHING an unselected tool's files, but an orphan is stale for every
+ * tool, and leaving one behind in `.cursor/rules` is the exact failure this fixes.
+ */
+export function sweepOrphanedGeneratedSkills(projectRoot: string, categories: CategoryDef[]): string[] {
+  const expected = generatedClaudeSkillNames(categories);
+  const removed = new Set<string>();
+  for (const tree of [['.claude', 'skills'], ['.agents', 'skills'], ['.gemini', 'skills']]) {
+    for (const n of sweepOrphanedSkillTree(join(projectRoot, ...tree), expected)) removed.add(n);
+  }
+  const flat: [string[], string][] = [
+    [['.cursor', 'rules'], '.mdc'],
+    [['.github', 'prompts'], '.prompt.md'],
+    [['.windsurf', 'rules'], '.md'],
+  ];
+  for (const [dir, suffix] of flat) {
+    for (const n of sweepOrphanedFlatFiles(join(projectRoot, ...dir), suffix, expected)) removed.add(n);
+  }
+  return [...removed];
 }
 
 // --- Shared content ---
@@ -866,6 +976,25 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   // `buildTicketSkills`. Falls back to the global when omitted (bare `ensureSkills`).
   if (categories !== undefined) skillsState.categories = categories;
   const platforms: string[] = [];
+
+  // HS-9476 — delete generated `hs-*` skills/rules whose category no longer
+  // exists, BEFORE regenerating. `SKILL_VERSION` iterates the skills we would
+  // write, so it silently skips orphans and every future fix misses them (the
+  // baked-in secret and the baked-in port both had to be scrubbed out of `hs-m`
+  // and `hs-req-change` by hand). They are also still live: Claude Code offers a
+  // skill from the file on disk, not from the category list.
+  //
+  // ONLY when the caller supplied categories. `skillsState.categories` is a
+  // process-global that holds whatever project called last (the HS-8910 foot-gun),
+  // and deleting files based on possibly-another-project's category list is not a
+  // mistake worth risking. `ensureSkills()` and the worktree wiring pass nothing,
+  // so they generate but never sweep.
+  if (categories !== undefined) {
+    const swept = sweepOrphanedGeneratedSkills(projectRoot, categories);
+    if (swept.length > 0) {
+      console.log(`[skills] removed ${String(swept.length)} generated skill(s) for categories that no longer exist: ${swept.join(', ')}`);
+    }
+  }
 
   // HS-9311 (docs/113 §113.3) — when the project's `ai_tool` is an explicit choice
   // (not `auto`), seed ONLY that tool's skill/rule files instead of every detected

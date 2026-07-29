@@ -9,10 +9,12 @@ import {
   ensureSkills,
   ensureSkillsForDir,
   initSkills,
+  orphanedSkillNames,
   parseVersionHeader,
   regenerateMainSkill,
   setSkillCategories,
   SKILL_VERSION,
+  sweepOrphanedGeneratedSkills,
   updateFile,
 } from './skills.js';
 import { DEFAULT_CATEGORIES } from './types.js';
@@ -1084,5 +1086,158 @@ describe('ensureSkillsForDir honors the ai_tool setting (HS-9311)', () => {
     setAiTool('cursor');
     ensureSkillsForDir(root, undefined, join(root, '.hotsheet'));
     expect(existsSync(claudeSkill)).toBe(true); // narrowing never deletes
+  });
+});
+
+/**
+ * HS-9476 — a generated skill whose category has since been removed goes stale
+ * FOREVER. `SKILL_VERSION` is how a correction reaches every generated file, but
+ * it iterates the skills we would write, so it silently skips orphans: `hs-m`
+ * (marketing, no longer a category) and `hs-req-change` (superseded by
+ * `hs-requirement-change`) had to be scrubbed by hand twice — once for a
+ * baked-in secret, again for a baked-in port. Nothing asserted anything about
+ * this case before, which is exactly why both survived.
+ */
+describe('orphanedSkillNames — which generated skills no longer have a category (HS-9476)', () => {
+  const expected = ['hotsheet', 'hotsheet-worker', 'hs-bug', 'hs-feature'];
+
+  it('picks out the ticket skills whose category is gone', () => {
+    expect(orphanedSkillNames(['hs-bug', 'hs-m', 'hs-req-change', 'hs-feature'], expected))
+      .toEqual(['hs-m', 'hs-req-change']);
+  });
+
+  it('never touches the always-generated skills', () => {
+    // `hotsheet` / `hotsheet-worker` are not category-derived; a bug here would
+    // delete the main worklist skill.
+    expect(orphanedSkillNames(['hotsheet', 'hotsheet-worker'], expected)).toEqual([]);
+    expect(orphanedSkillNames(['hotsheet', 'hotsheet-worker'], [])).toEqual([]);
+  });
+
+  it("never touches the user's own skills", () => {
+    // Only the `hs-` prefix we generate is in scope. Everything else in the
+    // directory belongs to whoever put it there.
+    expect(orphanedSkillNames(['my-skill', 'deploy', 'hotsheet-notes', 'review'], expected)).toEqual([]);
+  });
+
+  it('is empty when every present skill still has a category', () => {
+    expect(orphanedSkillNames(expected, expected)).toEqual([]);
+  });
+});
+
+describe('sweepOrphanedGeneratedSkills (HS-9476)', () => {
+  let projectDir: string;
+  const MARKETING = { id: 'm', label: 'Marketing', shortLabel: 'MKT', color: '#8b5cf6', shortcutKey: 'm', description: 'Marketing tasks' };
+
+  const seedGenerated = (path: string, version = 12): void => {
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, `---\nname: x\n---\n<!-- hotsheet-skill-version: ${String(version)} -->\n\nbody\n`, 'utf-8');
+  };
+
+  beforeEach(() => {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    projectDir = join(tmpdir(), `hs-skills-9476-${stamp}`);
+    mkdirSync(join(projectDir, '.hotsheet'), { recursive: true });
+    mkdirSync(join(projectDir, '.claude'), { recursive: true });
+    writeFileSync(join(projectDir, '.hotsheet', 'settings.json'), JSON.stringify({ secret: 'test-secret', port: 4174 }));
+    initSkills(4174);
+    _resetSkillsStateForTesting();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    _resetSkillsStateForTesting();
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('removes an orphaned skill tree entry and its now-empty directory', () => {
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'));
+    const removed = sweepOrphanedGeneratedSkills(projectDir, DEFAULT_CATEGORIES);
+    expect(removed).toEqual(['hs-m']);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m'))).toBe(false);
+  });
+
+  it('sweeps every generated layout, not just Claude', () => {
+    // The stale `/hs-m` was equally live in Cursor's rule list; leaving one
+    // behind in `.cursor/rules` is the same failure with a different filename.
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'));
+    seedGenerated(join(projectDir, '.agents', 'skills', 'hs-m', 'SKILL.md'));
+    seedGenerated(join(projectDir, '.gemini', 'skills', 'hs-m', 'SKILL.md'));
+    seedGenerated(join(projectDir, '.cursor', 'rules', 'hs-m.mdc'));
+    seedGenerated(join(projectDir, '.github', 'prompts', 'hs-m.prompt.md'));
+    seedGenerated(join(projectDir, '.windsurf', 'rules', 'hs-m.md'));
+
+    expect(sweepOrphanedGeneratedSkills(projectDir, DEFAULT_CATEGORIES)).toEqual(['hs-m']);
+
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m'))).toBe(false);
+    expect(existsSync(join(projectDir, '.agents', 'skills', 'hs-m'))).toBe(false);
+    expect(existsSync(join(projectDir, '.gemini', 'skills', 'hs-m'))).toBe(false);
+    expect(existsSync(join(projectDir, '.cursor', 'rules', 'hs-m.mdc'))).toBe(false);
+    expect(existsSync(join(projectDir, '.github', 'prompts', 'hs-m.prompt.md'))).toBe(false);
+    expect(existsSync(join(projectDir, '.windsurf', 'rules', 'hs-m.md'))).toBe(false);
+  });
+
+  it('keeps a live category and the main worklist skills', () => {
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'));
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hotsheet', 'SKILL.md'));
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hotsheet-worker', 'SKILL.md'));
+    expect(sweepOrphanedGeneratedSkills(projectDir, DEFAULT_CATEGORIES)).toEqual([]);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hotsheet', 'SKILL.md'))).toBe(true);
+  });
+
+  it('leaves a hand-written hs-* skill alone — no version header, not ours', () => {
+    // The header is the ownership marker. An orphan still carries one (an OLD
+    // number, which is the whole problem); a file the user wrote by hand has none.
+    const mine = join(projectDir, '.claude', 'skills', 'hs-mine', 'SKILL.md');
+    mkdirSync(join(projectDir, '.claude', 'skills', 'hs-mine'), { recursive: true });
+    writeFileSync(mine, '---\nname: hs-mine\n---\n\nmy own skill\n', 'utf-8');
+    expect(sweepOrphanedGeneratedSkills(projectDir, DEFAULT_CATEGORIES)).toEqual([]);
+    expect(existsSync(mine)).toBe(true);
+  });
+
+  it('keeps a directory the user has put other files in', () => {
+    // Deleting our SKILL.md is in scope; deleting whatever else is in there is not.
+    const dir = join(projectDir, '.claude', 'skills', 'hs-m');
+    seedGenerated(join(dir, 'SKILL.md'));
+    writeFileSync(join(dir, 'notes.md'), 'mine', 'utf-8');
+    expect(sweepOrphanedGeneratedSkills(projectDir, DEFAULT_CATEGORIES)).toEqual(['hs-m']);
+    expect(existsSync(join(dir, 'SKILL.md'))).toBe(false);
+    expect(existsSync(join(dir, 'notes.md'))).toBe(true);
+  });
+
+  it('sweeps through ensureSkillsForDir when categories are passed', () => {
+    // The wiring, not just the helper — HS-9477 was nearly shipped with a test
+    // that only exercised the function.
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'));
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hs-req-change', 'SKILL.md'));
+    ensureSkillsForDir(projectDir, DEFAULT_CATEGORIES);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m'))).toBe(false);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-req-change'))).toBe(false);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'))).toBe(true);
+  });
+
+  it('a category that still exists survives a regeneration', () => {
+    ensureSkillsForDir(projectDir, [...DEFAULT_CATEGORIES, MARKETING]);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(true);
+    ensureSkillsForDir(projectDir, [...DEFAULT_CATEGORIES, MARKETING]);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(true);
+  });
+
+  it('removing a category removes its skill on the next generation', () => {
+    // The end-to-end story: the category goes away, and so does its skill.
+    ensureSkillsForDir(projectDir, [...DEFAULT_CATEGORIES, MARKETING]);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(true);
+    ensureSkillsForDir(projectDir, DEFAULT_CATEGORIES);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m'))).toBe(false);
+  });
+
+  it('does NOT sweep when no categories are passed — the global may be another project\'s', () => {
+    // `skillsState.categories` is a process-global holding whatever project set
+    // it last (the HS-8910 foot-gun). Deleting files off that is not a risk worth
+    // taking, so the back-compat callers generate but never sweep.
+    seedGenerated(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'));
+    setSkillCategories(DEFAULT_CATEGORIES);
+    ensureSkillsForDir(projectDir);
+    expect(existsSync(join(projectDir, '.claude', 'skills', 'hs-m', 'SKILL.md'))).toBe(true);
   });
 });
