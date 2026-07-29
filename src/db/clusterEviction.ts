@@ -165,8 +165,87 @@ export function chooseEvictions(input: EvictionInput): string[] {
 const lastAccess = new Map<string, number>();
 const inFlight = new Map<string, number>();
 
+/**
+ * HS-9470 — eviction counters, so the HS-9468 budget can be judged on a real
+ * machine instead of only in unit tests.
+ *
+ * The tests prove the policy is what we intended; they cannot say whether the
+ * intent was right. Three things are worth knowing and none were observable:
+ *
+ *  - **Which mode evicts.** Before HS-9468 the cap was suspected of doing nearly
+ *    all of it. It should now be mostly `idle`. Any `headroom` firing at all means
+ *    memory is tighter than the budget assumes and the ceilings are too generous.
+ *  - **Churn** — a cluster evicted and then reopened seconds later. That is the
+ *    signal a budget or window is too tight, and it is the cost the user actually
+ *    feels (a reopen is 60–240 ms warm).
+ *  - **Whether the split holds** — are project clusters staying put while
+ *    telemetry absorbs the pressure, as "telemetry gives way first" intends?
+ *
+ * Counts, deliberately, rather than bytes. Attributing freed memory around an
+ * eviction is meaningless without forcing a GC (docs/128 §128.5.1) — that trap has
+ * already produced one wrong conclusion in this area, and a counter cannot lie the
+ * same way.
+ */
+export interface EvictionStats {
+  /** Evictions by mode, since process start. */
+  byMode: Record<EvictionMode, number>;
+  /** Evictions by cluster type. */
+  project: number;
+  telemetry: number;
+  /** Evicted, then reopened within `CHURN_WINDOW_MS` — the budget was too tight. */
+  churn: number;
+}
+
+/** A reopen sooner than this after an eviction means we should not have closed it. */
+export const CHURN_WINDOW_MS = 30_000;
+
+const stats: EvictionStats = {
+  byMode: { cap: 0, idle: 0, headroom: 0 },
+  project: 0,
+  telemetry: 0,
+  churn: 0,
+};
+
+/** When each recently-evicted path was closed, for churn detection. Bounded by
+ *  pruning on write — a path that is never reopened ages out rather than leaking. */
+const evictedAt = new Map<string, number>();
+
+/** Record an eviction. Called by `connection.ts` as it closes each victim. */
+export function noteEviction(dbPath: string, mode: EvictionMode, now: number = Date.now()): void {
+  stats.byMode[mode] += 1;
+  if (isTelemetryClusterDbPath(dbPath)) stats.telemetry += 1;
+  else stats.project += 1;
+  evictedAt.set(dbPath, now);
+  // Prune anything past the churn window; nothing older can ever count.
+  for (const [path, at] of evictedAt) {
+    if (now - at > CHURN_WINDOW_MS) evictedAt.delete(path);
+  }
+}
+
+/** A point-in-time copy. Cheap enough to read from the diagnostics snapshot. */
+export function evictionStats(): EvictionStats {
+  return { byMode: { ...stats.byMode }, project: stats.project, telemetry: stats.telemetry, churn: stats.churn };
+}
+
+/** Test seam — zero the counters. */
+export function resetEvictionStatsForTests(): void {
+  stats.byMode = { cap: 0, idle: 0, headroom: 0 };
+  stats.project = 0;
+  stats.telemetry = 0;
+  stats.churn = 0;
+  evictedAt.clear();
+}
+
 /** Record that a cluster was just opened or served from cache. */
 export function noteClusterAccess(dbPath: string, now: number = Date.now()): void {
+  // HS-9470 — reopening something we evicted moments ago is churn: we paid a close
+  // and a reopen for nothing. Counted here because this is the one call every
+  // open and cache-hit funnels through.
+  const closedAt = evictedAt.get(dbPath);
+  if (closedAt !== undefined) {
+    if (now - closedAt <= CHURN_WINDOW_MS) stats.churn += 1;
+    evictedAt.delete(dbPath);
+  }
   lastAccess.set(dbPath, now);
 }
 

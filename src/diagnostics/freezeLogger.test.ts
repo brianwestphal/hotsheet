@@ -21,6 +21,7 @@ import {
   memorySnapshot,
   onServerWake,
   setFreezeLogClusterCounter,
+  setFreezeLogEvictionStats,
   startServerEventLoopHeartbeat,
   stopServerEventLoopHeartbeat,
   WAKE_GAP_THRESHOLD_MS,
@@ -320,6 +321,9 @@ describe('startServerEventLoopHeartbeat (HS-8054 v3)', () => {
     expect(mem, 'no baseline server-memory entry').toBeDefined();
     expect(mem!.extra?.rssMb).toBeTypeOf('number');
     expect(mem!.extra?.externalMb).toBeTypeOf('number');
+    // HS-9470 — the eviction counters ride the same snapshot. Absent until the
+    // boot wiring injects the reader, which is the state under test here.
+    expect(mem!.extra?.evictChurn).toBeUndefined();
     expect(mem!.extra?.memoryPressure).toBeTypeOf('boolean');
   });
 
@@ -344,5 +348,31 @@ describe('startServerEventLoopHeartbeat (HS-8054 v3)', () => {
     // has to be quiet in the normal case or it's noise.
     expect(snap.memoryPressure).toBe(false);
     expect(snap.usedPctOfLimit).toBeLessThan(75);
+  });
+});
+
+describe('eviction counters in the memory snapshot (HS-9470)', () => {
+  afterEach(() => { setFreezeLogEvictionStats(null as unknown as () => never); });
+
+  it('includes the counters once the reader is injected', () => {
+    setFreezeLogEvictionStats(() => ({
+      byMode: { cap: 3, idle: 7, headroom: 1 }, project: 4, telemetry: 7, churn: 2,
+    }));
+    const snap = memorySnapshot();
+    expect(snap.evictCap).toBe(3);
+    expect(snap.evictIdle).toBe(7);
+    expect(snap.evictHeadroom).toBe(1);
+    expect(snap.evictProject).toBe(4);
+    expect(snap.evictTelemetry).toBe(7);
+    // The field to read first: reopens we paid for by evicting too eagerly.
+    expect(snap.evictChurn).toBe(2);
+  });
+
+  it('omits them entirely before the reader is wired, rather than reporting zeros', () => {
+    // Zeros would be a lie — indistinguishable from "no evictions happened".
+    setFreezeLogEvictionStats(null as unknown as () => never);
+    const snap = memorySnapshot();
+    expect(snap.evictChurn).toBeUndefined();
+    expect(snap.externalMb).toBeTypeOf('number'); // the rest still there
   });
 });

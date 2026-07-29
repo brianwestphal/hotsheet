@@ -1,21 +1,25 @@
 // HS-9420 (docs/128) — the pure eviction policy + bookkeeping. No real clusters:
 // the whole point is that the transition matrix (cap / idle / headroom ×
 // pinned / in-flight / recency) is testable without opening a PGLite instance.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   APPROX_CLUSTER_EXTERNAL_BYTES,
   beginClusterQuery,
   chooseEvictions,
+  CHURN_WINDOW_MS,
   clusterBudget,
   clusterInFlight,
   clusterLastAccess,
   type ClusterState,
   endClusterQuery,
   type EvictionInput,
+  evictionStats,
   forgetCluster,
   headroomEvictionCount,
   noteClusterAccess,
+  noteEviction,
+  resetEvictionStatsForTests,
   resetEvictionTrackingForTests,
   resolveEvictionConfig,
   snapshotClusters,
@@ -477,5 +481,100 @@ describe('chooseEvictions — separate per-type LRUs (HS-9468)', () => {
       pinnedPaths: new Set([telemetryDb('t2')]),
     }));
     expect(out).toEqual([telemetryDb('t3')]);
+  });
+});
+
+/**
+ * HS-9470 — the counters that let the HS-9468 budget be judged on a real machine.
+ * Counts, not bytes: attributing freed memory around an eviction is meaningless
+ * without forcing a GC (docs/128 §128.5.1), and that trap has already produced one
+ * wrong conclusion in this area.
+ */
+describe('eviction counters (HS-9470)', () => {
+  const projectDb = (n: string) => `/data/${n}/db`;
+  const telemetryDb = (n: string) => `/data/${n}/telemetry/db`;
+
+  beforeEach(() => { resetEvictionStatsForTests(); resetEvictionTrackingForTests(); });
+  afterEach(() => { resetEvictionStatsForTests(); resetEvictionTrackingForTests(); });
+
+  it('starts at zero', () => {
+    expect(evictionStats()).toEqual({
+      byMode: { cap: 0, idle: 0, headroom: 0 }, project: 0, telemetry: 0, churn: 0,
+    });
+  });
+
+  it('counts by mode — the question "which layer actually binds"', () => {
+    noteEviction(projectDb('a'), 'cap', NOW);
+    noteEviction(projectDb('b'), 'idle', NOW);
+    noteEviction(projectDb('c'), 'idle', NOW);
+    noteEviction(projectDb('d'), 'headroom', NOW);
+    expect(evictionStats().byMode).toEqual({ cap: 1, idle: 2, headroom: 1 });
+  });
+
+  it('counts by type — does "telemetry gives way first" hold in practice', () => {
+    noteEviction(telemetryDb('t1'), 'cap', NOW);
+    noteEviction(telemetryDb('t2'), 'cap', NOW);
+    noteEviction(projectDb('p1'), 'cap', NOW);
+    const s = evictionStats();
+    expect(s.telemetry).toBe(2);
+    expect(s.project).toBe(1);
+  });
+
+  it('counts churn — evicted, then reopened moments later', () => {
+    // The cost the user actually feels: we paid a close and a reopen for nothing.
+    noteEviction(projectDb('a'), 'cap', NOW);
+    noteClusterAccess(projectDb('a'), NOW + 5_000);
+    expect(evictionStats().churn).toBe(1);
+  });
+
+  it('does NOT count a reopen long after the eviction', () => {
+    // Coming back to a project half an hour later is the cache working, not churn.
+    noteEviction(projectDb('a'), 'cap', NOW);
+    noteClusterAccess(projectDb('a'), NOW + CHURN_WINDOW_MS + 1);
+    expect(evictionStats().churn).toBe(0);
+  });
+
+  it('counts churn only once per eviction', () => {
+    // A reopened cluster is accessed constantly afterwards; each of those must not
+    // re-count the single eviction that preceded them.
+    noteEviction(projectDb('a'), 'cap', NOW);
+    noteClusterAccess(projectDb('a'), NOW + 1_000);
+    noteClusterAccess(projectDb('a'), NOW + 2_000);
+    noteClusterAccess(projectDb('a'), NOW + 3_000);
+    expect(evictionStats().churn).toBe(1);
+  });
+
+  it('counts churn again if the same cluster is evicted a second time', () => {
+    // Repeated evict→reopen on ONE cluster is the strongest "too tight" signal
+    // there is, so it must accumulate rather than saturate at 1.
+    noteEviction(projectDb('a'), 'cap', NOW);
+    noteClusterAccess(projectDb('a'), NOW + 1_000);
+    noteEviction(projectDb('a'), 'cap', NOW + 2_000);
+    noteClusterAccess(projectDb('a'), NOW + 3_000);
+    expect(evictionStats().churn).toBe(2);
+  });
+
+  it('does not count an access to a cluster that was never evicted', () => {
+    noteClusterAccess(projectDb('fresh'), NOW);
+    expect(evictionStats().churn).toBe(0);
+  });
+
+  it('prunes evicted paths past the churn window instead of growing forever', () => {
+    // The map is bounded by pruning on write — a cluster evicted and never
+    // reopened must not sit in it for the life of the process.
+    noteEviction(projectDb('never-reopened'), 'idle', NOW);
+    noteEviction(projectDb('later'), 'idle', NOW + CHURN_WINDOW_MS + 1);
+    // The first is now aged out, so a (very) late reopen is not counted as churn.
+    noteClusterAccess(projectDb('never-reopened'), NOW + CHURN_WINDOW_MS + 2);
+    expect(evictionStats().churn).toBe(0);
+  });
+
+  it('returns a copy, so a caller cannot mutate the live counters', () => {
+    noteEviction(projectDb('a'), 'cap', NOW);
+    const snapshot = evictionStats();
+    snapshot.byMode.cap = 999;
+    snapshot.project = 999;
+    expect(evictionStats().byMode.cap).toBe(1);
+    expect(evictionStats().project).toBe(1);
   });
 });

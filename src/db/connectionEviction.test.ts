@@ -16,6 +16,8 @@ import {
   beginClusterQuery,
   clusterLastAccess,
   endClusterQuery,
+  evictionStats,
+  resetEvictionStatsForTests,
   resetEvictionTrackingForTests,
 } from './clusterEviction.js';
 import {
@@ -388,5 +390,77 @@ describe('stale-handle healing vs deliberate close (HS-9461)', () => {
 
     const res = await stale.query<{ c: number }>('SELECT count(*)::int AS c FROM t');
     expect(res.rows[0].c).toBe(2);
+  });
+});
+
+/**
+ * HS-9470 — the counters have to be wired to REAL evictions, not just unit-tested
+ * in isolation. A counter that is never incremented reads exactly like a healthy
+ * system, which is the worst possible failure for an observability feature.
+ */
+describe('eviction counters wired to real evictions (HS-9470)', () => {
+  let anchor: string;
+  const saved: Record<string, string | undefined> = {};
+  const created: string[] = [];
+  const tempDir = (): string => { const d = createTempDir(); created.push(d); return d; };
+
+  beforeEach(async () => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    process.env.HOTSHEET_MAX_OPEN_CLUSTERS = '2';
+    process.env.HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS = '0';
+    process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = '1';
+    resetEvictionStatsForTests();
+    anchor = tempDir();
+    setDataDir(anchor);
+    await getDbForDir(anchor);
+  });
+
+  afterEach(async () => {
+    await closeAllDatabases();
+    resetEvictionTrackingForTests();
+    resetEvictionStatsForTests();
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+    created.length = 0;
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) Reflect.deleteProperty(process.env, k);
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('records the MODE of a real cap eviction', async () => {
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    await getDbForDir(tempDir()); // over the project budget → cap eviction
+    expect(isDbOpenForDir(p1)).toBe(false);
+
+    const s = evictionStats();
+    expect(s.byMode.cap).toBeGreaterThanOrEqual(1);
+    expect(s.byMode.idle).toBe(0);
+    expect(s.project).toBeGreaterThanOrEqual(1);
+  });
+
+  it('records the MODE of a real idle eviction', async () => {
+    process.env.HOTSHEET_CLUSTER_IDLE_MS = '0';
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    await evictIdleClusters();
+
+    const s = evictionStats();
+    expect(s.byMode.idle).toBeGreaterThanOrEqual(1);
+    expect(s.byMode.cap).toBe(0);
+  });
+
+  it('records churn when an evicted cluster is reopened straight away', async () => {
+    // The signal that a budget is too tight — and the reason it is worth counting
+    // separately from the eviction itself: evictions alone look like the cache
+    // working, evictions followed by immediate reopens are it thrashing.
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    await getDbForDir(tempDir()); // evicts p1
+    expect(isDbOpenForDir(p1)).toBe(false);
+    expect(evictionStats().churn).toBe(0);
+
+    await getDbForDir(p1); // straight back — that is churn
+    expect(evictionStats().churn).toBe(1);
   });
 });

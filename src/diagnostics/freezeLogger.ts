@@ -144,6 +144,25 @@ export function setFreezeLogClusterCounter(fn: () => number): void {
   openClusterCounter = fn;
 }
 
+/** HS-9470 — supplies the cluster-eviction counters. Injected for the same
+ *  reason as the counter above: `diagnostics/` keeps no dependency on `db/`. */
+let evictionStatsReader: (() => {
+  byMode: Record<string, number>;
+  project: number;
+  telemetry: number;
+  churn: number;
+}) | null = null;
+
+/** HS-9470 — register the eviction-stats reader (called once at boot). */
+export function setFreezeLogEvictionStats(fn: () => {
+  byMode: Record<string, number>;
+  project: number;
+  telemetry: number;
+  churn: number;
+}): void {
+  evictionStatsReader = fn;
+}
+
 const MB = 1024 * 1024;
 
 /**
@@ -171,6 +190,25 @@ export function memorySnapshot(): Record<string, number | boolean> {
     usedPctOfLimit: Math.round(usedRatio * 100),
     openPGLiteClusters: openClusterCounter === null ? -1 : openClusterCounter(),
     memoryPressure: usedRatio >= MEMORY_PRESSURE_WARN_RATIO,
+    // HS-9470 — the eviction counters, so a freeze capture says not just how much
+    // memory was in use but what the cache was doing to keep it there. `evictChurn`
+    // is the one to read first: a non-trivial count means a budget or idle window
+    // is too tight and we are paying reopens for nothing.
+    ...evictionCounters(),
+  };
+}
+
+/** Flattened eviction counters for the snapshot, or nothing before boot wiring. */
+function evictionCounters(): Record<string, number> {
+  if (evictionStatsReader === null) return {};
+  const s = evictionStatsReader();
+  return {
+    evictCap: s.byMode.cap,
+    evictIdle: s.byMode.idle,
+    evictHeadroom: s.byMode.headroom,
+    evictProject: s.project,
+    evictTelemetry: s.telemetry,
+    evictChurn: s.churn,
   };
 }
 

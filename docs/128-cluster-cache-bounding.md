@@ -269,6 +269,29 @@ two clusters per project, ~5 active projects already saturate the cap, so on a b
 LRU cap may be doing most of the work and the idle windows little. Whether `maxOpen` should
 count the two types separately is deliberately left open — see HS-9468.
 
+## 128.5.2 Observing it — the eviction counters (HS-9470)
+
+The policy above is unit-tested, which proves it is what we intended. It cannot say whether the
+intent was RIGHT on a real machine, so the cache now counts what it does. The counters ride the
+existing §HS-9421 memory snapshot in `freeze.log`, next to `externalMb`:
+
+| Field | Read it for |
+| --- | --- |
+| `evictCap` / `evictIdle` / `evictHeadroom` | **which layer actually binds.** Mostly `idle` is healthy. Any `headroom` at all means memory is tighter than the budget assumes and the ceilings are too generous. A `cap`-dominated profile means the budget is the binding constraint, which was the pre-HS-9468 situation. |
+| `evictProject` / `evictTelemetry` | **whether "telemetry gives way first" holds** in practice, or whether project clusters are being evicted more than intended. |
+| `evictChurn` | **read this first.** A cluster evicted and then reopened within 30 s: we paid a close plus a ~180 MB reopen for nothing. Non-trivial churn means a budget or idle window is too tight. |
+
+Counts, deliberately, **not bytes**. Attributing freed memory around an eviction is meaningless
+without forcing a GC (§128.5.1), and that trap has already produced one wrong conclusion here. A
+counter cannot lie the same way.
+
+The counters are absent from the snapshot until the boot wiring injects the reader, rather than
+reported as zeros — zeros would be indistinguishable from "no evictions happened", which is
+exactly the ambiguity an observability feature must not introduce.
+
+**Once there is a real session's worth of numbers**, revisit the §128.5 defaults with evidence
+rather than the reasoning-from-first-principles they currently rest on.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →

@@ -183,7 +183,7 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   // file, paste-ready, lets us see whether the freeze the user reports
   // is in the browser, the Node process, or neither (which would point
   // at the WS / PTY layer the user suspected on 2026-05-04).
-  const { startServerEventLoopHeartbeat, onServerWake, setFreezeLogClusterCounter } = await import('./diagnostics/freezeLogger.js');
+  const { startServerEventLoopHeartbeat, onServerWake, setFreezeLogClusterCounter, setFreezeLogEvictionStats } = await import('./diagnostics/freezeLogger.js');
   // HS-9421 — publish the open-PGLite-cluster count to BOTH diagnostic surfaces
   // before the heartbeat starts sampling. That one number would have pointed
   // straight at HS-9420 (18 open clusters x ~180 MB of WASM heap each); it is
@@ -191,6 +191,12 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   const { openDatabaseCount } = await import('./db/connection.js');
   setFreezeLogClusterCounter(openDatabaseCount);
   setWatchdogClusterCounter(openDatabaseCount);
+  // HS-9470 — and the eviction counters alongside it, so a freeze capture records
+  // not just how much memory was in use but what the cluster cache was doing to
+  // keep it there (which mode evicted, which type, and how often we evicted
+  // something we then had to reopen).
+  const { evictionStats } = await import('./db/clusterEviction.js');
+  setFreezeLogEvictionStats(evictionStats);
   startServerEventLoopHeartbeat(dataDir);
   // HS-8726 (load resilience, docs/75 §75.6 Phase 4) — on resume from a system
   // suspend, open the scheduler's post-wake stagger window so every project's

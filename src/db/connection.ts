@@ -22,6 +22,7 @@ import {
   heapSizeLimitBytes,
   isTelemetryClusterDbPath,
   noteClusterAccess,
+  noteEviction,
   resolveEvictionConfig,
   snapshotClusters,
 } from './clusterEviction.js';
@@ -387,7 +388,7 @@ function pinnedClusterPaths(): Set<string> {
  * the same path opens a fresh instance rather than handing out one that's
  * mid-close. Never throws — a failed close is logged and the entry stays gone.
  */
-async function closeClusterForEviction(dbPath: string): Promise<void> {
+async function closeClusterForEviction(dbPath: string, mode: EvictionMode): Promise<void> {
   const db = databases.get(dbPath);
   if (db === undefined) return;
   databases.delete(dbPath);
@@ -399,6 +400,7 @@ async function closeClusterForEviction(dbPath: string): Promise<void> {
   // exactly the unbounded-growth leak docs/128 exists to prevent.
   evictedClusterPaths.add(dbPath);
   notePendingReclaim(); // HS-9468 — its heap comes back on GC, not now.
+  noteEviction(dbPath, mode); // HS-9470 — which mode/type, and churn on reopen.
   try {
     await db.close();
   } catch (err) {
@@ -612,7 +614,7 @@ async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<num
     telemetryIdleMs: cfg.telemetryIdleMs,
     targetEvictions,
   });
-  for (const dbPath of victims) await closeClusterForEviction(dbPath);
+  for (const dbPath of victims) await closeClusterForEviction(dbPath, mode);
   return victims.length;
 }
 
