@@ -1,13 +1,14 @@
 import { setApiTransport, setApiUploadTransport } from '../api/_runner.js';
 import { createTicket, getGitStatus, getGlassboxStatus, launchGlassbox, updateSettings, uploadAttachment } from '../api/index.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { getErrorMessage } from '../utils/errorMessage.js';
 import { resyncActiveDevice, startActiveDevice } from './activeDevice.js';
 import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
 import { flashAnchoredHint } from './anchoredHint.js';
 import { suppressAnimation } from './animate.js';
 import { initAnnouncer, refreshAnnouncerVisibility } from './announcer.js';
 import { bindAnnouncerSettings } from './announcerSettings.js';
-import { api, apiUpload, apiWithSecret } from './api.js';
+import { api, apiUpload, apiWithSecret, showErrorPopup } from './api.js';
 import { bindBackupsUI } from './backups.js';
 import { bindBatchToolbar } from './batch.js';
 import { startBellPolling } from './bellPoll.js';
@@ -26,6 +27,7 @@ import { bindDetailPositionToggle, updateDetailPositionToggle } from './detailBi
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { maybePulseDraftInput } from './draftRow.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
+import { describeUnreadableDrop, screenDroppedFiles } from './dropFiles.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { hasGlassboxReviewableChanges } from './glassboxReview.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
@@ -300,21 +302,43 @@ function bindFileDropListeners(): void {
   });
   document.addEventListener('dragend', () => { setFileDropRow(null); });
   document.addEventListener('drop', async (e) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
-    e.preventDefault();
-    setFileDropRow(null);
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0) return;
-    const { id: ticketId, createdNew } = await resolveDropTicketId(target, findRowUnder);
-    for (const file of Array.from(files)) {
-      await uploadAttachment(ticketId, file);
+    try {
+      const target = e.target as HTMLElement;
+      if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
+      e.preventDefault();
+      setFileDropRow(null);
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      // HS-9465 — check the bytes are actually there BEFORE creating a ticket or
+      // starting an upload. A macOS screen capture dragged from the corner preview
+      // is a promised file with no backing store yet; uploading it truncates the
+      // multipart body mid-flight and the server can only answer 400.
+      const { readable, unreadable } = await screenDroppedFiles(Array.from(files));
+      if (readable.length === 0) {
+        showErrorPopup(describeUnreadableDrop(unreadable), { title: 'Nothing to attach' });
+        return;
+      }
+      const { id: ticketId, createdNew } = await resolveDropTicketId(target, findRowUnder);
+      for (const file of readable) {
+        await uploadAttachment(ticketId, file);
+      }
+      // Some readable, some not — attach what we can and still say what was skipped.
+      if (unreadable.length > 0) {
+        showErrorPopup(describeUnreadableDrop(unreadable), { title: 'Some files were skipped' });
+      }
+      // HS-8742 — when the drop created a fresh "Attachment" ticket (no row under
+      // the cursor, no single selection), select + open it so the user lands on
+      // it ready to retitle and see the attached files. Mirrors the paste flow.
+      if (createdNew) selectAndOpenDetail(ticketId);
+      void loadTickets();
+    } catch (err) {
+      // HS-9465 — this listener is async, so ANY rejection in here (a failed
+      // upload, a failed ticket create) escaped as an unhandled promise rejection
+      // and surfaced as the generic HS-9455 "Something went wrong" crash popup —
+      // which names neither the file nor anything the user can do. Report it as
+      // the attachment failure it is.
+      showErrorPopup(getErrorMessage(err), { title: 'Could not attach the file' });
     }
-    // HS-8742 — when the drop created a fresh "Attachment" ticket (no row under
-    // the cursor, no single selection), select + open it so the user lands on
-    // it ready to retitle and see the attached files. Mirrors the paste flow.
-    if (createdNew) selectAndOpenDetail(ticketId);
-    void loadTickets();
   });
 }
 
