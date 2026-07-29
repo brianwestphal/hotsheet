@@ -45,7 +45,20 @@
  * here, asks `chooseEvictions` what to close, and performs the closes itself.
  */
 
+import { basename, dirname } from 'node:path';
 import v8 from 'node:v8';
+
+/**
+ * Is this a TELEMETRY cluster's `db/` dir (`<dataDir>/telemetry/db`) rather than a
+ * project's own (`<dataDir>/db`, where `<dataDir>` is always a `.hotsheet` dir)?
+ *
+ * Lives here rather than in `connection.ts` (which re-exports it) because the pure
+ * planner below needs it and `connection.ts` imports this module — the other
+ * direction would be a cycle. Originally added for the HS-9426 WAL budget.
+ */
+export function isTelemetryClusterDbPath(dbPath: string): boolean {
+  return basename(dirname(dbPath)) === 'telemetry';
+}
 
 /** Per-cluster bookkeeping the planner reasons over. */
 export interface ClusterState {
@@ -70,8 +83,13 @@ export interface EvictionInput {
   maxOpen: number;
   /** `cap`: don't evict a cluster accessed within this many ms (recency guard). */
   minIdleMs: number;
-  /** `idle`: evict any non-pinned cluster untouched for at least this long. */
+  /** `idle`: evict any non-pinned PROJECT cluster untouched for at least this long. */
   idleMs: number;
+  /**
+   * `idle`: the same for a TELEMETRY cluster (HS-9467). Deliberately much shorter —
+   * see `resolveEvictionConfig` for why the two are not alike.
+   */
+  telemetryIdleMs: number;
   /** `headroom`: how many clusters to try to free (ignores the recency guard). */
   targetEvictions: number;
 }
@@ -91,9 +109,13 @@ export function chooseEvictions(input: EvictionInput): string[] {
   );
 
   if (input.mode === 'idle') {
-    // Every cluster that has aged past the idle threshold — order doesn't matter.
+    // Every cluster aged past ITS OWN idle threshold — order doesn't matter.
+    // HS-9467: a telemetry cluster gets a much shorter window than a project one.
     return evictable
-      .filter((c) => input.now - c.lastAccess >= input.idleMs)
+      .filter((c) => {
+        const window = isTelemetryClusterDbPath(c.dbPath) ? input.telemetryIdleMs : input.idleMs;
+        return input.now - c.lastAccess >= window;
+      })
       .map((c) => c.dbPath);
   }
 
@@ -194,6 +216,8 @@ export function resetEvictionTrackingForTests(): void {
 export interface EvictionConfig {
   maxOpen: number;
   idleMs: number;
+  /** HS-9467 — the shorter idle window for telemetry clusters. */
+  telemetryIdleMs: number;
   minIdleMs: number;
   headroomFloorBytes: number;
   sweepIntervalMs: number;
@@ -227,7 +251,22 @@ function numEnv(name: string, fallback: number): number {
 export function resolveEvictionConfig(): EvictionConfig {
   return {
     maxOpen: Math.max(2, numEnv('HOTSHEET_MAX_OPEN_CLUSTERS', 10)),
-    idleMs: numEnv('HOTSHEET_CLUSTER_IDLE_MS', 10 * 60 * 1000),
+    // HS-9467 — the idle window is split by cluster type, because the two are not
+    // alike in either cost or benefit:
+    //
+    //  - A PROJECT cluster backs tab switches, so a reopen is a hitch the user
+    //    sees: measured 60–240 ms warm on a real 57 MB cluster (arm64/Node 22.14),
+    //    and 0.5–2.3 s cold in this machine's own startup log. 5 min (down from
+    //    10) reclaims an abandoned tab within a coffee break without making an
+    //    every-few-minutes revisit pay for it.
+    //  - A TELEMETRY cluster is opened by an OTLP ingest burst and then sits
+    //    there, and NOTHING user-facing ever waits on one — a reopen is invisible.
+    //    They are also the big ones (1.0 GB on disk for this repo's own, vs 41 MB
+    //    for its project DB). 60 s, i.e. one sweep interval past idle.
+    //
+    // Each ~190 MB of `external` freed is measured, not assumed (see docs/128 §128.5).
+    idleMs: numEnv('HOTSHEET_CLUSTER_IDLE_MS', 5 * 60 * 1000),
+    telemetryIdleMs: numEnv('HOTSHEET_TELEMETRY_CLUSTER_IDLE_MS', 60 * 1000),
     minIdleMs: numEnv('HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS', 30 * 1000),
     headroomFloorBytes: numEnv('HOTSHEET_EXTERNAL_HEADROOM_BYTES', 768 * 1024 * 1024),
     // Floor the sweep interval so a 0 / tiny override can't spin the timer.

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { type PGlite, type PGliteOptions } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { basename, dirname, join } from 'path';
+import { join } from 'path';
 import { z } from 'zod';
 
 import { globalHotsheetDir } from '../global-dir.js';
@@ -16,6 +16,7 @@ import {
   forgetCluster,
   headroomEvictionCount,
   heapSizeLimitBytes,
+  isTelemetryClusterDbPath,
   noteClusterAccess,
   resolveEvictionConfig,
   snapshotClusters,
@@ -550,6 +551,7 @@ async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<num
     maxOpen: cfg.maxOpen,
     minIdleMs: cfg.minIdleMs,
     idleMs: cfg.idleMs,
+    telemetryIdleMs: cfg.telemetryIdleMs,
     targetEvictions,
   });
   for (const dbPath of victims) await closeClusterForEviction(dbPath);
@@ -839,10 +841,12 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
  * here (rather than threading a flag) means EVERY construction path — first open,
  * recovery, snapshot restore — tunes consistently, since they all funnel through
  * `openAndCacheDb`.
+ *
+ * HS-9467 — the definition MOVED to `clusterEviction.ts` (the pure eviction planner
+ * needs it for the per-type idle window, and that module can't import this one
+ * without a cycle). Re-exported here so existing importers are unaffected.
  */
-export function isTelemetryClusterDbPath(dbPath: string): boolean {
-  return basename(dirname(dbPath)) === 'telemetry';
-}
+export { isTelemetryClusterDbPath } from './clusterEviction.js';
 
 /**
  * HS-9427 (docs/127 §127.5) — reclaim a bloated telemetry cluster's `pg_wal` by

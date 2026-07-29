@@ -33,10 +33,12 @@ PGLite handles and performs the closes the planner selects.
 1. **LRU cap** (`maxOpen`, default 10). Opening the (cap+1)-th cluster evicts the
    least-recently-used *evictable* cluster. Steady-state memory is now independent of how many
    projects are registered — someone with 30 projects holds at most `maxOpen` open.
-2. **Idle-close** (`idleMs`, default 10 min). A periodic sweep (`evictIdleClusters`, off-loop,
-   `unref`'d, 60 s) closes any non-pinned cluster untouched for `idleMs`. This is what reclaims
-   the telemetry clusters an ingest burst opened — they go idle and are closed, bounding the
-   session-long "creep."
+2. **Idle-close** (`idleMs`). A periodic sweep (`evictIdleClusters`, off-loop, `unref`'d, 60 s)
+   closes any non-pinned cluster untouched for its idle window. This is what reclaims the
+   telemetry clusters an ingest burst opened — they go idle and are closed, bounding the
+   session-long "creep." **HS-9467 — the window is per cluster TYPE:** project clusters 5 min,
+   telemetry clusters 60 s, because a telemetry reopen is invisible while a project reopen is a
+   hitch the user sees. §128.5.1 has the measurements behind both numbers.
 3. **Headroom guard** (`headroomFloorBytes`, default 768 MB). Before opening a new cluster, if
    `external` is within the floor of the V8 heap ceiling, evict LRU clusters *ignoring the
    recency guard* (but never one mid-query) to buy headroom before allocating another ~180 MB.
@@ -175,13 +177,52 @@ just got `PGlite is closed`. See §128.3.1 for what actually happens now.
 | Env var | Meaning | Default |
 | --- | --- | --- |
 | `HOTSHEET_MAX_OPEN_CLUSTERS` | LRU cap on open clusters (floor 2) | 10 |
-| `HOTSHEET_CLUSTER_IDLE_MS` | idle-close threshold | 600000 (10 min) |
+| `HOTSHEET_CLUSTER_IDLE_MS` | idle-close threshold, **project** clusters | 300000 (5 min) |
+| `HOTSHEET_TELEMETRY_CLUSTER_IDLE_MS` | idle-close threshold, **telemetry** clusters (HS-9467) | 60000 (1 min) |
 | `HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS` | recency guard for cap/idle eviction | 30000 (30 s) |
 | `HOTSHEET_EXTERNAL_HEADROOM_BYTES` | headroom floor below the heap ceiling | 805306368 (768 MB) |
 | `HOTSHEET_CLUSTER_SWEEP_INTERVAL_MS` | idle-sweep timer period (floor 1 s) | 60000 |
 
 `0` is a valid value for the guard thresholds (disables that guard); `maxOpen` is clamped to a
 floor of 2, the sweep interval to 1 s.
+
+### 128.5.1 Why the idle window is split by type (HS-9467)
+
+The two kinds of cluster are not alike in either the cost of closing them or the benefit:
+
+- A **project** cluster backs tab switches, so a reopen is a hitch the user sees. Measured on
+  arm64 / Node 22.14: **60–240 ms** to reopen a real 57 MB cluster warm, and **537 ms – 2.3 s**
+  cold in this machine's own `~/.hotsheet/startup.log` (that line only logs opens over 500 ms,
+  so it is the slow tail, not the typical). Window cut 10 min → **5 min**: an abandoned tab is
+  reclaimed within a coffee break, while an every-few-minutes revisit never pays.
+- A **telemetry** cluster is opened by an OTLP ingest burst and then sits there, and **nothing
+  user-facing ever waits on one** — the reopen is invisible. They are also the big ones on
+  disk (1.0 GB for this repo's own telemetry cluster vs 41 MB for its project DB). Window
+  **60 s**, one sweep interval past idle.
+
+Only **idle** mode is type-aware. Cap and headroom are about count and memory, where a telemetry
+cluster is not special, so LRU order alone decides — splitting those too would let a busy
+telemetry cluster outrank a colder project one for no reason.
+
+**Measured effect** (7 clusters open — 1 anchor, 3 projects, 3 sibling telemetry — with the cap
+and recency guard disabled to isolate the sweep):
+
+```
+external BEFORE sweep: 1576 MB
+evicted: 3 cluster(s)          ← the 3 telemetry ones; all 3 projects kept
+external AFTER  sweep:  768 MB   (freed 808 MB, ~270 MB per cluster)
+```
+
+**The catch, and it is easy to be fooled by:** that memory comes back on **GC**, not at
+`close()`. The same measurement without `--expose-gc` reachable by node reported `freed 0 MB`
+and looked like proof that eviction does nothing. Anyone checking whether a tuning change helped
+must force or wait for a collection before reading `process.memoryUsage().external` — a reading
+taken immediately after a sweep is meaningless.
+
+**Before tuning further, check which layer is actually binding.** With `maxOpen` 10 and roughly
+two clusters per project, ~5 active projects already saturate the cap, so on a busy install the
+LRU cap may be doing most of the work and the idle windows little. Whether `maxOpen` should
+count the two types separately is deliberately left open — see HS-9468.
 
 ## 128.6 Lifecycle
 

@@ -32,6 +32,7 @@ function input(over: Partial<EvictionInput>): EvictionInput {
     maxOpen: 3,
     minIdleMs: 30_000,
     idleMs: 600_000,
+    telemetryIdleMs: 60_000,
     targetEvictions: 0,
     ...over,
   };
@@ -106,6 +107,98 @@ describe('chooseEvictions — idle mode (HS-9420)', () => {
   it('evicts nothing when all clusters are fresh', () => {
     const clusters = [cluster('a', 10_000), cluster('b', 5_000)];
     expect(chooseEvictions(input({ clusters, mode: 'idle', idleMs: 600_000 }))).toEqual([]);
+  });
+});
+
+/**
+ * HS-9467 — the idle window is per cluster TYPE. A telemetry cluster is opened by
+ * an ingest burst and then sits there with nothing user-facing waiting on it (a
+ * reopen is invisible), and it is the big one on disk; a project cluster backs tab
+ * switches, where a reopen is a hitch the user sees. Same age, different verdict.
+ */
+describe('chooseEvictions — per-type idle windows (HS-9467)', () => {
+  const projectDb = (name: string) => `/data/${name}/db`;
+  const telemetryDb = (name: string) => `/data/${name}/telemetry/db`;
+
+  it('evicts a telemetry cluster that a project cluster of the SAME age keeps', () => {
+    // 90 s idle: past the 60 s telemetry window, well inside the 5 min project one.
+    const clusters = [
+      cluster(projectDb('p'), 90_000),
+      cluster(telemetryDb('p'), 90_000),
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'idle', idleMs: 300_000, telemetryIdleMs: 60_000,
+    }));
+    expect(out).toEqual([telemetryDb('p')]);
+  });
+
+  it('still evicts a project cluster once it passes its own longer window', () => {
+    const clusters = [
+      cluster(projectDb('p'), 400_000),
+      cluster(telemetryDb('p'), 400_000),
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'idle', idleMs: 300_000, telemetryIdleMs: 60_000,
+    }));
+    expect(new Set(out)).toEqual(new Set([projectDb('p'), telemetryDb('p')]));
+  });
+
+  it('keeps a telemetry cluster that is still inside its short window', () => {
+    const clusters = [cluster(telemetryDb('p'), 30_000)];
+    expect(chooseEvictions(input({
+      clusters, mode: 'idle', idleMs: 300_000, telemetryIdleMs: 60_000,
+    }))).toEqual([]);
+  });
+
+  it('holds the hard invariants for telemetry clusters too', () => {
+    // The shorter window must not become a back door around pinned / in-flight.
+    const clusters = [
+      cluster(telemetryDb('a'), 900_000, 1),   // in-flight
+      cluster(telemetryDb('b'), 900_000),      // pinned
+      cluster(telemetryDb('c'), 900_000),      // evictable
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'idle', idleMs: 300_000, telemetryIdleMs: 60_000,
+      pinnedPaths: new Set([telemetryDb('b')]),
+    }));
+    expect(out).toEqual([telemetryDb('c')]);
+  });
+
+  it('applies only to idle mode — cap and headroom are type-blind', () => {
+    // Those two are about COUNT and MEMORY, where a telemetry cluster is not
+    // special; LRU order alone decides. Splitting them too would let a busy
+    // telemetry cluster outrank a colder project one for no reason.
+    const clusters = [
+      cluster(projectDb('old'), 900_000),
+      cluster(telemetryDb('new'), 100_000),
+    ];
+    const capOut = chooseEvictions(input({
+      clusters, mode: 'cap', maxOpen: 1, minIdleMs: 30_000,
+      idleMs: 300_000, telemetryIdleMs: 60_000,
+    }));
+    expect(capOut).toEqual([projectDb('old')]); // LRU, not "telemetry first"
+
+    const headOut = chooseEvictions(input({
+      clusters, mode: 'headroom', targetEvictions: 1,
+      idleMs: 300_000, telemetryIdleMs: 60_000,
+    }));
+    expect(headOut).toEqual([projectDb('old')]);
+  });
+
+  it('classifies by path: only a `…/telemetry/db` dir gets the short window', () => {
+    // A project literally named "telemetry" must NOT be mistaken for one — its
+    // cluster is `/data/telemetry/db`, whose parent dir IS named telemetry.
+    // This is the known sharp edge of path-based classification; assert the
+    // actual behavior so a future change to the rule shows up here.
+    expect(chooseEvictions(input({
+      clusters: [cluster('/data/telemetry/db', 90_000)],
+      mode: 'idle', idleMs: 300_000, telemetryIdleMs: 60_000,
+    }))).toEqual(['/data/telemetry/db']);
+    // A normal project is unaffected.
+    expect(chooseEvictions(input({
+      clusters: [cluster('/data/telemetry-tools/db', 90_000)],
+      mode: 'idle', idleMs: 300_000, telemetryIdleMs: 60_000,
+    }))).toEqual([]);
   });
 });
 
@@ -200,6 +293,7 @@ describe('resolveEvictionConfig (HS-9420)', () => {
   const KEYS = [
     'HOTSHEET_MAX_OPEN_CLUSTERS',
     'HOTSHEET_CLUSTER_IDLE_MS',
+    'HOTSHEET_TELEMETRY_CLUSTER_IDLE_MS',
     'HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS',
     'HOTSHEET_EXTERNAL_HEADROOM_BYTES',
     'HOTSHEET_CLUSTER_SWEEP_INTERVAL_MS',
@@ -209,7 +303,10 @@ describe('resolveEvictionConfig (HS-9420)', () => {
   it('uses production defaults when no env is set', () => {
     const cfg = resolveEvictionConfig();
     expect(cfg.maxOpen).toBe(10);
-    expect(cfg.idleMs).toBe(600_000);
+    // HS-9467 — project clusters 5 min (was 10), telemetry 60 s. A reopen costs
+    // 60–240 ms warm; nothing user-facing waits on a telemetry reopen at all.
+    expect(cfg.idleMs).toBe(300_000);
+    expect(cfg.telemetryIdleMs).toBe(60_000);
     expect(cfg.minIdleMs).toBe(30_000);
     expect(cfg.headroomFloorBytes).toBe(768 * 1024 * 1024);
     expect(cfg.sweepIntervalMs).toBe(60_000);
@@ -218,8 +315,10 @@ describe('resolveEvictionConfig (HS-9420)', () => {
   it('honors env overrides', () => {
     process.env.HOTSHEET_MAX_OPEN_CLUSTERS = '4';
     process.env.HOTSHEET_CLUSTER_IDLE_MS = '120000';
+    process.env.HOTSHEET_TELEMETRY_CLUSTER_IDLE_MS = '15000';
     expect(resolveEvictionConfig().maxOpen).toBe(4);
     expect(resolveEvictionConfig().idleMs).toBe(120_000);
+    expect(resolveEvictionConfig().telemetryIdleMs).toBe(15_000);
   });
 
   it('clamps maxOpen to a floor of 2 and ignores invalid/negative values', () => {
@@ -228,6 +327,6 @@ describe('resolveEvictionConfig (HS-9420)', () => {
     process.env.HOTSHEET_MAX_OPEN_CLUSTERS = 'not-a-number';
     expect(resolveEvictionConfig().maxOpen).toBe(10); // falls back to default
     process.env.HOTSHEET_CLUSTER_IDLE_MS = '-5';
-    expect(resolveEvictionConfig().idleMs).toBe(600_000); // negative → default
+    expect(resolveEvictionConfig().idleMs).toBe(300_000); // negative → default
   });
 });
