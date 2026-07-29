@@ -1,6 +1,6 @@
 # 132. AI-tool plugin interface — one contract, one implementation per tool
 
-HS-9482. Status: **design only, decided.** Maintainer decision (2026-07-29): this is a
+HS-9482. Status: **decided; phase 1 SHIPPED (HS-9490), phases 2–8 open.** Maintainer decision (2026-07-29): this is a
 **new plugin interface specific to AI-tool integration** — not the docs/18
 `TicketingBackend` and not an extension of it — which **reuses docs/18's supporting
 subsystems** where they fit, the custom config UI first among them (§132.9).
@@ -300,7 +300,7 @@ each phase leaving the tree green and shippable.
 
 | Phase | Ticket | Scope |
 |---|---|---|
-| **1** | HS-9490 | `src/aiTools/` + the interface + the registry + plugin stubs carrying only identity (id, name, tier, devGate, detect). Adopt in `agentDisplayName` and the dropdown. Nothing else moves. |
+| **1** | HS-9490 ✅ | `src/aiTools/` + the interface + the registry + plugin stubs carrying only identity. Adopted in `agentDisplayName` and the dropdown. **SHIPPED** — see §132.12 for what building it changed about the design. |
 | **2** | HS-9491 | Instructions + skills: fold `TOOLS`, `ADAPTER_FAMILY`, `skillArtifactRelPath`, and the `ensureSkillsForDir` if-chain into plugins. Highest branch-count payoff. |
 | **3** | HS-9492 | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. |
 | **4** | HS-9493 | Drive + permissions + MCP: absorb `mcpHooksAgents.ts` and `resolveAcpAgentCommand`; **close the §132.1.1 leak** — the five generic modules stop importing `codexAppServer.js`. |
@@ -407,7 +407,53 @@ is the thing that would make this irreversible.
    their plugins, but the exclusion patterns are path-based — a follow-up, not a
    blocker.
 
-## 132.11 Cross-references
+## 132.11 What phase 1 changed about this design (HS-9490, shipped)
+
+Three refinements the doc did not anticipate, recorded because they are the kind of
+thing a later phase would otherwise re-litigate.
+
+**1. The pure core must stay client-safe, so `detect` became data.** `agentDisplayName.ts`
+is re-exported into the CLIENT bundle (`src/client/agentName.ts`), and it is the first
+consumer of the registry — so the registry and every plugin module transitively become
+client code. A `detect(projectRoot): boolean` closure would have pulled `fs` into the
+browser bundle and broken the build.
+
+So detection is declared as a `DetectionSpec` (`{ binaries, paths }`) and evaluated by
+`aiTools/detect.ts`, which is server-only. This is strictly better than the constraint
+that forced it: all nine hand-written predicates turned out to be the same expression —
+*any binary on PATH, or any of these paths present* — so this is the first entry in the
+§132.9.1 toolkit, written once and tested once instead of nine times. The rule it
+establishes: **`aiTools/types.ts`, `aiTools/registry.ts` and `aiTools/plugins/**` import
+no node builtins.** A capability that needs the filesystem takes it as an injected
+dependency or lives in a server-only sibling.
+
+**2. `displayName` alone was not enough — plugins carry two names.** The existing
+surfaces disagree, and collapsing them would have changed user-visible strings:
+`agentDisplayName` says "Claude" / "Gemini" / "Copilot" (they land in running text —
+"Gemini finished"), while the dropdown and instruction states say "Claude Code" /
+"Gemini CLI" / "GitHub Copilot". Both are correct for their context, so the interface
+has `displayName` (short) and `productName` (full). Six of the nine tools have them
+identical, which is why one field looked sufficient on paper.
+
+**3. The docs/124 gate filter stays client-side.** §132.5 said generating the dropdown
+would make gate filtering "fall out of" `devGate`. Half true: the option LIST now comes
+from the registry, but `applyAiToolDevGating` still runs in the client because it
+depends on per-project gate settings and the currently-selected tool — neither of which
+the server render knows. What the registry actually removed is the hand-maintained
+`<option>` list, which is the part that drifted.
+
+Also settled by building it: the plugin declares `devGateKey` duplicated from
+`DEV_FEATURES`, with a conformance test that fails on drift, rather than deriving it —
+same derive-and-pin approach as the wire enum, and for the same reason.
+
+**One divergence found, deliberately not resolved.** Eight tools' two detection
+predicates agree; Claude's do not (instructions checks `CLAUDE.md`, skills generation
+does not). Recorded as the union in the plugin with nothing consuming it yet, and filed
+as **HS-9500** for phase 2 to decide — picking a winner silently would either stop
+maintaining a file someone relies on or start writing a skills tree into repos that
+never asked for one.
+
+## 132.12 Cross-references
 
 - [113](113-multi-ai-tool-support.md) — the epic this consolidates; §113.2's A/B tiering
   becomes the plugin `tier` field.

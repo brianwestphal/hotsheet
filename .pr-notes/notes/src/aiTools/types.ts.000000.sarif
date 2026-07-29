@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms60nq3iq2pz9hju",
+          "message": {
+            "text": "Detection is declared as DATA rather than a detect(projectRoot): boolean closure because the registry is transitively CLIENT code, and a closure would have pulled fs into the browser bundle.\n\nThe chain is not obvious: agentDisplayName.ts is the registry's first consumer, and it is re-exported into the client bundle (0). So registry.ts → every plugins/*.ts becomes client code the moment the client imports a display name.\n\nThe constraint turned out to improve the design rather than compromise it. All nine hand-written predicates — spread across aiInstructionsTools.ts and skills.ts, written independently over many tickets — are the same expression: any binary on PATH, or any of these paths present. So DetectionSpec loses no expressiveness, and detect.ts becomes the first entry in the docs/132 §132.9.1 host toolkit: one implementation, tested once, instead of nine predicates tested never.\n\nThe rule this establishes for later phases: types.ts, registry.ts and plugins/** import no node builtins. A capability needing the filesystem takes it as an injected dependency (see DetectDeps) or lives in a server-only sibling. Phase 4 moves the drive capability, which spawns processes — that one has to land in a sibling, not on the plugin object.\n\nVerified: npm run build:client succeeds and the bundle contains no fs import after this change.\n",
+            "markdown": "Detection is declared as DATA rather than a `detect(projectRoot): boolean` closure because the registry is transitively CLIENT code, and a closure would have pulled `fs` into the browser bundle.\n\nThe chain is not obvious: `agentDisplayName.ts` is the registry's first consumer, and it is [re-exported into the client bundle](0). So `registry.ts` → every `plugins/*.ts` becomes client code the moment the client imports a display name.\n\nThe constraint turned out to improve the design rather than compromise it. All nine hand-written predicates — spread across `aiInstructionsTools.ts` and `skills.ts`, written independently over many tickets — are the same expression: *any binary on PATH, or any of these paths present*. So `DetectionSpec` loses no expressiveness, and `detect.ts` becomes the first entry in the docs/132 §132.9.1 host toolkit: one implementation, tested once, instead of nine predicates tested never.\n\n**The rule this establishes for later phases:** `types.ts`, `registry.ts` and `plugins/**` import no node builtins. A capability needing the filesystem takes it as an injected dependency (see `DetectDeps`) or lives in a server-only sibling. Phase 4 moves the drive capability, which spawns processes — that one has to land in a sibling, not on the plugin object.\n\nVerified: `npm run build:client` succeeds and the bundle contains no `fs` import after this change.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/aiTools/types.ts"
+                },
+                "region": {
+                  "startLine": 15,
+                  "endLine": 22,
+                  "snippet": {
+                    "text": "// server-side helper rather than a `(projectRoot) => boolean` closure; see `detect.ts`.\n\nimport type { DevFeatureKey } from '../devFeatures.js';\n\n/**\n * How to tell whether a project uses this tool, expressed as data so the pure registry\n * stays free of `fs`. Evaluated by `detect.ts::detectsTool` (server-side) as:\n *"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/agentName.ts"
+                },
+                "region": {
+                  "startLine": 6
+                }
+              }
+            }
+          ],
+          "workItemUris": [
+            "HS-9490"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "564465bc823e9c92d87b17150814ee94"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "55b8eace5e3872c5fa77d3a0ee2ebe6c8429adc9",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

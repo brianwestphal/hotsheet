@@ -4,23 +4,19 @@
 // anything unrecognized) render as "Claude" — the default drive is Claude, so an unknown/
 // auto tool keeps the current label rather than inventing one.
 //
-// Pure + dependency-free so BOTH the server (the `/channel/done` log entry) and the client
-// (`src/client/agentName.ts` re-exports this) can use one source of truth.
+// HS-9490 (docs/132) — the per-tool name table moved to the plugin registry; this is now
+// the thin lookup over it. The registry is pure (no `fs`), which is what keeps this
+// module usable from BOTH the server (`/channel/done`) and the client
+// (`src/client/agentName.ts` re-exports it) — see the client-safety note in
+// `aiTools/types.ts`.
+//
+// Note this reads `displayName` (the SHORT form) rather than `productName`: these labels
+// land in running text — "Claude working", "Gemini finished" — where the full product
+// name ("Claude Code", "Gemini CLI") reads wrong.
 
-const DISPLAY_NAMES: Readonly<Record<string, string>> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  gemini: 'Gemini',
-  antigravity: 'Antigravity',
-  opencode: 'OpenCode',
-  goose: 'Goose',
-  cursor: 'Cursor',
-  copilot: 'Copilot',
-  windsurf: 'Windsurf',
-};
+import { getPlugin } from './aiTools/registry.js';
 
 /** Human label for an `ai_tool` value. `auto`/unset/unknown → "Claude". */
 export function agentDisplayName(aiTool: string | undefined): string {
-  if (aiTool === undefined) return 'Claude';
-  return DISPLAY_NAMES[aiTool.trim().toLowerCase()] ?? 'Claude';
+  return getPlugin(aiTool)?.displayName ?? 'Claude';
 }

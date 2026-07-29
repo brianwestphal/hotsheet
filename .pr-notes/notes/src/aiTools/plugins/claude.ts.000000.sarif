@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms60nq91a9knay6v",
+          "message": {
+            "text": "This spec records the UNION of two predicates that disagree today, and that choice is safe only because nothing consumes it yet.\n\naiInstructionsTools.ts detects Claude via `claude on PATH or .claude/ or CLAUDE.md; skills.ts::ensureSkillsForDir omits the CLAUDE.md` arm. Eight of the nine tools agree between their two definitions — Claude is the only one that doesn't.\n\nThe observable gap: a project with a committed CLAUDE.md but no .claude/, on a machine without the CLI, gets its instruction file maintained but its skills never generated.\n\nI did not resolve it here. Both readings are defensible — refreshing an existing file on weak evidence is harmless, while generating a .claude/skills/ tree into someone's repo on the same evidence is not — and picking silently would either stop maintaining a file someone relies on or start writing into repos that never asked for it. Filed as HS-9500**.\n\nPhase 2 (HS-9491) cannot leave this alone. The moment it routes both call sites through this plugin, the union silently becomes the answer for both. That is the point at which the decision gets made whether or not anyone notices, which is exactly why it is written down here.\n",
+            "markdown": "This spec records the UNION of two predicates that disagree today, and that choice is safe only because nothing consumes it yet.\n\n`aiInstructionsTools.ts` detects Claude via ``claude`` on PATH **or** `.claude/` **or** `CLAUDE.md`; `skills.ts::ensureSkillsForDir` omits the `CLAUDE.md` arm. Eight of the nine tools agree between their two definitions — Claude is the only one that doesn't.\n\nThe observable gap: a project with a committed `CLAUDE.md` but no `.claude/`, on a machine without the CLI, gets its instruction file maintained but its skills never generated.\n\nI did not resolve it here. Both readings are defensible — refreshing an existing file on weak evidence is harmless, while generating a `.claude/skills/**` tree into someone's repo on the same evidence is not — and picking silently would either stop maintaining a file someone relies on or start writing into repos that never asked for it. Filed as **HS-9500**.\n\n**Phase 2 (HS-9491) cannot leave this alone.** The moment it routes both call sites through this plugin, the union silently becomes the answer for both. That is the point at which the decision gets made whether or not anyone notices, which is exactly why it is written down here.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/aiTools/plugins/claude.ts"
+                },
+                "region": {
+                  "startLine": 16,
+                  "endLine": 21,
+                  "snippet": {
+                    "text": "    // NOTE (HS-9500): `CLAUDE.md` is the UNION of two predicates that disagree today —\n    // `aiInstructionsTools.ts` checks it, `skills.ts::ensureSkillsForDir` does not.\n    // Nothing consumes this spec yet (phase 1 is identity only), so recording the\n    // superset changes no behavior; phase 2 has to make the choice deliberately.\n    paths: ['.claude', 'CLAUDE.md'],\n  },"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "assumption"
+            ]
+          },
+          "workItemUris": [
+            "HS-9490"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "5f23b8202a4f8b23bb2d99fd96b5d5d0"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "55b8eace5e3872c5fa77d3a0ee2ebe6c8429adc9",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

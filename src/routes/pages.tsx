@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 
+import { listPlugins } from '../aiTools/registry.js';
 import { ANNOUNCER_MODELS } from '../announcer/models.js';
 import { Layout } from '../components/layout.js';
 import { PairPage } from '../components/pairPage.js';
@@ -717,17 +718,17 @@ pageRoutes.get('/', (c) => {
               <div className="settings-divider"></div>
               <div className="settings-field">
                 <label htmlFor="ai-tool-select">AI tool</label>
+                {/* HS-9490 (docs/132 §132.5) — generated from the plugin registry, in
+                    its declared order, instead of a hand-maintained list. Adding a tool
+                    is now a registry line, not an edit here. `auto` is written
+                    explicitly because it is a resolution MODE, not a plugin (§132.6).
+                    The docs/124 In-Development filtering still runs client-side
+                    (`applyAiToolDevGating`) — it depends on per-project gate settings
+                    and the currently-selected tool, neither of which the server render
+                    knows. */}
                 <select id="ai-tool-select" className="settings-select">
                   <option value="auto">Auto-detect (default)</option>
-                  <option value="claude">Claude Code</option>
-                  <option value="codex">Codex</option>
-                  <option value="antigravity">Antigravity</option>
-                  <option value="gemini">Gemini CLI</option>
-                  <option value="opencode">OpenCode</option>
-                  <option value="goose">Goose</option>
-                  <option value="cursor">Cursor</option>
-                  <option value="copilot">GitHub Copilot</option>
-                  <option value="windsurf">Windsurf</option>
+                  {listPlugins().map(p => <option value={p.id}>{p.productName}</option>)}
                 </select>
                 <span className="settings-hint">Which AI tool this project uses. <strong>Auto-detect</strong> keeps today's behavior (seed skills/instructions for every detected tool). Choosing a CLI agent (Claude / Codex / Antigravity / Gemini / OpenCode / Goose) makes a <code>{'{{aiCommand}}'}</code> terminal launch that tool's binary (Antigravity → <code>agy</code>). Editor tools (Cursor / Copilot / Windsurf) get rules + instructions only. Driving non-Claude agents through the play button / permission popup is in progress — Antigravity rides the same MCP tools as Claude (HS-9310 spike proven; docs/113).</span>
               </div>
