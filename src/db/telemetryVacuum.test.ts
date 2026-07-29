@@ -325,7 +325,23 @@ describe('maintainTelemetryDb (HS-8884)', () => {
       } finally {
         for (const d of dirs) await cleanupTestDb(d);
       }
-    });
+    // HS-9501 — the slowest test in the file, and it needs its own budget. It builds
+    // THREE real projects (each a PGLite cluster) and runs a real VACUUM FULL over
+    // each one's telemetry cluster. Measured: ~7 s run alone, ~43 s inside a full
+    // `src/db` run — a 6× stretch from CPU starvation across parallel forks, which is
+    // the same effect `vitest.config.ts` documents for the PGLite-heavy suites. It was
+    // therefore blowing the 30 s global and reporting as a timeout, which reads exactly
+    // like a hang and is not one.
+    //
+    // The cost is deliberate, not accidental: `setupTestDb` is used rather than bare
+    // temp dirs precisely BECAUSE it also opens each project's main cluster, which is
+    // the confounder `openTelemetry()` filters out — a cheaper fixture would stop
+    // resembling the situation this guards. Three projects rather than two for the same
+    // reason: a leak of "all but the first" or "all but the last" survives N=2.
+    //
+    // Guarding the HS-9420 OOM is worth ~40 s of suite time. Raise the budget, keep the
+    // test honest.
+    }, 120_000);
 
     it('leaves a cluster that was ALREADY open alone', async () => {
       // Somebody else (an OTLP write, a dashboard read) has it open — closing it
