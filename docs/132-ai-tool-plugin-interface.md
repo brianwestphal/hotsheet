@@ -446,12 +446,15 @@ Also settled by building it: the plugin declares `devGateKey` duplicated from
 `DEV_FEATURES`, with a conformance test that fails on drift, rather than deriving it —
 same derive-and-pin approach as the wire enum, and for the same reason.
 
-**One divergence found, deliberately not resolved.** Eight tools' two detection
-predicates agree; Claude's do not (instructions checks `CLAUDE.md`, skills generation
-does not). Recorded as the union in the plugin with nothing consuming it yet, and filed
-as **HS-9500** for phase 2 to decide — picking a winner silently would either stop
-maintaining a file someone relies on or start writing a skills tree into repos that
-never asked for one.
+**One divergence found, and since resolved.** Eight tools' two detection predicates
+agreed; Claude's did not — instructions counted a committed `CLAUDE.md`, skills
+generation did not, so such a project got its instruction file maintained while its
+skills were never generated. Phase 1 recorded the union in the plugin with nothing
+consuming it and filed **HS-9500** rather than picking a winner silently, since either
+choice changes real behavior. Maintainer decision (2026-07-29): **union everywhere**,
+and `skills.ts` was brought into line immediately. So phase 2 inherits one definition
+both call sites already agree on, instead of a choice disguised as a refactor — which
+is the whole reason phase 1 was asked to compare them.
 
 ## 132.12 Cross-references
 

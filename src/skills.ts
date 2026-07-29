@@ -1004,7 +1004,13 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   // (they just stop being refreshed) — a non-destructive narrowing.
   const wants = wantsTool(dataDir);
 
-  if (wants('claude') && (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude')))) {
+  // HS-9500 — `CLAUDE.md` counts as evidence here, matching
+  // `aiInstructionsTools.ts::TOOLS`. The two predicates had disagreed since they were
+  // written: instructions checked the file, skills generation did not, so a project
+  // with a committed `CLAUDE.md` and no `.claude/` — a fresh clone, or a second machine
+  // without the CLI — got its instruction file maintained while its skills were never
+  // generated. Maintainer decision (2026-07-29): use the union everywhere.
+  if (wants('claude') && (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude')) || existsSync(join(projectRoot, 'CLAUDE.md')))) {
     // HS-8936 — `dataDir` defaults to `projectRoot/.hotsheet`; a worktree follower
     // passes the OWNER's `.hotsheet` so `/hotsheet` + the curl skills target the
     // shared instance's worklist + port/secret (docs/89 §89.2 Phase C).

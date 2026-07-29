@@ -155,6 +155,11 @@ describe('detection spec matches the predicates it replaces (HS-9490)', () => {
   // against those predicates now, so the phase-2 swap is a verified no-op rather than a
   // hope. Expressed as literal expectations rather than by importing the old tables,
   // because the point is to catch a change on EITHER side.
+  //
+  // HS-9500 — Claude's two predicates used to disagree (instructions counted
+  // `CLAUDE.md`, skills generation did not). `skills.ts` was brought into line with the
+  // union, so all nine tools now have ONE definition and this table pins it. The
+  // agreement itself is asserted end-to-end in `skills.test.ts`.
   const EXPECTED: Record<string, { binaries: string[]; paths: string[] }> = {
     claude: { binaries: ['claude'], paths: ['.claude', 'CLAUDE.md'] },
     codex: { binaries: ['codex'], paths: ['AGENTS.md'] },

@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { getInstructionsStatesForTools } from './aiInstructionsTools.js';
 import {
   _resetSkillsStateForTesting,
   consumeSkillsCreatedFlag,
@@ -1014,10 +1015,43 @@ describe('ensureSkillsForDir — PATH-based detection (HS-8486)', () => {
     expect(platforms).toContain('Claude Code');
   });
 
-  it('does NOT install Claude skill when neither PATH nor folder are present', () => {
+  it('does NOT install Claude skill when neither PATH nor folder nor CLAUDE.md are present', () => {
     const platforms = ensureSkillsForDir(tempDir);
     expect(platforms).not.toContain('Claude Code');
     expect(existsSync(join(tempDir, '.claude'))).toBe(false);
+  });
+
+  /**
+   * HS-9500 — the two Claude detection predicates had disagreed since they were
+   * written: `aiInstructionsTools.ts::TOOLS` counted a committed `CLAUDE.md` as
+   * evidence, `ensureSkillsForDir` did not. So a project with a `CLAUDE.md` and no
+   * `.claude/` — a fresh clone, or a second machine without the CLI — got its
+   * instruction file maintained while its skills were never generated.
+   *
+   * Maintainer decision (2026-07-29): use the union everywhere. These assert BOTH
+   * paths on the same fixture, because the bug was not either path being wrong on its
+   * own — it was the two of them disagreeing, which no single-path test can see.
+   */
+  it('installs Claude skill from a committed CLAUDE.md alone (no binary, no .claude folder)', () => {
+    writeFileSync(join(tempDir, 'CLAUDE.md'), '# Project instructions\n');
+    const platforms = ensureSkillsForDir(tempDir);
+    expect(platforms).toContain('Claude Code');
+    expect(existsSync(join(tempDir, '.claude', 'skills', 'hotsheet', 'SKILL.md'))).toBe(true);
+  });
+
+  it('agrees with the instructions path on a CLAUDE.md-only project (HS-9500)', () => {
+    writeFileSync(join(tempDir, 'CLAUDE.md'), '# Project instructions\n');
+    const claudeState = getInstructionsStatesForTools(tempDir).find(s => s.tool === 'claude');
+    expect(claudeState?.detected).toBe(true);
+    expect(ensureSkillsForDir(tempDir)).toContain('Claude Code');
+  });
+
+  it('agrees with the instructions path when nothing indicates Claude (HS-9500)', () => {
+    // The other half of the agreement — a union that detected everything would pass
+    // the test above while being just as wrong.
+    const claudeState = getInstructionsStatesForTools(tempDir).find(s => s.tool === 'claude');
+    expect(claudeState?.detected).toBe(false);
+    expect(ensureSkillsForDir(tempDir)).not.toContain('Claude Code');
   });
 
   it('Copilot detection stays folder-only (no executable probe — Copilot lives inside VS Code)', () => {

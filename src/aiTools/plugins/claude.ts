@@ -13,10 +13,13 @@ export const claudePlugin: AiToolPlugin = {
   devGateKey: null, // the default tool — never gated
   detection: {
     binaries: ['claude'],
-    // NOTE (HS-9500): `CLAUDE.md` is the UNION of two predicates that disagree today —
-    // `aiInstructionsTools.ts` checks it, `skills.ts::ensureSkillsForDir` does not.
-    // Nothing consumes this spec yet (phase 1 is identity only), so recording the
-    // superset changes no behavior; phase 2 has to make the choice deliberately.
+    // HS-9500 — `CLAUDE.md` counts. The two predicates this spec will replace had
+    // disagreed since they were written (`aiInstructionsTools.ts` checked the file,
+    // `skills.ts::ensureSkillsForDir` did not), so a project with a committed
+    // `CLAUDE.md` and no `.claude/` got its instruction file maintained while its
+    // skills were never generated. Maintainer decision (2026-07-29): union everywhere,
+    // and `skills.ts` was brought into line — so phase 2 (HS-9491) now inherits an
+    // answer both call sites already agree on, rather than having to pick one.
     paths: ['.claude', 'CLAUDE.md'],
   },
 };
