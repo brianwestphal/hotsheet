@@ -392,6 +392,44 @@ Follow-ups: **HS-9479** (force a GC after a pressure pass — the actual fix), *
 like this again), **HS-9481** (verify PGLite really does release on `close()`; if something
 retains the instance, HS-9479 is the wrong fix and this is a reference leak).
 
+### 128.5.5 PGLite does release on close — the missing ingredient is the collection (HS-9481)
+
+§128.5.4 left one assumption unverified: that after `close()` nothing still references the
+instance, so a collection *would* reclaim its heap. If PGLite retained it internally, forcing a
+GC would fix nothing. Measured directly, and it does not:
+
+```
+baseline (1 anchor cluster open)                    194 MB
+cycle 1  open 4 -> 1193 MB   close + forced GC ->   194 MB   residue 0 MB
+cycle 2  open 4 -> 1193 MB   close + forced GC ->   194 MB   residue 0 MB
+cycle 3  open 4 -> 1193 MB   close + forced GC ->   194 MB   residue 0 MB
+```
+
+**Zero accumulation across three cycles.** No upstream leak, no internal registry, no stuck
+`FinalizationRegistry`. Each cluster costs ~250 MB here and every byte comes back.
+
+The control isolates the actual production behavior:
+
+```
+open 4                                     -> 1193 MB
+close all, wait 5 s, NO forced GC          -> 1197 MB   (residue 1004 MB — nothing freed)
+then force a GC                            ->  194 MB   (residue 0 MB)
+```
+
+Closing frees nothing; collecting frees everything. That is the whole bug, in two lines.
+
+**One caveat that can defeat the fix.** A *held* handle pins its heap through both close and
+collection:
+
+```
+close a cluster while a stale handle is HELD, forced GC -> 385 MB (191 MB retained)
+```
+
+GC cannot reclaim what is still reachable. HS-9461 deliberately made stale handles keep working
+(reopen + retry), which makes holding one a supported pattern rather than an obvious error — so
+nothing discourages code from keeping one, and any long-lived holder silently costs ~190 MB that
+HS-9479 cannot recover. Auditing for those is **HS-9483**.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →
