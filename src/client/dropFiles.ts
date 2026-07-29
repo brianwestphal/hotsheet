@@ -22,19 +22,59 @@
  * what the user meant, and it is the other shape the un-materialized case takes.
  */
 
-/** One byte is enough — we only need to know whether the backing store answers. */
-async function isReadable(file: File): Promise<boolean> {
-  if (file.size === 0) return false;
+/**
+ * Above this, don't buffer the file into memory — stream it as before.
+ *
+ * A promised screen capture is a few hundred KB, so the case this whole module
+ * exists for is never anywhere near the limit. The cap is only so that dropping a
+ * genuinely large attachment (a video) doesn't double its memory.
+ */
+const MAX_MATERIALIZE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Turn a dropped file into one whose bytes we HOLD, or null if they aren't there.
+ *
+ * The first version of this only checked that reading one byte didn't throw, and
+ * it was not enough — the reported failure got past it and still produced
+ * `Malformed upload body`. Two ways that check was too weak:
+ *
+ *  1. `slice(0, 1).arrayBuffer()` can RESOLVE WITH ZERO BYTES. No throw, nothing
+ *     read, and the file sails through as readable.
+ *  2. Even a genuinely readable first byte proves nothing about the rest. `fetch`
+ *     streams a `File` lazily, so the body can still truncate mid-flight — which
+ *     is exactly the failure we were trying to detect, just moved later.
+ *
+ * So the check is no longer a check. We read the bytes and upload THOSE, which
+ * makes truncation structurally impossible: either the promise delivered and we
+ * hold a real in-memory file, or it didn't and we say so before any request
+ * exists. A short read counts as failure too — a partially-delivered PNG is
+ * garbage, and silently attaching it would be worse than refusing.
+ */
+async function materialize(file: File): Promise<File | null> {
+  if (file.size === 0) return null;
   try {
-    await file.slice(0, 1).arrayBuffer();
-    return true;
+    if (file.size > MAX_MATERIALIZE_BYTES) {
+      // Too big to buffer. Verify a byte is genuinely there (with the emptiness
+      // check the original version was missing) and stream it as before.
+      const probe = await file.slice(0, 1).arrayBuffer();
+      return probe.byteLength > 0 ? file : null;
+    }
+    const bytes = await file.arrayBuffer();
+    if (bytes.byteLength === 0) return null;
+    // Short read ⇒ the promise did not deliver what it claimed.
+    if (file.size > 0 && bytes.byteLength < file.size) return null;
+    return new File([bytes], file.name, { type: file.type, lastModified: file.lastModified });
   } catch {
-    return false;
+    return null;
   }
 }
 
 export interface ScreenedFiles {
-  /** Files whose bytes are actually there — safe to upload. */
+  /**
+   * Files safe to upload. For anything under `MAX_MATERIALIZE_BYTES` these are
+   * IN-MEMORY copies, not the originals — that is the point, since the original
+   * may be a promise whose backing store can still vanish mid-upload.
+   */
   readable: File[];
   /** Names of files that could not be read, for the message to the user. */
   unreadable: string[];
@@ -50,7 +90,8 @@ export async function screenDroppedFiles(files: readonly File[]): Promise<Screen
   const readable: File[] = [];
   const unreadable: string[] = [];
   for (const file of files) {
-    if (await isReadable(file)) readable.push(file);
+    const materialized = await materialize(file);
+    if (materialized !== null) readable.push(materialized);
     else unreadable.push(file.name === '' ? '(unnamed file)' : file.name);
   }
   return { readable, unreadable };

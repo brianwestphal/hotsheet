@@ -22,9 +22,33 @@ function realFile(name: string, body = 'png-bytes'): File {
 function promisedFile(name: string): File {
   const f = realFile(name);
   Object.defineProperty(f, 'size', { value: 12345 });
-  Object.defineProperty(f, 'slice', {
-    value: () => ({ arrayBuffer: () => Promise.reject(new Error('NotFoundError: file not found')) }),
-  });
+  const fail = () => Promise.reject(new Error('NotFoundError: file not found'));
+  Object.defineProperty(f, 'slice', { value: () => ({ arrayBuffer: fail }) });
+  Object.defineProperty(f, 'arrayBuffer', { value: fail });
+  return f;
+}
+
+/**
+ * The shape that DEFEATED the first version of this screening, and the reason the
+ * reported bug survived it: reading resolves, but with zero bytes. No throw, so a
+ * "did it throw?" check waves it straight through to an upload that then truncates.
+ */
+function emptyResolvingFile(name: string): File {
+  const f = realFile(name);
+  Object.defineProperty(f, 'size', { value: 12345 });
+  const empty = () => Promise.resolve(new ArrayBuffer(0));
+  Object.defineProperty(f, 'slice', { value: () => ({ arrayBuffer: empty }) });
+  Object.defineProperty(f, 'arrayBuffer', { value: empty });
+  return f;
+}
+
+/** Reading resolves, but delivers FEWER bytes than `size` — a partial PNG is garbage. */
+function shortReadFile(name: string): File {
+  const f = realFile(name);
+  Object.defineProperty(f, 'size', { value: 12345 });
+  const short = () => Promise.resolve(new ArrayBuffer(16));
+  Object.defineProperty(f, 'slice', { value: () => ({ arrayBuffer: short }) });
+  Object.defineProperty(f, 'arrayBuffer', { value: short });
   return f;
 }
 
@@ -72,12 +96,31 @@ describe('screenDroppedFiles (HS-9465)', () => {
     expect(await screenDroppedFiles([])).toEqual({ readable: [], unreadable: [] });
   });
 
-  it('does not consume the file — it stays uploadable', async () => {
-    // A full `arrayBuffer()` read would work too, but would buffer a large
-    // attachment into memory; slicing one byte must leave the File intact.
+  it('returns a file whose bytes we HOLD, with the content intact', async () => {
+    // The returned file is an in-memory copy, not the original — that is the point:
+    // the original may be a promise whose backing store can still vanish mid-upload.
     const file = realFile('shot.png', 'the-real-bytes');
     const { readable } = await screenDroppedFiles([file]);
     expect(await readable[0].text()).toBe('the-real-bytes');
+    expect(readable[0].name).toBe('shot.png');
+    expect(readable[0].type).toBe('image/png');
+  });
+
+  it('rejects a file whose read RESOLVES WITH ZERO BYTES', async () => {
+    // The shape that got past the first version of this screening and produced the
+    // reported "Could not attach the file / Malformed upload body". Nothing threw;
+    // nothing was read either.
+    const { readable, unreadable } = await screenDroppedFiles([emptyResolvingFile('unsaved.png')]);
+    expect(readable).toEqual([]);
+    expect(unreadable).toEqual(['unsaved.png']);
+  });
+
+  it('rejects a SHORT read rather than attaching a partial file', async () => {
+    // The promise claimed 12345 bytes and delivered 16. Silently attaching a
+    // truncated PNG would be worse than refusing it.
+    const { readable, unreadable } = await screenDroppedFiles([shortReadFile('partial.png')]);
+    expect(readable).toEqual([]);
+    expect(unreadable).toEqual(['partial.png']);
   });
 });
 

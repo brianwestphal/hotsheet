@@ -302,6 +302,12 @@ function bindFileDropListeners(): void {
   });
   document.addEventListener('dragend', () => { setFileDropRow(null); });
   document.addEventListener('drop', async (e) => {
+    // HS-9466 — captured OUTSIDE the try so the catch can report it too. The first
+    // version only logged when SCREENING flagged a file, i.e. only for the failure
+    // I expected; when screening wrongly passed a promised file and the upload
+    // truncated instead, nothing was logged at all and the report came back with
+    // no diagnostic attached.
+    let dragPayload = '(not captured)';
     try {
       const target = e.target as HTMLElement;
       if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
@@ -314,17 +320,17 @@ function bindFileDropListeners(): void {
       // is a promised file with no backing store yet; uploading it truncates the
       // multipart body mid-flight and the server can only answer 400.
       const transfer = e.dataTransfer;
+      dragPayload = describeDragPayload(
+        Array.from(transfer.types),
+        Array.from(transfer.items).map(it => ({ kind: it.kind, type: it.type })),
+      );
       const { readable, unreadable } = await screenDroppedFiles(Array.from(files));
       if (unreadable.length > 0) {
-        // HS-9466 (docs/130 §130.4) — the one diagnostic that decides whether the
+        // HS-9466 (docs/130 §130.4) — the diagnostic that decides whether the
         // native file-promise work is justified: does this drag ALSO carry a
-        // representation with real bytes? Only logged when a drop actually failed.
+        // representation with real bytes? Logged whenever a drop fails, either way.
         console.warn(
-          `[hotsheet] drop had ${String(unreadable.length)} unreadable file(s). Drag payload:\n`
-          + describeDragPayload(
-            Array.from(transfer.types),
-            Array.from(transfer.items).map(it => ({ kind: it.kind, type: it.type })),
-          ),
+          `[hotsheet] drop had ${String(unreadable.length)} unreadable file(s). Drag payload:\n${dragPayload}`,
         );
       }
       if (readable.length === 0) {
@@ -350,6 +356,10 @@ function bindFileDropListeners(): void {
       // and surfaced as the generic HS-9455 "Something went wrong" crash popup —
       // which names neither the file nor anything the user can do. Report it as
       // the attachment failure it is.
+      // HS-9466 — an upload that fails AFTER screening passed is the more
+      // interesting failure, so log the payload here too rather than only on the
+      // path where screening caught it.
+      console.warn(`[hotsheet] attach failed: ${getErrorMessage(err)}. Drag payload:\n${dragPayload}`);
       showErrorPopup(getErrorMessage(err), { title: 'Could not attach the file' });
     }
   });

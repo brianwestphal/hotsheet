@@ -41,10 +41,31 @@ tells the truth.
 
 ## 130.3 What shipped (HS-9465) — detect, explain, don't crash
 
-`src/client/dropFiles.ts::screenDroppedFiles` reads the **first byte** of every dropped file
-before anything is created or uploaded. A file that throws — or reports size 0 — is unreadable.
-Slicing one byte rather than calling `arrayBuffer()` keeps a large legitimate attachment out of
-memory, and a test asserts screening does not consume the file.
+`src/client/dropFiles.ts::screenDroppedFiles` **materializes** every dropped file — reads its
+bytes and hands back an in-memory copy — before anything is created or uploaded. A file whose
+bytes aren't there is reported instead of uploaded.
+
+### 130.3.1 The first attempt was too weak (HS-9466)
+
+The original version only checked that reading one byte didn't *throw*. The reported failure got
+straight past it and still produced `Malformed upload body` — this time surfaced as
+"Could not attach the file", i.e. from the `catch`, proving screening had passed the file and the
+upload truncated anyway. Two holes:
+
+1. **`slice(0, 1).arrayBuffer()` can resolve with ZERO bytes.** Nothing throws, nothing is read,
+   and a "did it throw?" check waves the file through.
+2. **One readable byte proves nothing about the rest.** `fetch` streams a `File` lazily, so the
+   body can still truncate mid-flight — the exact failure being detected, just moved later.
+
+So it is no longer a check. We read the bytes and upload *those*, which makes truncation
+structurally impossible: either the promise delivered and we hold a real file, or it didn't and we
+say so before any request exists. A **short read** (fewer bytes than `size`) counts as failure
+too — silently attaching a partial PNG is worse than refusing it.
+
+Files over `MAX_MATERIALIZE_BYTES` (64 MB) are still streamed rather than buffered, after a
+one-byte probe that now also requires the byte to actually arrive. A promised screen capture is a
+few hundred KB, so the case this module exists for never approaches the cap; it is only there so
+dropping a large video doesn't double its memory.
 
 - The message names the file and states the two things that work: wait for the capture to land
   on the desktop, or press ⌘V.
@@ -64,8 +85,11 @@ alongside the broken promised file. Nobody has looked. If it offers an `image/pn
 real bytes, or a resolvable URL, the fix is a few lines of client code preferring that
 representation and the native path is unjustified.
 
-`describeDragPayload` (`dropFiles.ts`) is logged by the drop handler **whenever a drop contains
-an unreadable file** — the failure path only, so it costs nothing in normal use:
+`describeDragPayload` (`dropFiles.ts`) is logged by the drop handler on **either** failure path —
+when screening rejects a file, and when an upload fails after screening passed. The first version
+logged only the former, i.e. only the failure that was expected; when the second one happened
+instead, the report came back with no diagnostic attached at all. Failure paths only, so it costs
+nothing in normal use:
 
 ```
 [hotsheet] drop had 1 unreadable file(s). Drag payload:
