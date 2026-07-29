@@ -5,6 +5,7 @@
 import { Hono } from 'hono';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as ConnectionModule from '../db/connection.js';
 import { getDb } from '../db/connection.js';
 import { createTicket } from '../db/tickets.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -16,10 +17,6 @@ const mockProject = {
   dataDir: '/tmp/test-project/.hotsheet',
   name: 'Test Project',
   secret: 'test-secret-123',
-  db: {
-    // HS-9056 — the list query now returns ticket / open / up-next counts.
-    query: vi.fn(() => Promise.resolve({ rows: [{ ticket_count: '5', open_count: '4', up_next_count: '2' }] })),
-  },
   markdownSyncState: { worklistTimeout: null, openTicketsTimeout: null },
   backupTimers: { fiveMin: null, hourly: null, daily: null },
 };
@@ -28,14 +25,42 @@ const mockProject2 = {
   dataDir: '/tmp/test-project-2/.hotsheet',
   name: 'Second Project',
   secret: 'test-secret-456',
-  db: {
-    query: vi.fn(() => Promise.resolve({ rows: [{ ticket_count: '3', open_count: '1', up_next_count: '0' }] })),
-  },
   markdownSyncState: { worklistTimeout: null, openTicketsTimeout: null },
   backupTimers: { fiveMin: null, hourly: null, daily: null },
 };
 
 let mockProjects = [mockProject, mockProject2];
+
+// HS-9485 — the fake clusters are keyed by dataDir, NOT hung off the project
+// context. `ProjectContext` no longer carries a `PGlite`: a handle stored there
+// outlived every eviction and pinned ~190 MB of WASM heap per registered project
+// for the life of the process (docs/128 §128.5.7). The routes resolve their
+// handle with `getDbForDir` per use, so the test mirrors that.
+const mockDbs: Record<string, { query: ReturnType<typeof vi.fn> } | undefined> = {
+  // HS-9056 — the list query returns ticket / open / up-next counts.
+  [mockProject.dataDir]: {
+    query: vi.fn(() => Promise.resolve({ rows: [{ ticket_count: '5', open_count: '4', up_next_count: '2' }] })),
+  },
+  [mockProject2.dataDir]: {
+    query: vi.fn(() => Promise.resolve({ rows: [{ ticket_count: '3', open_count: '1', up_next_count: '0' }] })),
+  },
+};
+
+// Only `getDbForDir` is faked — everything else in connection.js stays real so
+// the FILTER-SQL test below still runs against a genuine PGLite cluster.
+vi.mock('../db/connection.js', async () => {
+  const actual = await vi.importActual<typeof ConnectionModule>('../db/connection.js');
+  return {
+    ...actual,
+    getDbForDir: vi.fn((dataDir: string) => {
+      const fake = mockDbs[dataDir];
+      // An unmapped dir means the test registered a project the fixture doesn't
+      // know about; failing loudly beats silently opening a real cluster in /tmp.
+      if (fake === undefined) return Promise.reject(new Error(`no mock cluster for ${dataDir}`));
+      return Promise.resolve(fake);
+    }),
+  };
+});
 
 vi.mock('../projects.js', () => ({
   getAllProjects: vi.fn(() => mockProjects),
@@ -346,7 +371,7 @@ describe('GET /projects/feedback-state (HS-8378)', () => {
     // Project A has feedback, Project B doesn't — verifies the per-project
     // boolean is keyed by `secret` and surfaces independently.
     vi.mocked(projectHasPendingFeedback).mockImplementation((db: unknown) => {
-      if (db === mockProject.db) return Promise.resolve(true);
+      if (db === mockDbs[mockProject.dataDir]) return Promise.resolve(true);
       return Promise.resolve(false);
     });
 

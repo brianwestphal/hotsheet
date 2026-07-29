@@ -9,7 +9,7 @@ import { readdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDataDir, getDb, telemetryClusterDataDir } from '../db/connection.js';
+import { getDataDir, telemetryClusterDataDir } from '../db/connection.js';
 import { _resetOtelJsonlForTesting, appendOtelJsonl } from '../db/otelJsonlStore.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -27,7 +27,7 @@ beforeAll(async () => {
   // HS-8874 — `collectTelemetrySignals` reads the project's OWN telemetry DB
   // (resolved from its secret). Register SECRET against the test DB so the
   // seeded rows are visible.
-  registerExistingProject(tempDir, SECRET, await getDb());
+  registerExistingProject(tempDir, SECRET);
 });
 afterAll(async () => { unregisterProject(SECRET); await cleanupTestDb(tempDir); });
 // HS-9286 (epic HS-9226 Phase 3) — `collectTelemetrySignals` now reads the recent

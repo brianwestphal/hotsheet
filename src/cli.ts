@@ -875,7 +875,10 @@ async function main() {
   }
 
   startupMark('initializing project');
-  const db = await initializeProject(dataDir, demo);
+  // HS-9485 — the returned handle is deliberately dropped: it's already in the
+  // `databases` cache, and holding it here would pin the cluster for the life of
+  // the process (docs/128 §128.5.7).
+  await initializeProject(dataDir, demo);
   startupMark('project initialized');
   if (demo !== null) {
     writeFileSettings(dataDir, { appName: 'Hot Sheet Demo' });
@@ -889,7 +892,7 @@ async function main() {
   if (parsed.server !== null) {
     console.log(`  Server-only mode (--server ${parsed.server}) — no client launched; connect a Hot Sheet client to this server.`);
   }
-  registerExistingProject(dataDir, secret, db);
+  registerExistingProject(dataDir, secret);
   // Eager-spawn non-lazy terminals for the primary project (HS-6310).
   const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
   eagerSpawnTerminals(secret, dataDir);

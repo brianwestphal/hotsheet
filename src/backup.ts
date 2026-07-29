@@ -70,8 +70,13 @@ function getOrCreateState(dataDir: string): BackupState {
   return state;
 }
 
-/** Active backup previews keyed by dataDir. Stores the temporary PGlite instance.
- *  Modified by: loadBackupForPreview() (add), cleanupPreview() (clear). */
+/** In-flight backup previews keyed by dataDir, holding the temporary PGlite
+ *  instance so `cleanupPreview` can close one that is still being read.
+ *
+ *  HS-9485 — entries are transient by construction: `loadBackupForPreview` adds
+ *  one and removes it in its own `finally`, so a handle never outlives the single
+ *  request that opened it. Anything longer-lived here pins ~190 MB of WASM heap
+ *  that no eviction and no forced collection can reclaim (docs/128 §128.5.7). */
 const activePreviews = new Map<string, PGlite>();
 
 /**
@@ -352,27 +357,46 @@ export async function loadBackupForPreview(dataDir: string, tier: string, filena
   await db.waitReady;
   activePreviews.set(dataDir, db);
 
-  const tickets = await db.query<Record<string, unknown>>(
-    `SELECT * FROM tickets WHERE status != 'deleted' ORDER BY created_at DESC`
-  );
+  // HS-9485 — close in a `finally`, i.e. hold the cluster for exactly this one
+  // operation (docs/128 §128.5.7). It used to stay open until the client posted
+  // `/preview/cleanup`, which left two ways to strand ~190 MB of WASM heap for
+  // the life of the process: either query below throwing, or the user simply
+  // closing the preview / the tab without the request ever being sent. Nothing
+  // reads the retained handle — `cleanupPreview` is its only other consumer — so
+  // keeping it open bought nothing. The endpoint still runs, and now just removes
+  // the `_preview` directory.
+  try {
+    const tickets = await db.query<Record<string, unknown>>(
+      `SELECT * FROM tickets WHERE status != 'deleted' ORDER BY created_at DESC`
+    );
 
-  const statsResult = await db.query<{ total: string; open: string; up_next: string }>(`
-    SELECT
-      COUNT(*) FILTER (WHERE status != 'deleted') as total,
-      COUNT(*) FILTER (WHERE status IN ('not_started', 'started')) as open,
-      COUNT(*) FILTER (WHERE up_next = true AND status != 'deleted') as up_next
-    FROM tickets
-  `);
-  const row = statsResult.rows[0];
+    const statsResult = await db.query<{ total: string; open: string; up_next: string }>(`
+      SELECT
+        COUNT(*) FILTER (WHERE status != 'deleted') as total,
+        COUNT(*) FILTER (WHERE status IN ('not_started', 'started')) as open,
+        COUNT(*) FILTER (WHERE up_next = true AND status != 'deleted') as up_next
+      FROM tickets
+    `);
+    const row = statsResult.rows[0];
 
-  return {
-    tickets: tickets.rows,
-    stats: {
-      total: parseInt(row.total, 10),
-      open: parseInt(row.open, 10),
-      upNext: parseInt(row.up_next, 10),
-    },
-  };
+    return {
+      tickets: tickets.rows,
+      stats: {
+        total: parseInt(row.total, 10),
+        open: parseInt(row.open, 10),
+        upNext: parseInt(row.up_next, 10),
+      },
+    };
+  } finally {
+    try { await db.close(); } catch { /* ignore — the handle is being dropped either way */ }
+    activePreviews.delete(dataDir);
+  }
+}
+
+/** Test seam (HS-9485) — how many preview clusters are currently held. Between
+ *  requests this must be 0; anything else is ~190 MB of unreclaimable WASM heap. */
+export function _activePreviewCountForTests(): number {
+  return activePreviews.size;
 }
 
 export async function cleanupPreview(dataDir?: string): Promise<void> {

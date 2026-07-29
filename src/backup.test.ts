@@ -10,7 +10,7 @@ import {
   manifestSiblingFilename,
   readManifest,
 } from './attachmentBackup.js';
-import { _resetGlobalBackupLockForTesting, _setFiveMinBackupGateForTests, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, shouldDeferFiveMinBackup, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
+import { _activePreviewCountForTests, _resetGlobalBackupLockForTesting, _setFiveMinBackupGateForTests, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, loadBackupForPreview, shouldDeferFiveMinBackup, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
 import { addAttachment } from './db/attachments.js';
 import { getDb, SCHEMA_VERSION } from './db/connection.js';
 import { createPglite } from './db/pglite.js';
@@ -452,5 +452,46 @@ describe('shouldDeferFiveMinBackup — automatic-tick gate (HS-9238)', () => {
   it('does NOT defer under mild lag below the threshold', () => {
     _setFiveMinBackupGateForTests({ now: () => 1_000_000, lag: () => 250, lastWakeAt: Number.NEGATIVE_INFINITY });
     expect(shouldDeferFiveMinBackup()).toBe(false);
+  });
+});
+
+/**
+ * HS-9485 — a preview opens a whole second PGLite cluster (~190 MB of WASM
+ * heap). It used to stay open until the client posted `/preview/cleanup`, so a
+ * user who closed the preview, closed the tab, or hit an error stranded that
+ * memory for the life of the process — where no eviction pass and no forced
+ * collection (docs/128 §128.5.7) could ever reclaim it. The cluster is now held
+ * for exactly the one request that opens it.
+ */
+describe('backup preview holds its cluster for one operation only (HS-9485)', () => {
+  it('reads the backup and releases the cluster before returning', async () => {
+    await createTicket('Preview ticket A');
+    const info = await createBackup(tempDir, 'daily');
+    expect(info).not.toBeNull();
+
+    const result = await loadBackupForPreview(tempDir, 'daily', info!.filename);
+    expect(result.tickets.length).toBeGreaterThanOrEqual(1);
+    expect(result.stats.total).toBeGreaterThanOrEqual(1);
+    expect(_activePreviewCountForTests(), 'the preview cluster must not outlive the request').toBe(0);
+  });
+
+  it('releases the cluster when the read THROWS — the path that used to strand it', async () => {
+    // A backup that loads as a valid cluster but has no `tickets` table: the
+    // open succeeds (so the handle is registered) and the SELECT then fails.
+    // Without the `finally` the handle stayed in the map forever.
+    const foreignDir = join(tempDir, 'foreign-cluster');
+    mkdirSync(foreignDir, { recursive: true });
+    const foreign = createPglite(foreignDir);
+    await foreign.waitReady;
+    const dump = await foreign.dumpDataDir('gzip');
+    await foreign.close();
+
+    const dailyDir = join(tempDir, 'backups', 'daily');
+    mkdirSync(dailyDir, { recursive: true });
+    const filename = 'foreign-backup.tgz';
+    writeFileSync(join(dailyDir, filename), Buffer.from(await dump.arrayBuffer()));
+
+    await expect(loadBackupForPreview(tempDir, 'daily', filename)).rejects.toThrow();
+    expect(_activePreviewCountForTests(), 'a failed preview must still release its cluster').toBe(0);
   });
 });

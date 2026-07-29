@@ -42,6 +42,9 @@ const ENV_KEYS = [
   'HOTSHEET_CLUSTER_IDLE_MS',
   'HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS',
   'HOTSHEET_EXTERNAL_HEADROOM_BYTES',
+  // The memory-reclamation tests disable the forced-GC throttle; restore it so a
+  // later test in this file doesn't inherit an un-throttled collector.
+  'HOTSHEET_FORCED_GC_MIN_INTERVAL_MS',
 ] as const;
 
 describe('bounded cluster cache — connection.ts integration (HS-9420)', () => {
@@ -564,6 +567,59 @@ describe('pressure-driven eviction runs off the sweep, not just on open (HS-9477
     expect(dirs.filter((d) => isDbOpenForDir(d)).length).toBe(0);
     const after = process.memoryUsage().external;
     expect(after, `external should fall after eviction (was ${String(opened)})`).toBeLessThan(opened);
+  });
+
+  it('RECLAIMS the memory of REGISTERED projects too — nothing may retain a handle (HS-9485)', async () => {
+    // The test above evicts clusters nothing is holding. This one runs the same
+    // sequence through `registerProject`'s real bookkeeping, because a single
+    // surviving reference silently defeats eviction AND the forced collection
+    // together: the cluster is closed, gone from `databases`, and still resident.
+    //
+    // `ProjectContext` used to carry a `db: PGlite` assigned once at registration
+    // and never reassigned. Measured before the fix — 4 projects registered, then
+    // every cluster evicted and a collection forced:
+    //
+    //   baseline 194 MB -> registered 1193 MB -> evicted+GC 959 MB   (765 MB LEAKED)
+    //
+    // i.e. ~191 MB per registered project that no policy in docs/128 could ever
+    // return, on a machine with 10 registered projects and a 4144 MB ceiling.
+    process.env.HOTSHEET_FORCED_GC_MIN_INTERVAL_MS = '0';
+    const { registerExistingProject, unregisterProject } = await import('../projects.js');
+
+    const before = process.memoryUsage().external;
+    const dirs = [tempDir(), tempDir(), tempDir()];
+    const secrets: string[] = [];
+    for (const [i, d] of dirs.entries()) {
+      await getDbForDir(d);
+      const secret = `hs-9485-${String(i)}`;
+      secrets.push(secret);
+      registerExistingProject(d, secret);
+    }
+    const opened = process.memoryUsage().external;
+    // Guard the guard: if registration didn't actually allocate clusters, the
+    // reclamation assertion below would pass vacuously.
+    expect(opened - before, 'registering 3 projects should allocate real WASM heaps').toBeGreaterThan(100 * 1024 * 1024);
+
+    try {
+      process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = String(1024 ** 4);
+      await evictForHeadroomForTests();
+      expect(dirs.filter((d) => isDbOpenForDir(d)).length).toBe(0);
+
+      // The projects are STILL REGISTERED — that is the whole point. Their memory
+      // has to come back anyway, because a tab left open in the UI keeps its
+      // project registered for as long as the process lives.
+      const { getAllProjects } = await import('../projects.js');
+      expect(getAllProjects().map((p) => p.secret)).toEqual(expect.arrayContaining(secrets));
+
+      const residue = process.memoryUsage().external - before;
+      // One cluster's heap is ~190 MB, so a retained handle per project shows up
+      // here as hundreds of MB. Allow generous slack for unrelated allocations
+      // while still failing loudly on even ONE pinned cluster.
+      expect(residue, `evicting registered projects must reclaim their heaps (opened ${String(opened - before)} over baseline)`)
+        .toBeLessThan(100 * 1024 * 1024);
+    } finally {
+      for (const secret of secrets) unregisterProject(secret);
+    }
   });
 
   it('does nothing when there is comfortable headroom', async () => {

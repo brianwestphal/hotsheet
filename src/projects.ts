@@ -1,4 +1,3 @@
-import type { PGlite } from '@electric-sql/pglite';
 import { dirname, resolve } from 'path';
 
 import { getBackupTimers, initBackupScheduler } from './backup.js';
@@ -14,11 +13,25 @@ import { startupLog } from './startup-log.js';
 import { getSyncState, initMarkdownSync, scheduleAllSync } from './sync/markdown.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 
+/**
+ * A registered project. Deliberately holds NO `PGlite` handle — see HS-9485.
+ *
+ * This Map lives for the whole process, so a `db` field here was a permanent
+ * hard reference to whichever cluster instance existed at registration. Eviction
+ * (docs/128) closed that instance and dropped it from the `databases` cache, but
+ * this reference kept its ~190 MB WASM heap alive anyway, so neither eviction nor
+ * the HS-9479 forced collection could reclaim it. Measured: 4 registered projects
+ * left 765 MB unreclaimable after evicting everything and forcing a GC; clearing
+ * this Map returned it to the 194 MB baseline.
+ *
+ * The rule (docs/128 §128.5.7): hold a `PGlite` for one operation and no longer.
+ * Store the `dataDir` and resolve with `getDbForDir` at the point of use — that
+ * also picks up a reopened cluster instead of pinning a closed one.
+ */
 export interface ProjectContext {
   dataDir: string;
   name: string;
   secret: string;
-  db: PGlite;
   markdownSyncState: { worklistTimeout: ReturnType<typeof setTimeout> | null; openTicketsTimeout: ReturnType<typeof setTimeout> | null };
   backupTimers: { fiveMin: ReturnType<typeof setTimeout> | null; hourly: ReturnType<typeof setInterval> | null; daily: ReturnType<typeof setInterval> | null };
 }
@@ -50,8 +63,9 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
   // Timed: getDbForDir is the one variable-cost step in registration (PGLite
   // WASM open + the §73 snapshot integrity probe + any auto-restore), so a slow
   // launch shows up here in the startup log.
+  // The handle is deliberately not kept — see the ProjectContext doc comment.
   const dbT0 = Date.now();
-  const db = await getDbForDir(absDataDir);
+  await getDbForDir(absDataDir);
   const dbMs = Date.now() - dbT0;
   if (dbMs > 500) startupLog(`[restore-step] getDbForDir took ${String(dbMs)}ms for ${absDataDir}`);
 
@@ -124,7 +138,6 @@ export async function registerProject(dataDir: string, port: number): Promise<Pr
     dataDir: absDataDir,
     name,
     secret,
-    db,
     markdownSyncState: syncState ?? { worklistTimeout: null, openTicketsTimeout: null },
     backupTimers,
   };
@@ -183,8 +196,13 @@ export function seedClaudeTerminalIfNew(
 /**
  * Register a project that was already initialized by cli.ts.
  * This avoids re-running lock/db/sync/backup init that cli.ts already did.
+ *
+ * HS-9485 — this used to take the caller's open `PGlite` purely to store it on
+ * the context. It doesn't any more (the context holds no handle), and the
+ * cluster is already in the `databases` cache by the time cli.ts calls this, so
+ * there was nothing for the argument to contribute.
  */
-export function registerExistingProject(dataDir: string, secret: string, db: PGlite): ProjectContext {
+export function registerExistingProject(dataDir: string, secret: string): ProjectContext {
   // HS-8934 — follower → authoritative owner (idempotent; the CLI primary path
   // already resolves before calling this, so the owner dir resolves to itself).
   const absDataDir = resolveAuthoritativeDataDir(dataDir);
@@ -206,7 +224,6 @@ export function registerExistingProject(dataDir: string, secret: string, db: PGl
     dataDir: absDataDir,
     name,
     secret,
-    db,
     markdownSyncState: syncState ?? { worklistTimeout: null, openTicketsTimeout: null },
     backupTimers,
   };

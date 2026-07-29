@@ -25,7 +25,7 @@ beforeAll(async () => {
   // HS-8874 — the telemetry-signal path reads the project's OWN DB (resolved
   // from its secret). Register `sec-x` against the test DB so the seeded
   // user_prompt row is visible to `collectTelemetrySignals`.
-  registerExistingProject(tempDir, 'sec-x', await getDb());
+  registerExistingProject(tempDir, 'sec-x');
 });
 afterAll(async () => { unregisterProject('sec-x'); await cleanupTestDb(tempDir); });
 

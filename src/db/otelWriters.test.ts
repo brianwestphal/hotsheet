@@ -152,8 +152,10 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
     // Register KNOWN_SECRET against the test's own dataDir. HS-9230 — telemetry is
     // now written to the relocated `<tempDir>/telemetry/db` cluster, so the
     // round-trip assertions below read that cluster (not `getDb()` = `<tempDir>/db`).
-    const projectDb = await getDb();
-    registerExistingProject(tempDir, KNOWN_SECRET, projectDb);
+    // The removed `registerExistingProject` db argument used to open this cluster;
+    // keep the open explicit so the round-trip assertions see the same state.
+    await getDb();
+    registerExistingProject(tempDir, KNOWN_SECRET);
   });
 
   afterEach(async () => {
@@ -505,8 +507,8 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
     it('routes two resources for two known projects to their two separate DBs', async () => {
       const SECRET_2 = 'secret-known-B';
       const dir2 = createTempDir();
-      const db2 = await getDbForDir(telemetryClusterDataDir(dir2));
-      registerExistingProject(dir2, SECRET_2, db2);
+      await getDbForDir(telemetryClusterDataDir(dir2));
+      registerExistingProject(dir2, SECRET_2);
       try {
         const payload = {
           resourceMetrics: [

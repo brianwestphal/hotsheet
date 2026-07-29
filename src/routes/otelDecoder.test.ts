@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { getDataDir, getDb, telemetryClusterDataDir } from '../db/connection.js';
+import { getDataDir, telemetryClusterDataDir } from '../db/connection.js';
 import { readAllOtelJsonl } from '../db/otelJsonlStore.js';
 import { persistMetricsPayload } from '../db/otelWriters.js';
 import { registerExistingProject, unregisterProject } from '../projects.js';
@@ -102,7 +102,7 @@ describe('protobuf → persistence end-to-end (HS-8471)', () => {
     // Register KNOWN_SECRET against the test DB so the persisted rows land in that
     // project's telemetry cluster, which the assertion reads via `getTelemetryDb()`
     // (HS-9230/HS-9269 — raw otel_* moved to `<dataDir>/telemetry/db`).
-    registerExistingProject(tempDir, KNOWN_SECRET, await getDb());
+    registerExistingProject(tempDir, KNOWN_SECRET);
   });
 
   afterEach(async () => {

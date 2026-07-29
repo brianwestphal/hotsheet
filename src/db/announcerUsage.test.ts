@@ -11,7 +11,7 @@ import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import {
   getAnnouncerUsageByProject, getAnnouncerUsageTotals, recordAnnouncerUsage,
 } from './announcerUsage.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getTelemetryDb } from './connection.js';
 
 let tempDir: string;
 // HS-8874 — `recordAnnouncerUsage` for an UNregistered secret falls back to the
@@ -26,7 +26,7 @@ beforeAll(async () => {
   // HS-8874 — `recordAnnouncerUsage` routes to the writing project's OWN DB via
   // `getProjectBySecret(secret).dataDir`. Register pA against the test DB so its
   // writes land there (and reads, via `defaultDbPath`, agree).
-  registerExistingProject(tempDir, 'pA', await getDb());
+  registerExistingProject(tempDir, 'pA');
 });
 afterAll(async () => {
   unregisterProject('pA');

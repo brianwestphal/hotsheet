@@ -485,9 +485,12 @@ resident. So after HS-9479 the next question was: does anything hold one?
 bindings of a `PGlite`, object/class properties typed `PGlite`, and handles captured by timers or
 long-lived closures. Two structural hits:
 
-- **`src/backup.ts` `activePreviews: Map<string, PGlite>`** — real, but `cleanupPreview` deletes
-  the entry, so it only retains for the life of a preview. Low risk; worth confirming no path
-  abandons a preview without cleanup.
+- **`src/backup.ts` `activePreviews: Map<string, PGlite>`** — smaller, but genuinely leaky: the
+  entry was removed only when the client posted `/preview/cleanup`, so either query throwing, or
+  the user closing the preview / the tab, stranded a whole second cluster. Nothing read the
+  retained handle (`cleanupPreview` was its only other consumer), so it is now closed in a
+  `finally` — held for exactly the one request that opens it. The endpoint stays and now just
+  removes the `_preview` directory.
 - **`src/projects.ts` `ProjectContext.db: PGlite`**, inside the process-lifetime
   `const projects = new Map<string, ProjectContext>()` — **the leak.** It is assigned once at
   registration and never reassigned, so each registered project pins the exact instance that
@@ -507,14 +510,25 @@ after clearing the Map + forced GC          194 MB   residue   0 MB
 The Map is precisely what pins them, and clearing it is what releases them. With 10 registered
 projects that is roughly **2 GB permanently unreclaimable** against a 4144 MB ceiling — a floor
 everything else stacks on, and the reason §128.5.4 measured 248 MB median / 7533 MB max per
-*open* cluster. Fix tracked in HS-9485: drop the field and let the two consumers
-(`routes/projects.ts:54`, `:167`) resolve via `getDbForDir(p.dataDir)` per §128.3.2, rather than
-teaching the field to track eviction — a handle that must be kept in sync with the cache is the
-same defect shape as HS-9461's stale handles.
+*open* cluster.
+
+**Fixed in HS-9485** by dropping the field rather than teaching it to track eviction — a handle
+that must be kept in sync with the cache is the same defect shape as HS-9461's stale handles. The
+two consumers (the projects-list counts and `feedback-state`) resolve with `getDbForDir(p.dataDir)`
+per §128.3.2, which also means they see a reopened cluster instead of a closed one.
+`registerExistingProject` lost its `db` argument — it existed only to populate the field, and the
+cluster is already in the `databases` cache by the time cli.ts calls it.
 
 **The rule this leaves behind:** a `PGlite` may be held for the duration of one operation (a pin,
 per §128.3.2) and never beyond it. Anything that outlives a request must store the **`dataDir`**
 and resolve the handle at use.
+
+Pinned by `connectionEviction.test.ts` — register three projects, evict everything, force a
+collection, and assert `external` returns to within 100 MB of baseline **while the projects are
+still registered** (a tab left open keeps its project registered for the life of the process).
+Verified to fail on a deliberately retained handle: 356 MB residue. The preview lifecycle has its
+own two cases in `backup.test.ts`, including the throw path, via the `_activePreviewCountForTests`
+seam.
 
 ## 128.6 Lifecycle
 

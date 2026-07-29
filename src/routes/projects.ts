@@ -5,6 +5,7 @@ import type { z } from 'zod';
 
 import { pendingAcpPermissionForSecret } from '../acp/acpPermissionBridge.js';
 import { getChannelPort, isChannelAlive, registerChannel } from '../channel-config.js';
+import { getDbForDir } from '../db/connection.js';
 import { projectHasPendingFeedback } from '../feedback-state.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
@@ -51,7 +52,11 @@ projectRoutes.get('/', async (c) => {
       // HS-9056 — one pass for all three counts the projects list surfaces.
       // `open` / `up_next` use the canonical defs from `src/db/tickets.ts`
       // (open = not_started|started; up_next = flagged and not deleted/backlog/archive).
-      const res = await p.db.query<{ ticket_count: string; open_count: string; up_next_count: string }>(
+      // HS-9485 — resolved per use rather than read off the project context; a
+      // handle stored there outlives every eviction and pins the cluster's WASM
+      // heap for the process lifetime (docs/128 §128.5.7).
+      const db = await getDbForDir(p.dataDir);
+      const res = await db.query<{ ticket_count: string; open_count: string; up_next_count: string }>(
         `SELECT
            COUNT(*) FILTER (WHERE status != 'deleted') AS ticket_count,
            COUNT(*) FILTER (WHERE status IN ('not_started', 'started')) AS open_count,
@@ -164,7 +169,8 @@ projectRoutes.get('/feedback-state', async (c) => {
   const projects = getAllProjects();
   const result: Record<string, boolean> = {};
   await Promise.all(projects.map(async (p) => {
-    result[p.secret] = await projectHasPendingFeedback(p.db);
+    // HS-9485 — resolve the handle per use; see the note on the counts query above.
+    result[p.secret] = await projectHasPendingFeedback(await getDbForDir(p.dataDir));
   }));
   return c.json({ projects: result });
 });

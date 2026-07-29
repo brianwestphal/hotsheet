@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createRawOtelTables, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDataDir, getDb, getDbForDir, getRollupDb, getTelemetryDb, runWithDataDir, telemetryClusterDataDir } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDataDir, getDbForDir, getRollupDb, getTelemetryDb, runWithDataDir, telemetryClusterDataDir } from './connection.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
   clearProjectTelemetry,
@@ -340,7 +340,7 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
 
       // HS-8874 — `dailyMetricCounts` now fans out across `getAllProjects()` DBs
       // + central. Register the test DB as a project so the fan-out includes it.
-      registerExistingProject(tempDir, SECRET_A, await getDb());
+      registerExistingProject(tempDir, SECRET_A);
       try {
         const info = await getTelemetryDebugInfo(SECRET_A, 'UTC');
         const todayStr = info.dailyMetricCounts[0]?.date ?? '';

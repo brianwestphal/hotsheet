@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { getProjectBySecret, registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
-import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
+import { centralTelemetryDataDir, closeDbForDir, getDbForDir, getTelemetryDb, runWithTelemetryDb } from './connection.js';
 import { closeOpenTicketIntervalsForProject, recordTicketWorkTransition } from './ticketWorkIntervals.js';
 
 const SECRET = 'secret-twi';
@@ -29,9 +29,10 @@ let tempDir: string;
 let otherDir: string;
 beforeEach(async () => {
   tempDir = await setupTestDb();
-  registerExistingProject(tempDir, SECRET, await getDb());
+  registerExistingProject(tempDir, SECRET);
   otherDir = createTempDir();
-  registerExistingProject(otherDir, OTHER_SECRET, await getDbForDir(otherDir));
+  await getDbForDir(otherDir); // afterEach closes it; open it explicitly now that registration doesn't
+  registerExistingProject(otherDir, OTHER_SECRET);
 });
 afterEach(async () => {
   unregisterProject(SECRET);
