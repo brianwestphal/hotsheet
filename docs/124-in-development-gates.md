@@ -81,6 +81,17 @@ A gate that failed open would defeat the point of the section.
   asserts the markup directly, including a class-level guard that fails on ANY settings field
   mentioning a gated tool that is neither `data-dev-feature`-gated nor revealed by the `ai_tool`
   selection.
+- **`DEV_FEATURES_CHANGED_EVENT` is how the imperative surfaces stay live** (HS-9474). Flipping a
+  checkbox calls `setDevEnabledLocal()`, which updates the cache, runs `applyDevFeatureGates()`
+  (so every declarative surface reacts at once) and dispatches this event. For a long time
+  **nothing subscribed to it** — a dispatched-but-unheard event, which is a uniquely quiet
+  failure: the dispatch looks right, the gate tests all pass, and the only symptom is a surface
+  that silently stays stale. That surface was the `ai_tool` dropdown, whose gating runs only
+  during the dialog's hydration, so enabling a tool's gate left its option disabled until
+  Settings was closed and reopened. `settingsDialog.tsx` now re-applies `applyAiToolDevGating`
+  on the event. **Anything gating imperatively needs either this subscription or its own refresh
+  path** — `channelUI.tsx`'s worker rows re-evaluate on each channel status poll and
+  `commandSidebar.tsx`'s chevron on each command render, which is why neither showed the bug.
 - **Per-project hydration:** `hydrateDevFeatures(resolved)` **replaces** the cache on every
   `loadSettings()`, which runs on each project switch. Per HS-9407 this must never be a merge, or a
   gate enabled in one project would leak into the next.

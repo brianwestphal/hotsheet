@@ -4,7 +4,7 @@
 // project B. Transition tests, because that bug only exists in the sequence.
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { applyDevFeatureGates, hydrateDevFeatures, isAiToolDevEnabled, isDevEnabled, setDevEnabledLocal } from './devFeatures.js';
+import { applyDevFeatureGates, DEV_FEATURES_CHANGED_EVENT, hydrateDevFeatures, isAiToolDevEnabled, isDevEnabled, setDevEnabledLocal } from './devFeatures.js';
 
 beforeEach(() => {
   document.body.innerHTML = '';
@@ -133,5 +133,49 @@ describe('setDevEnabledLocal', () => {
     setDevEnabledLocal('dev_parallel_workers', true);
     hydrateDevFeatures({});
     expect(isDevEnabled('dev_parallel_workers')).toBe(false);
+  });
+});
+
+/**
+ * HS-9474 — `DEV_FEATURES_CHANGED_EVENT` was dispatched and heard by nobody.
+ *
+ * That is a uniquely quiet failure: the dispatch looks correct, every test of the
+ * gate machinery passes, and the only symptom is a surface that silently stays
+ * stale until something else re-renders it. The `ai_tool` dropdown was that
+ * surface — enabling a tool's gate left its option disabled until Settings was
+ * closed and reopened.
+ *
+ * The wiring itself is covered end-to-end by `e2e/in-development-gates.spec.ts`
+ * ("enabling a tool gate enables its dropdown option WITHOUT reopening Settings").
+ * These pin the contract that event depends on.
+ */
+describe('DEV_FEATURES_CHANGED_EVENT (HS-9474)', () => {
+  it('fires on a local gate change, so imperative surfaces can re-gate', () => {
+    let heard = 0;
+    const onChange = () => { heard += 1; };
+    document.addEventListener(DEV_FEATURES_CHANGED_EVENT, onChange);
+    try {
+      setDevEnabledLocal('dev_tool_antigravity', true);
+      expect(heard).toBe(1);
+      setDevEnabledLocal('dev_tool_antigravity', false);
+      expect(heard).toBe(2);
+    } finally {
+      document.removeEventListener(DEV_FEATURES_CHANGED_EVENT, onChange);
+    }
+  });
+
+  it('has already applied the new value by the time listeners run', () => {
+    // A listener that re-gates by calling `isDevEnabled` must not observe the OLD
+    // value — otherwise the surface would re-render itself right back to stale.
+    let observed: boolean | null = null;
+    const onChange = () => { observed = isDevEnabled('dev_tool_antigravity'); };
+    document.addEventListener(DEV_FEATURES_CHANGED_EVENT, onChange);
+    try {
+      setDevEnabledLocal('dev_tool_antigravity', true);
+      expect(observed).toBe(true);
+    } finally {
+      document.removeEventListener(DEV_FEATURES_CHANGED_EVENT, onChange);
+      setDevEnabledLocal('dev_tool_antigravity', false);
+    }
   });
 });

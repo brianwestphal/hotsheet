@@ -38,7 +38,7 @@ test.describe('In Development gates (HS-9411)', () => {
     // Start from the default (all gates off) regardless of what ran before.
     await request.patch('/api/file-settings/layer', {
       headers: secretHeaders(secret),
-      data: { layer: 'local', settings: { dev_parallel_workers: false, dev_remote_access: false, dev_tool_codex: false } },
+      data: { layer: 'local', settings: { dev_parallel_workers: false, dev_remote_access: false, dev_tool_codex: false, dev_tool_antigravity: false } },
     });
   });
 
@@ -125,6 +125,55 @@ test.describe('In Development gates (HS-9411)', () => {
     await expect(page.locator('#settings-overlay')).toBeVisible();
     await expect.poll(() => optionCount('codex'), { timeout: 5000 }).toBe(1);
     expect(await optionCount('opencode')).toBe(0);
+  });
+
+  // HS-9474 — the reported bug: enabling a tool's gate left its dropdown option
+  // disabled until Settings was closed and reopened. Note the test ABOVE reopens
+  // the dialog between the two assertions, which is precisely why it never caught
+  // this — it encoded the workaround as the expected flow.
+  test('enabling a tool gate enables its dropdown option WITHOUT reopening Settings', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openExperimentalTab(page);
+
+    // Playwright treats any `<option>` in a closed `<select>` as not visible, so
+    // assert the `hidden` ATTRIBUTE (as the test above does) rather than visibility.
+    const shown = async () => await page.locator('#ai-tool-select option[value="antigravity"]:not([hidden])').count();
+    const option = page.locator('#ai-tool-select option[value="antigravity"]');
+
+    await page.locator('.settings-tab[data-tab="general"]').click();
+    expect(await shown()).toBe(0);
+    await expect(option).toBeDisabled();
+
+    // Flip the gate and come straight back — no close, no reload.
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await gate(page, 'dev_tool_antigravity').check();
+    await page.locator('.settings-tab[data-tab="general"]').click();
+
+    await expect.poll(shown, { timeout: 5000 }).toBe(1);
+    // Enabled + not hidden IS selectable — `disabled` is what blocks selection.
+    // Deliberately NOT calling `selectOption` here: persisting `ai_tool` would leak
+    // into the next test, where the docs/124 "already in use" exception keeps that
+    // tool selectable and every gate assertion stops meaning what it says. (Found
+    // exactly that way — these passed alone and failed in sequence, the option
+    // labeled "— in development".)
+    await expect(option).toBeEnabled();
+  });
+
+  test('turning a tool gate back off re-hides its option live', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openExperimentalTab(page);
+    await gate(page, 'dev_tool_antigravity').check();
+
+    const option = page.locator('#ai-tool-select option[value="antigravity"]');
+    await page.locator('.settings-tab[data-tab="general"]').click();
+    await expect(option).toBeEnabled();
+
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await gate(page, 'dev_tool_antigravity').uncheck();
+    await page.locator('.settings-tab[data-tab="general"]').click();
+    await expect(option).toBeDisabled();
   });
 
   test('a tool the project already uses stays selectable even with its gate off', async ({ page, request }) => {

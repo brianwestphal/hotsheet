@@ -9,7 +9,7 @@ import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindViewsTab } from './customViews.js';
-import { isAiToolDevEnabled } from './devFeatures.js';
+import { DEV_FEATURES_CHANGED_EVENT, isAiToolDevEnabled } from './devFeatures.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
@@ -336,6 +336,23 @@ function bindGeneralTab() {
 
   // HS-8009 — the project's preferred AI tool (docs/113 §113.3). A shared, scoped
   // string setting; `persistScopedSetting` writes it to the active layer.
+  // HS-9474 — re-gate the dropdown when an In Development toggle flips.
+  //
+  // `applyAiToolDevGating` is imperative, so unlike the `data-dev-feature`
+  // surfaces (which `applyDevFeatureGates` refreshes on every change) it only ran
+  // during the dialog's hydration. Enabling a tool's gate therefore left its
+  // option `hidden` + `disabled` until Settings was closed and reopened, which is
+  // exactly what the reporter hit with Antigravity.
+  //
+  // `DEV_FEATURES_CHANGED_EVENT` existed for this ("so surfaces can re-apply their
+  // gates") but had no subscriber anywhere — a dispatched-but-unheard event, which
+  // is invisible until someone notices the symptom. The current `value` is passed
+  // as `currentTool` so an already-selected gated tool stays selectable (docs/124
+  // §124.5 — hiding the selected option would blank the `<select>`).
+  document.addEventListener(DEV_FEATURES_CHANGED_EVENT, () => {
+    if (aiToolSelect !== null) applyAiToolDevGating(aiToolSelect, aiToolSelect.value);
+  });
+
   aiToolSelect?.addEventListener('change', () => {
     // HS-9406 — mirror the new value into `state.settings` immediately. The
     // client-side consumers (command-editor "AI agent" label, channel busy
