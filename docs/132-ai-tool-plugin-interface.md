@@ -1,7 +1,9 @@
-# 132. AI-tool provider interface — one contract, one implementation per tool
+# 132. AI-tool plugin interface — one contract, one implementation per tool
 
-HS-9482. Status: **design only.** One open decision (§132.9) gates the implementation
-tickets; everything else here is settled enough to build against.
+HS-9482. Status: **design only, decided.** Maintainer decision (2026-07-29): this is a
+**new plugin interface specific to AI-tool integration** — not the docs/18
+`TicketingBackend` and not an extension of it — which **reuses docs/18's supporting
+subsystems** where they fit, the custom config UI first among them (§132.9).
 
 Umbrella for the per-tool work already shipped across
 [113](113-multi-ai-tool-support.md) (the multi-tool epic), [114](114-acp-channel.md) /
@@ -13,7 +15,7 @@ Umbrella for the per-tool work already shipped across
 (the codex drive). This doc does not change what any tool does — it changes **where that
 knowledge lives**.
 
-## 132.1 The problem: one tool's identity is spelled out in eleven places
+## 132.1 The problem: one tool's identity is spelled out in a dozen places
 
 Support for a tool is not a module. It is a set of `if (tool === …)` branches and
 per-tool lookup tables scattered across the server, each added by whichever ticket
@@ -34,10 +36,17 @@ The current inventory — every place that names a specific tool:
 | `mcpHooksAgents.ts` | the MCP-hooks registry (spawn + MCP config) |
 | `acp/acpAgents.ts` | `resolveAcpAgentCommand` — a switch of ACP entrypoints |
 | `agentTransport.ts` | the transport capability table |
+| `file-settings.ts` | each tool's setting keys as `FileSettings` zod fields (`antigravity_interactive_permissions`, `codex_interactive_permissions`, `dev_tool_*`) |
+| `routes/pages.tsx` + `client/settingsDialog.tsx` | each tool's settings UI: hand-written `<div class="settings-field" style="display:none">`, a hand-written `byIdOrNull` binding, and a `revealAgyPerms` branch (`tool === 'antigravity' ? … : tool === 'codex' ? …`) |
 
 Three of those are already registries (`TOOLS`, `AGENTS`, `DEV_FEATURES`) — the pattern
 is right, the scope is too narrow. Each covers **one concern for all tools** when what
 is wanted is **one tool across all concerns**.
+
+The last row is the same disease in the settings UI, and it is the one the maintainer
+pointed at: adding a third tool with an opt-in toggle means hand-writing HTML in
+`pages.tsx`, a binding in `settingsDialog.tsx`, a reveal branch, **and** a zod field in
+`file-settings.ts`. §132.9.2 makes that a declaration.
 
 ### 132.1.1 The leak that makes this urgent
 
@@ -85,21 +94,25 @@ against all of them.
 **Goals**
 
 1. One interface. Every tool — **including Claude** — is an implementation of it.
-2. Adding a tool = adding one provider module + one registry line. No edits to generic
+2. Adding a tool = adding one plugin module + one registry line. No edits to generic
    modules, no new `if (tool === …)` anywhere.
 3. Capability presence is the only feature test. Tools genuinely differ (Gemini has no
    drive; Goose has only a command; the editor tools have no runtime at all), and the
    interface must express that without a `supportsX` boolean zoo.
-4. A conformance suite every provider passes, plus per-provider tests that need no
+4. A conformance suite every plugin passes, plus per-plugin tests that need no
    server, no route, and no other tool.
+5. **The host carries the machinery** (§132.9). A plugin declares what is specific to
+   its tool and calls built-in helpers for the rest; if two plugins would write the
+   same code, that code belongs in the host. A thin interface over N copies of the
+   same logic would trade one problem for a tidier one.
 
 **Non-goals**
 
 - Changing any tool's *behavior*. This is a refactor with a test suite attached; a
-  provider migration that changes what a tool does has failed.
+  plugin migration that changes what a tool does has failed.
 - Building the missing integrations (a Goose drive, a Gemini drive). The interface
   should make those cheap; it does not deliver them.
-- Retiring the docs/124 In-Development gates. Gating stays; it becomes a provider field.
+- Retiring the docs/124 In-Development gates. Gating stays; it becomes a plugin field.
 
 ## 132.3 What an AI-tool integration actually does
 
@@ -126,7 +139,7 @@ are already expressible as a command variant plus a drive hook.
 ## 132.4 The interface
 
 ```ts
-export interface AiToolProvider {
+export interface AiToolPlugin {
   readonly id: string;                       // the `ai_tool` value, lowercase
   readonly displayName: string;              // UI + busy labels
   readonly tier: 'cli-agent' | 'editor';     // docs/113 §113.2 A / B
@@ -142,6 +155,12 @@ export interface AiToolProvider {
   readonly drive?: DriveCapability;
   readonly permissions?: PermissionsCapability;
   readonly mcp?: McpCapability;
+
+  /** §132.9.2 — the plugin's own settings, declared not hand-written. Rendered by
+   *  the docs/18 config-UI renderer, revealed when this tool is selected, and
+   *  contributed to the `FileSettings` schema. */
+  readonly preferences?: PluginPreference[];
+  readonly configLayout?: ConfigLayoutItem[];
 }
 ```
 
@@ -186,8 +205,8 @@ interface McpCapability {
 ```
 
 **The load-bearing rule:** outside `src/aiTools/<id>.ts`, no code may branch on a tool
-id. Everything asks the provider. The generic modules in §132.1.1 stop importing
-`codexAppServer.js` and start calling `provider.drive?.prestart?.(dataDir)` — a call
+id. Everything asks the plugin. The generic modules in §132.1.1 stop importing
+`codexAppServer.js` and start calling `plugin.drive?.prestart?.(dataDir)` — a call
 that is a no-op for every tool that doesn't need it, which is the whole point.
 
 This is enforceable the way this codebase already enforces its other structural rules
@@ -211,15 +230,15 @@ interface with stubs:
 | goose | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 | cursor / copilot / windsurf | ✅ rules | ✅ rules/prompts | ❌ | ❌ | ❌ | ❌ |
 
-Goose is the useful stress case: a provider that is *only* identity plus a command. If
+Goose is the useful stress case: a plugin that is *only* identity plus a command. If
 the interface makes that awkward, the interface is wrong.
 
 ## 132.5 Registry and resolution
 
-`src/aiTools/registry.ts` holds the list and the lookups — `getProvider(id)`,
-`listProviders()`, `listDetected(projectRoot)`. It replaces `mcpHooksAgents.ts`'s
+`src/aiTools/registry.ts` holds the list and the lookups — `getPlugin(id)`,
+`listPlugins()`, `listDetected(projectRoot)`. It replaces `mcpHooksAgents.ts`'s
 `AGENTS`, `aiInstructionsTools.ts`'s `TOOLS`, and the `resolveAcpAgentCommand` switch;
-`agentTransport.ts` becomes `getProvider(id)?.drive?.transport ?? 'claude-channel'`.
+`agentTransport.ts` becomes `getPlugin(id)?.drive?.transport ?? 'claude-channel'`.
 
 Two consumers keep a derived view rather than reading the registry directly:
 
@@ -227,11 +246,11 @@ Two consumers keep a derived view rather than reading the registry directly:
   from the registry by a test that fails when they diverge — not computed at runtime.
   A zod enum built from a mutable array loses its literal type, and the HS-9366 lesson
   was that making the wire type *derived* is what caught the HS-9322/9344 drift.
-- **The dropdown** in `routes/pages.tsx` is server-rendered from `listProviders()`,
+- **The dropdown** in `routes/pages.tsx` is server-rendered from `listPlugins()`,
   which deletes the hand-maintained `<option>` list and makes the docs/124 gate
-  filtering fall out of the provider's `devGate` field.
+  filtering fall out of the plugin's `devGate` field.
 
-## 132.6 Claude is a provider, and it is the acceptance test
+## 132.6 Claude is a plugin, and it is the acceptance test
 
 The ticket says "including claude", and that is the right call for a reason worth
 stating: Claude is the tool whose integration is deepest and least like the others — a
@@ -244,17 +263,17 @@ is real. Concretely it is also the safest to do **last** — everything else in 
 assumes it works, and it has the most existing coverage to regress. Sequencing in
 §132.8 reflects that.
 
-`auto` is **not** a provider. It is a resolution *mode* — "every detected provider"
+`auto` is **not** a plugin. It is a resolution *mode* — "every detected plugin"
 — and belongs in the registry lookup, not the registry list.
 
 ## 132.7 Conformance testing — the actual deliverable
 
-One suite, parameterized over `listProviders()`, run against a temp fixture project.
-The point is that every provider answers the same questions, so a new tool inherits the
+One suite, parameterized over `listPlugins()`, run against a temp fixture project.
+The point is that every plugin answers the same questions, so a new tool inherits the
 whole suite by existing.
 
 - **Identity.** Unique lowercase id; non-empty display name; the dev gate's `aiTool`
-  matches the provider id; `detect()` on an empty dir does not throw.
+  matches the plugin id; `detect()` on an empty dir does not throw.
 - **Instructions.** `relPath` is repo-relative and inside the project; writing twice is
   idempotent; the adapter-family flag agrees with what the generator emits.
 - **Skills.** `ensure()` is idempotent; the artifact it writes is the one
@@ -262,11 +281,11 @@ whole suite by existing.
   where prep reports "needed" forever.
 - **Command.** `resolve()` returns a non-empty line starting with the declared binary.
 - **Drive.** `transport` is a valid value; `run()` with an injected spawner reports the
-  content it would send. Real spawning stays in the per-provider live tests.
+  content it would send. Real spawning stays in the per-plugin live tests.
 - **Permissions.** `ensure()` with the setting off removes cleanly and leaves foreign
   hook entries intact — merge-safety is the property most likely to break silently.
-- **Cross-provider.** No two providers claim the same id; every `AI_INSTRUCTION_TOOLS`
-  entry has a provider and vice versa; every docs/124 tool gate names a real provider.
+- **Cross-plugin.** No two plugins claim the same id; every `AI_INSTRUCTION_TOOLS`
+  entry has a plugin and vice versa; every docs/124 tool gate names a real plugin.
 
 Note what this replaces: the current per-tool assertions live in `skills.test.ts`,
 `toolPrep.test.ts`, `aiInstructionsTools.test.ts` and friends, where they test the
@@ -281,66 +300,117 @@ each phase leaving the tree green and shippable.
 
 | Phase | Ticket | Scope |
 |---|---|---|
-| **1** | HS-9490 | `src/aiTools/` + the interface + the registry + provider stubs carrying only identity (id, name, tier, devGate, detect). Adopt in `agentDisplayName` and the dropdown. Nothing else moves. |
-| **2** | HS-9491 | Instructions + skills: fold `TOOLS`, `ADAPTER_FAMILY`, `skillArtifactRelPath`, and the `ensureSkillsForDir` if-chain into providers. Highest branch-count payoff. |
+| **1** | HS-9490 | `src/aiTools/` + the interface + the registry + plugin stubs carrying only identity (id, name, tier, devGate, detect). Adopt in `agentDisplayName` and the dropdown. Nothing else moves. |
+| **2** | HS-9491 | Instructions + skills: fold `TOOLS`, `ADAPTER_FAMILY`, `skillArtifactRelPath`, and the `ensureSkillsForDir` if-chain into plugins. Highest branch-count payoff. |
 | **3** | HS-9492 | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. |
 | **4** | HS-9493 | Drive + permissions + MCP: absorb `mcpHooksAgents.ts` and `resolveAcpAgentCommand`; **close the §132.1.1 leak** — the five generic modules stop importing `codexAppServer.js`. |
-| **5** | HS-9494 | Claude becomes a provider. The acceptance test for the whole design. |
-| **6** | HS-9495 | The conformance suite and the ESLint backstop, so phase 1–5 gains can't erode. |
+| **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
+| **6** | HS-9496 | Extract the §132.9.1 toolkit — starting with the merge-safe hooks-file helper, which is already written twice. |
+| **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
+| **8** | HS-9495 | The conformance suite and the ESLint backstop, so the earlier gains can't erode. |
 
 The suite arrives last only in the sense of being *complete* last; each phase adds its
 slice of it as that concern moves. A phase that moves a concern without moving its
 tests has not finished.
 
-## 132.9 OPEN DECISION — in-tree interface, or loadable plugins?
+## 132.9 Built-in support — what the host provides so a plugin stays thin
 
-Hot Sheet already has a plugin system (docs/18): a manifest, an entry point loaded from
-`~/.hotsheet/plugins` at runtime, preferences, UI registration, and the
-`TicketingBackend` interface. "Plugin interface" in the ticket could mean either thing,
-and the answer changes the design substantially.
+Maintainer decision (2026-07-29), two parts: this is a **new interface specific to
+AI-tool integration** rather than the docs/18 `TicketingBackend`, and **the host should
+carry general mechanisms for supporting AI tools** rather than making each plugin
+reimplement them.
 
-**Recommendation: an in-tree provider interface + registry (everything above).**
+That second half matters more than it sounds. An interface alone would let every tool
+hand-roll its own hooks-file merge, its own skill-tree writer, its own permission
+plumbing — which is roughly what happened already, and is why Antigravity and Codex
+have two implementations of the same merge-safe hook install. The target shape is: **a
+plugin declares what is specific to its tool and calls host helpers for everything
+else.** A new tool that follows a common shape (AGENTS.md + a skills tree + a hooks
+file + a spawn drive) should be close to declarative.
 
-- The stated goal is independent *testing*, and that comes from the seam, not from
-  dynamic loading. A conformance suite over in-tree providers delivers it fully.
-- An AI-tool provider does things docs/18 plugins deliberately do not: spawn
-  processes, write into the user's repo, install permission hooks, and bridge the §47
-  approval overlay. Making that surface loadable from `~/.hotsheet/plugins` hands
-  arbitrary third-party code the ability to run commands as the user, for no benefit
-  anyone has asked for.
-- Every tool we support ships with Hot Sheet. Nobody has asked to add one without
-  touching the source.
+### 132.9.1 The toolkit — generic mechanisms plugins compose
 
-**The honest case for loadable:** it is the only version where a *third party* adds
-tool support without a Hot Sheet release. If the intent behind "plugin" is an
-ecosystem — other people shipping tool integrations on their own schedule — then
-in-tree is the wrong answer and the design needs a manifest, a capability
-declaration, a version-compat check, and a trust model for the permission bridge.
+Most of these already exist as generic code; the work is exposing them deliberately as
+a toolkit rather than leaving them as functions a tool happens to import.
 
-**A middle option**, if that ecosystem is wanted later: build the in-tree interface
-now, and keep the provider surface free of Hot Sheet internals (paths and settings in,
-plain data out) so a loader can be added behind it later without redesigning. That is
-strictly cheaper than deciding now, and costs nothing today — the interface in §132.4
-is already written that way.
+| Helper | Status today | Note |
+|---|---|---|
+| Managed sections — markers, versioning, `applyManagedSections` / `removeManagedSections`, `planAdapterConversion` (docs/118, 120) | already generic in `aiInstructions.ts` | Only per-tool DATA moves to plugins. If a plugin ends up owning section logic, the split is wrong. |
+| Adapter skill-tree writer (`ensureAdapterSkillTree`) + the adapter-vs-full mode decision | generic, called per tool | Three tools already share it; make it the default path. |
+| The channel MCP server entry (`getChannelServerPath`, `buildHotsheetMcpServerEntry`) | generic | Each plugin only supplies its config FORMAT (JSON / TOML / ACP session field). |
+| **Merge-safe hooks-file install/remove** | **duplicated** — `ensureAntigravityHooks` and `ensureCodexHooks` independently implement "merge with the user's other hooks, drop only our marked group, remove cleanly when off" | The clearest extraction candidate. Both got merge-safety right separately; the third tool should not have to. |
+| The §47 permission bridge | three implementations (ACP option-driven, agy PreToolUse hook CLI, codex hooks CLI) | A host-side "ask the user, get a decision" surface, with plugins supplying only the transport-specific adapter. |
+| Spawn + stdio/JSONL framing, heartbeats, busy reporting | partly generic (`acpFraming.ts`), partly per-tool | Drive-side commonality worth consolidating as the third and fourth drives land. |
+| Commands Log transcript entries | generic | Plugins emit; they should not know the log's shape. |
+
+The rule of thumb: **if two plugins would write the same code, it belongs in the
+toolkit.** The merge-safe hooks helper is the proof that this is not hypothetical —
+it has already been written twice.
+
+### 132.9.2 Reused from docs/18 — the custom config UI
+
+The docs/18 plugin system already has a declarative settings vocabulary and a renderer,
+and AI-tool plugins should use them rather than growing a parallel one:
+
+- **Reused:** `PluginPreference` / `ConfigLayoutItem` (the vocabulary), and
+  `client/pluginConfigDialog.tsx`'s `renderConfigLayout` / `createPreferenceRow` /
+  the per-type input builders (the renderer).
+- **NOT reused:** the loader, the manifest-on-disk, `TicketingBackend`, and the sync
+  engine. Those are docs/18's *identity*, not its support.
+
+**The decoupling this needs.** The renderer is currently welded to plugin storage in
+three places, and AI-tool settings live somewhere else entirely:
+
+| | docs/18 plugin | AI-tool plugin |
+|---|---|---|
+| project-scope key | `plugin:<id>:<key>` in settings | a plain `FileSettings` key (`codex_interactive_permissions`) |
+| global-scope | `getPluginGlobalConfig` / `setPluginGlobalConfig` | `~/.hotsheet` global config |
+| layer routing | n/a | docs/95 shared-vs-local + the docs/124 `dev_` prefix |
+| validation | `validatePluginField(pluginId, …)` | zod on `FileSettings` |
+
+So: extract a **storage adapter** behind the renderer — read, write, validate — with
+the existing plugin store as one implementation and file-settings (docs/95-scope-aware)
+as another. The renderer keeps rendering; it stops knowing where values live. That is a
+small, self-contained refactor and it is what makes the reuse honest rather than a
+copy-paste of the dialog.
+
+**What it buys.** The three hand-written pieces per tool in §132.1's last row collapse
+to a `preferences` declaration on the plugin: the field renders, it is revealed when
+that tool is selected (the plugin owns it, so the `revealAgyPerms` branch disappears),
+and its key is contributed to the `FileSettings` schema instead of being hand-added.
+
+### 132.9.3 Registration stays in-tree
+
+Plugins are declared in the registry (§132.5), not loaded from `~/.hotsheet/plugins`.
+Every tool we support ships with Hot Sheet, and an AI-tool plugin spawns processes,
+writes into the user's repo, installs permission hooks and bridges the approval
+overlay — a surface worth keeping first-party until someone actually wants a
+third-party ecosystem.
+
+That is a decision about *registration*, not about the interface, and it is
+deliberately reversible: the plugin surface takes paths and settings in and returns
+plain data, so a loader can be slotted behind the registry later without redesigning
+anything above. **Keep it that way** — a plugin that reaches into Hot Sheet internals
+is the thing that would make this irreversible.
 
 ## 132.10 Other open decisions
 
 1. **Does `auto` stay?** §132.6 treats it as a resolution mode. It could instead be
    retired in favor of "every detected tool", which is what it means. Left alone —
    no reason to churn the setting.
-2. **Provider granularity for shared files.** Antigravity, OpenCode and Codex all write
+2. **Plugin granularity for shared files.** Antigravity, OpenCode and Codex all write
    `AGENTS.md`, and today the double-write is idempotent so nothing special is needed.
-   Under the interface each provider declares the same `relPath`, which stays correct
+   Under the interface each plugin declares the same `relPath`, which stays correct
    but reads oddly. Leaving it — a "file owner" concept costs more than the oddity.
 3. **Where live tests go.** `opencodeAcpLive.test.ts` and `codexModelBLive.test.ts`
    need real binaries and are excluded from the fast suites. They should move next to
-   their providers, but the exclusion patterns are path-based — a follow-up, not a
+   their plugins, but the exclusion patterns are path-based — a follow-up, not a
    blocker.
 
 ## 132.11 Cross-references
 
 - [113](113-multi-ai-tool-support.md) — the epic this consolidates; §113.2's A/B tiering
-  becomes the provider `tier` field.
+  becomes the plugin `tier` field.
 - [114](114-acp-channel.md) / [115](115-mcp-hooks-agent-channel.md) — the two drive
   transports, which become `drive.transport` values.
 - [117](117-agent-backend-transport.md) — the capability table, absorbed into the
@@ -351,4 +421,10 @@ is already written that way.
 - [121](121-codex-app-server-drive.md) / [129](129-codex-model-b-terminal-hosting.md) —
   the codex drive whose leaked imports §132.1.1 is about.
 - [124](124-in-development-gates.md) — the per-tool gates, which become `devGate`.
-- [18](18-plugins.md) — the existing plugin system, and the subject of §132.9.
+- [18](18-plugins.md) — the existing plugin system. AI-tool plugins are a SEPARATE
+  interface that reuses its config-UI subsystem (§132.9.2); they do not implement
+  `TicketingBackend` and are not loaded by its loader.
+- [95](95-settings-sharing-classification.md) — the shared/local layer routing a
+  declared preference has to respect (§132.9.2).
+- [47](47-richer-permission-overlay.md) — the permission overlay the §132.9.1 toolkit's
+  bridge fronts.
