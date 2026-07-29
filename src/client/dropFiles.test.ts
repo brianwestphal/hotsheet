@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { describeUnreadableDrop, screenDroppedFiles } from './dropFiles.js';
+import { describeDragPayload, describeUnreadableDrop, screenDroppedFiles } from './dropFiles.js';
 
 /** A file whose bytes are genuinely there. */
 function realFile(name: string, body = 'png-bytes'): File {
@@ -98,5 +98,33 @@ describe('describeUnreadableDrop (HS-9465)', () => {
 
   it('is empty when nothing was skipped', () => {
     expect(describeUnreadableDrop([])).toBe('');
+  });
+});
+
+describe('describeDragPayload (HS-9466)', () => {
+  it('reports the types and every item, so one failed drag settles the question', () => {
+    // The decision the diagnostic exists for: does the drag carry ANY
+    // representation besides the broken promised file?
+    const out = describeDragPayload(
+      ['Files', 'public.file-url'],
+      [{ kind: 'file', type: 'image/png' }, { kind: 'string', type: 'text/uri-list' }],
+    );
+    expect(out).toContain('Files, public.file-url');
+    expect(out).toContain('[0] kind=file type=image/png');
+    expect(out).toContain('[1] kind=string type=text/uri-list');
+  });
+
+  it('is explicit about emptiness rather than rendering blanks', () => {
+    // "(none)" is evidence; a blank line is ambiguous between "nothing there"
+    // and "the diagnostic itself is broken" — which is the whole question.
+    const out = describeDragPayload([], []);
+    expect(out).toContain('types: (none)');
+    expect(out).toContain('(no items)');
+  });
+
+  it('labels an item with a blank kind or type', () => {
+    const out = describeDragPayload(['Files'], [{ kind: '', type: '' }]);
+    expect(out).toContain('kind=(empty)');
+    expect(out).toContain('type=(empty)');
   });
 });

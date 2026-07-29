@@ -72,3 +72,31 @@ export function describeUnreadableDrop(names: readonly string[]): string {
   const subject = names.length === 1 ? `“${list}” has` : `${String(names.length)} files (${list}) have`;
   return `${subject} no readable content yet. A screen capture can be dragged from the corner preview before macOS has written it to disk — wait for it to appear on your desktop and drag it again, or press ⌘V to paste it directly.`;
 }
+
+/**
+ * HS-9466 — describe what a drag actually carried, for the one diagnostic that
+ * gates the native work (docs/130 §130.4).
+ *
+ * We know the `files` entry is a broken promise; what nobody has checked is
+ * whether the SAME drag also offers a representation that does carry bytes (an
+ * `image/png` item, a resolvable URL). If it does, the fix is a few lines of
+ * client code and the Rust/Objective-C path is unjustified. If it comes back with
+ * nothing but the promised file, that is the evidence that native is the only way.
+ *
+ * Logged only on the failure path, so it costs nothing in normal use — and this
+ * failure is rare enough, and hard enough to reproduce on demand, that asking a
+ * user to reproduce it twice (once to notice, once with instrumentation) is worse
+ * than carrying these few lines.
+ *
+ * Pure: takes only the transfer's shape, returns a string. Exported for the test.
+ */
+export function describeDragPayload(
+  types: readonly string[],
+  items: readonly { kind: string; type: string }[],
+): string {
+  const typeList = types.length > 0 ? types.join(', ') : '(none)';
+  const itemList = items.length > 0
+    ? items.map((it, i) => `  [${String(i)}] kind=${it.kind || '(empty)'} type=${it.type || '(empty)'}`).join('\n')
+    : '  (no items)';
+  return `types: ${typeList}\nitems:\n${itemList}`;
+}

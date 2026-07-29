@@ -27,7 +27,7 @@ import { bindDetailPositionToggle, updateDetailPositionToggle } from './detailBi
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { maybePulseDraftInput } from './draftRow.js';
 import { initDrawerTerminalGrid } from './drawerTerminalGrid.js';
-import { describeUnreadableDrop, screenDroppedFiles } from './dropFiles.js';
+import { describeDragPayload, describeUnreadableDrop, screenDroppedFiles } from './dropFiles.js';
 import { initGitStatusChip, refreshGitStatusChip } from './gitStatusChip.js';
 import { hasGlassboxReviewableChanges } from './glassboxReview.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
@@ -313,7 +313,20 @@ function bindFileDropListeners(): void {
       // starting an upload. A macOS screen capture dragged from the corner preview
       // is a promised file with no backing store yet; uploading it truncates the
       // multipart body mid-flight and the server can only answer 400.
+      const transfer = e.dataTransfer;
       const { readable, unreadable } = await screenDroppedFiles(Array.from(files));
+      if (unreadable.length > 0) {
+        // HS-9466 (docs/130 §130.4) — the one diagnostic that decides whether the
+        // native file-promise work is justified: does this drag ALSO carry a
+        // representation with real bytes? Only logged when a drop actually failed.
+        console.warn(
+          `[hotsheet] drop had ${String(unreadable.length)} unreadable file(s). Drag payload:\n`
+          + describeDragPayload(
+            Array.from(transfer.types),
+            Array.from(transfer.items).map(it => ({ kind: it.kind, type: it.type })),
+          ),
+        );
+      }
       if (readable.length === 0) {
         showErrorPopup(describeUnreadableDrop(unreadable), { title: 'Nothing to attach' });
         return;
