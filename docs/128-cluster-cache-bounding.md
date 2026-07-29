@@ -474,6 +474,48 @@ run" and "ran and freed nothing" are the two states this area keeps conflating. 
 can be obtained, `connection.ts` says so once, loudly — a build where eviction cannot reclaim is
 one that will climb until the watchdog restarts it, and that should not be silent.
 
+### 128.5.7 Retained handles defeat all of it (HS-9483 audit)
+
+Forcing the collection (§128.5.6) only helps if nothing else is still holding the cluster. A
+single surviving reference makes eviction, the idle sweep, the headroom guard **and** the forced
+GC all no-ops together — the cluster is closed, unreachable through `databases`, and still
+resident. So after HS-9479 the next question was: does anything hold one?
+
+**Audited** with ast-grep for the shapes that retain across an eviction — module-level `let`
+bindings of a `PGlite`, object/class properties typed `PGlite`, and handles captured by timers or
+long-lived closures. Two structural hits:
+
+- **`src/backup.ts` `activePreviews: Map<string, PGlite>`** — real, but `cleanupPreview` deletes
+  the entry, so it only retains for the life of a preview. Low risk; worth confirming no path
+  abandons a preview without cleanup.
+- **`src/projects.ts` `ProjectContext.db: PGlite`**, inside the process-lifetime
+  `const projects = new Map<string, ProjectContext>()` — **the leak.** It is assigned once at
+  registration and never reassigned, so each registered project pins the exact instance that
+  existed when it was registered, forever. Eviction closes that instance and removes it from
+  `databases`; this Map keeps it alive anyway. A later reopen builds a *new* instance beside the
+  old one.
+
+Measured on the real path, with the HS-9479 forced collection running:
+
+```
+baseline                                    194 MB
+4 projects registered (handle in the Map)  1193 MB
+evicted all + forced GC                     959 MB   residue 765 MB   <- ~191 MB per project, LEAKED
+after clearing the Map + forced GC          194 MB   residue   0 MB
+```
+
+The Map is precisely what pins them, and clearing it is what releases them. With 10 registered
+projects that is roughly **2 GB permanently unreclaimable** against a 4144 MB ceiling — a floor
+everything else stacks on, and the reason §128.5.4 measured 248 MB median / 7533 MB max per
+*open* cluster. Fix tracked in HS-9485: drop the field and let the two consumers
+(`routes/projects.ts:54`, `:167`) resolve via `getDbForDir(p.dataDir)` per §128.3.2, rather than
+teaching the field to track eviction — a handle that must be kept in sync with the cache is the
+same defect shape as HS-9461's stale handles.
+
+**The rule this leaves behind:** a `PGlite` may be held for the duration of one operation (a pin,
+per §128.3.2) and never beyond it. Anything that outlives a request must store the **`dataDir`**
+and resolve the handle at use.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →
