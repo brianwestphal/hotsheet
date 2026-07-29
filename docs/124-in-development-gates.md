@@ -71,6 +71,16 @@ A gate that failed open would defeat the point of the section.
   (`.settings-tab { display: flex }` kept a gated tab visible while carrying `hidden=""`).
 - **Imperative:** surfaces that already own their visibility (`channelUI.tsx`'s worker rows, which
   are also channel-gated; the command target chevron) call `isDevEnabled()` directly.
+- **The declarative form only hides what OPTS IN, which is the failure mode of this design**
+  (HS-9473). Two Codex-specific *global* settings — "Codex app-server drive" and "Codex terminals
+  host the driven session" — shipped without `data-dev-feature`, so they stayed visible in a
+  project with the Codex gate off. Nothing was broken: `applyDevFeatureGates` can only act on
+  elements that ask it to, and no test of the *mechanism* can catch markup that never asks. A
+  tool-specific setting being machine-global does not exempt it — global scope answers "where is
+  the value stored", the gate answers "should this be reachable at all". `pages.test.tsx` now
+  asserts the markup directly, including a class-level guard that fails on ANY settings field
+  mentioning a gated tool that is neither `data-dev-feature`-gated nor revealed by the `ai_tool`
+  selection.
 - **Per-project hydration:** `hydrateDevFeatures(resolved)` **replaces** the cache on every
   `loadSettings()`, which runs on each project switch. Per HS-9407 this must never be a merge, or a
   gate enabled in one project would leak into the next.

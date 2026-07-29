@@ -1157,7 +1157,11 @@ pageRoutes.get('/', (c) => {
                   DEFAULT ON. Disabled ⇒ codex projects hide the play button +
                   prompt-command buttons (shell buttons unaffected) — no one-shot
                   fallback. */}
-              <div className="settings-field" style="margin-top:16px">
+              {/* HS-9473 — dev-gated: these are Codex-specific, so they must not be
+                  reachable while the Codex gate (docs/124) is off for this project.
+                  `data-dev-feature` is the generic opt-in `applyDevFeatureGates`
+                  reads; the toggles themselves stay machine-global. */}
+              <div className="settings-field" style="margin-top:16px" data-dev-feature="dev_tool_codex">
                 <label className="settings-checkbox-label">
                   <input type="checkbox" id="settings-codex-app-server-enabled" />
                   Codex app-server drive <span className="global-setting-badge">Global Setting</span>
@@ -1169,7 +1173,7 @@ pageRoutes.get('/', (c) => {
                   DEFAULT ON. Off ⇒ Codex terminals launch plain `codex` and the
                   drive keeps its own headless thread (turns don't render in the
                   terminal). `HOTSHEET_CODEX_DISCOVER_THREAD=0|1` overrides. */}
-              <div className="settings-field" style="margin-top:16px">
+              <div className="settings-field" style="margin-top:16px" data-dev-feature="dev_tool_codex">
                 <label className="settings-checkbox-label">
                   <input type="checkbox" id="settings-codex-model-b-terminals" />
                   Codex terminals host the driven session <span className="global-setting-badge">Global Setting</span>

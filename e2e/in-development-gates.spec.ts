@@ -149,6 +149,32 @@ test.describe('In Development gates (HS-9411)', () => {
     }
   });
 
+  // HS-9473 — the reported bug: two Codex-specific GLOBAL settings stayed visible
+  // in a project whose Codex gate was off. The gate mechanism was fine; the markup
+  // simply never opted in via `data-dev-feature`, which no test of the mechanism
+  // could have caught.
+  test('Codex-specific settings stay hidden with the Codex gate off', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openExperimentalTab(page);
+    await expect(gate(page, 'dev_tool_codex')).not.toBeChecked();
+    await expect(page.locator('#settings-codex-app-server-enabled')).toBeHidden();
+    await expect(page.locator('#settings-codex-model-b-terminals')).toBeHidden();
+  });
+
+  test('the Codex settings appear as soon as the gate is on, without a reload', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+    await openExperimentalTab(page);
+    await gate(page, 'dev_tool_codex').check();
+    await expect(page.locator('#settings-codex-app-server-enabled')).toBeVisible();
+    await expect(page.locator('#settings-codex-model-b-terminals')).toBeVisible();
+
+    // ...and go away again when it is turned back off.
+    await gate(page, 'dev_tool_codex').uncheck();
+    await expect(page.locator('#settings-codex-app-server-enabled')).toBeHidden();
+  });
+
   test('worker surfaces stay hidden with the parallel-workers gate off', async ({ page, request }) => {
     await request.post('/api/channel/enable', { headers: secretHeaders(secret) });
     try {

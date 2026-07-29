@@ -96,3 +96,61 @@ describe('detail-panel telemetry block placement (HS-8648)', () => {
     expect(notesIdx).toBeLessThan(metaIdx);
   });
 });
+
+/**
+ * HS-9473 — the In Development gates (docs/124) only hide what OPTS IN via
+ * `data-dev-feature`. The mechanism was already unit-tested in
+ * `client/devFeatures.test.ts`; what failed was the markup — two Codex-specific
+ * settings shipped without the attribute, so they stayed visible in a project
+ * with the Codex gate off. A test of the mechanism can never catch that, so this
+ * one asserts the markup itself.
+ */
+describe('dev-gated settings markup (HS-9473)', () => {
+  /** The `.settings-field` wrapper containing an input id, as raw HTML. */
+  function fieldFor(html: string, inputId: string): string {
+    const idx = html.indexOf(`id="${inputId}"`);
+    expect(idx, `#${inputId} is not in the page`).toBeGreaterThan(-1);
+    const start = html.lastIndexOf('<div class="settings-field', idx);
+    expect(start, `no .settings-field wraps #${inputId}`).toBeGreaterThan(-1);
+    return html.slice(start, idx);
+  }
+
+  it('gates the Codex-specific global toggles behind the Codex gate', async () => {
+    const html = await (await app.request('/')).text();
+    // Both are machine-global settings, but they are meaningless — and per
+    // docs/124 must be unreachable — while Codex itself is gated off.
+    for (const id of ['settings-codex-app-server-enabled', 'settings-codex-model-b-terminals']) {
+      expect(fieldFor(html, id), `#${id} must be gated`).toContain('data-dev-feature="dev_tool_codex"');
+    }
+  });
+
+  it('every gated-tool-specific settings field is either dev-gated or tool-revealed', async () => {
+    // The class-level guard: adding another tool-specific toggle without a gate
+    // is the same mistake, and this fails on it rather than waiting for a report.
+    const html = await (await app.request('/')).text();
+    // Fields that are revealed by the `ai_tool` selection instead (they start
+    // `display:none` and only appear for their tool, which is itself gated).
+    const toolRevealed = new Set([
+      'antigravity-perms-field',
+      'codex-perms-field',
+      // The `ai_tool` dropdown gates its OPTIONS individually
+      // (`settingsDialog.tsx::applyAiToolDevGating`) rather than hiding the whole
+      // field — it must stay available for the ungated tools. Surfaced by this
+      // guard on first run, and correct as-is.
+      'ai-tool-select',
+    ]);
+
+    const fields = html.split('<div class="settings-field').slice(1);
+    const offenders: string[] = [];
+    for (const raw of fields) {
+      const field = raw.slice(0, raw.indexOf('</div>'));
+      const mentionsGatedTool = /\b(Codex|Antigravity|OpenCode|Gemini|Goose)\b/.test(field);
+      if (!mentionsGatedTool) continue;
+      if (field.includes('data-dev-feature=')) continue;
+      const id = /id="([a-z0-9-]+)"/.exec(field)?.[1] ?? '(no id)';
+      if (toolRevealed.has(id)) continue;
+      offenders.push(id);
+    }
+    expect(offenders, 'tool-specific settings fields with no gate').toEqual([]);
+  });
+});
