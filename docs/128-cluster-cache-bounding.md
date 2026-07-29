@@ -332,6 +332,66 @@ built on. At the wedge the ratio is off by ~30×. Two candidates, not yet distin
 Distinguishing them is HS-9478. Until it is settled, the fix here is a genuine improvement
 (pressure now gets a response at all) but is **not** established as sufficient.
 
+## 128.5.4 What actually kills the server (HS-9478 — measured, and it is not the cluster count)
+
+The 2026-07-29 death was investigated against `freeze.log`, which already records
+`arrayBuffersMb` alongside `externalMb` and (since HS-9470) the eviction counters. No new
+instrumentation was needed; the answer was in the data.
+
+**It is not Buffers or file reads.** Across the peak samples `arrayBuffers` is **4–7% of
+`external`** (e.g. 393 MB of 8449 MB). Whatever is consuming memory is WASM, not
+`readAllOtelJsonl` or a `dumpDataDir` Buffer.
+
+**It is not the live cluster count either.** Same-day comparison, same code:
+
+| | median MB per open cluster | max |
+| --- | --- | --- |
+| the process that died (02:47) | **248 MB** | **7533 MB** |
+| the process that replaced it (03:56), 30+ min | **183 MB** | 252 MB |
+
+A fresh process sits exactly on the ~180 MB/cluster figure this doc is built on and stays there.
+The dying one had drifted to 4–40× that. So the WASM heaps of clusters that are *no longer
+open* are still resident.
+
+**Why they are still resident:** V8 runs a major GC under **heap** pressure, and `external`
+creates none. Throughout the entire spiral `heapUsed` was 130–320 MB against a 4144 MB limit —
+completely relaxed — so V8 never had a reason to collect, while `external` climbed to 8449 MB
+and the process was SIGKILLed for wedging. HS-9467 measured the same thing from the other side:
+evicting 3 telemetry clusters freed **0 MB** normally and **808 MB** with a forced
+`global.gc()`.
+
+**And the guard makes it worse.** Because closing frees nothing, the headroom guard keeps seeing
+high `external` and keeps evicting, while the work that needed a cluster reopens one and
+allocates a *fresh* ~180 MB heap. Each cycle NET ADDS memory:
+
+```
+high external -> evict (frees nothing) -> work reopens (+180 MB) -> higher external -> evict harder -> ...
+```
+
+Measured, from the dying process's own counters:
+
+| | time | external | clusters | headroom evictions | churn |
+| --- | --- | --- | --- | --- | --- |
+| healthy | 03:43:12 | 3077 MB | 17 | 0 | 10 |
+| onset | 03:52:16 | 4237 MB | 10 | 5 | 12 |
+| death | 03:54:26 | 5845 MB | 2 | **375** | **372** |
+
+**370 evictions and 360 churned reopens in ~130 s, and `external` rose.** The §128.2.1
+`pendingReclaim` credit was live and did not prevent it: it assumes the memory comes back within
+15 s, and here it never comes back at all, so it delays the loop by one window rather than
+breaking it.
+
+**What this means for this document.** The LRU cap, the per-type budgets and the idle windows
+are all still correct and still worth having — they bound how many heaps get *allocated*. But
+every one of them assumes that closing a cluster returns its memory, and **that assumption is
+false without a collection**. Until HS-9479 lands, no amount of eviction policy can rescue a
+process in this state.
+
+Follow-ups: **HS-9479** (force a GC after a pressure pass — the actual fix), **HS-9480**
+(circuit-break the guard when eviction demonstrably isn't reclaiming, so it can never run away
+like this again), **HS-9481** (verify PGLite really does release on `close()`; if something
+retains the instance, HS-9479 is the wrong fix and this is a reference leak).
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →
