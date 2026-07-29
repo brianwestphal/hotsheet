@@ -1,5 +1,5 @@
 import { getProjectBySecret } from '../projects.js';
-import { centralTelemetryDataDir, getDbForDir, telemetryClusterDataDir } from './connection.js';
+import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
   attributeApiRequestToTicket,
@@ -227,83 +227,93 @@ export async function persistMetricsPayload(
     // HS-9230 — write into the relocated telemetry cluster (`<dataDir>/telemetry/db`
     // for a project; the central store maps to itself), NOT the snapshotted project db.
     const clusterDir = telemetryClusterDataDir(targetDir); // dir holding db/ + the HS-9236 JSONL
-    // HS-9233 — the compact rollups live in the SNAPSHOTTED main db (small + the
-    // per-ticket history is kept indefinitely, so it's backed up), so resolve it
-    // separately from the raw cluster.
-    const mainDb = await getDbForDir(targetDir);
-    const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
-    for (const sm of scopes) {
-      if (typeof sm !== 'object' || sm === null) continue;
-      const metrics = (sm as Record<string, unknown>).metrics;
-      if (!Array.isArray(metrics)) continue;
-      for (const m of metrics) {
-        if (typeof m !== 'object' || m === null) continue;
-        const mR = m as Record<string, unknown>;
-        const metricName = typeof mR.name === 'string' ? mR.name : null;
-        if (metricName === null) { dropped += collectDataPoints(m).length; continue; }
-        const points = collectDataPoints(m);
-        // HS-8600 — capture the metric-level aggregation temporality +
-        // isMonotonic so each row records whether it's a DELTA increment
-        // (safe to SUM) or a CUMULATIVE running total (summing re-inflates —
-        // the HS-8599 overcount). `warnIfCumulativeCounter` surfaces the
-        // first cumulative monotonic cost/token counter as a stderr warning
-        // so a future config that re-enables cumulative export is visible
-        // instead of silently wrong.
-        const agg = extractMetricAggregation(m);
-        warnIfCumulativeCounter(metricName, agg);
-        for (const point of points) {
-          const ts = unixNanoToDate(point.timeUnixNano);
-          if (ts === null) { dropped++; continue; }
-          const attrs = flattenAttributes(point.attributes);
-          // HS-8514 — Claude Code's exporter stamps `session.id` on
-          // the per-data-point attributes, NOT the resource. Prefer
-          // the data-point value when the resource didn't carry one
-          // so the `session_id` column gets populated for downstream
-          // session-count proxies.
-          const sessionId = resCtx.sessionId ??
-            (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
-          // HS-9233 — strip the redundant nested `attributes` array from the
-          // stored data point; the flattened `attributes_json` already holds it
-          // and is what every stats query reads.
-          const storedPoint = stripNestedAttributes(point);
-          inserted++;
-          // HS-9280 — the rotating JSONL store is now the SOLE raw store (the
-          // `otel_metrics` table was dropped). The deep §68 inspectors read these;
-          // the file lives OUTSIDE db/, so it's never snapshotted/backed up.
-          await appendOtelJsonl(clusterDir, 'metrics', ts, {
-            ts: ts.toISOString(), project_secret: resCtx.projectSecret, session_id: sessionId,
-            metric_name: metricName, attributes_json: attrs, value_json: storedPoint,
-            aggregation_temporality: agg.temporality, is_monotonic: agg.isMonotonic,
-          });
-          // HS-9233 — dual-write the compact daily time-series rollup (cost +
-          // split token sums). Best-effort: a rollup failure must never fail
-          // ingest (OTLP returns 200 regardless).
-          try {
-            await updateDailyRollup(mainDb, resCtx.projectSecret, ts, metricName, dataPointValue(point), attrs, agg);
-          } catch (err) {
-            console.debug('[otel] daily rollup update failed:', err);
-          }
-          // HS-9279 — feed the hour-of-week heatmap's COST measure (otel_rollup_activity
-          // kind='hour'). Same source as the old read: cost.usage, delta only. Best-effort.
-          try {
-            if (metricName === 'claude_code.cost.usage' && !isCumulativeMonotonic(agg)) {
-              await recordHourCost(mainDb, resCtx.projectSecret, ts, dataPointValue(point));
+    // HS-9462 — pin BOTH clusters for the whole per-resource write, not just
+    // each statement. The loop below resolves its handles once and then writes
+    // many records; in the gaps `inFlight` is 0 and the headroom guard (which
+    // drops the recency guard under memory pressure) could close a cluster this
+    // request is still using. This is the OTLP ingest path that actually bit.
+    const releasePins = pinClustersForDirs([clusterDir, targetDir]);
+    try {
+      // HS-9233 — the compact rollups live in the SNAPSHOTTED main db (small + the
+      // per-ticket history is kept indefinitely, so it's backed up), so resolve it
+      // separately from the raw cluster.
+      const mainDb = await getDbForDir(targetDir);
+      const scopes = Array.isArray(eR.scopeMetrics) ? eR.scopeMetrics : [];
+      for (const sm of scopes) {
+        if (typeof sm !== 'object' || sm === null) continue;
+        const metrics = (sm as Record<string, unknown>).metrics;
+        if (!Array.isArray(metrics)) continue;
+        for (const m of metrics) {
+          if (typeof m !== 'object' || m === null) continue;
+          const mR = m as Record<string, unknown>;
+          const metricName = typeof mR.name === 'string' ? mR.name : null;
+          if (metricName === null) { dropped += collectDataPoints(m).length; continue; }
+          const points = collectDataPoints(m);
+          // HS-8600 — capture the metric-level aggregation temporality +
+          // isMonotonic so each row records whether it's a DELTA increment
+          // (safe to SUM) or a CUMULATIVE running total (summing re-inflates —
+          // the HS-8599 overcount). `warnIfCumulativeCounter` surfaces the
+          // first cumulative monotonic cost/token counter as a stderr warning
+          // so a future config that re-enables cumulative export is visible
+          // instead of silently wrong.
+          const agg = extractMetricAggregation(m);
+          warnIfCumulativeCounter(metricName, agg);
+          for (const point of points) {
+            const ts = unixNanoToDate(point.timeUnixNano);
+            if (ts === null) { dropped++; continue; }
+            const attrs = flattenAttributes(point.attributes);
+            // HS-8514 — Claude Code's exporter stamps `session.id` on
+            // the per-data-point attributes, NOT the resource. Prefer
+            // the data-point value when the resource didn't carry one
+            // so the `session_id` column gets populated for downstream
+            // session-count proxies.
+            const sessionId = resCtx.sessionId ??
+              (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
+            // HS-9233 — strip the redundant nested `attributes` array from the
+            // stored data point; the flattened `attributes_json` already holds it
+            // and is what every stats query reads.
+            const storedPoint = stripNestedAttributes(point);
+            inserted++;
+            // HS-9280 — the rotating JSONL store is now the SOLE raw store (the
+            // `otel_metrics` table was dropped). The deep §68 inspectors read these;
+            // the file lives OUTSIDE db/, so it's never snapshotted/backed up.
+            await appendOtelJsonl(clusterDir, 'metrics', ts, {
+              ts: ts.toISOString(), project_secret: resCtx.projectSecret, session_id: sessionId,
+              metric_name: metricName, attributes_json: attrs, value_json: storedPoint,
+              aggregation_temporality: agg.temporality, is_monotonic: agg.isMonotonic,
+            });
+            // HS-9233 — dual-write the compact daily time-series rollup (cost +
+            // split token sums). Best-effort: a rollup failure must never fail
+            // ingest (OTLP returns 200 regardless).
+            try {
+              await updateDailyRollup(mainDb, resCtx.projectSecret, ts, metricName, dataPointValue(point), attrs, agg);
+            } catch (err) {
+              console.debug('[otel] daily rollup update failed:', err);
             }
-          } catch (err) {
-            console.debug('[otel] hour-cost rollup update failed:', err);
-          }
-          // HS-9243 — record this session in the daily dedup set so the reads can
-          // derive an exact daily distinct `session_count` without scanning raw.
-          // Only the rollup metrics carry the session proxy the reads count.
-          try {
-            if (isRollupMetric(metricName)) {
-              await markDailySeen(mainDb, resCtx.projectSecret, ts, 'session', sessionId);
+            // HS-9279 — feed the hour-of-week heatmap's COST measure (otel_rollup_activity
+            // kind='hour'). Same source as the old read: cost.usage, delta only. Best-effort.
+            try {
+              if (metricName === 'claude_code.cost.usage' && !isCumulativeMonotonic(agg)) {
+                await recordHourCost(mainDb, resCtx.projectSecret, ts, dataPointValue(point));
+              }
+            } catch (err) {
+              console.debug('[otel] hour-cost rollup update failed:', err);
             }
-          } catch (err) {
-            console.debug('[otel] daily-seen session update failed:', err);
+            // HS-9243 — record this session in the daily dedup set so the reads can
+            // derive an exact daily distinct `session_count` without scanning raw.
+            // Only the rollup metrics carry the session proxy the reads count.
+            try {
+              if (isRollupMetric(metricName)) {
+                await markDailySeen(mainDb, resCtx.projectSecret, ts, 'session', sessionId);
+              }
+            } catch (err) {
+              console.debug('[otel] daily-seen session update failed:', err);
+            }
           }
         }
       }
+    } finally {
+      releasePins();
     }
   }
 
@@ -444,87 +454,97 @@ export async function persistLogsPayload(
     // HS-8874 — per-resource target DB.
     const targetDir = telemetryDataDirForSecret(resCtx.projectSecret);
     const clusterDir = telemetryClusterDataDir(targetDir); // dir holding db/ + the HS-9236 JSONL
-    const db = await getDbForDir(clusterDir); // HS-9230 — relocated telemetry cluster
-    // HS-9233 — rollups live in the snapshotted main db (see persistMetricsPayload).
-    const mainDb = await getDbForDir(targetDir);
-    const scopes = Array.isArray(eR.scopeLogs) ? eR.scopeLogs : [];
-    for (const sl of scopes) {
-      if (typeof sl !== 'object' || sl === null) continue;
-      const records = (sl as Record<string, unknown>).logRecords;
-      if (!Array.isArray(records)) continue;
-      for (const rec of records) {
-        if (typeof rec !== 'object' || rec === null) { dropped++; continue; }
-        const rR = rec as Record<string, unknown>;
-        const ts = unixNanoToDate(rR.timeUnixNano ?? rR.observedTimeUnixNano);
-        if (ts === null) { dropped++; continue; }
-        const attrs = flattenAttributes(rR.attributes);
-        const eventName = typeof rR.eventName === 'string' ? rR.eventName
-          : typeof attrs['event.name'] === 'string' ? attrs['event.name']
-          : 'log';
-        const promptId = typeof attrs['prompt.id'] === 'string'
-          ? attrs['prompt.id']
-          : null;
-        // HS-8514 / HS-8639 — same as the metrics writer: Claude Code stamps
-        // `session.id` on the per-record attributes, not the resource (the
-        // `/api/telemetry/_debug` paste showed `distinctSessions: 0` because
-        // this column was always taking the null resource value). Prefer the
-        // record attribute when the resource didn't carry one.
-        const sessionId = resCtx.sessionId ??
-          (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
-        // HS-9233 — strip the nested `attributes` array (already flattened into
-        // `attributes_json`); the `<!-- hotsheet:ticket=… -->` marker lives in
-        // the record BODY, not attributes, so the per-ticket marker LIKE is
-        // unaffected.
-        const storedRecord = stripNestedAttributes(rR);
-        inserted++;
-        // HS-9280 — the rotating JSONL store is now the SOLE raw event store
-        // (the `otel_events` table was dropped).
-        await appendOtelJsonl(clusterDir, 'events', ts, {
-          ts: ts.toISOString(), project_secret: resCtx.projectSecret, session_id: sessionId,
-          prompt_id: promptId, event_name: eventName, attributes_json: attrs, body_json: storedRecord,
-        });
-        // HS-9233 — ingest-time per-ticket cost attribution (time-window path):
-        // an api_request's cost/tokens go to the ticket whose work window covers
-        // `ts`; a user_prompt bumps that ticket's prompt_count. `ticket_work_intervals`
-        // lives in the cluster db (`db`), the rollup in the main db. Best-effort.
-        try {
-          if (eventNameMatches(eventName, 'api_request')) {
-            await attributeApiRequestToTicket(db, mainDb, resCtx.projectSecret, ts, attrs, promptId);
-          } else if (eventNameMatches(eventName, 'user_prompt')) {
-            await attributeUserPromptToTicket(db, mainDb, resCtx.projectSecret, ts);
-          }
-        } catch (err) {
-          console.debug('[otel] per-ticket rollup update failed:', err);
-        }
-        // HS-9279 — roll tool_result events into the daily tool-usage rollup
-        // (otel_rollup_activity, kind='tool') so getToolRollup can read the
-        // rollup instead of scanning raw otel_events (Phase 3b). Best-effort.
-        if (eventNameMatches(eventName, 'tool_result')) {
+    // HS-9462 — pin BOTH clusters for the whole per-resource write, not just
+    // each statement. The loop below resolves its handles once and then writes
+    // many records; in the gaps `inFlight` is 0 and the headroom guard (which
+    // drops the recency guard under memory pressure) could close a cluster this
+    // request is still using. This is the OTLP ingest path that actually bit.
+    const releasePins = pinClustersForDirs([clusterDir, targetDir]);
+    try {
+      const db = await getDbForDir(clusterDir); // HS-9230 — relocated telemetry cluster
+      // HS-9233 — rollups live in the snapshotted main db (see persistMetricsPayload).
+      const mainDb = await getDbForDir(targetDir);
+      const scopes = Array.isArray(eR.scopeLogs) ? eR.scopeLogs : [];
+      for (const sl of scopes) {
+        if (typeof sl !== 'object' || sl === null) continue;
+        const records = (sl as Record<string, unknown>).logRecords;
+        if (!Array.isArray(records)) continue;
+        for (const rec of records) {
+          if (typeof rec !== 'object' || rec === null) { dropped++; continue; }
+          const rR = rec as Record<string, unknown>;
+          const ts = unixNanoToDate(rR.timeUnixNano ?? rR.observedTimeUnixNano);
+          if (ts === null) { dropped++; continue; }
+          const attrs = flattenAttributes(rR.attributes);
+          const eventName = typeof rR.eventName === 'string' ? rR.eventName
+            : typeof attrs['event.name'] === 'string' ? attrs['event.name']
+            : 'log';
+          const promptId = typeof attrs['prompt.id'] === 'string'
+            ? attrs['prompt.id']
+            : null;
+          // HS-8514 / HS-8639 — same as the metrics writer: Claude Code stamps
+          // `session.id` on the per-record attributes, not the resource (the
+          // `/api/telemetry/_debug` paste showed `distinctSessions: 0` because
+          // this column was always taking the null resource value). Prefer the
+          // record attribute when the resource didn't carry one.
+          const sessionId = resCtx.sessionId ??
+            (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
+          // HS-9233 — strip the nested `attributes` array (already flattened into
+          // `attributes_json`); the `<!-- hotsheet:ticket=… -->` marker lives in
+          // the record BODY, not attributes, so the per-ticket marker LIKE is
+          // unaffected.
+          const storedRecord = stripNestedAttributes(rR);
+          inserted++;
+          // HS-9280 — the rotating JSONL store is now the SOLE raw event store
+          // (the `otel_events` table was dropped).
+          await appendOtelJsonl(clusterDir, 'events', ts, {
+            ts: ts.toISOString(), project_secret: resCtx.projectSecret, session_id: sessionId,
+            prompt_id: promptId, event_name: eventName, attributes_json: attrs, body_json: storedRecord,
+          });
+          // HS-9233 — ingest-time per-ticket cost attribution (time-window path):
+          // an api_request's cost/tokens go to the ticket whose work window covers
+          // `ts`; a user_prompt bumps that ticket's prompt_count. `ticket_work_intervals`
+          // lives in the cluster db (`db`), the rollup in the main db. Best-effort.
           try {
-            await recordToolActivity(mainDb, resCtx.projectSecret, ts, attrs);
+            if (eventNameMatches(eventName, 'api_request')) {
+              await attributeApiRequestToTicket(db, mainDb, resCtx.projectSecret, ts, attrs, promptId);
+            } else if (eventNameMatches(eventName, 'user_prompt')) {
+              await attributeUserPromptToTicket(db, mainDb, resCtx.projectSecret, ts);
+            }
           } catch (err) {
-            console.debug('[otel] tool-activity rollup update failed:', err);
+            console.debug('[otel] per-ticket rollup update failed:', err);
           }
-        }
-        // HS-9279 — record a user_prompt's prompt_id in the per-(day,hour) dedup set
-        // for the heatmap's distinct-prompt-count measure. Best-effort.
-        if (eventNameMatches(eventName, 'user_prompt')) {
+          // HS-9279 — roll tool_result events into the daily tool-usage rollup
+          // (otel_rollup_activity, kind='tool') so getToolRollup can read the
+          // rollup instead of scanning raw otel_events (Phase 3b). Best-effort.
+          if (eventNameMatches(eventName, 'tool_result')) {
+            try {
+              await recordToolActivity(mainDb, resCtx.projectSecret, ts, attrs);
+            } catch (err) {
+              console.debug('[otel] tool-activity rollup update failed:', err);
+            }
+          }
+          // HS-9279 — record a user_prompt's prompt_id in the per-(day,hour) dedup set
+          // for the heatmap's distinct-prompt-count measure. Best-effort.
+          if (eventNameMatches(eventName, 'user_prompt')) {
+            try {
+              await markHourlySeenPrompt(mainDb, resCtx.projectSecret, ts, promptId);
+            } catch (err) {
+              console.debug('[otel] hourly-seen prompt update failed:', err);
+            }
+          }
+          // HS-9243 — record this prompt in the daily dedup set so the reads can
+          // derive an exact daily distinct `prompt_count` without scanning raw. Any
+          // event carrying a `prompt_id` counts (mirrors getWindowTotals, which
+          // counts distinct prompt_id across ALL event names, not just user_prompt).
           try {
-            await markHourlySeenPrompt(mainDb, resCtx.projectSecret, ts, promptId);
+            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'prompt', promptId);
           } catch (err) {
-            console.debug('[otel] hourly-seen prompt update failed:', err);
+            console.debug('[otel] daily-seen prompt update failed:', err);
           }
-        }
-        // HS-9243 — record this prompt in the daily dedup set so the reads can
-        // derive an exact daily distinct `prompt_count` without scanning raw. Any
-        // event carrying a `prompt_id` counts (mirrors getWindowTotals, which
-        // counts distinct prompt_id across ALL event names, not just user_prompt).
-        try {
-          await markDailySeen(mainDb, resCtx.projectSecret, ts, 'prompt', promptId);
-        } catch (err) {
-          console.debug('[otel] daily-seen prompt update failed:', err);
         }
       }
+    } finally {
+      releasePins();
     }
   }
 
@@ -572,45 +592,55 @@ export async function persistTracesPayload(
 
     // HS-8874 — per-resource target DB.
     const clusterDir = telemetryClusterDataDir(telemetryDataDirForSecret(resCtx.projectSecret)); // dir holding db/ + the HS-9236 JSONL
-    const scopes = Array.isArray(eR.scopeSpans) ? eR.scopeSpans : [];
-    for (const ss of scopes) {
-      if (typeof ss !== 'object' || ss === null) continue;
-      const spans = (ss as Record<string, unknown>).spans;
-      if (!Array.isArray(spans)) continue;
-      for (const span of spans) {
-        if (typeof span !== 'object' || span === null) { dropped++; continue; }
-        const sR = span as Record<string, unknown>;
-        const traceId = typeof sR.traceId === 'string' ? sR.traceId : null;
-        const spanId = typeof sR.spanId === 'string' ? sR.spanId : null;
-        const startTs = unixNanoToDate(sR.startTimeUnixNano);
-        const endTs = unixNanoToDate(sR.endTimeUnixNano);
-        if (traceId === null || spanId === null || startTs === null || endTs === null) {
-          dropped++;
-          continue;
-        }
-        const parentSpanId = typeof sR.parentSpanId === 'string' && sR.parentSpanId !== '' ? sR.parentSpanId : null;
-        const spanName = typeof sR.name === 'string' ? sR.name : 'span';
-        const attrs = flattenAttributes(sR.attributes);
-        const promptId = typeof attrs['prompt.id'] === 'string' ? attrs['prompt.id'] : null;
-        // HS-8514 / HS-8639 — prefer the span's own `session.id` attribute when
-        // the resource didn't carry one (mirrors the metrics + events writers).
-        const sessionId = resCtx.sessionId ??
-          (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
-        const status = sR.status as Record<string, unknown> | undefined;
-        const statusCode = status !== undefined && typeof status.code === 'string'
-          ? status.code
-          : (status !== undefined && typeof status.code === 'number' ? String(status.code) : null);
+    // HS-9462 — pin BOTH clusters for the whole per-resource write, not just
+    // each statement. The loop below resolves its handles once and then writes
+    // many records; in the gaps `inFlight` is 0 and the headroom guard (which
+    // drops the recency guard under memory pressure) could close a cluster this
+    // request is still using. This is the OTLP ingest path that actually bit.
+    const releasePins = pinClustersForDirs([clusterDir]);
+    try {
+      const scopes = Array.isArray(eR.scopeSpans) ? eR.scopeSpans : [];
+      for (const ss of scopes) {
+        if (typeof ss !== 'object' || ss === null) continue;
+        const spans = (ss as Record<string, unknown>).spans;
+        if (!Array.isArray(spans)) continue;
+        for (const span of spans) {
+          if (typeof span !== 'object' || span === null) { dropped++; continue; }
+          const sR = span as Record<string, unknown>;
+          const traceId = typeof sR.traceId === 'string' ? sR.traceId : null;
+          const spanId = typeof sR.spanId === 'string' ? sR.spanId : null;
+          const startTs = unixNanoToDate(sR.startTimeUnixNano);
+          const endTs = unixNanoToDate(sR.endTimeUnixNano);
+          if (traceId === null || spanId === null || startTs === null || endTs === null) {
+            dropped++;
+            continue;
+          }
+          const parentSpanId = typeof sR.parentSpanId === 'string' && sR.parentSpanId !== '' ? sR.parentSpanId : null;
+          const spanName = typeof sR.name === 'string' ? sR.name : 'span';
+          const attrs = flattenAttributes(sR.attributes);
+          const promptId = typeof attrs['prompt.id'] === 'string' ? attrs['prompt.id'] : null;
+          // HS-8514 / HS-8639 — prefer the span's own `session.id` attribute when
+          // the resource didn't carry one (mirrors the metrics + events writers).
+          const sessionId = resCtx.sessionId ??
+            (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
+          const status = sR.status as Record<string, unknown> | undefined;
+          const statusCode = status !== undefined && typeof status.code === 'string'
+            ? status.code
+            : (status !== undefined && typeof status.code === 'number' ? String(status.code) : null);
 
-        inserted++;
-        // HS-9280 — the rotating JSONL store is now the SOLE raw span store (the
-        // `otel_spans` table was dropped). Partitioned by START time's server-local day.
-        await appendOtelJsonl(clusterDir, 'spans', startTs, {
-          trace_id: traceId, span_id: spanId, parent_span_id: parentSpanId,
-          project_secret: resCtx.projectSecret, session_id: sessionId, prompt_id: promptId,
-          span_name: spanName, start_ts: startTs.toISOString(), end_ts: endTs.toISOString(),
-          attributes_json: attrs, status_code: statusCode,
-        });
+          inserted++;
+          // HS-9280 — the rotating JSONL store is now the SOLE raw span store (the
+          // `otel_spans` table was dropped). Partitioned by START time's server-local day.
+          await appendOtelJsonl(clusterDir, 'spans', startTs, {
+            trace_id: traceId, span_id: spanId, parent_span_id: parentSpanId,
+            project_secret: resCtx.projectSecret, session_id: sessionId, prompt_id: promptId,
+            span_name: spanName, start_ts: startTs.toISOString(), end_ts: endTs.toISOString(),
+            attributes_json: attrs, status_code: statusCode,
+          });
+        }
       }
+    } finally {
+      releasePins();
     }
   }
 

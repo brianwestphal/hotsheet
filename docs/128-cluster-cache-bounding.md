@@ -101,8 +101,37 @@ rest — half a fix. Pinned by the "keeps working for EVERY later query on the s
 handle" and "heals repeatedly" transition tests.
 
 Healing is a safety net, not a substitute for not evicting an in-use cluster: the eviction
-still wasted a close + ~180 MB reopen. Extending the protected window to a whole request is
-tracked as **HS-9462**.
+still wasted a close + ~180 MB reopen, under the very memory pressure that triggered the guard.
+
+### 128.3.2 The prevention half — operation-scoped pins (HS-9462)
+
+`pinClustersForDirs(dataDirs)` (`connection.ts`) holds clusters for a whole **operation**
+rather than one statement, and returns a release function to call in a `finally`:
+
+```ts
+const release = pinClustersForDirs([clusterDir, targetDir]);
+try { /* resolve handles, write many records */ } finally { release(); }
+```
+
+It reuses the **same `inFlight` counter** the planner already consults, so a pinned cluster is
+excluded in every mode — there is no second exclusion rule to keep in sync with
+`chooseEvictions`. Pinning a dataDir whose cluster isn't open yet is correct: only open
+clusters are eviction candidates, and the pin is already in place if one opens mid-operation
+(which is exactly what the OTLP writers do — they pin before `getDbForDir`).
+
+Applied to the three OTLP writers (`persistMetricsPayload` / `persistLogsPayload` /
+`persistSpansPayload` in `otelWriters.ts`), which resolve their handles once per resource and
+then write many records — the path that actually produced the report.
+
+**The pin must be released, and that is the whole risk.** One that outlives its operation makes
+its cluster permanently un-evictable, which is the unbounded-growth bug this doc exists to fix.
+Hence a release function called in `finally`, rather than anything inferred from request
+lifetime; releasing twice is a no-op, so a duplicate release can't drop a *concurrent*
+operation's hold on the same cluster. Tests cover the pinned-survives-eviction case, release on
+throw, double-release, and pinning-before-open.
+
+Healing (§128.3.1) stays regardless — it covers what prevention misses: a genuinely long gap, or
+a handle cached across requests. Broadening pins beyond the OTLP writers is **HS-9464**.
 
 ## 128.4 Accepted trade-off
 

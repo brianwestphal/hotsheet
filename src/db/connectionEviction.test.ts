@@ -23,6 +23,7 @@ import {
   evictIdleClusters,
   getDbForDir,
   isDbOpenForDir,
+  pinClustersForDirs,
   setDataDir,
 } from './connection.js';
 
@@ -186,6 +187,80 @@ describe('stale-handle healing vs deliberate close (HS-9461)', () => {
     for (const k of ENV_KEYS) {
       if (saved[k] === undefined) Reflect.deleteProperty(process.env, k);
       else process.env[k] = saved[k];
+    }
+  });
+
+  it('a PINNED cluster is not evicted, even when opening past the cap', async () => {
+    // HS-9462 — the prevention half. The in-flight guard covers ONE query; a
+    // request that resolves a handle once and then writes many records is
+    // unprotected between statements. With the pin held, the cluster must
+    // survive the eviction pass that would otherwise pick it.
+    const p1 = tempDir();
+    const stale = await getDbForDir(p1);
+    await stale.exec('CREATE TABLE t (id int)');
+
+    const release = pinClustersForDirs([p1]);
+    try {
+      await getDbForDir(tempDir()); // over cap → p1 is the LRU non-pinned
+      expect(isDbOpenForDir(p1)).toBe(true); // pinned → survived
+      await evictIdleClusters();             // and the idle sweep skips it too
+      expect(isDbOpenForDir(p1)).toBe(true);
+    } finally {
+      release();
+    }
+
+    // Released → evictable again, so the pin is not a permanent leak.
+    await getDbForDir(tempDir());
+    expect(isDbOpenForDir(p1)).toBe(false);
+  });
+
+  it('releases the pin when the operation throws', async () => {
+    // A pin that outlives its operation makes the cluster permanently
+    // un-evictable — the unbounded-growth bug docs/128 exists to fix.
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    const release = pinClustersForDirs([p1]);
+    const failingOperation = async (): Promise<void> => {
+      try {
+        await Promise.resolve();
+        throw new Error('write failed');
+      } finally { release(); }
+    };
+    await expect(failingOperation()).rejects.toThrow('write failed');
+
+    await getDbForDir(tempDir());
+    expect(isDbOpenForDir(p1)).toBe(false); // evictable again
+  });
+
+  it('releasing twice is a no-op (does not under-count the guard)', async () => {
+    // A double release would decrement past zero and could un-protect a
+    // DIFFERENT concurrent pin on the same cluster.
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    const first = pinClustersForDirs([p1]);
+    const second = pinClustersForDirs([p1]); // concurrent operation on the same cluster
+    first();
+    first(); // duplicate — must not release `second`'s hold
+
+    await getDbForDir(tempDir());
+    expect(isDbOpenForDir(p1)).toBe(true); // still held by `second`
+    second();
+    await getDbForDir(tempDir());
+    expect(isDbOpenForDir(p1)).toBe(false);
+  });
+
+  it('pinning a dataDir whose cluster is not open yet still protects it', async () => {
+    // The pin is taken before `getDbForDir` in the OTLP writers, so it must
+    // apply to a cluster that opens DURING the operation.
+    const p1 = tempDir();
+    const release = pinClustersForDirs([p1]);
+    try {
+      await getDbForDir(p1); // opens under the pin
+      await getDbForDir(tempDir());
+      await getDbForDir(tempDir());
+      expect(isDbOpenForDir(p1)).toBe(true);
+    } finally {
+      release();
     }
   });
 

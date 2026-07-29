@@ -8,8 +8,10 @@ import { z } from 'zod';
 import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import {
+  beginClusterQuery,
   chooseEvictions,
   currentExternalBytes,
+  endClusterQuery,
   type EvictionMode,
   forgetCluster,
   headroomEvictionCount,
@@ -454,6 +456,41 @@ async function reopenEvictedCluster(dbPath: string): Promise<PGlite | null> {
 }
 
 setClusterReopener(reopenEvictedCluster);
+
+/**
+ * HS-9462 — hold clusters against eviction for a whole OPERATION, not just one
+ * query. Returns the release function; call it in a `finally`.
+ *
+ * The in-flight guard (docs/128 §128.3) covers a single `query`/`exec`, but a
+ * caller that resolves a handle once and then does a dozen writes is unprotected
+ * in the gaps: `inFlight` drops to 0 between statements and the cluster looks
+ * idle. The headroom guard deliberately drops the recency guard under memory
+ * pressure, so it picks exactly those clusters, and the request's next write
+ * lands on a closed instance — the HS-9461 failure, which heals it only after
+ * the fact, at the cost of a close plus a ~180 MB reopen.
+ *
+ * This is the prevention half. It reuses the SAME `inFlight` counter the
+ * eviction planner already consults, so a pinned cluster is excluded in every
+ * mode — no second exclusion rule to keep in sync with `chooseEvictions`.
+ * Pinning a dataDir whose cluster is not open yet is harmless and correct: only
+ * open clusters are eviction candidates, and the pin is already in place if one
+ * opens mid-operation.
+ *
+ * **The pin MUST be released.** One that outlives its operation makes its
+ * cluster permanently un-evictable — the unbounded-growth bug docs/128 exists to
+ * fix. Hence a release function to call in `finally`, rather than anything
+ * inferred from request lifetime. Releasing more than once is a no-op.
+ */
+export function pinClustersForDirs(dataDirs: readonly string[]): () => void {
+  const dbPaths = dataDirs.map((dir) => join(dir, 'db'));
+  for (const p of dbPaths) beginClusterQuery(p);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const p of dbPaths) endClusterQuery(p);
+  };
+}
 
 /** HS-9460 — dataDirs already marked for recovery this process, so a failing
  *  cluster logs + writes the marker ONCE rather than on every query it rejects
