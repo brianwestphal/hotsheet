@@ -7,6 +7,7 @@ import {
   APPROX_CLUSTER_EXTERNAL_BYTES,
   beginClusterQuery,
   chooseEvictions,
+  clusterBudget,
   clusterInFlight,
   clusterLastAccess,
   type ClusterState,
@@ -29,7 +30,7 @@ function input(over: Partial<EvictionInput>): EvictionInput {
     pinnedPaths: new Set<string>(),
     now: NOW,
     mode: 'cap',
-    maxOpen: 3,
+    budget: { project: 3, telemetry: 3 },
     minIdleMs: 30_000,
     idleMs: 600_000,
     telemetryIdleMs: 60_000,
@@ -46,32 +47,32 @@ function cluster(dbPath: string, ageMs: number, inFlight = 0): ClusterState {
 describe('chooseEvictions — cap mode (HS-9420)', () => {
   it('evicts nothing when at or under the cap', () => {
     const clusters = [cluster('a', 60_000), cluster('b', 50_000), cluster('c', 40_000)];
-    expect(chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 3 }))).toEqual([]);
+    expect(chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 3, telemetry: 99 } }))).toEqual([]);
   });
 
   it('evicts the least-recently-used when over the cap', () => {
     // d is newest, a is oldest → a is the victim.
     const clusters = [cluster('a', 90_000), cluster('b', 60_000), cluster('c', 45_000), cluster('d', 1_000)];
-    expect(chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 3 }))).toEqual(['a']);
+    expect(chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 3, telemetry: 99 } }))).toEqual(['a']);
   });
 
   it('evicts multiple LRU when several over the cap', () => {
     const clusters = [cluster('a', 90_000), cluster('b', 80_000), cluster('c', 70_000), cluster('d', 60_000), cluster('e', 1_000)];
     // 5 open, cap 3 → evict the 2 oldest.
-    expect(chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 3 }))).toEqual(['a', 'b']);
+    expect(chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 3, telemetry: 99 } }))).toEqual(['a', 'b']);
   });
 
   it('never evicts a pinned cluster even if it is the LRU', () => {
     const clusters = [cluster('a', 90_000), cluster('b', 60_000), cluster('c', 45_000), cluster('d', 1_000)];
     // a is oldest but pinned → next-oldest unpinned (b) is the victim.
-    const out = chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 3, pinnedPaths: new Set(['a']) }));
+    const out = chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 3, telemetry: 99 }, pinnedPaths: new Set(['a']) }));
     expect(out).toEqual(['b']);
   });
 
   it('never evicts an in-flight cluster even if it is the LRU', () => {
     const clusters = [cluster('a', 90_000, 1), cluster('b', 60_000), cluster('c', 45_000), cluster('d', 1_000)];
     // a is oldest but has an in-flight query → b is the victim.
-    expect(chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 3 }))).toEqual(['b']);
+    expect(chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 3, telemetry: 99 } }))).toEqual(['b']);
   });
 
   it('respects the recency guard — a just-touched cluster is not cap-evicted', () => {
@@ -79,14 +80,14 @@ describe('chooseEvictions — cap mode (HS-9420)', () => {
     // enough to evict, so the cap is temporarily exceeded (a burst) rather than
     // churn-evicting a hot cluster.
     const clusters = [cluster('a', 5_000), cluster('b', 4_000), cluster('c', 3_000), cluster('d', 1_000)];
-    expect(chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 3, minIdleMs: 30_000 }))).toEqual([]);
+    expect(chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 3, telemetry: 99 }, minIdleMs: 30_000 }))).toEqual([]);
   });
 
   it('evicts only aged clusters when over cap, skipping recent ones', () => {
     // a + b are aged (> guard); c + d are recent. Over by 2, but only aged ones
     // are eligible → both aged evicted.
     const clusters = [cluster('a', 90_000), cluster('b', 80_000), cluster('c', 2_000), cluster('d', 1_000)];
-    expect(chooseEvictions(input({ clusters, mode: 'cap', maxOpen: 2, minIdleMs: 30_000 }))).toEqual(['a', 'b']);
+    expect(chooseEvictions(input({ clusters, mode: 'cap', budget: { project: 2, telemetry: 99 }, minIdleMs: 30_000 }))).toEqual(['a', 'b']);
   });
 });
 
@@ -164,20 +165,14 @@ describe('chooseEvictions — per-type idle windows (HS-9467)', () => {
     expect(out).toEqual([telemetryDb('c')]);
   });
 
-  it('applies only to idle mode — cap and headroom are type-blind', () => {
-    // Those two are about COUNT and MEMORY, where a telemetry cluster is not
-    // special; LRU order alone decides. Splitting them too would let a busy
-    // telemetry cluster outrank a colder project one for no reason.
+  it('headroom stays type-blind — it is pure memory triage', () => {
+    // Cap mode became type-aware in HS-9468 (separate budgets, see below), but
+    // headroom did NOT: when memory is critical the only question is which
+    // cluster was touched least recently, whatever kind it is.
     const clusters = [
       cluster(projectDb('old'), 900_000),
       cluster(telemetryDb('new'), 100_000),
     ];
-    const capOut = chooseEvictions(input({
-      clusters, mode: 'cap', maxOpen: 1, minIdleMs: 30_000,
-      idleMs: 300_000, telemetryIdleMs: 60_000,
-    }));
-    expect(capOut).toEqual([projectDb('old')]); // LRU, not "telemetry first"
-
     const headOut = chooseEvictions(input({
       clusters, mode: 'headroom', targetEvictions: 1,
       idleMs: 300_000, telemetryIdleMs: 60_000,
@@ -328,5 +323,159 @@ describe('resolveEvictionConfig (HS-9420)', () => {
     expect(resolveEvictionConfig().maxOpen).toBe(10); // falls back to default
     process.env.HOTSHEET_CLUSTER_IDLE_MS = '-5';
     expect(resolveEvictionConfig().idleMs).toBe(300_000); // negative → default
+  });
+});
+
+/**
+ * HS-9468 — the budget is derived from LIVE memory pressure instead of a fixed
+ * count, with separate allowances for project and telemetry clusters. Encodes two
+ * maintainer decisions: separate LRUs, and telemetry gives way first (a stats page
+ * paying a reopen is cheap; a tab switch paying one is not).
+ */
+describe('clusterBudget (HS-9468)', () => {
+  const GB = 1024 * 1024 * 1024;
+  const base = {
+    heapLimitBytes: 4 * GB,
+    headroomFloorBytes: 768 * 1024 * 1024,
+    pendingReclaimBytes: 0,
+    openProject: 2,
+    openTelemetry: 2,
+    maxProject: 10,
+    maxTelemetry: 6,
+    minProject: 2,
+    minTelemetry: 1,
+  };
+
+  it('allows the full ceilings when memory is plentiful', () => {
+    // Almost nothing allocated → room for everything.
+    expect(clusterBudget({ ...base, externalBytes: 100 * 1024 * 1024 }))
+      .toEqual({ project: 10, telemetry: 6 });
+  });
+
+  it('shrinks as pressure rises', () => {
+    const plenty = clusterBudget({ ...base, externalBytes: 0.5 * GB });
+    const tight = clusterBudget({ ...base, externalBytes: 3 * GB });
+    const total = (b: { project: number; telemetry: number }) => b.project + b.telemetry;
+    expect(total(tight)).toBeLessThan(total(plenty));
+  });
+
+  it('takes it out of TELEMETRY first', () => {
+    // Enough pressure to force a shrink, but not down to the floors: the
+    // telemetry allowance should absorb it while projects stay at their ceiling.
+    const b = clusterBudget({ ...base, externalBytes: 3 * GB, openProject: 6, openTelemetry: 6 });
+    expect(b.telemetry).toBeLessThan(base.maxTelemetry);
+    expect(b.project).toBeGreaterThan(b.telemetry);
+  });
+
+  it('never drops below the floors, however critical memory is', () => {
+    // The active project must survive, and one telemetry cluster stays so an
+    // ingest burst isn't reopening on every batch.
+    const b = clusterBudget({ ...base, externalBytes: 100 * GB });
+    expect(b.project).toBe(base.minProject);
+    expect(b.telemetry).toBe(base.minTelemetry);
+  });
+
+  it('never exceeds the ceilings, however much room there is', () => {
+    const b = clusterBudget({ ...base, heapLimitBytes: 1024 * GB, externalBytes: 0 });
+    expect(b).toEqual({ project: 10, telemetry: 6 });
+  });
+
+  it('credits pending reclaim so eviction cannot cascade', () => {
+    // THE subtle one. A closed cluster's heap returns on GC, not at close(), so
+    // `external` still counts it. Without the credit the budget reads the same
+    // pressure that just triggered an eviction and evicts again — a cascade
+    // caused by its own success. With 4 evictions in flight the budget must be
+    // no tighter than if that memory were already back.
+    const externalBytes = 3.2 * GB;
+    const naive = clusterBudget({ ...base, externalBytes, pendingReclaimBytes: 0 });
+    const credited = clusterBudget({
+      ...base, externalBytes, pendingReclaimBytes: 4 * APPROX_CLUSTER_EXTERNAL_BYTES,
+    });
+    const total = (b: { project: number; telemetry: number }) => b.project + b.telemetry;
+    expect(total(credited)).toBeGreaterThan(total(naive));
+  });
+
+  it('grows from the CURRENT open count, so the loop converges', () => {
+    // The budget is `open + spare`: with headroom it sits above what is open (so
+    // nothing is evicted and more may open), and each open raises `external`,
+    // lowering `spare`. That feedback is what makes it self-regulating rather
+    // than oscillating.
+    const b = clusterBudget({ ...base, externalBytes: 2 * GB, openProject: 3, openTelemetry: 3 });
+    expect(b.project + b.telemetry).toBeGreaterThanOrEqual(6);
+  });
+
+  it('handles a negative headroom without producing nonsense', () => {
+    const b = clusterBudget({ ...base, externalBytes: 5 * GB });
+    expect(Number.isFinite(b.project)).toBe(true);
+    expect(b.project).toBeGreaterThanOrEqual(base.minProject);
+    expect(b.telemetry).toBeGreaterThanOrEqual(base.minTelemetry);
+  });
+
+  it('cannot be pushed below its floors by an absurd pending credit', () => {
+    const b = clusterBudget({ ...base, externalBytes: 0, pendingReclaimBytes: 100 * GB });
+    expect(b.project).toBeLessThanOrEqual(base.maxProject);
+    expect(b.telemetry).toBeLessThanOrEqual(base.maxTelemetry);
+  });
+});
+
+describe('chooseEvictions — separate per-type LRUs (HS-9468)', () => {
+  const projectDb = (n: string) => `/data/${n}/db`;
+  const telemetryDb = (n: string) => `/data/${n}/telemetry/db`;
+
+  it('a telemetry burst does not evict the project the user is looking at', () => {
+    // The reason for separate budgets: under one combined cap, 4 telemetry opens
+    // would push the total over and evict the oldest cluster — which could be a
+    // project. Now the telemetry overage is settled among telemetry clusters.
+    const clusters = [
+      cluster(projectDb('active'), 900_000),
+      cluster(telemetryDb('t1'), 800_000),
+      cluster(telemetryDb('t2'), 700_000),
+      cluster(telemetryDb('t3'), 600_000),
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'cap', budget: { project: 5, telemetry: 2 }, minIdleMs: 0,
+    }));
+    // Exactly one telemetry cluster over budget → the LRU telemetry one goes.
+    expect(out).toEqual([telemetryDb('t1')]);
+    expect(out).not.toContain(projectDb('active'));
+  });
+
+  it('evicts within each type independently when both are over', () => {
+    const clusters = [
+      cluster(projectDb('p1'), 900_000),
+      cluster(projectDb('p2'), 800_000),
+      cluster(telemetryDb('t1'), 700_000),
+      cluster(telemetryDb('t2'), 600_000),
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'cap', budget: { project: 1, telemetry: 1 }, minIdleMs: 0,
+    }));
+    // Telemetry first (cheaper reopen), then the project one; LRU within each.
+    expect(out).toEqual([telemetryDb('t1'), projectDb('p1')]);
+  });
+
+  it('leaves a type alone when only the OTHER is over budget', () => {
+    const clusters = [
+      cluster(projectDb('p1'), 900_000),
+      cluster(telemetryDb('t1'), 800_000),
+      cluster(telemetryDb('t2'), 700_000),
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'cap', budget: { project: 5, telemetry: 1 }, minIdleMs: 0,
+    }));
+    expect(out).toEqual([telemetryDb('t1')]);
+  });
+
+  it('keeps the hard invariants per type', () => {
+    const clusters = [
+      cluster(telemetryDb('t1'), 900_000, 1),  // in-flight (a write in progress)
+      cluster(telemetryDb('t2'), 800_000),     // pinned
+      cluster(telemetryDb('t3'), 700_000),     // evictable
+    ];
+    const out = chooseEvictions(input({
+      clusters, mode: 'cap', budget: { project: 5, telemetry: 1 }, minIdleMs: 0,
+      pinnedPaths: new Set([telemetryDb('t2')]),
+    }));
+    expect(out).toEqual([telemetryDb('t3')]);
   });
 });

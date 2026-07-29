@@ -8,10 +8,14 @@ import { z } from 'zod';
 import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import {
+  APPROX_CLUSTER_EXTERNAL_BYTES,
   beginClusterQuery,
   chooseEvictions,
+  type ClusterBudget,
+  clusterBudget,
   currentExternalBytes,
   endClusterQuery,
+  type EvictionConfig,
   type EvictionMode,
   forgetCluster,
   headroomEvictionCount,
@@ -394,6 +398,7 @@ async function closeClusterForEviction(dbPath: string): Promise<void> {
   // closed, or a late request would resurrect a cluster we meant to be rid of —
   // exactly the unbounded-growth leak docs/128 exists to prevent.
   evictedClusterPaths.add(dbPath);
+  notePendingReclaim(); // HS-9468 — its heap comes back on GC, not now.
   try {
     await db.close();
   } catch (err) {
@@ -539,6 +544,59 @@ export function resetStorageFailureReportingForTests(): void {
   storageFailureReported.clear();
 }
 
+/**
+ * HS-9468 — timestamps of recent eviction closes, so the budget below can credit
+ * memory that is already promised back.
+ *
+ * A closed cluster's WASM heap returns on **GC**, not at `close()` (docs/128
+ * §128.5.1 — the measurement that nearly read as "eviction frees nothing"). A
+ * pressure-driven budget that ignored this would read the still-high `external`
+ * immediately after evicting, conclude it is still over budget, and evict again —
+ * an over-eviction cascade triggered by its own success. Entries older than the
+ * lag window are assumed collected and drop off.
+ */
+const recentEvictions: number[] = [];
+const RECLAIM_LAG_MS = 15_000;
+
+function notePendingReclaim(now: number = Date.now()): void {
+  recentEvictions.push(now);
+}
+
+/** Bytes evicted recently enough that GC may not have returned them yet. */
+function pendingReclaimBytes(now: number = Date.now()): number {
+  while (recentEvictions.length > 0 && now - recentEvictions[0] > RECLAIM_LAG_MS) {
+    recentEvictions.shift();
+  }
+  return recentEvictions.length * APPROX_CLUSTER_EXTERNAL_BYTES;
+}
+
+/** Test seam — forget the pending-reclaim credit. */
+export function resetPendingReclaimForTests(): void {
+  recentEvictions.length = 0;
+}
+
+/** HS-9468 — the per-type budget for right now, from live memory pressure. */
+function currentClusterBudget(cfg: EvictionConfig): ClusterBudget {
+  let openProject = 0;
+  let openTelemetry = 0;
+  for (const dbPath of databases.keys()) {
+    if (isTelemetryClusterDbPath(dbPath)) openTelemetry += 1;
+    else openProject += 1;
+  }
+  return clusterBudget({
+    externalBytes: currentExternalBytes(),
+    heapLimitBytes: heapSizeLimitBytes(),
+    headroomFloorBytes: cfg.headroomFloorBytes,
+    pendingReclaimBytes: pendingReclaimBytes(),
+    openProject,
+    openTelemetry,
+    maxProject: cfg.maxOpen,
+    maxTelemetry: cfg.maxTelemetryOpen,
+    minProject: cfg.minOpen,
+    minTelemetry: cfg.minTelemetryOpen,
+  });
+}
+
 /** Snapshot the live clusters, ask the planner what to close for `mode`, and
  *  close them serially. Returns the number actually evicted. */
 async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<number> {
@@ -548,7 +606,7 @@ async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<num
     pinnedPaths: pinnedClusterPaths(),
     now: Date.now(),
     mode,
-    maxOpen: cfg.maxOpen,
+    budget: currentClusterBudget(cfg),
     minIdleMs: cfg.minIdleMs,
     idleMs: cfg.idleMs,
     telemetryIdleMs: cfg.telemetryIdleMs,

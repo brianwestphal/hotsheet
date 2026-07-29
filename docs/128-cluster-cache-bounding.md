@@ -30,9 +30,10 @@ that mattered was `process.memoryUsage().external`, surfaced in the diagnostics 
 Policy lives in `src/db/clusterEviction.ts` (pure + unit-tested); `connection.ts` owns the
 PGLite handles and performs the closes the planner selects.
 
-1. **LRU cap** (`maxOpen`, default 10). Opening the (cap+1)-th cluster evicts the
-   least-recently-used *evictable* cluster. Steady-state memory is now independent of how many
-   projects are registered — someone with 30 projects holds at most `maxOpen` open.
+1. **LRU cap — now a pressure-driven, per-type BUDGET** (HS-9468; was a fixed combined count).
+   Project and telemetry clusters have **separate LRUs** with separate allowances, and both
+   allowances are computed from live memory pressure rather than hardcoded. Steady-state memory
+   is independent of how many projects are registered. See §128.2.1.
 2. **Idle-close** (`idleMs`). A periodic sweep (`evictIdleClusters`, off-loop, `unref`'d, 60 s)
    closes any non-pinned cluster untouched for its idle window. This is what reclaims the
    telemetry clusters an ingest burst opened — they go idle and are closed, bounding the
@@ -43,6 +44,47 @@ PGLite handles and performs the closes the planner selects.
    `external` is within the floor of the V8 heap ceiling, evict LRU clusters *ignoring the
    recency guard* (but never one mid-query) to buy headroom before allocating another ~180 MB.
    The hard safety valve; count sized by the deficit ÷ ~180 MB/cluster.
+
+### 128.2.1 The dynamic per-type budget (HS-9468)
+
+`clusterBudget()` answers "how many of each kind can we afford *right now*", replacing the fixed
+`maxOpen`:
+
+```
+effectiveExternal = external − pendingReclaim
+spare             = ⌊(heapLimit − effectiveExternal − headroomFloor) / ~180 MB⌋
+allowedTotal      = clamp(openNow + spare, floors, ceilings)
+project           = clamp(allowedTotal − minTelemetry, minProject, maxProject)
+telemetry         = clamp(allowedTotal − project,      minTelemetry, maxTelemetry)
+```
+
+Three properties fall out of that shape, and each is a deliberate decision:
+
+- **It self-regulates.** The budget grows from `openNow`, and every cluster opened raises
+  `external`, which lowers `spare`. Plentiful memory ⇒ budget above what is open ⇒ nothing
+  evicted and more may open. Tight memory ⇒ budget below what is open ⇒ the excess is evicted.
+  No oscillation, because the feedback is negative.
+- **Separate LRUs.** A telemetry burst can no longer evict the project the user is looking at,
+  and a project switch can no longer evict the cluster an ingest is writing to. Under the old
+  single cap of 10 they competed for the same slots, and with two clusters per project **~5
+  projects saturated it** — the cap, not the idle sweep, was doing all the work.
+- **Telemetry gives way first.** Projects are served from `allowedTotal` before telemetry, so a
+  shrink lands on telemetry until it hits its floor and only then on projects. Maintainer's
+  rule: *"write speed for telemetry is more important than read speed — showing stats pages is
+  relatively low priority"*. A stats page paying a reopen is cheap; a tab switch paying one is
+  not. The telemetry **floor** is what protects writes: an ingest burst must not reopen on every
+  batch, so at least one telemetry cluster always stays.
+
+**`pendingReclaim` is not an optimization — it prevents a cascade.** A closed cluster's WASM heap
+returns on **GC**, not at `close()` (§128.5.1). A pressure loop that ignored this would read the
+still-high `external` immediately after evicting, conclude it is *still* over budget, and evict
+again — an over-eviction cascade caused by its own success, which would empty the cache under
+exactly the memory pressure where reopens hurt most. `connection.ts` timestamps each eviction
+close and credits `~180 MB` per eviction inside a 15 s lag window.
+
+Headroom eviction is deliberately **not** type-aware: when memory is critical the only question
+is which cluster was touched least recently, whatever kind it is. Idle-close remains type-aware
+via the §128.5.1 windows.
 
 ## 128.3 The correctness invariant — never evict mid-query
 
@@ -176,7 +218,10 @@ just got `PGlite is closed`. See §128.3.1 for what actually happens now.
 
 | Env var | Meaning | Default |
 | --- | --- | --- |
-| `HOTSHEET_MAX_OPEN_CLUSTERS` | LRU cap on open clusters (floor 2) | 10 |
+| `HOTSHEET_MAX_OPEN_CLUSTERS` | ceiling on open **project** clusters when memory is plentiful (floor 2) | 10 |
+| `HOTSHEET_MAX_OPEN_TELEMETRY_CLUSTERS` | ceiling on open **telemetry** clusters (HS-9468) | 6 |
+| `HOTSHEET_MIN_OPEN_CLUSTERS` | project-cluster floor the pressure budget never goes below | 2 |
+| `HOTSHEET_MIN_OPEN_TELEMETRY_CLUSTERS` | telemetry floor — protects ingest write throughput | 1 |
 | `HOTSHEET_CLUSTER_IDLE_MS` | idle-close threshold, **project** clusters | 300000 (5 min) |
 | `HOTSHEET_TELEMETRY_CLUSTER_IDLE_MS` | idle-close threshold, **telemetry** clusters (HS-9467) | 60000 (1 min) |
 | `HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS` | recency guard for cap/idle eviction | 30000 (30 s) |

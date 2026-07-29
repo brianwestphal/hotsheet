@@ -79,8 +79,12 @@ export interface EvictionInput {
   pinnedPaths: ReadonlySet<string>;
   now: number;
   mode: EvictionMode;
-  /** `cap`: steady-state ceiling on open clusters. */
-  maxOpen: number;
+  /**
+   * `cap`: the per-type budget (HS-9468). Project and telemetry clusters have
+   * SEPARATE LRUs, so a telemetry burst can't evict the project the user is
+   * looking at. Sized from live memory pressure by `clusterBudget`.
+   */
+  budget: ClusterBudget;
   /** `cap`: don't evict a cluster accessed within this many ms (recency guard). */
   minIdleMs: number;
   /** `idle`: evict any non-pinned PROJECT cluster untouched for at least this long. */
@@ -123,12 +127,24 @@ export function chooseEvictions(input: EvictionInput): string[] {
   const byLru = [...evictable].sort((a, b) => a.lastAccess - b.lastAccess);
 
   if (input.mode === 'cap') {
-    const overBy = input.clusters.length - input.maxOpen;
-    if (overBy <= 0) return [];
-    // Only evict clusters aged past the recency guard, so a burst that opened
-    // many clusters at once doesn't immediately churn-evict a just-touched one.
-    const aged = byLru.filter((c) => input.now - c.lastAccess >= input.minIdleMs);
-    return aged.slice(0, overBy).map((c) => c.dbPath);
+    // HS-9468 — two independent LRUs. Counting them together let one type's
+    // churn evict the other's warm clusters; with two clusters per project a
+    // single combined cap of 10 was saturated by ~5 projects.
+    const overBudget = (type: 'project' | 'telemetry'): string[] => {
+      const isTel = type === 'telemetry';
+      const all = input.clusters.filter((c) => isTelemetryClusterDbPath(c.dbPath) === isTel);
+      const limit = isTel ? input.budget.telemetry : input.budget.project;
+      const overBy = all.length - limit;
+      if (overBy <= 0) return [];
+      // Only evict clusters aged past the recency guard, so a burst that opened
+      // many at once doesn't immediately churn-evict a just-touched one.
+      const aged = byLru
+        .filter((c) => isTelemetryClusterDbPath(c.dbPath) === isTel)
+        .filter((c) => input.now - c.lastAccess >= input.minIdleMs);
+      return aged.slice(0, overBy).map((c) => c.dbPath);
+    };
+    // Telemetry first: if both are over budget, the cheaper reopens go first.
+    return [...overBudget('telemetry'), ...overBudget('project')];
   }
 
   // headroom (critical): free `targetEvictions` LRU clusters, dropping the
@@ -221,12 +237,92 @@ export interface EvictionConfig {
   minIdleMs: number;
   headroomFloorBytes: number;
   sweepIntervalMs: number;
+  /** HS-9468 — ceiling on open TELEMETRY clusters when memory is plentiful.
+   *  (`maxOpen` is the matching project-cluster ceiling.) */
+  maxTelemetryOpen: number;
+  /** HS-9468 — floors the pressure-driven budget never shrinks below, so the
+   *  active project and the cluster an ingest burst is writing to survive even
+   *  when memory is critical. */
+  minOpen: number;
+  minTelemetryOpen: number;
 }
 
 /** ~WASM heap per open PGLite cluster, from the HS-9420 live measurement
  *  (3.2 GB / 18 clusters ≈ 180 MB). Used only to size the headroom-guard's
  *  eviction count; an approximation is fine for a safety valve. */
 export const APPROX_CLUSTER_EXTERNAL_BYTES = 180 * 1024 * 1024;
+
+/**
+ * HS-9468 — how many clusters of each type we can afford to keep open RIGHT NOW.
+ *
+ * Replaces the fixed `maxOpen` count with a budget derived from live memory
+ * pressure: keep more when there is headroom, fewer when there is not. The
+ * feedback loop is self-regulating — every cluster we open raises `external`,
+ * which lowers the budget, which is what eventually evicts something.
+ *
+ * Two policy decisions are encoded here, both from the maintainer:
+ *
+ *  1. **Project and telemetry clusters get SEPARATE budgets** (separate LRUs), so
+ *     a burst of telemetry opens can't evict the project the user is looking at,
+ *     and vice versa. Under a single cap they competed, and with two clusters per
+ *     project ~5 projects saturated it.
+ *  2. **Telemetry gives way first.** When the affordable total shrinks, it comes
+ *     out of the telemetry budget before the project one — a stats page paying a
+ *     reopen is cheap, a tab switch paying one is not. The telemetry FLOOR still
+ *     holds, because telemetry WRITE throughput matters (an ingest burst
+ *     shouldn't reopen on every batch) even though read latency doesn't.
+ *
+ * `pendingReclaimBytes` is the subtle part, and it comes from a measurement that
+ * nearly produced the wrong conclusion (docs/128 §128.5.1): a closed cluster's
+ * WASM heap is returned on **GC**, not at `close()`. Reading `external` straight
+ * after an eviction still sees the freed memory, so a naive pressure loop would
+ * evict again, and again — an over-eviction cascade triggered by its own success.
+ * Bytes already promised back are subtracted before computing pressure.
+ *
+ * Pure. Exported for the unit test.
+ */
+export interface ClusterBudgetInput {
+  externalBytes: number;
+  heapLimitBytes: number;
+  headroomFloorBytes: number;
+  /** Clusters closed but not yet collected — see above. */
+  pendingReclaimBytes: number;
+  /** Currently-open counts, the base the budget grows or shrinks from. */
+  openProject: number;
+  openTelemetry: number;
+  maxProject: number;
+  maxTelemetry: number;
+  minProject: number;
+  minTelemetry: number;
+}
+
+export interface ClusterBudget {
+  project: number;
+  telemetry: number;
+}
+
+export function clusterBudget(input: ClusterBudgetInput): ClusterBudget {
+  const effectiveExternal = Math.max(0, input.externalBytes - input.pendingReclaimBytes);
+  const headroom = input.heapLimitBytes - effectiveExternal;
+  // How many more (or fewer, when negative) cluster-sized heaps fit above the floor.
+  const spare = Math.floor((headroom - input.headroomFloorBytes) / APPROX_CLUSTER_EXTERNAL_BYTES);
+  const open = input.openProject + input.openTelemetry;
+
+  const floorTotal = input.minProject + input.minTelemetry;
+  const ceilTotal = input.maxProject + input.maxTelemetry;
+  const allowedTotal = Math.min(Math.max(open + spare, floorTotal), ceilTotal);
+
+  // Projects are served first; telemetry takes what's left. That ordering IS the
+  // "telemetry gives way first" rule — under pressure the subtraction lands on
+  // telemetry until it hits its floor, and only then on projects.
+  const project = clamp(allowedTotal - input.minTelemetry, input.minProject, input.maxProject);
+  const telemetry = clamp(allowedTotal - project, input.minTelemetry, input.maxTelemetry);
+  return { project, telemetry };
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(Math.max(n, lo), Math.max(lo, hi));
+}
 
 /** Parse a NON-NEGATIVE numeric env, falling back on absent/blank/invalid/negative.
  *  0 is accepted deliberately — `minIdleMs`/`idleMs`/`headroomFloorBytes` all treat
@@ -250,7 +346,17 @@ function numEnv(name: string, fallback: number): number {
  */
 export function resolveEvictionConfig(): EvictionConfig {
   return {
+    // HS-9468 — `maxOpen` is now the PROJECT-cluster ceiling (it was a combined
+    // one; with two clusters per project that meant ~5 projects saturated it).
+    // Both ceilings apply only when memory is plentiful — `clusterBudget` scales
+    // down from here as pressure rises.
     maxOpen: Math.max(2, numEnv('HOTSHEET_MAX_OPEN_CLUSTERS', 10)),
+    maxTelemetryOpen: Math.max(1, numEnv('HOTSHEET_MAX_OPEN_TELEMETRY_CLUSTERS', 6)),
+    // Floors: the active project always stays, and one telemetry cluster stays so
+    // an ingest burst isn't reopening on every batch (write throughput matters
+    // even though telemetry read latency doesn't).
+    minOpen: Math.max(1, numEnv('HOTSHEET_MIN_OPEN_CLUSTERS', 2)),
+    minTelemetryOpen: Math.max(1, numEnv('HOTSHEET_MIN_OPEN_TELEMETRY_CLUSTERS', 1)),
     // HS-9467 — the idle window is split by cluster type, because the two are not
     // alike in either cost or benefit:
     //
