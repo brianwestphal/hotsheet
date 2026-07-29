@@ -4,6 +4,7 @@ import { type DashboardData, getDashboard } from '../api/index.js';
 import { maxOf } from '../utils/largeArray.js';
 import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
 import { byIdOrNull, toElement } from './dom.js';
+import { sparkBarGeometry } from './sparkBars.js';
 import { getCategoryColor, state } from './state.js';
 
 let currentDays = 30;
@@ -528,16 +529,26 @@ export async function renderSidebarWidget(): Promise<HTMLElement> {
       : 0;
     const arrow = change > 0 ? '\u2191' : change < 0 ? '\u2193' : '';
 
+    // HS-9463 — geometry is computed to fill the viewBox edge to edge (it used to
+    // be a fixed 98px inside a wider sidebar, which read as missing data), and a
+    // day with no completions gets a flat gray baseline instead of an invisible
+    // zero-height rect. `preserveAspectRatio="none"` on the SVG below lets the
+    // bars stretch horizontally to whatever width the sidebar actually is.
     const last7 = data.throughput.slice(-7);
-    const max = Math.max(maxOf(last7.map(d => d.completed)) ?? 1, 1);
-    const barRects = last7.map((d, i) => {
-      const barH = (d.completed / max) * 20;
-      return <rect x={String(i * 14)} y={String(20 - barH)} width="10" height={String(barH)} fill="#3b82f6" rx="1" opacity="0.7"/>;
-    });
+    const barRects = sparkBarGeometry(last7.map(d => d.completed)).map(b => (
+      <rect
+        x={String(b.x)} y={String(b.y)} width={String(b.width)} height={String(b.height)}
+        // `currentColor` for the empty baseline so it follows the theme's text
+        // color instead of a hardcoded gray that only works in one of them.
+        fill={b.empty ? 'currentColor' : '#3b82f6'}
+        opacity={b.empty ? '0.25' : '0.7'}
+        rx="1"
+      />
+    ));
 
     const content = toElement(
       <div>
-        <div className="sidebar-widget-spark"><svg viewBox="0 0 98 20" width="98" height="20">{barRects}</svg></div>
+        <div className="sidebar-widget-spark"><svg viewBox="0 0 100 20" width="100%" height="20" preserveAspectRatio="none">{barRects}</svg></div>
         <div className="sidebar-widget-stats">
           <span className="sidebar-widget-value">{kpi.completedThisWeek} completed</span>
           {arrow ? <span className={`sidebar-widget-trend ${change > 0 ? 'up' : 'down'}`}>{arrow}{Math.abs(change)}%</span> : null}
