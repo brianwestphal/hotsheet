@@ -925,3 +925,117 @@ describe('terminalTileGrid — dashboard project stats cluster (HS-9056)', () =>
     expect(document.querySelector('.terminal-dashboard-tile-label-main')).not.toBeNull();
   });
 });
+
+/**
+ * HS-9484 — "after clicking to zoom a terminal or double-clicking to maximize it,
+ * the terminal often loses keyboard focus." Two independent causes, one per case.
+ */
+describe('terminalTileGrid — enlarging a tile must not cost keyboard focus (HS-9484)', () => {
+  /**
+   * The maximize case. Double-clicking an already-centered tile runs
+   * `uncenterTile` — which defers its HS-9200 `term.blur()` behind a 280 ms
+   * transition — and then `enterDedicatedView`, which focuses immediately. Both
+   * consumers share ONE xterm per (secret, terminalId), so the deferred blur
+   * landed on the terminal the dedicated view had just focused, roughly a third
+   * of a second after the user maximized it. Asserting call ORDER is the point:
+   * both calls happen, and the fix is that the blur no longer comes last.
+   */
+  it('double-clicking a CENTERED tile leaves the maximized terminal focused, not blurred', async () => {
+    // happy-dom reports every element as 0×0, which makes `uncenterTile` take its
+    // degenerate branch and call `finishUncenterTile` SYNCHRONOUSLY — i.e. before
+    // the dedicated view exists, which is the one ordering where this bug cannot
+    // happen. Give elements a real box so the animated path (transitionend, plus
+    // the `CENTER_ANIMATION_MS + 80` fallback) runs, which is what a browser does
+    // and where the stale blur actually lands.
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue(new DOMRect(0, 0, 240, 160));
+    const focusSpy = vi.spyOn(XTerm.prototype, 'focus');
+    const blurSpy = vi.spyOn(XTerm.prototype, 'blur');
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tileRoot = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    focusSpy.mockClear();
+    blurSpy.mockClear();
+    tileRoot!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+    // Wait past the uncenter animation AND its `CENTER_ANIMATION_MS + 80`
+    // fallback timer — the stale blur arrived at the far end of that window,
+    // which is exactly why it read as "focus works for a moment, then dies".
+    await new Promise(r => setTimeout(r, 420));
+
+    expect(document.querySelector('.terminal-dashboard-dedicated')).not.toBeNull();
+    expect(focusSpy, 'the dedicated view should have focused its terminal').toHaveBeenCalled();
+    const lastFocus = Math.max(...focusSpy.mock.invocationCallOrder);
+    const lastBlur = blurSpy.mock.invocationCallOrder.length > 0
+      ? Math.max(...blurSpy.mock.invocationCallOrder)
+      : -1;
+    expect(lastFocus, 'a blur must not land after the dedicated view took focus').toBeGreaterThan(lastBlur);
+
+    focusSpy.mockRestore();
+    blurSpy.mockRestore();
+    rectSpy.mockRestore();
+    grid.dispose();
+  });
+
+  /**
+   * The zoom case. A centered tile renders its xterm `pointer-events: none`
+   * (HS-8010), so a click in the terminal area lands on the tile root — which
+   * can't hold focus — and the browser blurs the helper textarea. HS-8157 made
+   * that click a deliberate no-op, so nothing put focus back and the user's
+   * typing silently went nowhere.
+   */
+  it('clicking inside a ZOOMED tile keeps focus on the terminal instead of dropping it to the body', async () => {
+    const focusSpy = vi.spyOn(XTerm.prototype, 'focus');
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tileRoot = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    focusSpy.mockClear();
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    const notCanceled = tileRoot!.dispatchEvent(down);
+    expect(notCanceled, 'the default focus move must be suppressed so focus never leaves').toBe(false);
+    expect(focusSpy, 'and focus is claimed, for a click arriving from elsewhere').toHaveBeenCalled();
+
+    focusSpy.mockRestore();
+    grid.dispose();
+  });
+
+  it('does NOT suppress the default on a tile that is not centered', async () => {
+    // The grid still has to behave like a normal clickable surface — the
+    // suppression is scoped to the one tile the user has zoomed.
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tiles = document.querySelectorAll<HTMLElement>('.terminal-dashboard-tile');
+
+    tiles[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    expect(tiles[1].dispatchEvent(down), 'the OTHER tile is untouched').toBe(true);
+
+    grid.dispose();
+  });
+
+  it('lets a real control inside the zoomed tile keep its click', async () => {
+    // Suppressing mousedown wholesale would break any button the tile carries
+    // (and any it grows later), so the guard exempts real controls.
+    const grid = mount([makeEntry('s', 't1'), makeEntry('s', 't2')]);
+    const tileRoot = document.querySelector<HTMLElement>('.terminal-dashboard-tile');
+    tileRoot!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 260));
+    expect(grid.isCentered()).toBe(true);
+
+    const button = document.createElement('button');
+    tileRoot!.appendChild(button);
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    expect(button.dispatchEvent(down)).toBe(true);
+
+    grid.dispose();
+  });
+});

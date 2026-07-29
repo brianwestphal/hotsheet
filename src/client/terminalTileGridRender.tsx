@@ -218,6 +218,28 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
     markTileMounted(ctx, tile);
   }
 
+  // HS-9484 — keep keyboard focus when the user clicks inside a ZOOMED tile.
+  // A centered tile renders its xterm with `pointer-events: none` (HS-8010, so a
+  // mis-scaled selection can't be started), which means a click in the terminal
+  // area lands on the tile root — an element that cannot hold focus. The browser
+  // therefore moves focus to `<body>`, silently blurring the helper textarea, and
+  // nothing puts it back: `onTileClick` treats a click on the already-centered
+  // tile as a no-op (HS-8157). The user zooms a terminal, clicks in it, and their
+  // typing goes nowhere with no visible reason and no recovery short of Esc.
+  //
+  // Suppressing the default on `mousedown` stops the focus move before it
+  // happens, which beats refocusing afterwards (no flicker, and nothing to race).
+  // Only for the centered tile, and only when the click isn't headed for a real
+  // control — the tile's own buttons must keep working.
+  root.addEventListener('mousedown', (e) => {
+    if (ctx.centered.current !== tile) return;
+    if (e.target instanceof Element && e.target.closest('button, a, input, textarea, select') !== null) return;
+    e.preventDefault();
+    // `preventDefault` only KEEPS focus where it is, so also claim it — the user
+    // may be clicking into the zoomed terminal from somewhere else entirely.
+    // Focusing an already-focused term is a no-op.
+    try { tile.checkout?.term.focus(); } catch { /* term disposed */ }
+  });
   root.addEventListener('click', (e) => { onTileClick(ctx, tile, e); });
   root.addEventListener('dblclick', (e) => { onTileDblClick(ctx, tile, e); });
   if (opts.onContextMenu !== undefined) {

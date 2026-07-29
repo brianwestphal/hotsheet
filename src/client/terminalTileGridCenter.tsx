@@ -264,7 +264,21 @@ export function finishUncenterTile(ctx: TileGridContext, tile: InternalTile, pla
   // while the textarea is still visible fires the blur synchronously, clearing
   // the class and the stale activeElement. Playwright/Chromium blurs hidden
   // elements correctly, which is why this only reproduces in the desktop build.
-  try { tile.checkout?.term.blur(); } catch { /* term disposed */ }
+  //
+  // HS-9484 — but NOT when the dedicated view is showing this same terminal.
+  // Double-clicking an already-centered tile runs `uncenterTile` (which defers
+  // this function behind a 280 ms transition) and then `enterDedicatedView`
+  // synchronously, and both consumers share ONE xterm instance for a given
+  // (secret, terminalId) — `checkout()` hands back `entry.term`. So the blur
+  // arrived ~300 ms after the dedicated view had focused that very term, killing
+  // keyboard focus a beat after the terminal was maximized. It is also pointless
+  // there: the xterm element has been reparented into the dedicated pane, so the
+  // tile's `:not(.centered)` display rule — the whole reason HS-9200 blurs — no
+  // longer applies to it.
+  const tileTerm = tile.checkout?.term ?? null;
+  if (tileTerm !== null && tileTerm !== ctx.dedicated.current?.term) {
+    try { tileTerm.blur(); } catch { /* term disposed */ }
+  }
   tile.root.classList.remove('centered');
   tile.root.style.transition = '';
   tile.root.style.transform = '';
