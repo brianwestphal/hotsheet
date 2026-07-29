@@ -15,7 +15,7 @@ Call the `hotsheet_create_ticket` tool with `{ "title": "<TITLE>", "category": "
 
 **Fallback (curl):**
 ```bash
-curl -s -X POST http://localhost:4174/api/tickets \
+curl -s -X POST "http://localhost:$HOTSHEET_PORT/api/tickets" \
   -H "Content-Type: application/json" \
   -H "X-Hotsheet-Secret: $HOTSHEET_SECRET" \
   -d '{"title": "<TITLE>", "defaults": {"category": "m", "up_next": <true|false>}}'

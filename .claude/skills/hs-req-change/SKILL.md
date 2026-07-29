@@ -13,7 +13,7 @@ Create a new Hot Sheet **requirement change** ticket. Changes to existing requir
 
 **Create the ticket** by running:
 ```bash
-curl -s -X POST http://localhost:4174/api/tickets \
+curl -s -X POST "http://localhost:$HOTSHEET_PORT/api/tickets" \
   -H "Content-Type: application/json" \
   -d '{"title": "<TITLE>", "defaults": {"category": "requirement_change", "up_next": <true|false>}}'
 ```

@@ -59,7 +59,7 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // tree (`.agents/skills`, Antigravity/Codex) is written as THIN ADAPTERS that
 // reference the canonical `.claude/skills/<name>/SKILL.md` instead of
 // duplicating the body; the bump rewrites existing full-content copies.
-export const SKILL_VERSION = 24; // HS-9475 — forces a rewrite of every file that baked in the secret
+export const SKILL_VERSION = 25; // HS-9475 — forces a rewrite of every file that baked in the secret or the port
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -184,22 +184,23 @@ export function updateFile(path: string, content: string): boolean {
 
 // --- Shared content ---
 
-function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string = join(projectRoot, '.hotsheet')): string {
-  // HS-8936 — `dataDir` defaults to this project's own `.hotsheet`, but a git
-  // worktree (follower) passes the OWNER's `.hotsheet` so the skill's worklist
-  // path + port/secret point at the shared instance (docs/89 §89.2 Phase C).
-  const settings = readFileSettings(dataDir);
-  // HS-8390 — settings.port wins; fall back to skillsState.port; final
-  // fallback to a placeholder if neither is set (production code always
-  // calls initSkills before this runs, so the placeholder only fires in
-  // edge-case test paths that skip init).
-  const port = settings.port ?? skillsState.port ?? 4174;
-  // HS-9475 — the secret is NEVER written into a skill file. These live in
-  // `.claude/skills/` / `.cursor/rules/`, which are committed and shared with
-  // everyone who clones the repo — and the value is machine-specific anyway, so a
-  // baked-in one is both a leak and wrong for every other developer. The curl
-  // fallback references an env var instead, with the lookup spelled out below.
-  // (The PREFERRED path, the MCP tool, needs no secret at all.)
+function ticketSkillBody(skill: SkillDef, projectRoot: string, _dataDir: string = join(projectRoot, '.hotsheet')): string {
+  // `_dataDir` is unused since HS-9475 but kept in the signature: HS-8936 passes a
+  // git worktree's OWNER `.hotsheet` here so the skill points at the shared
+  // instance (docs/89 §89.2 Phase C), and it is the natural home for anything
+  // project-specific this body needs again. Nothing needs resolving today —
+  // the port lookup that used to live here (HS-8390:
+  // `settings.port ?? skillsState.port ?? 4174`) is gone with the value itself.
+  //
+  // HS-9475 — NEITHER the secret NOR the port is written into a skill file. These
+  // live in `.claude/skills/` / `.cursor/rules/`, which are committed and shared
+  // with everyone who clones the repo, and BOTH values are machine-specific:
+  // the secret is per-project-per-machine (`.hotsheet/secret.json`, gitignored)
+  // and the port is machine-local (`settings.local.json`, gitignored, since
+  // HS-9002). A baked-in value is therefore wrong for every other developer AND a
+  // guaranteed diff conflict — this file's history already shows the port
+  // flip-flopping 4174 ↔ 4177. Both are referenced as env vars, with the lookup
+  // spelled out below. (The PREFERRED path, the MCP tool, needs neither.)
   const secretLine = '  -H "X-Hotsheet-Secret: $HOTSHEET_SECRET" \\';
   // HS-8348 — Phase 3 two-form skill body. MCP tool listed first
   // (preferred when the Claude Channel is connected), curl form right
@@ -220,7 +221,7 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string =
     '',
     '**Fallback (curl):**',
     '```bash',
-    `curl -s -X POST http://localhost:${port}/api/tickets \\`,
+    'curl -s -X POST "http://localhost:$HOTSHEET_PORT/api/tickets" \\',
     '  -H "Content-Type: application/json" \\',
   ];
   lines.push(secretLine);
@@ -228,12 +229,13 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string =
     `  -d '{"title": "<TITLE>", "defaults": {"category": "${skill.category}", "up_next": <true|false>}}'`,
     '```',
     '',
-    'Set `$HOTSHEET_SECRET` first. It is machine-specific and deliberately not stored in this file (which is committed and shared):',
+    'Set these first. Both are machine-specific and deliberately not stored in this file (which is committed and shared with everyone on the repo):',
     '```bash',
+    `export HOTSHEET_PORT=$(node -p "require('./.hotsheet/settings.local.json').port ?? 4174")`,
     `export HOTSHEET_SECRET=$(node -p "require('./.hotsheet/secret.json').secret")`,
     '```',
     '',
-    `If the request fails (connection refused or 403), re-read \`.hotsheet/settings.json\` for the current \`port\`, and \`.hotsheet/secret.json\` for the \`secret\` — you may be connecting to the wrong Hot Sheet instance.`,
+    'If the request fails (connection refused or 403), re-read those two files — you may be connecting to the wrong Hot Sheet instance. (Older projects keep `port` and `secret` in `.hotsheet/settings.json` instead.)',
     '',
     'Report the created ticket number and title to the user.',
   );
@@ -303,8 +305,7 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
  * surface. The durable pool that launches N of these is HS-8962.
  */
 function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot, '.hotsheet')): string {
-  const settings = readFileSettings(dataDir);
-  const port = settings.port ?? skillsState.port ?? 4174;
+  // HS-9475 — no port lookup: it is machine-local and no longer embedded here.
   const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
   return [
     'You are a **distributed worker** draining the Hot Sheet **Up Next** pool. Multiple workers run in parallel against ONE shared Hot Sheet, each in its own git worktree, coordinated by the atomic claim/lease primitive (docs/90 §90.5) — so you never need to worry about another worker grabbing the same ticket.',
@@ -358,7 +359,7 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     '- **Crash-safety:** if you die mid-ticket, your lease simply expires and another worker reclaims the ticket automatically — nothing to clean up.',
     '- **Dependencies:** `claim-next` already skips tickets blocked by an unfinished `blocked_by` dependency (docs/90 §90.6), so anything you claim is ready to work.',
     '- **Never** work a ticket you have not successfully claimed, and never complete/release a ticket whose lease you have lost.',
-    `- If an MCP call fails, fall back to the REST API at \`http://localhost:${port}/api\` (claim-next: \`POST /api/tickets/claim-next\`; renew: \`POST /api/tickets/:id/renew-lease\`; release: \`POST /api/tickets/:id/release\`). Re-read \`${settingsRel}\` for the current \`port\`/\`secret\` if calls are refused.`,
+    `- If an MCP call fails, fall back to the REST API at \`http://localhost:$HOTSHEET_PORT/api\` (claim-next: \`POST /api/tickets/claim-next\`; renew: \`POST /api/tickets/:id/renew-lease\`; release: \`POST /api/tickets/:id/release\`). HS-9475 — the port and secret are machine-specific and deliberately not written here; read them from \`.hotsheet/settings.local.json\` (\`port\`) and \`.hotsheet/secret.json\` (\`secret\`), falling back to \`${settingsRel}\` for older projects.`,
   ].join('\n');
 }
 

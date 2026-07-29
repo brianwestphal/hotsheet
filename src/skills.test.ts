@@ -569,11 +569,18 @@ describe('ticket creation skill content', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('includes curl POST command with correct port', () => {
+  // HS-9475 — the port used to be interpolated here too. It is machine-local
+  // (`settings.local.json`, gitignored since HS-9002) yet these files are
+  // committed, so a baked-in port is a guaranteed diff conflict between
+  // developers — this repo's history already shows it flip-flopping 4174 ↔ 4177.
+  it('references the port by env var, never a literal', () => {
+    // Not hypothetical: `git log -p` on this repo's own `hs-bug/SKILL.md` shows
+    // `localhost:4174` and `localhost:4177` alternating across commits.
     ensureSkills();
     const skillPath = join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
-    expect(content).toContain('curl -s -X POST http://localhost:4174/api/tickets');
+    expect(content).toContain('curl -s -X POST "http://localhost:$HOTSHEET_PORT/api/tickets"');
+    expect(content).not.toMatch(/localhost:\d+/);
   });
 
   it('includes up_next parsing instructions', () => {
@@ -609,12 +616,17 @@ describe('ticket creation skill content', () => {
    * developer. It reached 14 tracked files before anyone noticed, because nothing
    * ever looked.
    */
-  it('never writes the project secret into a generated skill', () => {
+  it('never writes the project secret OR a literal port into a generated skill', () => {
     // A realistic 32-hex secret in BOTH places a project can hold one: the
-    // HS-8999 sidecar and the legacy `settings.json` fallback.
+    // HS-8999 sidecar and the legacy `settings.json` fallback. The port is set to
+    // a NON-default value so a literal would be unmistakable (4174 could be a
+    // coincidence in prose; 4177 could not — and 4177 is the value this repo's
+    // own history shows leaking into the committed files).
     const realSecret = 'abcdef0123456789abcdef0123456789';
     writeFileSync(join(settingsDir, 'secret.json'), JSON.stringify({ secret: realSecret }));
-    writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ secret: realSecret, port: 4174 }));
+    writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ secret: realSecret, port: 4177 }));
+    writeFileSync(join(settingsDir, 'settings.local.json'), JSON.stringify({ port: 4177 }));
+    initSkills(4177);
     ensureSkills();
 
     // Every skill actually generated, rather than a hand-listed set that could
@@ -625,13 +637,17 @@ describe('ticket creation skill content', () => {
     for (const name of generated) {
       const file = join(skillsRoot, name, 'SKILL.md');
       if (!existsSync(file)) continue;
-      expect(readFileSync(file, 'utf-8'), `${name} leaked the secret`).not.toContain(realSecret);
+      const body = readFileSync(file, 'utf-8');
+      expect(body, `${name} leaked the secret`).not.toContain(realSecret);
+      expect(body, `${name} leaked a literal port`).not.toMatch(/localhost:\d+/);
     }
     // ...and the .cursor/rules mirror, which is committed just the same.
     const rulesDir = join(tempDir, '.cursor', 'rules');
     if (existsSync(rulesDir)) {
       for (const f of readdirSync(rulesDir)) {
-        expect(readFileSync(join(rulesDir, f), 'utf-8'), `${f} leaked the secret`).not.toContain(realSecret);
+        const body = readFileSync(join(rulesDir, f), 'utf-8');
+        expect(body, `${f} leaked the secret`).not.toContain(realSecret);
+        expect(body, `${f} leaked a literal port`).not.toMatch(/localhost:\d+/);
       }
     }
   });
@@ -643,6 +659,9 @@ describe('ticket creation skill content', () => {
     const content = readFileSync(join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'), 'utf-8');
     expect(content).toContain('X-Hotsheet-Secret: $HOTSHEET_SECRET');
     expect(content).toContain('.hotsheet/secret.json');
+    // Same for the port — a placeholder with no lookup would just move the problem.
+    expect(content).toContain('export HOTSHEET_PORT=');
+    expect(content).toContain('.hotsheet/settings.local.json');
   });
 
   it('leaks nothing even when NO secret exists yet', () => {
