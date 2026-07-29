@@ -39,7 +39,8 @@ feedback-needed tickets.
 
 ## 116.3 Row indicators (borders)
 
-A ticket row carries a 3px left border matching the `up-next` treatment, colored by state:
+A ticket row **and a column-view card** carry a 3px left border matching the `up-next`
+treatment, colored by state:
 
 | State | Class | Border color |
 |-------|-------|--------------|
@@ -56,6 +57,28 @@ tool / another browser tab) keeps the border live.
 
 The feedback-needed **border** is additive to the pre-existing feedback **dot** (§21) —
 the dot marks the ticket in the list; the border makes the whole row easier to spot.
+
+**Every renderer carries the borders (HS-9487).** HS-9336 wired them into the list row
+only, so on the **column board** a blocked ticket was indistinguishable from an unblocked
+one — the field was set, the detail panel showed it, and the list gave no signal. All four
+ticket renderers now apply the classes at create time (`createTicketRow`,
+`createColumnCard`, `createPreviewRow`, `createPreviewColumnCard`), both per-row effect
+helpers re-toggle them (`setupTicketRowEffects`, `setupColumnCardEffects`), and
+`.column-card` gained the matching CSS with the same source-order precedence.
+
+Two supporting details are easy to miss when adding a new indicator:
+
+- **`ticketEqualForRender`** (`src/client/ticketsStore.ts`) is the per-row signal's
+  change filter. `blocked_reason` was missing from it, so a `blocked_reason`-only change
+  didn't fire the per-row effect; a server round-trip repainted anyway only because it
+  also bumps `updated_at`, but `optimisticUpdate` merges a bare patch and has no such
+  cover. **Any field an indicator reads must be listed there.**
+- **Coverage shape** — `ticketBlockedIndicator.test.tsx` runs one set of expectations
+  against a `RENDERERS` table plus an `EFFECT_TARGETS` table, so a renderer that forgets
+  an indicator fails rather than going visually unnoticed (the pure `isTicketBlocked`
+  tests could not catch a renderer that never calls it). `e2e/blocked-indicator.spec.ts`
+  asserts the **computed `border-left-color`** in both layouts — a class landing without
+  a matching CSS rule is the half-fix that would still leave nothing to see.
 
 ## 116.4 What this is NOT
 

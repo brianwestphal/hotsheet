@@ -115,7 +115,13 @@ function ticketEqualForRender(a: Ticket, b: Ticket): boolean {
     // signal even when nothing else changed.
     && a.pending_integration === b.pending_integration
     // HS-9107 — the merge-pending badge's Review action reads the branch.
-    && a.integration_branch === b.integration_branch;
+    && a.integration_branch === b.integration_branch
+    // HS-9487 — the `.blocked` row/card border (docs/116 §116.3) reads this, so a
+    // change to it has to fire the per-row signal. Omitted when HS-9336 added the
+    // border; a server round-trip happened to repaint anyway because it also bumps
+    // `updated_at`, but `optimisticUpdate` merges a bare patch without touching
+    // `updated_at`, so a blocked_reason-only patch would have left a stale border.
+    && a.blocked_reason === b.blocked_reason;
 }
 
 /** Reconcile the per-ticket signal Map against a new ticket list.

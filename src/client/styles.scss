@@ -7095,6 +7095,18 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     border-left: 3px solid var(--star);
   }
 
+  // HS-9487 — the board card mirrors the list row's blocked / feedback-needed
+  // borders (docs/116 §116.3). Same source-order precedence as `.ticket-row`:
+  // declared after `.up-next`, and `.feedback-needed` last, so when more than
+  // one applies the winner is feedback > blocked > up-next.
+  &.blocked {
+    border-left: 3px solid var(--blocked);
+  }
+
+  &.feedback-needed {
+    border-left: 3px solid var(--feedback);
+  }
+
   &:active {
     cursor: grabbing;
   }

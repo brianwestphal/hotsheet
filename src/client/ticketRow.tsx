@@ -564,7 +564,9 @@ export function createPreviewRow(ticket: Ticket): HTMLElement {
 
   const row = toElement(
     <div
-      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}`}
+      // HS-9487 — the preview row carries the same blocked / feedback-needed borders as
+      // the live row, so a restore preview shows the ticket the way the list will.
+      className={`ticket-row${isSelected ? ' selected' : ''}${isDone ? ' completed' : ''}${ticket.up_next ? ' up-next' : ''}${isTicketBlocked(ticket) ? ' blocked' : ''}${getIndicatorDotType(ticket) === 'feedback' ? ' feedback-needed' : ''}`}
       data-id={String(ticket.id)}
     >
       <span className="ticket-checkbox-spacer"></span>

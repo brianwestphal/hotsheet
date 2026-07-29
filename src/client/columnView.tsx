@@ -18,7 +18,7 @@ import {
   callLoadTickets, callUpdateBatchToolbar, callUpdateColumnSelectionClasses,
   draggedTicketIds, setDraggedTicketIds,
 } from './ticketListState.js';
-import { getIndicatorDotType, liveTicket, showCategoryMenu, showPriorityMenu, toggleUpNext  } from './ticketRow.js';
+import { getIndicatorDotType, isTicketBlocked, liveTicket, showCategoryMenu, showPriorityMenu, toggleUpNext  } from './ticketRow.js';
 import { getTicketSignals, ticketsByStatusSignal } from './ticketsStore.js';
 import { trackedBatch } from './undo/actions.js';
 
@@ -273,7 +273,7 @@ export function createPreviewColumnCard(ticket: Ticket): HTMLElement {
 
   const card = toElement(
     <div
-      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
+      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${isTicketBlocked(ticket) ? ' blocked' : ''}${getIndicatorDotType(ticket) === 'feedback' ? ' feedback-needed' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
       data-id={String(ticket.id)}
     >
       <div className="column-card-header">
@@ -474,7 +474,10 @@ export function createColumnCard(ticket: Ticket): HTMLElement {
 
   const card = toElement(
     <div
-      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
+      // HS-9487 — `.blocked` / `.feedback-needed` mirror the list row (ticketRow.tsx),
+      // which has carried them since HS-9336 (docs/116 §116.3). The column card was
+      // the gap: a blocked ticket looked identical to an unblocked one on the board.
+      className={`column-card${isSelected ? ' selected' : ''}${ticket.up_next ? ' up-next' : ''}${isTicketBlocked(ticket) ? ' blocked' : ''}${getIndicatorDotType(ticket) === 'feedback' ? ' feedback-needed' : ''}${getCutTicketIds().has(ticket.id) ? ' cut-pending' : ''} status-${ticket.status}`}
       data-id={String(ticket.id)}
     >
       <div className="column-card-header">
@@ -627,6 +630,13 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
 
     // .up-next class on the card root
     card.classList.toggle('up-next', t.up_next);
+
+    // HS-9487 — keep the blocked / feedback-needed borders live too, so an
+    // external update (channel / MCP tool / another tab) that sets or clears
+    // `blocked_reason` — or appends a FEEDBACK NEEDED note — re-colors the card
+    // without waiting for a full re-render. Mirrors `setupTicketRowEffects`.
+    card.classList.toggle('blocked', isTicketBlocked(t));
+    card.classList.toggle('feedback-needed', getIndicatorDotType(t) === 'feedback');
 
     // Category badge
     if (catBadge !== null) {

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms5tdp1t5dl52zbw",
+          "message": {
+            "text": "These assert the computed border-left-color, not the class name, because the class landing without a matching CSS rule is the exact half-fix that still leaves the user with nothing to see.\n\n.ticket-row had &.blocked in SCSS; .column-card did not. A class-presence assertion would have passed on a card that renders identically to an unblocked one.\n\nVerified the spec catches the real bug: with the blocked / feedback-needed classes removed from createColumnCard and the client rebuilt, exactly one test fails —\n\n1 failed\n  [chromium] › e2e/blocked-indicator.spec.ts:75:3 › column-view card shows the blocked border too\n2 passed (22.5s)\n\nThe list-view and precedence tests still pass there, which is the right discrimination: they cover a surface that was already correct, and only the column-view assertion is load-bearing for this fix.\n",
+            "markdown": "These assert the computed `border-left-color`, not the class name, because the class landing without a matching CSS rule is the exact half-fix that still leaves the user with nothing to see.\n\n`.ticket-row` had `&.blocked` in SCSS; `.column-card` did not. A class-presence assertion would have passed on a card that renders identically to an unblocked one.\n\nVerified the spec catches the real bug: with the `blocked` / `feedback-needed` classes removed from `createColumnCard` and the client rebuilt, exactly one test fails —\n\n```\n1 failed\n  [chromium] › e2e/blocked-indicator.spec.ts:75:3 › column-view card shows the blocked border too\n2 passed (22.5s)\n```\n\nThe list-view and precedence tests still pass there, which is the right discrimination: they cover a surface that was already correct, and only the column-view assertion is load-bearing for this fix.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "e2e/blocked-indicator.spec.ts"
+                },
+                "region": {
+                  "startLine": 13,
+                  "endLine": 17,
+                  "snippet": {
+                    "text": "\n/** `--blocked: #4b5563` (styles.scss) — the dark-gray blocked accent. */\nconst BLOCKED_RGB = 'rgb(75, 85, 99)';\n/** `--star: #eab308` — the gold up-next accent, for the precedence check. */\nconst STAR_RGB = 'rgb(234, 179, 8)';"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ]
+          },
+          "workItemUris": [
+            "HS-9487"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "a997ff0d61665b2d0cafa280c298e592"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5ecc6a7b35d91300d39a91de69a0b21bd8607c95",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

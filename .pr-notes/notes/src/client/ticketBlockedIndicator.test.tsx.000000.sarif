@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms5tdhu86gnt3kd5",
+          "message": {
+            "text": "The RENDERERS table is the point of this file: the expectations run against every ticket renderer, so a renderer that forgets an indicator fails instead of going visually unnoticed.\n\nThe only coverage before HS-9487 was the pure isTicketBlocked predicate (ticketRowHelpers.test.ts (0)). That is structurally blind to this bug class — a predicate test cannot notice that a renderer never calls the predicate, which is exactly how createColumnCard shipped without the border and stayed that way.\n\nTwo consequences worth preserving:\n\n- The tests drive the real factories (createTicketRow / createColumnCard / both preview variants) rather than a hand-built DOM. A hand-built row asserts the shape the test author believed in, not the shape the JSX literal emits — and the missing class lived in the JSX literal.\n- Adding a renderer is one row in the table; adding an indicator is one it() that then covers all four. The cost of keeping this honest is deliberately near zero.\n\nThe EFFECT_TARGETS table does the same for the reactive half, which matters because bindList preserves a row across data changes — create-time correctness alone would leave the border stale for the entire life of the row.\n\nSee also e2e/blocked-indicator.spec.ts, which covers what a class-name assertion cannot: whether any CSS rule actually matches.\n",
+            "markdown": "The `RENDERERS` table is the point of this file: the expectations run against every ticket renderer, so a renderer that forgets an indicator fails instead of going visually unnoticed.\n\nThe only coverage before HS-9487 was the pure `isTicketBlocked` predicate ([ticketRowHelpers.test.ts](0)). That is structurally blind to this bug class — a predicate test cannot notice that a renderer never *calls* the predicate, which is exactly how `createColumnCard` shipped without the border and stayed that way.\n\nTwo consequences worth preserving:\n\n- The tests drive the **real factories** (`createTicketRow` / `createColumnCard` / both preview variants) rather than a hand-built DOM. A hand-built row asserts the shape the test author believed in, not the shape the JSX literal emits — and the missing class lived in the JSX literal.\n- Adding a renderer is one row in the table; adding an indicator is one `it()` that then covers all four. The cost of keeping this honest is deliberately near zero.\n\nThe `EFFECT_TARGETS` table does the same for the reactive half, which matters because `bindList` preserves a row across data changes — create-time correctness alone would leave the border stale for the entire life of the row.\n\nSee also `e2e/blocked-indicator.spec.ts`, which covers what a class-name assertion cannot: whether any CSS rule actually matches.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/ticketBlockedIndicator.test.tsx"
+                },
+                "region": {
+                  "startLine": 62,
+                  "endLine": 75,
+                  "snippet": {
+                    "text": "    { id: 'n2', text: 'FEEDBACK NEEDED: which option should I build?', created_at: '2026-01-02T00:00:00Z' },\n  ]);\n}\n\n/**\n * Every renderer that produces a user-visible ticket element. The indicator\n * expectations below run against all of them — ADD A ROW HERE when you add a\n * renderer, and the whole suite covers it.\n */\nconst RENDERERS: { name: string; render: (t: Ticket) => HTMLElement }[] = [\n  { name: 'createTicketRow (list view)', render: createTicketRow },\n  { name: 'createColumnCard (column view)', render: createColumnCard },\n  { name: 'createPreviewRow (list preview)', render: createPreviewRow },\n  { name: 'createPreviewColumnCard (column preview)', render: createPreviewColumnCard },"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/ticketRowHelpers.test.ts"
+                },
+                "region": {
+                  "startLine": 142
+                }
+              }
+            }
+          ],
+          "workItemUris": [
+            "HS-9487"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "64916c3bfcde9f606d41f4e93eeaffb1"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5ecc6a7b35d91300d39a91de69a0b21bd8607c95",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

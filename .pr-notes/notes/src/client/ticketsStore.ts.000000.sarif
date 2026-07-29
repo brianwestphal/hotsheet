@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms5td90fgyzhh925",
+          "message": {
+            "text": "blocked_reason belongs in ticketEqualForRender even though the bug was invisible in production — this function is the gate on whether a per-row effect ever fires.\n\nHS-9336 added the .blocked border but never registered the field here. It appeared to work: every server round-trip also bumps updatedat, which is on the list, so the signal fired and the border repainted for the wrong reason. optimisticUpdate has no such cover — it merges a bare Partial<Ticket> into the existing object, so a { blockedreason }-only patch leaves updated_at untouched and the row keeps a stale border.\n\nThe new unit tests isolate this deliberately: makeTicket holds updatedat fixed, so the assertions exercise a blockedreason-only change. They failed on BOTH the list row and the column card before this line was added — which is how the second half of HS-9487 surfaced at all.\n\nStanding rule for the next indicator: the field it reads goes on this list.\n",
+            "markdown": "`blocked_reason` belongs in `ticketEqualForRender` even though the bug was invisible in production — this function is the gate on whether a per-row effect ever fires.\n\nHS-9336 added the `.blocked` border but never registered the field here. It appeared to work: every server round-trip also bumps `updated_at`, which is on the list, so the signal fired and the border repainted for the wrong reason. `optimisticUpdate` has no such cover — it merges a bare `Partial<Ticket>` into the existing object, so a `{ blocked_reason }`-only patch leaves `updated_at` untouched and the row keeps a stale border.\n\nThe new unit tests isolate this deliberately: `makeTicket` holds `updated_at` fixed, so the assertions exercise a `blocked_reason`-only change. They failed on BOTH the list row and the column card before this line was added — which is how the second half of HS-9487 surfaced at all.\n\nStanding rule for the next indicator: the field it reads goes on this list.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/ticketsStore.ts"
+                },
+                "region": {
+                  "startLine": 113,
+                  "endLine": 126,
+                  "snippet": {
+                    "text": "    // HS-9045 — the \"merge pending\" row indicator reads this, so a change to it\n    // (worker sets it / owner clears it on integration) must fire the per-row\n    // signal even when nothing else changed.\n    && a.pending_integration === b.pending_integration\n    // HS-9107 — the merge-pending badge's Review action reads the branch.\n    && a.integration_branch === b.integration_branch\n    // HS-9487 — the `.blocked` row/card border (docs/116 §116.3) reads this, so a\n    // change to it has to fire the per-row signal. Omitted when HS-9336 added the\n    // border; a server round-trip happened to repaint anyway because it also bumps\n    // `updated_at`, but `optimisticUpdate` merges a bare patch without touching\n    // `updated_at`, so a blocked_reason-only patch would have left a stale border.\n    && a.blocked_reason === b.blocked_reason;\n}\n"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9487"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "4b8405f102d8492519a142cb8992f204"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "5ecc6a7b35d91300d39a91de69a0b21bd8607c95",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}
