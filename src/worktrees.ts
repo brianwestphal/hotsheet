@@ -15,20 +15,18 @@
  * so a slow/contended `git` never blocks the event loop. The `git` invoker is
  * injectable for unit tests; the integration test drives a real temp repo.
  */
-import { execFile } from 'child_process';
 import { existsSync, mkdirSync, realpathSync } from 'fs';
 import { basename, join, resolve } from 'path';
-import { promisify } from 'util';
 
 import { registerChannelAt } from './channel-config.js';
 import { writeWorktreeApprovals } from './claude-allow-rule.js';
 import { readFileSettings, writeFileSettings } from './file-settings.js';
 import { ensureGitignore } from './gitignore.js';
 import { ensureSkillsForDir, generatedClaudeSkillNames } from './skills.js';
+import { execFileAsync } from './utils/execAsync.js';
 import { provisionNodeModules, type ProvisionResult } from './workers/provisionNodeModules.js';
 import { runWorktreeSetup } from './workers/worktreeSetup.js';
 
-const execFileAsync = promisify(execFile);
 
 export interface WorktreeInfo {
   /** Absolute worktree root. */

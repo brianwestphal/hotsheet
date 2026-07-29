@@ -1,5 +1,6 @@
-import { execFile, execFileSync } from 'child_process';
-import { promisify } from 'util';
+import { execFileSync } from 'child_process';
+
+import { execFileAsync } from '../utils/execAsync.js';
 
 /**
  * Foreground-process inspection for the §37 quit-confirm flow (HS-7591 /
@@ -36,7 +37,6 @@ import { promisify } from 'util';
  * work.
  */
 
-const execFileAsync = promisify(execFile);
 
 /** Process names treated as "login shell" for the one-level-deeper rule. */
 export const SHELL_BASENAMES: ReadonlySet<string> = new Set([

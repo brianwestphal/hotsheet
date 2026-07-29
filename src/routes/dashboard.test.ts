@@ -39,9 +39,21 @@ vi.mock('../global-config.js', () => ({
 
 vi.mock('child_process', () => ({
   execFileSync: vi.fn(),
-  // HS-8723 — git/status.ts (pulled in transitively) now `promisify`s
-  // `execFile` at module load, so the mock must expose it as a function.
-  execFile: vi.fn(),
+  // HS-9498 — `execFile` must INVOKE ITS CALLBACK. `promisify` wraps it, so a bare
+  // `vi.fn()` returns undefined and the callback is never called: the promise never
+  // settles and the awaiting test hangs to its timeout. That went unnoticed because
+  // this whole file was failing at import (see below), so the paths reaching
+  // `listWorktrees` never ran. Errors back — the test dataDir is not a git repo, and
+  // callers treat a failed `git` as "no worktrees".
+  //
+  // The import failure this replaces: HS-8723 added `execFile: vi.fn()` here because
+  // `git/status.ts` promisified it at module load. That fix was per-mock, so it
+  // recurred with `systemMemoryPressure.ts` (HS-9469). Both now resolve
+  // `child_process` lazily via `utils/execAsync.ts`, guarded by
+  // `utils/lazyChildProcessImport.test.ts`.
+  execFile: vi.fn((_file: string, _args: string[], _opts: unknown, cb?: (e: Error | null, out: string, err: string) => void) => {
+    cb?.(new Error('execFile mocked in dashboard.test.ts'), '', '');
+  }),
   spawn: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() })),
 }));
 

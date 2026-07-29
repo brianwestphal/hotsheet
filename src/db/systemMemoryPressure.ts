@@ -41,12 +41,37 @@
  * little cache; being quick to relax costs thrashing during exactly the period
  * when reopens are most expensive.
  */
-import { exec } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import { promisify } from 'node:util';
 
-const execAsync = promisify(exec);
+/**
+ * HS-9498 — `child_process` is imported LAZILY, inside the probe, rather than
+ * `promisify(exec)` at module scope.
+ *
+ * Module-scope `promisify` of a `child_process` export makes a module hostile to
+ * import: `promisify(undefined)` throws, so ANY test that partially mocks
+ * `child_process` — for its own unrelated reasons — dies at import the moment this
+ * module is anywhere in its dependency graph. It reached `routes/dashboard.test.ts`
+ * and `routes/shell.test.ts` transitively via the docs/128 eviction path, and took
+ * both whole files down.
+ *
+ * That had happened before, and the fix chosen then was to add the missing export to
+ * the mock (see the HS-8723 comment in `dashboard.test.ts`, about `git/status.ts`).
+ * It recurred, because patching each mock treats the symptom: every new test that
+ * mocks `child_process` inherits the problem, and only finds out at import time.
+ *
+ * Resolving it inside the probe costs nothing here — the probe is sampled at most
+ * once per `SAMPLE_TTL_MS` (15 s) and is never awaited on the eviction path — and it
+ * moves the failure inside the `try`, where a missing export degrades to `normal`.
+ * Which is the module's documented contract anyway: a probe we cannot run adds no
+ * constraint (§131.4). Failing to MEASURE pressure must never shrink the cache.
+ */
+async function execCommand(command: string, timeoutMs: number): Promise<string> {
+  const { exec } = await import('node:child_process');
+  const { stdout } = await promisify(exec)(command, { timeout: timeoutMs });
+  return stdout;
+}
 
 /** The OS's verdict, normalized across platforms. */
 export type SystemPressureLevel = 'normal' | 'warn' | 'critical';
@@ -140,7 +165,7 @@ export function applyHysteresis(
 export async function sampleSystemPressure(platform: string = process.platform): Promise<SystemPressureLevel> {
   try {
     if (platform === 'darwin') {
-      const { stdout } = await execAsync('sysctl -n kern.memorystatus_vm_pressure_level', { timeout: PROBE_TIMEOUT_MS });
+      const stdout = await execCommand('sysctl -n kern.memorystatus_vm_pressure_level', PROBE_TIMEOUT_MS);
       return parseMacPressureLevel(stdout) ?? levelFromFreeRatio(os.freemem(), os.totalmem());
     }
     if (platform === 'linux') {

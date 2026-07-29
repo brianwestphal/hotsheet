@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms62sefgnjw5cu7c",
+          "message": {
+            "text": "This helper exists because the idiomatic const execFileAsync = promisify(execFile) at module scope is a trap, and patching it per-mock demonstrably does not hold.\n\npromisify(undefined) throws, so a module doing that at load is hostile to import: any test that partially mocks child_process — naming only the exports it uses — dies during module evaluation the moment such a module appears anywhere in its dependency graph. The failure is transitive, non-local, and fatal to the whole test file rather than a case. The error names a file the test author has never heard of.\n\nIt bit twice:\n\n- HS-8723 — git/status.ts reached routes/dashboard.test.ts. Fixed by adding execFile: vi.fn() to that one mock (0).\n- HS-9498 — systemMemoryPressure.ts (docs/131) reached routes/dashboard.test.ts AND routes/shell.test.ts through the docs/128 eviction path. Both files had been failing at import since 2026-07-27.\n\nThe second is what makes the per-mock fix untenable: it is the same defect, in a module nobody connected to the first one, found only because a full-suite run happened to be done for unrelated work. Every future test that mocks child_process inherits the trap.\n\nAll seven modules that shell out now route through here, and lazyChildProcessImport.test.ts imports each under a partial mock so a regression fails loudly in a file whose name explains it.\n\nTwo things surfaced while doing it, both worth knowing:\n\n- Fixing the import unmasked a test in dashboard.test.ts that had never run and hangs to its 30 s timeout, because execFile: vi.fn() never invokes its callback so the promisified call never settles. The mock now calls back.\n- The lazy form is more correct for the pressure probe specifically: it moves the failure inside the try, where an unavailable probe degrades to normal. That is docs/131 §131.4's contract — failing to measure pressure must never shrink the cache. Under the old form it was a crash.\n",
+            "markdown": "This helper exists because the idiomatic `const execFileAsync = promisify(execFile)` at module scope is a trap, and patching it per-mock demonstrably does not hold.\n\n`promisify(undefined)` throws, so a module doing that at load is hostile to import: any test that partially mocks `child_process` — naming only the exports it uses — dies during module evaluation the moment such a module appears anywhere in its dependency graph. The failure is transitive, non-local, and fatal to the whole test file rather than a case. The error names a file the test author has never heard of.\n\nIt bit twice:\n\n- **HS-8723** — `git/status.ts` reached `routes/dashboard.test.ts`. Fixed by [adding `execFile: vi.fn()` to that one mock](0).\n- **HS-9498** — `systemMemoryPressure.ts` (docs/131) reached `routes/dashboard.test.ts` AND `routes/shell.test.ts` through the docs/128 eviction path. Both files had been failing at import since 2026-07-27.\n\nThe second is what makes the per-mock fix untenable: it is the same defect, in a module nobody connected to the first one, found only because a full-suite run happened to be done for unrelated work. Every future test that mocks `child_process` inherits the trap.\n\nAll seven modules that shell out now route through here, and `lazyChildProcessImport.test.ts` imports each under a partial mock so a regression fails loudly in a file whose name explains it.\n\nTwo things surfaced while doing it, both worth knowing:\n\n- Fixing the import unmasked a test in `dashboard.test.ts` that had **never run** and hangs to its 30 s timeout, because `execFile: vi.fn()` never invokes its callback so the promisified call never settles. The mock now calls back.\n- The lazy form is more correct for the pressure probe specifically: it moves the failure inside the `try`, where an unavailable probe degrades to `normal`. That is docs/131 §131.4's contract — failing to *measure* pressure must never shrink the cache. Under the old form it was a crash.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/utils/execAsync.ts"
+                },
+                "region": {
+                  "startLine": 1,
+                  "endLine": 33,
+                  "snippet": {
+                    "text": "/**\n * HS-9498 — promisified `exec` / `execFile` that resolve `child_process` LAZILY.\n *\n * ## Why this exists\n *\n * The idiomatic `const execFileAsync = promisify(execFile)` at module scope makes a\n * module hostile to import. `promisify(undefined)` throws, so any test that partially\n * mocks `child_process` — for its own unrelated reasons, naming only the exports IT\n * uses — dies at import time the moment such a module appears anywhere in its\n * dependency graph, however indirectly.\n *\n * It is a nasty failure because it is transitive and non-local: the test that breaks\n * has no relationship to the module that broke it, the error names a file the author\n * never heard of, and it takes down the WHOLE file rather than a case.\n *\n * This bit twice. HS-8723: `git/status.ts` reached `routes/dashboard.test.ts` and the\n * fix was to add `execFile: vi.fn()` to that test's mock. HS-9498: `systemMemoryPressure.ts`\n * (docs/131) reached `routes/dashboard.test.ts` AND `routes/shell.test.ts` through the\n * docs/128 eviction path, and both files had been failing at import since 2026-07-27.\n *\n * Patching each mock treats the symptom — every future test that mocks `child_process`\n * inherits the trap, and only discovers it by tripping over it. Resolving the import\n * inside the call removes the trap: a mock missing the export now fails where the call\n * is made, inside whatever error handling that caller already has, instead of during\n * module evaluation.\n *\n * ## Cost\n *\n * One `await import()` per call, against a module the runtime has already loaded and\n * cached after the first use. Every caller here is already spawning a process, so the\n * import is noise next to the fork.\n */\nimport { promisify } from 'node:util';"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/routes/dashboard.test.ts"
+                },
+                "region": {
+                  "startLine": 40
+                }
+              }
+            }
+          ],
+          "workItemUris": [
+            "HS-9498"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "84d0c544ccf841f73de58753ff2fe40d"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "999023c39635efdf240aa8230014639422c7788c",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

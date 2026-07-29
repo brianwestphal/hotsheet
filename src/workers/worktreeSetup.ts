@@ -15,15 +15,13 @@
  * contract as the channel/skills wiring + the `node_modules` provisioning). The
  * command runner + logger are injectable for tests.
  */
-import { exec } from 'child_process';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { promisify } from 'util';
 
 import { readFileSettings } from '../file-settings.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { execAsync } from '../utils/execAsync.js';
 
-const execAsync = promisify(exec);
 
 /** The gitignored, machine-local convention script in the owner's data dir. */
 const SETUP_SCRIPT = 'worktree-setup.sh';

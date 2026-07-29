@@ -96,7 +96,35 @@ never evict a pinned cluster, `defaultDbPath` always pinned, floors always honor
   are first-principles choices. §128.5.2's `evictChurn` counter is the instrument for revisiting
   them with evidence.
 
-## 131.7 Cross-references
+## 131.7 The probe imports `child_process` lazily (HS-9498)
+
+`sampleSystemPressure` resolves `child_process` **inside** the macOS branch, through
+`utils/execAsync.ts`, rather than `promisify(exec)` at module scope.
+
+Module-scope `promisify` of a `child_process` export makes a module hostile to import:
+`promisify(undefined)` throws, so any test that PARTIALLY mocks `child_process` — for
+its own unrelated reasons, naming only the exports it uses — dies during module
+evaluation the moment this file appears anywhere in its dependency graph. It got there
+transitively via the docs/128 eviction path and took down `routes/dashboard.test.ts`
+and `routes/shell.test.ts` **entirely**, from 2026-07-27 until HS-9498.
+
+Two things make this worth a section rather than a code comment:
+
+- **It had already happened once**, to `git/status.ts` (HS-8723), and was fixed by
+  adding the missing export to the one mock that noticed. Per-mock fixes do not hold —
+  every future test that mocks `child_process` inherits the trap and finds out by
+  tripping over it. All seven modules that shell out now share
+  `utils/execAsync.ts`, and `utils/lazyChildProcessImport.test.ts` imports each of them
+  under a partial mock so a regression fails in a file whose name says why.
+- **The lazy form is also more correct here.** It moves the failure inside the `try`,
+  where a missing export degrades to `normal` — which is this module's whole contract
+  (§131.4): a probe we cannot run adds no constraint. Failing to *measure* pressure must
+  never shrink the cache. Under the old form, an unmeasurable probe was a crash.
+
+Cost is one `await import()` per sample against an already-cached module, at most once
+per `SAMPLE_TTL_MS` (15 s), on a path that is already spawning `sysctl`.
+
+## 131.8 Cross-references
 
 - [128-cluster-cache-bounding.md](128-cluster-cache-bounding.md) §128.2.1 (the budget this
   constrains), §128.5.1 (the GC-lag trap that applies to any pressure source), §128.5.2 (the

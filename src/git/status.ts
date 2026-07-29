@@ -1,12 +1,11 @@
-import { execFile } from 'child_process';
 import { join } from 'path';
-import { promisify } from 'util';
 
 // HS-8522 — wire shapes inferred from the typed-API-layer schemas
 // (`src/api/git.ts`), the single source of truth shared with the client.
 import type { FetchResult, GitStatus, GitStatusFiles, PendingCommit } from '../api/git.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { getGitRoot, isGitRepo } from '../gitignore.js';
+import { execFileAsync } from '../utils/execAsync.js';
 
 // HS-8723 (load resilience, docs/75 §75.6 Phase 1) — the whole git-status read
 // path used to be `spawnSync`, which blocks the single shared Node event loop
@@ -15,7 +14,6 @@ import { getGitRoot, isGitRepo } from '../gitignore.js';
 // saturated the loop and froze tab-switching (HS-8721). Everything here now
 // shells out asynchronously via `execFile` so a slow / contended `git` never
 // stalls request handling — it just resolves late.
-const execFileAsync = promisify(execFile);
 
 /** execFile on a non-zero exit, timeout, or missing-binary REJECTS rather than
  *  returning a status code. Coerce whatever it carries (stdout/stderr may be a

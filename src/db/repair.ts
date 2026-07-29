@@ -1,10 +1,9 @@
-import { execFile } from 'child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { promisify } from 'util';
 
 import { listBackups } from '../backup.js';
+import { execFileAsync } from '../utils/execAsync.js';
 import { createPglite } from './pglite.js';
 
 /** HS-7897: server-side repair helpers used by the Settings → Backups
@@ -24,7 +23,6 @@ import { createPglite } from './pglite.js';
  *     reachable.
  */
 
-const execFileP = promisify(execFile);
 
 export interface WorkingBackup {
   tier: string;
@@ -149,7 +147,7 @@ export async function getResetwalAvailability(): Promise<ResetwalAvailability> {
   const platform = process.platform;
   for (const candidate of candidatePgResetwalPaths(platform)) {
     try {
-      await execFileP(candidate, ['--version'], { timeout: 5000 });
+      await execFileAsync(candidate, ['--version'], { timeout: 5000 });
       return { available: true, path: candidate, platform, installInstructions: installInstructions(platform) };
     } catch {
       // Try the next candidate.
@@ -189,7 +187,7 @@ export async function runResetwalAndDump(
   try { rmSync(join(workDir, 'postmaster.pid'), { force: true }); } catch { /* ignore */ }
 
   try {
-    await execFileP(availability.path, ['-f', workDir], { timeout: 60_000 });
+    await execFileAsync(availability.path, ['-f', workDir], { timeout: 60_000 });
 
     const db = createPglite(workDir);
     await db.waitReady;

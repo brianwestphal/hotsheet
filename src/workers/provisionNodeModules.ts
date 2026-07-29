@@ -24,14 +24,12 @@
  * seam so tests drive the branches without real npm; the symlink + lock reads use
  * real `fs` (the tests run against real temp dirs, mirroring `worktrees.test.ts`).
  */
-import { execFile } from 'child_process';
 import { existsSync, readFileSync, rmSync, statSync, symlinkSync } from 'fs';
 import { join } from 'path';
-import { promisify } from 'util';
 
 import { getErrorMessage } from '../utils/errorMessage.js';
+import { execFileAsync } from '../utils/execAsync.js';
 
-const execFileAsync = promisify(execFile);
 
 const NODE_MODULES = 'node_modules';
 const LOCK = 'package-lock.json';
