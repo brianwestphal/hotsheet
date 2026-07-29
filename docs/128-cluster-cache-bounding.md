@@ -292,6 +292,46 @@ exactly the ambiguity an observability feature must not introduce.
 **Once there is a real session's worth of numbers**, revisit the §128.5 defaults with evidence
 rather than the reasoning-from-first-principles they currently rest on.
 
+## 128.5.3 Pressure is acted on periodically, not only on open (HS-9477)
+
+The headroom guard is the only layer that responds to how much memory is **actually in use** —
+cap and idle eviction both reason about counts and ages. It ran exclusively on the
+cluster-open path, so a server that was bloated but not opening anything had **no response to
+memory pressure at all**. Memory climbed, the loop went into GC thrash, and the docs/45
+watchdog SIGKILLed the process for being wedged. That is the "server still dying sometimes"
+report.
+
+The 60 s sweep now runs the pressure pass before the age pass. `evictForHeadroomBeforeOpen`
+is accordingly renamed `evictForHeadroom` — the old name encoded the very assumption that was
+wrong.
+
+**What the crash log actually showed**, and what is still open:
+
+```
+[watchdog] FATAL: event loop blocked for 61569ms (> 60000ms)
+[watchdog] memory at wedge: rss=1795MB heapUsed=231MB external=5852MB
+           (heapUsed+external=6083MB = 147% of the 4144MB V8 limit); openPGLiteClusters=1
+```
+
+Startup had finished 68 minutes earlier, so this was steady-state, not a startup stall (the
+watchdog's message says "where startup stalled" unconditionally, which is misleading for a
+long-running process — worth fixing). All the numbers come from one `publishMemorySample` on
+the main-thread heartbeat, so they are internally consistent and taken just before the wedge.
+
+The unresolved part: **1 cluster does not explain 5852 MB.** A healthy sample from the same
+day reads 15 clusters / 2818 MB — about 188 MB each, matching the ~180 MB figure this doc is
+built on. At the wedge the ratio is off by ~30×. Two candidates, not yet distinguished:
+
+1. **GC lag after mass eviction** (§128.5.1) — the clusters were shed, the count dropped, but
+   their WASM heaps had not been collected yet. If so, eviction cannot rescue this situation on
+   its own, because the memory only returns when V8 decides to collect.
+2. **A non-cluster allocator** — `heapUsed` was only 231 MB, so it is Buffers/ArrayBuffers, not
+   JS objects. This repo carries 1.0 GB of telemetry JSONL; the readers there are the obvious
+   suspects.
+
+Distinguishing them is HS-9478. Until it is settled, the fix here is a genuine improvement
+(pressure now gets a response at all) but is **not** established as sufficient.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →

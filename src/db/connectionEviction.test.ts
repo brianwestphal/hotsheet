@@ -9,7 +9,7 @@
 import { execFileSync } from 'child_process';
 import { readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTempDir } from '../test-helpers.js';
 import {
@@ -23,17 +23,21 @@ import {
 import {
   closeAllDatabases,
   closeDbForDir,
+  evictForHeadroomForTests,
   evictIdleClusters,
   getDbForDir,
   isDbOpenForDir,
   pinClustersForDirs,
   setDataDir,
+  startClusterEvictionTimer,
+  stopClusterEvictionTimer,
 } from './connection.js';
 
 const dbPathOf = (dataDir: string): string => join(dataDir, 'db');
 
 /** Env we set to make eviction deterministic in-test, restored in afterEach. */
 const ENV_KEYS = [
+  'HOTSHEET_CLUSTER_SWEEP_INTERVAL_MS',
   'HOTSHEET_MAX_OPEN_CLUSTERS',
   'HOTSHEET_CLUSTER_IDLE_MS',
   'HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS',
@@ -462,5 +466,111 @@ describe('eviction counters wired to real evictions (HS-9470)', () => {
 
     await getDbForDir(p1); // straight back — that is churn
     expect(evictionStats().churn).toBe(1);
+  });
+});
+
+/**
+ * HS-9477 — "server still dying sometimes ... it needs to be MUCH more resilient
+ * even if it starts running out of memory".
+ *
+ * The headroom guard is the only layer that responds to how much memory is
+ * actually in use, and it ran ONLY on the cluster-open path. A server that was
+ * bloated but not opening anything therefore had no response to pressure at all:
+ * memory climbed, the loop went into GC thrash, and the docs/45 watchdog SIGKILLed
+ * it for being wedged. The periodic sweep now runs it too.
+ */
+describe('pressure-driven eviction runs off the sweep, not just on open (HS-9477)', () => {
+  let anchor: string;
+  const saved: Record<string, string | undefined> = {};
+  const created: string[] = [];
+  const tempDir = (): string => { const d = createTempDir(); created.push(d); return d; };
+
+  beforeEach(async () => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    process.env.HOTSHEET_MAX_OPEN_CLUSTERS = '50';   // keep the cap out of it
+    process.env.HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS = '0';
+    process.env.HOTSHEET_CLUSTER_IDLE_MS = '3600000'; // and the idle window out of it
+    resetEvictionStatsForTests();
+    anchor = tempDir();
+    setDataDir(anchor);
+    await getDbForDir(anchor);
+  });
+
+  afterEach(async () => {
+    await closeAllDatabases();
+    resetEvictionTrackingForTests();
+    resetEvictionStatsForTests();
+    for (const d of created) rmSync(d, { recursive: true, force: true });
+    created.length = 0;
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) Reflect.deleteProperty(process.env, k);
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('sheds clusters under pressure even though none are idle and the cap is not reached', async () => {
+    const p1 = tempDir();
+    const p2 = tempDir();
+    await getDbForDir(p1);
+    await getDbForDir(p2);
+    expect(isDbOpenForDir(p1)).toBe(true);
+
+    // A headroom floor larger than the heap ceiling forces the guard to see a
+    // deficit — the same state a genuinely bloated process is in.
+    process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = String(1024 ** 4);
+    await evictForHeadroomForTests();
+
+    const stillOpen = [p1, p2].filter((d) => isDbOpenForDir(d)).length;
+    expect(stillOpen, 'pressure should have shed at least one cluster').toBeLessThan(2);
+    expect(evictionStats().byMode.headroom).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the SWEEP TIMER runs the pressure pass — not just the function existing', async () => {
+    // The bug was the WIRING, not the function: `evictForHeadroom` worked fine,
+    // it was simply never called except when opening a cluster. A test that calls
+    // it directly passes either way (this one was written that way first and
+    // proved nothing), so this drives the real timer.
+    const p1 = tempDir();
+    const p2 = tempDir();
+    await getDbForDir(p1);
+    await getDbForDir(p2);
+
+    process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = String(1024 ** 4);
+    process.env.HOTSHEET_CLUSTER_SWEEP_INTERVAL_MS = '1000'; // the floor
+    startClusterEvictionTimer();
+    try {
+      await vi.waitFor(
+        () => { expect(evictionStats().byMode.headroom).toBeGreaterThanOrEqual(1); },
+        { timeout: 8000, interval: 200 },
+      );
+    } finally {
+      stopClusterEvictionTimer();
+    }
+  });
+
+  it('does nothing when there is comfortable headroom', async () => {
+    // The guard must stay silent in the normal case — an always-on evictor would
+    // trade one failure (dying) for another (constant reopen churn).
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = '1';
+    await evictForHeadroomForTests();
+    expect(isDbOpenForDir(p1)).toBe(true);
+    expect(evictionStats().byMode.headroom).toBe(0);
+  });
+
+  it('still never evicts a pinned or in-flight cluster under pressure', async () => {
+    // Resilience must not come at the cost of the docs/128 §128.3 invariants —
+    // shedding a cluster mid-query would turn an OOM into a failed request.
+    const p1 = tempDir();
+    await getDbForDir(p1);
+    const release = pinClustersForDirs([p1]);
+    try {
+      process.env.HOTSHEET_EXTERNAL_HEADROOM_BYTES = String(1024 ** 4);
+      await evictForHeadroomForTests();
+      expect(isDbOpenForDir(p1), 'a pinned cluster must survive even critical pressure').toBe(true);
+    } finally {
+      release();
+    }
   });
 });

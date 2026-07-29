@@ -87,6 +87,13 @@ describe('memory publishing (HS-9421)', () => {
     expect(slots!.rssMb).toBeGreaterThan(0);
     expect(slots!.heapLimitMb).toBeGreaterThan(0);
     expect(slots!.openClusters).toBe(7);
+    // HS-9478 — the discriminator. `arrayBuffers` counts Buffer/ArrayBuffer bytes
+    // but NOT WASM heaps, so it is what separates "a Buffer/file-read allocator"
+    // from "cluster WASM heaps" at the moment of a wedge. Published from the same
+    // sample as the rest; a slot that is never written reads 0 forever and would
+    // silently make every future crash look like the WASM case.
+    expect(slots!.arrayBuffersMb).toBeTypeOf('number');
+    expect(slots!.arrayBuffersMb).toBeGreaterThanOrEqual(0);
   });
 
   it('reports zero clusters when no counter is registered', () => {

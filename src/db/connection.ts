@@ -628,8 +628,19 @@ async function enforceClusterCapAfterOpen(): Promise<void> {
   await runEviction('cap');
 }
 
-/** Before opening a new cluster, free memory if `external` is near the ceiling. */
-async function evictForHeadroomBeforeOpen(): Promise<void> {
+/**
+ * Free memory if `external` is near the ceiling.
+ *
+ * HS-9477 — this used to run ONLY before opening a cluster, which left the
+ * server with no response to memory pressure at all when nothing happened to be
+ * opening one. Memory could climb for an hour, the loop would start thrashing in
+ * GC, and the docs/45 watchdog would SIGKILL the process for being wedged — the
+ * "server still dying" report. The periodic sweep now calls it too, so pressure
+ * is acted on whether or not anything is asking for a new cluster.
+ */
+export async function evictForHeadroomForTests(): Promise<void> { await evictForHeadroom(); }
+
+async function evictForHeadroom(): Promise<void> {
   const cfg = resolveEvictionConfig();
   const count = headroomEvictionCount(
     currentExternalBytes(),
@@ -664,7 +675,12 @@ let evictionTimer: ReturnType<typeof setInterval> | null = null;
 export function startClusterEvictionTimer(): void {
   if (evictionTimer !== null) return;
   const cfg = resolveEvictionConfig();
-  evictionTimer = setInterval(() => { void evictIdleClusters(); }, cfg.sweepIntervalMs);
+  evictionTimer = setInterval(() => {
+    // HS-9477 — pressure FIRST, then age. The headroom guard is the only layer
+    // that responds to how much memory is actually in use; running it solely on
+    // the open path meant an idle-but-bloated server never shed anything.
+    void evictForHeadroom().then(() => evictIdleClusters());
+  }, cfg.sweepIntervalMs);
   evictionTimer.unref();
 }
 
@@ -973,7 +989,7 @@ async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlit
   // `external` is close to the V8 heap ceiling (the headroom guard). Runs on the
   // single open chokepoint so every construction path (first open, restore,
   // rebuild) is protected. No-op when there's comfortable headroom.
-  await evictForHeadroomBeforeOpen();
+  await evictForHeadroom();
 
   // HS-9426 — telemetry clusters get a small WAL budget so pg_wal can't balloon
   // to the default 1 GB (HS-9422). Project clusters keep PGLite's defaults: they
