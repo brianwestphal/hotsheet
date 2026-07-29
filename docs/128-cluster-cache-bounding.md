@@ -530,6 +530,51 @@ Verified to fail on a deliberately retained handle: 356 MB residue. The preview 
 own two cases in `backup.test.ts`, including the throw path, via the `_activePreviewCountForTests`
 seam.
 
+### 128.5.8 The guard's self-check (HS-9480)
+
+Everything above assumes evicting reclaims. §128.5.6 made that true again, and this is the
+guard against the assumption breaking a second time — worth having on its own terms, because a
+control loop that cannot tell success from failure will eventually run away. It already did:
+
+| | time | external | clusters | headroom evictions | churn |
+|---|---|---|---|---|---|
+| healthy | 03:43:12 | 3077 MB | 17 | 0 | 10 |
+| onset | 03:52:16 | 4237 MB | 10 | 5 | 12 |
+| death | 03:54:26 | 5845 MB | 2 | **375** | **372** |
+
+375 headroom evictions and 372 churned reopens in ~130 s, and `external` went **up** (peaking at
+8449 MB), because closing freed nothing while the work that needed a cluster reopened one and
+allocated another ~180 MB. Each cycle net ADDED memory. The HS-9468 `pendingReclaim` credit was
+designed for exactly this and was live; it didn't help, because it assumes the memory returns
+within 15 s and here it never returned at all.
+
+`clusterEviction.ts` now carries a pure `HeadroomBreakerState` (`noteHeadroomPass` /
+`isHeadroomSuppressed`). `evictForHeadroom` measures `external` either side of each pass; after
+`HEADROOM_BREAKER_TRIP_COUNT` (3) consecutive passes fail to free at least a quarter of what the
+clusters they closed should have been worth, pressure eviction is suspended for
+`HEADROOM_BREAKER_BACKOFF_MS` (5 min). One working pass re-arms it completely, so a transient
+blip can't latch; when the back-off expires one probe pass goes through, and if that still fails
+it re-suspends immediately rather than re-earning all three.
+
+Three details that matter:
+
+- **Only a pass where a collection actually ran is judged.** `forceGcNow` is throttled to one
+  collection per 30 s (it is stop-the-world), and a throttled pass legitimately frees nothing —
+  counting it would trip the breaker on a perfectly healthy server. `runEvictionDetailed` reports
+  the `ForceGcResult` so `evictForHeadroom` can tell the two apart.
+- **Only the pressure path is suspended.** The cap and idle sweeps keep running; they are not the
+  runaway, and suspending the cap would let the cache grow unbounded — the original bug.
+- **The log line is distinct.** "We are low on memory" and "our only lever does not work" are
+  completely different operator stories, and before this they were the same message.
+
+Tests: the pure transition matrix in `clusterEviction.test.ts` (armed while working, trips only on
+the Nth failure, trips on the real external-going-up signature, re-arms on one success, back-off
+expiry + re-suspend, partial reclaim counts as working, and the bar scales with the number of
+clusters closed) plus `headroomBreakerWiring.test.ts`, which pins `currentExternalBytes` to a
+constant and drives **real** clusters through `evictForHeadroom` — it evicts for three passes, then
+stops, logs the suspension exactly once, and leaves the idle sweep working. Verified to fail when
+the breaker is not consulted.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →
@@ -548,6 +593,8 @@ seam.
   past the cap evicts an LRU cluster, a project-switch-back keeps the active one, the idle sweep
   closes idle clusters, an in-flight query protects its cluster, the pinned default is never
   evicted, and a close drops the bookkeeping.
+- `src/db/headroomBreakerWiring.test.ts` — the §128.5.8 circuit breaker wired into
+  `evictForHeadroom` against real clusters (pressure eviction suspends; cap + idle keep running).
 - `src/db/queryInstrumentation.test.ts` — the always-on proxy stays transparent when
   freeze-timing is disabled, and in-flight counts are tracked (and released on reject).
 

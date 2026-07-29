@@ -16,9 +16,14 @@ import {
   type EvictionInput,
   evictionStats,
   forgetCluster,
+  HEADROOM_BREAKER_BACKOFF_MS,
+  HEADROOM_BREAKER_TRIP_COUNT,
   headroomEvictionCount,
+  initialHeadroomBreakerState,
+  isHeadroomSuppressed,
   noteClusterAccess,
   noteEviction,
+  noteHeadroomPass,
   resetEvictionStatsForTests,
   resetEvictionTrackingForTests,
   resolveEvictionConfig,
@@ -608,5 +613,104 @@ describe('eviction counters (HS-9470)', () => {
     snapshot.project = 999;
     expect(evictionStats().byMode.cap).toBe(1);
     expect(evictionStats().project).toBe(1);
+  });
+});
+
+/**
+ * HS-9480 — the headroom guard had no notion of whether it was working. In the
+ * 2026-07-29 death spiral it ran 375 headroom evictions and 372 churned reopens
+ * in ~130 s while `external` ROSE from 4237 MB to 5845 MB, because closing freed
+ * nothing (no collection ran) and every reopen allocated another ~180 MB. These
+ * pin the self-check that stops that.
+ */
+describe('headroom circuit breaker (HS-9480)', () => {
+  const MB = 1024 * 1024;
+  const pass = (before: number, after: number, evicted = 1) =>
+    ({ evicted, externalBefore: before * MB, externalAfter: after * MB });
+
+  it('stays armed while eviction is demonstrably working', () => {
+    let s = initialHeadroomBreakerState();
+    for (let i = 0; i < 10; i++) {
+      s = noteHeadroomPass(s, pass(1200, 1010), 1_000);   // ~190 MB freed per cluster
+      expect(isHeadroomSuppressed(s, 1_000)).toBe(false);
+    }
+    expect(s.ineffective).toBe(0);
+  });
+
+  it('trips after N consecutive passes that free nothing — and not before', () => {
+    let s = initialHeadroomBreakerState();
+    for (let i = 1; i < HEADROOM_BREAKER_TRIP_COUNT; i++) {
+      s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+      expect(isHeadroomSuppressed(s, 1_000), `must not trip on pass ${String(i)}`).toBe(false);
+    }
+    s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    expect(isHeadroomSuppressed(s, 1_000)).toBe(true);
+  });
+
+  it('trips on the real signature — external going UP while we evict', () => {
+    // The actual freeze.log shape: evicting hard, memory climbing anyway.
+    let s = initialHeadroomBreakerState();
+    let external = 4237;
+    for (let i = 0; i < HEADROOM_BREAKER_TRIP_COUNT; i++) {
+      const before = external;
+      external += 180; // the reopen that follows every eviction
+      s = noteHeadroomPass(s, pass(before, external, 2), 1_000);
+    }
+    expect(isHeadroomSuppressed(s, 1_000)).toBe(true);
+  });
+
+  it('one working pass re-arms it — a transient blip must not latch', () => {
+    let s = initialHeadroomBreakerState();
+    s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    expect(s.ineffective).toBe(2);
+    s = noteHeadroomPass(s, pass(1200, 1010), 1_000);
+    expect(s.ineffective).toBe(0);
+    // ...and the next two ineffective passes therefore still don't trip.
+    s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    expect(isHeadroomSuppressed(s, 1_000)).toBe(false);
+  });
+
+  it('re-arms once the back-off elapses, then trips again if still broken', () => {
+    let s = initialHeadroomBreakerState();
+    for (let i = 0; i < HEADROOM_BREAKER_TRIP_COUNT; i++) s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    expect(isHeadroomSuppressed(s, 1_000)).toBe(true);
+    expect(isHeadroomSuppressed(s, 1_000 + HEADROOM_BREAKER_BACKOFF_MS - 1)).toBe(true);
+
+    const after = 1_000 + HEADROOM_BREAKER_BACKOFF_MS + 1;
+    expect(isHeadroomSuppressed(s, after), 'back-off expiry lets one probe pass through').toBe(false);
+    // That probe still fails ⇒ straight back to suppressed (the counter was
+    // never reset, so it doesn't have to re-earn all N).
+    s = noteHeadroomPass(s, pass(4237, 4237), after);
+    expect(isHeadroomSuppressed(s, after)).toBe(true);
+  });
+
+  it('a probe that WORKS clears the suppression outright', () => {
+    let s = initialHeadroomBreakerState();
+    for (let i = 0; i < HEADROOM_BREAKER_TRIP_COUNT; i++) s = noteHeadroomPass(s, pass(4237, 4237), 1_000);
+    const after = 1_000 + HEADROOM_BREAKER_BACKOFF_MS + 1;
+    s = noteHeadroomPass(s, pass(1200, 1010), after);
+    expect(s).toEqual({ ineffective: 0, suppressedUntil: 0 });
+  });
+
+  it('a partial reclaim counts as working — the bar is "went down", not "went down fully"', () => {
+    // Concurrent work allocates during a pass; grading the collector would trip
+    // the breaker on a healthy server. Only ~25 % of one cluster is required.
+    let s = initialHeadroomBreakerState();
+    for (let i = 0; i < HEADROOM_BREAKER_TRIP_COUNT + 2; i++) {
+      s = noteHeadroomPass(s, pass(1200, 1200 - 50), 1_000); // 50 MB of an expected 45 MB
+    }
+    expect(isHeadroomSuppressed(s, 1_000)).toBe(false);
+  });
+
+  it('scales the bar with how many clusters the pass closed', () => {
+    // Closing four clusters and freeing one cluster's worth is a failure, even
+    // though the same absolute number passes for a single-cluster eviction.
+    let s = initialHeadroomBreakerState();
+    for (let i = 0; i < HEADROOM_BREAKER_TRIP_COUNT; i++) {
+      s = noteHeadroomPass(s, pass(2000, 2000 - 100, 4), 1_000); // expected ≥180 MB
+    }
+    expect(isHeadroomSuppressed(s, 1_000)).toBe(true);
   });
 });

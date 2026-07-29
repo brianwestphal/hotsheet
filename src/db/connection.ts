@@ -18,15 +18,21 @@ import {
   type EvictionConfig,
   type EvictionMode,
   forgetCluster,
+  HEADROOM_BREAKER_BACKOFF_MS,
+  HEADROOM_BREAKER_TRIP_COUNT,
+  type HeadroomBreakerState,
   headroomEvictionCount,
   heapSizeLimitBytes,
+  initialHeadroomBreakerState,
+  isHeadroomSuppressed,
   isTelemetryClusterDbPath,
   noteClusterAccess,
   noteEviction,
+  noteHeadroomPass,
   resolveEvictionConfig,
   snapshotClusters,
 } from './clusterEviction.js';
-import { forceGcNow } from './forceGc.js';
+import { forceGcNow, type ForceGcResult } from './forceGc.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
 import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
 import { isClusterStorageFailure } from './storageFailure.js';
@@ -559,6 +565,9 @@ export function resetStorageFailureReportingForTests(): void {
  * an over-eviction cascade triggered by its own success. Entries older than the
  * lag window are assumed collected and drop off.
  */
+/** HS-9480 — the pressure guard's self-check. See `noteHeadroomPass`. */
+let headroomBreaker: HeadroomBreakerState = initialHeadroomBreakerState();
+
 const recentEvictions: number[] = [];
 const RECLAIM_LAG_MS = 15_000;
 
@@ -608,6 +617,15 @@ function currentClusterBudget(cfg: EvictionConfig): ClusterBudget {
 /** Snapshot the live clusters, ask the planner what to close for `mode`, and
  *  close them serially. Returns the number actually evicted. */
 async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<number> {
+  return (await runEvictionDetailed(mode, targetEvictions)).evicted;
+}
+
+/** As `runEviction`, but also reports whether a collection actually ran — the
+ *  headroom breaker (HS-9480) can only judge a pass where one did. */
+async function runEvictionDetailed(
+  mode: EvictionMode,
+  targetEvictions = 0,
+): Promise<{ evicted: number; gc: ForceGcResult | 'skipped' }> {
   const cfg = resolveEvictionConfig();
   const victims = chooseEvictions({
     clusters: snapshotClusters(databases.keys()),
@@ -627,15 +645,14 @@ async function runEviction(mode: EvictionMode, targetEvictions = 0): Promise<num
   // guard sees it and evicts harder, and each reopen adds another ~180 MB
   // (docs/128 §128.5.4). Rate-limited inside `forceGcNow` — a forced major GC is
   // stop-the-world, so it must not run once per closed cluster.
-  if (victims.length > 0) {
-    const result = forceGcNow(dirname(victims[0]));
-    if (result === 'unavailable') {
-      // Worth saying once: without a collector, eviction cannot reclaim anything
-      // and the process will climb until the watchdog kills it.
-      warnForcedGcUnavailable();
-    }
+  if (victims.length === 0) return { evicted: 0, gc: 'skipped' };
+  const result = forceGcNow(dirname(victims[0]));
+  if (result === 'unavailable') {
+    // Worth saying once: without a collector, eviction cannot reclaim anything
+    // and the process will climb until the watchdog kills it.
+    warnForcedGcUnavailable();
   }
-  return victims.length;
+  return { evicted: victims.length, gc: result };
 }
 
 /** HS-9479 — log the no-collector case ONCE; it would otherwise repeat per sweep. */
@@ -669,16 +686,51 @@ export async function evictForHeadroomForTests(): Promise<void> { await evictFor
 
 async function evictForHeadroom(): Promise<void> {
   const cfg = resolveEvictionConfig();
+  // HS-9480 — while the breaker is open, do nothing. Evicting has been measured
+  // not to reclaim, and churning costs a reopen on top of the memory we failed
+  // to free. The cap and idle sweeps are unaffected; they are not the runaway.
+  if (isHeadroomSuppressed(headroomBreaker)) return;
+  const externalBefore = currentExternalBytes();
   const count = headroomEvictionCount(
-    currentExternalBytes(),
+    externalBefore,
     heapSizeLimitBytes(),
     cfg.headroomFloorBytes,
   );
   if (count === 0) return;
-  const freed = await runEviction('headroom', count);
-  if (freed > 0) {
-    console.error(`[db] headroom guard evicted ${String(freed)} idle cluster(s) (external near heap ceiling).`);
+  const { evicted, gc } = await runEvictionDetailed('headroom', count);
+  if (evicted > 0) {
+    console.error(`[db] headroom guard evicted ${String(evicted)} idle cluster(s) (external near heap ceiling).`);
   }
+  // Only a pass where a collection actually ran says anything about whether
+  // eviction works — `forceGcNow` is throttled to one collection per 30 s, and a
+  // throttled pass legitimately frees nothing.
+  if (evicted === 0 || gc !== 'collected') return;
+  const wasSuppressed = isHeadroomSuppressed(headroomBreaker);
+  headroomBreaker = noteHeadroomPass(headroomBreaker, {
+    evicted,
+    externalBefore,
+    externalAfter: currentExternalBytes(),
+  });
+  if (!wasSuppressed && isHeadroomSuppressed(headroomBreaker)) {
+    // Deliberately distinct from the "under memory pressure" line above: "we are
+    // low on memory" and "our only lever does not work" are completely different
+    // operator stories, and before this they looked identical.
+    console.error(
+      `[db] headroom guard SUSPENDED for ${String(Math.round(HEADROOM_BREAKER_BACKOFF_MS / 1000))}s: `
+      + `${String(HEADROOM_BREAKER_TRIP_COUNT)} consecutive evictions failed to reduce external memory. `
+      + 'Evicting is not reclaiming — see docs/128 §128.5.8.',
+    );
+  }
+}
+
+/** HS-9480 — is the pressure guard currently suspended? For diagnostics + tests. */
+export function headroomGuardSuspended(): boolean {
+  return isHeadroomSuppressed(headroomBreaker);
+}
+
+/** Test seam — re-arm the breaker. */
+export function resetHeadroomBreakerForTests(): void {
+  headroomBreaker = initialHeadroomBreakerState();
 }
 
 /**

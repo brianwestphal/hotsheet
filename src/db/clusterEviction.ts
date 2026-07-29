@@ -514,3 +514,83 @@ export function headroomEvictionCount(
   const deficit = headroomFloorBytes - headroom;
   return Math.max(1, Math.ceil(deficit / APPROX_CLUSTER_EXTERNAL_BYTES));
 }
+
+// --- Headroom circuit breaker (HS-9480, docs/128 §128.5.8) ---
+
+/**
+ * The headroom guard has no idea whether it is working, and in the 2026-07-29
+ * death spiral that made it the accelerant rather than the brake: **375 headroom
+ * evictions and 372 churned reopens in ~130 seconds while `external` ROSE**
+ * (4237 → 5845 MB, peaking at 8449 MB). Closing returned nothing (HS-9479 — no
+ * collection ran), so the guard still saw high `external`, while the work that
+ * needed a cluster reopened one and allocated a fresh ~180 MB heap. Every cycle
+ * net ADDED memory:
+ *
+ *     high external -> evict (frees nothing) -> reopen (+180 MB) -> higher external -> evict harder
+ *
+ * HS-9479 fixed the cause. This is the guard against the assumption breaking
+ * again, and it is worth having on its own terms: a control loop that cannot
+ * tell success from failure will eventually run away. When consecutive passes
+ * demonstrably fail to reduce `external`, stop pressure-evicting for a while —
+ * an un-evicted warm cluster costs the same memory as an evicted-then-reopened
+ * one, minus the reopen.
+ *
+ * The HS-9468 `pendingReclaim` credit was designed for this and was live at the
+ * time; it didn't help because it assumes the memory comes back within 15 s.
+ * Here it never came back at all, so the credit only delayed the loop by a
+ * window. This breaker keys off the *measured* outcome instead of an assumption
+ * about timing.
+ */
+export interface HeadroomBreakerState {
+  /** Consecutive measured passes that failed to reduce `external`. */
+  ineffective: number;
+  /** Epoch ms until which pressure eviction is suppressed; 0 when armed. */
+  suppressedUntil: number;
+}
+
+export function initialHeadroomBreakerState(): HeadroomBreakerState {
+  return { ineffective: 0, suppressedUntil: 0 };
+}
+
+/** Consecutive ineffective passes before the breaker trips. */
+export const HEADROOM_BREAKER_TRIP_COUNT = 3;
+/** How long pressure eviction stays suppressed once tripped. */
+export const HEADROOM_BREAKER_BACKOFF_MS = 5 * 60_000;
+/**
+ * A pass counts as effective if it freed at least this share of what the
+ * clusters it closed should have been worth. Deliberately forgiving (a quarter):
+ * concurrent work allocates during a pass, and the point is to catch "memory
+ * went UP", not to grade the collector. The consecutive-pass requirement covers
+ * the rest.
+ */
+const EFFECTIVE_FRACTION = 0.25;
+
+/** Is pressure eviction currently suppressed? */
+export function isHeadroomSuppressed(state: HeadroomBreakerState, now: number = Date.now()): boolean {
+  return state.suppressedUntil > now;
+}
+
+/**
+ * Fold one MEASURED pass into the breaker state.
+ *
+ * Only call this for a pass whose outcome is actually interpretable: it closed
+ * at least one cluster AND a collection ran. A pass whose forced GC was
+ * throttled (the common case — `forceGcNow` is rate-limited to one collection
+ * per 30 s because it is stop-the-world) legitimately frees nothing, and
+ * counting it would trip the breaker on a perfectly healthy server.
+ */
+export function noteHeadroomPass(
+  state: HeadroomBreakerState,
+  input: { evicted: number; externalBefore: number; externalAfter: number },
+  now: number = Date.now(),
+): HeadroomBreakerState {
+  const expected = input.evicted * APPROX_CLUSTER_EXTERNAL_BYTES * EFFECTIVE_FRACTION;
+  const freed = input.externalBefore - input.externalAfter;
+  if (freed >= expected) {
+    // Working. Reset completely — this also re-arms after a back-off probe.
+    return { ineffective: 0, suppressedUntil: 0 };
+  }
+  const ineffective = state.ineffective + 1;
+  if (ineffective < HEADROOM_BREAKER_TRIP_COUNT) return { ineffective, suppressedUntil: state.suppressedUntil };
+  return { ineffective, suppressedUntil: now + HEADROOM_BREAKER_BACKOFF_MS };
+}
