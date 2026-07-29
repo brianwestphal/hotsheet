@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms5ubmg896xq118y",
+          "message": {
+            "text": "Holding restartTerminal open on a caller-controlled deferred is what makes this testable at all — the real in-flight window is however long one HTTP call takes, so a timing-based test would be flaky in exactly the direction that hides the bug.\n\nVerified the tests fail against the pre-fix code (guard removed, target read from the captured parameter):\n\n× runs ONE spawn and opens ONLY the dedicated view\n× collapses repeated clicks during one in-flight spawn into a single spawn\n  Tests  2 failed | 3 passed (5)\n\nThe discrimination is the useful part: the two race cases fail, and the three control cases — plain single click still centers, the guard releases for a later spawn, a failed spawn enlarges nothing — still pass. So the suite is pinning the race specifically, not just \"something changed in this file\".\n\nThe tile is exited rather than not_spawned deliberately; see the note on spawnAndEnlarge in src/client/terminalTileGridCenter.tsx for why only that path can be re-entered.\n\nThe e2e half (e2e/dashboard-cold-tile-dblclick.spec.ts) covers what a unit test cannot: real click/dblclick dispatch through the browser's own event ordering, with the restart route delayed 1.2 s. Its load-bearing assertion is the restart COUNT (2 pre-fix, 1 post-fix) — the view-state assertions passed even pre-fix in one run, since which overlay survives depends on the order the two spawns settle.\n",
+            "markdown": "Holding `restartTerminal` open on a caller-controlled deferred is what makes this testable at all — the real in-flight window is however long one HTTP call takes, so a timing-based test would be flaky in exactly the direction that hides the bug.\n\nVerified the tests fail against the pre-fix code (guard removed, target read from the captured parameter):\n\n```\n× runs ONE spawn and opens ONLY the dedicated view\n× collapses repeated clicks during one in-flight spawn into a single spawn\n  Tests  2 failed | 3 passed (5)\n```\n\nThe discrimination is the useful part: the two race cases fail, and the three control cases — plain single click still centers, the guard releases for a later spawn, a failed spawn enlarges nothing — still pass. So the suite is pinning the race specifically, not just \"something changed in this file\".\n\nThe tile is `exited` rather than `not_spawned` deliberately; see the note on `spawnAndEnlarge` in `src/client/terminalTileGridCenter.tsx` for why only that path can be re-entered.\n\nThe e2e half (`e2e/dashboard-cold-tile-dblclick.spec.ts`) covers what a unit test cannot: real click/dblclick dispatch through the browser's own event ordering, with the restart route delayed 1.2 s. Its load-bearing assertion is the restart COUNT (2 pre-fix, 1 post-fix) — the view-state assertions passed even pre-fix in one run, since which overlay survives depends on the order the two spawns settle.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/terminalTileGridSpawnRace.test.ts"
+                },
+                "region": {
+                  "startLine": 15,
+                  "endLine": 25,
+                  "snippet": {
+                    "text": " * These tests hold `restartTerminal` open on a controllable deferred, which is\n * the only way to make the in-flight window wide enough to drive\n * deterministically — the real window is however long the HTTP call takes, so a\n * timing-based test would be inherently flaky.\n *\n * The tile is `exited` rather than `not_spawned` deliberately: only the exited\n * path awaits anything, so it is the only one that can be re-entered. A\n * `not_spawned` tile runs `spawnAndEnlarge` straight through with no await and\n * is already `alive` by the time `dblclick` arrives.\n */\nimport { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ]
+          },
+          "workItemUris": [
+            "HS-9486"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "e6be6518c642649d575bddcacc982218"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "6520bdb86295bc9ea13d7fb5dc7698c40c45ce0f",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

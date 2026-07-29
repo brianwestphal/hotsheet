@@ -91,6 +91,19 @@ export interface InternalTile {
    *  (drawer grid) or no cluster was rendered. Lives for the tile's full
    *  lifetime, like `bellEffectDispose`. */
   statsEffectDispose: (() => void) | null;
+  /** HS-9486 — the in-flight `spawnAndEnlarge` run for this tile, or null.
+   *  A cold tile's spawn awaits `restartTerminal`, and BOTH enlarge entry
+   *  points gate on `state !== 'alive'` — which stays true for the whole
+   *  await. So an unhurried double-click (macOS threshold ~500 ms, well past
+   *  the 220 ms `SINGLE_CLICK_DELAY_MS`) let the single-click timer start a
+   *  spawn and the `dblclick` start a SECOND one against the same PTY. A
+   *  later caller awaits this instead of starting its own. */
+  spawning: Promise<void> | null;
+  /** HS-9486 — the enlarge target the in-flight spawn should apply when it
+   *  finishes. LAST WRITER WINS, and the running spawn reads it only after
+   *  its await: a double-click must land in the dedicated view even though
+   *  the single-click timer asked for center first. Null when idle. */
+  spawnTarget: 'center' | 'dedicated' | null;
 }
 
 export interface DedicatedView {

@@ -88,7 +88,38 @@ export function onTileDblClick(ctx: TileGridContext, tile: InternalTile, e: Mous
   catch (err) { console.error('terminalTileGrid: enterDedicatedView failed', err); }
 }
 
-async function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
+/**
+ * HS-9486 — spawn a cold tile, then enlarge it. Re-entrant by design: a
+ * double-click on a cold tile reaches this twice (the 220 ms single-click timer
+ * fires first and asks for `center`, then `dblclick` arrives ~280 ms later and
+ * asks for `dedicated`), and both callers still see `state !== 'alive'` because
+ * that flag is only set AFTER the `restartTerminal` await.
+ *
+ * Pre-fix that meant two `restartTerminal` calls against one PTY, two
+ * `mountTileViaCheckout` + `markTileMounted` runs, and a centered overlay racing
+ * a dedicated view — whichever await settled last won, so the user could end up
+ * with both up, or a centered tile stranded underneath the dedicated overlay.
+ *
+ * Now the first call owns the run and later callers just await it. The target is
+ * re-read AFTER the await so the LATEST request wins, which is what makes a
+ * double-click land in the dedicated view rather than wherever the timer pointed.
+ * Note that clearing the pending single-click timer (which `onTileDblClick`
+ * already did) can't fix this on its own — by the time `dblclick` fires, the
+ * timer has usually already run and the spawn is in flight.
+ */
+function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {
+  tile.spawnTarget = target;
+  const inFlight = tile.spawning;
+  if (inFlight !== null) return inFlight;
+  const run = runSpawnAndEnlarge(ctx, tile).finally(() => {
+    tile.spawning = null;
+    tile.spawnTarget = null;
+  });
+  tile.spawning = run;
+  return run;
+}
+
+async function runSpawnAndEnlarge(ctx: TileGridContext, tile: InternalTile): Promise<void> {
   const wasExited = tile.state === 'exited';
   // HS-8059 — clear the inline theme-bg so the `Starting…` card uses its
   // own `--bg-secondary` instead of being painted with the previous mount's
@@ -116,8 +147,10 @@ async function spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target:
     tile.preview.replaceChildren(renderPreviewContent(ctx, tile.state, tile.exitCode));
     return;
   }
-  if (target === 'center') centerTile(ctx, tile);
-  else enterDedicatedView(ctx, tile, null);
+  // Read the target HERE, not from a parameter captured before the await —
+  // a dblclick that arrived mid-spawn has since upgraded it to 'dedicated'.
+  if (tile.spawnTarget === 'dedicated') enterDedicatedView(ctx, tile, null);
+  else centerTile(ctx, tile);
 }
 
 // --- Centered overlay (FLIP animation, §25.7 / HS-6867) ---

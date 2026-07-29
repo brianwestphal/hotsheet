@@ -198,6 +198,8 @@ export function renderTile(ctx: TileGridContext, entry: TileEntry): HTMLElement 
     bellPending,
     bellEffectDispose,
     statsEffectDispose,
+    spawning: null,
+    spawnTarget: null,
   };
   const key = tileKeyFor(entry);
   ctx.tiles.set(key, tile);

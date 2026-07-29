@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "ms5ubd8j9w97a41h",
+          "message": {
+            "text": "The guard is split into a sync wrapper plus an async body on purpose: the wrapper must claim the in-flight slot before any await, or the second caller can slip past it.\n\nIf the whole thing stayed one async function and set tile.spawning inside, the assignment would still happen synchronously (an async function runs to its first await eagerly), but the ordering would depend on where the assignment sat relative to the first await — a fragile invariant for the next editor to preserve. The wrapper makes it structural: tile.spawning is set before runSpawnAndEnlarge can yield.\n\nTwo decisions worth flagging:\n\n- The target is state on the tile, not a parameter. A parameter is captured at call time, and the whole point is that the request can be upgraded mid-flight — the single-click timer asks for center, the dblclick asks for dedicated ~280 ms later, and the spawn is still awaiting restartTerminal. Reading tile.spawnTarget after the await is what makes a double-click land in the dedicated view. Last writer wins.\n- The later caller returns the in-flight promise rather than a resolved one. Callers use void spawnAndEnlarge(...) today, so nothing observes it — but returning the real promise means a future await gets the honest completion signal instead of resolving early.\n\nOnly the exited path is genuinely re-entrant: not_spawned awaits nothing, so it runs straight through and the tile is already alive when the second event arrives. The guard covers both anyway, since which states await is not something a caller should have to know.\n",
+            "markdown": "The guard is split into a sync wrapper plus an async body on purpose: the wrapper must claim the in-flight slot *before* any await, or the second caller can slip past it.\n\nIf the whole thing stayed one `async function` and set `tile.spawning` inside, the assignment would still happen synchronously (an async function runs to its first await eagerly), but the ordering would depend on where the assignment sat relative to the first `await` — a fragile invariant for the next editor to preserve. The wrapper makes it structural: `tile.spawning` is set before `runSpawnAndEnlarge` can yield.\n\nTwo decisions worth flagging:\n\n- **The target is state on the tile, not a parameter.** A parameter is captured at call time, and the whole point is that the request can be *upgraded* mid-flight — the single-click timer asks for `center`, the dblclick asks for `dedicated` ~280 ms later, and the spawn is still awaiting `restartTerminal`. Reading `tile.spawnTarget` after the await is what makes a double-click land in the dedicated view. Last writer wins.\n- **The later caller returns the in-flight promise rather than a resolved one.** Callers use `void spawnAndEnlarge(...)` today, so nothing observes it — but returning the real promise means a future `await` gets the honest completion signal instead of resolving early.\n\nOnly the `exited` path is genuinely re-entrant: `not_spawned` awaits nothing, so it runs straight through and the tile is already `alive` when the second event arrives. The guard covers both anyway, since which states await is not something a caller should have to know.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/terminalTileGridCenter.tsx"
+                },
+                "region": {
+                  "startLine": 91,
+                  "endLine": 120,
+                  "snippet": {
+                    "text": "/**\n * HS-9486 — spawn a cold tile, then enlarge it. Re-entrant by design: a\n * double-click on a cold tile reaches this twice (the 220 ms single-click timer\n * fires first and asks for `center`, then `dblclick` arrives ~280 ms later and\n * asks for `dedicated`), and both callers still see `state !== 'alive'` because\n * that flag is only set AFTER the `restartTerminal` await.\n *\n * Pre-fix that meant two `restartTerminal` calls against one PTY, two\n * `mountTileViaCheckout` + `markTileMounted` runs, and a centered overlay racing\n * a dedicated view — whichever await settled last won, so the user could end up\n * with both up, or a centered tile stranded underneath the dedicated overlay.\n *\n * Now the first call owns the run and later callers just await it. The target is\n * re-read AFTER the await so the LATEST request wins, which is what makes a\n * double-click land in the dedicated view rather than wherever the timer pointed.\n * Note that clearing the pending single-click timer (which `onTileDblClick`\n * already did) can't fix this on its own — by the time `dblclick` fires, the\n * timer has usually already run and the spawn is in flight.\n */\nfunction spawnAndEnlarge(ctx: TileGridContext, tile: InternalTile, target: 'center' | 'dedicated'): Promise<void> {\n  tile.spawnTarget = target;\n  const inFlight = tile.spawning;\n  if (inFlight !== null) return inFlight;\n  const run = runSpawnAndEnlarge(ctx, tile).finally(() => {\n    tile.spawning = null;\n    tile.spawnTarget = null;\n  });\n  tile.spawning = run;\n  return run;\n}"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "workItemUris": [
+            "HS-9486"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "43553887fcbd67b7614d1eed13f1998d"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "6520bdb86295bc9ea13d7fb5dc7698c40c45ce0f",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}
