@@ -10,4 +10,9 @@ export const antigravityPlugin: AiToolPlugin = {
   tier: 'cli-agent',
   devGateKey: 'dev_tool_antigravity',
   detection: { binaries: ['agy'], paths: ['AGENTS.md'] },
+  instructions: {
+    relPath: 'AGENTS.md',
+    frontmatter: '',
+    adapterSkillsRoot: '.agents/skills',
+  },
 };

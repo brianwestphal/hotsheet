@@ -150,11 +150,11 @@ describe('registry ↔ existing per-tool tables agree (HS-9490)', () => {
 });
 
 describe('detection spec matches the predicates it replaces (HS-9490)', () => {
-  // Phase 1 does not yet ROUTE detection through the registry — `aiInstructionsTools.ts`
-  // and `skills.ts` still own their predicates (phase 2, HS-9491). These pin the specs
-  // against those predicates now, so the phase-2 swap is a verified no-op rather than a
-  // hope. Expressed as literal expectations rather than by importing the old tables,
-  // because the point is to catch a change on EITHER side.
+  // HS-9491 — `aiInstructionsTools.ts` now ROUTES detection through these specs;
+  // `skills.ts` still owns its own predicate until the skills half lands. So this table
+  // is half live-contract, half drift guard, and stays literal either way: importing the
+  // other side would make it agree with itself, when the point is to catch a change on
+  // EITHER side.
   //
   // HS-9500 — Claude's two predicates used to disagree (instructions counted
   // `CLAUDE.md`, skills generation did not). `skills.ts` was brought into line with the
@@ -185,5 +185,86 @@ describe('detection spec matches the predicates it replaces (HS-9490)', () => {
     expect(existsSync(emptyDir)).toBe(true);
     expect(detectsSpec({ binaries: [], paths: ['.'] }, emptyDir)).toBe(true);
     expect(detectsSpec({ binaries: [], paths: ['nope-not-here'] }, emptyDir)).toBe(false);
+  });
+});
+
+/**
+ * HS-9491 (docs/132 phase 2) — the instructions slice. The per-tool table that used to
+ * live in `aiInstructionsTools.ts` is now derived from these declarations, so these are
+ * both a conformance check and the drift guard for the move.
+ */
+describe('instructions capability (HS-9491)', () => {
+  const WITH_INSTRUCTIONS = PLUGINS.filter(p => p.instructions !== undefined);
+
+  it('every plugin except goose declares an instruction file', () => {
+    // Pinned as an exact list: adding a tool with no instruction convention should be a
+    // deliberate, visible choice. Goose's is unverified — HS-9347, docs/118 §118.6.
+    const without = PLUGINS.filter(p => p.instructions === undefined).map(p => p.id);
+    expect(without).toEqual(['goose']);
+  });
+
+  it.each(WITH_INSTRUCTIONS.map(p => [p.id, p] as const))('%s declares a sane instruction file', (_id, plugin) => {
+    const spec = plugin.instructions!;
+    expect(spec.relPath).not.toBe('');
+    expect(spec.relPath.startsWith('/')).toBe(false);
+    expect(spec.relPath.includes('..')).toBe(false);
+    // Declared POSIX-style; `aiInstructionsTools.ts` converts to the platform separator.
+    expect(spec.relPath.includes('\\')).toBe(false);
+    // Frontmatter, when present, must be a complete YAML block — a half-written one
+    // would be prepended verbatim to the file on create.
+    if (spec.frontmatter !== '') {
+      expect(spec.frontmatter.startsWith('---\n')).toBe(true);
+      expect(spec.frontmatter.endsWith('---\n')).toBe(true);
+    }
+    if (spec.adapterSkillsRoot !== null) {
+      expect(spec.adapterSkillsRoot).not.toBe('');
+      expect(spec.adapterSkillsRoot.startsWith('/')).toBe(false);
+    }
+  });
+
+  it('the adapter family is exactly the tools docs/118 says it is', () => {
+    const family = WITH_INSTRUCTIONS
+      .filter(p => p.instructions!.adapterSkillsRoot !== null)
+      .map(p => p.id);
+    // Registry order, not docs order — `family` is filtered from `listPlugins()`.
+    expect(family).toEqual(['codex', 'antigravity', 'gemini', 'opencode']);
+  });
+
+  it('adapter roots are per FILE, not per tool', () => {
+    // The AGENTS.md-sharing tools must agree on ONE root, or they rewrite each other's
+    // file on every pass (docs/118). Gemini has its own file, so its own root.
+    const rootFor = (id: string) => getPlugin(id)?.instructions?.adapterSkillsRoot;
+    expect(rootFor('codex')).toBe('.agents/skills');
+    expect(rootFor('antigravity')).toBe('.agents/skills');
+    expect(rootFor('opencode')).toBe('.agents/skills');
+    expect(rootFor('gemini')).toBe('.gemini/skills');
+  });
+
+  it('tools sharing an instruction file agree on its path', () => {
+    // Three tools write AGENTS.md. The double-write is idempotent ONLY while they
+    // target the same path; a divergence here means two of them fight over one file.
+    const byPath = new Map<string, string[]>();
+    for (const p of WITH_INSTRUCTIONS) {
+      const list = byPath.get(p.instructions!.relPath) ?? [];
+      list.push(p.id);
+      byPath.set(p.instructions!.relPath, list);
+    }
+    expect(byPath.get('AGENTS.md')).toEqual(['codex', 'antigravity', 'opencode']);
+  });
+
+  it('matches the paths the pre-registry table used (HS-9491 move guard)', () => {
+    const EXPECTED: Record<string, string> = {
+      claude: 'CLAUDE.md',
+      codex: 'AGENTS.md',
+      antigravity: 'AGENTS.md',
+      gemini: 'GEMINI.md',
+      opencode: 'AGENTS.md',
+      cursor: '.cursor/rules/hotsheet-instructions.mdc',
+      copilot: '.github/copilot-instructions.md',
+      windsurf: '.windsurf/rules/hotsheet-instructions.md',
+    };
+    for (const [id, relPath] of Object.entries(EXPECTED)) {
+      expect(getPlugin(id)?.instructions?.relPath, `relPath drift for ${id}`).toBe(relPath);
+    }
   });
 });

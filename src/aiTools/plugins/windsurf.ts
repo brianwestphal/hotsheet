@@ -2,6 +2,9 @@
 
 import type { AiToolPlugin } from '../types.js';
 
+const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
+const WINDSURF_FRONTMATTER = `---\ntrigger: manual\ndescription: ${SECTION_DESCRIPTION}\n---\n`;
+
 export const windsurfPlugin: AiToolPlugin = {
   id: 'windsurf',
   displayName: 'Windsurf',
@@ -9,4 +12,9 @@ export const windsurfPlugin: AiToolPlugin = {
   tier: 'editor',
   devGateKey: null,
   detection: { binaries: ['windsurf'], paths: ['.windsurf'] },
+  instructions: {
+    relPath: '.windsurf/rules/hotsheet-instructions.md',
+    frontmatter: WINDSURF_FRONTMATTER,
+    adapterSkillsRoot: null,
+  },
 };

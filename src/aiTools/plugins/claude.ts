@@ -22,4 +22,11 @@ export const claudePlugin: AiToolPlugin = {
     // answer both call sites already agree on, rather than having to pick one.
     paths: ['.claude', 'CLAUDE.md'],
   },
+  // The CANONICAL source (docs/118): every adapter-family tool's file references
+  // this one, so it never becomes an adapter itself.
+  instructions: {
+    relPath: 'CLAUDE.md',
+    frontmatter: '',
+    adapterSkillsRoot: null,
+  },
 };

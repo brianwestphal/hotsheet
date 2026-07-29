@@ -11,4 +11,9 @@ export const opencodePlugin: AiToolPlugin = {
   tier: 'cli-agent',
   devGateKey: 'dev_tool_opencode',
   detection: { binaries: ['opencode'], paths: ['AGENTS.md'] },
+  instructions: {
+    relPath: 'AGENTS.md',
+    frontmatter: '',
+    adapterSkillsRoot: '.agents/skills',
+  },
 };

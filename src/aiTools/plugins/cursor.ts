@@ -3,6 +3,9 @@
 
 import type { AiToolPlugin } from '../types.js';
 
+const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
+const CURSOR_FRONTMATTER = `---\ndescription: ${SECTION_DESCRIPTION}\nalwaysApply: false\n---\n`;
+
 export const cursorPlugin: AiToolPlugin = {
   id: 'cursor',
   displayName: 'Cursor',
@@ -10,4 +13,9 @@ export const cursorPlugin: AiToolPlugin = {
   tier: 'editor',
   devGateKey: null, // Tier-B tools are never gated — nothing half-built to hide
   detection: { binaries: ['cursor'], paths: ['.cursor'] },
+  instructions: {
+    relPath: '.cursor/rules/hotsheet-instructions.mdc',
+    frontmatter: CURSOR_FRONTMATTER,
+    adapterSkillsRoot: null,
+  },
 };

@@ -62,4 +62,38 @@ export interface AiToolPlugin {
   readonly devGateKey: DevFeatureKey | null;
   /** Declarative detection (see `DetectionSpec`). */
   readonly detection: DetectionSpec;
+  /**
+   * HS-9491 — the tool's managed-instructions file, or absent when it has no
+   * instruction convention we have verified (goose today; see docs/118 §118.6).
+   */
+  readonly instructions?: InstructionsCapability;
+}
+
+/**
+ * HS-9491 (docs/132 §132.3) — WHERE a tool's managed sections live and in what
+ * shape. Pure DATA: the machinery that reads and writes those sections (markers,
+ * versioning, `applyManagedSections`, `planAdapterConversion`) is generic and stays
+ * in `aiInstructions.ts` / `aiInstructionsTools.ts`. If a plugin ever needs to own
+ * section logic, the split is wrong.
+ *
+ * Data-only is also what keeps this on the plugin at all — `plugins/**` must not
+ * import node builtins (see the header), and every field here is a string.
+ */
+export interface InstructionsCapability {
+  /** Project-root-relative path, e.g. `CLAUDE.md`, `.cursor/rules/hotsheet-instructions.mdc`. */
+  readonly relPath: string;
+  /** YAML frontmatter written only when CREATING the file; '' for plain markdown.
+   *  An existing file's frontmatter is preserved on update. */
+  readonly frontmatter: string;
+  /**
+   * docs/118 — the skills root the THIN ADAPTER section points at, or null when the
+   * tool always gets the full managed sections. Non-null marks the adapter family:
+   * when a canonical Claude source exists, this tool's file gets a reference to it
+   * instead of a duplicate.
+   *
+   * Per FILE, not per tool — the AGENTS.md-sharing tools all say `.agents/skills`
+   * (one text per file, so no rewrite ping-pong), while gemini's `GEMINI.md` says
+   * `.gemini/skills`, its real discovery root.
+   */
+  readonly adapterSkillsRoot: string | null;
 }

@@ -7,11 +7,12 @@
 // Detection mirrors `skills.ts::ensureSkillsForDir` (PATH probe + folder presence).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, sep } from 'path';
 
 import { type AdapterConversionPlan, adapterSectionsFor, applyManagedSections, canonicalClaudeSourceExists, claudeMdPath, convertBodyToAdapter, getInstructionsStatus, type InstructionsStatus, MANAGED_SECTIONS,type ManagedSection, planAdapterConversion, readClaudeMd, removeManagedSections } from './aiInstructions.js';
-import type { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
-import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
+import { detectsTool } from './aiTools/detect.js';
+import { listPlugins } from './aiTools/registry.js';
+import { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 
 // HS-9366 — derived from the wire SSOT (`src/api/aiInstructions.ts`), so adding
 // a tool to the server table without the client schema is a compile error (the
@@ -19,31 +20,21 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 export type AiInstructionTool = typeof AI_INSTRUCTION_TOOLS[number];
 
 /**
- * HS-9366 / HS-9374 (docs/118) — the ADAPTER-family tools support ADAPTER MODE:
- * when the project has a canonical Claude source (`CLAUDE.md` + `.claude/skills`),
- * their instruction file gets the thin adapter section ("CLAUDE.md is the shared
- * source of truth") instead of a duplicate of the full managed sections. The map
- * value is the skills root the adapter text references — per FILE, so the
- * AGENTS.md-sharing tools all say `.agents/skills` (one text per file, no
- * rewrite ping-pong) while gemini's GEMINI.md says `.gemini/skills` (its real
- * discovery root, verified against gemini-cli 0.49.0).
+ * HS-9491 (docs/132) — the per-tool table that used to live here (`TOOLS` +
+ * `ADAPTER_FAMILY`) now comes from the AI-tool plugin registry. Everything below is
+ * the generic machinery: markers, versioning, section application, adapter
+ * conversion. Only the DATA moved.
+ *
+ * A tool's plugin declares `instructions` (relPath / frontmatter /
+ * adapterSkillsRoot); one without it — goose, whose conventions are unverified
+ * (docs/118 §118.6) — is simply absent here, which is the correct answer rather
+ * than a gap.
+ *
+ * The adapter family is now `adapterSkillsRoot !== null`. It is per FILE, so the
+ * AGENTS.md-sharing tools all name `.agents/skills` (one text per file, so no
+ * rewrite ping-pong) while gemini's `GEMINI.md` names `.gemini/skills`, its real
+ * discovery root.
  */
-const ADAPTER_FAMILY: ReadonlyMap<AiInstructionTool, string> = new Map([
-  ['antigravity', '.agents/skills'],
-  ['opencode', '.agents/skills'],
-  ['codex', '.agents/skills'],
-  ['gemini', '.gemini/skills'],
-]);
-
-const SECTION_DESCRIPTION = 'Hot Sheet — ticket-driven work, testing, and requirements-doc conventions';
-
-// Cursor `.mdc` rules need YAML frontmatter (`description` + `alwaysApply`);
-// Windsurf `.md` rules need `trigger` + `description`. Claude/Copilot are plain
-// markdown. Frontmatter is written only when CREATING a file; on update the
-// existing frontmatter is preserved (`splitFrontmatter`).
-const CURSOR_FRONTMATTER = `---\ndescription: ${SECTION_DESCRIPTION}\nalwaysApply: false\n---\n`;
-const WINDSURF_FRONTMATTER = `---\ntrigger: manual\ndescription: ${SECTION_DESCRIPTION}\n---\n`;
-
 interface ToolTarget {
   tool: AiInstructionTool;
   label: string;
@@ -53,59 +44,29 @@ interface ToolTarget {
   frontmatter: string;
   /** Is this tool used for the project? */
   detect: (projectRoot: string) => boolean;
+  /** docs/118 — the adapter's skills root, or null when this tool always gets the
+   *  full managed sections. */
+  adapterSkillsRoot: string | null;
 }
 
-const TOOLS: readonly ToolTarget[] = [
-  {
-    tool: 'claude', label: 'Claude Code', relPath: 'CLAUDE.md', frontmatter: '',
-    detect: (r) => isExecutableOnPath('claude') || existsSync(join(r, '.claude')) || existsSync(join(r, 'CLAUDE.md')),
-  },
-  {
-    tool: 'cursor', label: 'Cursor', relPath: join('.cursor', 'rules', 'hotsheet-instructions.mdc'), frontmatter: CURSOR_FRONTMATTER,
-    detect: (r) => isExecutableOnPath('cursor') || existsSync(join(r, '.cursor')),
-  },
-  {
-    tool: 'windsurf', label: 'Windsurf', relPath: join('.windsurf', 'rules', 'hotsheet-instructions.md'), frontmatter: WINDSURF_FRONTMATTER,
-    detect: (r) => isExecutableOnPath('windsurf') || existsSync(join(r, '.windsurf')),
-  },
-  {
-    tool: 'copilot', label: 'GitHub Copilot', relPath: join('.github', 'copilot-instructions.md'), frontmatter: '',
-    detect: (r) => existsSync(join(r, '.github', 'copilot-instructions.md')) || existsSync(join(r, '.github', 'prompts')),
-  },
-  {
-    // HS-9322 — Antigravity (`agy`) reads the AGENTS.md standard (verified in the
-    // agy binary: instruction paths `GEMINI.md` / `AGENTS.md` / `.agents/rules/*.md`).
-    // Plain markdown, repo root. Gives agy the same managed Hot Sheet sections as
-    // CLAUDE.md. (The /hotsheet worklist SKILL — agy's `.agents/skills/` format — is
-    // a separate follow-on; see HS-9322 notes.)
-    tool: 'antigravity', label: 'Antigravity', relPath: 'AGENTS.md', frontmatter: '',
-    detect: (r) => isExecutableOnPath('agy') || existsSync(join(r, 'AGENTS.md')),
-  },
-  {
-    // HS-9344 — OpenCode (the lead ACP agent, docs/114) reads the same AGENTS.md
-    // standard, so an opencode-driven project gets the managed Hot Sheet sections too.
-    // Shares the AGENTS.md file with the Antigravity entry above — when both are present
-    // the file is written twice, which is idempotent (`applyManagedSections` no-ops when
-    // unchanged), so no special-casing is needed.
-    tool: 'opencode', label: 'OpenCode', relPath: 'AGENTS.md', frontmatter: '',
-    detect: (r) => isExecutableOnPath('opencode') || existsSync(join(r, 'AGENTS.md')),
-  },
-  {
-    // HS-9366 (docs/118) — Codex reads the AGENTS.md standard (+ `.agents/skills`,
-    // the video-studio model). Shares the AGENTS.md file with the two entries above
-    // (idempotent double-write, same as the OpenCode note).
-    tool: 'codex', label: 'Codex', relPath: 'AGENTS.md', frontmatter: '',
-    detect: (r) => isExecutableOnPath('codex') || existsSync(join(r, 'AGENTS.md')),
-  },
-  {
-    // HS-9374 (docs/118) — Gemini CLI reads hierarchical `GEMINI.md` context files
-    // (verified against the installed gemini-cli 0.49.0 — no AGENTS.md support in
-    // its bundle) and discovers skills at `.gemini/skills/<name>/SKILL.md`. Its
-    // adapter text therefore references `.gemini/skills` (ADAPTER_FAMILY above).
-    tool: 'gemini', label: 'Gemini CLI', relPath: 'GEMINI.md', frontmatter: '',
-    detect: (r) => isExecutableOnPath('gemini') || existsSync(join(r, 'GEMINI.md')) || existsSync(join(r, '.gemini')),
-  },
-];
+function isInstructionTool(id: string): id is AiInstructionTool {
+  return (AI_INSTRUCTION_TOOLS as readonly string[]).includes(id);
+}
+
+/** Derived from the registry, in its declared order. */
+const TOOLS: readonly ToolTarget[] = listPlugins().flatMap((plugin): ToolTarget[] => {
+  const spec = plugin.instructions;
+  if (spec === undefined || !isInstructionTool(plugin.id)) return [];
+  return [{
+    tool: plugin.id,
+    label: plugin.productName,
+    relPath: spec.relPath.split('/').join(sep),
+    frontmatter: spec.frontmatter,
+    detect: (root: string) => detectsTool(plugin, root),
+    adapterSkillsRoot: spec.adapterSkillsRoot,
+  }];
+});
+
 
 /**
  * HS-9366 / HS-9375 (docs/118 §118.3, docs/120) — which section set a tool's
@@ -125,8 +86,8 @@ const TOOLS: readonly ToolTarget[] = [
  *    FULL; the user must reconcile (docs/120 §120.4).
  */
 function sectionSetFor(projectRoot: string, tool: AiInstructionTool, existingBody: string): { sections: ManagedSection[]; stripFullSections: boolean } {
-  const skillsRoot = ADAPTER_FAMILY.get(tool);
-  if (skillsRoot === undefined) return { sections: MANAGED_SECTIONS, stripFullSections: false };
+  const skillsRoot = TOOLS.find(t => t.tool === tool)?.adapterSkillsRoot ?? null;
+  if (skillsRoot === null) return { sections: MANAGED_SECTIONS, stripFullSections: false };
   if (!canonicalClaudeSourceExists(projectRoot)) return { sections: MANAGED_SECTIONS, stripFullSections: false };
   const adapterSections = adapterSectionsFor(skillsRoot);
   const fullPresent = getInstructionsStatus(existingBody).sections.some(s => s.present);
@@ -236,7 +197,8 @@ export function writeInstructionsForTool(projectRoot: string, tool: AiInstructio
  * inside `writeInstructionsForTool`; `conflict` stays full-mode.
  */
 export function adapterConversionPlanFor(projectRoot: string, tool: AiInstructionTool): AdapterConversionPlan | null {
-  if (!ADAPTER_FAMILY.has(tool) || !canonicalClaudeSourceExists(projectRoot)) return null;
+  const isAdapterFamily = (TOOLS.find(t => t.tool === tool)?.adapterSkillsRoot ?? null) !== null;
+  if (!isAdapterFamily || !canonicalClaudeSourceExists(projectRoot)) return null;
   const t = TOOLS.find(x => x.tool === tool);
   if (t === undefined) return null;
   const path = join(projectRoot, t.relPath);

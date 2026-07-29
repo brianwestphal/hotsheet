@@ -301,7 +301,8 @@ each phase leaving the tree green and shippable.
 | Phase | Ticket | Scope |
 |---|---|---|
 | **1** | HS-9490 ✅ | `src/aiTools/` + the interface + the registry + plugin stubs carrying only identity. Adopted in `agentDisplayName` and the dropdown. **SHIPPED** — see §132.12 for what building it changed about the design. |
-| **2** | HS-9491 | Instructions + skills: fold `TOOLS`, `ADAPTER_FAMILY`, `skillArtifactRelPath`, and the `ensureSkillsForDir` if-chain into plugins. Highest branch-count payoff. |
+| **2a** | HS-9491 ✅ | Instructions: `TOOLS` + `ADAPTER_FAMILY` → the plugin's `instructions` capability. **SHIPPED.** |
+| **2b** | HS-9503 | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → a **server-only capability sibling** (§132.11.1). |
 | **3** | HS-9492 | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. |
 | **4** | HS-9493 | Drive + permissions + MCP: absorb `mcpHooksAgents.ts` and `resolveAcpAgentCommand`; **close the §132.1.1 leak** — the five generic modules stop importing `codexAppServer.js`. |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
@@ -455,6 +456,37 @@ choice changes real behavior. Maintainer decision (2026-07-29): **union everywhe
 and `skills.ts` was brought into line immediately. So phase 2 inherits one definition
 both call sites already agree on, instead of a choice disguised as a refactor — which
 is the whole reason phase 1 was asked to compare them.
+
+### 132.11.1 Capabilities split into declarative and behavioral (HS-9491)
+
+Phase 2 was specified as one step and landed as two, because the client-safety rule from
+phase 1 cuts straight through the capability list.
+
+**Instructions is pure data** — `relPath`, `frontmatter`, `adapterSkillsRoot` are three
+strings. It sits on the plugin object exactly as §132.4 imagined, and
+`aiInstructionsTools.ts` now derives its table from the registry while keeping every bit
+of the machinery (markers, versioning, `planAdapterConversion`) generic.
+
+**Skills is not.** `ensure()` is the `ensureSkillsForDir` if-chain, and `skills.ts` has
+33 `fs` calls; `mainArtifactRelPath()` calls `canonicalClaudeSourceExists()` for OpenCode.
+Either one on the plugin object drags `fs` into the browser bundle and breaks the client
+build.
+
+So the interface has two kinds of capability:
+
+- **Declarative** — plain data, lives on the plugin, client-safe. Instructions today.
+- **Behavioral** — needs the host (filesystem, processes), lives in a **server-only
+  sibling keyed by plugin id**. Skills, and by inspection command / drive / permissions
+  too: command resolution shells out, the drive spawns processes.
+
+That means §132.4's single interface is really "the declarative half plus a
+server-side companion", and **HS-9503 should settle the sibling's shape**, because
+phases 3–5 all land there. Worth deciding once whether one `serverCapabilities.ts`
+covering skills/command/drive/permissions beats four separate files.
+
+This is not a retreat from the design — the plugin is still the one place a tool is
+defined, and `getPlugin(id)` is still the one lookup. It is a constraint on WHERE each
+half lives, and it was discoverable only by building it.
 
 ## 132.12 Cross-references
 

@@ -10,4 +10,9 @@ export const codexPlugin: AiToolPlugin = {
   tier: 'cli-agent',
   devGateKey: 'dev_tool_codex',
   detection: { binaries: ['codex'], paths: ['AGENTS.md'] },
+  instructions: {
+    relPath: 'AGENTS.md',
+    frontmatter: '',
+    adapterSkillsRoot: '.agents/skills',
+  },
 };

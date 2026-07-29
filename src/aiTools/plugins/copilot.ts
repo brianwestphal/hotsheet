@@ -10,4 +10,9 @@ export const copilotPlugin: AiToolPlugin = {
   tier: 'editor',
   devGateKey: null,
   detection: { binaries: [], paths: ['.github/copilot-instructions.md', '.github/prompts'] },
+  instructions: {
+    relPath: '.github/copilot-instructions.md',
+    frontmatter: '',
+    adapterSkillsRoot: null,
+  },
 };
