@@ -6,7 +6,8 @@
  * query protects its cluster, the default/pinned cluster is never evicted, and a
  * close drops the eviction bookkeeping.
  */
-import { rmSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -188,6 +189,34 @@ describe('stale-handle healing vs deliberate close (HS-9461)', () => {
       if (saved[k] === undefined) Reflect.deleteProperty(process.env, k);
       else process.env[k] = saved[k];
     }
+  });
+
+  it('every pin in src/ is released in a finally (leaked-pin guard)', () => {
+    // A pin that outlives its operation makes its cluster permanently
+    // un-evictable — the unbounded-growth bug docs/128 exists to fix. The
+    // failure is SILENT: eviction just stops working for that cluster and
+    // memory creeps back up, which is exactly how the original OOM went
+    // undiagnosed. So every `pinClustersForDirs` call must have a matching
+    // release, and it must be inside a `finally`.
+    const files = execFileSync('git', ['ls-files', 'src'], { encoding: 'utf8' })
+      .split('\n')
+      .filter((f) => f.endsWith('.ts') && !f.includes('.test.'));
+    const offenders: string[] = [];
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      const pins = src.split('pinClustersForDirs(').length - 1;
+      if (pins === 0) continue;
+      // `connection.ts` DEFINES the primitive; its own occurrence isn't a call site.
+      const calls = file.endsWith('db/connection.ts') ? pins - 1 : pins;
+      if (calls === 0) continue;
+      const releases = src.split('release();').length - 1;
+      if (releases !== calls) offenders.push(`${file}: ${String(calls)} pin(s), ${String(releases)} release(s)`);
+      // Each release must sit in a `finally`, not just anywhere in the file.
+      const finallyReleases = (/finally \{\s*(?:\/\/[^\n]*\n\s*)*release\(\);/g.exec(src) === null)
+        ? 0 : src.split(/finally \{\s*(?:\/\/[^\n]*\n\s*)*release\(\);/).length - 1;
+      if (finallyReleases < calls) offenders.push(`${file}: ${String(calls)} pin(s) but only ${String(finallyReleases)} released in a finally`);
+    }
+    expect(offenders).toEqual([]);
   });
 
   it('a PINNED cluster is not evicted, even when opening past the cap', async () => {

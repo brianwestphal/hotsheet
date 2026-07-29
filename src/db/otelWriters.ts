@@ -232,7 +232,7 @@ export async function persistMetricsPayload(
     // many records; in the gaps `inFlight` is 0 and the headroom guard (which
     // drops the recency guard under memory pressure) could close a cluster this
     // request is still using. This is the OTLP ingest path that actually bit.
-    const releasePins = pinClustersForDirs([clusterDir, targetDir]);
+    const release = pinClustersForDirs([clusterDir, targetDir]);
     try {
       // HS-9233 — the compact rollups live in the SNAPSHOTTED main db (small + the
       // per-ticket history is kept indefinitely, so it's backed up), so resolve it
@@ -313,7 +313,7 @@ export async function persistMetricsPayload(
         }
       }
     } finally {
-      releasePins();
+      release();
     }
   }
 
@@ -459,7 +459,7 @@ export async function persistLogsPayload(
     // many records; in the gaps `inFlight` is 0 and the headroom guard (which
     // drops the recency guard under memory pressure) could close a cluster this
     // request is still using. This is the OTLP ingest path that actually bit.
-    const releasePins = pinClustersForDirs([clusterDir, targetDir]);
+    const release = pinClustersForDirs([clusterDir, targetDir]);
     try {
       const db = await getDbForDir(clusterDir); // HS-9230 — relocated telemetry cluster
       // HS-9233 — rollups live in the snapshotted main db (see persistMetricsPayload).
@@ -544,7 +544,7 @@ export async function persistLogsPayload(
         }
       }
     } finally {
-      releasePins();
+      release();
     }
   }
 
@@ -597,7 +597,7 @@ export async function persistTracesPayload(
     // many records; in the gaps `inFlight` is 0 and the headroom guard (which
     // drops the recency guard under memory pressure) could close a cluster this
     // request is still using. This is the OTLP ingest path that actually bit.
-    const releasePins = pinClustersForDirs([clusterDir]);
+    const release = pinClustersForDirs([clusterDir]);
     try {
       const scopes = Array.isArray(eR.scopeSpans) ? eR.scopeSpans : [];
       for (const ss of scopes) {
@@ -640,7 +640,7 @@ export async function persistTracesPayload(
         }
       }
     } finally {
-      releasePins();
+      release();
     }
   }
 

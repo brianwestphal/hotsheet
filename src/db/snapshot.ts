@@ -42,7 +42,7 @@ import { join } from 'path';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
-import { getDbForDir } from './connection.js';
+import { getDbForDir, pinClustersForDirs } from './connection.js';
 
 /** Default debounce after the last mutation before a snapshot fires. */
 const DEFAULT_DEBOUNCE_MS = 2000;
@@ -224,6 +224,12 @@ export async function writeSnapshotNow(dataDir: string): Promise<SnapshotResult 
   // (via scheduleSnapshot) so the follow-up write captures it.
   state.dirty = false;
   const startedAt = Date.now(); // HS-9361 — the content cutoff (see state doc)
+  // HS-9464 (docs/128 §128.3.2) — hold the cluster across CHECKPOINT → dump. The
+  // two are separate statements, so `inFlight` returns to 0 between them, and the
+  // dump itself is the longest single DB operation we run (a large cluster took
+  // 6.7 s in the HS-9239 freeze). Losing the cluster in that window would abort
+  // the snapshot that the whole of docs/73 depends on.
+  const release = pinClustersForDirs([dataDir]);
   try {
     const db = await getDbForDir(dataDir);
     // CHECKPOINT first so the dump is internally consistent — without it
@@ -242,6 +248,7 @@ export async function writeSnapshotNow(dataDir: string): Promise<SnapshotResult 
     console.error(`[snapshot] write failed for ${dataDir}:`, err);
     return null;
   } finally {
+    release();
     state.inProgress = false;
   }
 }

@@ -39,7 +39,7 @@ import { z } from 'zod';
 
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
-import { centralTelemetryDataDir, getDbForDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
+import { centralTelemetryDataDir, getDbForDir, getTelemetryDb, pinClustersForDirs, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
 const TELEMETRY_TABLES = ['otel_metrics', 'otel_events', 'otel_spans', 'announcer_usage', 'ticket_work_intervals'] as const;
 type TelemetryTable = (typeof TELEMETRY_TABLES)[number];
@@ -182,6 +182,11 @@ export async function relocateTelemetryToSeparateCluster(launchedDataDir: string
     // Identity (the central store) — nothing to relocate; its `…/db` IS the
     // telemetry cluster already.
     if (destDir === dataDir) { doneDirs.add(dataDir); continue; }
+    // HS-9464 (docs/128 §128.3.2) — hold both clusters for the whole relocation.
+    // The handles are resolved once and then used across a keyset-paginated loop
+    // over EVERY telemetry row, which is unbounded and runs at startup — the worst
+    // combination for the headroom guard closing one of them mid-copy.
+    const release = pinClustersForDirs([dataDir, destDir]);
     try {
       // Source = the project's main `<dataDir>/db` (where telemetry used to live);
       // dest = the relocated `<dataDir>/telemetry/db` cluster.
@@ -220,6 +225,8 @@ export async function relocateTelemetryToSeparateCluster(launchedDataDir: string
       writeGlobalConfig({ telemetryRelocationV1DoneDirs: [...doneDirs] });
     } catch (err) {
       console.error(`[telemetry-relocation] skipping ${dataDir}:`, err);
+    } finally {
+      release();
     }
   }
 

@@ -60,7 +60,7 @@ import { z } from 'zod';
 import { createBackup } from '../backup.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
-import { centralTelemetryDataDir, getDbForDir, telemetryClusterDataDir } from './connection.js';
+import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
 import { computeTicketRollupFromRaw } from './otelDashboard.js';
 import { latencyBucketIndex } from './otelHistogram.js';
 import { eventNameMatchSql } from './otelRollups.js';
@@ -142,6 +142,12 @@ export async function backfillTelemetryRollups(launchedDataDir: string): Promise
 
   for (const dataDir of dirs) {
     if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    // HS-9464 (docs/128 §128.3.2) — hold both clusters for the whole per-dir
+    // backfill. The handles are resolved once and then used across many queries
+    // inside the helpers below; without the pin the headroom guard can close one
+    // mid-backfill. This runs at STARTUP, which is exactly when many clusters are
+    // opening and that guard is most likely to fire.
+    const release = pinClustersForDirs([telemetryClusterDataDir(dataDir), dataDir]);
     try {
       const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
       const mainDb = await getDbForDir(dataDir);
@@ -159,6 +165,8 @@ export async function backfillTelemetryRollups(launchedDataDir: string): Promise
       writeGlobalConfig({ telemetryRollupBackfillV1DoneDirs: [...doneDirs] });
     } catch (err) {
       console.error(`[rollup-backfill] skipping ${dataDir}:`, err);
+    } finally {
+      release();
     }
     await yieldToEventLoop();
   }
@@ -323,6 +331,12 @@ export async function backfillTelemetryActivityRollups(launchedDataDir: string):
   let toolRows = 0;
   for (const dataDir of dirs) {
     if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    // HS-9464 (docs/128 §128.3.2) — hold both clusters for the whole per-dir
+    // backfill. The handles are resolved once and then used across many queries
+    // inside the helpers below; without the pin the headroom guard can close one
+    // mid-backfill. This runs at STARTUP, which is exactly when many clusters are
+    // opening and that guard is most likely to fire.
+    const release = pinClustersForDirs([telemetryClusterDataDir(dataDir), dataDir]);
     try {
       const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
       const mainDb = await getDbForDir(dataDir);
@@ -333,6 +347,8 @@ export async function backfillTelemetryActivityRollups(launchedDataDir: string):
       writeGlobalConfig({ telemetryActivityRollupBackfillV1DoneDirs: [...doneDirs] });
     } catch (err) {
       console.error(`[activity-rollup-backfill] skipping ${dataDir}:`, err);
+    } finally {
+      release();
     }
     await yieldToEventLoop();
   }
@@ -610,6 +626,12 @@ export async function backfillTelemetryDailySeen(launchedDataDir: string): Promi
 
   for (const dataDir of dirs) {
     if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    // HS-9464 (docs/128 §128.3.2) — hold both clusters for the whole per-dir
+    // backfill. The handles are resolved once and then used across many queries
+    // inside the helpers below; without the pin the headroom guard can close one
+    // mid-backfill. This runs at STARTUP, which is exactly when many clusters are
+    // opening and that guard is most likely to fire.
+    const release = pinClustersForDirs([telemetryClusterDataDir(dataDir), dataDir]);
     try {
       const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
       const mainDb = await getDbForDir(dataDir);
@@ -619,6 +641,8 @@ export async function backfillTelemetryDailySeen(launchedDataDir: string): Promi
       writeGlobalConfig({ telemetryDailySeenBackfillV1DoneDirs: [...doneDirs] });
     } catch (err) {
       console.error(`[daily-seen-backfill] skipping ${dataDir}:`, err);
+    } finally {
+      release();
     }
     await yieldToEventLoop();
   }
@@ -712,6 +736,12 @@ export async function backfillTelemetryTicketSpans(launchedDataDir: string): Pro
 
   for (const dataDir of dirs) {
     if (doneDirs.has(dataDir)) { scannedDirs++; continue; }
+    // HS-9464 (docs/128 §128.3.2) — hold both clusters for the whole per-dir
+    // backfill. The handles are resolved once and then used across many queries
+    // inside the helpers below; without the pin the headroom guard can close one
+    // mid-backfill. This runs at STARTUP, which is exactly when many clusters are
+    // opening and that guard is most likely to fire.
+    const release = pinClustersForDirs([telemetryClusterDataDir(dataDir), dataDir]);
     try {
       const clusterDb = await getDbForDir(telemetryClusterDataDir(dataDir));
       const mainDb = await getDbForDir(dataDir);
@@ -722,6 +752,8 @@ export async function backfillTelemetryTicketSpans(launchedDataDir: string): Pro
       writeGlobalConfig({ telemetryTicketSpanBackfillV1DoneDirs: [...doneDirs] });
     } catch (err) {
       console.error(`[ticket-span-backfill] skipping ${dataDir}:`, err);
+    } finally {
+      release();
     }
     await yieldToEventLoop();
   }

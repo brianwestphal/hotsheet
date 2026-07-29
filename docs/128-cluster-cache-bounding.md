@@ -131,7 +131,31 @@ operation's hold on the same cluster. Tests cover the pinned-survives-eviction c
 throw, double-release, and pinning-before-open.
 
 Healing (§128.3.1) stays regardless — it covers what prevention misses: a genuinely long gap, or
-a handle cached across requests. Broadening pins beyond the OTLP writers is **HS-9464**.
+a handle cached across requests.
+
+**Where pins are taken (HS-9464 audit).** The vulnerable shape is *resolve a handle once, then
+`await` several statements against it* — the gaps are what the headroom guard sees as idle. A
+sweep of `src/` found three more places worth pinning, all of which hold handles across
+unbounded loops AND run at **startup**, exactly when many clusters are opening and the guard is
+most likely to fire:
+
+| Site | Why |
+|---|---|
+| `otelWriters.ts` ×3 (HS-9462) | per-resource OTLP write: handles resolved once, then many records |
+| `otelRollupBackfill.ts` ×4 | per-dir backfill across `backfillDaily…`/`backfillTickets…` etc. |
+| `telemetryMigration.ts` | keyset-paginated copy of EVERY telemetry row, source + dest clusters |
+| `snapshot.ts` | `CHECKPOINT` → `dumpDataDir` are separate statements, and the dump is our longest single DB op (6.7 s in the HS-9239 freeze) |
+
+Deliberately **not** pinned: request handlers in `routes/`, and helpers that call `getDb()` per
+statement. Re-resolving is already safe — `getDb()` reopens an evicted cluster transparently —
+so only a *held* handle is at risk. Short two-statement sequences aren't worth the ceremony
+either; the recency guard covers them outside memory pressure.
+
+**Leaked-pin guard.** A pin that is never released disables eviction for its cluster *silently*,
+which is how the original OOM went undiagnosed. `connectionEviction.test.ts` scans `src/` and
+fails if any file's `pinClustersForDirs` calls aren't matched by a `release()` inside a
+`finally`. That is also why every call site uses the same `release` name — a uniform convention
+is what makes the check simple enough to trust.
 
 ## 128.4 Accepted trade-off
 
