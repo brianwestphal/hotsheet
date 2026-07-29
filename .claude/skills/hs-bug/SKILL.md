@@ -3,7 +3,7 @@ name: hs-bug
 description: Create a new bug ticket in Hot Sheet
 allowed-tools: Bash
 ---
-<!-- hotsheet-skill-version: 23 -->
+<!-- hotsheet-skill-version: 24 -->
 
 Create a new Hot Sheet **bug** ticket. Bugs that should be fixed in the codebase.
 
@@ -18,10 +18,15 @@ Call the `hotsheet_create_ticket` tool with `{ "title": "<TITLE>", "category": "
 ```bash
 curl -s -X POST http://localhost:4174/api/tickets \
   -H "Content-Type: application/json" \
-  -H "X-Hotsheet-Secret: adae66c52c4e0335cfba23921464688a" \
+  -H "X-Hotsheet-Secret: $HOTSHEET_SECRET" \
   -d '{"title": "<TITLE>", "defaults": {"category": "bug", "up_next": <true|false>}}'
 ```
 
-If the request fails (connection refused or 403), re-read `.hotsheet/settings.json` for the current `port` and `secret` values — you may be connecting to the wrong Hot Sheet instance.
+Set `$HOTSHEET_SECRET` first. It is machine-specific and deliberately not stored in this file (which is committed and shared):
+```bash
+export HOTSHEET_SECRET=$(node -p "require('./.hotsheet/secret.json').secret")
+```
+
+If the request fails (connection refused or 403), re-read `.hotsheet/settings.json` for the current `port`, and `.hotsheet/secret.json` for the `secret` — you may be connecting to the wrong Hot Sheet instance.
 
 Report the created ticket number and title to the user.

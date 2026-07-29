@@ -22,8 +22,10 @@ describe('api / apiWithSecret / apiUpload — path-shape guard (HS-8141)', () =>
   });
 
   it('api() throws when the path arg is a secret-shaped hex string with no leading slash', async () => {
-    // The exact bug repro: hex secret passed where path was expected.
-    await expect(api('adae66c52c4e0335cfba23921464688a')).rejects.toThrow(/swapped-args bug \(HS-8141\)/);
+    // The exact bug repro: hex secret passed where path was expected. HS-9475 —
+    // deliberately a SYNTHETIC 32-hex value; this used to be a copy of the real
+    // project secret, which has no business being in source at all.
+    await expect(api('0123456789abcdef0123456789abcdef')).rejects.toThrow(/swapped-args bug \(HS-8141\)/);
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -38,7 +40,7 @@ describe('api / apiWithSecret / apiUpload — path-shape guard (HS-8141)', () =>
   it('apiWithSecret() throws when the path arg is a secret-shaped hex string', async () => {
     // The CHANNEL-UI bug shape — args swapped: `apiWithSecret(secret, path)`.
     await expect(
-      apiWithSecret('adae66c52c4e0335cfba23921464688a', '/terminal/list'),
+      apiWithSecret('0123456789abcdef0123456789abcdef', '/terminal/list'),
     ).rejects.toThrow(/swapped-args bug \(HS-8141\)/);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -60,7 +62,7 @@ describe('api / apiWithSecret / apiUpload — path-shape guard (HS-8141)', () =>
   it('apiWithSecret() does NOT throw for a well-formed (path, secret) call', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))));
     await expect(
-      apiWithSecret('/terminal/list', 'adae66c52c4e0335cfba23921464688a'),
+      apiWithSecret('/terminal/list', '0123456789abcdef0123456789abcdef'),
     ).resolves.not.toThrow();
     const calledUrl = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     // URL is exactly `/api/terminal/list` — no secret in path; secret goes in

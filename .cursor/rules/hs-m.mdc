@@ -17,7 +17,7 @@ Call the `hotsheet_create_ticket` tool with `{ "title": "<TITLE>", "category": "
 ```bash
 curl -s -X POST http://localhost:4174/api/tickets \
   -H "Content-Type: application/json" \
-  -H "X-Hotsheet-Secret: adae66c52c4e0335cfba23921464688a" \
+  -H "X-Hotsheet-Secret: $HOTSHEET_SECRET" \
   -d '{"title": "<TITLE>", "defaults": {"category": "m", "up_next": <true|false>}}'
 ```
 

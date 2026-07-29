@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -214,19 +214,24 @@ describe('ensureClaudeSkills', () => {
     }
   });
 
-  it('includes secret header in ticket skill when secret is set', () => {
+  // HS-9475 — these two used to assert that the skill CONTAINED the literal
+  // secret, and that the header was omitted when there wasn't one. That encoded
+  // the leak as the contract, which is why it survived into 14 committed files.
+  // The header is now unconditional and always references an env var.
+  it('references the secret by env var, never the value, when a secret is set', () => {
     ensureSkills();
     const skillPath = join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
-    expect(content).toContain('X-Hotsheet-Secret: test-secret');
+    expect(content).toContain('X-Hotsheet-Secret: $HOTSHEET_SECRET');
+    expect(content).not.toContain('test-secret');
   });
 
-  it('omits secret header when no secret in settings', () => {
+  it('emits the same env-var header when no secret is set', () => {
     writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({}));
     ensureSkills();
     const skillPath = join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
-    expect(content).not.toContain('X-Hotsheet-Secret');
+    expect(content).toContain('X-Hotsheet-Secret: $HOTSHEET_SECRET');
   });
 
   it('does not overwrite skills when version is current', () => {
@@ -593,6 +598,63 @@ describe('ticket creation skill content', () => {
     const skillPath = join(tempDir, '.claude', 'skills', 'hs-task', 'SKILL.md');
     const content = readFileSync(skillPath, 'utf-8');
     expect(content).toContain('Report the created ticket number');
+  });
+
+  /**
+   * HS-9475 — the project secret must NEVER reach a generated skill file.
+   *
+   * These land in `.claude/skills/` and `.cursor/rules/`, which are committed and
+   * shared with everyone who clones the repo. The value is also machine-specific,
+   * so a baked-in one is simultaneously a leak and wrong for every other
+   * developer. It reached 14 tracked files before anyone noticed, because nothing
+   * ever looked.
+   */
+  it('never writes the project secret into a generated skill', () => {
+    // A realistic 32-hex secret in BOTH places a project can hold one: the
+    // HS-8999 sidecar and the legacy `settings.json` fallback.
+    const realSecret = 'abcdef0123456789abcdef0123456789';
+    writeFileSync(join(settingsDir, 'secret.json'), JSON.stringify({ secret: realSecret }));
+    writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ secret: realSecret, port: 4174 }));
+    ensureSkills();
+
+    // Every skill actually generated, rather than a hand-listed set that could
+    // drift from DEFAULT_CATEGORIES and silently check fewer files than it looks.
+    const skillsRoot = join(tempDir, '.claude', 'skills');
+    const generated = readdirSync(skillsRoot);
+    expect(generated.length).toBeGreaterThan(3);
+    for (const name of generated) {
+      const file = join(skillsRoot, name, 'SKILL.md');
+      if (!existsSync(file)) continue;
+      expect(readFileSync(file, 'utf-8'), `${name} leaked the secret`).not.toContain(realSecret);
+    }
+    // ...and the .cursor/rules mirror, which is committed just the same.
+    const rulesDir = join(tempDir, '.cursor', 'rules');
+    if (existsSync(rulesDir)) {
+      for (const f of readdirSync(rulesDir)) {
+        expect(readFileSync(join(rulesDir, f), 'utf-8'), `${f} leaked the secret`).not.toContain(realSecret);
+      }
+    }
+  });
+
+  it('tells the reader how to supply the secret instead of embedding it', () => {
+    // A placeholder with no lookup would just move the problem: the curl fallback
+    // has to stay usable by someone who has never seen this file before.
+    ensureSkills();
+    const content = readFileSync(join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'), 'utf-8');
+    expect(content).toContain('X-Hotsheet-Secret: $HOTSHEET_SECRET');
+    expect(content).toContain('.hotsheet/secret.json');
+  });
+
+  it('leaks nothing even when NO secret exists yet', () => {
+    // Belt and braces: the old code emitted the header line only when a secret was
+    // present, so an absent one was the path that happened to be safe. It must
+    // stay safe now that the line is unconditional.
+    rmSync(join(settingsDir, 'secret.json'), { force: true });
+    writeFileSync(join(settingsDir, 'settings.json'), JSON.stringify({ port: 4174 }));
+    ensureSkills();
+    const content = readFileSync(join(tempDir, '.claude', 'skills', 'hs-bug', 'SKILL.md'), 'utf-8');
+    expect(content).toContain('X-Hotsheet-Secret: $HOTSHEET_SECRET');
+    expect(content).not.toMatch(/X-Hotsheet-Secret: [0-9a-f]{16,}/);
   });
 });
 

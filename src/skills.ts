@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { readFileSettings } from './file-settings.js';
 import { listMcpHooksAgents } from './mcpHooksAgents.js';
-import { getProjectSecret } from './secret-file.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
@@ -60,7 +59,7 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // tree (`.agents/skills`, Antigravity/Codex) is written as THIN ADAPTERS that
 // reference the canonical `.claude/skills/<name>/SKILL.md` instead of
 // duplicating the body; the bump rewrites existing full-content copies.
-export const SKILL_VERSION = 23;
+export const SKILL_VERSION = 24; // HS-9475 — forces a rewrite of every file that baked in the secret
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -195,8 +194,13 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string =
   // calls initSkills before this runs, so the placeholder only fires in
   // edge-case test paths that skip init).
   const port = settings.port ?? skillsState.port ?? 4174;
-  const secret = getProjectSecret(dataDir); // HS-8999 — sidecar secret
-  const secretLine = secret ? `  -H "X-Hotsheet-Secret: ${secret}" \\` : '';
+  // HS-9475 — the secret is NEVER written into a skill file. These live in
+  // `.claude/skills/` / `.cursor/rules/`, which are committed and shared with
+  // everyone who clones the repo — and the value is machine-specific anyway, so a
+  // baked-in one is both a leak and wrong for every other developer. The curl
+  // fallback references an env var instead, with the lookup spelled out below.
+  // (The PREFERRED path, the MCP tool, needs no secret at all.)
+  const secretLine = '  -H "X-Hotsheet-Secret: $HOTSHEET_SECRET" \\';
   // HS-8348 — Phase 3 two-form skill body. MCP tool listed first
   // (preferred when the Claude Channel is connected), curl form right
   // below as the universal fallback. The MCP form uses the
@@ -219,12 +223,17 @@ function ticketSkillBody(skill: SkillDef, projectRoot: string, dataDir: string =
     `curl -s -X POST http://localhost:${port}/api/tickets \\`,
     '  -H "Content-Type: application/json" \\',
   ];
-  if (secretLine) lines.push(secretLine);
+  lines.push(secretLine);
   lines.push(
     `  -d '{"title": "<TITLE>", "defaults": {"category": "${skill.category}", "up_next": <true|false>}}'`,
     '```',
     '',
-    `If the request fails (connection refused or 403), re-read \`.hotsheet/settings.json\` for the current \`port\` and \`secret\` values — you may be connecting to the wrong Hot Sheet instance.`,
+    'Set `$HOTSHEET_SECRET` first. It is machine-specific and deliberately not stored in this file (which is committed and shared):',
+    '```bash',
+    `export HOTSHEET_SECRET=$(node -p "require('./.hotsheet/secret.json').secret")`,
+    '```',
+    '',
+    `If the request fails (connection refused or 403), re-read \`.hotsheet/settings.json\` for the current \`port\`, and \`.hotsheet/secret.json\` for the \`secret\` — you may be connecting to the wrong Hot Sheet instance.`,
     '',
     'Report the created ticket number and title to the user.',
   );
