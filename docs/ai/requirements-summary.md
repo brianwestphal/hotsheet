@@ -997,6 +997,20 @@ HS-8662 (shipped 2026-06-05). A document-level `paste` listener (`src/client/pas
 
 ---
 
+## 131. System memory pressure (`131-system-memory-pressure.md`)
+
+**Status: Shipped (HS-9469).** Extends the §128 cluster budget with the MACHINE's pressure, not just this process's heap headroom — which was blind to a machine swapping because of Xcode, a VM or a browser, letting Hot Sheet hold ten clusters open because *its* headroom looked fine.
+
+`src/db/systemMemoryPressure.ts` reports `normal | warn | critical` — a level, not bytes, because bytes don't mean the same thing across platforms and the OS already knows better. macOS: `kern.memorystatus_vm_pressure_level` (kernel verdict; an unrecognized HIGHER level fails toward `critical`). Linux: PSI `/proc/pressure/memory` `some avg10` — **stall time**, since a machine can have little free memory and be fine but cannot be stalling and be fine. Elsewhere: a deliberately generous free-ratio fallback.
+
+**`os.freemem()` is the fallback, not the implementation, and there's a measurement for why:** on this machine, with the kernel reporting `normal`, free/total was **0.9 GB / 32 GB (2.8%)** — a naive ratio threshold would have shrunk the cache on a perfectly healthy machine.
+
+**Sampled, never polled hot** (15 s TTL; `currentSystemPressure()` is synchronous and never awaits the probe — an eviction decision must not wait on a subprocess). **Asymmetric hysteresis:** increases adopted immediately, decreases must survive 3 consecutive calmer samples, because pressure is spiky and following every dip would reopen clusters about to be evicted again (churn — §128.5.2's `evictChurn` is the instrument). A failed/timed-out probe reports `normal`, adding no constraint: shrinking the cache because we failed to *measure* would be the worst failure mode.
+
+Folded in as a **ceiling on** the process-derived budget, never a licence to grow (`warn` halves the room above the floors so the floors keep their meaning; `critical` drops to them). Passed INTO `clusterBudget` as a value so the planner stays pure. 15 unit tests over the parsers + hysteresis (platform behavior testable on any host) + 3 budget-interaction cases. Known gaps in §131.6: Windows has no real signal, the macOS probe is a subprocess, and the thresholds are reasoned rather than tuned.
+
+---
+
 ## 130. Promised-file drops — unsaved macOS screen captures (`130-promised-file-drops.md`)
 
 **Status: Partial — detection shipped (HS-9465); fulfillment NOT built and deliberately gated (HS-9466).**

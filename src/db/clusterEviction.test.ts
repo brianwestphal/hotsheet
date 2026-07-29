@@ -348,6 +348,7 @@ describe('clusterBudget (HS-9468)', () => {
     maxTelemetry: 6,
     minProject: 2,
     minTelemetry: 1,
+    systemPressure: 'normal' as const,
   };
 
   it('allows the full ceilings when memory is plentiful', () => {
@@ -413,6 +414,37 @@ describe('clusterBudget (HS-9468)', () => {
     expect(Number.isFinite(b.project)).toBe(true);
     expect(b.project).toBeGreaterThanOrEqual(base.minProject);
     expect(b.telemetry).toBeGreaterThanOrEqual(base.minTelemetry);
+  });
+
+  it('MACHINE pressure caps what process headroom would allow (HS-9469)', () => {
+    // The two signals are independent: process headroom can look roomy while the
+    // machine is swapping. Taking the more conservative is the whole point.
+    const roomy = { ...base, externalBytes: 100 * 1024 * 1024 };
+    const normal = clusterBudget({ ...roomy, systemPressure: 'normal' });
+    const warn = clusterBudget({ ...roomy, systemPressure: 'warn' });
+    const critical = clusterBudget({ ...roomy, systemPressure: 'critical' });
+    const total = (b: { project: number; telemetry: number }) => b.project + b.telemetry;
+
+    expect(total(normal)).toBe(16);
+    expect(total(warn)).toBeLessThan(total(normal));
+    // Critical means the machine is stalling; holding cache is actively harmful.
+    expect(critical).toEqual({ project: base.minProject, telemetry: base.minTelemetry });
+  });
+
+  it('machine pressure never LICENSES growth beyond process headroom', () => {
+    // `normal` must not loosen a budget the process-level term already tightened —
+    // it only ever caps.
+    const tight = { ...base, externalBytes: 100 * (1024 ** 3) };
+    expect(clusterBudget({ ...tight, systemPressure: 'normal' }))
+      .toEqual(clusterBudget({ ...tight, systemPressure: 'critical' }));
+  });
+
+  it('the floors survive every pressure level', () => {
+    for (const systemPressure of ['normal', 'warn', 'critical'] as const) {
+      const b = clusterBudget({ ...base, externalBytes: 100 * (1024 ** 3), systemPressure });
+      expect(b.project).toBeGreaterThanOrEqual(base.minProject);
+      expect(b.telemetry).toBeGreaterThanOrEqual(base.minTelemetry);
+    }
   });
 
   it('cannot be pushed below its floors by an absurd pending credit', () => {

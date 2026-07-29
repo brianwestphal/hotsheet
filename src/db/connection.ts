@@ -29,6 +29,7 @@ import {
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
 import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
 import { isClusterStorageFailure } from './storageFailure.js';
+import { currentSystemPressure } from './systemMemoryPressure.js';
 
 export { isClusterStorageFailure } from './storageFailure.js';
 
@@ -596,6 +597,10 @@ function currentClusterBudget(cfg: EvictionConfig): ClusterBudget {
     maxTelemetry: cfg.maxTelemetryOpen,
     minProject: cfg.minOpen,
     minTelemetry: cfg.minTelemetryOpen,
+    // HS-9469 — the machine's own verdict, from a cached background sample. Read
+    // synchronously and never awaited: an eviction decision must not wait on a
+    // subprocess (see `currentSystemPressure`).
+    systemPressure: currentSystemPressure(),
   });
 }
 

@@ -373,6 +373,14 @@ export interface ClusterBudgetInput {
   maxTelemetry: number;
   minProject: number;
   minTelemetry: number;
+  /**
+   * HS-9469 — the MACHINE's memory pressure, passed in (not read here) so the
+   * planner stays pure. `warn` halves what the process-level term allows;
+   * `critical` goes straight to the floors. Applied as a CEILING on the
+   * process-derived budget, never a licence to grow: if either signal says
+   * memory is tight, memory is tight.
+   */
+  systemPressure: 'normal' | 'warn' | 'critical';
 }
 
 export interface ClusterBudget {
@@ -394,9 +402,29 @@ export function clusterBudget(input: ClusterBudgetInput): ClusterBudget {
   // Projects are served first; telemetry takes what's left. That ordering IS the
   // "telemetry gives way first" rule — under pressure the subtraction lands on
   // telemetry until it hits its floor, and only then on projects.
-  const project = clamp(allowedTotal - input.minTelemetry, input.minProject, input.maxProject);
-  const telemetry = clamp(allowedTotal - project, input.minTelemetry, input.maxTelemetry);
+  // HS-9469 — the machine's verdict caps what the process-level headroom allows.
+  // Taking the MORE CONSERVATIVE of the two is the whole point: process headroom
+  // can look roomy while the machine is swapping, and vice versa.
+  const constrained = applySystemPressure(allowedTotal, floorTotal, input.systemPressure);
+
+  const project = clamp(constrained - input.minTelemetry, input.minProject, input.maxProject);
+  const telemetry = clamp(constrained - project, input.minTelemetry, input.maxTelemetry);
   return { project, telemetry };
+}
+
+/**
+ * HS-9469 — fold the machine-level verdict into the affordable total.
+ *
+ * `warn` halves the room ABOVE the floors rather than halving the total, so the
+ * floors keep their meaning (the active project and one telemetry cluster survive
+ * every level). `critical` drops to the floors outright — at that point the
+ * machine is stalling and holding cache is actively harmful.
+ */
+function applySystemPressure(allowedTotal: number, floorTotal: number, level: 'normal' | 'warn' | 'critical'): number {
+  if (level === 'normal') return allowedTotal;
+  if (level === 'critical') return floorTotal;
+  const above = Math.max(0, allowedTotal - floorTotal);
+  return floorTotal + Math.floor(above / 2);
 }
 
 function clamp(n: number, lo: number, hi: number): number {
