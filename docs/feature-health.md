@@ -2,9 +2,15 @@
 
 **Snapshot date: 2026-07-24.** Regenerate with **`/feature-health`**.
 
-> **Gated since HS-9411 (docs/124):** the worst offenders below — parallel agent workers, each
-> non-Claude AI tool, and remote access — are now **off by default** behind Settings → Experimental →
-> **In Development**. Their status here is unchanged; they are simply no longer reachable by accident.
+> **Gated since HS-9411 (docs/124):** parallel agent workers and remote access are **off by default**
+> behind Settings → Experimental → **In Development**. Their status here is unchanged; they are
+> simply no longer reachable by accident.
+>
+> **The per-tool gates were REMOVED in HS-9515 (2026-07-31).** Each non-Claude AI tool used to sit
+> behind its own `dev_tool_*` gate; now that every tool is an `AiToolPlugin` (docs/132), readiness is
+> managed by **not shipping a plugin publicly** and by labeling early releases alpha/beta. So the
+> AI-tool rows below are reachable by default again — **their health status is what tells you whether
+> to trust one**, which makes this doc more load-bearing for those features, not less.
 
 This doc answers one question for every feature: **does it actually work?**
 
@@ -119,7 +125,7 @@ a feature with nothing wrong that we know of.
 | **Codex drive (app-server)** | Shaking out | Shipped 2026-07-23 with six follow-up commits already (daemon transport, MCP elicitation fix, reattach chip, daemon pre-start). Days old. |
 | **Antigravity drive** | Unknown | Shipped HS-9319→9328. 4 manual items, no automated end-to-end, no evidence of sustained real use. |
 | **OpenCode / ACP** | Unknown | Same shape — 5 manual items, live-validated once during development, not since. |
-| Gemini / Goose / Kiro | Incomplete | Gemini gets config generation only, no drive. Goose deferred (HS-9347). **All appear in the `ai_tool` dropdown regardless — the picker advertises more than exists.** |
+| Gemini / Goose / Kiro | Incomplete | Gemini gets config generation only, no drive. Goose deferred (HS-9347). **All appear in the `ai_tool` dropdown — the picker advertises more than exists**, and since HS-9515 removed the per-tool gates they are listed unconditionally, for every user, with no In-Development label. The plan is that an unready tool simply isn't shipped, but registration is still in-tree (docs/132 §132.9.3), so nothing withholds them today. |
 | Tool-switch config prep (§119) + adapter retirement (§120) | Shaking out | Both shipped in the last few days. HS-9378 (conflict-merge flow) is a known unbuilt branch. |
 | Agent-backend transport picker | Underbaked | Capability table + `agent_backend` override shipped, but **§115.7's shared three-way picker is missing**, so transport selection is half-manual, half-inferred. |
 | Announcer (§78–§82, all providers) | Solid | 15 unit-test files + e2e; confirmed functional in real use. |
