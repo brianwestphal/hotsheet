@@ -4,7 +4,7 @@
  * the expected shape.
  */
 import { rmSync } from 'fs';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerExistingProject, unregisterProject } from '../projects.js';
 import { cleanupTestDb, createRawOtelTables, createTempDir, setupTestDb } from '../test-helpers.js';
@@ -33,6 +33,13 @@ import {
 } from './otelQueries.js';
 import { backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
 import { markDailySeen, markHourlySeenPrompt, recordHourCost, recordToolActivity, updateDailyRollup } from './otelRollupIngest.js';
+
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
 // HS-8874 — isolate the central store to a temp dir so the cross-project
 // fan-out (which also reads central) can't pick up rows from the developer's

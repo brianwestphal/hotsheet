@@ -5,10 +5,17 @@
  */
 import { rmSync } from 'fs';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTempDir } from '../test-helpers.js';
 import { closeDbForDir, getDbForDir, isTelemetryClusterDbPath, telemetryClusterDataDir } from './connection.js';
+
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
 let tmp: string;
 beforeEach(() => { tmp = createTempDir(); });

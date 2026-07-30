@@ -13,13 +13,20 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupTestDb, createRawOtelTables, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { getPerTicketRollup } from './otelDashboard.js';
 import { assembleDailyRows, backfillActivityHourForDir, backfillActivityToolForDir, backfillDailyForDir, backfillDailySeenForDir, backfillTicketPromptSpansForDir, backfillTicketsForDir } from './otelRollupBackfill.js';
 import { getHourlyActivityHeatmap, getToolRollup } from './otelRollups.js';
+
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
 // The machine's local IANA tz — the daily bucket uses it so `(ts AT TIME ZONE TZ)::date`
 // matches the local date the `Date(...)` fixtures are constructed in (mirrors

@@ -16,6 +16,13 @@ import { createBackgroundScheduler } from '../scheduler/backgroundScheduler.js';
 import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDbForDir, isDbOpenForDir } from './connection.js';
 
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
+
 // Isolate the central store to a temp dir (mirrors cleanupTelemetry.test.ts).
 let centralOverrideDir: string;
 beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });
@@ -325,23 +332,18 @@ describe('maintainTelemetryDb (HS-8884)', () => {
       } finally {
         for (const d of dirs) await cleanupTestDb(d);
       }
-    // HS-9501 — the slowest test in the file, and it needs its own budget. It builds
-    // THREE real projects (each a PGLite cluster) and runs a real VACUUM FULL over
-    // each one's telemetry cluster. Measured: ~7 s run alone, ~43 s inside a full
-    // `src/db` run — a 6× stretch from CPU starvation across parallel forks, which is
-    // the same effect `vitest.config.ts` documents for the PGLite-heavy suites. It was
-    // therefore blowing the 30 s global and reporting as a timeout, which reads exactly
-    // like a hang and is not one.
+    // HS-9501 — the slowest test in the file. It builds THREE real projects (each a
+    // PGLite cluster) and runs a real VACUUM FULL over each one's telemetry cluster:
+    // ~7 s alone, ~43 s inside a full `src/db` run. The file-level budget above covers
+    // it (HS-9504 raised the whole heavy tier); this note stays because the COST is
+    // deliberate and a future reader will be tempted to trim it.
     //
-    // The cost is deliberate, not accidental: `setupTestDb` is used rather than bare
-    // temp dirs precisely BECAUSE it also opens each project's main cluster, which is
-    // the confounder `openTelemetry()` filters out — a cheaper fixture would stop
-    // resembling the situation this guards. Three projects rather than two for the same
-    // reason: a leak of "all but the first" or "all but the last" survives N=2.
-    //
-    // Guarding the HS-9420 OOM is worth ~40 s of suite time. Raise the budget, keep the
-    // test honest.
-    }, 120_000);
+    // `setupTestDb` is used rather than bare temp dirs precisely BECAUSE it also opens
+    // each project's main cluster, which is the confounder `openTelemetry()` filters
+    // out — a cheaper fixture would stop resembling the situation this guards. Three
+    // projects rather than two for the same reason: a leak of "all but the first" or
+    // "all but the last" survives N=2. Guarding the HS-9420 OOM is worth the seconds.
+    });
 
     it('leaves a cluster that was ALREADY open alone', async () => {
       // Somebody else (an OTLP write, a dashboard read) has it open — closing it

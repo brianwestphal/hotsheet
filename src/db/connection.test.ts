@@ -7,6 +7,13 @@ import { isInsideHotSheetTerminal } from '../test-helpers.js';
 import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, handleLiveStorageFailure, ignoreBenignMigrationError, isClusterStorageFailure, isRecoverableOpenError, readRecoveryMarker, resetStorageFailureReportingForTests, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
 
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
+
 let dataDir: string;
 
 beforeEach(() => {

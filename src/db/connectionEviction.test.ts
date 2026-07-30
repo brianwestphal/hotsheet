@@ -5,6 +5,18 @@
  * cap evicts an LRU cluster, the idle sweep closes idle clusters, an in-flight
  * query protects its cluster, the default/pinned cluster is never evicted, and a
  * close drops the eviction bookkeeping.
+ *
+ * HS-9504 — this file scopes its own timeouts. Proving eviction integration means
+ * opening and closing REAL embedded-Postgres clusters over and over: ~56 cluster
+ * operations, against 5–14 for every other `src/db` suite. It is an order of magnitude
+ * heavier than its neighbors, and that shows up as ~69 s in isolation and intermittent
+ * 30 s timeouts under a full parallel run — the CPU-starvation stretch
+ * `vitest.config.ts` documents. The failures rotated between files run to run, which is
+ * the signature of contention rather than of any assertion being wrong.
+ *
+ * Raising the GLOBAL budget was rejected: 30 s is deliberate, and a suite-wide raise
+ * would mask a real hang somewhere quiet. Same reasoning as `snapshotRestore.test.ts`
+ * and `backup.test.ts`, which scope their own for the same reason.
  */
 import { execFileSync } from 'child_process';
 import { readFileSync, rmSync } from 'fs';
@@ -32,6 +44,8 @@ import {
   startClusterEvictionTimer,
   stopClusterEvictionTimer,
 } from './connection.js';
+
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
 const dbPathOf = (dataDir: string): string => join(dataDir, 'db');
 

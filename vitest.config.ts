@@ -25,8 +25,19 @@ export default defineConfig({
     // the full merged-coverage run (200+ files in parallel + V8 instrumentation)
     // that close work can exceed 10s purely from CPU starvation, surfacing as a
     // flaky "Hook timed out in 10000ms" that isn't a real hang. 30s gives every
-    // teardown hook the same headroom the bodies already get. (The slowest
-    // suite, `snapshotRestore.test.ts`, scopes an even-higher local override.)
+    // teardown hook the same headroom the bodies already get.
+    //
+    // HS-9504 — the SLOWEST suites scope their own budget with a file-level
+    // `vi.setConfig({ testTimeout, hookTimeout })` rather than raising these:
+    // `backup`, `snapshotRestore`, `connectionEviction`, and the `*.e2e` server-boot
+    // files, plus one per-test override in `telemetryVacuum` (HS-9501). Raising the
+    // global is the wrong lever — 30s is deliberate, and a suite-wide raise would
+    // mask a real hang somewhere quiet.
+    //
+    // **Adding a test that drives real PGLite clusters or boots a server?** Expect a
+    // ~6x wall-clock stretch under the full parallel run and scope a local override
+    // rather than waiting for it to flake. `connectionEviction` is the shape to
+    // measure against: ~56 cluster open/close operations, ~69s alone.
     hookTimeout: 30000,
     // HS-8097: `node_modules/**` only matches the top-level node_modules.
     // The Tauri release artefact at

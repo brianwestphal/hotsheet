@@ -15,6 +15,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { createRawOtelTables, createTempDir } from '../test-helpers.js';
 import { centralTelemetryDataDir, closeDbForDir, getDbForDir, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
+
 // HS-8874 — isolate the central store to a temp dir (see otelWriters.test.ts).
 let centralOverrideDir: string;
 beforeAll(() => { centralOverrideDir = createTempDir(); process.env.HOTSHEET_TELEMETRY_DIR = centralOverrideDir; });

@@ -3,7 +3,7 @@
  * Pure helpers + the daily time-series upsert + per-ticket time-window
  * attribution, against a real PGlite (the rollup tables come from initSchema).
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { getDb } from './connection.js';
@@ -23,6 +23,13 @@ import {
   widenTicketPromptSpan,
 } from './otelRollupIngest.js';
 import type { MetricAggregation } from './otelWriters.js';
+
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
 const DELTA: MetricAggregation = { temporality: 'delta', isMonotonic: true };
 const NONE: MetricAggregation = { temporality: null, isMonotonic: null };

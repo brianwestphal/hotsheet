@@ -18,6 +18,13 @@ import {
   persistTracesPayload,
 } from './otelWriters.js';
 
+// HS-9504 — a PGLite-heavy suite: real embedded-Postgres clusters, which stretch ~6x
+// under the full parallel run (CPU starvation, see `vitest.config.ts`). The global 30s
+// budget is deliberate and stays; the heavy tier scopes its own. Applied to the whole
+// tier at once rather than one file per flake — the failing file ROTATED between runs,
+// so fixing them individually was whack-a-mole.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
+
 // HS-8877 — central (no-project) writes mark the central store dirty for a
 // snapshot. Mock the trigger so the test asserts the wiring without a real
 // debounce timer firing after teardown.
