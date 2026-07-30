@@ -84,6 +84,17 @@ function readLoginShellPath(shell: string, execOverride?: typeof execFileSync): 
       const out = exec(shell, [flag, 'printf %s "$PATH"'], {
         encoding: 'utf8',
         timeout: SHELL_PATH_TIMEOUT_MS,
+        // HS-9391: SIGKILL, not the SIGTERM default. An INTERACTIVE shell (`-i`)
+        // ignores SIGTERM — that is what interactive means — so the `timeout` above
+        // fired, sent a signal the shell discarded, and `execFileSync` then blocked
+        // FOREVER waiting for a child that would never exit. Because the block is in
+        // native code (`SyncProcessRunner::Spawn` → `uv_run`), the calling thread
+        // stops dead: in a vitest worker that means every test has already passed but
+        // no reporter, summary or `hanging-process` dump can ever run, which is the
+        // whole "suite wedges at exit with all ✓ and no summary" signature. Measured
+        // 2026-07-30: the stuck `/bin/zsh -ilc` survived SIGTERM and died on SIGKILL,
+        // at which point the held-up run printed its summary immediately.
+        killSignal: 'SIGKILL',
         stdio: ['ignore', 'pipe', 'ignore'],
         windowsHide: true,
       });

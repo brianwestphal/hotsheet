@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { enrichProcessPath, mergePaths, resolveLoginShell } from './enrich-path.js';
@@ -115,6 +116,38 @@ describe('enrichProcessPath', () => {
     expect(exec).toHaveBeenNthCalledWith(1, '/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.anything());
     expect(exec).toHaveBeenNthCalledWith(2, '/bin/zsh', ['-lc', 'printf %s "$PATH"'], expect.anything());
     expect(process.env.PATH).toBe('/a:/usr/bin');
+  });
+
+  it('HS-9391 — kills a timed-out probe with SIGKILL, which an interactive shell cannot ignore', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    process.env.PATH = '/usr/bin';
+    const exec = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('timed out'); })
+      .mockReturnValueOnce('/a:/usr/bin\n');
+
+    enrichProcessPath({ exec: exec as never, shell: '/bin/zsh' });
+
+    // BOTH attempts, not just `-ilc`: `-lc` still runs the login rc files, which can
+    // themselves block, and a fallback that can hang forever is no fallback.
+    for (const call of [1, 2]) {
+      expect(exec).toHaveBeenNthCalledWith(call, '/bin/zsh', expect.anything(),
+        expect.objectContaining({ killSignal: 'SIGKILL' }));
+    }
+  });
+
+  it('HS-9391 — SIGKILL genuinely enforces the timeout on a SIGTERM-ignoring child', () => {
+    if (process.platform === 'win32') return;
+    // The claim the fix rests on, exercised against a REAL process rather than asserted
+    // in a comment: `trap "" TERM` is what an interactive shell effectively does, and it
+    // is why the default killSignal left `execFileSync` blocked forever. Only the SIGKILL
+    // side is run — asserting the SIGTERM side hangs would mean writing a test that hangs.
+    const started = Date.now();
+    expect(() => execFileSync('/bin/sh', ['-c', 'trap "" TERM; sleep 30'], {
+      timeout: 500,
+      killSignal: 'SIGKILL',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })).toThrow();
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   it('leaves PATH unchanged when the shell call throws (timeout, missing shell, etc.)', () => {
