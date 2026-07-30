@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPreferenceRow, renderConfigLayout } from './pluginConfigDialog.js';
 import type { ConfigLayoutItem, PluginPreference } from './pluginTypes.js';
+import { pluginPreferenceStore } from './preferenceStore.js';
 
 const h = vi.hoisted(() => ({
   getPluginGlobalConfig: vi.fn(() => Promise.resolve('')),
@@ -97,7 +98,7 @@ describe('renderConfigLayout — item types', () => {
 
 describe('createPreferenceRow', () => {
   it('shows the required marker + global badge + description when present', () => {
-    const row = createPreferenceRow(PID, {
+    const row = createPreferenceRow(pluginPreferenceStore(PID), {
       key: 'apiKey', label: 'API Key', scope: 'global', required: true, description: 'Your key',
     } as PluginPreference);
     expect(row.querySelector('.plugin-pref-required')).not.toBeNull();
@@ -107,7 +108,7 @@ describe('createPreferenceRow', () => {
   });
 
   it('omits the markers for a plain project-scoped preference', () => {
-    const row = createPreferenceRow(PID, { key: 'name', label: 'Name' } as PluginPreference);
+    const row = createPreferenceRow(pluginPreferenceStore(PID), { key: 'name', label: 'Name' } as PluginPreference);
     expect(row.querySelector('.plugin-pref-required')).toBeNull();
     expect(row.querySelector('.global-setting-badge')).toBeNull();
     expect(row.querySelector('.settings-hint')).toBeNull();

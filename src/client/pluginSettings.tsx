@@ -16,6 +16,7 @@ import { createPreferenceRow, renderConfigLayout } from './pluginConfigDialog.js
 import { computeConflictDiff,type ConflictFieldDiff } from './pluginConflictDiff.js';
 import { STATUS_DOT } from './pluginTypes.js';
 import { refreshPluginUI } from './pluginUI.js';
+import { pluginPreferenceStore } from './preferenceStore.js';
 import { refreshSyncConflictBanner } from './syncConflictBanner.js';
 import { getTauriInvoke } from './tauriIntegration.js';
 
@@ -389,7 +390,7 @@ async function showPluginConfigDialog(plugin: PluginInfo) {
   } else {
     // Fallback: flat preference list
     for (const pref of detail.preferences) {
-      body.appendChild(createPreferenceRow(plugin.id, pref));
+      body.appendChild(createPreferenceRow(pluginPreferenceStore(plugin.id), pref));
     }
   }
 
