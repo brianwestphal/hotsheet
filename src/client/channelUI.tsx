@@ -576,18 +576,22 @@ export async function initChannel() {
     renderChannelCommands(); // Still render shell commands
     return;
   }
-  // HS-9384 (docs/121 §121.7) — a codex project whose app-server drive is toggled
-  // off (or whose handshake failed) hides the SAME surface: play button + prompt
-  // commands (via isCommandVisible seeing the hidden section); shell buttons stay.
+  // HS-9384 (docs/121 §121.7) — a codex project whose app-server handshake failed hides
+  // the play button + prompt commands (via isCommandVisible seeing the hidden section);
+  // shell buttons stay. HS-9513 — and shows a Retry row in their place, so the surface
+  // no longer just vanishes with the recovery left as folklore.
+  const codexFailedRow = byIdOrNull('codex-drive-failed-row');
   if (shouldHideCodexDriveSurface(status, state.settings.ai_tool)) {
     section.style.display = 'none';
     if (autoRow) autoRow.style.display = 'none';
     if (workerActionsRow) workerActionsRow.style.display = 'none';
+    if (codexFailedRow) codexFailedRow.style.display = '';
     setChannelAlive(false);
     stopPermissionPolling();
     renderChannelCommands(); // Still render shell commands
     return;
   }
+  if (codexFailedRow) codexFailedRow.style.display = 'none';
   section.style.display = '';
   // HS-9411 (docs/124) — the worker surfaces are ALSO behind the "Parallel agent
   // workers" In Development gate. The channel being enabled is necessary but no

@@ -417,19 +417,21 @@ describe('HS-9384 — Experimental toggle + handshake-failure degradation', () =
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('isCodexAppServerEnabled defaults ON (absent) and honors an explicit false', () => {
+  // HS-9513 — the `codexAppServerEnabled` flag is gone. It read as an Experimental
+  // readiness gate but was really the only in-app way to clear a handshake failure, so
+  // it became an explicit "Retry Codex drive" action instead.
+  it('isCodexAppServerEnabled is ON, and IGNORES a leftover codexAppServerEnabled key', () => {
     expect(isCodexAppServerEnabled()).toBe(true);
+    // Anyone who turned the old toggle off still carries it in ~/.hotsheet/config.json.
+    // Honouring it would silently keep the drive disabled with no control to re-enable.
     writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
-    expect(isCodexAppServerEnabled()).toBe(false);
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: true }), 'utf-8');
     expect(isCodexAppServerEnabled()).toBe(true);
   });
 
-  it('spawnCodexAppServerRun refuses to spawn when the toggle is off (no one-shot fallback)', () => {
+  it('spawnCodexAppServerRun spawns even with a leftover disable key present', () => {
     writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
     const fake = scriptedAppServer();
-    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(false);
-    expect(fake.spawnFn).not.toHaveBeenCalled();
+    expect(spawnCodexAppServerRun(dataDir, 4174, 'go', { spawnFn: fake.spawnFn, connectDaemon: noDaemon, postHeartbeat: vi.fn(), signalDone: vi.fn() })).toBe(true);
   });
 
   it('a failed initialize marks the project handshake-failed, clears busy; clearing the flag retries fresh', async () => {
@@ -1258,10 +1260,10 @@ describe('HS-9429 — codexTerminalRemoteCommand + codexTerminalNeedsDaemonEnsur
       expect(codexTerminalRemoteCommand(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBeNull();
     });
 
-    it('returns null when the drive toggle is off', () => {
+    it('HS-9513 — a leftover drive-disable key no longer suppresses the remote command', () => {
       vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
       writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
-      expect(codexTerminalRemoteCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBeNull();
+      expect(codexTerminalRemoteCommand(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).not.toBeNull();
     });
   });
 
@@ -1322,17 +1324,13 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
     expect(ensureDaemon).toHaveBeenCalledTimes(1);
   });
 
-  it('no-ops for non-codex projects and when the drive is off', () => {
+  it('no-ops for non-codex projects', () => {
     const ensureDaemon = vi.fn();
     // non-codex tool
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'gemini' }), 'utf-8');
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
-    // drive toggle off
-    writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'codex' }), 'utf-8');
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
-    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
-    // HS-9513 — the "model-B off" case is gone with the flag: model-B is now
-    // unconditional (bar the env override), so no config suppresses it.
+    // HS-9513 — the "drive toggle off" and "model-B off" cases are both gone with their
+    // flags. A non-codex project is the only thing that suppresses the prestart now.
     expect(ensureDaemon).not.toHaveBeenCalled();
   });
 

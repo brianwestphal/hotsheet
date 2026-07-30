@@ -51,7 +51,6 @@ export const ChannelStatusSchema = z.object({
   aliveCount: z.number(),
   // HS-9384 (docs/121 §121.7) — codex app-server drive state. Optional so a status
   // response from an older server still validates during an upgrade window.
-  codexAppServerEnabled: z.boolean().optional(),
   codexAppServerFailed: z.boolean().optional(),
 });
 export type ChannelStatus = z.infer<typeof ChannelStatusSchema>;
@@ -133,14 +132,16 @@ export async function disableChannel(): Promise<OkResponse> {
   return apiCall(OkResponseSchema, '/channel/disable', { method: 'POST' });
 }
 
-/** HS-9384 (docs/121 §121.7) — flip the machine-global codex app-server drive toggle.
- *  Disabling kills live driven sessions; enabling clears handshake-failure flags. */
-export const CodexAppServerToggleResponseSchema = z.object({ ok: z.boolean(), enabled: z.boolean() });
-export async function setCodexAppServerEnabled(enabled: boolean): Promise<z.infer<typeof CodexAppServerToggleResponseSchema>> {
-  return apiCall(CodexAppServerToggleResponseSchema, '/channel/codex-app-server', {
-    method: 'POST',
-    body: { enabled },
-  });
+/**
+ * HS-9513 (docs/121 §121.7) — retry the codex drive after a handshake failure.
+ *
+ * Replaces the `codexAppServerEnabled` toggle. That flag was labeled experimental but
+ * was really the only in-app way to clear a handshake-failure flag: users recovered by
+ * switching it off and on again. This does that recovery directly, and says so.
+ */
+export const CodexDriveRetryResponseSchema = z.object({ ok: z.boolean() });
+export async function retryCodexDrive(): Promise<z.infer<typeof CodexDriveRetryResponseSchema>> {
+  return apiCall(CodexDriveRetryResponseSchema, '/channel/codex-drive/retry', { method: 'POST' });
 }
 
 /** GET `/channel/heartbeat-status` → busy/idle updates after the client's `since`

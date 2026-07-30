@@ -1,4 +1,4 @@
-import { clearLocalSettingOverride, disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getLayeredFileSettings, getSettings, setCodexAppServerEnabled, updateFileSettingsLayer } from '../api/index.js';
+import { clearLocalSettingOverride, disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getLayeredFileSettings, getSettings, updateFileSettingsLayer } from '../api/index.js';
 // HS-9014 — the canonical command-tree types + `isGroup` live in the server-safe
 // `settingsCommandDelta` module (shared with the file-settings resolver). Re-export
 // them here so the many `from './experimentalSettings.js'` importers keep working.
@@ -694,19 +694,6 @@ export function bindExperimentalSettings() {
       customCommandsSection.style.display = '';
     });
   });
-
-  // HS-9384 (docs/121 §121.7) — the codex app-server drive toggle. Machine-global,
-  // DEFAULT ON (absent ⇒ enabled). Flipping it re-runs initChannel so a codex
-  // project's play/prompt surface hides or reappears immediately.
-  const codexAppServerCheckbox = byIdOrNull('settings-codex-app-server-enabled');
-  if (codexAppServerCheckbox instanceof HTMLInputElement) {
-    getGlobalConfig().catch(() => null).then(config => {
-      codexAppServerCheckbox.checked = config?.codexAppServerEnabled !== false;
-    }).catch(() => {});
-    codexAppServerCheckbox.addEventListener('change', () => {
-      void setCodexAppServerEnabled(codexAppServerCheckbox.checked).then(() => initChannel());
-    });
-  }
 
   // Load channel enabled state from global config (authoritative source)
   getGlobalConfig().catch(() => null).then(config => {

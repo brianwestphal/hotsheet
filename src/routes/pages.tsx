@@ -250,6 +250,14 @@ pageRoutes.get('/', (c) => {
                 <span className="channel-auto-icon" id="channel-auto-icon" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M12 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 12 18z"/><path d="M2 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 2 18z"/></svg></span>
               </button>
             </div>
+            {/* HS-9513 (docs/121 §121.7) — shown in place of the play button when the
+                codex drive's handshake failed. Before this the surface simply vanished
+                with no explanation and the only recovery was toggling an Experimental
+                flag off and on; this states what happened and offers the retry. */}
+            <div className="sidebar-codex-drive-failed" id="codex-drive-failed-row" style="display:none">
+              <span className="codex-drive-failed-text">Codex drive unavailable</span>
+              <button className="btn btn-sm" id="codex-drive-retry-btn" title="Clear the handshake failure and try the codex app-server again">Retry</button>
+            </div>
             <div id="channel-commands-container"></div>
             {PLUGINS_ENABLED ? <div id="plugin-sidebar-top" className="plugin-sidebar-actions"></div> : null}
             {/* HS-8528 — "Copy AI prompt" sidebar button removed.
@@ -1145,22 +1153,6 @@ pageRoutes.get('/', (c) => {
                     <button className="btn btn-sm" id="settings-channel-copy-btn" title="Copy command">Copy</button>
                   </div>
                 </div>
-              </div>
-              {/* HS-9384 (docs/121 §121.7) — the codex app-server drive toggle.
-                  Machine-global (`~/.hotsheet/config.json` `codexAppServerEnabled`),
-                  DEFAULT ON. Disabled ⇒ codex projects hide the play button +
-                  prompt-command buttons (shell buttons unaffected) — no one-shot
-                  fallback. */}
-              {/* HS-9473 — dev-gated: these are Codex-specific, so they must not be
-                  reachable while the Codex gate (docs/124) is off for this project.
-                  `data-dev-feature` is the generic opt-in `applyDevFeatureGates`
-                  reads; the toggles themselves stay machine-global. */}
-              <div className="settings-field" style="margin-top:16px">
-                <label className="settings-checkbox-label">
-                  <input type="checkbox" id="settings-codex-app-server-enabled" />
-                  Codex app-server drive <span className="global-setting-badge">Global Setting</span>
-                </label>
-                <span className="settings-hint">Drive Codex projects through a persistent <code>codex app-server</code> session (play + prompt commands share one conversation with approvals in the permission popup). On by default. When off, the play button and Codex prompt commands are hidden for Codex projects.</span>
               </div>
               {/* HS-9222 (docs/110 §110.7 P2) — AI Review Notes inducement toggle
                   (`aiReviewNotes`). Scope-aware Shared/Local (registered in

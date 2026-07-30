@@ -2183,6 +2183,23 @@ body.cross-project-stats-active {
   padding: 8px 10px 4px;
 }
 
+// HS-9513 (docs/121 §121.7) — shown in place of the play button when the codex
+// app-server handshake failed. Before this the surface just vanished, so the state
+// was indistinguishable from "no drive configured" and the only recovery was an
+// Experimental toggle nothing on screen pointed at.
+.sidebar-codex-drive-failed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 4px;
+
+  .codex-drive-failed-text {
+    font-size: 12px;
+    color: var(--text-muted, #888);
+  }
+}
+
 // HS-9039 — "Auto worker pool" switch, just above the play button.
 // HS-9068 — worker-pool + in-flight-work entry buttons (moved off the git
 // popover). Two equal-width iconic buttons on a single row, sitting just above

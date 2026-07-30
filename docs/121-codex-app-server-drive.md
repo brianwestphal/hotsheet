@@ -311,3 +311,38 @@ pre-started before the eager spawn). *Phase 3 (HS-9430):* the gate became the
 `codexModelBTerminals` setting (Settings → Experimental → "Codex terminals host the
 driven session", default ON, `HOTSHEET_CODEX_DISCOVER_THREAD` overrides), and the
 terminal-attach / `codexReattach` chase (HS-9394/9397) was deleted.
+
+
+## 121.11 The drive toggle became a Retry action (HS-9513, 2026-07-31)
+
+The `codexAppServerEnabled` Experimental toggle is **removed**, alongside the docs/124
+per-tool gates (HS-9515) and `codexModelBTerminals` (docs/129 §129.11), under the same
+maintainer decision: with each AI tool an `AiToolPlugin` (docs/132), readiness is managed
+by not shipping a plugin publicly and by alpha/beta labeling, not by runtime flags.
+
+**But this flag was not a readiness gate**, and that is worth recording because its label
+said otherwise. `POST /channel/codex-app-server` was the only in-app path that cleared a
+handshake-failure flag, so the actual recovery from a protocol/version drift — a real
+event, since codex-cli versions independently of Hot Sheet — was *"toggle it off and on
+again"*. That is folklore, not an affordance, and it was undiscoverable: a failed
+handshake made the play surface **vanish with no explanation**, so nothing on screen
+suggested the Experimental tab had anything to do with it.
+
+So rather than delete the recovery with the flag:
+
+- `POST /channel/codex-drive/retry` (no body — the only question was ever "try again")
+  clears the failure flags, re-prestarts the daemon (HS-9396), and lets the next play
+  retry fresh.
+- A **"Codex drive unavailable — Retry"** row renders in place of the hidden play button
+  (`codexDriveRetry.ts`), so the failure states itself and offers the one action that
+  helps. Strictly better than the toggle it replaces, which is why (b) was chosen over
+  simply keeping the flag.
+- `isCodexAppServerEnabled()` is now constant `true`; a **failed handshake is the only
+  thing that hides the drive surface**, and it is the only one of the two a user never
+  chose.
+
+A leftover `codexAppServerEnabled: false` in `~/.hotsheet/config.json` is **ignored** —
+honouring it would keep the drive disabled with no control left to re-enable it. Pinned
+in `codexAppServer.test.ts` and in `codexDriveGate.test.ts` (for a stale status payload
+from an older server), because a silently-disabled drive is exactly what a deletion like
+this invites.

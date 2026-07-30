@@ -24,15 +24,40 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
   test.afterAll(async ({ request }) => {
     // Reset shared-server state so later specs aren't affected.
     try {
-      await request.post('/api/channel/codex-app-server', { headers, data: { enabled: true } });
       await request.patch('/api/file-settings', { headers, data: { ai_tool: '' } });
       await request.patch('/api/settings', { headers, data: { custom_commands: '[]' } });
       await request.post('/api/channel/disable', { headers });
     } catch { /* best-effort cleanup */ }
   });
 
-  test('toggle off hides play + prompt buttons (shell stays); Experimental checkbox re-enables', async ({ page, request }) => {
-    // Arrange: channel on, ai_tool = codex, one prompt + one shell command.
+  // HS-9513 — the drive ENABLE/DISABLE toggle is gone, so the old "toggle off → surface
+  // hides → checkbox re-enables" journey no longer exists to test. What replaced it is a
+  // handshake-FAILURE state, which can't be forced from here without a broken `codex`
+  // binary — that logic is unit-tested (`codexDriveGate.test.ts`, `codexDriveRetry.test.ts`).
+  //
+  // What IS worth asserting end-to-end is that the removed controls are actually gone.
+  // A leftover checkbox writing a key nothing reads, or a live endpoint flipping a flag
+  // nothing honours, would both look perfectly healthy while doing nothing at all.
+  test('the removed drive toggle is gone from the UI and the API', async ({ page, request }) => {
+    await request.post('/api/channel/enable', { headers });
+    await request.patch('/api/file-settings', { headers, data: { ai_tool: 'codex' } });
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
+
+    await page.locator('#settings-btn').click();
+    await expect(page.locator('#settings-overlay')).toBeVisible();
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await expect(page.locator('#settings-codex-app-server-enabled')).toHaveCount(0);
+    await page.locator('#settings-close').click();
+
+    // The endpoint it drove is gone too; the status no longer carries the flag.
+    const stale = await request.post('/api/channel/codex-app-server', { headers, data: { enabled: false } });
+    expect(stale.status()).toBe(404);
+    const status = await (await request.get('/api/channel/status', { headers })).json() as Record<string, unknown>;
+    expect(status).not.toHaveProperty('codexAppServerEnabled');
+  });
+
+  test('a healthy codex project keeps its play + prompt surface, and the retry row stays hidden', async ({ page, request }) => {
     await request.post('/api/channel/enable', { headers });
     await request.patch('/api/file-settings', { headers, data: { ai_tool: 'codex' } });
     await request.patch('/api/settings', {
@@ -47,50 +72,17 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
-    const playSection = page.locator('#channel-play-section');
-    const promptBtn = page.locator('#channel-commands-container button', { hasText: PROMPT_CMD });
     const shellBtn = page.locator('#channel-commands-container button', { hasText: SHELL_CMD });
-
-    // The ON-state visibility assertions share the channel-ui.spec.ts guard: the
-    // play section also needs a sufficient `claude` CLI on the machine.
+    // The play-surface assertions share the channel-ui.spec.ts guard: they also need a
+    // sufficient `claude` CLI on the machine.
     const { meetsMinimum } = await (await request.get('/api/channel/claude-check', { headers })).json() as { meetsMinimum: boolean };
-
     if (meetsMinimum) {
-      // (1) Default ON → the full drive surface is visible for the codex project.
-      await expect(playSection).toBeVisible({ timeout: 5000 });
-      await expect(promptBtn).toBeVisible();
-      await expect(shellBtn).toBeVisible();
-    }
-
-    // (2) Toggle OFF via the API → play + prompt hidden, shell stays.
-    await request.post('/api/channel/codex-app-server', { headers, data: { enabled: false } });
-    await page.reload();
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await expect(playSection).toBeHidden();
-    await expect(promptBtn).toBeHidden();
-    await expect(shellBtn).toBeVisible(); // shell commands are unaffected by the gate
-
-    // The Experimental checkbox reflects the OFF state.
-    await page.locator('#settings-btn').click();
-    await expect(page.locator('#settings-overlay')).toBeVisible();
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
-    const checkbox = page.locator('#settings-codex-app-server-enabled');
-    await expect(checkbox).toBeVisible();
-    await expect(checkbox).not.toBeChecked();
-
-    // (3) Re-enable via the checkbox → the change handler re-runs initChannel, so
-    // the surface returns without a reload.
-    await checkbox.check();
-    await expect.poll(async () => {
-      const status = await (await request.get('/api/channel/status', { headers })).json() as { codexAppServerEnabled?: boolean };
-      return status.codexAppServerEnabled;
-    }, { timeout: 5000 }).toBe(true);
-    await page.locator('#settings-close').click();
-    if (meetsMinimum) {
-      await expect(playSection).toBeVisible({ timeout: 5000 });
-      await expect(promptBtn).toBeVisible();
+      await expect(page.locator('#channel-play-section')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('#channel-commands-container button', { hasText: PROMPT_CMD })).toBeVisible();
     }
     await expect(shellBtn).toBeVisible();
+    // No failure ⇒ no retry row. It appears only in place of a hidden play surface.
+    await expect(page.locator('#codex-drive-failed-row')).toBeHidden();
   });
 
   // HS-9513 — the model-B toggle is GONE (the flag it wrote no longer exists), so its
@@ -105,24 +97,21 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
     await page.locator('.settings-tab[data-tab="experimental"]').click();
 
     await expect(page.locator('#settings-codex-model-b-terminals')).toHaveCount(0);
-    // The drive toggle beside it is untouched — this removal was scoped to model-B.
-    await expect(page.locator('#settings-codex-app-server-enabled')).toBeVisible();
     await page.locator('#settings-close').click();
   });
 
-  test('non-codex projects are unaffected by the toggle', async ({ page, request }) => {
+  test('non-codex projects are unaffected by codex drive state', async ({ page, request }) => {
     await request.post('/api/channel/enable', { headers });
     await request.patch('/api/file-settings', { headers, data: { ai_tool: 'claude' } });
-    await request.post('/api/channel/codex-app-server', { headers, data: { enabled: false } });
+    // HS-9513 — the retry is codex-scoped; running it must not disturb a claude project.
+    await request.post('/api/channel/codex-drive/retry', { headers });
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
     const { meetsMinimum } = await (await request.get('/api/channel/claude-check', { headers })).json() as { meetsMinimum: boolean };
     if (meetsMinimum) {
-      // The codex toggle being off must not hide a CLAUDE project's play section.
       await expect(page.locator('#channel-play-section')).toBeVisible({ timeout: 5000 });
     }
-    // Restore for cleanliness (afterAll also resets).
-    await request.post('/api/channel/codex-app-server', { headers, data: { enabled: true } });
+    await expect(page.locator('#codex-drive-failed-row')).toBeHidden();
   });
 });

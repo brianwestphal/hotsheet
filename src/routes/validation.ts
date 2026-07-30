@@ -198,11 +198,6 @@ export const ChannelTriggerSchema = z.object({
   target: ChannelTriggerTargetSchema.optional(),
 });
 
-/** HS-9384 — flip the machine-global codex app-server drive toggle (docs/121 §121.7). */
-export const CodexAppServerToggleSchema = z.object({
-  enabled: z.boolean(),
-});
-
 /** HS-9385 — one codex turn-transcript event (self-POSTed by the session manager;
  *  docs/121 §121.6 phase 1). `text` is bounded — a runaway item can't balloon a
  *  request (§96 spirit); the route additionally caps the accumulated detail. */
@@ -335,7 +330,6 @@ export const GlobalConfigSchema = z.object({
   channelEnabled: z.boolean().optional(),
   /** HS-9384 (docs/121 §121.7) — the codex app-server drive toggle. Absent ⇒ ENABLED
    *  (default ON, like an experimental feature the user hasn't turned off). */
-  codexAppServerEnabled: z.boolean().optional(),
   /** HS-9430 (docs/129, model-B) — codex terminals own a daemon thread (`codex --remote`)
    *  the drive discovers by cwd, instead of the model-A "terminal chases the drive's
    *  thread" attach. Absent ⇒ ENABLED (default ON, verified end-to-end HS-9429/9431).

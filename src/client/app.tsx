@@ -14,6 +14,7 @@ import { bindBatchToolbar } from './batch.js';
 import { startBellPolling } from './bellPoll.js';
 import { channelAutoTrigger, initChannel } from './channelUI.js';
 import { initSkillsBanner } from './clipboardUtil.js';
+import { bindCodexDriveRetry } from './codexDriveRetry.js';
 import { applyPerProjectDrawerState, initCommandLog, refreshCommandLog } from './commandLog.js';
 import { initCustomViews, loadCustomViews } from './customViews.js';
 import { initDashboardWidget, refreshDashboardWidget, restoreTicketList } from './dashboardMode.js';
@@ -153,6 +154,9 @@ async function reloadAppState() {
   void import('./claimsStore.js').then(({ resetClaimsForProjectSwitch }) => resetClaimsForProjectSwitch());
   // Re-init channel for the new project context, then reflect this project's
   // Auto-worker-pool switch (HS-9039) once the play section's visibility settles.
+  // HS-9513 — the codex-drive Retry button lives beside the play surface; bind once
+  // at boot, and re-init the channel on success so the surface returns immediately.
+  bindCodexDriveRetry(() => initChannel().then(() => { syncWorkerAutoModeUI(); }));
   void initChannel().then(() => syncWorkerAutoModeUI());
   // Reload plugin UI for the new project
   void reloadPluginToolbar();

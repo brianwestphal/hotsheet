@@ -21,7 +21,7 @@ import { PendingPermissionSchema } from '../schemas.js';
 import { flushPendingSyncs } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
-import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexAppServerToggleSchema, CodexTranscriptEventSchema, parseBody, PermissionRespondSchema } from './validation.js';
+import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexTranscriptEventSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
 
@@ -147,24 +147,24 @@ channelRoutes.get('/channel/status', async (c) => {
     }
   }
   // HS-9384 (docs/121 §121.7) — codex app-server drive state: the machine-global
-  // Experimental toggle + a per-project handshake-failure flag. The client hides
-  // the play/prompt surface for codex projects when either says no. A newly
-  // observed failure gets ONE Commands Log warning (written here — project
-  // context — because the session manager runs outside any request).
+  // HS-9513 — the experimental enable/disable toggle is gone; a per-project
+  // handshake-failure flag is what remains, and the client hides the play/prompt
+  // surface for codex projects while it is set. A newly observed failure gets ONE
+  // Commands Log warning (written here — project context — because the session
+  // manager runs outside any request).
   // HS-9493 — asked of the project's drive backing service rather than of codex by
-  // name. `false`/`false` when the tool has none, which is the same answer the
-  // client already handles for every non-codex project.
+  // name. `false` when the tool has none, which is the same answer the client
+  // already handles for every non-codex project.
   const driveService = projectDriveService(dataDir);
-  const codexAppServerEnabled = driveService?.isEnabled() ?? false;
   const codexAppServerFailed = driveService?.hasFailed(dataDir) ?? false;
   if (codexAppServerFailed && !loggedCodexHandshakeFailures.has(dataDir)) {
     loggedCodexHandshakeFailures.add(dataDir);
     addLogEntry('trigger', 'incoming', 'Codex app-server handshake failed — drive hidden',
-      'The codex app-server session could not initialize (protocol/version drift or codex not runnable). The play button and codex prompt commands are hidden. Toggle Settings → Experimental → "Codex app-server drive" off and on to retry, and check that `codex app-server` works in a terminal.').catch(() => {});
+      'The codex app-server session could not initialize (protocol/version drift or codex not runnable). The play button and codex prompt commands are hidden; a "Retry Codex drive" button appears in their place. Check that `codex app-server` works in a terminal, then retry.').catch(() => {});
   } else if (!codexAppServerFailed) {
     loggedCodexHandshakeFailures.delete(dataDir);
   }
-  return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount, codexAppServerEnabled, codexAppServerFailed });
+  return c.json({ enabled, alive, port, done, versionMismatch, serverName, aliveCount, codexAppServerFailed });
 });
 
 /** HS-9384 — dedup so the polled status route logs a handshake failure once. */
@@ -215,27 +215,23 @@ channelRoutes.post('/channel/codex-transcript', async (c) => {
 });
 
 /**
- * HS-9384 (docs/121 §121.7) — flip the machine-global codex app-server drive toggle.
- * Disabling kills every live driven session (no one-shot fallback — the client hides
- * the drive surface); enabling clears handshake-failure flags so the next play
- * retries fresh.
+ * HS-9513 (docs/121 §121.7) — retry the drive after a handshake failure.
+ *
+ * Replaces `POST /channel/codex-app-server`, which flipped an Experimental toggle. That
+ * flag read as a readiness gate but was really the only in-app way to clear a
+ * handshake-failure flag — the recovery was "switch it off and on again", which is
+ * folklore rather than an affordance. This does the recovery directly: clear the flags,
+ * re-prestart the daemon (HS-9396, docs/123 §123.5, so the next codex terminal can
+ * launch attached), and let the next play retry fresh.
+ *
+ * Takes no body. There is nothing to configure — the only question was ever "try again".
  */
-channelRoutes.post('/channel/codex-app-server', async (c) => {
-  const raw: unknown = await c.req.json().catch(() => ({}));
-  const parsed = parseBody(CodexAppServerToggleSchema, raw);
-  if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  writeGlobalConfig({ codexAppServerEnabled: parsed.data.enabled });
-  if (parsed.data.enabled) {
-    projectDriveService(c.get('dataDir'))?.clearFailures();
-    loggedCodexHandshakeFailures.clear();
-    // HS-9396 (docs/123 §123.5) — re-enabling the drive readies the daemon so
-    // this project's next codex terminal can launch attached.
-    prestartProjectDriveService(c.get('dataDir'));
-  } else {
-    projectDriveService(c.get('dataDir'))?.shutdown();
-  }
+channelRoutes.post('/channel/codex-drive/retry', (c) => {
+  projectDriveService(c.get('dataDir'))?.clearFailures();
+  loggedCodexHandshakeFailures.clear();
+  prestartProjectDriveService(c.get('dataDir'));
   notifyChange();
-  return c.json({ ok: true, enabled: parsed.data.enabled });
+  return c.json({ ok: true });
 });
 
 /** HS-8948 — per-dataDir dedup of the multi-connection diagnostic log so the

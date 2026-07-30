@@ -65,7 +65,6 @@ import {
   ensureCodexDaemonRunning,
 } from './codexDaemonTransport.js';
 import { readFileSettings } from './file-settings.js';
-import { readGlobalConfig } from './global-config.js';
 import { findMatchingAllowRule, parseAllowRules } from './permissionAllowRules.js';
 import { getProjectSecret } from './secret-file.js';
 
@@ -78,7 +77,12 @@ export function codexInteractivePermissions(dataDir: string): boolean {
 /** HS-9384 (docs/121 §121.7) — the machine-global Experimental toggle, DEFAULT ON
  *  (absent ⇒ enabled, like `channelEnabled`'s treatment of the Claude Channel). */
 export function isCodexAppServerEnabled(): boolean {
-  return readGlobalConfig().codexAppServerEnabled !== false;
+  // HS-9513 — the `codexAppServerEnabled` Experimental flag is GONE. It looked like a
+  // readiness gate but was really the only in-app way to clear a handshake-failure flag
+  // (users recovered by toggling it off and on), which is now an explicit "Retry Codex
+  // drive" action. The drive is simply on; `hasCodexAppServerHandshakeFailed` is what
+  // hides the surface when the session can't initialize.
+  return true;
 }
 
 /** HS-9384 — projects whose app-server HANDSHAKE failed (protocol/version drift).

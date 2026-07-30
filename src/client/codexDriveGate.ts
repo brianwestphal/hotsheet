@@ -4,17 +4,21 @@
 // also hides prompt commands via `commandSidebar.tsx::isCommandVisible`; shell
 // command buttons are unaffected).
 //
-// Only `ai_tool = codex` projects are gated: the toggle + handshake state are
-// meaningless for every other drive. Absent status fields (older server during an
-// upgrade window) fail OPEN — the surface stays visible.
+// Only `ai_tool = codex` projects are gated: the handshake state is meaningless for
+// every other drive. An absent status field (older server during an upgrade window)
+// fails OPEN — the surface stays visible.
+//
+// HS-9513 — the `codexAppServerEnabled` half is GONE. It was an Experimental toggle in
+// name but the only in-app way to clear a handshake failure in practice, so it became an
+// explicit "Retry Codex drive" action. A FAILED handshake is now the only thing that
+// hides the surface, which is also the only one of the two a user did not choose.
 
 export interface CodexDriveStatus {
-  codexAppServerEnabled?: boolean;
   codexAppServerFailed?: boolean;
 }
 
-/** True ⇒ hide the drive surface (codex project + toggle off or handshake failed). */
+/** True ⇒ hide the drive surface (codex project whose app-server handshake failed). */
 export function shouldHideCodexDriveSurface(status: CodexDriveStatus, aiTool: string | undefined): boolean {
   if ((aiTool ?? '').trim().toLowerCase() !== 'codex') return false;
-  return status.codexAppServerEnabled === false || status.codexAppServerFailed === true;
+  return status.codexAppServerFailed === true;
 }
