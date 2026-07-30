@@ -402,7 +402,7 @@ pageRoutes.get('/', (c) => {
                     structured blocked-by dependency gate. */}
                 <div className="detail-field detail-field-full">
                   <label>Blocked reason</label>
-                  <textarea id="detail-blocked-reason" rows={2} placeholder="What is this waiting on? (leave blank if not blocked)" spellcheck="true"></textarea>
+                  <textarea id="detail-blocked-reason" rows={1} placeholder="What is this waiting on? (leave blank if not blocked)" spellcheck="true"></textarea>
                 </div>
                 <div className="detail-field detail-field-full">
                   <label>Tags</label>

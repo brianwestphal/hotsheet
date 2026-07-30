@@ -6,6 +6,7 @@
  * never paints a stale render.
  */
 import { updateTicketField } from '../../api/index.js';
+import { syncBlockedReasonSize } from '../blockedReasonSize.js';
 import { TIMERS } from '../constants/timers.js';
 import { renderDetailsMarkdown } from '../detail.js';
 import { byIdOrNull } from '../dom.js';
@@ -49,6 +50,11 @@ export function bindDetailAutoSave(): void {
       if (fieldId === 'detail-details') {
         syncDetailReaderButton();
         renderDetailsMarkdown(el.value);
+      }
+      // HS-9516 — grow to Details' height on the first character and collapse back to
+      // one row when cleared, so the field's size tracks whether it is in use.
+      if (fieldId === 'detail-blocked-reason') {
+        syncBlockedReasonSize(el as HTMLTextAreaElement, byIdOrNull<HTMLTextAreaElement>('detail-details'));
       }
       const currentTimeout = getDetailSaveTimeout();
       if (currentTimeout) clearTimeout(currentTimeout);

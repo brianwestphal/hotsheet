@@ -37,6 +37,15 @@ feedback-needed tickets.
     OUT of Hot Sheet's special undo coalescing so the field's own native text undo/redo
     works (see §116.5 / HS-9335).
 
+    **Its height tracks whether it is in use (HS-9516):** one row when empty, and the
+    same height as the Details textarea once it has content, applied on every panel load
+    and on every keystroke (`blockedReasonSize.ts`). It shipped at a fixed 2 rows, which
+    read backwards — taller than nothing while empty, shorter than Details when full,
+    even though a blocked reason is the rare case and Details the common one.
+    Whitespace-only counts as empty, matching the "non-empty marks the ticket blocked"
+    rule above. The expanded height is READ FROM the Details textarea rather than
+    hard-coded, so the two cannot drift apart if Details is ever resized.
+
 ## 116.3 Row indicators (borders)
 
 A ticket row **and a column-view card** carry a 3px left border matching the `up-next`

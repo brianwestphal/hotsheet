@@ -5,6 +5,7 @@ import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
+import { syncBlockedReasonSize } from './blockedReasonSize.js';
 import { renderClaimedByChip } from './claimedByChip.js';
 import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
@@ -343,7 +344,11 @@ function loadPreviewDetail(id: number) {
   byId<HTMLTextAreaElement>('detail-details').value = ticket.details;
   // HS-9336 (docs/116) — populate the free-text blocked-reason editor.
   const blockedArea0 = byIdOrNull<HTMLTextAreaElement>('detail-blocked-reason');
-  if (blockedArea0 !== null) blockedArea0.value = ticket.blocked_reason ?? '';
+  if (blockedArea0 !== null) {
+    blockedArea0.value = ticket.blocked_reason ?? '';
+    // HS-9516 — one row when empty, Details' height once it has content.
+    syncBlockedReasonSize(blockedArea0, byIdOrNull<HTMLTextAreaElement>('detail-details'));
+  }
   // HS-8020 — paint the markdown-rendered view alongside the textarea
   // so the read-only preview shows formatted details (matches the live
   // detail panel post-fix).
@@ -485,6 +490,7 @@ async function loadDetail(id: number, forceTextFields = false) {
   const blockedArea = byIdOrNull<HTMLTextAreaElement>('detail-blocked-reason');
   if (blockedArea !== null && (forceTextFields || document.activeElement !== blockedArea)) {
     blockedArea.value = ticket.blocked_reason ?? '';
+    syncBlockedReasonSize(blockedArea, byIdOrNull<HTMLTextAreaElement>('detail-details')); // HS-9516
     if (forceTextFields && document.activeElement === blockedArea) {
       const len = blockedArea.value.length;
       blockedArea.setSelectionRange(len, len);
