@@ -16,7 +16,6 @@ import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AI_INSTRUCTION_TOOLS } from '../api/aiInstructions.js';
-import { DEV_FEATURES, devFeatureForAiTool } from '../devFeatures.js';
 import { detectsSpec, detectsTool, listDetectedPlugins } from './detect.js';
 import { AI_TOOL_AUTO, getPlugin, isKnownAiTool, listPlugins, normalizeAiToolId } from './registry.js';
 import type { AiToolPlugin } from './types.js';
@@ -121,20 +120,6 @@ describe('registry-wide invariants (HS-9490)', () => {
  * drift (docs/118).
  */
 describe('registry ↔ existing per-tool tables agree (HS-9490)', () => {
-  it('every docs/124 tool gate names a registered plugin', () => {
-    for (const feature of DEV_FEATURES) {
-      if (feature.aiTool === undefined) continue;
-      expect(getPlugin(feature.aiTool), `gate ${feature.key} → unknown tool`).not.toBeNull();
-    }
-  });
-
-  it("every plugin's devGateKey matches what devFeatures says for it", () => {
-    for (const plugin of PLUGINS) {
-      expect(plugin.devGateKey, `devGateKey drift for ${plugin.id}`)
-        .toBe(devFeatureForAiTool(plugin.id)?.key ?? null);
-    }
-  });
-
   it('every AI_INSTRUCTION_TOOLS entry is a registered plugin', () => {
     for (const tool of AI_INSTRUCTION_TOOLS) {
       expect(getPlugin(tool), `${tool} is in the wire enum but not the registry`).not.toBeNull();
@@ -286,7 +271,6 @@ describe('a NEW plugin inherits the conformance suite by existing (HS-9495)', ()
     displayName: 'Probe',
     productName: 'Probe Tool',
     tier: 'cli-agent',
-    devGateKey: null,
     detection: { binaries: ['probetool'], paths: ['.probetool'] },
     instructions: { relPath: 'PROBE.md', frontmatter: '', adapterSkillsRoot: null },
   };

@@ -722,10 +722,10 @@ pageRoutes.get('/', (c) => {
                     its declared order, instead of a hand-maintained list. Adding a tool
                     is now a registry line, not an edit here. `auto` is written
                     explicitly because it is a resolution MODE, not a plugin (§132.6).
-                    The docs/124 In-Development filtering still runs client-side
-                    (`applyAiToolDevGating`) — it depends on per-project gate settings
-                    and the currently-selected tool, neither of which the server render
-                    knows. */}
+                    HS-9515 — every plugin is listed unconditionally now; the per-tool
+                    In-Development gating that used to filter these options client-side
+                    is gone, since readiness is handled by not shipping a plugin rather
+                    than by a runtime flag. */}
                 <select id="ai-tool-select" className="settings-select">
                   <option value="auto">Auto-detect (default)</option>
                   {listPlugins().map(p => <option value={p.id}>{p.productName}</option>)}
@@ -1155,7 +1155,7 @@ pageRoutes.get('/', (c) => {
                   reachable while the Codex gate (docs/124) is off for this project.
                   `data-dev-feature` is the generic opt-in `applyDevFeatureGates`
                   reads; the toggles themselves stay machine-global. */}
-              <div className="settings-field" style="margin-top:16px" data-dev-feature="dev_tool_codex">
+              <div className="settings-field" style="margin-top:16px">
                 <label className="settings-checkbox-label">
                   <input type="checkbox" id="settings-codex-app-server-enabled" />
                   Codex app-server drive <span className="global-setting-badge">Global Setting</span>
@@ -1167,7 +1167,7 @@ pageRoutes.get('/', (c) => {
                   DEFAULT ON. Off ⇒ Codex terminals launch plain `codex` and the
                   drive keeps its own headless thread (turns don't render in the
                   terminal). `HOTSHEET_CODEX_DISCOVER_THREAD=0|1` overrides. */}
-              <div className="settings-field" style="margin-top:16px" data-dev-feature="dev_tool_codex">
+              <div className="settings-field" style="margin-top:16px">
                 <label className="settings-checkbox-label">
                   <input type="checkbox" id="settings-codex-model-b-terminals" />
                   Codex terminals host the driven session <span className="global-setting-badge">Global Setting</span>

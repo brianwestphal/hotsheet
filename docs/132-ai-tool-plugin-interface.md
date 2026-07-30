@@ -796,7 +796,9 @@ mechanism it does not belong to. Recorded as HS-9513 rather than silently skippe
   become the `instructions` and `skills` capabilities.
 - [121](121-codex-app-server-drive.md) / [129](129-codex-model-b-terminal-hosting.md) —
   the codex drive whose leaked imports §132.1.1 is about.
-- [124](124-in-development-gates.md) — the per-tool gates, which become `devGate`.
+- [124](124-in-development-gates.md) — the In-Development gates. The per-tool ones (and the
+  plugin's `devGateKey` field) were REMOVED in HS-9515: with each tool a plugin, readiness is
+  managed by not shipping a plugin publicly and by alpha/beta labeling, not by a runtime flag.
 - [18](18-plugins.md) — the existing plugin system. AI-tool plugins are a SEPARATE
   interface that reuses its config-UI subsystem (§132.9.2); they do not implement
   `TicketingBackend` and are not loaded by its loader.

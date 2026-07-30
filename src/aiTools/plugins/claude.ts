@@ -10,7 +10,6 @@ export const claudePlugin: AiToolPlugin = {
   displayName: 'Claude',
   productName: 'Claude Code',
   tier: 'cli-agent',
-  devGateKey: null, // the default tool — never gated
   transport: 'claude-channel',
   detection: {
     binaries: ['claude'],

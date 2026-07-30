@@ -15,7 +15,6 @@
 // server-side helper rather than a `(projectRoot) => boolean` closure; see `detect.ts`.
 
 import type { AgentTransport } from '../agentBackendParse.js';
-import type { DevFeatureKey } from '../devFeatures.js';
 
 /**
  * How to tell whether a project uses this tool, expressed as data so the pure registry
@@ -54,13 +53,6 @@ export interface AiToolPlugin {
   /** FULL product name for pickers and settings copy. */
   readonly productName: string;
   readonly tier: AiToolTier;
-  /**
-   * docs/124 — the In-Development gate fronting this tool, or null when it is generally
-   * available (claude + the Tier-B editor tools). The key is duplicated from
-   * `DEV_FEATURES` rather than derived, and `registry.test.ts` fails if the two drift —
-   * the same derive-and-pin approach that caught the HS-9322/9344 wire-enum drift.
-   */
-  readonly devGateKey: DevFeatureKey | null;
   /** Declarative detection (see `DetectionSpec`). */
   readonly detection: DetectionSpec;
   /**

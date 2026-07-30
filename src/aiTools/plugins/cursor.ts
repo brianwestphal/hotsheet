@@ -11,7 +11,6 @@ export const cursorPlugin: AiToolPlugin = {
   displayName: 'Cursor',
   productName: 'Cursor',
   tier: 'editor',
-  devGateKey: null, // Tier-B tools are never gated — nothing half-built to hide
   detection: { binaries: ['cursor'], paths: ['.cursor'] },
   instructions: {
     relPath: '.cursor/rules/hotsheet-instructions.mdc',

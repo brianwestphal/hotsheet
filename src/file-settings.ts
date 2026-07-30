@@ -69,11 +69,6 @@ export const FileSettingsSchema = z.object({
   // `src/devFeatures.ts`. All are `dev_`-prefixed ⇒ routed to the LOCAL layer by
   // `defaultScope` below, and all default to FALSE (absent = off).
   dev_parallel_workers: z.boolean().optional(),
-  dev_tool_codex: z.boolean().optional(),
-  dev_tool_antigravity: z.boolean().optional(),
-  dev_tool_opencode: z.boolean().optional(),
-  dev_tool_gemini: z.boolean().optional(),
-  dev_tool_goose: z.boolean().optional(),
   dev_remote_access: z.boolean().optional(),
 }).loose();
 

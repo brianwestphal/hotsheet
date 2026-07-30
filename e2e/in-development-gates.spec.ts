@@ -7,6 +7,7 @@
  * `settings.local.json` and NOT the shared `settings.json` (the whole point of the
  * `dev_` prefix — these must never be committed for the team).
  */
+import { DEV_FEATURES } from '../src/devFeatures.js';
 import { expect, test } from './coverage-fixture.js';
 
 type Page = import('@playwright/test').Page;
@@ -38,7 +39,7 @@ test.describe('In Development gates (HS-9411)', () => {
     // Start from the default (all gates off) regardless of what ran before.
     await request.patch('/api/file-settings/layer', {
       headers: secretHeaders(secret),
-      data: { layer: 'local', settings: { dev_parallel_workers: false, dev_remote_access: false, dev_tool_codex: false, dev_tool_antigravity: false } },
+      data: { layer: 'local', settings: { dev_parallel_workers: false, dev_remote_access: false } },
     });
   });
 
@@ -51,9 +52,12 @@ test.describe('In Development gates (HS-9411)', () => {
     await expect(section).toBeVisible();
     await expect(section.locator('.settings-in-development-note')).toContainText('at your own risk');
 
+    // HS-9515 — derived from the registry rather than hard-coded. The literal 7 here
+    // went stale the moment the five per-tool gates were removed, and a count that
+    // has to be hand-updated tells you nothing about which gate changed.
     const toggles = page.locator('.in-development-toggle');
-    await expect(toggles).toHaveCount(7);
-    for (let i = 0; i < 7; i++) await expect(toggles.nth(i)).not.toBeChecked();
+    await expect(toggles).toHaveCount(DEV_FEATURES.length);
+    for (let i = 0; i < DEV_FEATURES.length; i++) await expect(toggles.nth(i)).not.toBeChecked();
   });
 
   test('Remote Access tab is hidden until its gate is on, and returns when enabled', async ({ page }) => {
@@ -100,128 +104,6 @@ test.describe('In Development gates (HS-9411)', () => {
     await openExperimentalTab(page);
     await expect(gate(page, 'dev_remote_access')).toBeChecked();
     await expect(page.locator('#settings-tab-devices')).toBeVisible();
-  });
-
-  test('an in-development AI tool is absent from the dropdown until its gate is on', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await openExperimentalTab(page);
-
-    const optionCount = async (value: string) => await page.locator(`#ai-tool-select option[value="${value}"]:not([hidden])`).count();
-
-    await page.locator('.settings-tab[data-tab="general"]').click();
-    // Ungated tools are always offered; gated ones are not (this project's ai_tool
-    // is unset, so no already-selected exception applies).
-    await expect.poll(() => optionCount('claude'), { timeout: 5000 }).toBe(1);
-    expect(await optionCount('cursor')).toBe(1);
-    expect(await optionCount('codex')).toBe(0);
-    expect(await optionCount('opencode')).toBe(0);
-
-    // Enable just Codex — it appears, the others stay hidden.
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
-    await gate(page, 'dev_tool_codex').check();
-    await page.locator('#settings-close').click();
-    await page.locator('#settings-btn').click();
-    await expect(page.locator('#settings-overlay')).toBeVisible();
-    await expect.poll(() => optionCount('codex'), { timeout: 5000 }).toBe(1);
-    expect(await optionCount('opencode')).toBe(0);
-  });
-
-  // HS-9474 — the reported bug: enabling a tool's gate left its dropdown option
-  // disabled until Settings was closed and reopened. Note the test ABOVE reopens
-  // the dialog between the two assertions, which is precisely why it never caught
-  // this — it encoded the workaround as the expected flow.
-  test('enabling a tool gate enables its dropdown option WITHOUT reopening Settings', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await openExperimentalTab(page);
-
-    // Playwright treats any `<option>` in a closed `<select>` as not visible, so
-    // assert the `hidden` ATTRIBUTE (as the test above does) rather than visibility.
-    const shown = async () => await page.locator('#ai-tool-select option[value="antigravity"]:not([hidden])').count();
-    const option = page.locator('#ai-tool-select option[value="antigravity"]');
-
-    await page.locator('.settings-tab[data-tab="general"]').click();
-    expect(await shown()).toBe(0);
-    await expect(option).toBeDisabled();
-
-    // Flip the gate and come straight back — no close, no reload.
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
-    await gate(page, 'dev_tool_antigravity').check();
-    await page.locator('.settings-tab[data-tab="general"]').click();
-
-    await expect.poll(shown, { timeout: 5000 }).toBe(1);
-    // Enabled + not hidden IS selectable — `disabled` is what blocks selection.
-    // Deliberately NOT calling `selectOption` here: persisting `ai_tool` would leak
-    // into the next test, where the docs/124 "already in use" exception keeps that
-    // tool selectable and every gate assertion stops meaning what it says. (Found
-    // exactly that way — these passed alone and failed in sequence, the option
-    // labeled "— in development".)
-    await expect(option).toBeEnabled();
-  });
-
-  test('turning a tool gate back off re-hides its option live', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await openExperimentalTab(page);
-    await gate(page, 'dev_tool_antigravity').check();
-
-    const option = page.locator('#ai-tool-select option[value="antigravity"]');
-    await page.locator('.settings-tab[data-tab="general"]').click();
-    await expect(option).toBeEnabled();
-
-    await page.locator('.settings-tab[data-tab="experimental"]').click();
-    await gate(page, 'dev_tool_antigravity').uncheck();
-    await page.locator('.settings-tab[data-tab="general"]').click();
-    await expect(option).toBeDisabled();
-  });
-
-  test('a tool the project already uses stays selectable even with its gate off', async ({ page, request }) => {
-    // Simulate the upgrade case: the project was already on codex before the gate existed.
-    await request.patch('/api/file-settings', { headers: secretHeaders(secret), data: { ai_tool: 'codex' } });
-    try {
-      await page.goto('/');
-      await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-      await page.locator('#settings-btn').click();
-      await expect(page.locator('#settings-overlay')).toBeVisible();
-
-      // Visible despite the gate being off, labeled so the state is legible, and
-      // still the selected value — the project is NOT silently switched.
-      const codex = page.locator('#ai-tool-select option[value="codex"]');
-      await expect(codex).not.toHaveAttribute('hidden', /.*/, { timeout: 5000 });
-      await expect(codex).toContainText('in development');
-      await expect(page.locator('#ai-tool-select')).toHaveValue('codex');
-      // A different gated tool is still hidden — the exception is scoped to the one in use.
-      expect(await page.locator('#ai-tool-select option[value="opencode"]:not([hidden])').count()).toBe(0);
-    } finally {
-      await request.patch('/api/file-settings', { headers: secretHeaders(secret), data: { ai_tool: '' } });
-    }
-  });
-
-  // HS-9473 — the reported bug: two Codex-specific GLOBAL settings stayed visible
-  // in a project whose Codex gate was off. The gate mechanism was fine; the markup
-  // simply never opted in via `data-dev-feature`, which no test of the mechanism
-  // could have caught.
-  test('Codex-specific settings stay hidden with the Codex gate off', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await openExperimentalTab(page);
-    await expect(gate(page, 'dev_tool_codex')).not.toBeChecked();
-    await expect(page.locator('#settings-codex-app-server-enabled')).toBeHidden();
-    await expect(page.locator('#settings-codex-model-b-terminals')).toBeHidden();
-  });
-
-  test('the Codex settings appear as soon as the gate is on, without a reload', async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await openExperimentalTab(page);
-    await gate(page, 'dev_tool_codex').check();
-    await expect(page.locator('#settings-codex-app-server-enabled')).toBeVisible();
-    await expect(page.locator('#settings-codex-model-b-terminals')).toBeVisible();
-
-    // ...and go away again when it is turned back off.
-    await gate(page, 'dev_tool_codex').uncheck();
-    await expect(page.locator('#settings-codex-app-server-enabled')).toBeHidden();
   });
 
   test('worker surfaces stay hidden with the parallel-workers gate off', async ({ page, request }) => {

@@ -6,7 +6,7 @@
 // gate to false, so a project that never enabled a gate can't inherit the
 // previously-viewed project's `true`. Never make this a merge.
 
-import { DEV_FEATURES, devFeatureForAiTool, type DevFeatureKey, isDevFeatureEnabled } from '../devFeatures.js';
+import {DEV_FEATURES, type DevFeatureKey, isDevFeatureEnabled} from '../devFeatures.js';
 import { byIdOrNull } from './dom.js';
 
 /** Fires after a hydration so surfaces can re-apply their gates. */
@@ -35,13 +35,6 @@ export function setDevEnabledLocal(key: DevFeatureKey, enabled: boolean): void {
   cache[key] = enabled;
   applyDevFeatureGates();
   document.dispatchEvent(new CustomEvent(DEV_FEATURES_CHANGED_EVENT));
-}
-
-/** Is the drive surface for an `ai_tool` allowed? Ungated tools (`auto`, `claude`,
- *  and the Tier-B editor tools) are always allowed. */
-export function isAiToolDevEnabled(aiTool: string): boolean {
-  const feature = devFeatureForAiTool(aiTool);
-  return feature === null || isDevEnabled(feature.key);
 }
 
 /**

@@ -8,7 +8,6 @@ export const antigravityPlugin: AiToolPlugin = {
   displayName: 'Antigravity',
   productName: 'Antigravity',
   tier: 'cli-agent',
-  devGateKey: 'dev_tool_antigravity',
   transport: 'mcp-hooks',
   detection: { binaries: ['agy'], paths: ['AGENTS.md'] },
   instructions: {

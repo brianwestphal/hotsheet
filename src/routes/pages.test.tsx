@@ -106,23 +106,9 @@ describe('detail-panel telemetry block placement (HS-8648)', () => {
  * one asserts the markup itself.
  */
 describe('dev-gated settings markup (HS-9473)', () => {
-  /** The `.settings-field` wrapper containing an input id, as raw HTML. */
-  function fieldFor(html: string, inputId: string): string {
-    const idx = html.indexOf(`id="${inputId}"`);
-    expect(idx, `#${inputId} is not in the page`).toBeGreaterThan(-1);
-    const start = html.lastIndexOf('<div class="settings-field', idx);
-    expect(start, `no .settings-field wraps #${inputId}`).toBeGreaterThan(-1);
-    return html.slice(start, idx);
-  }
-
-  it('gates the Codex-specific global toggles behind the Codex gate', async () => {
-    const html = await (await app.request('/')).text();
-    // Both are machine-global settings, but they are meaningless — and per
-    // docs/124 must be unreachable — while Codex itself is gated off.
-    for (const id of ['settings-codex-app-server-enabled', 'settings-codex-model-b-terminals']) {
-      expect(fieldFor(html, id), `#${id} must be gated`).toContain('data-dev-feature="dev_tool_codex"');
-    }
-  });
+  // HS-9515 — the Codex-specific toggles are no longer gated: the per-tool gates are
+  // gone entirely, so there is nothing left to hide them behind. The guard below now
+  // treats them as ordinary always-visible settings.
 
   it('every gated-tool-specific settings field is either dev-gated or tool-revealed', async () => {
     // The class-level guard: adding another tool-specific toggle without a gate
@@ -134,11 +120,12 @@ describe('dev-gated settings markup (HS-9473)', () => {
       // HS-9497 — the per-tool permission fields are no longer server-rendered; the
       // selected tool's plugin `preferences` render into this one container.
       'ai-tool-prefs',
-      // The `ai_tool` dropdown gates its OPTIONS individually
-      // (`settingsDialog.tsx::applyAiToolDevGating`) rather than hiding the whole
-      // field — it must stay available for the ungated tools. Surfaced by this
-      // guard on first run, and correct as-is.
+      // The `ai_tool` dropdown is always available (HS-9515 removed the per-tool
+      // option filtering along with the gates).
       'ai-tool-select',
+      // HS-9515 — the Codex global toggles are ungated now, for the same reason.
+      'settings-codex-app-server-enabled',
+      'settings-codex-model-b-terminals',
     ]);
 
     const fields = html.split('<div class="settings-field').slice(1);

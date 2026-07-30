@@ -3,14 +3,7 @@
 // the fail-closed behavior is pinned explicitly rather than assumed.
 import { describe, expect, it } from 'vitest';
 
-import {
-  DEV_FEATURES,
-  devFeatureForAiTool,
-  type DevFeatureKey,
-  isAiToolSelectable,
-  isDevFeatureEnabled,
-  isDevFeatureKey,
-} from './devFeatures.js';
+import { DEV_FEATURES, type DevFeatureKey, isDevFeatureEnabled, isDevFeatureKey } from './devFeatures.js';
 import { defaultScope } from './file-settings.js';
 
 describe('DEV_FEATURES registry', () => {
@@ -33,31 +26,15 @@ describe('DEV_FEATURES registry', () => {
     }
   });
 
-  it('covers the five gated non-Claude drive tools and nothing else', () => {
-    const tools = DEV_FEATURES.filter(f => f.aiTool !== undefined).map(f => f.aiTool);
-    expect(new Set(tools)).toEqual(new Set(['codex', 'antigravity', 'opencode', 'gemini', 'goose']));
-  });
-
-  it('does NOT gate claude, auto, or the Tier-B editor tools', () => {
-    for (const tool of ['auto', 'claude', 'cursor', 'copilot', 'windsurf']) {
-      expect(devFeatureForAiTool(tool), tool).toBeNull();
-    }
-  });
-
-  it('maps a gated tool to its feature, case-insensitively', () => {
-    expect(devFeatureForAiTool('codex')?.key).toBe('dev_tool_codex');
-    expect(devFeatureForAiTool('  CODEX ')?.key).toBe('dev_tool_codex');
-  });
-
   it('recognizes its own keys and rejects others', () => {
-    expect(isDevFeatureKey('dev_tool_codex')).toBe(true);
+    expect(isDevFeatureKey('dev_parallel_workers')).toBe(true);
     expect(isDevFeatureKey('dev_not_a_real_gate')).toBe(false);
     expect(isDevFeatureKey('ai_tool')).toBe(false);
   });
 });
 
 describe('isDevFeatureEnabled — fails closed', () => {
-  const KEY: DevFeatureKey = 'dev_tool_codex';
+  const KEY: DevFeatureKey = 'dev_parallel_workers';
 
   it('is true only for an explicit boolean true', () => {
     expect(isDevFeatureEnabled({ [KEY]: true }, KEY)).toBe(true);
@@ -72,34 +49,17 @@ describe('isDevFeatureEnabled — fails closed', () => {
   });
 });
 
-describe('isAiToolSelectable', () => {
-  it('always offers an ungated tool regardless of gate state', () => {
-    for (const tool of ['auto', 'claude', 'cursor']) {
-      expect(isAiToolSelectable(tool, false, 'auto'), tool).toBe(true);
+// HS-9515 — `isAiToolSelectable` / `devFeatureForAiTool` / the dropdown suffix are gone
+// with the per-tool gates. No AI tool is gated any more, so there is no "offer this
+// option only if the gate is on, or the project already uses it" rule left to test.
+// What remains here gates FEATURES, which is what this mechanism is for.
+describe('no AI tool is gated any more (HS-9515)', () => {
+  it('the registry holds only feature gates, never a tool gate', () => {
+    // Guards the regression directly: re-adding a `dev_tool_*` entry would resurrect
+    // the asymmetry HS-9515 removed, where a project could show a tool selected while
+    // its settings stayed hidden.
+    for (const f of DEV_FEATURES) {
+      expect(f.key.startsWith('dev_tool_'), `${f.key} is a per-tool gate`).toBe(false);
     }
-  });
-
-  it('offers a gated tool when its gate is on', () => {
-    expect(isAiToolSelectable('codex', true, 'auto')).toBe(true);
-  });
-
-  it('hides a gated tool when its gate is off', () => {
-    expect(isAiToolSelectable('codex', false, 'auto')).toBe(false);
-  });
-
-  // The maintainer-decided exception (HS-9411): hiding the option a project is
-  // ALREADY set to would render the select blank and let the next change silently
-  // rewrite a working project's tool.
-  it('still offers a gated, gate-off tool when the project is already set to it', () => {
-    expect(isAiToolSelectable('codex', false, 'codex')).toBe(true);
-  });
-
-  it('applies that exception case-insensitively', () => {
-    expect(isAiToolSelectable('codex', false, 'CODEX')).toBe(true);
-    expect(isAiToolSelectable('Codex', false, ' codex ')).toBe(true);
-  });
-
-  it('does not leak the exception to a DIFFERENT gated tool', () => {
-    expect(isAiToolSelectable('opencode', false, 'codex')).toBe(false);
   });
 });

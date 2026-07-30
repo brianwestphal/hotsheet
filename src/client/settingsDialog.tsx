@@ -4,14 +4,13 @@ import { getPlugin } from '../aiTools/registry.js';
 import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { defaultProjectName } from '../defaultProjectName.js';
-import { IN_DEVELOPMENT_OPTION_SUFFIX, isAiToolSelectable } from '../devFeatures.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from './agentBackend.js';
 import { buildAiToolPreferenceRows } from './aiToolPreferences.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindViewsTab } from './customViews.js';
-import { DEV_FEATURES_CHANGED_EVENT, isAiToolDevEnabled } from './devFeatures.js';
+import { DEV_FEATURES_CHANGED_EVENT } from './devFeatures.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
@@ -45,18 +44,6 @@ import { maybeOfferToolPrep } from './toolPrepNudge.js';
  * legible rather than mysterious. Hiding the SELECTED option would make the
  * `<select>` render blank and the next change silently rewrite a working project.
  */
-function applyAiToolDevGating(select: HTMLSelectElement, currentTool: string): void {
-  for (const option of Array.from(select.options)) {
-    const base = option.dataset.baseLabel ?? option.textContent;
-    option.dataset.baseLabel = base; // remember the pristine label across re-opens
-    const enabled = isAiToolDevEnabled(option.value);
-    const selectable = isAiToolSelectable(option.value, enabled, currentTool);
-    option.hidden = !selectable;
-    option.disabled = !selectable;
-    option.textContent = selectable && !enabled ? base + IN_DEVELOPMENT_OPTION_SUFFIX : base;
-  }
-}
-
 export function bindSettingsDialog(rebuildCategoryUI: () => void) {
   bindTabSwitching();
   bindDialogOpenClose();
@@ -250,7 +237,6 @@ function bindGeneralTab() {
       // is off. MUST run before assigning `.value`: a hidden-but-present option is
       // still assignable, and the already-selected tool is deliberately kept
       // visible so an existing working project is never silently switched.
-      if (aiToolSelect !== null) applyAiToolDevGating(aiToolSelect, tool);
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       // HS-9497 — each declared preference carries its own default (agy off, codex ON
       // per docs/121 O4), so the polarity lives in the plugin rather than here.
@@ -345,7 +331,6 @@ function bindGeneralTab() {
   // string setting; `persistScopedSetting` writes it to the active layer.
   // HS-9474 — re-gate the dropdown when an In Development toggle flips.
   //
-  // `applyAiToolDevGating` is imperative, so unlike the `data-dev-feature`
   // surfaces (which `applyDevFeatureGates` refreshes on every change) it only ran
   // during the dialog's hydration. Enabling a tool's gate therefore left its
   // option `hidden` + `disabled` until Settings was closed and reopened, which is
@@ -357,7 +342,6 @@ function bindGeneralTab() {
   // as `currentTool` so an already-selected gated tool stays selectable (docs/124
   // §124.5 — hiding the selected option would blank the `<select>`).
   document.addEventListener(DEV_FEATURES_CHANGED_EVENT, () => {
-    if (aiToolSelect !== null) applyAiToolDevGating(aiToolSelect, aiToolSelect.value);
   });
 
   aiToolSelect?.addEventListener('change', () => {

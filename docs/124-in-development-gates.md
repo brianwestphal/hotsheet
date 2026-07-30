@@ -27,18 +27,30 @@ about it*.
 | Key | Label | Hides when off |
 | --- | --- | --- |
 | `dev_parallel_workers` | Parallel agent workers (git worktrees + worker pool) | Sidebar worker-actions row, worker-pool + in-flight panels, the auto-worker-pool switch, and the "Run on…" command target chevron (docs/89, docs/91, docs/103) |
-| `dev_tool_codex` | Codex | The `codex` option in the AI-tool dropdown (docs/121) |
-| `dev_tool_antigravity` | Antigravity | Ditto for `antigravity` (docs/115) |
-| `dev_tool_opencode` | OpenCode | Ditto for `opencode` (docs/114) |
-| `dev_tool_gemini` | Gemini CLI | Ditto for `gemini` (docs/118 §118.4a — config generation only, no drive) |
-| `dev_tool_goose` | Goose | Ditto for `goose` (deferred, HS-9347) |
 | `dev_remote_access` | Remote access | The Settings → Remote Access tab (mint / QR-pair / revoke) and remote-project client surfaces (docs/94, docs/112) |
 
 **Worktrees and the worker pool share one gate** (maintainer decision, HS-9411): the pool is unusable
 without worktrees, and their incompleteness is the same incompleteness.
 
-**Claude and the Tier-B editor tools (Cursor / Copilot / Windsurf) are NOT gated.** The editor tools
-only receive generated rules/instructions — a shipped, tested path with no drive surface to hide.
+**No AI tool is gated (HS-9515, 2026-07-31).** There were five per-tool gates — `dev_tool_codex`,
+`_antigravity`, `_opencode`, `_gemini`, `_goose` — and they are gone. Maintainer decision: now that
+each tool is an `AiToolPlugin` (docs/132), readiness is managed by **not shipping a plugin publicly
+until it is ready**, and by labeling early releases alpha/beta. A runtime flag that every user
+carries is the wrong mechanism for "this isn't finished yet".
+
+Removing them also resolved a real defect. The dropdown deliberately kept a gated tool **selectable**
+when the project already used it (so an existing project was never silently switched), but
+`applyDevFeatureGates` hid `data-dev-feature` elements unconditionally — so a project could show
+Codex selected with **none of its settings reachable**. The fix for that asymmetry was to delete the
+gates rather than teach the generic marker about tools.
+
+Gone with them: `DevFeature.aiTool`, `devFeatureForAiTool`, `isAiToolSelectable`,
+`IN_DEVELOPMENT_OPTION_SUFFIX`, the client's `isAiToolDevEnabled`, `applyAiToolDevGating` in the
+settings dialog, `AiToolPlugin.devGateKey`, and the five `dev_tool_*` fields on `FileSettings`.
+`devFeatures.test.ts` now asserts the registry holds **no** `dev_tool_*` key, so re-adding one is a
+red test rather than a quiet return of the asymmetry.
+
+**What remains gates FEATURES, not tools** — which is what this mechanism is for.
 
 ## 124.3 Scope: local-only, by two independent mechanisms
 
@@ -123,7 +135,8 @@ the dropdown.
 When a feature is genuinely done: delete its entry from `DEV_FEATURES`, remove its
 `data-dev-feature` markers and `isDevEnabled` checks, and drop its row from §124.2. Stale
 `dev_*` keys left in a user's `settings.local.json` are harmless — `defaultScope` still routes them
-locally and nothing reads them.
+locally and nothing reads them. (That is exactly what happened to the five `dev_tool_*` keys in
+HS-9515: dropped from the schema and left behind on disk, with no migration needed.)
 
 Update [`feature-health.md`](feature-health.md) in the same change: a graduating feature should be
 moving off its Underbaked / Unknown row, and if it isn't, it probably isn't graduating.
