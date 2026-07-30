@@ -43,7 +43,7 @@ import type { AgentTransport } from '../agentBackendParse.js';
 import { canonicalClaudeSourceExists } from '../aiInstructions.js';
 import { ensureAntigravityMcpConfig } from '../antigravity.js';
 import { spawnAgyRun } from '../antigravityDrive.js';
-import { claudeWithChannelCommand } from '../channel-config.js';
+import { claudeWithChannelCommand, runClaudeChannelTrigger  } from '../channel-config.js';
 import { ensureCodexMcpConfig } from '../codex.js';
 import {   clearCodexAppServerFailures,
   codexDriveDiscoverEnabled,
@@ -56,6 +56,7 @@ import {   clearCodexAppServerFailures,
 import { ensureCodexDaemonRunning } from '../codexDaemonTransport.js';
 import { readFileSettings } from '../file-settings.js';
 import { permissionHookCommand } from '../permissionHookCommand.js';
+import type { ChannelTriggerTarget } from '../routes/validation.js';
 import {
   ensureAgentsFamilySkills,
   ensureClaudeSkills,
@@ -394,13 +395,37 @@ export function shutdownAllDriveServices(): void {
  * carve-out. Claude itself has no entry YET; it is the persistent-channel path that
  * phase 5 (HS-9494) converts, and that conversion is the real test of this interface.
  */
+/**
+ * Context the DRIVE cannot read for itself — caller intent and test seams.
+ *
+ * Both fields exist for Claude (docs/132 §132.11.5): a project with git-worktree
+ * followers has one channel per worktree, so `target` selects which to trigger, and
+ * `isPidAlive` is how the port resolution is tested without real processes. The spawn
+ * drives ignore the whole object.
+ */
+export interface DriveRunContext {
+  target?: ChannelTriggerTarget;
+  opts?: { isPidAlive?: (pid: number) => boolean };
+}
+
 export interface DriveCapability {
   transport: AgentTransport;
-  /** Run one worklist turn. Returns whether it started. */
-  run(dataDir: string, serverPort: number, content: string): boolean;
+  /**
+   * Run one worklist turn. Returns whether it started.
+   *
+   * `Promise<boolean>` is allowed because Claude's channel drive genuinely is async — it
+   * POSTs to one or more live sessions. The spawn drives stay synchronous; the caller
+   * awaits either.
+   */
+  run(dataDir: string, serverPort: number, content: string, ctx?: DriveRunContext): boolean | Promise<boolean>;
 }
 
 const DRIVES: Readonly<Record<string, DriveCapability>> = {
+  // docs/12 — the PERSISTENT channel session. Claude is the only drive that talks to an
+  // already-running agent rather than starting one, and the only one that fans out to
+  // several targets. Phase 5 (HS-9494) added it; that it fits without reshaping the other
+  // three is the evidence this is an interface and not a hierarchy.
+  claude: { transport: 'claude-channel', run: (d, p, c, ctx) => runClaudeChannelTrigger(d, p, c, ctx) },
   // docs/115 — MCP-native agents on the Claude rails, one spawn per play.
   antigravity: { transport: 'mcp-hooks', run: (d, p, c) => spawnAgyRun(d, p, c) },
   // docs/121 — the persistent app-server session; a play is a `turn/start` on a resumed
@@ -415,6 +440,27 @@ const DRIVES: Readonly<Record<string, DriveCapability>> = {
 export function driveFor(aiTool: string): DriveCapability | null {
   return DRIVES[aiTool.trim().toLowerCase()] ?? null;
 }
+
+/**
+ * The drive that handles a transport when the project's own tool has none — e.g. an
+ * `agent_backend` override (docs/117 §117.3) forcing `claude-channel` onto a project set
+ * to a different tool. Null for transports with no default, which is the documented
+ * no-op the override path already had.
+ */
+export function driveForTransport(transport: AgentTransport): DriveCapability | null {
+  const id = TRANSPORT_DEFAULT_DRIVE[transport];
+  return id !== undefined ? DRIVES[id] : null;
+}
+
+/**
+ * Only `claude-channel` has a default: it is the transport of the SHARED channel, which
+ * any project can talk to regardless of which tool it selected. `mcp-hooks` and `acp`
+ * have none on purpose — they mean "spawn THIS tool's agent", so there is no sensible
+ * answer when the project's tool isn't one of them.
+ */
+const TRANSPORT_DEFAULT_DRIVE: Readonly<Partial<Record<AgentTransport, string>>> = {
+  'claude-channel': 'claude',
+};
 
 /** Ids that declare a drive (for the conformance suite). */
 export function driveIds(): string[] {

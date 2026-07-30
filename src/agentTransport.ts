@@ -33,9 +33,10 @@ export type { AgentTransport } from './agentBackendParse.js';
  * (no module-init call) so the `channel-config`↔`mcpHooksAgents` cycle stays init-safe.
  */
 export function resolveAgentTransport(aiTool: string | undefined): AgentTransport {
-  // HS-9505 — one lookup instead of two membership tests. A tool we don't drive has no
-  // entry, and falls through to the Claude channel — the DEFAULT, not a carve-out
-  // (docs/132 §132.11.2). Claude has no entry yet; phase 5 converts it.
+  // HS-9505 / HS-9494 — one lookup. Claude is now an ordinary drive declaring
+  // `claude-channel`, so this reads it from the table like any other tool; the `??` is a
+  // genuine default for `auto`, unset, an unknown id and the Tier-B editor tools, none of
+  // which we drive. It is no longer standing in for Claude (docs/132 §132.6).
   return driveFor(aiTool ?? '')?.transport ?? 'claude-channel';
 }
 

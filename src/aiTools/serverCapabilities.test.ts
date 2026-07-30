@@ -19,7 +19,7 @@ import { claudeWithChannelCommand } from '../channel-config.js';
 import { initSkills, parseVersionHeader, setSkillCategories, SKILL_VERSION } from '../skills.js';
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { getPlugin, listPlugins } from './registry.js';
-import { acpCommandFor, commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveFor, driveIds, driveServiceFor, driveServiceIds, mcpConfigFor, mcpConfigIds, permissionsFor, permissionsIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
+import { acpCommandFor, commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveFor, driveForTransport, driveIds, driveServiceFor, driveServiceIds, mcpConfigFor, mcpConfigIds, permissionsFor, permissionsIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
 
 const IDS = skillsCapabilityIds();
 
@@ -314,8 +314,8 @@ describe('project-level drive-service helpers (HS-9493)', () => {
  * suite now, where a new tool inherits them.
  */
 describe('drive capability (HS-9505)', () => {
-  it('is declared by exactly the tools we drive', () => {
-    expect(driveIds()).toEqual(['antigravity', 'codex', 'opencode']);
+  it('is declared by exactly the tools we drive — Claude included since phase 5', () => {
+    expect(driveIds()).toEqual(['claude', 'antigravity', 'codex', 'opencode']);
   });
 
   it('declares a transport matching what the tool actually speaks', () => {
@@ -339,10 +339,46 @@ describe('drive capability (HS-9505)', () => {
     expect(driveFor('Codex')).toBe(driveFor('codex'));
   });
 
-  it('Claude, editor tools and unknown ids have NO drive — they fall to claude-channel', () => {
-    // Claude's absence is temporary and deliberate: it is the persistent-channel path
-    // phase 5 (HS-9494) converts, and that conversion is the real test of this interface.
-    for (const id of ['claude', 'cursor', 'copilot', 'windsurf', 'gemini', 'goose', '', 'nope']) {
+  /**
+   * HS-9494 (docs/132 phase 5) — Claude as an ordinary plugin. §132.6 set the bar: it is
+   * an interface only if the tool it was NOT written around fits without reshaping the
+   * others. These pin that it fits, and that nothing about it is special-cased.
+   */
+  it('Claude declares claude-channel like any other tool declares its transport', () => {
+    expect(driveFor('claude')!.transport).toBe('claude-channel');
+  });
+
+  it('claude-channel is the only transport with a DEFAULT drive', () => {
+    // The default exists for the `agent_backend` override forcing a transport onto a
+    // project whose tool has none. `mcp-hooks` and `acp` mean "spawn THIS tool's agent",
+    // so there is no sensible answer for them — null, the documented no-op.
+    expect(driveForTransport('claude-channel')).toBe(driveFor('claude'));
+    expect(driveForTransport('mcp-hooks')).toBeNull();
+    expect(driveForTransport('acp')).toBeNull();
+  });
+
+  it('Claude needs no hooks file, MCP config or backing service — and says so by absence', () => {
+    // The shape of Claude's integration, asserted rather than assumed: its permissions
+    // are native to the channel, its MCP registration is the per-project `.mcp.json` the
+    // channel already writes, and its session is not a service we start or stop. Absence
+    // is how the interface expresses that (docs/132 §132.11.2), so a future capability
+    // appearing here should be a deliberate choice, not a drive-by.
+    expect(permissionsFor('claude')).toBeNull();
+    expect(mcpConfigFor('claude')).toBeNull();
+    expect(driveServiceFor('claude')).toBeNull();
+    expect(acpCommandFor('claude')).toBeNull();
+  });
+
+  it('Claude is not the only claude-channel drive by accident — no other tool claims it', () => {
+    const claudeChannel = driveIds().filter(id => driveFor(id)!.transport === 'claude-channel');
+    expect(claudeChannel).toEqual(['claude']);
+  });
+
+  it('editor tools, undriven CLI agents and unknown ids have NO drive', () => {
+    // Gemini has instructions and a command but no drive (docs/118 §118.4a — the play
+    // button genuinely does not work for it), Goose is command-only, and the Tier-B
+    // editor tools are not driven at all.
+    for (const id of ['cursor', 'copilot', 'windsurf', 'gemini', 'goose', '', 'nope']) {
       expect(driveFor(id), `${id || '(empty)'} should have no drive`).toBeNull();
     }
   });

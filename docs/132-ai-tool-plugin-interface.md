@@ -307,7 +307,7 @@ each phase leaving the tree green and shippable.
 | **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
 | **4b** | HS-9505 ✅ | Drive + MCP + ACP absorbed — `mcpHooksAgents.ts` **deleted**, `agentTransport` is one lookup, `triggerChannel` dispatches to `drive.run`. |
 | **4c** | HS-9507 ✅ | Permissions capability + the shared hook-command builder (§132.11.4). |
-| **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
+| **5** | HS-9494 ✅ | Claude becomes a plugin. **The acceptance test passed** — see §132.11.5. |
 | **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
 | **8** | HS-9495 | The conformance suite and the ESLint backstop, so the earlier gains can't erode. |
@@ -595,6 +595,40 @@ CALLERS moved into the capability layer. Two things generalize from that:
 - **The test that makes it safe is "does the resolved path exist".** Nothing asserted that
   before; `permissionHookCommand.test.ts` does now, and it was verified against a copy
   placed one directory deeper — which fails with the resolved path in the message.
+
+### 132.11.5 Claude fitted, and cost the interface two allowances (HS-9494)
+
+§132.6 set the bar: this is an interface only if the tool it was **not** written around
+fits without reshaping the others. Claude fits. Nothing about the other three drives
+changed, `resolveAgentTransport` reads Claude's transport from the table like anyone
+else's, and `triggerChannel` has no branch left — it picks the drive for the effective
+transport and runs it.
+
+It was not free. Claude needed two widenings, both anticipated by the phase-5 ticket as
+legitimate outcomes rather than failures:
+
+1. **`run` may return a promise.** Claude's drive POSTs to an already-running session;
+   every other drive starts a process and returns synchronously. `boolean | Promise<boolean>`
+   costs the spawn drives nothing and the caller awaits either.
+2. **`run` takes a caller CONTEXT.** A project with git-worktree followers has one channel
+   per worktree, so `target` selects which to trigger — caller intent the drive cannot
+   read for itself. `isPidAlive` rides along as the test seam for port resolution.
+
+Both are real generalizations rather than Claude-shaped holes: "talks to something already
+running" and "the caller knows which instance" are categories a future tool can land in.
+The test is whether a THIRD kind of drive needs a third allowance; if it does, the
+interface is accreting rather than generalizing.
+
+**What Claude does NOT declare is as informative as what it does.** No permissions
+capability (native to the channel), no MCP config (the per-project `.mcp.json` the channel
+already writes), no backing service (its session is not ours to start or stop), no ACP
+entrypoint. Absence carries that, per §132.11.2, and the conformance suite asserts each
+one — so a capability appearing there later is a deliberate choice rather than a drive-by.
+
+The one asymmetry that stays: `CLAUDE.md` + `.claude/skills` are the canonical source the
+adapter family references, so `canonicalClaudeSourceExists` is consulted BY other plugins.
+That is a real fact about the ecosystem, not a modelling failure — §132.6 said not to
+invert it to make the shape look tidier, and it has not been.
 
 ## 132.12 Cross-references
 

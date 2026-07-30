@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 import { resolveEffectiveTransport } from './agentTransport.js';
-import { driveFor } from './aiTools/serverCapabilities.js';
+import { driveFor, driveForTransport } from './aiTools/serverCapabilities.js';
 import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
@@ -453,17 +453,36 @@ export async function triggerChannel(
   //   - 'claude-channel': falls through to the persistent channel-port `/trigger` path.
   // HS-9338 — the EFFECTIVE transport respects the per-project `agent_backend` override
   // (docs/117 §117.3) ahead of the `ai_tool`-derived capability-table default.
+  // HS-9494 (docs/132 phase 5) — Claude is now an ordinary drive, so there is no
+  // remaining branch here: pick the drive for the effective transport and run it. The
+  // `agent_backend` override (docs/117 §117.3) still decides that transport; when it
+  // forces one onto a tool that has no drive, `driveForTransport` supplies the
+  // transport's default (Claude's, for `claude-channel`) or null — the same documented
+  // no-op as before.
   const transport = resolveEffectiveTransport(dataDir);
-  if (transport !== 'claude-channel') {
-    // HS-9505 — dispatch to the tool's own drive. Null when an `agent_backend` override
-    // (docs/117 §117.3) forced a transport onto a tool that has no drive: a documented
-    // no-op, same as before.
-    const tool = readFileSettings(dataDir).ai_tool;
-    const drive = driveFor(typeof tool === 'string' ? tool : '');
-    return drive !== null ? drive.run(dataDir, serverPort, content) : false;
-  }
+  const tool = readFileSettings(dataDir).ai_tool;
+  const own = driveFor(typeof tool === 'string' ? tool : '');
+  const drive = own !== null && own.transport === transport ? own : driveForTransport(transport);
+  return drive !== null ? await drive.run(dataDir, serverPort, content, { target, opts }) : false;
+}
 
-  const ports = resolveTriggerTargetPorts(dataDir, target, opts);
+/**
+ * HS-9494 — the `claude-channel` drive: POST the worklist to the persistent channel
+ * session(s) listening on this project's channel port(s).
+ *
+ * Unlike every other drive this is ASYNC and fans out to MULTIPLE targets — a project
+ * with git-worktree followers has one channel per worktree, and `target` selects which.
+ * That is why `DriveCapability.run` takes a caller context and may return a promise:
+ * Claude is the case those two allowances exist for, and the interface would have been
+ * a hierarchy without them (docs/132 §132.11.5).
+ */
+export async function runClaudeChannelTrigger(
+  dataDir: string,
+  _serverPort: number,
+  content: string,
+  ctx: { target?: ChannelTriggerTarget; opts?: { isPidAlive?: (pid: number) => boolean } } = {},
+): Promise<boolean> {
+  const ports = resolveTriggerTargetPorts(dataDir, ctx.target, ctx.opts ?? {});
   if (ports.length === 0) return false;
   const results = await Promise.all(ports.map(p => postTriggerToPort(p, content)));
   return results.every(Boolean);
