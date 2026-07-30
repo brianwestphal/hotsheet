@@ -19,6 +19,15 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
   test.beforeAll(async ({ request }) => {
     const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
     headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+    // HS-9514 — HS-9473 put the two Codex Experimental rows behind
+    // `data-dev-feature="dev_tool_codex"` (docs/124), so they render HIDDEN unless the
+    // gate is on. This spec drives those checkboxes, so it has to opt in — the same
+    // thing `antigravity-permissions-setting.spec.ts` already does for its own gate.
+    // Without this the rows are correctly hidden and the assertions fail on visibility,
+    // which is exactly how this spec went red without anyone changing it.
+    await request.patch('/api/file-settings/layer', {
+      headers, data: { layer: 'local', settings: { dev_tool_codex: true } },
+    });
   });
 
   test.afterAll(async ({ request }) => {
@@ -29,6 +38,10 @@ test.describe('Codex drive surface gating (HS-9390)', () => {
       await request.patch('/api/file-settings', { headers, data: { ai_tool: '' } });
       await request.patch('/api/settings', { headers, data: { custom_commands: '[]' } });
       await request.post('/api/channel/disable', { headers });
+      // Restore the shipped default (gate off) so later specs see it.
+      await request.patch('/api/file-settings/layer', {
+        headers, data: { layer: 'local', settings: { dev_tool_codex: false } },
+      });
     } catch { /* best-effort cleanup */ }
   });
 
