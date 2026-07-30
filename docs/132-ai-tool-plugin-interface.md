@@ -307,6 +307,7 @@ each phase leaving the tree green and shippable.
 | **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
 | **4b** | HS-9505 ✅ | Drive + MCP + ACP absorbed — `mcpHooksAgents.ts` **deleted**, `agentTransport` is one lookup, `triggerChannel` dispatches to `drive.run`. |
 | **4c** | HS-9507 ✅ | Permissions capability + the shared hook-command builder (§132.11.4). |
+| **7** | HS-9497 ✅ | Config UI: `PreferenceStore` seam + per-tool `preferences` declarations; the hand-written field, binding and reveal branch are gone (§132.11.9). |
 | **6** | HS-9506 ✅ | Rest of the §132.9.1 toolkit: permission bridge → `aiTools/permissionHook.ts`, newline framing → `aiTools/lineFraming.ts`; three items verified as already-generic, no work needed (§132.11.8). |
 | **5** | HS-9494 ✅ | Claude becomes a plugin. **The acceptance test passed** — see §132.11.5. |
 | **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
@@ -739,6 +740,48 @@ else — pushing the parse/filter policy in too would have forced one transport 
 the other's line-dropping rules, which is a behavior change smuggled inside a dedup.
 Extracting it also left `Session.buffered` dead, which is the usual sign the state
 belonged to the mechanism rather than the session.
+
+### 132.11.9 The reuse that mattered was the seam, not the renderer (HS-9497)
+
+Phase 7 read as "reuse the docs/18 config UI". Two of its three literal instructions
+turned out to be worth declining, and saying which is the useful part of the record.
+
+**The zod instruction cost more than it saved.** Step 2 says a declared preference's key
+is "contributed to the `FileSettings` schema rather than hand-added" — i.e. build the
+schema dynamically from declarations. But the server reads `fs.codex_interactive_permissions`
+and friends in typed positions throughout, and a dynamic schema turns every one into an
+untyped index lookup. That trades a compile-time guarantee for deleting one line per
+setting. The fields stay **static**, and `aiTools/aiToolPreferences.test.ts` fails if a
+declared key is missing from the schema — so the residual duplicate line cannot drift,
+which was the only real risk in keeping it.
+
+**The row renderer was the wrong half to reuse.** `createPreferenceRow` draws a
+`plugin-pref-row` whose label appears above AND again as the checkbox caption. That is
+right inside the plugin dialog and visibly wrong beside the settings dialog's other
+`settings-field` rows, and the phase's own acceptance criterion is "the same control the
+hand-written HTML did". So these render as `settings-field`. What IS reused is step 1's
+`PreferenceStore` seam — which is the part that made reuse possible at all, and the part
+that will let a machine-global backend plug in later (HS-9513) without touching the
+renderer. "Reuse the config UI" meant reuse its *storage abstraction*, not its markup.
+
+**Moving JSX hints into string declarations is a silent downgrade unless you plan for
+it.** The hand-written hints carried `<code>` and `<strong>`. `formatPrefDescription`
+keeps a tiny inline subset, and its safety argument is ordering: **escape first, then
+insert our own tags**, so by the time markup exists in the string it is markup we wrote
+and the result is safe to `raw()`. Worth noting because the obvious alternatives are both
+bad — dropping the formatting is a visible regression, and allowing raw HTML in a
+renderer shared with third-party plugin declarations is an XSS surface.
+
+**The default had to be data, not a convention.** The two migrated toggles have OPPOSITE
+polarity — antigravity's permissions default OFF, codex's default ON (docs/121 O4). A
+`default: false` assumption would have flipped codex's toggle for every existing project
+on upgrade, which no test would have caught unless it was looking; one is.
+
+**And one of the three named toggles was declined outright.** `codexModelBTerminals` is a
+docs/124 Experimental gate in machine-global config, living with its peers in the
+Experimental tab — not a per-project setting revealed by tool selection. Migrating it
+would have moved it away from its own surface for the sake of consistency with a
+mechanism it does not belong to. Recorded as HS-9513 rather than silently skipped.
 
 ## 132.12 Cross-references
 
