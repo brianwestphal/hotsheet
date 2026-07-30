@@ -1,13 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'fs';
-import { dirname, join, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { join, relative } from 'path';
 import { z } from 'zod';
 
 import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { detectsTool } from './aiTools/detect.js';
-import { ensureHooksFile } from './aiTools/hooksFile.js';
 import { listPlugins } from './aiTools/registry.js';
-import { mcpConfigFor, mcpConfigIds, skillsCapabilityFor  } from './aiTools/serverCapabilities.js';
+import { mcpConfigFor, mcpConfigIds, permissionsFor, skillsCapabilityFor  } from './aiTools/serverCapabilities.js';
 import { readFileSettings } from './file-settings.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
@@ -710,18 +708,7 @@ export function ensureOpencodeSkills(cwd: string, dataDir: string = join(cwd, '.
 // HS-9327 — the interactive-permission PreToolUse hook for agy. A command in the
 // hook's `command` field identifies OUR entry, so we can merge in/out without
 // touching the user's other hooks.
-const AGY_HOOK_MARKER = '__agy-permission-hook';
 
-/** Resolve the `<cli> __agy-permission-hook` command (dev tsx vs prod node/dist),
- *  quoting paths for the shell. Mirrors `getChannelServerPath`'s dev/prod probe. */
-function agyPermissionHookCommand(): string {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-  const distCli = join(thisDir, 'cli.js'); // prod: skills.ts is bundled into dist/cli.js
-  if (existsSync(distCli)) return `"${process.execPath}" "${distCli}" ${AGY_HOOK_MARKER}`;
-  const srcCli = join(thisDir, 'cli.ts'); // dev: src/skills.ts sibling
-  if (existsSync(srcCli)) return `npx tsx "${srcCli}" ${AGY_HOOK_MARKER}`;
-  return `"${process.execPath}" "${distCli}" ${AGY_HOOK_MARKER}`;
-}
 
 
 /**
@@ -730,35 +717,12 @@ function agyPermissionHookCommand(): string {
  * Gated on `antigravity_interactive_permissions`. Best-effort (won't clobber a
  * corrupt hooks.json). Returns true when a write happened.
  */
-function ensureAntigravityHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
-  // HS-9496 — the merge/removal/idempotence contract lives in `aiTools/hooksFile.ts`;
-  // this is now just agy's shape. Its events sit at the file ROOT and it takes one.
-  return ensureHooksFile({
-    path: join(cwd, '.agents', 'hooks.json'),
-    marker: AGY_HOOK_MARKER,
-    container: null,
-    command: agyPermissionHookCommand(),
-    timeout: 600,
-    comment: 'Hot Sheet interactive permissions',
-    groups: [{ event: 'PreToolUse', matcher: '' }],
-  }, readFileSettings(dataDir).antigravity_interactive_permissions === true);
-}
 
 // HS-9359 — the interactive-permission hooks for Codex. Same marker-based
 // merge-in/merge-out model as agy's, but codex's `.codex/hooks.json` nests
 // events under a top-level `hooks` object and each group nests `hooks` entries
 // under a `matcher` (the Claude schema; verified live on codex-cli 0.145.0).
-const CODEX_HOOK_MARKER = '__codex-permission-hook';
 
-/** Resolve the `<cli> __codex-permission-hook` command (dev tsx vs prod node/dist). */
-function codexPermissionHookCommand(): string {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-  const distCli = join(thisDir, 'cli.js'); // prod: skills.ts is bundled into dist/cli.js
-  if (existsSync(distCli)) return `"${process.execPath}" "${distCli}" ${CODEX_HOOK_MARKER}`;
-  const srcCli = join(thisDir, 'cli.ts'); // dev: src/skills.ts sibling
-  if (existsSync(srcCli)) return `npx tsx "${srcCli}" ${CODEX_HOOK_MARKER}`;
-  return `"${process.execPath}" "${distCli}" ${CODEX_HOOK_MARKER}`;
-}
 
 
 /**
@@ -775,22 +739,6 @@ function codexPermissionHookCommand(): string {
  * Gated on `codex_interactive_permissions`. Best-effort (won't clobber a corrupt
  * hooks.json). Returns true when a write happened.
  */
-function ensureCodexHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
-  // HS-9496 — same helper, codex's shape: events NEST under `hooks`, and it takes two
-  // (the tool-call gate plus codex's own approval requests). Matchers are Rust regexes,
-  // verified live on codex-cli 0.145.0.
-  return ensureHooksFile({
-    path: join(cwd, '.codex', 'hooks.json'),
-    marker: CODEX_HOOK_MARKER,
-    container: 'hooks',
-    command: codexPermissionHookCommand(),
-    timeout: 180,
-    groups: [
-      { event: 'PreToolUse', matcher: '^(Bash|apply_patch|Edit|Write)$' },
-      { event: 'PermissionRequest', matcher: '*' },
-    ],
-  }, readFileSettings(dataDir).codex_interactive_permissions === true);
-}
 
 // --- Cursor (.cursor/rules/*.mdc) ---
 
@@ -994,16 +942,9 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
     const mcp = mcpConfigFor(toolId)!;
     if (!wants(toolId) || !isExecutableOnPath(mcp.binary)) continue;
     mcp.ensureConfig();
-    if (toolId === 'antigravity') {
-      // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
-      // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
-      ensureAntigravityHooks(projectRoot, dataDir);
-    }
-    if (toolId === 'codex') {
-      // HS-9359 — install/remove the interactive-permission hooks (`.codex/hooks.json`)
-      // per the `codex_interactive_permissions` setting (idempotent, merge-safe).
-      ensureCodexHooks(projectRoot, dataDir);
-    }
+    // HS-9507 — install/remove the tool's interactive-permission hooks per its gating
+    // setting (idempotent, merge-safe). A no-op for a tool that declares none.
+    permissionsFor(toolId)?.ensure(projectRoot, dataDir);
   }
 
   if (platforms.length > 0) {

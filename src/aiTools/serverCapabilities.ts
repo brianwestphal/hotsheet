@@ -36,6 +36,8 @@
  * every generator out of `skills.ts` would separate them from the shared machinery they
  * use (`updateFile`, the version header, `ensureAdapterSkillTree`) for no gain.
  */
+import { join } from 'path';
+
 import { spawnAcpRun } from '../acp/acpDrive.js';
 import type { AgentTransport } from '../agentBackendParse.js';
 import { canonicalClaudeSourceExists } from '../aiInstructions.js';
@@ -53,6 +55,7 @@ import {   clearCodexAppServerFailures,
   shutdownCodexAppServers,spawnCodexAppServerRun } from '../codexAppServer.js';
 import { ensureCodexDaemonRunning } from '../codexDaemonTransport.js';
 import { readFileSettings } from '../file-settings.js';
+import { permissionHookCommand } from '../permissionHookCommand.js';
 import {
   ensureAgentsFamilySkills,
   ensureClaudeSkills,
@@ -64,6 +67,7 @@ import {
 } from '../skills.js';
 import { noteUnhostedCodexLaunch } from '../terminals/codexHostedWarning.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
+import { ensureHooksFile } from './hooksFile.js';
 
 export interface SkillsCapability {
   /**
@@ -467,4 +471,76 @@ const ACP_COMMANDS: Readonly<Record<string, { command: string; args: string[] }>
 /** The ACP entrypoint for a tool id, or null when it has none. */
 export function acpCommandFor(aiTool: string): { command: string; args: string[] } | null {
   return ACP_COMMANDS[aiTool.trim().toLowerCase()] ?? null;
+}
+
+// ── Interactive permissions (HS-9507) ───────────────────────────────────────
+
+/**
+ * Routing an agent's tool calls through Hot Sheet's §47 permission overlay, by installing
+ * a hook into the agent's own hooks file.
+ *
+ * Opt-in per project and OFF by default: turning it on means the agent asks before each
+ * mutating call, which is safer but not unattended. `ensure` therefore has to handle
+ * removal as a first-class path — a stale hook left after switching the setting off would
+ * keep routing calls into an overlay the user has disabled.
+ *
+ * The merge/removal/idempotence contract lives in `hooksFile.ts` (HS-9496); a capability
+ * here declares only its tool's SHAPE and which setting gates it.
+ */
+export interface PermissionsCapability {
+  /** The `FileSettings` key that turns this on. */
+  settingKey: 'antigravity_interactive_permissions' | 'codex_interactive_permissions';
+  /** Install or remove, per the setting. Idempotent; returns whether the file changed. */
+  ensure(projectRoot: string, dataDir: string): boolean;
+}
+
+/** Marker + CLI subcommand for each agent's hook. Also what identifies OUR group in the
+ *  agent's hooks file, so it must be distinctive. */
+const AGY_HOOK_MARKER = '__agy-permission-hook';
+const CODEX_HOOK_MARKER = '__codex-permission-hook';
+
+const PERMISSIONS: Readonly<Record<string, PermissionsCapability>> = {
+  antigravity: {
+    settingKey: 'antigravity_interactive_permissions',
+    // agy's events sit at the file ROOT and it takes one. Generous timeout: the hook
+    // blocks until a human answers the overlay.
+    ensure: (projectRoot, dataDir) => ensureHooksFile({
+      path: join(projectRoot, '.agents', 'hooks.json'),
+      marker: AGY_HOOK_MARKER,
+      container: null,
+      command: permissionHookCommand(AGY_HOOK_MARKER),
+      timeout: 600,
+      comment: 'Hot Sheet interactive permissions',
+      groups: [{ event: 'PreToolUse', matcher: '' }],
+    }, readFileSettings(dataDir).antigravity_interactive_permissions === true),
+  },
+  codex: {
+    settingKey: 'codex_interactive_permissions',
+    // codex NESTS events under `hooks` and takes two: the mutating-tool gate plus its own
+    // approval requests. Matchers are Rust regexes, verified live on codex-cli 0.145.0.
+    ensure: (projectRoot, dataDir) => ensureHooksFile({
+      path: join(projectRoot, '.codex', 'hooks.json'),
+      marker: CODEX_HOOK_MARKER,
+      container: 'hooks',
+      command: permissionHookCommand(CODEX_HOOK_MARKER),
+      timeout: 180,
+      groups: [
+        { event: 'PreToolUse', matcher: '^(Bash|apply_patch|Edit|Write)$' },
+        { event: 'PermissionRequest', matcher: '*' },
+      ],
+    }, readFileSettings(dataDir).codex_interactive_permissions === true),
+  },
+  // Absent for everything else. OpenCode's permissions are ACP-NATIVE (the agent supplies
+  // `PermissionOption[]` on the wire, docs/114), and Claude's are native to the channel —
+  // neither needs a hooks file, so neither declares one.
+};
+
+/** The permissions capability for a tool id, or null when it needs no hook wiring. */
+export function permissionsFor(aiTool: string): PermissionsCapability | null {
+  return PERMISSIONS[aiTool.trim().toLowerCase()] ?? null;
+}
+
+/** Ids that declare permission hooks (for the conformance suite + generation loop). */
+export function permissionsIds(): string[] {
+  return Object.keys(PERMISSIONS);
 }

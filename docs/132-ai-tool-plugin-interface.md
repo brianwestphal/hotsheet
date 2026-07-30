@@ -305,7 +305,8 @@ each phase leaving the tree green and shippable.
 | **2b** | HS-9503 ✅ | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → `aiTools/serverCapabilities.ts` (§132.11.1). **SHIPPED.** |
 | **3** | HS-9492 ✅ | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. **SHIPPED** — first of the five §132.1.1 leaks closed. |
 | **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
-| **4b** | HS-9505 ◐ | Drive + MCP + ACP absorbed — `mcpHooksAgents.ts` **deleted**, `agentTransport` is one lookup, `triggerChannel` dispatches to `drive.run`. **Permissions deferred to HS-9507.** |
+| **4b** | HS-9505 ✅ | Drive + MCP + ACP absorbed — `mcpHooksAgents.ts` **deleted**, `agentTransport` is one lookup, `triggerChannel` dispatches to `drive.run`. |
+| **4c** | HS-9507 ✅ | Permissions capability + the shared hook-command builder (§132.11.4). |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
 | **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
@@ -572,6 +573,28 @@ members, which is what optional-fields-inside looks like before it becomes a hab
 do not drive falls through to `claude-channel` — the DEFAULT, not a carve-out. Claude has
 no drive entry YET; that is phase 5's conversion, and it is the real test of whether this
 interface holds.
+
+### 132.11.4 Not every helper can move (HS-9507)
+
+The permission-hook command builder was the third copy of one function — the HS-9496
+pattern again — and the obvious finish was to extract it into `aiTools/` with its
+callers. It cannot go there.
+
+It resolves the Hot Sheet CLI from `import.meta.url` and assumes it is a SIBLING of the
+entry point: `dist/cli.js` in prod (everything bundles), `src/cli.ts` in dev (nothing
+does). One directory down, the dev probe misses and falls through to a `dist/cli.js` that
+a dev tree may not have — and the resulting hook points at nothing. The failure mode is
+that **the permission overlay simply never appears**: no error, no log line, the agent
+running unattended when the user asked to be asked.
+
+So the shared builder lives at `src/` root, next to the CLI it resolves, and only its
+CALLERS moved into the capability layer. Two things generalize from that:
+
+- **A module whose behavior depends on its own location is not freely movable.** Check for
+  `import.meta.url` / `__dirname` before treating an extraction as a lift.
+- **The test that makes it safe is "does the resolved path exist".** Nothing asserted that
+  before; `permissionHookCommand.test.ts` does now, and it was verified against a copy
+  placed one directory deeper — which fails with the resolved path in the message.
 
 ## 132.12 Cross-references
 

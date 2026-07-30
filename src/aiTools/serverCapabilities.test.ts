@@ -19,7 +19,7 @@ import { claudeWithChannelCommand } from '../channel-config.js';
 import { initSkills, parseVersionHeader, setSkillCategories, SKILL_VERSION } from '../skills.js';
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { getPlugin, listPlugins } from './registry.js';
-import { acpCommandFor, commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveFor, driveIds, driveServiceFor, driveServiceIds, mcpConfigFor, mcpConfigIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
+import { acpCommandFor, commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveFor, driveIds, driveServiceFor, driveServiceIds, mcpConfigFor, mcpConfigIds, permissionsFor, permissionsIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
 
 const IDS = skillsCapabilityIds();
 
@@ -385,5 +385,58 @@ describe('ACP entrypoint (HS-9505)', () => {
     // play button into a spawn that cannot be built.
     const acpDrives = driveIds().filter(id => driveFor(id)!.transport === 'acp');
     for (const id of acpDrives) expect(acpCommandFor(id), `${id} drives over ACP`).not.toBeNull();
+  });
+});
+
+/**
+ * HS-9507 — the permissions capability. The merge/removal contract itself is covered
+ * generically in `hooksFile.test.ts`; these are about the WIRING: which tools declare it,
+ * which setting gates each, and that the hook command carries the marker the hooks file
+ * will later look for.
+ */
+describe('permissions capability (HS-9507)', () => {
+  it('is declared only by tools that need a hooks FILE', () => {
+    // OpenCode's permissions are ACP-native (the agent supplies `PermissionOption[]` on
+    // the wire) and Claude's are native to the channel — neither writes a hooks file, so
+    // neither should declare one and make the generation loop probe for it.
+    expect(permissionsIds()).toEqual(['antigravity', 'codex']);
+  });
+
+  it('names the setting that gates it', () => {
+    expect(permissionsFor('antigravity')!.settingKey).toBe('antigravity_interactive_permissions');
+    expect(permissionsFor('codex')!.settingKey).toBe('codex_interactive_permissions');
+  });
+
+  it('every declaring tool is a registered CLI-agent plugin', () => {
+    for (const id of permissionsIds()) {
+      expect(getPlugin(id), `${id} declares permissions but has no plugin`).not.toBeNull();
+      expect(getPlugin(id)!.tier).toBe('cli-agent');
+    }
+  });
+
+  it('resolves case-insensitively and returns null for the rest', () => {
+    expect(permissionsFor('Codex')).toBe(permissionsFor('codex'));
+    for (const id of ['claude', 'opencode', 'gemini', 'cursor', '', 'nope']) {
+      expect(permissionsFor(id), `${id || '(empty)'} should declare no permission hooks`).toBeNull();
+    }
+  });
+
+  it('writes a hook whose command carries the tool-specific marker', () => {
+    // The marker is how `hooksFile.ts` finds our group again on the next pass. If two
+    // tools shared one, each would delete the other's hook.
+    writeFileSync(join(root, '.hotsheet', 'settings.json'),
+      JSON.stringify({ antigravity_interactive_permissions: true }));
+    expect(permissionsFor('antigravity')!.ensure(root, join(root, '.hotsheet'))).toBe(true);
+    const written = readFileSync(join(root, '.agents', 'hooks.json'), 'utf-8');
+    expect(written).toContain('__agy-permission-hook');
+    expect(written).not.toContain('__codex-permission-hook');
+  });
+
+  it('writes nothing when the gating setting is off', () => {
+    // Default-off is the whole point: unattended is the default, and a project that never
+    // opted in should end up with no hooks file at all.
+    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({}));
+    expect(permissionsFor('codex')!.ensure(root, join(root, '.hotsheet'))).toBe(false);
+    expect(existsSync(join(root, '.codex', 'hooks.json'))).toBe(false);
   });
 });
