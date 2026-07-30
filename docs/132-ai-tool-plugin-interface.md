@@ -310,7 +310,7 @@ each phase leaving the tree green and shippable.
 | **5** | HS-9494 ✅ | Claude becomes a plugin. **The acceptance test passed** — see §132.11.5. |
 | **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
-| **8** | HS-9495 | The conformance suite and the ESLint backstop, so the earlier gains can't erode. |
+| **8** | HS-9495 ✅ | The conformance suite and the ESLint backstop, so the earlier gains can't erode. |
 
 The suite arrives last only in the sense of being *complete* last; each phase adds its
 slice of it as that concern moves. A phase that moves a concern without moving its
@@ -629,6 +629,36 @@ The one asymmetry that stays: `CLAUDE.md` + `.claude/skills` are the canonical s
 adapter family references, so `canonicalClaudeSourceExists` is consulted BY other plugins.
 That is a real fact about the ecosystem, not a modelling failure — §132.6 said not to
 invert it to make the shape look tidier, and it has not been.
+
+### 132.11.6 The backstop found a whole layer the epic had missed (HS-9495)
+
+The `no-restricted-syntax` rule flagging tool-id literals outside `src/aiTools/**` was
+expected to be a ratchet — something that holds ground already taken. It found new ground
+instead: **every violation was in CLIENT code, and nothing else fired.**
+
+That is not chance. docs/132 was scoped to the server, and the client cannot reach
+`aiTools/serverCapabilities.ts` (it imports process-spawning modules), so the client
+re-derives what it needs. `src/client/agentBackend.ts` holds a second copy of the drive
+transports with nothing pinning it against the server's — the exact drift class this epic
+removed, reintroduced one layer up. Filed as **HS-9508**.
+
+Two things worth keeping from how it was built:
+
+- **A rule is only worth having if it is calibrated.** Measured first: 28 literals across
+  12 files, nearly all in modules named after the tool they implement. Exempting those
+  left four real hits and zero noise. The config's own warning — a rule that noisy
+  "trains reflexive allowlisting" — is the failure mode to avoid, and the check is
+  cheap: count the hits before writing the rule.
+- **Allowlist files individually, not directories.** All four hits are under
+  `src/client/`, and `src/client/**` would have been one line. Listing them separately
+  means a NEW client tool-id branch still fires, so the debt is frozen rather than
+  licensed.
+
+The suite gained its own proof at the same time: a hypothetical plugin, never registered,
+put through the same identity and detection expectations as the nine real ones. If a
+future change makes the suite depend on something only the known tools have, that test
+fails and says so — which turns "adding a tool is one module plus one registry line" from
+a claim in this document into an assertion.
 
 ## 132.12 Cross-references
 

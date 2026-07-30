@@ -70,6 +70,24 @@ const SPREAD_ARG_LIMIT_RULES = [
 // say exactly which subset they want, instead of re-declaring the array (the old
 // shape, where each block spelled out its own list, is why adding a rule risked
 // silently re-enabling others for allowlisted files).
+// HS-9495 (docs/132 §132.4) — a tool-id string literal outside the plugin layer.
+//
+// The whole point of docs/132 is that a tool is defined in ONE place. Before it, a
+// tool's identity was spelled out across roughly a dozen scattered tables and
+// `if (tool === …)` branches — and it got that way one ticket at a time, each addition
+// reasonable on its own. This is the backstop that stops it growing back, modelled on
+// the §62 `innerHTML` and docs/126 project-scoped rules that exist for the same job.
+//
+// Deliberately narrow: it flags a literal EQUAL to a tool id, not a substring, so
+// `codex_turn`, `dev_tool_codex` and `.codex/hooks.json` paths don't fire. Measured at
+// 28 hits over 12 files when written, nearly all in modules named after the tool they
+// implement — which the allowlist exempts, because a tool's own module naming itself is
+// not the problem this is about.
+const TOOL_ID_LITERAL_RULE = {
+  selector: "Literal[value=/^(codex|antigravity|opencode|gemini|goose|cursor|copilot|windsurf)$/]",
+  message: "Tool-id literal outside `src/aiTools/**`: ask the plugin instead (`getPlugin`, `driveFor`, `skillsCapabilityFor`, … in `src/aiTools/`). A tool is defined in ONE place (docs/132) — scattered ids are exactly what that epic removed. If this file legitimately owns per-tool DATA (the wire enum, the docs/124 gate table) or IS the tool's own module, add it to the HS-9495 allowlist at the bottom of eslint.config.mjs with a one-line reason.",
+};
+
 const CORE_RULES = [
   BIND_DISPOSER_RULE,
   ...SPREAD_ARG_LIMIT_RULES,
@@ -449,6 +467,41 @@ export default tseslint.config(
   {
     rules: {
       "kerfjs/ai-assistant-configs": "off",
+    },
+  },
+  // HS-9495 (docs/132) — the tool-id literal rule, plus the files exempt from it. Each
+  // exemption has a stated reason; a long allowlist here would mean the rule is wrong.
+  {
+    files: ["src/**/*.ts", "src/**/*.tsx"],
+    ignores: [
+      // THE plugin layer — where per-tool knowledge is supposed to live.
+      "src/aiTools/**",
+      // A tool's OWN implementation module naming itself is not the leak this targets;
+      // the rule is about ids reaching GENERIC code.
+      "src/codex*.ts",
+      "src/antigravity*.ts",
+      "src/acp/**",
+      "src/terminals/codexHostedWarning.ts",
+      // Per-tool DATA that legitimately lives outside the registry — both pinned against
+      // it by the conformance suite, so the two cannot drift:
+      "src/api/aiInstructions.ts", // the wire enum: a literal `as const` tuple by design (§132.5)
+      "src/devFeatures.ts",        // the docs/124 In-Development gate table
+      // Tests name tools constantly, by necessity.
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      // HS-9508 — the four CLIENT files that re-derive per-tool knowledge, because
+      // docs/132 was scoped to the server and the client cannot reach
+      // `aiTools/serverCapabilities.ts` (it imports process-spawning modules). Listed
+      // INDIVIDUALLY rather than exempting `src/client/**`, so a NEW client tool-id
+      // branch still fires. `agentBackend.ts` is the serious one: a second copy of the
+      // drive transports with nothing pinning it against the server's.
+      "src/client/agentBackend.ts",
+      "src/client/codexDriveGate.ts",
+      "src/client/commandLogEntryRow.tsx",
+      "src/client/settingsDialog.tsx", // HS-9497 deletes this one's branch
+    ],
+    rules: {
+      "no-restricted-syntax": ["error", TOOL_ID_LITERAL_RULE],
     },
   },
 );

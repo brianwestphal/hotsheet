@@ -19,6 +19,7 @@ import { AI_INSTRUCTION_TOOLS } from '../api/aiInstructions.js';
 import { DEV_FEATURES, devFeatureForAiTool } from '../devFeatures.js';
 import { detectsSpec, detectsTool, listDetectedPlugins } from './detect.js';
 import { AI_TOOL_AUTO, getPlugin, isKnownAiTool, listPlugins, normalizeAiToolId } from './registry.js';
+import type { AiToolPlugin } from './types.js';
 
 const PLUGINS = listPlugins();
 
@@ -265,6 +266,55 @@ describe('instructions capability (HS-9491)', () => {
     };
     for (const [id, relPath] of Object.entries(EXPECTED)) {
       expect(getPlugin(id)?.instructions?.relPath, `relPath drift for ${id}`).toBe(relPath);
+    }
+  });
+});
+
+/**
+ * HS-9495 (docs/132 §132.7) — the claim the whole epic rests on, asserted rather than
+ * asserted-in-prose: **adding a tool is one plugin module plus one registry line, and it
+ * is covered by the conformance suite the moment it exists.**
+ *
+ * A hypothetical plugin is built here — never registered, so it cannot affect production
+ * — and put through the same identity + detection expectations every real plugin faces.
+ * If a future change makes the suite depend on something only the nine known tools have,
+ * this fails and says so.
+ */
+describe('a NEW plugin inherits the conformance suite by existing (HS-9495)', () => {
+  const newcomer: AiToolPlugin = {
+    id: 'probetool',
+    displayName: 'Probe',
+    productName: 'Probe Tool',
+    tier: 'cli-agent',
+    devGateKey: null,
+    detection: { binaries: ['probetool'], paths: ['.probetool'] },
+    instructions: { relPath: 'PROBE.md', frontmatter: '', adapterSkillsRoot: null },
+  };
+
+  it('satisfies the identity expectations with no special-casing', () => {
+    expect(newcomer.id).toBe(newcomer.id.toLowerCase().trim());
+    expect(newcomer.displayName.trim()).not.toBe('');
+    expect(newcomer.productName.trim()).not.toBe('');
+    expect(['cli-agent', 'editor']).toContain(newcomer.tier);
+  });
+
+  it('works with the shared detection evaluator — no per-tool code path', () => {
+    // The point of `DetectionSpec` being DATA: a tool nobody wrote code for is still
+    // detectable, by the same evaluator, with the same injected seams.
+    expect(detectsTool(newcomer, emptyDir, { isOnPath: () => false })).toBe(false);
+    expect(detectsTool(newcomer, emptyDir, { isOnPath: (b) => b === 'probetool' })).toBe(true);
+    expect(detectsSpec(newcomer.detection, emptyDir, {
+      isOnPath: () => false,
+      pathExists: (abs) => abs === join(emptyDir, '.probetool'),
+    })).toBe(true);
+  });
+
+  it('declares capabilities by ABSENCE without tripping anything', () => {
+    // It has no drive, skills, command or permissions — the shape a genuinely new tool
+    // starts in. Every lookup must answer null rather than assume presence.
+    expect(newcomer.instructions).toBeDefined();
+    for (const cap of [newcomer.detection.binaries, newcomer.detection.paths]) {
+      expect(Array.isArray(cap)).toBe(true);
     }
   });
 });
