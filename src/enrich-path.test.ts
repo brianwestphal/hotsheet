@@ -1,12 +1,18 @@
 import { execFileSync } from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { enrichProcessPath, mergePaths, resolveLoginShell } from './enrich-path.js';
+import { enrichProcessPath, extractMarkedPath, mergePaths, resolveLoginShell } from './enrich-path.js';
 
 // HS-9509 — the probe moved from `execFileSync` (returns stdout, throws on failure)
 // to `spawnSync` (returns a result object) so it can read the child's pid and reap
 // its whole process group. These shape the fakes accordingly.
-function spawnOk(stdout: string) {
+function spawnOk(pathValue: string) {
+  // HS-9512 — the probe reads only what is between the markers, so fakes must
+  // speak the same protocol the real shell is asked to.
+  return marked(`__HOTSHEET_PATH_BEGIN__${pathValue.trim()}__HOTSHEET_PATH_END__`);
+}
+/** A raw stdout fake, for asserting what the probe does with unmarked / noisy output. */
+function marked(stdout: string) {
   return { pid: 0, status: 0, signal: null, stdout, stderr: '', output: [] };
 }
 function spawnFail(message: string) {
@@ -73,7 +79,7 @@ describe('enrichProcessPath', () => {
     enrichProcessPath({ spawn: spawn as never });
 
     expect(process.env.PATH).toBe('/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin:/bin');
-    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({
+    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', expect.stringContaining('"$PATH"')], expect.objectContaining({
       encoding: 'utf8',
       timeout: 2000,
     }));
@@ -99,7 +105,7 @@ describe('enrichProcessPath', () => {
 
     enrichProcessPath({ spawn: spawn as never, passwdShell: '/bin/zsh' });
 
-    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
+    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', expect.stringContaining('"$PATH"')], expect.objectContaining({ timeout: 2000 }));
     expect(process.env.PATH).toBe('/Users/x/.local/bin:/usr/bin');
   });
 
@@ -111,7 +117,7 @@ describe('enrichProcessPath', () => {
 
     enrichProcessPath({ spawn: spawn as never, passwdShell: null });
 
-    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
+    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', expect.stringContaining('"$PATH"')], expect.objectContaining({ timeout: 2000 }));
     expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin');
   });
 
@@ -124,8 +130,8 @@ describe('enrichProcessPath', () => {
 
     enrichProcessPath({ spawn: spawn as never, shell: '/bin/zsh' });
 
-    expect(spawn).toHaveBeenNthCalledWith(1, '/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.anything());
-    expect(spawn).toHaveBeenNthCalledWith(2, '/bin/zsh', ['-lc', 'printf %s "$PATH"'], expect.anything());
+    expect(spawn).toHaveBeenNthCalledWith(1, '/bin/zsh', ['-ilc', expect.stringContaining('"$PATH"')], expect.anything());
+    expect(spawn).toHaveBeenNthCalledWith(2, '/bin/zsh', ['-lc', expect.stringContaining('"$PATH"')], expect.anything());
     expect(process.env.PATH).toBe('/a:/usr/bin');
   });
 
@@ -223,5 +229,97 @@ describe('resolveLoginShell (HS-8946)', () => {
   it('returns null on win32', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     expect(resolveLoginShell({ env: { SHELL: '/bin/zsh' }, passwdShell: '/bin/zsh' })).toBeNull();
+  });
+});
+
+// HS-9512 — the probe runs an INTERACTIVE shell, and interactive shells print
+// startup chatter to stdout. Treating the whole stream as the PATH corrupted it.
+describe('HS-9512 — shell banner output must not reach PATH', () => {
+  let originalPath: string | undefined;
+  let originalPlatform: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    originalPath = process.env.PATH;
+    originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+  });
+  afterEach(() => {
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  // The exact stdout captured from the maintainer's machine on 2026-07-30, which is
+  // what made this a real bug rather than a hypothetical one. Before the fix this
+  // produced PATH entries "Restored session", " Thu Jul 30 16", "21", and a fourth
+  // that fused the banner tail onto /Users/x/.local/bin so it stopped resolving.
+  const APPLE_TERMINAL_BANNER = 'Restored session: Thu Jul 30 16:21:23 PST 2026\n';
+
+  it('discards the macOS Terminal "Restored session" banner and keeps the first entry intact', () => {
+    process.env.PATH = '/usr/bin';
+    const realPath = '/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin';
+    const spawn = vi.fn().mockReturnValue(
+      marked(`${APPLE_TERMINAL_BANNER}__HOTSHEET_PATH_BEGIN__${realPath}__HOTSHEET_PATH_END__`));
+
+    enrichProcessPath({ spawn: spawn as never, shell: '/bin/zsh' });
+
+    expect(process.env.PATH).toBe('/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin');
+    // The specific regression: the first real entry must survive as its own entry.
+    const entries = process.env.PATH.split(':');
+    expect(entries).toContain('/Users/x/.local/bin');
+    // And nothing from the banner may appear anywhere.
+    expect(process.env.PATH).not.toContain('Restored');
+    expect(process.env.PATH).not.toContain('PST');
+    for (const entry of entries) {
+      expect(entry).not.toMatch(/\s/); // no entry carries whitespace
+      expect(entry.startsWith('/')).toBe(true);
+    }
+  });
+
+  it('asks the shell for a marked value in the first place', () => {
+    process.env.PATH = '/usr/bin';
+    const spawn = vi.fn().mockReturnValue(marked('__HOTSHEET_PATH_BEGIN__/a__HOTSHEET_PATH_END__'));
+
+    enrichProcessPath({ spawn: spawn as never, shell: '/bin/zsh' });
+
+    const args: unknown = spawn.mock.calls[0][1];
+    const script = Array.isArray(args) ? String(args[1]) : '';
+    expect(script).toContain('__HOTSHEET_PATH_BEGIN__');
+    expect(script).toContain('__HOTSHEET_PATH_END__');
+    // Single-quoted format string: the shell must expand $PATH and nothing else.
+    expect(script).toContain('"$PATH"');
+  });
+
+  it('accepts unmarked output only when it cannot be carrying chatter', () => {
+    process.env.PATH = '/usr/bin';
+    // Clean, whitespace-free: a shell that dropped the markers but answered honestly.
+    const clean = vi.fn().mockReturnValue(marked('/opt/clean/bin:/usr/bin'));
+    enrichProcessPath({ spawn: clean as never, shell: '/bin/zsh' });
+    expect(process.env.PATH).toBe('/opt/clean/bin:/usr/bin');
+  });
+
+  it('refuses unmarked output that contains chatter rather than corrupting PATH', () => {
+    process.env.PATH = '/usr/bin';
+    // Unmarked AND noisy -> "no answer". Degrading to no enrichment beats garbage.
+    const noisy = vi.fn().mockReturnValue(marked(`${APPLE_TERMINAL_BANNER}/Users/x/.local/bin:/usr/bin`));
+    enrichProcessPath({ spawn: noisy as never, shell: '/bin/zsh' });
+    expect(process.env.PATH).toBe('/usr/bin'); // unchanged
+  });
+
+  it('drops non-absolute segments the shell contributes (defense in depth)', () => {
+    expect(mergePaths('/usr/bin', 'relative/dir:/opt/ok:  :/usr/bin')).toBe('/opt/ok:/usr/bin');
+  });
+
+  describe('extractMarkedPath', () => {
+    it('returns the value between markers', () => {
+      expect(extractMarkedPath('noise__HOTSHEET_PATH_BEGIN__/a:/b__HOTSHEET_PATH_END__')).toBe('/a:/b');
+    });
+    it('returns null when a marker is missing', () => {
+      expect(extractMarkedPath('/a:/b')).toBeNull();
+      expect(extractMarkedPath('__HOTSHEET_PATH_BEGIN__/a:/b')).toBeNull();
+    });
+    it('uses the LAST begin marker, so an rc file echoing one cannot spoof the value', () => {
+      const out = '__HOTSHEET_PATH_BEGIN__/spoofed__HOTSHEET_PATH_BEGIN__/real__HOTSHEET_PATH_END__';
+      expect(extractMarkedPath(out)).toBe('/real');
+    });
   });
 });

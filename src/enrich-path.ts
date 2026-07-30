@@ -21,6 +21,11 @@ import { userInfo } from 'os';
 
 const SHELL_PATH_TIMEOUT_MS = 2000;
 
+/** HS-9512 — delimiters bracketing the printed PATH so the shell's own startup
+ *  chatter can be discarded. Deliberately ugly and unlikely to occur in a banner. */
+const PATH_BEGIN_MARKER = '__HOTSHEET_PATH_BEGIN__';
+const PATH_END_MARKER = '__HOTSHEET_PATH_END__';
+
 /** Non-login "shells" that must never be used to probe PATH. */
 const NON_SHELLS = new Set(['/usr/bin/false', '/bin/false', '/sbin/nologin', '/usr/sbin/nologin']);
 
@@ -56,7 +61,8 @@ export function resolveLoginShell(opts: { env?: NodeJS.ProcessEnv; passwdShell?:
 
 /** Pure helper: merge `shellPath` into `currentPath`, prepending new entries
  *  in their original shell order. Existing entries keep their position; no
- *  duplicates are introduced. Empty / whitespace-only segments are dropped. */
+ *  duplicates are introduced. Empty / whitespace-only segments are dropped, as
+ *  are non-absolute ones (HS-9512). */
 export function mergePaths(currentPath: string, shellPath: string): string {
   const sep = ':';
   const existing = currentPath.split(sep).filter((s) => s !== '');
@@ -65,11 +71,44 @@ export function mergePaths(currentPath: string, shellPath: string): string {
   for (const dir of shellPath.split(sep)) {
     const trimmed = dir.trim();
     if (trimmed === '' || existingSet.has(trimmed)) continue;
+    // HS-9512 — defense in depth: only ABSOLUTE directories are merged in. A
+    // malformed probe should degrade to "no enrichment", never to "PATH with
+    // garbage in it". This filters only what the SHELL contributed; entries
+    // already in `currentPath` keep their position untouched, so a caller's
+    // unusual relative entry is preserved.
+    if (!trimmed.startsWith('/')) continue;
     existingSet.add(trimmed);
     additions.push(trimmed);
   }
   if (additions.length === 0) return currentPath;
   return [...additions, ...existing].join(sep);
+}
+
+/**
+ * HS-9512 — pull the PATH out of a shell's stdout, ignoring everything else it said.
+ *
+ * The probe runs an INTERACTIVE shell, and interactive shells print startup chatter
+ * to stdout: macOS Terminal's `Restored session: <date>` banner, motd, version
+ * notices, `nvm` messages, a `date` someone put in their `.zshrc`. Treating the whole
+ * stream as the PATH (what this did before) produced, on the dev machine:
+ *
+ *   "Restored session: Thu Jul 30 16:21:23 PST 2026" + newline +
+ *   "/Users/westphal/.local/bin:..."
+ *
+ * which splits on `:` into three junk entries PLUS a first real entry fused with the
+ * banner text — so `~/.local/bin` silently stopped resolving. That is the very
+ * "cannot find `claude`" failure HS-8946 added this feature to fix.
+ *
+ * So don't trust the stream: bracket the value with markers and take only what is
+ * between them. Same approach as VS Code's shell-path resolution.
+ */
+export function extractMarkedPath(stdout: string): string | null {
+  const begin = stdout.lastIndexOf(PATH_BEGIN_MARKER);
+  if (begin === -1) return null;
+  const from = begin + PATH_BEGIN_MARKER.length;
+  const end = stdout.indexOf(PATH_END_MARKER, from);
+  if (end === -1) return null;
+  return stdout.slice(from, end);
 }
 
 /**
@@ -108,7 +147,11 @@ function reapProcessGroup(pid: number | undefined): void {
 function readLoginShellPath(shell: string, spawnOverride?: typeof spawnSync): string | null {
   const run = spawnOverride ?? spawnSync;
   for (const flag of ['-ilc', '-lc']) {
-    const result = run(shell, [flag, 'printf %s "$PATH"'], {
+    // HS-9512 — bracketed with markers so `extractMarkedPath` can discard whatever
+    // the interactive rc files printed before it. Single-quoted format string so the
+    // shell expands only `$PATH`, via printf's `%s`, and never the markers.
+    const script = `printf '${PATH_BEGIN_MARKER}%s${PATH_END_MARKER}' "$PATH"`;
+    const result = run(shell, [flag, script], {
       encoding: 'utf8',
       timeout: SHELL_PATH_TIMEOUT_MS,
       // HS-9391: SIGKILL, not the SIGTERM default. An INTERACTIVE shell (`-i`)
@@ -141,7 +184,15 @@ function readLoginShellPath(shell: string, spawnOverride?: typeof spawnSync): st
     reapProcessGroup(result.pid);
     if (result.error !== undefined || result.status !== 0) continue; // try the next flag
     // `stdout` is typed non-null and the error/non-zero cases already `continue`.
-    const trimmed = result.stdout.trim();
+    const marked = extractMarkedPath(result.stdout);
+    // HS-9512 — no markers means some shell did not run our printf as written. Rather
+    // than trust the whole stream (the old behavior, i.e. the bug) or refuse outright
+    // (which would silently switch enrichment off for that shell), accept the stream
+    // only when it CANNOT be carrying chatter: a real PATH has no whitespace, and
+    // every observed corruption came in as a banner line plus a newline.
+    const candidate = marked ?? (/\s/.test(result.stdout.trim()) ? null : result.stdout);
+    if (candidate === null) continue;
+    const trimmed = candidate.trim();
     if (trimmed !== '') return trimmed;
   }
   return null;
