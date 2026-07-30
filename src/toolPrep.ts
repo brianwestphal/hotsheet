@@ -19,10 +19,10 @@
  * detect-and-seed-everything behavior.
  */
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, sep } from 'path';
 
-import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { adapterConversionPlanFor, type AiInstructionTool, convertToolFileToAdapter, getInstructionsStatesForTools, instructionFileRelPath, writeInstructionsForTool } from './aiInstructionsTools.js';
+import { skillsCapabilityFor } from './aiTools/serverCapabilities.js';
 import { AI_INSTRUCTION_TOOLS } from './api/aiInstructions.js';
 import { readFileSettings } from './file-settings.js';
 import { ensureSkillsForDir, parseVersionHeader, SKILL_VERSION } from './skills.js';
@@ -53,29 +53,27 @@ export interface ToolPrepStatus {
 }
 
 /** The main generated skill artifact per `ai_tool` — the file whose presence +
- *  version header tell us whether the tool's skills are prepared. Mirrors the
- *  generator targets in `skills.ts` (`ensureClaudeSkills` /
- *  `ensureAgentsFamilySkills` / `ensureGeminiSkills` / `ensureOpencodeSkills` /
- *  `ensureCursorRules` / `ensureWindsurfRules` / `ensureCopilotPrompts`).
- *  Null → no skill format for the tool (goose — unverified, see HS-9374).
- *  HS-9374 — `projectRoot` disambiguates OpenCode, whose generator targets the
- *  CANONICAL `.claude/skills` when it exists (OpenCode reads it directly) and
- *  the shared `.agents/skills` otherwise. */
+ *  version header tell us whether the tool's skills are prepared. Null → no skill
+ *  format for the tool (goose — unverified, see HS-9374).
+ *
+ *  HS-9503 — the per-tool answer now comes from the plugin's skills capability, which
+ *  also owns the generator, so the two cannot drift. They used to be a switch here and
+ *  an if-chain in `skills.ts`, and a mismatch between them is the docs/119 failure where
+ *  prep reports "needed" forever because it checks a path nothing writes.
+ *
+ *  HS-9374 — `projectRoot` disambiguates OpenCode, whose generator targets the CANONICAL
+ *  `.claude/skills` when it exists (OpenCode reads it directly) and the shared
+ *  `.agents/skills` otherwise. */
 export function skillArtifactRelPath(aiTool: string, projectRoot?: string): string | null {
-  switch (aiTool) {
-    case 'claude': return join('.claude', 'skills', 'hotsheet', 'SKILL.md');
-    case 'antigravity':
-    case 'codex': return join('.agents', 'skills', 'hotsheet', 'SKILL.md');
-    case 'gemini': return join('.gemini', 'skills', 'hotsheet', 'SKILL.md');
-    case 'opencode':
-      return projectRoot !== undefined && canonicalClaudeSourceExists(projectRoot)
-        ? join('.claude', 'skills', 'hotsheet', 'SKILL.md')
-        : join('.agents', 'skills', 'hotsheet', 'SKILL.md');
-    case 'cursor': return join('.cursor', 'rules', 'hotsheet.mdc');
-    case 'windsurf': return join('.windsurf', 'rules', 'hotsheet.md');
-    case 'copilot': return join('.github', 'prompts', 'hotsheet.prompt.md');
-    default: return null;
-  }
+  // HS-9503 — was a switch over every tool; now the plugin's skills capability owns it
+  // (docs/132 §132.11.1). `projectRoot` stays optional for callers that only want the
+  // static answer: OpenCode is the sole tool whose target depends on the filesystem, and
+  // without a root it falls back to the same `.agents/skills` a project with no
+  // canonical Claude source gets.
+  const capability = skillsCapabilityFor(aiTool);
+  if (capability === null) return null;
+  const posix = capability.mainArtifactRelPath(projectRoot);
+  return posix.split('/').join(sep);
 }
 
 function isInstructionTool(aiTool: string): aiTool is AiInstructionTool {

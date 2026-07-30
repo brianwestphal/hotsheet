@@ -4,6 +4,9 @@ import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
 import { canonicalClaudeSourceExists } from './aiInstructions.js';
+import { detectsTool } from './aiTools/detect.js';
+import { listPlugins } from './aiTools/registry.js';
+import { skillsCapabilityFor } from './aiTools/serverCapabilities.js';
 import { readFileSettings } from './file-settings.js';
 import { listMcpHooksAgents } from './mcpHooksAgents.js';
 import type { CategoryDef } from './types.js';
@@ -645,7 +648,7 @@ function adapterSkillBody(name: string): string {
   ].join('\n');
 }
 
-function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+export function ensureClaudeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   let updated = false;
   // Ensure curl permissions for Hot Sheet API calls
   if (ensureClaudePermissions(cwd)) updated = true;
@@ -679,12 +682,12 @@ function ensureAdapterSkillTree(cwd: string, dataDir: string, treeDir: string): 
   return updated;
 }
 
-function ensureAgentsFamilySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+export function ensureAgentsFamilySkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   return ensureAdapterSkillTree(cwd, dataDir, join(cwd, '.agents', 'skills'));
 }
 
 /** HS-9374 — Gemini CLI's skills root (`.gemini/skills`). */
-function ensureGeminiSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+export function ensureGeminiSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   return ensureAdapterSkillTree(cwd, dataDir, join(cwd, '.gemini', 'skills'));
 }
 
@@ -697,7 +700,7 @@ function ensureGeminiSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet'
  * absent (started-on-OpenCode) → seed full bodies into the shared
  * `.agents/skills` root.
  */
-function ensureOpencodeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
+export function ensureOpencodeSkills(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
   if (canonicalClaudeSourceExists(cwd)) {
     return writeSkillTree(join(cwd, '.claude', 'skills'), cwd, dataDir, true);
   }
@@ -840,7 +843,7 @@ function ensureCodexHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet'))
 
 // --- Cursor (.cursor/rules/*.mdc) ---
 
-function ensureCursorRules(cwd: string): boolean {
+export function ensureCursorRules(cwd: string): boolean {
   let updated = false;
   const rulesDir = join(cwd, '.cursor', 'rules');
   mkdirSync(rulesDir, { recursive: true });
@@ -878,7 +881,7 @@ function ensureCursorRules(cwd: string): boolean {
 
 // --- GitHub Copilot (.github/prompts/*.prompt.md) ---
 
-function ensureCopilotPrompts(cwd: string): boolean {
+export function ensureCopilotPrompts(cwd: string): boolean {
   let updated = false;
   const promptsDir = join(cwd, '.github', 'prompts');
   mkdirSync(promptsDir, { recursive: true });
@@ -914,7 +917,7 @@ function ensureCopilotPrompts(cwd: string): boolean {
 
 // --- Windsurf (.windsurf/rules/*.md) ---
 
-function ensureWindsurfRules(cwd: string): boolean {
+export function ensureWindsurfRules(cwd: string): boolean {
   let updated = false;
   const rulesDir = join(cwd, '.windsurf', 'rules');
   mkdirSync(rulesDir, { recursive: true });
@@ -1010,38 +1013,36 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   // with a committed `CLAUDE.md` and no `.claude/` — a fresh clone, or a second machine
   // without the CLI — got its instruction file maintained while its skills were never
   // generated. Maintainer decision (2026-07-29): use the union everywhere.
-  if (wants('claude') && (isExecutableOnPath('claude') || existsSync(join(projectRoot, '.claude')) || existsSync(join(projectRoot, 'CLAUDE.md')))) {
-    // HS-8936 — `dataDir` defaults to `projectRoot/.hotsheet`; a worktree follower
-    // passes the OWNER's `.hotsheet` so `/hotsheet` + the curl skills target the
-    // shared instance's worklist + port/secret (docs/89 §89.2 Phase C).
-    if (ensureClaudeSkills(projectRoot, dataDir)) platforms.push('Claude Code');
-  }
-  if (wants('cursor') && (isExecutableOnPath('cursor') || existsSync(join(projectRoot, '.cursor')))) {
-    if (ensureCursorRules(projectRoot)) platforms.push('Cursor');
-  }
-  if (wants('copilot') && (existsSync(join(projectRoot, '.github', 'prompts')) || existsSync(join(projectRoot, '.github', 'copilot-instructions.md')))) {
-    if (ensureCopilotPrompts(projectRoot)) platforms.push('GitHub Copilot');
-  }
-  if (wants('windsurf') && (isExecutableOnPath('windsurf') || existsSync(join(projectRoot, '.windsurf')))) {
-    if (ensureWindsurfRules(projectRoot)) platforms.push('Windsurf');
+  // HS-9503 (docs/132 phase 2b) — was a hand-written if-chain, one branch per tool,
+  // each repeating the same three steps with its own detection expression inline. Now:
+  // iterate the registry, ask the plugin whether it is detected, ask its capability to
+  // generate. Adding a tool touches neither this loop nor this file.
+  //
+  // HS-8936 — `dataDir` defaults to `projectRoot/.hotsheet`; a worktree follower passes
+  // the OWNER's `.hotsheet` so `/hotsheet` + the curl skills target the shared
+  // instance's worklist + port/secret (docs/89 §89.2 Phase C).
+  for (const plugin of listPlugins()) {
+    if (!wants(plugin.id)) continue;
+    const capability = skillsCapabilityFor(plugin.id);
+    if (capability === null) continue; // no skill format (goose — HS-9347)
+    if (!detectsTool(plugin, projectRoot)) continue;
+    if (capability.ensure(projectRoot, dataDir)) platforms.push(capability.platformLabel);
   }
 
-  // HS-9320 / HS-9339 — spawn-based MCP+hooks agents (docs/115) have no skill files for
-  // the tools (they consume the `hotsheet_*` MCP tools directly), so instead of a skill
-  // generator we register the cwd-resolving channel server in the agent's GLOBAL MCP
-  // config (a single entry serves every project; idempotent + best-effort). This now
-  // iterates the per-agent registry (`mcpHooksAgents.ts`) so a second spawn agent's
-  // config-write needs no new code here. Each is gated on its binary being present.
+  // HS-9320 / HS-9339 — spawn-based MCP+hooks agents (docs/115) consume the `hotsheet_*`
+  // MCP tools directly, so beyond the skills above they need the cwd-resolving channel
+  // server registered in the agent's GLOBAL MCP config (one entry serves every project;
+  // idempotent + best-effort), plus their interactive-permission hooks. Each is gated on
+  // its binary being present.
+  //
+  // Still a per-agent `if` because MCP config and permission hooks are phase 4's concern
+  // (HS-9493) — this phase moved the SKILLS out, which is why Antigravity's
+  // `ensureAgentsFamilySkills` call is gone from here: its plugin declares the same
+  // capability Codex does, and the shared `.agents/skills` write is idempotent.
   for (const agent of listMcpHooksAgents()) {
     if (!wants(agent.aiTool) || !isExecutableOnPath(agent.binary)) continue;
     agent.ensureMcpConfig();
-    // Antigravity extras (worklist skills + the interactive-permission hook) stay
-    // agy-specific for now — their on-disk format is agent-specific; generalize them
-    // against a real second agent when one lands (HS-9339 note).
     if (agent.aiTool === 'antigravity') {
-      // HS-9326 — seed the /hotsheet worklist skills into agy's `.agents/skills/`
-      // (HS-9366: thin adapters when the canonical Claude source exists).
-      if (ensureAgentsFamilySkills(projectRoot, dataDir)) platforms.push('Antigravity');
       // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
       // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
       ensureAntigravityHooks(projectRoot, dataDir);
@@ -1051,28 +1052,6 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
       // per the `codex_interactive_permissions` setting (idempotent, merge-safe).
       ensureCodexHooks(projectRoot, dataDir);
     }
-  }
-
-  // HS-9366 (docs/118) — Codex reads the AGENTS.md standard + `.agents/skills`
-  // (the video-studio model), so a codex project gets the same skill tree the
-  // Antigravity branch writes: thin adapters when the canonical Claude source
-  // exists, full bodies otherwise. Idempotent when both agents seeded it.
-  if (wants('codex') && (isExecutableOnPath('codex') || existsSync(join(projectRoot, 'AGENTS.md')))) {
-    if (ensureAgentsFamilySkills(projectRoot, dataDir)) platforms.push('Codex');
-  }
-
-  // HS-9374 (docs/118 §118.4a) — OpenCode reads `.claude/skills` DIRECTLY (plus
-  // `.agents/skills` / `.opencode/skills`): with a canonical source, only keep it
-  // fresh (adapters would duplicate names in its skill list); without one, seed
-  // full bodies into `.agents/skills`.
-  if (wants('opencode') && (isExecutableOnPath('opencode') || existsSync(join(projectRoot, 'AGENTS.md')))) {
-    if (ensureOpencodeSkills(projectRoot, dataDir)) platforms.push('OpenCode');
-  }
-
-  // HS-9374 — Gemini CLI: `GEMINI.md` context + `.gemini/skills` discovery
-  // (verified against gemini-cli 0.49.0). Adapter mode like the AGENTS family.
-  if (wants('gemini') && (isExecutableOnPath('gemini') || existsSync(join(projectRoot, 'GEMINI.md')) || existsSync(join(projectRoot, '.gemini')))) {
-    if (ensureGeminiSkills(projectRoot, dataDir)) platforms.push('Gemini');
   }
 
   if (platforms.length > 0) {

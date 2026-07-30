@@ -302,7 +302,7 @@ each phase leaving the tree green and shippable.
 |---|---|---|
 | **1** | HS-9490 ✅ | `src/aiTools/` + the interface + the registry + plugin stubs carrying only identity. Adopted in `agentDisplayName` and the dropdown. **SHIPPED** — see §132.12 for what building it changed about the design. |
 | **2a** | HS-9491 ✅ | Instructions: `TOOLS` + `ADAPTER_FAMILY` → the plugin's `instructions` capability. **SHIPPED.** |
-| **2b** | HS-9503 | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → a **server-only capability sibling** (§132.11.1). |
+| **2b** | HS-9503 ✅ | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → `aiTools/serverCapabilities.ts` (§132.11.1). **SHIPPED.** |
 | **3** | HS-9492 | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. |
 | **4** | HS-9493 | Drive + permissions + MCP: absorb `mcpHooksAgents.ts` and `resolveAcpAgentCommand`; **close the §132.1.1 leak** — the five generic modules stop importing `codexAppServer.js`. |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
@@ -480,9 +480,24 @@ So the interface has two kinds of capability:
   too: command resolution shells out, the drive spawns processes.
 
 That means §132.4's single interface is really "the declarative half plus a
-server-side companion", and **HS-9503 should settle the sibling's shape**, because
-phases 3–5 all land there. Worth deciding once whether one `serverCapabilities.ts`
-covering skills/command/drive/permissions beats four separate files.
+server-side companion". **HS-9503 settled the sibling: `src/aiTools/serverCapabilities.ts`,
+one file, one lookup per capability, capabilities added as they move.** Phases 3–5 land
+there — command resolution shells out, the drive spawns processes.
+
+**Two rules the sibling carries, both learned the hard way:**
+
+1. **Wrap, never reference.** `ensure: (root, dataDir) => ensureClaudeSkills(root, dataDir)`,
+   not `ensure: ensureClaudeSkills`. The bare form reads the imported binding while the
+   capability table is being EVALUATED, at module scope — which is the HS-9498 trap one
+   level up. Written the bare way first, it took `routes/api.test.ts` and
+   `routes/attachmentCopyCrossProject.test.ts` down in full, because they partially mock
+   `skills.js` for unrelated reasons. Pinned by `serverCapabilitiesImport.test.ts`.
+2. **Never let an omitted argument become a filesystem probe of the CWD.**
+   `mainArtifactRelPath()` with no `projectRoot` must return the same answer as one for a
+   project with no canonical source. The first version passed `''` through to
+   `canonicalClaudeSourceExists`, which resolves against `process.cwd()` — so the answer
+   depended on which project the server was started in. Caught by its own conformance
+   test, pinned by "omitting projectRoot never probes the CWD".
 
 This is not a retreat from the design — the plugin is still the one place a tool is
 defined, and `getPlugin(id)` is still the one lookup. It is a constraint on WHERE each
