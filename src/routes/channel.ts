@@ -3,11 +3,11 @@ import { Hono } from 'hono';
 
 import { hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBridge.js';
 import { agentDisplayName } from '../agentDisplayName.js';
+import { prestartProjectDriveService, projectDriveService } from '../aiTools/serverCapabilities.js';
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
 import { appendMainServerEvent } from '../channelLog.js';
 import { disconnectMainConnections, listAliveEntries, mainConnections } from '../channelRegistry.js';
 import { installHeartbeatHook, removeHeartbeatHook } from '../claude-hooks.js';
-import { clearCodexAppServerFailures, hasCodexAppServerHandshakeFailed, isCodexAppServerEnabled, prestartCodexDaemonIfNeeded, shutdownCodexAppServers } from '../codexAppServer.js';
 import { appendTranscriptDetail } from '../codexAppServerMapping.js';
 import { addLogEntry, updateLogEntry } from '../db/commandLog.js';
 import { getSettings } from '../db/settings.js';
@@ -151,8 +151,12 @@ channelRoutes.get('/channel/status', async (c) => {
   // the play/prompt surface for codex projects when either says no. A newly
   // observed failure gets ONE Commands Log warning (written here — project
   // context — because the session manager runs outside any request).
-  const codexAppServerEnabled = isCodexAppServerEnabled();
-  const codexAppServerFailed = hasCodexAppServerHandshakeFailed(dataDir);
+  // HS-9493 — asked of the project's drive backing service rather than of codex by
+  // name. `false`/`false` when the tool has none, which is the same answer the
+  // client already handles for every non-codex project.
+  const driveService = projectDriveService(dataDir);
+  const codexAppServerEnabled = driveService?.isEnabled() ?? false;
+  const codexAppServerFailed = driveService?.hasFailed(dataDir) ?? false;
   if (codexAppServerFailed && !loggedCodexHandshakeFailures.has(dataDir)) {
     loggedCodexHandshakeFailures.add(dataDir);
     addLogEntry('trigger', 'incoming', 'Codex app-server handshake failed — drive hidden',
@@ -222,13 +226,13 @@ channelRoutes.post('/channel/codex-app-server', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   writeGlobalConfig({ codexAppServerEnabled: parsed.data.enabled });
   if (parsed.data.enabled) {
-    clearCodexAppServerFailures();
+    projectDriveService(c.get('dataDir'))?.clearFailures();
     loggedCodexHandshakeFailures.clear();
     // HS-9396 (docs/123 §123.5) — re-enabling the drive readies the daemon so
     // this project's next codex terminal can launch attached.
-    prestartCodexDaemonIfNeeded(c.get('dataDir'));
+    prestartProjectDriveService(c.get('dataDir'));
   } else {
-    shutdownCodexAppServers();
+    projectDriveService(c.get('dataDir'))?.shutdown();
   }
   notifyChange();
   return c.json({ ok: true, enabled: parsed.data.enabled });

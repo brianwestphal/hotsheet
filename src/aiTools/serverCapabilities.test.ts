@@ -19,7 +19,7 @@ import { claudeWithChannelCommand } from '../channel-config.js';
 import { initSkills, parseVersionHeader, setSkillCategories, SKILL_VERSION } from '../skills.js';
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { getPlugin, listPlugins } from './registry.js';
-import { commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
+import { commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveServiceFor, driveServiceIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
 
 const IDS = skillsCapabilityIds();
 
@@ -224,5 +224,82 @@ describe('command capability table (HS-9492)', () => {
     // model-B off → plain codex, and the remote resolver is never consulted.
     expect(codex.resolve(dataDir, { isOnPath: () => true, codexModelB: false, codexRemote: remote }))
       .toBe('codex');
+  });
+});
+
+/**
+ * HS-9493 (docs/132 phase 4a) — the drive backing service.
+ *
+ * This is the concept that let five generic modules stop importing `codexAppServer` by
+ * name. Codex is the only implementer today, so the risk is that the "interface" is
+ * really codex's API renamed — these assert the properties that make it a category
+ * rather than a rename: absence is meaningful, every method is answerable, and a caller
+ * with no service gets a safe no-op.
+ */
+describe('drive backing service (HS-9493)', () => {
+  it('is declared only by tools whose drive actually needs one', () => {
+    // Exact list. Antigravity spawns per play and OpenCode starts one per ACP session —
+    // neither has a long-lived service, and claiming otherwise would give every caller a
+    // lifecycle to manage that does not exist.
+    expect(driveServiceIds()).toEqual(['codex']);
+  });
+
+  it('every declaring tool is a registered CLI-agent plugin', () => {
+    for (const id of driveServiceIds()) {
+      expect(getPlugin(id), `${id} has a drive service but no plugin`).not.toBeNull();
+      expect(getPlugin(id)!.tier).toBe('cli-agent');
+    }
+  });
+
+  it('answers the whole contract — no half-implemented service', () => {
+    // Optionality belongs at the `service` field, not inside it: a caller that gets a
+    // service must be able to ask it anything without probing for method existence.
+    for (const id of driveServiceIds()) {
+      const svc = driveServiceFor(id)!;
+      for (const method of ['isEnabled', 'hasFailed', 'prestart', 'clearFailures',
+        'shutdown', 'blocksTerminalSpawn', 'ensureUpForSpawn', 'noteTerminalLaunch'] as const) {
+        expect(typeof svc[method], `${id}.${method}`).toBe('function');
+      }
+    }
+  });
+
+  it('returns null for tools without one, and for unknown ids', () => {
+    for (const id of ['claude', 'antigravity', 'opencode', 'gemini', 'goose', 'cursor', 'nope']) {
+      expect(driveServiceFor(id), `${id} should have no backing service`).toBeNull();
+    }
+  });
+
+  it('resolves case-insensitively', () => {
+    expect(driveServiceFor('CODEX')).toBe(driveServiceFor('codex'));
+  });
+});
+
+describe('project-level drive-service helpers (HS-9493)', () => {
+  it('prestart is a safe no-op for a project whose tool has no service', () => {
+    // The property every one of the five migrated call sites depends on: they call this
+    // unconditionally, on lifecycle events that must not fail.
+    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({ ai_tool: 'claude' }));
+    expect(() => prestartProjectDriveService(root + '/.hotsheet')).not.toThrow();
+    expect(projectDriveService(root + '/.hotsheet')).toBeNull();
+  });
+
+  it('prestart swallows a throwing service rather than breaking the caller', () => {
+    // eagerSpawn / settings / channel all call this incidentally; a drive that cannot
+    // pre-start must not take down a project registration or a settings save.
+    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({ ai_tool: 'codex' }));
+    // The real codex prestart is itself best-effort; this asserts the wrapper's guard by
+    // pointing at a dataDir with no codex anything, which is the realistic failure shape.
+    expect(() => prestartProjectDriveService(root + '/.hotsheet')).not.toThrow();
+  });
+
+  it('resolves the service from the project ai_tool setting', () => {
+    writeFileSync(join(root, '.hotsheet', 'settings.json'), JSON.stringify({ ai_tool: 'codex' }));
+    expect(projectDriveService(root + '/.hotsheet')).toBe(driveServiceFor('codex'));
+  });
+
+  it('shutdownAllDriveServices never throws, even with no project context', () => {
+    // The process-exit path calls this; a throw there strands the orphan children it
+    // exists to kill.
+    expect(() => shutdownAllDriveServices()).not.toThrow();
   });
 });

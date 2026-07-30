@@ -4,11 +4,8 @@ import type { IPty } from 'node-pty';
 import { spawn as spawnPty } from 'node-pty';
 import { dirname, join } from 'path';
 
-import { codexDriveDiscoverEnabled, codexTerminalNeedsDaemonEnsure, isCodexAppServerEnabled } from '../../codexAppServer.js';
-import { ensureCodexDaemonRunning } from '../../codexDaemonTransport.js';
-import { readFileSettings } from '../../file-settings.js';
+import { projectDriveService } from '../../aiTools/serverCapabilities.js';
 import { containsClaudeSpinner } from '../claudeSpinner.js';
-import { noteUnhostedCodexLaunch } from '../codexHostedWarning.js';
 import { DEFAULT_TERMINAL_ID, type TerminalConfig } from '../config.js';
 import { scanPtyChunk } from '../oscScanner.js';
 import { killProcessTreeBestEffort } from '../processInspect.js';
@@ -87,8 +84,11 @@ export function createSession(
  * fallback in `codexTerminalRemoteCommand`), so the terminal always works.
  */
 export function spawnIntoSession(session: SessionState, dataDir: string): void {
-  if (codexTerminalNeedsDaemonEnsure(dataDir)) {
-    void ensureCodexDaemonRunning()
+  // HS-9493 — does this project's drive have a backing service that a terminal spawn
+  // must wait for? Null (and so `false`) for every tool without one — docs/132 §132.1.1.
+  const service = projectDriveService(dataDir);
+  if (service !== null && service.blocksTerminalSpawn(dataDir)) {
+    void service.ensureUpForSpawn()
       .catch(() => false)
       // Re-check the guard after the await: the session may have been spawned by
       // another path or torn down while we waited (~1-2s on a cold daemon).
@@ -104,16 +104,12 @@ function doSpawnIntoSession(session: SessionState, dataDir: string): void {
     terminalId: session.terminalId,
     configOverride: session.configOverride ?? undefined,
   });
-  const aiTool: unknown = readFileSettings(dataDir).ai_tool;
-  // HS-9446 — model-B expects this terminal to host the driven thread. If it resolved
-  // to plain `codex`, the daemon was unreachable and driven turns will run off-screen;
-  // say so once in the Commands Log rather than letting it be silent (the HS-9403 class).
-  noteUnhostedCodexLaunch(dataDir, session.terminalId, {
-    modelB: codexDriveDiscoverEnabled(),
-    driveEnabled: isCodexAppServerEnabled(),
-    aiTool: typeof aiTool === 'string' ? aiTool : '',
-    command: resolved.command,
-  });
+  // HS-9493 — the drive service notices if the terminal did not end up hosted by it and
+  // warns once. Which flags that depends on is the service's business, not ours.
+  // Resolved here rather than passed in: this function is also reached directly from the
+  // deferred-spawn `.finally` above, so a parameter would have two call sites to keep in
+  // step for no gain (the lookup is a settings read the spawn path already does).
+  projectDriveService(dataDir)?.noteTerminalLaunch(dataDir, session.terminalId, resolved.command);
   // HS-7965 — generate per-terminal shell init files + collect env / command
   // overrides so up-arrow recall is scoped per (project, terminal id) rather
   // than sharing the user's global ~/.zsh_history / ~/.bash_history.

@@ -1,4 +1,4 @@
-import { prestartCodexDaemonIfNeeded } from '../codexAppServer.js';
+import { prestartProjectDriveService } from '../aiTools/serverCapabilities.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { listTerminalConfigs } from './config.js';
 import { ensureSpawned } from './registry.js';
@@ -25,7 +25,9 @@ export function eagerSpawnTerminals(secret: string, dataDir: string): void {
   // included) resolve to the ATTACHED command without waiting for a play.
   // Called at exactly the right moments (project registration + terminals
   // settings changes); a no-op for every other project.
-  try { prestartCodexDaemonIfNeeded(dataDir); } catch { /* best-effort */ }
+  // HS-9493 — ready the drive's backing service, if this project's tool has one.
+  // A no-op for every tool that doesn't (docs/132 §132.1.1).
+  prestartProjectDriveService(dataDir);
   let configs;
   try {
     configs = listTerminalConfigs(dataDir);

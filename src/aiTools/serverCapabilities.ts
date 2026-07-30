@@ -38,7 +38,18 @@
  */
 import { canonicalClaudeSourceExists } from '../aiInstructions.js';
 import { claudeWithChannelCommand } from '../channel-config.js';
-import { codexDriveDiscoverEnabled, codexTerminalRemoteCommand } from '../codexAppServer.js';
+import {
+  clearCodexAppServerFailures,
+  codexDriveDiscoverEnabled,
+  codexTerminalNeedsDaemonEnsure,
+  codexTerminalRemoteCommand,
+  hasCodexAppServerHandshakeFailed,
+  isCodexAppServerEnabled,
+  prestartCodexDaemonIfNeeded,
+  shutdownCodexAppServers,
+} from '../codexAppServer.js';
+import { ensureCodexDaemonRunning } from '../codexDaemonTransport.js';
+import { readFileSettings } from '../file-settings.js';
 import {
   ensureAgentsFamilySkills,
   ensureClaudeSkills,
@@ -48,6 +59,7 @@ import {
   ensureOpencodeSkills,
   ensureWindsurfRules,
 } from '../skills.js';
+import { noteUnhostedCodexLaunch } from '../terminals/codexHostedWarning.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
 
 export interface SkillsCapability {
@@ -245,4 +257,117 @@ export function commandCapabilityOrDefault(aiTool: string): CommandCapability {
 /** Ids that declare a command capability (for the conformance suite). */
 export function commandCapabilityIds(): string[] {
   return Object.keys(COMMANDS);
+}
+
+
+// ── Drive backing service (HS-9493, docs/132 phase 4a) ──────────────────────
+
+/**
+ * A long-lived process the drive depends on, distinct from the drive itself.
+ *
+ * Codex is the only implementer today (the app-server daemon, docs/121 + docs/129), and
+ * the temptation was to expose its seven functions verbatim. That would be codex's API
+ * with a new coat of paint — the hierarchy trap docs/132 §132.6 warns about, just aimed
+ * at a different tool.
+ *
+ * So the concept is "the drive has a backing service", which is a real category: a spawn
+ * agent like Antigravity has none, an ACP agent starts one per play, and Claude's
+ * persistent channel is arguably one already and could implement this later. The
+ * questions below are the ones a generic caller genuinely needs to ask — is it on, is it
+ * healthy, get it ready, does a terminal spawn have to wait for it — not the ones codex
+ * happens to export.
+ *
+ * Every method is required here rather than optional: a tool either HAS a backing
+ * service (and can answer all of it) or declares none at all. Optionality belongs at the
+ * `service` field, not inside it.
+ */
+export interface DriveBackingService {
+  /** Is the drive that owns this service switched on? (docs/124 Experimental gate.) */
+  isEnabled(): boolean;
+  /** Has this project's handshake with the service failed? Drives the UI hiding the
+   *  play surface (docs/121 §121.7). */
+  hasFailed(dataDir: string): boolean;
+  /** Ready the service ahead of need, so the next terminal/play doesn't pay a cold
+   *  start. Best-effort and idempotent — safe to call on any lifecycle event. */
+  prestart(dataDir: string): void;
+  /** Forget recorded failures (a re-enable is a retry). */
+  clearFailures(): void;
+  /** Tear the service down (the drive was switched off). */
+  shutdown(): void;
+  /** Must a terminal spawn WAIT for the service to be up? True only when this project's
+   *  terminal is meant to be hosted BY the service (docs/129 model-B). */
+  blocksTerminalSpawn(dataDir: string): boolean;
+  /** Bring it up; the caller defers the spawn until this settles. Never rejects in a way
+   *  the caller must handle — a failure just means the terminal launches unhosted. */
+  ensureUpForSpawn(): Promise<unknown>;
+  /** A terminal just launched with `command`. Lets the service notice that it was NOT
+   *  hosted after all and say so once, rather than the mismatch being silent. The
+   *  caller supplies only what it already has; anything else the service reads itself. */
+  noteTerminalLaunch(dataDir: string, terminalId: string, command: string): void;
+}
+
+const DRIVE_SERVICES: Readonly<Record<string, DriveBackingService>> = {
+  codex: {
+    isEnabled: isCodexAppServerEnabled,
+    hasFailed: hasCodexAppServerHandshakeFailed,
+    prestart: (dataDir) => { prestartCodexDaemonIfNeeded(dataDir); },
+    clearFailures: () => { clearCodexAppServerFailures(); },
+    shutdown: shutdownCodexAppServers,
+    blocksTerminalSpawn: (dataDir) => codexTerminalNeedsDaemonEnsure(dataDir),
+    ensureUpForSpawn: () => ensureCodexDaemonRunning(),
+    // HS-9446 — model-B expects the terminal to host the driven thread. If it resolved
+    // to plain `codex` the daemon was unreachable and driven turns run off-screen; say
+    // so once rather than letting it be silent (the HS-9403 class). The model-B and
+    // drive-enabled flags are read HERE so the caller doesn't have to know they exist.
+    noteTerminalLaunch: (dataDir, terminalId, command) => {
+      const aiTool: unknown = readFileSettings(dataDir).ai_tool;
+      noteUnhostedCodexLaunch(dataDir, terminalId, {
+        modelB: codexDriveDiscoverEnabled(),
+        driveEnabled: isCodexAppServerEnabled(),
+        aiTool: typeof aiTool === 'string' ? aiTool : '',
+        command,
+      });
+    },
+  },
+};
+
+/** The backing service for a tool id, or null when its drive needs none. */
+export function driveServiceFor(aiTool: string): DriveBackingService | null {
+  return DRIVE_SERVICES[aiTool.trim().toLowerCase()] ?? null;
+}
+
+/** Ids that declare a backing service (for the conformance suite). */
+export function driveServiceIds(): string[] {
+  return Object.keys(DRIVE_SERVICES);
+}
+
+/**
+ * The backing service for a PROJECT, resolved from its `ai_tool`. Null for every tool
+ * whose drive needs none — which is most of them, and is why the call sites below read
+ * as optional chaining rather than a codex branch.
+ */
+export function projectDriveService(dataDir: string): DriveBackingService | null {
+  const tool = readFileSettings(dataDir).ai_tool;
+  return driveServiceFor(typeof tool === 'string' ? tool : '');
+}
+
+/**
+ * Ready a project's drive service, if it has one. The no-op-by-default call that lets
+ * `terminals/eagerSpawn.ts`, `routes/settings.ts` and `routes/channel.ts` stop importing
+ * one tool's module by name (docs/132 §132.1.1). Best-effort: a throwing service must
+ * never break the caller's flow, all three of which are incidental lifecycle events.
+ */
+export function prestartProjectDriveService(dataDir: string): void {
+  try { projectDriveService(dataDir)?.prestart(dataDir); } catch { /* best-effort */ }
+}
+
+/**
+ * Shut down EVERY drive backing service. Used by the process-exit path, which has no
+ * project context — it just needs every long-lived child gone so none is orphaned.
+ * Best-effort per service so one failure can't strand the others.
+ */
+export function shutdownAllDriveServices(): void {
+  for (const service of Object.values(DRIVE_SERVICES)) {
+    try { service.shutdown(); } catch { /* already torn down */ }
+  }
 }

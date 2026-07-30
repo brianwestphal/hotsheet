@@ -304,7 +304,8 @@ each phase leaving the tree green and shippable.
 | **2a** | HS-9491 ✅ | Instructions: `TOOLS` + `ADAPTER_FAMILY` → the plugin's `instructions` capability. **SHIPPED.** |
 | **2b** | HS-9503 ✅ | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → `aiTools/serverCapabilities.ts` (§132.11.1). **SHIPPED.** |
 | **3** | HS-9492 ✅ | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. **SHIPPED** — first of the five §132.1.1 leaks closed. |
-| **4** | HS-9493 | Drive + permissions + MCP: absorb `mcpHooksAgents.ts` and `resolveAcpAgentCommand`; **close the §132.1.1 leak** — the five generic modules stop importing `codexAppServer.js`. |
+| **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
+| **4b** | HS-9505 | Absorb `mcpHooksAgents.ts` + `resolveAcpAgentCommand` + `agentTransport`; `triggerChannel`'s switch → `drive.run`; permissions hooks. |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
 | **6** | HS-9496 | Extract the §132.9.1 toolkit — starting with the merge-safe hooks-file helper, which is already written twice. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
@@ -456,6 +457,31 @@ choice changes real behavior. Maintainer decision (2026-07-29): **union everywhe
 and `skills.ts` was brought into line immediately. So phase 2 inherits one definition
 both call sites already agree on, instead of a choice disguised as a refactor — which
 is the whole reason phase 1 was asked to compare them.
+
+### 132.11.2 A leaked API is not an interface (HS-9493)
+
+Five generic modules imported `codexAppServer` by name, and the obvious fix was to expose
+its seven functions on a capability. That would have been codex's API with a new coat of
+paint — the same hierarchy trap §132.6 warns about for Claude, aimed at a different tool.
+
+What made it a real category was asking what a GENERIC caller needs to know, rather than
+what codex happens to export. The answer is that **the drive may have a long-lived
+backing service**: is it on, is it healthy, get it ready, must a terminal spawn wait for
+it, tell it a terminal launched. Antigravity spawns per play and has none; OpenCode
+starts one per ACP session; Claude's persistent channel arguably IS one and could
+implement this later. Codex being the only implementer today is a fact about today.
+
+Two shape decisions fell out of that framing:
+
+- **Absence is the signal, and it is at the FIELD.** `driveServiceFor(id)` returns null
+  for a tool with no service, and every method on the interface is required. A caller
+  that gets a service can ask it anything without probing for method existence; a caller
+  that gets null skips the whole concern. Optional methods inside would have recreated
+  the `supportsX` problem one level down.
+- **The caller supplies only what it already has.** `noteTerminalLaunch(dataDir,
+  terminalId, command)` — the model-B and drive-enabled flags it actually depends on are
+  read by the service. The old call site passed them in, which is how
+  `terminals/registry/lifecycle.ts` came to import two codex predicates.
 
 ### 132.11.1 Capabilities split into declarative and behavioral (HS-9491)
 
