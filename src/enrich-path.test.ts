@@ -3,6 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { enrichProcessPath, mergePaths, resolveLoginShell } from './enrich-path.js';
 
+// HS-9509 — the probe moved from `execFileSync` (returns stdout, throws on failure)
+// to `spawnSync` (returns a result object) so it can read the child's pid and reap
+// its whole process group. These shape the fakes accordingly.
+function spawnOk(stdout: string) {
+  return { pid: 0, status: 0, signal: null, stdout, stderr: '', output: [] };
+}
+function spawnFail(message: string) {
+  return { pid: 0, status: null, signal: null, stdout: '', stderr: '', output: [], error: new Error(message) };
+}
+
+
 describe('mergePaths', () => {
   it('prepends entries the shell PATH has and the current PATH does not', () => {
     const out = mergePaths('/usr/bin:/bin', '/opt/homebrew/bin:/usr/bin');
@@ -57,12 +68,12 @@ describe('enrichProcessPath', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     process.env.SHELL = '/bin/zsh';
     process.env.PATH = '/usr/bin:/bin';
-    const exec = vi.fn().mockReturnValue('/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin\n');
+    const spawn = vi.fn().mockReturnValue(spawnOk('/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin\n'));
 
-    enrichProcessPath({ exec: exec as never });
+    enrichProcessPath({ spawn: spawn as never });
 
     expect(process.env.PATH).toBe('/Users/x/.local/bin:/opt/homebrew/bin:/usr/bin:/bin');
-    expect(exec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({
+    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({
       encoding: 'utf8',
       timeout: 2000,
     }));
@@ -72,11 +83,11 @@ describe('enrichProcessPath', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     process.env.SHELL = '/bin/zsh';
     process.env.PATH = 'C:\\Windows';
-    const exec = vi.fn();
+    const spawn = vi.fn();
 
-    enrichProcessPath({ exec: exec as never });
+    enrichProcessPath({ spawn: spawn as never });
 
-    expect(exec).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
     expect(process.env.PATH).toBe('C:\\Windows');
   });
 
@@ -84,11 +95,11 @@ describe('enrichProcessPath', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     delete process.env.SHELL;
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn().mockReturnValue('/Users/x/.local/bin:/usr/bin\n');
+    const spawn = vi.fn().mockReturnValue(spawnOk('/Users/x/.local/bin:/usr/bin\n'));
 
-    enrichProcessPath({ exec: exec as never, passwdShell: '/bin/zsh' });
+    enrichProcessPath({ spawn: spawn as never, passwdShell: '/bin/zsh' });
 
-    expect(exec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
+    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
     expect(process.env.PATH).toBe('/Users/x/.local/bin:/usr/bin');
   });
 
@@ -96,41 +107,41 @@ describe('enrichProcessPath', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     delete process.env.SHELL;
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn().mockReturnValue('/opt/homebrew/bin:/usr/bin\n');
+    const spawn = vi.fn().mockReturnValue(spawnOk('/opt/homebrew/bin:/usr/bin\n'));
 
-    enrichProcessPath({ exec: exec as never, passwdShell: null });
+    enrichProcessPath({ spawn: spawn as never, passwdShell: null });
 
-    expect(exec).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
+    expect(spawn).toHaveBeenCalledWith('/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.objectContaining({ timeout: 2000 }));
     expect(process.env.PATH).toBe('/opt/homebrew/bin:/usr/bin');
   });
 
   it('HS-8946 — falls back to a non-interactive login shell (-lc) when -ilc errors', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn()
-      .mockImplementationOnce(() => { throw new Error('no tty for -i'); })
-      .mockReturnValueOnce('/a:/usr/bin\n');
+    const spawn = vi.fn()
+      .mockImplementationOnce(() => spawnFail('no tty for -i'))
+      .mockReturnValueOnce(spawnOk('/a:/usr/bin\n'));
 
-    enrichProcessPath({ exec: exec as never, shell: '/bin/zsh' });
+    enrichProcessPath({ spawn: spawn as never, shell: '/bin/zsh' });
 
-    expect(exec).toHaveBeenNthCalledWith(1, '/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.anything());
-    expect(exec).toHaveBeenNthCalledWith(2, '/bin/zsh', ['-lc', 'printf %s "$PATH"'], expect.anything());
+    expect(spawn).toHaveBeenNthCalledWith(1, '/bin/zsh', ['-ilc', 'printf %s "$PATH"'], expect.anything());
+    expect(spawn).toHaveBeenNthCalledWith(2, '/bin/zsh', ['-lc', 'printf %s "$PATH"'], expect.anything());
     expect(process.env.PATH).toBe('/a:/usr/bin');
   });
 
   it('HS-9391 — kills a timed-out probe with SIGKILL, which an interactive shell cannot ignore', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn()
-      .mockImplementationOnce(() => { throw new Error('timed out'); })
-      .mockReturnValueOnce('/a:/usr/bin\n');
+    const spawn = vi.fn()
+      .mockImplementationOnce(() => spawnFail('timed out'))
+      .mockReturnValueOnce(spawnOk('/a:/usr/bin\n'));
 
-    enrichProcessPath({ exec: exec as never, shell: '/bin/zsh' });
+    enrichProcessPath({ spawn: spawn as never, shell: '/bin/zsh' });
 
     // BOTH attempts, not just `-ilc`: `-lc` still runs the login rc files, which can
     // themselves block, and a fallback that can hang forever is no fallback.
     for (const call of [1, 2]) {
-      expect(exec).toHaveBeenNthCalledWith(call, '/bin/zsh', expect.anything(),
+      expect(spawn).toHaveBeenNthCalledWith(call, '/bin/zsh', expect.anything(),
         expect.objectContaining({ killSignal: 'SIGKILL' }));
     }
   });
@@ -154,9 +165,9 @@ describe('enrichProcessPath', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     process.env.SHELL = '/bin/zsh';
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn().mockImplementation(() => { throw new Error('ETIMEDOUT'); });
+    const spawn = vi.fn().mockImplementation(() => spawnFail('ETIMEDOUT'));
 
-    enrichProcessPath({ exec: exec as never });
+    enrichProcessPath({ spawn: spawn as never });
 
     expect(process.env.PATH).toBe('/usr/bin');
   });
@@ -165,9 +176,9 @@ describe('enrichProcessPath', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     process.env.SHELL = '/bin/zsh';
     process.env.PATH = '/usr/bin';
-    const exec = vi.fn().mockReturnValue('   \n');
+    const spawn = vi.fn().mockReturnValue(spawnOk('   \n'));
 
-    enrichProcessPath({ exec: exec as never });
+    enrichProcessPath({ spawn: spawn as never });
 
     expect(process.env.PATH).toBe('/usr/bin');
   });
