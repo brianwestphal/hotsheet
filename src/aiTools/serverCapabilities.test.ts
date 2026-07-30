@@ -318,6 +318,24 @@ describe('drive capability (HS-9505)', () => {
     expect(driveIds()).toEqual(['claude', 'antigravity', 'codex', 'opencode']);
   });
 
+  it('drive transports match the PLUGIN declaration — the two cannot drift (HS-9508)', () => {
+    // Transport is declared on the plugin (identity, and client-safe) and echoed on the
+    // drive (server routing). This is the pin that keeps one from silently disagreeing
+    // with the other — the failure the client's old hand-synced mirror actually had.
+    for (const id of driveIds()) {
+      expect(driveFor(id)!.transport, `drive/plugin transport drift for ${id}`)
+        .toBe(getPlugin(id)!.transport);
+    }
+  });
+
+  it('every driven tool declares a transport, and every declared transport has a drive', () => {
+    // A plugin with a transport but no drive would route the play button at nothing; a
+    // drive whose plugin declares none would make `transportFor` answer claude-channel
+    // for a tool we actually spawn.
+    const declared = listPlugins().filter(p => p.transport !== undefined).map(p => p.id);
+    expect(declared.sort()).toEqual([...driveIds()].sort());
+  });
+
   it('declares a transport matching what the tool actually speaks', () => {
     // docs/115 (MCP-native, Claude rails) vs docs/114 (ACP-native). Getting this wrong
     // routes the play button at the wrong drive entirely.

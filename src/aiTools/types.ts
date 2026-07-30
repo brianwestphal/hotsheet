@@ -14,6 +14,7 @@
 // the build. That constraint is why `detect` is DATA (a `DetectionSpec`) evaluated by a
 // server-side helper rather than a `(projectRoot) => boolean` closure; see `detect.ts`.
 
+import type { AgentTransport } from '../agentBackendParse.js';
 import type { DevFeatureKey } from '../devFeatures.js';
 
 /**
@@ -67,6 +68,17 @@ export interface AiToolPlugin {
    * instruction convention we have verified (goose today; see docs/118 §118.6).
    */
   readonly instructions?: InstructionsCapability;
+  /**
+   * HS-9508 — which drive protocol this tool speaks (docs/117), or absent when we do
+   * not drive it at all (`resolveAgentTransport` then answers `claude-channel`).
+   *
+   * Lives HERE rather than on the server-side drive because it is IDENTITY, not
+   * behavior: "codex speaks MCP+hooks" is a fact about codex, true whether or not this
+   * process can spawn it. Putting it on the plugin also makes it client-safe, which is
+   * what let `client/agentBackend.ts` delete its hand-synced mirror of the transport
+   * table — a second copy that nothing pinned against the server's.
+   */
+  readonly transport?: AgentTransport;
 }
 
 /**

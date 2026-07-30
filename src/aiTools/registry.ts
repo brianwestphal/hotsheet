@@ -13,6 +13,7 @@
 // bundle reaches this through `agentDisplayName.ts`. Filesystem detection lives in
 // `detect.ts`, which is server-only.
 
+import type { AgentTransport } from '../agentBackendParse.js';
 import { antigravityPlugin } from './plugins/antigravity.js';
 import { claudePlugin } from './plugins/claude.js';
 import { codexPlugin } from './plugins/codex.js';
@@ -64,6 +65,19 @@ export function getPlugin(aiTool: string | undefined | null): AiToolPlugin | nul
 /** Every registered plugin, in dropdown order. */
 export function listPlugins(): readonly AiToolPlugin[] {
   return PLUGINS;
+}
+
+/**
+ * HS-9508 — the drive transport for an `ai_tool` (docs/117). Client-safe: this is the
+ * ONE definition, so the Settings picker's derived-default hint and the server's routing
+ * cannot disagree. Before this the client kept its own hand-synced copy, marked
+ * "⚠ MIRROR", which is precisely the drift docs/132 exists to remove.
+ *
+ * `claude-channel` for anything we do not drive — `auto`, unset, an unknown id, and the
+ * Tier-B editor tools. A genuine default, not a Claude carve-out (§132.6).
+ */
+export function transportFor(aiTool: string | undefined | null): AgentTransport {
+  return getPlugin(aiTool)?.transport ?? 'claude-channel';
 }
 
 /** True when `aiTool` names a registered plugin (i.e. an explicit tool, not `auto`). */

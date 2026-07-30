@@ -4,6 +4,7 @@
 // live here (client-only display concerns).
 
 import { type AgentTransport, parseAgentBackend } from '../agentBackendParse.js';
+import { transportFor } from '../aiTools/registry.js';
 
 export { parseAgentBackend };
 export type { AgentTransport };
@@ -15,21 +16,18 @@ export const TRANSPORT_LABEL: Record<AgentTransport, string> = {
   acp: 'ACP',
 };
 
-// ⚠ MIRROR of the server capability table (`src/agentTransport.ts::resolveAgentTransport`
-// + `MCP_HOOKS_AGENTS` + `acpAgents.ts::isAcpDrivenTool`). Used ONLY to show the derived
-// default next to the "Auto" option — the real routing decision is always made
-// server-side. Keep in sync when enabling an agent: an MCP-hooks agent → add to
-// `MCP_HOOKS_AI_TOOLS` here AND `MCP_HOOKS_AGENTS`; an ACP agent → add to `ACP_AI_TOOLS`
-// here AND give it an `acpAgents.ts` entrypoint.
-const MCP_HOOKS_AI_TOOLS = new Set(['antigravity', 'codex']); // HS-9369 — codex drive
-const ACP_AI_TOOLS = new Set(['opencode']);
-
-/** The transport the capability table would auto-derive for an `ai_tool` (display only). */
+/**
+ * The transport the capability table auto-derives for an `ai_tool` — shown next to the
+ * "Auto" option. The real routing decision is still made server-side.
+ *
+ * HS-9508 — this used to be a hand-synced ⚠ MIRROR of the server's table (two `Set`s of
+ * tool ids, with a comment asking future readers to keep them in step). Nothing pinned
+ * it, so adding a tool server-side silently made this hint wrong. Transport now lives on
+ * the plugin as identity data (docs/132 §132.11.7), and the pure registry is client-safe,
+ * so both sides read ONE definition.
+ */
 export function deriveDefaultTransport(aiTool: string | undefined): AgentTransport {
-  const t = (aiTool ?? '').trim().toLowerCase();
-  if (MCP_HOOKS_AI_TOOLS.has(t)) return 'mcp-hooks';
-  if (ACP_AI_TOOLS.has(t)) return 'acp';
-  return 'claude-channel';
+  return transportFor(aiTool);
 }
 
 /** The select value ('auto' | transport) for a stored `agent_backend` string. */

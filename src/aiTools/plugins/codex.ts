@@ -9,6 +9,7 @@ export const codexPlugin: AiToolPlugin = {
   productName: 'Codex',
   tier: 'cli-agent',
   devGateKey: 'dev_tool_codex',
+  transport: 'mcp-hooks',
   detection: { binaries: ['codex'], paths: ['AGENTS.md'] },
   instructions: {
     relPath: 'AGENTS.md',

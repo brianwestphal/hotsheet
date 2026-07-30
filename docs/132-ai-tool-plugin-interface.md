@@ -660,6 +660,31 @@ future change makes the suite depend on something only the known tools have, tha
 fails and says so — which turns "adding a tool is one module plus one registry line" from
 a claim in this document into an assertion.
 
+### 132.11.7 Transport was identity all along (HS-9508)
+
+The HS-9495 backstop found `src/client/agentBackend.ts` holding two `Set`s of tool ids —
+a hand-maintained copy of the drive transports, carrying a `⚠ MIRROR` comment that asked
+future readers to keep it in step with the server by hand. Nothing pinned it, so adding a
+tool server-side silently made the Settings "Auto (currently: X)" hint wrong.
+
+The fix was not to sync the copies but to notice the field was in the wrong place.
+**Transport is IDENTITY, not behavior:** "codex speaks MCP+hooks" is a fact about codex,
+true whether or not this process can spawn it. It now lives on the plugin — which is
+client-safe by the §132.11.1 rule — so `transportFor()` is one definition both sides read.
+The server's `resolveAgentTransport` delegates to it; the client's
+`deriveDefaultTransport` is now a one-line call; the two `Set`s are gone.
+
+The generalizable question: **when a client "mirror" appears, ask whether the mirrored
+field is behavior or identity.** Behavior has to stay server-side and the copy needs a
+pin. Identity was simply filed under the wrong concern, and moving it removes the mirror
+rather than maintaining it.
+
+`DriveCapability.transport` still exists for server routing, and the conformance suite
+now fails if it disagrees with the plugin's — plus a check that the set of tools
+declaring a transport is exactly the set with a drive, since either half alone is a bug
+(a transport with no drive routes the play button at nothing; a drive whose plugin
+declares none makes `transportFor` answer `claude-channel` for a tool we actually spawn).
+
 ## 132.12 Cross-references
 
 - [113](113-multi-ai-tool-support.md) — the epic this consolidates; §113.2's A/B tiering

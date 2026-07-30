@@ -66,10 +66,6 @@ const SPREAD_ARG_LIMIT_RULES = [
   },
 ];
 
-// HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
-// say exactly which subset they want, instead of re-declaring the array (the old
-// shape, where each block spelled out its own list, is why adding a rule risked
-// silently re-enabling others for allowlisted files).
 // HS-9495 (docs/132 §132.4) — a tool-id string literal outside the plugin layer.
 //
 // The whole point of docs/132 is that a tool is defined in ONE place. Before it, a
@@ -87,6 +83,11 @@ const TOOL_ID_LITERAL_RULE = {
   selector: "Literal[value=/^(codex|antigravity|opencode|gemini|goose|cursor|copilot|windsurf)$/]",
   message: "Tool-id literal outside `src/aiTools/**`: ask the plugin instead (`getPlugin`, `driveFor`, `skillsCapabilityFor`, … in `src/aiTools/`). A tool is defined in ONE place (docs/132) — scattered ids are exactly what that epic removed. If this file legitimately owns per-tool DATA (the wire enum, the docs/124 gate table) or IS the tool's own module, add it to the HS-9495 allowlist at the bottom of eslint.config.mjs with a one-line reason.",
 };
+
+// HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
+// say exactly which subset they want, instead of re-declaring the array (the old
+// shape, where each block spelled out its own list, is why adding a rule risked
+// silently re-enabling others for allowlisted files).
 
 const CORE_RULES = [
   BIND_DISPOSER_RULE,
@@ -493,9 +494,8 @@ export default tseslint.config(
       // docs/132 was scoped to the server and the client cannot reach
       // `aiTools/serverCapabilities.ts` (it imports process-spawning modules). Listed
       // INDIVIDUALLY rather than exempting `src/client/**`, so a NEW client tool-id
-      // branch still fires. `agentBackend.ts` is the serious one: a second copy of the
-      // drive transports with nothing pinning it against the server's.
-      "src/client/agentBackend.ts",
+      // branch still fires. `agentBackend.ts` came OFF this list in HS-9508 — its copy of
+      // the transport table is gone, replaced by the client-safe `transportFor`.
       "src/client/codexDriveGate.ts",
       "src/client/commandLogEntryRow.tsx",
       "src/client/settingsDialog.tsx", // HS-9497 deletes this one's branch

@@ -20,7 +20,7 @@
 // is the thin dataDir-reading wrapper.
 
 import { type AgentTransport, parseAgentBackend } from './agentBackendParse.js';
-import { driveFor } from './aiTools/serverCapabilities.js';
+import { transportFor } from './aiTools/registry.js';
 import { readFileSettings } from './file-settings.js';
 
 export type { AgentTransport } from './agentBackendParse.js';
@@ -37,7 +37,7 @@ export function resolveAgentTransport(aiTool: string | undefined): AgentTranspor
   // `claude-channel`, so this reads it from the table like any other tool; the `??` is a
   // genuine default for `auto`, unset, an unknown id and the Tier-B editor tools, none of
   // which we drive. It is no longer standing in for Claude (docs/132 §132.6).
-  return driveFor(aiTool ?? '')?.transport ?? 'claude-channel';
+  return transportFor(aiTool);
 }
 
 /** Resolve the drive transport for a project from its `ai_tool` file setting. */

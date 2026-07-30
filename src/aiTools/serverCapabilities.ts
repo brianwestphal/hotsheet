@@ -409,6 +409,9 @@ export interface DriveRunContext {
 }
 
 export interface DriveCapability {
+  /** HS-9508 — mirrors the plugin's declared transport, which is the source of truth
+   *  (it is identity, and the client needs it too). `driveTransportsMatchPlugins` in the
+   *  conformance suite fails if the two ever disagree. */
   transport: AgentTransport;
   /**
    * Run one worklist turn. Returns whether it started.
