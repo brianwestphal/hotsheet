@@ -307,7 +307,7 @@ each phase leaving the tree green and shippable.
 | **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
 | **4b** | HS-9505 | Absorb `mcpHooksAgents.ts` + `resolveAcpAgentCommand` + `agentTransport`; `triggerChannel`'s switch → `drive.run`; permissions hooks. |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
-| **6** | HS-9496 | Extract the §132.9.1 toolkit — starting with the merge-safe hooks-file helper, which is already written twice. |
+| **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
 | **8** | HS-9495 | The conformance suite and the ESLint backstop, so the earlier gains can't erode. |
 
@@ -337,17 +337,29 @@ a toolkit rather than leaving them as functions a tool happens to import.
 
 | Helper | Status today | Note |
 |---|---|---|
+| **Merge-safe hooks-file writer** (`aiTools/hooksFile.ts`) | **SHIPPED (HS-9496)** | The proof the rule is not hypothetical — see below. |
 | Managed sections — markers, versioning, `applyManagedSections` / `removeManagedSections`, `planAdapterConversion` (docs/118, 120) | already generic in `aiInstructions.ts` | Only per-tool DATA moves to plugins. If a plugin ends up owning section logic, the split is wrong. |
 | Adapter skill-tree writer (`ensureAdapterSkillTree`) + the adapter-vs-full mode decision | generic, called per tool | Three tools already share it; make it the default path. |
 | The channel MCP server entry (`getChannelServerPath`, `buildHotsheetMcpServerEntry`) | generic | Each plugin only supplies its config FORMAT (JSON / TOML / ACP session field). |
-| **Merge-safe hooks-file install/remove** | **duplicated** — `ensureAntigravityHooks` and `ensureCodexHooks` independently implement "merge with the user's other hooks, drop only our marked group, remove cleanly when off" | The clearest extraction candidate. Both got merge-safety right separately; the third tool should not have to. |
+| ~~Merge-safe hooks-file install/remove~~ | done, above | |
 | The §47 permission bridge | three implementations (ACP option-driven, agy PreToolUse hook CLI, codex hooks CLI) | A host-side "ask the user, get a decision" surface, with plugins supplying only the transport-specific adapter. |
 | Spawn + stdio/JSONL framing, heartbeats, busy reporting | partly generic (`acpFraming.ts`), partly per-tool | Drive-side commonality worth consolidating as the third and fourth drives land. |
 | Commands Log transcript entries | generic | Plugins emit; they should not know the log's shape. |
 
 The rule of thumb: **if two plugins would write the same code, it belongs in the
-toolkit.** The merge-safe hooks helper is the proof that this is not hypothetical —
-it has already been written twice.
+toolkit.** The merge-safe hooks helper was the proof, and extracting it (HS-9496) taught
+two things worth applying to the rest of the table:
+
+- **The duplication was hiding a real difference in safety.** Both copies were correct on
+  the paths their own tests covered, but the agy one adopted a non-object JSON file (an
+  array, a bare string) and wrote a property onto it — which serializes to `[]` and
+  destroys whatever the user had. One shared implementation gets one answer, and that
+  answer is now "refuse and leave it alone", tested for both shapes.
+- **Parameterize the SHAPE, not the behavior.** What actually differed between the two
+  was four things: where event arrays live (agy at the root, codex nested under `hooks`),
+  which events and matchers, the command and timeout, and an optional `//` comment.
+  Everything else — merge, replace-don't-accumulate, clean removal, idempotence,
+  don't-clobber — was identical and is now written once.
 
 ### 132.9.2 Reused from docs/18 — the custom config UI
 

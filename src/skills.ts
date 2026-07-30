@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { detectsTool } from './aiTools/detect.js';
+import { ensureHooksFile } from './aiTools/hooksFile.js';
 import { listPlugins } from './aiTools/registry.js';
 import { skillsCapabilityFor } from './aiTools/serverCapabilities.js';
 import { readFileSettings } from './file-settings.js';
@@ -723,14 +724,6 @@ function agyPermissionHookCommand(): string {
   return `"${process.execPath}" "${distCli}" ${AGY_HOOK_MARKER}`;
 }
 
-function hookGroupIsOurs(group: unknown): boolean {
-  if (typeof group !== 'object' || group === null) return false;
-  const hooks = (group as { hooks?: unknown }).hooks;
-  return Array.isArray(hooks) && hooks.some(h =>
-    typeof h === 'object' && h !== null
-    && typeof (h as { command?: unknown }).command === 'string'
-    && ((h as { command: string }).command).includes(AGY_HOOK_MARKER));
-}
 
 /**
  * HS-9327 — install (or, when the setting is off, remove) our PreToolUse permission
@@ -739,30 +732,17 @@ function hookGroupIsOurs(group: unknown): boolean {
  * corrupt hooks.json). Returns true when a write happened.
  */
 function ensureAntigravityHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
-  const hooksPath = join(cwd, '.agents', 'hooks.json');
-  const want = readFileSettings(dataDir).antigravity_interactive_permissions === true;
-
-  let config: Record<string, unknown> = {};
-  if (existsSync(hooksPath)) {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(hooksPath, 'utf-8'));
-      if (typeof parsed === 'object' && parsed !== null) config = parsed as Record<string, unknown>; // guarded
-    } catch { return false; } // corrupt → don't clobber the user's file
-  }
-  const prev = Array.isArray(config.PreToolUse) ? (config.PreToolUse as unknown[]) : [];
-  const others = prev.filter(g => !hookGroupIsOurs(g)); // drop any prior Hot Sheet hook
-  const next = want
-    ? [...others, { '//': 'Hot Sheet interactive permissions', matcher: '', hooks: [{ type: 'command', command: agyPermissionHookCommand(), timeout: 600 }] }]
-    : others;
-
-  if (next.length > 0) config.PreToolUse = next; else delete config.PreToolUse;
-  const serialized = Object.keys(config).length === 0 ? '' : JSON.stringify(config, null, 2) + '\n';
-
-  const before = existsSync(hooksPath) ? readFileSync(hooksPath, 'utf-8') : '';
-  if (serialized === before) return false; // idempotent
-  mkdirSync(dirname(hooksPath), { recursive: true });
-  writeFileSync(hooksPath, serialized, 'utf-8');
-  return true;
+  // HS-9496 — the merge/removal/idempotence contract lives in `aiTools/hooksFile.ts`;
+  // this is now just agy's shape. Its events sit at the file ROOT and it takes one.
+  return ensureHooksFile({
+    path: join(cwd, '.agents', 'hooks.json'),
+    marker: AGY_HOOK_MARKER,
+    container: null,
+    command: agyPermissionHookCommand(),
+    timeout: 600,
+    comment: 'Hot Sheet interactive permissions',
+    groups: [{ event: 'PreToolUse', matcher: '' }],
+  }, readFileSettings(dataDir).antigravity_interactive_permissions === true);
 }
 
 // HS-9359 — the interactive-permission hooks for Codex. Same marker-based
@@ -781,14 +761,6 @@ function codexPermissionHookCommand(): string {
   return `"${process.execPath}" "${distCli}" ${CODEX_HOOK_MARKER}`;
 }
 
-function codexHookGroupIsOurs(group: unknown): boolean {
-  if (typeof group !== 'object' || group === null) return false;
-  const hooks = (group as { hooks?: unknown }).hooks;
-  return Array.isArray(hooks) && hooks.some(h =>
-    typeof h === 'object' && h !== null
-    && typeof (h as { command?: unknown }).command === 'string'
-    && ((h as { command: string }).command).includes(CODEX_HOOK_MARKER));
-}
 
 /**
  * HS-9359 — install (or, when the setting is off, remove) our permission hooks in
@@ -805,40 +777,20 @@ function codexHookGroupIsOurs(group: unknown): boolean {
  * hooks.json). Returns true when a write happened.
  */
 function ensureCodexHooks(cwd: string, dataDir: string = join(cwd, '.hotsheet')): boolean {
-  const hooksPath = join(cwd, '.codex', 'hooks.json');
-  const want = readFileSettings(dataDir).codex_interactive_permissions === true;
-
-  let config: Record<string, unknown> = {};
-  if (existsSync(hooksPath)) {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(hooksPath, 'utf-8'));
-      if (typeof parsed === 'object' && parsed !== null) config = parsed as Record<string, unknown>; // guarded
-    } catch { return false; } // corrupt → don't clobber the user's file
-  }
-  const events = typeof config.hooks === 'object' && config.hooks !== null && !Array.isArray(config.hooks)
-    ? { ...(config.hooks as Record<string, unknown>) } // guarded above
-    : {};
-
-  const hookEntry = { type: 'command', command: codexPermissionHookCommand(), timeout: 180 };
-  const wanted: Record<string, { matcher: string }> = {
-    PreToolUse: { matcher: '^(Bash|apply_patch|Edit|Write)$' },
-    PermissionRequest: { matcher: '*' },
-  };
-  for (const [event, { matcher }] of Object.entries(wanted)) {
-    const prev = Array.isArray(events[event]) ? (events[event] as unknown[]) : [];
-    const others = prev.filter(g => !codexHookGroupIsOurs(g)); // drop any prior Hot Sheet group
-    const next = want ? [...others, { matcher, hooks: [hookEntry] }] : others;
-    if (next.length > 0) events[event] = next; else delete events[event]; // eslint-disable-line @typescript-eslint/no-dynamic-delete
-  }
-
-  if (Object.keys(events).length > 0) config.hooks = events; else delete config.hooks;
-  const serialized = Object.keys(config).length === 0 ? '' : JSON.stringify(config, null, 2) + '\n';
-
-  const before = existsSync(hooksPath) ? readFileSync(hooksPath, 'utf-8') : '';
-  if (serialized === before) return false; // idempotent
-  mkdirSync(dirname(hooksPath), { recursive: true });
-  writeFileSync(hooksPath, serialized, 'utf-8');
-  return true;
+  // HS-9496 — same helper, codex's shape: events NEST under `hooks`, and it takes two
+  // (the tool-call gate plus codex's own approval requests). Matchers are Rust regexes,
+  // verified live on codex-cli 0.145.0.
+  return ensureHooksFile({
+    path: join(cwd, '.codex', 'hooks.json'),
+    marker: CODEX_HOOK_MARKER,
+    container: 'hooks',
+    command: codexPermissionHookCommand(),
+    timeout: 180,
+    groups: [
+      { event: 'PreToolUse', matcher: '^(Bash|apply_patch|Edit|Write)$' },
+      { event: 'PermissionRequest', matcher: '*' },
+    ],
+  }, readFileSettings(dataDir).codex_interactive_permissions === true);
 }
 
 // --- Cursor (.cursor/rules/*.mdc) ---
