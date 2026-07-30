@@ -105,3 +105,34 @@ describe('formatPrefDescription — escape FIRST, then our own tags', () => {
     expect(formatPrefDescription('a * b ** c ` d')).toBe('a * b ** c ` d');
   });
 });
+
+// HS-9497 — a transition test, not a single-operation one. Rows used to persist across
+// tool switches (they were merely hidden); now they are rebuilt from the settings the
+// dialog is holding. So a toggle made in this dialog session has to survive switching
+// away and back, which only works if the caller folds the new value into that snapshot.
+// Every individual operation here passes in isolation; the bug would live in the SEQUENCE.
+describe('toggle → switch away → switch back (HS-9497)', () => {
+  it('re-renders the toggled value, not the value the dialog opened with', () => {
+    const pref: AiToolPreference = {
+      key: 'antigravity_interactive_permissions', label: 'Prompts', type: 'boolean', default: false,
+    };
+    // The settings snapshot the dialog holds, updated the way settingsDialog does it.
+    let snapshot: Record<string, unknown> = {};
+    const onChange = (p: AiToolPreference, value: boolean): void => {
+      snapshot = { ...snapshot, [p.key]: value };
+    };
+
+    const [first] = buildAiToolPreferenceRows([pref], snapshot, onChange);
+    const input = first.querySelector('input');
+    if (!(input instanceof HTMLInputElement)) throw new Error('no checkbox');
+    expect(input.checked).toBe(false);
+
+    input.checked = true;
+    input.dispatchEvent(new Event('change'));
+
+    // Switch away (no rows), then back — rebuilt from the updated snapshot.
+    expect(buildAiToolPreferenceRows([], snapshot, onChange)).toEqual([]);
+    const [rebuilt] = buildAiToolPreferenceRows([pref], snapshot, onChange);
+    expect(rebuilt.querySelector<HTMLInputElement>('input')?.checked).toBe(true);
+  });
+});
