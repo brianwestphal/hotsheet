@@ -131,8 +131,9 @@ describe('dev-gated settings markup (HS-9473)', () => {
     // Fields that are revealed by the `ai_tool` selection instead (they start
     // `display:none` and only appear for their tool, which is itself gated).
     const toolRevealed = new Set([
-      'antigravity-perms-field',
-      'codex-perms-field',
+      // HS-9497 — the per-tool permission fields are no longer server-rendered; the
+      // selected tool's plugin `preferences` render into this one container.
+      'ai-tool-prefs',
       // The `ai_tool` dropdown gates its OPTIONS individually
       // (`settingsDialog.tsx::applyAiToolDevGating`) rather than hiding the whole
       // field — it must stay available for the ungated tools. Surfaced by this

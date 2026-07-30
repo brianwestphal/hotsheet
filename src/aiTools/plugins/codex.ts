@@ -16,4 +16,14 @@ export const codexPlugin: AiToolPlugin = {
     frontmatter: '',
     adapterSkillsRoot: '.agents/skills',
   },
+  // HS-9359 / HS-9383 (docs/121 O4) / HS-9497 — default ON: absent ⇒ overlay approvals,
+  // explicit false ⇒ auto-approve. The OPPOSITE default to antigravity's, which is why
+  // the declaration carries it rather than assuming false.
+  preferences: [{
+    key: 'codex_interactive_permissions',
+    label: 'Interactive permission prompts (Codex)',
+    type: 'boolean',
+    default: true,
+    description: 'When on, the play button runs `codex` **without** the approvals/sandbox bypass (workspace-write sandbox + hooks instead) and installs `.codex/hooks.json` hooks that route each mutating tool call and approval request through Hot Sheet\'s permission popup (Allow / Deny). Hot Sheet\'s own `hotsheet_*` tools are auto-allowed. Off = codex runs the worklist unattended (auto-approve).',
+  }],
 };

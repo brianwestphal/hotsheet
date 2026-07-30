@@ -79,6 +79,43 @@ export interface AiToolPlugin {
    * table — a second copy that nothing pinned against the server's.
    */
   readonly transport?: AgentTransport;
+  /**
+   * HS-9497 (docs/132 §132.9.2) — per-tool settings the Settings dialog renders and
+   * reveals when this tool is selected. Absent when the tool has none.
+   *
+   * Declaring these removes the three hand-written places a toggle used to live: the
+   * `<div class="settings-field" style="display:none">` in `pages.tsx`, the `byIdOrNull`
+   * binding, and the `revealAgyPerms` tool-id branch.
+   */
+  readonly preferences?: readonly AiToolPreference[];
+}
+
+/**
+ * HS-9497 — one per-tool setting, as DATA (this module is client-safe; see the header).
+ *
+ * Deliberately narrow: `boolean` is the only type, because both real cases are booleans
+ * and inventing select/text/combo variants ahead of a tool that needs one is the
+ * single-implementer trap docs/132 §132.11.2 describes. Widen when a tool actually asks.
+ */
+export interface AiToolPreference {
+  /** The `FileSettings` key. Stays a static zod field — see `aiToolPreferences.test.ts`,
+   *  which fails if a declared key is missing from the schema, so the two cannot drift. */
+  readonly key: string;
+  readonly label: string;
+  /**
+   * Hint text. Supports a tiny inline subset — `` `code` `` and `**bold**` — so the
+   * declaration keeps the formatting the hand-written HTML had. Rendered escape-first
+   * (`formatPrefDescription`), so the markup is ours and never the string's.
+   */
+  readonly description?: string;
+  readonly type: 'boolean';
+  /**
+   * The value when the key is ABSENT — and it is genuinely per-tool, not a constant:
+   * antigravity's permissions default OFF (`=== true`) while codex's default ON
+   * (`!== false`). Getting this wrong silently flips the toggle for every existing
+   * project, which is why it is required rather than defaulted to `false`.
+   */
+  readonly default: boolean;
 }
 
 /**

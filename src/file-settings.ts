@@ -7,7 +7,10 @@ import { readSecretFile, writeSecretFile } from './secret-file.js';
 import { type CommandItem, isCommandTreeDelta, resolveCommandTreeDelta } from './settingsCommandDelta.js';
 import { resolveDeltaArray } from './settingsDelta.js';
 
-const FileSettingsSchema = z.object({
+/** Exported for the HS-9497 conformance test, which fails if an AI-tool plugin
+ *  declares a preference key this schema doesn't have — the guard that lets the
+ *  zod fields stay STATIC (and therefore typed) rather than plugin-contributed. */
+export const FileSettingsSchema = z.object({
   appName: z.string().optional(),
   backupDir: z.string().optional(),
   ticketPrefix: z.string().optional(),

@@ -744,18 +744,11 @@ pageRoutes.get('/', (c) => {
                 </select>
                 <span className="settings-hint">How Hot Sheet <strong>drives</strong> this project's agent via the play button (docs/117). <strong>Auto</strong> picks the transport from the AI tool<span id="agent-backend-derived"></span> — leave it here unless you need to force a specific one. This is a per-machine (Local) setting.</span>
               </div>
-              {/* HS-9328 — Antigravity interactive permission prompts (HS-9327).
-                  Revealed only when ai_tool=antigravity. */}
-              <div className="settings-field" id="antigravity-perms-field" style="display:none">
-                <label><input type="checkbox" id="settings-antigravity-interactive-permissions" /> Interactive permission prompts (Antigravity)</label>
-                <span className="settings-hint">When on, the play button runs <code>agy</code> <strong>without</strong> <code>--dangerously-skip-permissions</code> and installs a <code>.agents/hooks.json</code> hook that routes each tool call through Hot Sheet's permission popup (Allow / Deny). Off = agy runs the worklist unattended (auto-approve). Requires a trusted agy workspace.</span>
-              </div>
-              {/* HS-9359 — Codex interactive permission prompts.
-                  Revealed only when ai_tool=codex. */}
-              <div className="settings-field" id="codex-perms-field" style="display:none">
-                <label><input type="checkbox" id="settings-codex-interactive-permissions" /> Interactive permission prompts (Codex)</label>
-                <span className="settings-hint">When on, the play button runs <code>codex exec</code> <strong>without</strong> the approvals/sandbox bypass (workspace-write sandbox + hooks instead) and installs <code>.codex/hooks.json</code> hooks that route each mutating tool call and approval request through Hot Sheet's permission popup (Allow / Deny). Hot Sheet's own <code>hotsheet_*</code> tools are auto-allowed. Off = codex runs the worklist unattended (auto-approve).</span>
-              </div>
+              {/* HS-9497 (docs/132 §132.9.2) — per-tool settings render HERE from the
+                  selected tool's plugin `preferences` declaration. Replaces the
+                  hand-written per-tool fields (agy HS-9328, codex HS-9359) and the
+                  `revealAgyPerms` tool-id branch that showed/hid them. */}
+              <div id="ai-tool-prefs"></div>
               {/* HS-8913 — install / update Hot Sheet's recommended AI-assistant
                   instruction sections in this project's CLAUDE.md. */}
               <div className="settings-divider"></div>

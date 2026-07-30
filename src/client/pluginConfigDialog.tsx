@@ -6,6 +6,7 @@ import { TIMERS } from './constants/timers.js';
 import { byIdOrNull, toElement } from './dom.js';
 import type { ConfigLayoutItem, PluginPreference } from './pluginTypes.js';
 import { labelColorClass } from './pluginTypes.js';
+import { formatPrefDescription } from './prefDescription.js';
 import type { PreferenceStore } from './preferenceStore.js';
 import { pluginPreferenceStore } from './preferenceStore.js';
 
@@ -101,7 +102,10 @@ export function createPreferenceRow(store: PreferenceStore, pref: PluginPreferen
         {pref.required === true ? <span className="plugin-pref-required">*</span> : null}
         {isGlobal ? <span className="global-setting-badge">Global</span> : null}
       </label>
-      {pref.description != null && pref.description !== '' ? <span className="settings-hint">{pref.description}</span> : null}
+      {pref.description != null && pref.description !== ''
+        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- HS-9497: `formatPrefDescription` ESCAPES first and only then inserts <code>/<strong>, so every tag in the result is one we wrote. See its module note.
+        ? <span className="settings-hint">{raw(formatPrefDescription(pref.description))}</span>
+        : null}
       <div className="plugin-pref-input" id={`pref-input-${ns}-${pref.key}`}></div>
       <div className="plugin-pref-validation" id={`pref-validation-${ns}-${pref.key}`}></div>
     </div>

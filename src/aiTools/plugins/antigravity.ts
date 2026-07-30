@@ -16,4 +16,13 @@ export const antigravityPlugin: AiToolPlugin = {
     frontmatter: '',
     adapterSkillsRoot: '.agents/skills',
   },
+  // HS-9328 / HS-9497 — default OFF: agy runs the worklist unattended unless the user
+  // opts in. Note this is the OPPOSITE polarity to codex's identically-named setting.
+  preferences: [{
+    key: 'antigravity_interactive_permissions',
+    label: 'Interactive permission prompts (Antigravity)',
+    type: 'boolean',
+    default: false,
+    description: 'When on, the play button runs `agy` **without** `--dangerously-skip-permissions` and installs a `.agents/hooks.json` hook that routes each tool call through Hot Sheet\'s permission popup (Allow / Deny). Off = agy runs the worklist unattended (auto-approve). Requires a trusted agy workspace.',
+  }],
 };

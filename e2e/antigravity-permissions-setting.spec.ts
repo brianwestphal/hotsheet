@@ -32,13 +32,17 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible();
 
-    const field = page.locator('#antigravity-perms-field');
-    const checkbox = page.locator('#settings-antigravity-interactive-permissions');
+    // HS-9497 — the row is now RENDERED from the tool's plugin `preferences` declaration
+    // rather than server-rendered and toggled with `display:none`, so for a non-selected
+    // tool it is ABSENT rather than hidden. `toBeHidden()` covers both, and the
+    // not-in-DOM assertion below is the stronger one.
+    const field = page.locator('[data-pref-key="antigravity_interactive_permissions"]');
+    const checkbox = page.locator('#settings-pref-antigravity_interactive_permissions');
     const aiSelect = page.locator('#ai-tool-select');
 
     // Hidden until Antigravity is selected. (Each dropdown change persists ai_tool
     // async — poll it to land before the next change so they can't race/reorder.)
-    await expect(field).toBeHidden();
+    await expect(field).toHaveCount(0); // nothing rendered until Antigravity is selected
     await aiSelect.selectOption('antigravity');
     await expect(field).toBeVisible();
     await expect(checkbox).not.toBeChecked(); // default off
@@ -46,7 +50,7 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
 
     // Switching to another tool hides it again.
     await aiSelect.selectOption('claude');
-    await expect(field).toBeHidden();
+    await expect(field).toHaveCount(0); // not merely hidden — Claude declares no preferences
     await expect.poll(readTool, { timeout: 5000 }).toBe('claude');
 
     // Back to Antigravity + enable → persists to settings.json.
@@ -61,11 +65,11 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#settings-btn').click();
     await expect(page.locator('#ai-tool-select')).toHaveValue('antigravity', { timeout: 5000 });
-    await expect(page.locator('#antigravity-perms-field')).toBeVisible();
-    await expect(page.locator('#settings-antigravity-interactive-permissions')).toBeChecked();
+    await expect(page.locator('[data-pref-key="antigravity_interactive_permissions"]')).toBeVisible();
+    await expect(page.locator('#settings-pref-antigravity_interactive_permissions')).toBeChecked();
 
     // Cleanup — reset so the shared server's project doesn't carry this into other specs.
-    await page.locator('#settings-antigravity-interactive-permissions').uncheck();
+    await page.locator('#settings-pref-antigravity_interactive_permissions').uncheck();
     await expect.poll(readFlag, { timeout: 5000 }).toBe(false);
     await page.locator('#ai-tool-select').selectOption('auto');
     // Restore the shipped default (gate off) so later specs see it.

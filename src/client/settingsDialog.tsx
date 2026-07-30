@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
+import { getPlugin } from '../aiTools/registry.js';
 import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { defaultProjectName } from '../defaultProjectName.js';
 import { IN_DEVELOPMENT_OPTION_SUFFIX, isAiToolSelectable } from '../devFeatures.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from './agentBackend.js';
+import { buildAiToolPreferenceRows } from './aiToolPreferences.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindViewsTab } from './customViews.js';
@@ -191,15 +193,21 @@ function bindGeneralTab() {
   const worklistPreambleInput = byId<HTMLTextAreaElement>('settings-worklist-preamble');
   const integrationGateInput = byId<HTMLInputElement>('settings-integration-gate');
   const aiToolSelect = byIdOrNull<HTMLSelectElement>('ai-tool-select'); // HS-8009
-  // HS-9328 — Antigravity interactive-permission toggle (revealed only for agy).
-  const agyPermsField = byIdOrNull<HTMLDivElement>('antigravity-perms-field');
-  const agyPermsCheckbox = byIdOrNull<HTMLInputElement>('settings-antigravity-interactive-permissions');
-  // HS-9359 — the Codex sibling (revealed only for codex).
-  const codexPermsField = byIdOrNull<HTMLDivElement>('codex-perms-field');
-  const codexPermsCheckbox = byIdOrNull<HTMLInputElement>('settings-codex-interactive-permissions');
-  const revealAgyPerms = (tool: string): void => {
-    if (agyPermsField !== null) agyPermsField.style.display = tool === 'antigravity' ? '' : 'none';
-    if (codexPermsField !== null) codexPermsField.style.display = tool === 'codex' ? '' : 'none';
+  // HS-9497 (docs/132 §132.9.2) — per-tool settings come from the selected tool's plugin
+  // `preferences` declaration, replacing a hand-written field + binding + reveal branch
+  // per toggle. `renderAiToolPrefs` is the only tool-aware call left, and it names no
+  // tool: a tool with no declared preferences simply renders nothing.
+  const aiToolPrefsContainer = byIdOrNull<HTMLDivElement>('ai-tool-prefs');
+  let latestFileSettings: Record<string, unknown> = {};
+  const renderAiToolPrefs = (tool: string): void => {
+    if (aiToolPrefsContainer === null) return;
+    const prefs = getPlugin(tool)?.preferences ?? [];
+    aiToolPrefsContainer.replaceChildren(...buildAiToolPreferenceRows(prefs, latestFileSettings, (pref, value) => {
+      // Same persistence as before: a JSON boolean through the docs/95 layer routing,
+      // then `ensureSkills` rewrites that tool's hooks file (install on, remove off).
+      latestFileSettings = { ...latestFileSettings, [pref.key]: value };
+      void persistScopedSetting(pref.key, value).then(() => ensureSkills());
+    }));
   };
   // HS-9338 — the drive-transport override picker + its "Auto (derived: X)" hint.
   const agentBackendSelect = byIdOrNull<HTMLSelectElement>('agent-backend-select');
@@ -244,11 +252,10 @@ function bindGeneralTab() {
       // visible so an existing working project is never silently switched.
       if (aiToolSelect !== null) applyAiToolDevGating(aiToolSelect, tool);
       if (aiToolSelect !== null) aiToolSelect.value = tool;
-      if (agyPermsCheckbox !== null) agyPermsCheckbox.checked = fs.antigravity_interactive_permissions === true;
-      // HS-9359 / HS-9383 (docs/121 O4) — default flipped ON for the app-server
-      // drive: absent ⇒ overlay approvals; explicit false ⇒ auto-approve.
-      if (codexPermsCheckbox !== null) codexPermsCheckbox.checked = fs.codex_interactive_permissions !== false;
-      revealAgyPerms(tool);
+      // HS-9497 — each declared preference carries its own default (agy off, codex ON
+      // per docs/121 O4), so the polarity lives in the plugin rather than here.
+      latestFileSettings = fs;
+      renderAiToolPrefs(tool);
       // HS-9338 — load the drive-transport override (Local setting) into the picker.
       if (agentBackendSelect !== null) agentBackendSelect.value = agentBackendSelectValue(fs.agent_backend);
       updateAgentBackendDerived();
@@ -360,7 +367,7 @@ function bindGeneralTab() {
     // only hydrated by `loadSettings()` — so before this, picking a tool didn't
     // relabel anything until a project switch or reload.
     state.settings.ai_tool = aiToolSelect.value;
-    revealAgyPerms(aiToolSelect.value); // HS-9328 — show/hide the agy permission toggle
+    renderAiToolPrefs(aiToolSelect.value); // HS-9497 — swap in the newly-selected tool's settings
     updateAgentBackendDerived();        // HS-9338 — the derived default follows ai_tool
     // HS-9367 (docs/119) — prepare the NEW tool's full config, ask-first: when
     // something is missing/stale for the selected tool the prep dialog offers a
@@ -374,18 +381,6 @@ function bindGeneralTab() {
   agentBackendSelect?.addEventListener('change', () => {
     updateAgentBackendDerived();
     void persistScopedSetting('agent_backend', agentBackendSelect.value);
-  });
-
-  // HS-9328 — Antigravity interactive-permission prompts (HS-9327). A JSON boolean;
-  // `ensureSkills` rewrites `.agents/hooks.json` (install when on, remove when off).
-  agyPermsCheckbox?.addEventListener('change', () => {
-    void persistScopedSetting('antigravity_interactive_permissions', agyPermsCheckbox.checked).then(() => ensureSkills());
-  });
-
-  // HS-9359 — Codex interactive-permission prompts. Same model: `ensureSkills`
-  // rewrites `.codex/hooks.json` (install when on, remove when off).
-  codexPermsCheckbox?.addEventListener('change', () => {
-    void persistScopedSetting('codex_interactive_permissions', codexPermsCheckbox.checked).then(() => ensureSkills());
   });
 
   // Notification dropdowns
