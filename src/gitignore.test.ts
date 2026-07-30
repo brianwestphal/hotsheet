@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -151,4 +151,44 @@ describe('computeHotsheetGitignore (HS-8989)', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+// HS-9510 (following HS-9391) — the git probes here run on a STARTUP path, and
+// `execFileSync` blocks the calling thread in native code, so a `git` that never
+// returns is a server that never finishes booting. `git` does hang in real
+// conditions: waiting on credentials, contending an `index.lock`, or sitting on an
+// unresponsive network mount.
+//
+// This asserts the bound against a REAL process rather than reading the options
+// object back. The fake `git` ignores SIGTERM, which pins BOTH halves of the fix in
+// one test: drop `timeout` and it hangs forever, drop `killSignal: 'SIGKILL'` and it
+// ALSO hangs forever, because the timeout is enforced by sending a signal this child
+// discards. That second case is precisely the HS-9391 bug, and a test that only
+// checked for a timeout would have sailed straight past it.
+describe('HS-9510 — the git probes are bounded', () => {
+  it('gives up instead of hanging when git ignores SIGTERM', () => {
+    if (process.platform === 'win32') return; // sh script + POSIX signals
+    const dir = createTempDir();
+    const binDir = join(dir, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const fakeGit = join(binDir, 'git');
+    writeFileSync(fakeGit, '#!/bin/sh\ntrap "" TERM\nsleep 60\n');
+    chmodSync(fakeGit, 0o755);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${originalPath ?? ''}`;
+    try {
+      const started = Date.now();
+      expect(isGitRepo(dir)).toBe(false); // times out -> throws -> false
+      const elapsed = Date.now() - started;
+
+      expect(elapsed).toBeLessThan(20_000);
+      // Confirms the fake actually ran, so the assertion above is not passing
+      // because `git` was missing and failed instantly.
+      expect(elapsed).toBeGreaterThan(1_000);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 40_000);
 });

@@ -141,6 +141,16 @@ The app ships in Tauri's WKWebView, which silently no-ops several standard dialo
 
 This is HS-9451: `readAllOtelJsonl` accumulated day files with `out.push(...day)`, so once a day's spans crossed ~100k the prompt drill-down 500'd every time. `otelJsonlStore.test.ts` pins it with a 130k-row day file.
 
+### Synchronous child processes (`execFileSync` / `execSync` / `spawnSync`)
+
+These block the calling thread inside **native code** (`SyncProcessRunner::Spawn` → `uv_run`), so a child that never exits is not a slow call — it is a thread that never runs again. On a startup path that is a server that never finishes booting; in a vitest worker it is a suite where every test passed but no reporter, summary, or even `--reporter=hanging-process` dump can ever run.
+
+**Every such call needs BOTH `timeout` AND `killSignal: 'SIGKILL'`.** The second one is not belt-and-braces: `timeout` is enforced by *sending* `killSignal`, which **defaults to SIGTERM**, and a child that ignores SIGTERM leaves the call blocked forever anyway.
+
+This is HS-9391 — `enrich-path.ts` probed PATH with `execFileSync(shell, ['-ilc', …], { timeout: 2000 })`. The probe is an **interactive** shell, interactive shells ignore SIGTERM, so the timeout fired, the signal was discarded, and the call hung. It wedged the full test suite intermittently for a week and leaked immortal orphan shells on the dev machine (17 found, oldest 4d18h). Measured: the stuck shell survived SIGTERM, died on SIGKILL, and the held-up run printed its summary instantly.
+
+The `no-restricted-syntax` ESLint rule (HS-9510) flags a sync child-process call missing either property. Test files are exempt — a `git init` in a temp fixture repo is not the risk this is about. Where a hang is plausible, also make the child fail fast rather than wait (`GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0` for git), so the timeout is the backstop rather than the mechanism.
+
 ### Type assertions (`as`) and runtime validation
 
 The `as` operator is an unchecked assertion — the compiler trusts it and forgets to check at runtime, so an upstream shape change ships a runtime crash while everything still compiles (HS-8567).

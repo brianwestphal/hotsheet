@@ -429,7 +429,9 @@ export function killProcessTreeBestEffort(
     // tears the tree down already — but mirrors the POSIX grandchild-reaping path.
     let stdout = '';
     try {
-      stdout = execFileSync(WIN32_PROCESS_EXE, [...WIN32_PROCESS_ARGS], { encoding: 'utf8', timeout: 4000, windowsHide: true });
+      // HS-9510 — `killSignal` so the timeout can enforce itself (HS-9391); on
+      // win32 it maps to TerminateProcess, which the child cannot decline either.
+      stdout = execFileSync(WIN32_PROCESS_EXE, [...WIN32_PROCESS_ARGS], { encoding: 'utf8', timeout: 4000, killSignal: 'SIGKILL', windowsHide: true });
     } catch (err) {
       return { ...empty, error: `Get-CimInstance execution failed: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -437,7 +439,7 @@ export function killProcessTreeBestEffort(
   } else {
     let stdout = '';
     try {
-      stdout = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8', timeout: 2000 });
+      stdout = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL' });
     } catch (err) {
       return { ...empty, error: `ps execution failed: ${err instanceof Error ? err.message : String(err)}` };
     }

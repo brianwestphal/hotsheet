@@ -66,7 +66,10 @@ export interface EnsureCodexDeps {
  */
 export function ensureCodexMcpConfig(deps: EnsureCodexDeps = {}): boolean {
   const run = deps.runCodex ?? ((args: string[]) => {
-    execFileSync('codex', args, { stdio: 'ignore', timeout: 15_000 });
+    // HS-9510 — `killSignal` so the timeout can enforce itself. `codex` is a whole
+    // CLI here, not a one-shot builtin, so "it will surely exit" is exactly the
+    // assumption HS-9391 disproved.
+    execFileSync('codex', args, { stdio: 'ignore', timeout: 15_000, killSignal: 'SIGKILL' });
   });
   const read = deps.readConfig ?? defaultReadConfig;
   const { command, args } = getChannelServerPath();

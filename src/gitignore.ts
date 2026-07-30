@@ -2,9 +2,48 @@ import { execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
+/** How long any one `git` probe here may take. These are all local, index-free
+ *  queries that finish in milliseconds; the bound exists for the pathological
+ *  cases below, not the normal ones. */
+const GIT_TIMEOUT_MS = 5000;
+
+/**
+ * Run a read-only `git` probe, bounded so it cannot wedge the process.
+ *
+ * HS-9510, following HS-9391. Every call here is on a STARTUP path
+ * (`ensureGitignored`), and `execFileSync` blocks the whole thread in native
+ * code — so a `git` that never returns is a server that never finishes booting.
+ * `git` does hang in real conditions: waiting on credentials for a repo with a
+ * remote helper, contending an `index.lock`, or living on an unresponsive
+ * network mount.
+ *
+ * Three defenses, each closing a different door:
+ * - `timeout` — there was none at all before, so nothing bounded these.
+ * - `killSignal: 'SIGKILL'` — HS-9391 proved the SIGTERM default is not enough:
+ *   a child that ignores it leaves `execFileSync` blocked forever anyway. `git`
+ *   is better behaved than the interactive shell that caused HS-9391, but SIGKILL
+ *   costs nothing and removes the question.
+ * - `GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0` — fail fast instead of
+ *   waiting on a credential prompt or a contended lock, so the timeout is the
+ *   backstop rather than the mechanism.
+ *
+ * Callers only care whether it threw (non-zero exit) or what it printed, which
+ * is why one helper covers all three probes.
+ */
+function runGitProbe(args: string[], cwd: string): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf-8',
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+  });
+}
+
 export function isHotsheetGitignored(repoRoot: string): boolean {
   try {
-    execFileSync('git', ['check-ignore', '-q', '.hotsheet'], { cwd: repoRoot, stdio: 'ignore' });
+    runGitProbe(['check-ignore', '-q', '.hotsheet'], repoRoot);
     return true;
   } catch {
     return false;
@@ -13,7 +52,7 @@ export function isHotsheetGitignored(repoRoot: string): boolean {
 
 export function isGitRepo(dir: string): boolean {
   try {
-    execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: dir, stdio: 'ignore' });
+    runGitProbe(['rev-parse', '--is-inside-work-tree'], dir);
     return true;
   } catch {
     return false;
@@ -22,7 +61,7 @@ export function isGitRepo(dir: string): boolean {
 
 export function getGitRoot(dir: string): string | null {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf-8' }).trim();
+    return runGitProbe(['rev-parse', '--show-toplevel'], dir).trim();
   } catch {
     return null;
   }

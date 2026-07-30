@@ -51,6 +51,9 @@ export function getProcessStartTime(pid: number): string | null {
     const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
       timeout: 2000,
+      // HS-9510: SIGKILL, not the SIGTERM default — a timeout enforced with a
+      // signal the child may ignore is not a timeout (HS-9391).
+      killSignal: 'SIGKILL',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const trimmed = out.trim();

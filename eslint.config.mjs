@@ -84,6 +84,34 @@ const TOOL_ID_LITERAL_RULE = {
   message: "Tool-id literal outside `src/aiTools/**`: ask the plugin instead (`getPlugin`, `driveFor`, `skillsCapabilityFor`, … in `src/aiTools/`). A tool is defined in ONE place (docs/132) — scattered ids are exactly what that epic removed. If this file legitimately owns per-tool DATA (the wire enum, the docs/124 gate table) or IS the tool's own module, add it to the HS-9495 allowlist at the bottom of eslint.config.mjs with a one-line reason.",
 };
 
+// HS-9510 (following HS-9391) — a synchronous child-process call that cannot be bounded.
+//
+// `execFileSync` / `execSync` / `spawnSync` block the calling thread inside NATIVE code
+// (`SyncProcessRunner::Spawn` → `uv_run`), so a child that never exits is not a slow
+// call — it is a thread that never runs again. In a server that is a boot that never
+// finishes; in a vitest worker it is the HS-9391 signature, where every test passed but
+// no reporter, summary, or even `--reporter=hanging-process` dump could ever run.
+//
+// TWO properties, because HS-9391 was a call that already had the first one:
+// `execFileSync` enforces `timeout` by sending `killSignal`, which DEFAULTS TO SIGTERM —
+// and the interactive shell it was killing ignored SIGTERM, so the timeout fired, the
+// signal was discarded, and the call blocked forever anyway. A timeout enforced with a
+// signal the child may decline is not a timeout. Measured: the stuck shell survived
+// SIGTERM, died on SIGKILL, and the held-up run printed its summary instantly.
+//
+// Test files are exempt (they replace `no-restricted-syntax` with a narrow subset
+// below) — a `git init` in a temp fixture repo is not the startup-path risk this is for.
+const SYNC_CHILD_PROCESS_RULES = [
+  {
+    selector: ":matches(CallExpression[callee.name=/^(execFileSync|execSync|spawnSync)$/], CallExpression[callee.property.name=/^(execFileSync|execSync|spawnSync)$/]):not(:has(Property[key.name='timeout']))",
+    message: "Synchronous child-process call with no `timeout` (HS-9510). It blocks the thread in native code, so a child that never exits never returns control — on a startup path that is a server that never boots. Add `timeout: <ms>` AND `killSignal: 'SIGKILL'`. If it genuinely cannot block, say why in a comment and add the file to the HS-9510 allowlist at the bottom of eslint.config.mjs.",
+  },
+  {
+    selector: ":matches(CallExpression[callee.name=/^(execFileSync|execSync|spawnSync)$/], CallExpression[callee.property.name=/^(execFileSync|execSync|spawnSync)$/]):not(:has(Property[key.name='killSignal']))",
+    message: "Synchronous child-process call with no `killSignal` (HS-9510). `timeout` alone is not enough: it is enforced by sending `killSignal`, which defaults to SIGTERM, and a child that ignores SIGTERM leaves the call blocked forever — that is exactly HS-9391. Add `killSignal: 'SIGKILL'`.",
+  },
+];
+
 // HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
 // say exactly which subset they want, instead of re-declaring the array (the old
 // shape, where each block spelled out its own list, is why adding a rule risked
@@ -92,6 +120,7 @@ const TOOL_ID_LITERAL_RULE = {
 const CORE_RULES = [
   BIND_DISPOSER_RULE,
   ...SPREAD_ARG_LIMIT_RULES,
+  ...SYNC_CHILD_PROCESS_RULES,
   {
     selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
     message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",

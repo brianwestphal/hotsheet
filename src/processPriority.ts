@@ -73,7 +73,8 @@ export function bumpProcessPriorityBestEffort(): boolean {
   const args = buildTaskpolicyArgs(process.pid);
   let result: ReturnType<typeof spawnSync>;
   try {
-    result = spawnSync('taskpolicy', args, { encoding: 'utf8', timeout: 2000 });
+    // HS-9510 — `killSignal` so the timeout can actually enforce itself (HS-9391).
+    result = spawnSync('taskpolicy', args, { encoding: 'utf8', timeout: 2000, killSignal: 'SIGKILL' });
   } catch (err) {
     console.warn(`[priority] taskpolicy spawn failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
