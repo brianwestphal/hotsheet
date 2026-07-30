@@ -6,6 +6,8 @@
 // transport (`acpDrive.ts`, still to build) pipes a child process's stdout through
 // `createNdjsonDecoder` and writes `encodeMessage(...)` to its stdin.
 
+import { createLineSplitter } from '../aiTools/lineFraming.js';
+
 /** A parsed JSON-RPC message — the client discriminates request/response/notification. */
 export type AcpMessage = Record<string, unknown>;
 
@@ -23,15 +25,15 @@ export function encodeMessage(msg: AcpMessage): string {
  * defensive, not expected.
  */
 export function createNdjsonDecoder(): { push: (chunk: string) => AcpMessage[] } {
-  let buffer = '';
+  // HS-9506 — the chunk-accumulate-and-split half is shared with the codex app-server
+  // transport and lives in the host toolkit. The parse/skip policy below stays here:
+  // it is ACP's, not every stdio agent's.
+  const lines = createLineSplitter();
   return {
     push(chunk: string): AcpMessage[] {
-      buffer += chunk;
       const out: AcpMessage[] = [];
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
+      for (const raw of lines.push(chunk)) {
+        const line = raw.trim();
         if (line === '') continue;
         let parsed: unknown;
         try {

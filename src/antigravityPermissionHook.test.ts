@@ -1,7 +1,11 @@
-// HS-9327 — the Antigravity PreToolUse permission hook logic (IO fully injected).
+// HS-9327 — the Antigravity PreToolUse permission hook (IO fully injected).
+// HS-9506 — the FLOW under test now lives in the host toolkit
+// (`aiTools/permissionHook.ts`); these cases drive it through agy's ADAPTER
+// rather than through a default that happened to be agy-shaped.
 import { describe, expect, it } from 'vitest';
 
-import { decisionJson, type PermissionHookIO, runPermissionHook } from './antigravityPermissionHook.js';
+import { type PermissionHookIO, runPermissionHook } from './aiTools/permissionHook.js';
+import { antigravityHookAdapter, decisionJson } from './antigravityPermissionHook.js';
 
 interface Opts {
   base?: string | null;
@@ -43,7 +47,7 @@ function makeIo(o: Opts = {}): { io: PermissionHookIO; out: string[]; urls: stri
 describe('runPermissionHook', () => {
   it('ALLOW: injects, polls, and emits allow (exit 0)', async () => {
     const { io, out, urls } = makeIo({ behavior: 'allow' });
-    expect(await runPermissionHook(io)).toBe(0);
+    expect(await runPermissionHook(io, antigravityHookAdapter())).toBe(0);
     expect(out.at(-1)).toBe(decisionJson('allow'));
     expect(urls.some(u => u.includes('/permission/inject'))).toBe(true);
     expect(urls.some(u => u.includes('/permission/decision?request_id=req-1'))).toBe(true);
@@ -51,37 +55,37 @@ describe('runPermissionHook', () => {
 
   it('DENY: a deny decision → exit 2 + deny JSON', async () => {
     const { io, out } = makeIo({ behavior: 'deny' });
-    expect(await runPermissionHook(io)).toBe(2);
+    expect(await runPermissionHook(io, antigravityHookAdapter())).toBe(2);
     expect(out.at(-1)).toBe(decisionJson('deny'));
   });
 
   it('polls repeatedly until the user answers', async () => {
     const { io, urls } = makeIo({ behavior: 'allow', decideAfterPolls: 3 });
-    expect(await runPermissionHook(io)).toBe(0);
+    expect(await runPermissionHook(io, antigravityHookAdapter())).toBe(0);
     expect(urls.filter(u => u.includes('/permission/decision')).length).toBe(4); // 3 pending + 1 decided
   });
 
   it('FAIL-OPEN when the channel is unresolved (no inject, allow)', async () => {
     const { io, out, urls } = makeIo({ base: null });
-    expect(await runPermissionHook(io)).toBe(0);
+    expect(await runPermissionHook(io, antigravityHookAdapter())).toBe(0);
     expect(out.at(-1)).toBe(decisionJson('allow'));
     expect(urls).toHaveLength(0); // never touched the network
   });
 
   it('FAIL-OPEN when the inject POST fails (allow)', async () => {
     const { io, out } = makeIo({ injectOk: false });
-    expect(await runPermissionHook(io)).toBe(0);
+    expect(await runPermissionHook(io, antigravityHookAdapter())).toBe(0);
     expect(out.at(-1)).toBe(decisionJson('allow'));
   });
 
   it('FAIL-CLOSED (deny) when no answer arrives before the timeout', async () => {
     const { io, out } = makeIo({ neverDecide: true });
-    expect(await runPermissionHook(io, 20)).toBe(2); // clock advances +5 per sleep → exits past 20
+    expect(await runPermissionHook(io, antigravityHookAdapter(), 20)).toBe(2); // clock advances +5 per sleep → exits past 20
     expect(out.at(-1)).toBe(decisionJson('deny'));
   });
 
   it('treats unparseable stdin as a bare tool (still gates)', async () => {
     const { io } = makeIo({ stdin: 'not json', behavior: 'allow' });
-    expect(await runPermissionHook(io)).toBe(0);
+    expect(await runPermissionHook(io, antigravityHookAdapter())).toBe(0);
   });
 });

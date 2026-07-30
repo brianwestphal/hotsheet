@@ -17,23 +17,19 @@
 // with exit 2 did NOT block; the same deny with exit 0 did) — so unlike agy, every
 // decision exits 0 and the stdout JSON alone carries it.
 //
-// The shared flow (stdin parse → §47 inject → poll decision → emit; fail-open on
-// no channel, fail-closed on timeout) lives in `antigravityPermissionHook.ts` —
-// this module supplies only the codex-specific pieces.
-import { randomUUID } from 'crypto';
-import { join } from 'path';
-
-import { type PermissionHookOpts, runPermissionHook } from './antigravityPermissionHook.js';
-import { getChannelPort } from './channel-config.js';
+// HS-9506 — the shared flow and the real-IO block live in the host toolkit
+// (`aiTools/permissionHook.ts`). They used to live in `antigravityPermissionHook.ts`,
+// so this module imported its core logic from a module named after another tool.
+import { claudeStyleDecisionJson, type PermissionHookAdapter, realPermissionHookIo, runPermissionHook } from './aiTools/permissionHook.js';
 
 /** The codex stdout decision JSON for an event. `PermissionRequest` uses the
- *  `decision.{behavior}` shape; everything else the `permissionDecision` shape.
- *  Exported for testing. */
+ *  `decision.{behavior}` shape; everything else the shared `permissionDecision`
+ *  shape, echoing the incoming event name. Exported for testing. */
 export function codexDecisionJson(decision: 'allow' | 'deny', eventName: string): string {
   if (eventName === 'PermissionRequest') {
     return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: decision } } });
   }
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: eventName, permissionDecision: decision } });
+  return claudeStyleDecisionJson(decision, eventName);
 }
 
 /** Hot Sheet's own control-plane MCP tools — allowed without the overlay. Codex
@@ -43,8 +39,8 @@ export function isHotsheetControlTool(toolName: string): boolean {
   return toolName.startsWith('mcp__hotsheet') || toolName.startsWith('hotsheet_');
 }
 
-/** The codex-specific opts for the shared permission-hook flow. */
-export function codexHookOpts(): PermissionHookOpts {
+/** Codex's adapter. Note `exitCode: 0` even on DENY — see the module note. */
+export function codexHookAdapter(): PermissionHookAdapter {
   return {
     agentLabel: 'Codex',
     emit: (decision, eventName) => ({ stdout: codexDecisionJson(decision, eventName), exitCode: 0 }),
@@ -52,34 +48,8 @@ export function codexHookOpts(): PermissionHookOpts {
   };
 }
 
-/** Read all of stdin (codex pipes the hook payload). Resolves on `end`, on
- *  error, or after a short cap so a hook with nothing piped can't hang. */
-function readStdin(): Promise<string> {
-  return new Promise((resolve) => {
-    let data = '';
-    const stdin = process.stdin;
-    stdin.setEncoding('utf-8');
-    stdin.on('data', (c: string | Buffer) => { data += typeof c === 'string' ? c : c.toString('utf-8'); });
-    stdin.on('end', () => resolve(data));
-    stdin.on('error', () => resolve(data));
-    setTimeout(() => resolve(data), 2000).unref();
-  });
-}
-
 /** Run the codex permission hook with real IO. Always exits 0 (see module note);
  *  the stdout JSON carries the decision. */
 export function runCodexPermissionHookCli(): Promise<number> {
-  const dataDir = join(process.cwd(), '.hotsheet'); // codex runs hooks in the project dir
-  return runPermissionHook({
-    readStdin,
-    channelBaseUrl: () => {
-      const port = getChannelPort(dataDir);
-      return port !== null && port > 0 ? `http://localhost:${String(port)}` : null;
-    },
-    writeStdout: (s) => { process.stdout.write(s); },
-    fetchFn: fetch,
-    now: () => Date.now(),
-    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    newRequestId: () => randomUUID(),
-  }, undefined, codexHookOpts());
+  return runPermissionHook(realPermissionHookIo(), codexHookAdapter());
 }

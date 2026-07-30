@@ -307,6 +307,7 @@ each phase leaving the tree green and shippable.
 | **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
 | **4b** | HS-9505 ✅ | Drive + MCP + ACP absorbed — `mcpHooksAgents.ts` **deleted**, `agentTransport` is one lookup, `triggerChannel` dispatches to `drive.run`. |
 | **4c** | HS-9507 ✅ | Permissions capability + the shared hook-command builder (§132.11.4). |
+| **6** | HS-9506 ✅ | Rest of the §132.9.1 toolkit: permission bridge → `aiTools/permissionHook.ts`, newline framing → `aiTools/lineFraming.ts`; three items verified as already-generic, no work needed (§132.11.8). |
 | **5** | HS-9494 ✅ | Claude becomes a plugin. **The acceptance test passed** — see §132.11.5. |
 | **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
@@ -684,6 +685,60 @@ now fails if it disagrees with the plugin's — plus a check that the set of too
 declaring a transport is exactly the set with a drive, since either half alone is a bug
 (a transport with no drive routes the play button at nothing; a drive whose plugin
 declares none makes `transportFor` answer `claude-channel` for a tool we actually spawn).
+
+### 132.11.8 The toolkit was already written — it was just filed under a tool (HS-9506)
+
+The §132.9.1 table read like a list of things to *build*. Working through it, the most
+useful finding was that the headline item did not need building at all.
+
+**The permission bridge was already shared.** `codexPermissionHook.ts` did not have its
+own flow — it imported `runPermissionHook` from **`antigravityPermissionHook.ts`**. So
+the generic machinery existed, was already parameterized, and already had two consumers.
+What was wrong was ownership: one tool's module was the other tool's dependency, and the
+generic function's DEFAULTS were agy's label and agy's wire shape, which made agy the
+implicit baseline and codex the exception. Moving it to `aiTools/permissionHook.ts` and
+making `agentLabel` + `emit` **required** changed no behavior and made the two tools
+symmetric adapters. This is a distinct failure mode from the ones above: not a missing
+abstraction, and not a leaked API (§132.11.2), but a correct abstraction filed under a
+tool — which reads as "shared code" to anyone who already knows, and as "codex depends on
+antigravity" to everyone else.
+
+**The genuinely duplicated code was the boring part.** The IO block — stdin reader with
+its 2 s cap, channel-port resolution, fetch, clock, id source — was written out *verbatim*
+in both hook CLIs. That is now `realPermissionHookIo()`. The lesson is that the rule ("if
+two plugins would write the same code…") pointed at plumbing, not at the interesting
+protocol logic everyone was looking at.
+
+**A test asserted the special case.** `codexPermissionHook.test.ts` had a case named "agy
+defaults are unchanged by the opts refactor", which called `runPermissionHook(io, 1000)`
+with no adapter. It was pinning the privileged default. Rewritten to pass agy's adapter
+explicitly, it becomes something better — the two adapters' exit codes side by side,
+which is where the one safety-relevant difference lives: **agy reads exit 2 as "blocked",
+codex reads any non-zero exit as "the hook failed, proceed"**, so an agent that inherited
+the wrong one would silently stop denying anything.
+
+**Three of the five items needed no work, and saying so required evidence.** The ticket
+warned that extracting a single-implementer helper invents an abstraction around one case
+(§132.11.2). Checked rather than assumed:
+
+- *MCP server entry* — already correct. `getChannelServerPath()` is the shared primitive
+  and all four consumers (antigravity, codex, codexAppServer, acpAgents) call it directly,
+  supplying only their own FORMAT. Nothing to extract.
+- *Managed sections / markers / adapter skill-tree writer* — the HS-9495 ESLint backstop
+  already proves it: `aiInstructions.ts`, `aiInstructionsTools.ts` and `skills.ts` are NOT
+  on the tool-id allowlist and lint is clean, so no per-tool logic has leaked back in.
+  A backstop written for one purpose answered a different question for free.
+- *Commands Log transcript* — drives already don't import `db/commandLog.ts`; they POST
+  events and the host owns the log's shape.
+
+**Only the framing had a second implementer, and only half of it was shared.** Both
+`acp/acpFraming.ts` and `codexAppServer.ts` buffer stdout and split on `\n`. But ACP
+yields *parsed* objects and drops blank/unparseable lines, while codex hands *raw* lines
+to its dispatcher. So `aiTools/lineFraming.ts` owns accumulate-and-split and nothing
+else — pushing the parse/filter policy in too would have forced one transport to adopt
+the other's line-dropping rules, which is a behavior change smuggled inside a dedup.
+Extracting it also left `Session.buffered` dead, which is the usual sign the state
+belonged to the mechanism rather than the session.
 
 ## 132.12 Cross-references
 

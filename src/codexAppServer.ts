@@ -34,6 +34,7 @@ import { dirname, join } from 'path';
 import { z } from 'zod';
 
 import { dismissAcpPermission, injectAcpPermission } from './acp/acpPermissionBridge.js';
+import { createLineSplitter } from './aiTools/lineFraming.js';
 import { getChannelServerPath } from './channel-config.js';
 import { CODEX_MCP_KEY } from './codex.js';
 import {
@@ -171,7 +172,6 @@ interface Session {
   deps: Required<Pick<CodexAppServerDeps, 'signalDone' | 'postHeartbeat' | 'postTranscript'>>;
   nextId: number;
   pending: Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>;
-  buffered: string;
   threadId: string | null;
   /** HS-9438 — do we hold a `thread/resume` SUBSCRIPTION for `threadId`? True ⇒ the
    *  full `turn/*` + `item/*` stream arrives. False ⇒ an adopted live thread whose
@@ -490,7 +490,6 @@ function createSession(dataDir: string, serverPort: number, deps: CodexAppServer
     },
     nextId: 1,
     pending: new Map(),
-    buffered: '',
     threadId: null,
     subscribed: false,
     modelAThreadId: readPersistedThreadId(dataDir),
@@ -553,14 +552,14 @@ function createStdioTransport(session: Session, doSpawn: NonNullable<CodexAppSer
   } catch {
     return null;
   }
+  // HS-9506 — the newline accumulate-and-split is the host toolkit's
+  // (`aiTools/lineFraming.ts`); it was written out here and in `acp/acpFraming.ts`.
+  // Semantics are unchanged: raw lines, untrimmed, blanks included — the toolkit
+  // splitter deliberately applies no filtering policy of its own.
+  const lines = createLineSplitter();
   proc.stdout?.on('data', (chunk: Buffer | string) => {
-    session.buffered += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
-    let nl = session.buffered.indexOf('\n');
-    while (nl !== -1) {
-      const line = session.buffered.slice(0, nl);
-      session.buffered = session.buffered.slice(nl + 1);
+    for (const line of lines.push(typeof chunk === 'string' ? chunk : chunk.toString('utf-8'))) {
       handlers.onMessage(line);
-      nl = session.buffered.indexOf('\n');
     }
   });
   proc.on('error', () => { handlers.onClose(); });
