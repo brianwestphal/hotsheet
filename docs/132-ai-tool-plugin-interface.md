@@ -305,7 +305,7 @@ each phase leaving the tree green and shippable.
 | **2b** | HS-9503 ✅ | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → `aiTools/serverCapabilities.ts` (§132.11.1). **SHIPPED.** |
 | **3** | HS-9492 ✅ | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. **SHIPPED** — first of the five §132.1.1 leaks closed. |
 | **4a** | HS-9493 ✅ | **The §132.1.1 leak is closed** — no generic module imports `codexAppServer` any more, via the drive BACKING SERVICE concept. |
-| **4b** | HS-9505 | Absorb `mcpHooksAgents.ts` + `resolveAcpAgentCommand` + `agentTransport`; `triggerChannel`'s switch → `drive.run`; permissions hooks. |
+| **4b** | HS-9505 ◐ | Drive + MCP + ACP absorbed — `mcpHooksAgents.ts` **deleted**, `agentTransport` is one lookup, `triggerChannel` dispatches to `drive.run`. **Permissions deferred to HS-9507.** |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
 | **6** | HS-9496 ◐ | Extract the §132.9.1 toolkit. **Hooks-file helper SHIPPED** (`aiTools/hooksFile.ts`); the rest of the table remains. |
 | **7** | HS-9497 | The §132.9.2 config-UI reuse: storage adapter behind the docs/18 renderer, then per-tool settings become `preferences` declarations. |
@@ -553,6 +553,25 @@ and re-typing the flag would have been two spellings of one contract.
 This is not a retreat from the design — the plugin is still the one place a tool is
 defined, and `getPlugin(id)` is still the one lookup. It is a constraint on WHERE each
 half lives, and it was discoverable only by building it.
+
+### 132.11.3 The prototype collapsed cleanly (HS-9505)
+
+`mcpHooksAgents.ts` was HS-9339's unification of `spawnRun` across two agents — the
+existing proof that this generalizes, and §132.1.1 predicted it "should collapse cleanly.
+If it doesn't, that's a signal about the interface."
+
+It did, and the module is deleted. Its descriptor split into three capabilities that each
+answer one question — `driveFor` (transport + run a turn), `mcpConfigFor` (binary +
+write the config), `acpCommandFor` (the ACP entrypoint) — and the split was not
+cosmetic: **OpenCode drives but needs no MCP config** (its server rides the ACP
+`session/new` payload), and **Antigravity and Codex write config but are not ACP**. One
+combined descriptor would have carried a field that is meaningless for a third of its
+members, which is what optional-fields-inside looks like before it becomes a habit.
+
+`resolveAgentTransport` is now one lookup instead of two membership tests, and a tool we
+do not drive falls through to `claude-channel` — the DEFAULT, not a carve-out. Claude has
+no drive entry YET; that is phase 5's conversion, and it is the real test of whether this
+interface holds.
 
 ## 132.12 Cross-references
 

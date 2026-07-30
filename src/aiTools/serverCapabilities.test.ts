@@ -19,7 +19,7 @@ import { claudeWithChannelCommand } from '../channel-config.js';
 import { initSkills, parseVersionHeader, setSkillCategories, SKILL_VERSION } from '../skills.js';
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { getPlugin, listPlugins } from './registry.js';
-import { commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveServiceFor, driveServiceIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
+import { acpCommandFor, commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, driveFor, driveIds, driveServiceFor, driveServiceIds, mcpConfigFor, mcpConfigIds, prestartProjectDriveService, projectDriveService, shutdownAllDriveServices, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
 
 const IDS = skillsCapabilityIds();
 
@@ -301,5 +301,89 @@ describe('project-level drive-service helpers (HS-9493)', () => {
     // The process-exit path calls this; a throw there strands the orphan children it
     // exists to kill.
     expect(() => shutdownAllDriveServices()).not.toThrow();
+  });
+});
+
+/**
+ * HS-9505 (docs/132 phase 4b) — drive, MCP config and ACP entrypoint.
+ *
+ * These absorb `mcpHooksAgents.test.ts`, whose module is gone. Its assertions are kept
+ * rather than dropped: it pinned that the two spawn agents resolve case-insensitively
+ * with the right binaries, and that Claude / ACP / editor tools resolve to nothing. Those
+ * are still the properties that matter — they just live with the rest of the conformance
+ * suite now, where a new tool inherits them.
+ */
+describe('drive capability (HS-9505)', () => {
+  it('is declared by exactly the tools we drive', () => {
+    expect(driveIds()).toEqual(['antigravity', 'codex', 'opencode']);
+  });
+
+  it('declares a transport matching what the tool actually speaks', () => {
+    // docs/115 (MCP-native, Claude rails) vs docs/114 (ACP-native). Getting this wrong
+    // routes the play button at the wrong drive entirely.
+    expect(driveFor('antigravity')!.transport).toBe('mcp-hooks');
+    expect(driveFor('codex')!.transport).toBe('mcp-hooks');
+    expect(driveFor('opencode')!.transport).toBe('acp');
+  });
+
+  it('every drive is a registered CLI-agent plugin with a runnable turn', () => {
+    for (const id of driveIds()) {
+      expect(getPlugin(id), `${id} drives but has no plugin`).not.toBeNull();
+      expect(getPlugin(id)!.tier).toBe('cli-agent');
+      expect(typeof driveFor(id)!.run).toBe('function');
+    }
+  });
+
+  it('resolves case-insensitively', () => {
+    expect(driveFor('Antigravity')).toBe(driveFor('antigravity'));
+    expect(driveFor('Codex')).toBe(driveFor('codex'));
+  });
+
+  it('Claude, editor tools and unknown ids have NO drive — they fall to claude-channel', () => {
+    // Claude's absence is temporary and deliberate: it is the persistent-channel path
+    // phase 5 (HS-9494) converts, and that conversion is the real test of this interface.
+    for (const id of ['claude', 'cursor', 'copilot', 'windsurf', 'gemini', 'goose', '', 'nope']) {
+      expect(driveFor(id), `${id || '(empty)'} should have no drive`).toBeNull();
+    }
+  });
+});
+
+describe('MCP config capability (HS-9505)', () => {
+  it('is declared only by tools with a config file to write', () => {
+    // OpenCode is the meaningful absence: its MCP server rides the ACP `session/new`
+    // payload, so there is no file (docs/114 §114.4). Declaring one would make the
+    // generation loop probe for a binary and write nothing.
+    expect(mcpConfigIds()).toEqual(['antigravity', 'codex']);
+  });
+
+  it('gates on the binary that must be installed', () => {
+    expect(mcpConfigFor('antigravity')!.binary).toBe('agy');
+    expect(mcpConfigFor('codex')!.binary).toBe('codex');
+  });
+
+  it('resolves case-insensitively and returns null for the rest', () => {
+    expect(mcpConfigFor('Antigravity')).toBe(mcpConfigFor('antigravity'));
+    for (const id of ['claude', 'opencode', 'cursor', '', 'nope']) {
+      expect(mcpConfigFor(id), `${id || '(empty)'} should need no MCP config`).toBeNull();
+    }
+  });
+});
+
+describe('ACP entrypoint (HS-9505)', () => {
+  it('is declared only for agents whose entrypoint was verified live', () => {
+    // `opencode acp` was pinned by the HS-9330 spike against opencode 1.17.9. Goose and
+    // Kiro get entries when theirs are actually verified — a guessed entrypoint fails at
+    // spawn time, in front of the user.
+    expect(acpCommandFor('opencode')).toEqual({ command: 'opencode', args: ['acp'] });
+    for (const id of ['claude', 'codex', 'antigravity', 'goose', '', 'nope']) {
+      expect(acpCommandFor(id), `${id || '(empty)'} should have no ACP entrypoint`).toBeNull();
+    }
+  });
+
+  it('every ACP-transport drive has an entrypoint, and vice versa', () => {
+    // The pairing that matters: an `acp` transport with no entrypoint would route the
+    // play button into a spawn that cannot be built.
+    const acpDrives = driveIds().filter(id => driveFor(id)!.transport === 'acp');
+    for (const id of acpDrives) expect(acpCommandFor(id), `${id} drives over ACP`).not.toBeNull();
   });
 });

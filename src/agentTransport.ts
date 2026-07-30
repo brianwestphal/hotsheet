@@ -19,10 +19,9 @@
 // Pure + tiny so the mapping is unit-testable in isolation; `resolveProjectTransport`
 // is the thin dataDir-reading wrapper.
 
-import { isAcpDrivenTool } from './acp/acpAgents.js';
 import { type AgentTransport, parseAgentBackend } from './agentBackendParse.js';
+import { driveFor } from './aiTools/serverCapabilities.js';
 import { readFileSettings } from './file-settings.js';
-import { isMcpHooksAiTool } from './mcpHooksAgents.js';
 
 export type { AgentTransport } from './agentBackendParse.js';
 
@@ -34,10 +33,10 @@ export type { AgentTransport } from './agentBackendParse.js';
  * (no module-init call) so the `channel-config`↔`mcpHooksAgents` cycle stays init-safe.
  */
 export function resolveAgentTransport(aiTool: string | undefined): AgentTransport {
-  const tool = (aiTool ?? '').trim().toLowerCase();
-  if (isMcpHooksAiTool(tool)) return 'mcp-hooks';
-  if (isAcpDrivenTool(tool)) return 'acp';
-  return 'claude-channel';
+  // HS-9505 — one lookup instead of two membership tests. A tool we don't drive has no
+  // entry, and falls through to the Claude channel — the DEFAULT, not a carve-out
+  // (docs/132 §132.11.2). Claude has no entry yet; phase 5 converts it.
+  return driveFor(aiTool ?? '')?.transport ?? 'claude-channel';
 }
 
 /** Resolve the drive transport for a project from its `ai_tool` file setting. */

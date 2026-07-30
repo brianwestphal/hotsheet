@@ -9,6 +9,7 @@
 // over newline-delimited JSON-RPC on stdio, and `session/new` with a STDIO
 // `mcpServers` entry returned a real `sessionId` + streamed a `session/update`.
 
+import { acpCommandFor } from '../aiTools/serverCapabilities.js';
 import { getChannelServerPath } from '../channel-config.js';
 
 /** ACP protocol version Hot Sheet's client speaks — ACP v1, confirmed by
@@ -27,12 +28,10 @@ export const ACP_PROTOCOL_VERSION = 1;
 export function resolveAcpAgentCommand(
   aiTool: string | undefined,
 ): { command: string; args: string[] } | null {
-  switch ((aiTool ?? '').trim().toLowerCase()) {
-    case 'opencode':
-      return { command: 'opencode', args: ['acp'] };
-    default:
-      return null;
-  }
+  // HS-9505 — the per-agent switch moved to the plugin layer
+  // (`aiTools/serverCapabilities.ts`). This stays as the ACP-side name for it, so the
+  // ACP client reads naturally without importing the registry everywhere.
+  return acpCommandFor(aiTool ?? '');
 }
 
 /** True when the given `ai_tool` is driven over the ACP transport (docs/113

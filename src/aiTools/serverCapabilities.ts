@@ -36,18 +36,21 @@
  * every generator out of `skills.ts` would separate them from the shared machinery they
  * use (`updateFile`, the version header, `ensureAdapterSkillTree`) for no gain.
  */
+import { spawnAcpRun } from '../acp/acpDrive.js';
+import type { AgentTransport } from '../agentBackendParse.js';
 import { canonicalClaudeSourceExists } from '../aiInstructions.js';
+import { ensureAntigravityMcpConfig } from '../antigravity.js';
+import { spawnAgyRun } from '../antigravityDrive.js';
 import { claudeWithChannelCommand } from '../channel-config.js';
-import {
-  clearCodexAppServerFailures,
+import { ensureCodexMcpConfig } from '../codex.js';
+import {   clearCodexAppServerFailures,
   codexDriveDiscoverEnabled,
   codexTerminalNeedsDaemonEnsure,
   codexTerminalRemoteCommand,
   hasCodexAppServerHandshakeFailed,
   isCodexAppServerEnabled,
   prestartCodexDaemonIfNeeded,
-  shutdownCodexAppServers,
-} from '../codexAppServer.js';
+  shutdownCodexAppServers,spawnCodexAppServerRun } from '../codexAppServer.js';
 import { ensureCodexDaemonRunning } from '../codexDaemonTransport.js';
 import { readFileSettings } from '../file-settings.js';
 import {
@@ -370,4 +373,98 @@ export function shutdownAllDriveServices(): void {
   for (const service of Object.values(DRIVE_SERVICES)) {
     try { service.shutdown(); } catch { /* already torn down */ }
   }
+}
+
+// ── Drive (HS-9505, docs/132 phase 4b) ──────────────────────────────────────
+
+/**
+ * How Hot Sheet DRIVES a tool: which transport it speaks, and how to run one worklist
+ * turn (the play button).
+ *
+ * Absorbs `mcpHooksAgents.ts`, which was the prototype for this whole design — HS-9339
+ * unified `spawnRun` across two agents and stopped there. It collapsed cleanly, which is
+ * the confirmation the interface was the right shape rather than a rationalization.
+ *
+ * Absence is the signal, per §132.11.2: a tool with no entry here is not driven by us at
+ * all, and `resolveAgentTransport` answers `claude-channel` for it — the default, not a
+ * carve-out. Claude itself has no entry YET; it is the persistent-channel path that
+ * phase 5 (HS-9494) converts, and that conversion is the real test of this interface.
+ */
+export interface DriveCapability {
+  transport: AgentTransport;
+  /** Run one worklist turn. Returns whether it started. */
+  run(dataDir: string, serverPort: number, content: string): boolean;
+}
+
+const DRIVES: Readonly<Record<string, DriveCapability>> = {
+  // docs/115 — MCP-native agents on the Claude rails, one spawn per play.
+  antigravity: { transport: 'mcp-hooks', run: (d, p, c) => spawnAgyRun(d, p, c) },
+  // docs/121 — the persistent app-server session; a play is a `turn/start` on a resumed
+  // thread rather than a fresh process, but the caller's contract is identical.
+  codex: { transport: 'mcp-hooks', run: (d, p, c) => spawnCodexAppServerRun(d, p, c) },
+  // docs/114 — ACP-native. `spawnAcpRun` re-reads the tool to pick its entrypoint, which
+  // is why this entry needs no per-agent detail.
+  opencode: { transport: 'acp', run: (d, p, c) => spawnAcpRun(d, p, c) },
+};
+
+/** The drive for a tool id, or null when we do not drive it (→ `claude-channel`). */
+export function driveFor(aiTool: string): DriveCapability | null {
+  return DRIVES[aiTool.trim().toLowerCase()] ?? null;
+}
+
+/** Ids that declare a drive (for the conformance suite). */
+export function driveIds(): string[] {
+  return Object.keys(DRIVES);
+}
+
+// ── MCP registration (HS-9505) ──────────────────────────────────────────────
+
+/**
+ * Registering the cwd-resolving `hotsheet-channel` MCP server in a tool's own config.
+ *
+ * `binary` gates it: the config is only written when the agent is actually installed, so
+ * Hot Sheet doesn't scatter entries into config files for tools the machine doesn't have.
+ * The FORMAT is the tool's business (agy's global JSON, codex's TOML via `codex mcp add`)
+ * — the server entry itself is shared host machinery (docs/132 §132.9.1).
+ */
+export interface McpConfigCapability {
+  /** Executable that must be on PATH for the config write to apply. */
+  binary: string;
+  /** Idempotent, best-effort. */
+  ensureConfig(): void;
+}
+
+const MCP_CONFIGS: Readonly<Record<string, McpConfigCapability>> = {
+  antigravity: { binary: 'agy', ensureConfig: () => { ensureAntigravityMcpConfig(); } },
+  codex: { binary: 'codex', ensureConfig: () => { ensureCodexMcpConfig(); } },
+  // OpenCode needs none: its MCP server rides the ACP `session/new` payload, so there is
+  // no config file to write (docs/114 §114.4).
+};
+
+/** The MCP-config capability for a tool id, or null when it needs none. */
+export function mcpConfigFor(aiTool: string): McpConfigCapability | null {
+  return MCP_CONFIGS[aiTool.trim().toLowerCase()] ?? null;
+}
+
+/** Ids that declare MCP config (for the conformance suite + the generation loop). */
+export function mcpConfigIds(): string[] {
+  return Object.keys(MCP_CONFIGS);
+}
+
+// ── ACP entrypoint (HS-9505) ────────────────────────────────────────────────
+
+/**
+ * The subprocess that puts an ACP-native agent into ACP-server mode.
+ *
+ * Was a `switch` in `acp/acpAgents.ts`. Each entrypoint is pinned by a spike and never
+ * guessed — `opencode acp` was validated live against opencode 1.17.9 (HS-9330). Goose
+ * and Kiro get entries when theirs are actually verified, not before.
+ */
+const ACP_COMMANDS: Readonly<Record<string, { command: string; args: string[] }>> = {
+  opencode: { command: 'opencode', args: ['acp'] },
+};
+
+/** The ACP entrypoint for a tool id, or null when it has none. */
+export function acpCommandFor(aiTool: string): { command: string; args: string[] } | null {
+  return ACP_COMMANDS[aiTool.trim().toLowerCase()] ?? null;
 }

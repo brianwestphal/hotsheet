@@ -7,9 +7,8 @@ import { canonicalClaudeSourceExists } from './aiInstructions.js';
 import { detectsTool } from './aiTools/detect.js';
 import { ensureHooksFile } from './aiTools/hooksFile.js';
 import { listPlugins } from './aiTools/registry.js';
-import { skillsCapabilityFor } from './aiTools/serverCapabilities.js';
+import { mcpConfigFor, mcpConfigIds, skillsCapabilityFor  } from './aiTools/serverCapabilities.js';
 import { readFileSettings } from './file-settings.js';
-import { listMcpHooksAgents } from './mcpHooksAgents.js';
 import type { CategoryDef } from './types.js';
 import { DEFAULT_CATEGORIES } from './types.js';
 import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
@@ -991,15 +990,16 @@ export function ensureSkillsForDir(projectRoot: string, categories?: CategoryDef
   // (HS-9493) — this phase moved the SKILLS out, which is why Antigravity's
   // `ensureAgentsFamilySkills` call is gone from here: its plugin declares the same
   // capability Codex does, and the shared `.agents/skills` write is idempotent.
-  for (const agent of listMcpHooksAgents()) {
-    if (!wants(agent.aiTool) || !isExecutableOnPath(agent.binary)) continue;
-    agent.ensureMcpConfig();
-    if (agent.aiTool === 'antigravity') {
+  for (const toolId of mcpConfigIds()) {
+    const mcp = mcpConfigFor(toolId)!;
+    if (!wants(toolId) || !isExecutableOnPath(mcp.binary)) continue;
+    mcp.ensureConfig();
+    if (toolId === 'antigravity') {
       // HS-9327 — install/remove the interactive-permission PreToolUse hook per the
       // `antigravity_interactive_permissions` setting (idempotent, merge-safe).
       ensureAntigravityHooks(projectRoot, dataDir);
     }
-    if (agent.aiTool === 'codex') {
+    if (toolId === 'codex') {
       // HS-9359 — install/remove the interactive-permission hooks (`.codex/hooks.json`)
       // per the `codex_interactive_permissions` setting (idempotent, merge-safe).
       ensureCodexHooks(projectRoot, dataDir);
