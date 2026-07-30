@@ -334,6 +334,15 @@ Distinguishing them is HS-9478. Until it is settled, the fix here is a genuine i
 
 ## 128.5.4 What actually kills the server (HS-9478 — measured, and it is not the cluster count)
 
+**HS-9502 — telemetry-cluster stalls are in the PROJECT's `freeze.log`, tagged `telemetry:`.**
+They used to land in `.hotsheet/telemetry/freeze.log`, because the instrumentation derived
+its target from the cluster's own directory and a telemetry cluster sits one level deeper
+(`telemetryClusterDataDir`). Nothing errored and nothing was lost — the log was silently
+SPLIT, and the file every diagnostic instruction names looked complete while the entries
+most likely to explain a stall sat one directory down. That matters most exactly here:
+the eviction sweeps, OTLP ingest and `VACUUM FULL` passes this doc is about are telemetry
+work. One file per project now; identity moved from the path into the label.
+
 The 2026-07-29 death was investigated against `freeze.log`, which already records
 `arrayBuffersMb` alongside `externalMb` and (since HS-9470) the eviction counters. No new
 instrumentation was needed; the answer was in the data.

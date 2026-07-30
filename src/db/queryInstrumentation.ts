@@ -34,7 +34,7 @@ import { type PGlite } from '@electric-sql/pglite';
 import { dirname } from 'path';
 
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
-import { beginClusterQuery, endClusterQuery } from './clusterEviction.js';
+import { beginClusterQuery, endClusterQuery, isTelemetryClusterDbPath } from './clusterEviction.js';
 import { isClusterStorageFailure } from './storageFailure.js';
 
 /** Methods whose wall-clock we time (the ones that run WASM on the loop). */
@@ -47,6 +47,37 @@ function methodLabel(method: string, firstArg: unknown): string {
   if (typeof firstArg !== 'string' || firstArg === '') return `pglite.${method}`;
   const oneLine = firstArg.replace(/\s+/g, ' ').trim();
   return `pglite.${method}: ${oneLine.slice(0, 140)}`;
+}
+
+/**
+ * HS-9502 — where a cluster's freeze entries are written, and how they are tagged.
+ *
+ * The naive answer, `dirname(dbPath)`, is right for the MAIN cluster (`.hotsheet/db` →
+ * `.hotsheet/`) and wrong for a TELEMETRY one: `telemetryClusterDataDir` puts that
+ * cluster at `<dataDir>/telemetry`, so its entries were landing in
+ * `.hotsheet/telemetry/freeze.log`.
+ *
+ * Nothing was lost and nothing errored — it was silently SPLIT, which is worse. The
+ * standing guidance for a freeze report is "first stop is `.hotsheet/freeze.log`", and a
+ * reader following it saw a file that looked complete while the entries most likely to
+ * explain the stall sat one directory down. Telemetry is precisely the workload this
+ * logger exists for: OTLP ingest, the docs/128 eviction sweeps, `VACUUM FULL`.
+ *
+ * So a telemetry cluster logs to its PARENT (the project's `.hotsheet`, or the global
+ * dir for the central store) and carries its identity in the label instead of in the
+ * path — one chronological view per project, which is what you want when correlating a
+ * freeze against everything else the loop was doing. The `telemetry:` prefix keeps them
+ * greppable.
+ *
+ * Reuses `isTelemetryClusterDbPath` rather than re-deriving: the eviction planner
+ * already owns that distinction, and two spellings of it would be one more thing to
+ * drift.
+ */
+export function freezeLogTargetFor(dbPath: string): { logDir: string; labelPrefix: string } {
+  const clusterDir = dirname(dbPath);
+  return isTelemetryClusterDbPath(dbPath)
+    ? { logDir: dirname(clusterDir), labelPrefix: 'telemetry:' }
+    : { logDir: clusterDir, labelPrefix: '' };
 }
 
 /** True unless explicitly disabled via env. */
@@ -106,15 +137,19 @@ export function setStorageFailureHandler(fn: StorageFailureHandler | null): void
 
 /**
  * Wrap `db` so its heavy methods (a) track in-flight query count for the
- * HS-9420 eviction safety invariant and (b) log to `<dataDir>/freeze.log` when
- * slow. `dbPath` is `<dataDir>/db`, so the dataDir is its parent. The proxy is
+ * HS-9420 eviction safety invariant and (b) log to the PROJECT's `freeze.log` when
+ * slow — `freezeLogTargetFor` picks the file, which is NOT simply the cluster's own
+ * directory for a telemetry cluster (HS-9502). The proxy is
  * ALWAYS applied; `HOTSHEET_DISABLE_QUERY_INSTRUMENTATION=1` only skips the
  * freeze-timing wrapper (the in-flight tracking always runs — eviction
  * correctness must not depend on an env flag).
  */
 export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
   const timingEnabled = isQueryInstrumentationEnabled();
-  const dataDir = dirname(dbPath);
+  // HS-9502 — NOT `dirname(dbPath)`: a telemetry cluster sits one level deeper and its
+  // entries belong in the project's log, not a second file beside it. See
+  // `freezeLogTargetFor`.
+  const { logDir: dataDir, labelPrefix } = freezeLogTargetFor(dbPath);
   return new Proxy(db, {
     get(target, prop) {
       // Read the property off the REAL target (private-field-safe getters).
@@ -135,7 +170,7 @@ export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
           try {
             const run = (): Promise<unknown> => Promise.resolve(fn.call(target, ...args));
             const result = timingEnabled
-              ? instrumentAsync(dataDir, methodLabel(prop, args[0]), run)
+              ? instrumentAsync(dataDir, labelPrefix + methodLabel(prop, args[0]), run)
               : run();
             // HS-9461 — heal a query issued against an EVICTED cluster.
             //

@@ -5,10 +5,11 @@
  * private-field hazard). These run against a real in-memory PGLite.
  */
 import { PGlite } from '@electric-sql/pglite';
+import { dirname, join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { clusterInFlight, resetEvictionTrackingForTests } from './clusterEviction.js';
-import { instrumentDbQueries, isClosedInstanceError, isQueryInstrumentationEnabled, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
+import { freezeLogTargetFor, instrumentDbQueries, isClosedInstanceError, isQueryInstrumentationEnabled, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
 
 describe('instrumentDbQueries (HS-9239)', () => {
   afterEach(() => { delete process.env.HOTSHEET_DISABLE_QUERY_INSTRUMENTATION; resetEvictionTrackingForTests(); });
@@ -286,5 +287,54 @@ describe('live storage-failure detection (HS-9460)', () => {
       await expect(wrapped.query('SELECT 1')).rejects.toThrow(/xlog/);
     }
     expect(reports).toBe(3);
+  });
+});
+
+/**
+ * HS-9502 — WHICH freeze.log an entry lands in.
+ *
+ * `dirname(dbPath)` is right for the main cluster and wrong for a telemetry one:
+ * `telemetryClusterDataDir` puts that cluster at `<dataDir>/telemetry`, so its slow-query
+ * entries were going to `.hotsheet/telemetry/freeze.log` while every diagnostic
+ * instruction says to read `.hotsheet/freeze.log`. Nothing errored and nothing was lost —
+ * it was silently split, and the main log looked complete.
+ *
+ * Nothing asserted the destination before, which is exactly why it went unnoticed. These
+ * are pure (`freezeLogTargetFor` takes a path and returns a path), so they cost nothing
+ * and cover the case that actually broke.
+ */
+describe('freezeLogTargetFor — which freeze.log a cluster writes to (HS-9502)', () => {
+  const proj = join('/home', 'me', 'proj', '.hotsheet');
+
+  it('main cluster logs beside itself, unprefixed', () => {
+    expect(freezeLogTargetFor(join(proj, 'db'))).toEqual({ logDir: proj, labelPrefix: '' });
+  });
+
+  it('telemetry cluster logs to the PROJECT dir, not its own', () => {
+    const target = freezeLogTargetFor(join(proj, 'telemetry', 'db'));
+    expect(target.logDir).toBe(proj);
+    expect(target.logDir).not.toBe(join(proj, 'telemetry')); // the pre-fix answer
+  });
+
+  it('tags telemetry entries so they stay greppable once merged', () => {
+    // Identity moves from the PATH into the label — that is what makes one merged file
+    // an improvement rather than a loss of information.
+    expect(freezeLogTargetFor(join(proj, 'telemetry', 'db')).labelPrefix).toBe('telemetry:');
+  });
+
+  it('sends the CENTRAL telemetry store to the global dir, not inside itself', () => {
+    // `~/.hotsheet/telemetry/db` — the central store is its own cluster with no project
+    // above it; its parent is the global dir, which is still a better home than a lone
+    // file nested inside `telemetry/`.
+    const globalDir = join('/home', 'me', '.hotsheet');
+    expect(freezeLogTargetFor(join(globalDir, 'telemetry', 'db')).logDir).toBe(globalDir);
+  });
+
+  it('never returns the cluster dir itself for a telemetry cluster', () => {
+    // The property, stated directly: the bug was returning `dirname(dbPath)` verbatim.
+    for (const root of [proj, join('/tmp', 'x', '.hotsheet')]) {
+      const dbPath = join(root, 'telemetry', 'db');
+      expect(freezeLogTargetFor(dbPath).logDir).not.toBe(dirname(dbPath));
+    }
   });
 });
