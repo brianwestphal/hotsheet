@@ -1191,9 +1191,11 @@ describe('HS-9430 — {{aiCommand}} terminal resolves the model-B launch end-to-
   });
 });
 
-// HS-9430 — `codexDriveDiscoverEnabled` is now backed by a real setting
-// (`codexModelBTerminals`, Settings → Experimental), not just an env gate.
-describe('HS-9430 — codexDriveDiscoverEnabled setting + env override', () => {
+// HS-9513 — `codexDriveDiscoverEnabled` is ON unless the env var says otherwise. The
+// `codexModelBTerminals` setting behind it is gone: model-A already survives as the
+// automatic drive-side fallback, so the flag only ever offered a manual override of a
+// decision the code makes correctly on its own. The env var stays as the escape hatch.
+describe('HS-9513 — codexDriveDiscoverEnabled is on by default, env-overridable', () => {
   let home: string;
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), 'hs-codexapp-home-'));
@@ -1205,26 +1207,25 @@ describe('HS-9430 — codexDriveDiscoverEnabled setting + env override', () => {
     writeFileSync(join(home, 'config.json'), JSON.stringify(config), 'utf-8');
   };
 
-  it('defaults ON with no config file and with the key absent', () => {
+  it('is ON with no config file, and with an unrelated config present', () => {
     expect(codexDriveDiscoverEnabled()).toBe(true);
     writeConfig({ channelEnabled: true });
     expect(codexDriveDiscoverEnabled()).toBe(true);
   });
 
-  it('an explicit `codexModelBTerminals: false` turns it off; `true` turns it back on', () => {
+  it('ignores a leftover codexModelBTerminals key rather than honouring it', () => {
+    // Users who turned the old flag OFF still carry it in ~/.hotsheet/config.json. A
+    // stale key silently pinning model-B off after the flag was removed is precisely
+    // the failure mode a deletion invites, so it is asserted rather than assumed.
     writeConfig({ codexModelBTerminals: false });
-    expect(codexDriveDiscoverEnabled()).toBe(false);
-    writeConfig({ codexModelBTerminals: true });
     expect(codexDriveDiscoverEnabled()).toBe(true);
   });
 
-  it('the env var force-overrides the setting in BOTH directions', () => {
-    writeConfig({ codexModelBTerminals: false });
-    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
-    expect(codexDriveDiscoverEnabled()).toBe(true);
-    writeConfig({ codexModelBTerminals: true });
+  it('the env var force-overrides in BOTH directions', () => {
     vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0');
     expect(codexDriveDiscoverEnabled()).toBe(false);
+    vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
+    expect(codexDriveDiscoverEnabled()).toBe(true);
   });
 });
 
@@ -1321,7 +1322,7 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
     expect(ensureDaemon).toHaveBeenCalledTimes(1);
   });
 
-  it('no-ops for non-codex projects, when the drive is off, and when model-B is off', () => {
+  it('no-ops for non-codex projects and when the drive is off', () => {
     const ensureDaemon = vi.fn();
     // non-codex tool
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'gemini' }), 'utf-8');
@@ -1330,9 +1331,8 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
     writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'codex' }), 'utf-8');
     writeFileSync(join(home, 'config.json'), JSON.stringify({ codexAppServerEnabled: false }), 'utf-8');
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
-    // model-B off (the daemon-hosted launch it exists to serve isn't happening)
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ codexModelBTerminals: false }), 'utf-8');
-    prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: (p) => p !== '/s.sock' });
+    // HS-9513 — the "model-B off" case is gone with the flag: model-B is now
+    // unconditional (bar the env override), so no config suppresses it.
     expect(ensureDaemon).not.toHaveBeenCalled();
   });
 

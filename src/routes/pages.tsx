@@ -1162,18 +1162,6 @@ pageRoutes.get('/', (c) => {
                 </label>
                 <span className="settings-hint">Drive Codex projects through a persistent <code>codex app-server</code> session (play + prompt commands share one conversation with approvals in the permission popup). On by default. When off, the play button and Codex prompt commands are hidden for Codex projects.</span>
               </div>
-              {/* HS-9430 (docs/129 §129.6) — the model-B terminal-hosting toggle.
-                  Machine-global (`~/.hotsheet/config.json` `codexModelBTerminals`),
-                  DEFAULT ON. Off ⇒ Codex terminals launch plain `codex` and the
-                  drive keeps its own headless thread (turns don't render in the
-                  terminal). `HOTSHEET_CODEX_DISCOVER_THREAD=0|1` overrides. */}
-              <div className="settings-field" style="margin-top:16px">
-                <label className="settings-checkbox-label">
-                  <input type="checkbox" id="settings-codex-model-b-terminals" />
-                  Codex terminals host the driven session <span className="global-setting-badge">Global Setting</span>
-                </label>
-                <span className="settings-hint">Launch Codex terminals against the shared daemon (<code>codex --remote</code>) so the terminal owns the conversation and driven turns — play, prompt commands — render live in the window you're watching. On by default. When off, Codex terminals launch plain <code>codex</code> and the drive runs its own off-screen session. Takes effect the next time a terminal starts.</span>
-              </div>
               {/* HS-9222 (docs/110 §110.7 P2) — AI Review Notes inducement toggle
                   (`aiReviewNotes`). Scope-aware Shared/Local (registered in
                   `settingsScope.tsx` SCOPED_FIELDS); when on, the worklist induces

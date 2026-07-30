@@ -1,4 +1,4 @@
-import { clearLocalSettingOverride, disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getLayeredFileSettings, getSettings, setCodexAppServerEnabled, updateFileSettingsLayer, updateGlobalConfig } from '../api/index.js';
+import { clearLocalSettingOverride, disableChannel, enableChannel, getChannelStatus, getClaudeVersionCheck, getGlobalConfig, getLayeredFileSettings, getSettings, setCodexAppServerEnabled, updateFileSettingsLayer } from '../api/index.js';
 // HS-9014 — the canonical command-tree types + `isGroup` live in the server-safe
 // `settingsCommandDelta` module (shared with the file-settings resolver). Re-export
 // them here so the many `from './experimentalSettings.js'` importers keep working.
@@ -705,20 +705,6 @@ export function bindExperimentalSettings() {
     }).catch(() => {});
     codexAppServerCheckbox.addEventListener('change', () => {
       void setCodexAppServerEnabled(codexAppServerCheckbox.checked).then(() => initChannel());
-    });
-  }
-
-  // HS-9430 (docs/129 §129.6) — the model-B terminal-hosting toggle. Machine-global
-  // `codexModelBTerminals`, DEFAULT ON (absent ⇒ enabled, like the drive toggle).
-  // Read at terminal-spawn + drive-boot time, so no live re-init is needed — the
-  // next terminal start picks it up.
-  const codexModelBCheckbox = byIdOrNull('settings-codex-model-b-terminals');
-  if (codexModelBCheckbox instanceof HTMLInputElement) {
-    getGlobalConfig().catch(() => null).then(config => {
-      codexModelBCheckbox.checked = config?.codexModelBTerminals !== false;
-    }).catch(() => {});
-    codexModelBCheckbox.addEventListener('change', () => {
-      void updateGlobalConfig({ codexModelBTerminals: codexModelBCheckbox.checked }).catch(() => {});
     });
   }
 

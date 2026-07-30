@@ -262,16 +262,20 @@ export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps 
  * so cron/worker/no-UI runs never regress; the terminal falls back to plain
  * `codex` when the daemon is unavailable.
  *
- * Off (Settings → Experimental → "Codex terminals host the driven session", the
- * `codexModelBTerminals` global-config flag) means: terminals launch plain `codex`
- * and the drive always owns its own thread. `HOTSHEET_CODEX_DISCOVER_THREAD`
- * force-overrides either way (`1` on / `0` off) for tests + a quick revert.
+ * HS-9513 — the `codexModelBTerminals` Experimental flag is GONE. It selected between
+ * model-B and model-A, but model-A already survives as the automatic drive-side
+ * fallback, so the flag only ever offered a manual override of a decision the code
+ * makes correctly on its own. Model-B is now simply how this works.
+ *
+ * `HOTSHEET_CODEX_DISCOVER_THREAD` remains as the escape hatch (`1` on / `0` off) —
+ * it is what the tests use, and it keeps a quick revert available without a
+ * user-facing toggle that implies the choice is routine.
  */
 export function codexDriveDiscoverEnabled(): boolean {
   const env = process.env.HOTSHEET_CODEX_DISCOVER_THREAD;
   if (env === '1') return true;
   if (env === '0') return false;
-  return readGlobalConfig().codexModelBTerminals !== false;
+  return true;
 }
 
 /**

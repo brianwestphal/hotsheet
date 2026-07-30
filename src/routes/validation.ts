@@ -340,7 +340,6 @@ export const GlobalConfigSchema = z.object({
    *  the drive discovers by cwd, instead of the model-A "terminal chases the drive's
    *  thread" attach. Absent ⇒ ENABLED (default ON, verified end-to-end HS-9429/9431).
    *  `HOTSHEET_CODEX_DISCOVER_THREAD=0` force-disables (reverts to model-A); `=1` forces on. */
-  codexModelBTerminals: z.boolean().optional(),
   shareTotalSeconds: z.number().optional(),
   shareLastPrompted: z.string().optional(),
   shareAccepted: z.boolean().optional(),

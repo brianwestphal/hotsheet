@@ -77,7 +77,7 @@ newest `recencyAt`. `codexAppServer.ts`: `discoverLiveThreadForCwd` + `codexDriv
 `bootSession` tries discovery FIRST (daemon-only, gated) → `thread/resume` the discovered id, else
 the existing model-A resume-persisted/`thread/start` fallback.
 
-**Gate (HS-9430): now DEFAULT ON** — the `codexModelBTerminals` global-config flag (absent ⇒ enabled,
+**Gate: REMOVED (HS-9513, 2026-07-31).** Model-B is unconditional; `HOTSHEET_CODEX_DISCOVER_THREAD=0|1` is the remaining escape hatch. The former `codexModelBTerminals` global-config flag (absent ⇒ enabled,
 like `codexAppServerEnabled`); `HOTSHEET_CODEX_DISCOVER_THREAD` env force-overrides (`1` on / `0` off)
 for tests + a quick revert. Verified end-to-end against real codex 0.145.0 (§129.4). model-A stays the
 fallback (daemon down → plain codex; no live terminal thread → the drive starts its own), so a config
@@ -193,7 +193,7 @@ still force-overrides in both directions, which is what tests use.
 | Terminal opened AFTER the first play | Joined at the next turn boundary (`maybeRejoinLiveThread`, HS-9438) |
 | No live terminal (headless / worker / no UI) | Drive starts/resumes its own thread (**model-A, the surviving headless fallback**) |
 | Daemon unreachable at terminal spawn | Terminal launches plain `codex`; drive uses model-A — and **says so once in the Commands Log** (HS-9446) |
-| Toggle off (`codexModelBTerminals: false` / `HOTSHEET_CODEX_DISCOVER_THREAD=0`) | Terminal launches plain `codex`; drive owns its own thread. No discovery, no `--remote` — and since HS-9430, no attach either |
+| Forced off (`HOTSHEET_CODEX_DISCOVER_THREAD=0` — the setting is gone, HS-9513) | Terminal launches plain `codex`; drive owns its own thread. No discovery, no `--remote` — and since HS-9430, no attach either |
 
 **The one silent case, now audible (HS-9446).** A terminal that launches plain `codex` because the
 daemon was unreachable owns a thread the drive can never discover, so driven turns run off-screen for
@@ -252,7 +252,7 @@ that thread at launch) is gone.
   the deleted attach; it stubs `$HOME` so the socket probe never touches the developer's `~/.codex`);
   the prestart matrix reworked for the dropped rollout precondition; and a browser E2E
   (`e2e/codex-drive-gating.spec.ts`) that the Experimental checkbox defaults ON and round-trips
-  `codexModelBTerminals` through `PATCH /global-config` across a reload.
+  `codexModelBTerminals` through `PATCH /global-config` across a reload. **Removed in HS-9513** — the e2e now asserts the control is ABSENT instead.
 - **Manual (`docs/manual-test-plan.md`)**: real end-to-end on codex 0.145.0 — open a `{{aiCommand}}`
   terminal (daemon-hosted), press play, confirm the driven turn renders **in that terminal**; type a
   turn yourself and confirm it shares the thread + transcript.
@@ -360,3 +360,28 @@ Two implementation details worth keeping: the disarm happens **before** `onTurnE
 re-entrant arm must not be clobbered by the outer disarm; and the test pins the race by having the
 scripted fake **withhold** the `turn/start` response (`deferTurnStart` / `releaseTurnStart`) so an
 idle can be delivered inside the sent-but-unacked window. Removing the guard fails that test.
+
+
+## 129.11 The toggle was removed (HS-9513, 2026-07-31)
+
+Maintainer decision, alongside the docs/124 per-tool gate removal: with each AI tool an
+`AiToolPlugin` (docs/132), readiness is managed by not shipping a plugin publicly and by
+labeling early releases alpha/beta — not by runtime flags every user carries.
+
+`codexModelBTerminals` was the easy half of that call, because it never gated readiness. It
+selected between model-B and model-A, and **model-A already survives as the automatic
+drive-side fallback** (§129.4) whenever nothing is discoverable for the cwd. So the flag
+only ever offered a manual override of a decision the code already makes correctly. Gone:
+the global-config key, its zod field, the Experimental checkbox, and its row in `pages.tsx`.
+
+`HOTSHEET_CODEX_DISCOVER_THREAD` stays. It is what the tests use, and it keeps a quick
+revert available without a user-facing toggle implying the choice is routine.
+
+**A leftover `codexModelBTerminals: false` in a user's `~/.hotsheet/config.json` is now
+ignored**, which is the one behavior worth pinning rather than assuming — a stale key
+silently keeping model-B off after its flag was deleted is exactly the failure a deletion
+invites. `codexAppServer.test.ts` asserts it.
+
+The sibling `codexAppServerEnabled` was deliberately NOT removed in the same pass: it is
+the only in-app path that clears handshake-failure flags, so deleting it would take a real
+recovery route with it. That question is HS-9513's remaining half.
