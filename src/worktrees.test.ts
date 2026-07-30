@@ -67,12 +67,12 @@ describe('worktrees — real git', () => {
   let ownerData: string;
 
   function gitInit(dir: string): void {
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
-    execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    execFileSync('git', ['init', '-q', '-b', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+    execFileSync('git', ['config', 'user.email', 't@example.com'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Test'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
     writeFileSync(join(dir, 'README.md'), '# test\n');
-    execFileSync('git', ['add', '.'], { cwd: dir });
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: dir });
+    execFileSync('git', ['add', '.'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
   }
 
   beforeEach(() => {
@@ -154,7 +154,7 @@ describe('worktrees — real git', () => {
   it('removeWorktree with deleteBranch also deletes the branch', async () => {
     const wt = await createWorktree(repoRoot, ownerData, { branch: 'throwaway', newBranch: true });
     await removeWorktree(repoRoot, wt.path, { force: true, deleteBranch: true });
-    const branches = execFileSync('git', ['branch', '--list', 'throwaway'], { cwd: repoRoot, encoding: 'utf-8' });
+    const branches = execFileSync('git', ['branch', '--list', 'throwaway'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot, encoding: 'utf-8' });
     expect(branches.trim()).toBe('');
   });
 
@@ -185,8 +185,8 @@ describe('worktrees — real git', () => {
   it('writes worktree MCP-server + skill approvals into <worktree>/.claude/settings.local.json', async () => {
     mkdirSync(join(repoRoot, '.claude'), { recursive: true });
     writeFileSync(join(repoRoot, '.claude', '.gitkeep'), '');
-    execFileSync('git', ['add', '.'], { cwd: repoRoot });
-    execFileSync('git', ['commit', '-q', '-m', 'add .claude'], { cwd: repoRoot });
+    execFileSync('git', ['add', '.'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
+    execFileSync('git', ['commit', '-q', '-m', 'add .claude'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
 
     const wt = await createWorktree(repoRoot, ownerData, { branch: 'approve', newBranch: true });
     const serverKey = getMcpServerKey(ownerData);

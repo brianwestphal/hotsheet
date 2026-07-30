@@ -25,7 +25,7 @@ import {
 } from './watcher.js';
 
 function git(repo: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repo, encoding: 'utf-8' });
+  return execFileSync('git', args, { timeout: 60_000, killSignal: 'SIGKILL', cwd: repo, encoding: 'utf-8' });
 }
 
 describe('working-tree poll — real git repo (HS-9111)', () => {

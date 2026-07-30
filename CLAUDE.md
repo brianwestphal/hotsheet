@@ -149,7 +149,7 @@ These block the calling thread inside **native code** (`SyncProcessRunner::Spawn
 
 This is HS-9391 — `enrich-path.ts` probed PATH with `execFileSync(shell, ['-ilc', …], { timeout: 2000 })`. The probe is an **interactive** shell, interactive shells ignore SIGTERM, so the timeout fired, the signal was discarded, and the call hung. It wedged the full test suite intermittently for a week and leaked immortal orphan shells on the dev machine (17 found, oldest 4d18h). Measured: the stuck shell survived SIGTERM, died on SIGKILL, and the held-up run printed its summary instantly.
 
-The `no-restricted-syntax` ESLint rule (HS-9510) flags a sync child-process call missing either property. Test files are exempt — a `git init` in a temp fixture repo is not the risk this is about. Where a hang is plausible, also make the child fail fast rather than wait (`GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0` for git), so the timeout is the backstop rather than the mechanism.
+The `no-restricted-syntax` ESLint rule (HS-9510) flags a sync child-process call missing either property. **It applies to test files too** (HS-9511) — HS-9391's entire *symptom* was a wedged test suite, and a wedge is harder to diagnose from a test than from production code, because the natural first assumption is that the test is merely slow. Where a hang is plausible, also make the child fail fast rather than wait (`GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0` for git), so the timeout is the backstop rather than the mechanism.
 
 ### Type assertions (`as`) and runtime validation
 

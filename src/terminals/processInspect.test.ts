@@ -476,7 +476,7 @@ describe('killProcessTreeBestEffort + spawned subprocess (HS-8140 integration)',
       try {
         // Confirm a sleep grandchild was actually spawned under the wrapper
         // (otherwise this test isn't exercising the bug).
-        const psOut = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8' });
+        const psOut = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { timeout: 60_000, killSignal: 'SIGKILL', encoding: 'utf8' });
         const rows = parsePsOutput(psOut);
         const descendants = collectDescendantPids(rows, wrapperPid!);
         expect(descendants.length).toBeGreaterThan(0);
@@ -494,7 +494,7 @@ describe('killProcessTreeBestEffort + spawned subprocess (HS-8140 integration)',
 
         // Verify NO descendant of the wrapper still exists in the process
         // table — the bug being tested is "grandchildren survive shutdown".
-        const psAfter = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { encoding: 'utf8' });
+        const psAfter = execFileSync('ps', ['-o', 'pid,ppid,comm', '-A'], { timeout: 60_000, killSignal: 'SIGKILL', encoding: 'utf8' });
         const rowsAfter = parsePsOutput(psAfter);
         const survivors = collectDescendantPids(rowsAfter, wrapperPid!);
         expect(survivors).toEqual([]);

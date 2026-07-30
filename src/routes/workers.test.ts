@@ -23,11 +23,11 @@ import { listWorktrees } from '../worktrees.js';
 import { workerRoutes } from './workers.js';
 
 function gitInit(dir: string): void {
-  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
-  execFileSync('git', ['add', '.'], { cwd: dir });
-  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
+  execFileSync('git', ['init', '-q', '-b', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+  execFileSync('git', ['config', 'user.email', 't@example.com'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'Test'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+  execFileSync('git', ['add', '.'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
+  execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
 }
 
 /** Build a Hono app that serves the worker routes with `dataDir` set to `dataDir`. */
@@ -117,10 +117,10 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
   let ownerData: string;
 
   function commitFileOn(branch: string, file: string, content: string): void {
-    execFileSync('git', ['checkout', '-q', '-B', branch], { cwd: repoRoot });
+    execFileSync('git', ['checkout', '-q', '-B', branch], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
     writeFileSync(join(repoRoot, file), content);
-    execFileSync('git', ['add', file], { cwd: repoRoot });
-    execFileSync('git', ['commit', '-q', '-m', `work ${file}`], { cwd: repoRoot });
+    execFileSync('git', ['add', file], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
+    execFileSync('git', ['commit', '-q', '-m', `work ${file}`], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
   }
 
   beforeEach(() => {
@@ -139,7 +139,7 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
 
   it('GET /api/workers/integratable lists ready hotsheet/* branches + the target', async () => {
     commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+    execFileSync('git', ['checkout', '-q', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
 
     const res = await appFor(ownerData).request('/api/workers/integratable');
     expect(res.status).toBe(200);
@@ -150,12 +150,12 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
 
   it('POST /api/workers/integrate merges a ready branch into the target', async () => {
     commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+    execFileSync('git', ['checkout', '-q', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
 
     const res = await appFor(ownerData).request('/api/workers/integrate', post({ branch: 'hotsheet/worker-1' }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, status: 'merged' });
-    expect(execFileSync('git', ['log', '--oneline', 'main'], { cwd: repoRoot, encoding: 'utf-8' })).toContain('work a.txt');
+    expect(execFileSync('git', ['log', '--oneline', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot, encoding: 'utf-8' })).toContain('work a.txt');
   });
 
   it('returns 400 on a non-git project', async () => {
@@ -179,7 +179,7 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
 
     // Merge the branch — the integrate route clears the ready signal for it.
     commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
-    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+    execFileSync('git', ['checkout', '-q', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
     const intRes = await app.request('/api/workers/integrate', post({ branch: 'hotsheet/worker-1' }));
     expect((await intRes.json() as { status: string }).status).toBe('merged');
     expect(readyCount(ownerData)).toBe(0);
@@ -210,7 +210,7 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
   // HS-9075 — the headless worker worktree-refresh endpoint (docs/99 §99.3).
   it('POST /api/workers/refresh rebases a follower worktree onto the target', async () => {
     const wtPath = join(base, 'wt-refresh');
-    execFileSync('git', ['worktree', 'add', '-q', '-b', 'hotsheet/refresh-test', wtPath], { cwd: repoRoot });
+    execFileSync('git', ['worktree', 'add', '-q', '-b', 'hotsheet/refresh-test', wtPath], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
     const res = await appFor(ownerData).request('/api/workers/refresh', post({ worktree: wtPath }));
     expect(res.status).toBe(200);
     const data = await res.json() as { ok: boolean; status: string; rebased: boolean };
@@ -248,7 +248,7 @@ describe('worker integration endpoints — real git (HS-9048)', () => {
       // A worker branch one commit ahead of main, then back on main; leave the
       // (owner) worktree dirty so the porcelain check trips.
       commitFileOn('hotsheet/worker-1', 'a.txt', 'a\n');
-      execFileSync('git', ['checkout', '-q', 'main'], { cwd: repoRoot });
+      execFileSync('git', ['checkout', '-q', 'main'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: repoRoot });
       writeFileSync(join(repoRoot, 'scratch.txt'), 'wip\n');
       // Register a worker whose worktree is the repo root + branch is that worker branch.
       await app.request('/api/workers/pool/register', post({ label: 'worker-1', worker: 'w1', worktreePath: repoRoot, branch: 'hotsheet/worker-1' }));

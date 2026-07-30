@@ -326,7 +326,8 @@ export default tseslint.config(
       // silently switched them off for ~35 client files — the same "adding a rule
       // doesn't reach the override blocks" trap the HS-9417 note at the top warns
       // about, in the opposite direction.
-      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES],
+      // HS-9511 — the sync child-process rules apply here for the same reason.
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES, ...SYNC_CHILD_PROCESS_RULES],
     },
   },
   // HS-8567 — test files are exempt from the wire-/file-boundary
@@ -341,7 +342,13 @@ export default tseslint.config(
     rules: {
       // HS-9455 — spread-argument-limit rules stay on in tests too: a test is where
       // you are most likely to build a large fixture array and hit the limit.
-      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES],
+      // HS-9511 — and the sync child-process rules stay on in tests too. HS-9391's
+      // entire SYMPTOM was a wedged test suite: a sync spawn blocks the worker thread
+      // in native code, so every test passes and then no reporter, summary, or
+      // `hanging-process` dump can run. A wedge is also HARDER to diagnose from a
+      // test than from production code, because the natural first assumption is that
+      // the test is merely slow. Tests are where this rule earns the most, not least.
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES, ...SYNC_CHILD_PROCESS_RULES],
     },
   },
   // HS-9417 (docs/126 §126.6) — allowlist for the module-level Map/Set rule.

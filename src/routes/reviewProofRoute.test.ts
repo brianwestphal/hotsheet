@@ -21,7 +21,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'hs-9293-'));
   // `git init` so `getGitRoot(root)` deterministically resolves to `root`
   // (independent of whether the ambient tmpdir sits inside another repo).
-  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['init', '-q'], { timeout: 60_000, killSignal: 'SIGKILL', cwd: root });
   app = new Hono<AppEnv>();
   app.use('*', async (c, next) => {
     c.set('dataDir', join(root, '.hotsheet')); // projectRootFromDataDir peels `.hotsheet` → root

@@ -22,10 +22,10 @@ function createTempDir(): string {
 }
 
 function initGitRepo(dir: string): void {
-  execSync('git init', { cwd: dir, stdio: 'ignore' });
+  execSync('git init', { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir, stdio: 'ignore' });
   // Configure git user for the repo to avoid errors
-  execSync('git config user.email "test@test.com"', { cwd: dir, stdio: 'ignore' });
-  execSync('git config user.name "Test"', { cwd: dir, stdio: 'ignore' });
+  execSync('git config user.email "test@test.com"', { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir, stdio: 'ignore' });
+  execSync('git config user.name "Test"', { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir, stdio: 'ignore' });
 }
 
 describe('isGitRepo', () => {
@@ -140,7 +140,7 @@ describe('computeHotsheetGitignore (HS-8989)', () => {
   it('writes the block to disk via ensureGitignore in a real repo (settings.json stays tracked)', () => {
     const dir = createTempDir();
     try {
-      execSync('git init -q', { cwd: dir });
+      execSync('git init -q', { timeout: 60_000, killSignal: 'SIGKILL', cwd: dir });
       writeFileSync(join(dir, '.gitignore'), '.hotsheet/\n');
       ensureGitignore(dir);
       const content = readFileSync(join(dir, '.gitignore'), 'utf-8');

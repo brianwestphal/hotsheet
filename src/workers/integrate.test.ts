@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { detectTargetBranch, integrateBranch, listReadyBranches, summarizeWorktreesGit } from './integrate.js';
 
 function git(repo: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repo, encoding: 'utf-8' });
+  return execFileSync('git', args, { timeout: 60_000, killSignal: 'SIGKILL', cwd: repo, encoding: 'utf-8' });
 }
 
 /** Commit `content` to `file` on the current branch. */

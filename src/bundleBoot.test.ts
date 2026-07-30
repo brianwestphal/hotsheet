@@ -55,6 +55,7 @@ function ensureBundlesBuilt(): void {
   // shell. A bare `execFileSync('npx', …)` throws `spawnSync npx ENOENT` on
   // win32 (only `npx.cmd`/`npx.ps1` exist on PATH, not a bare `npx`).
   execFileSync('npx', ['tsup', '--config', 'tsup.config.ts'], {
+    killSignal: 'SIGKILL',
     cwd: repoRoot,
     timeout: 180_000,
     stdio: 'ignore',
@@ -188,6 +189,7 @@ describe('bundled cli.js loads without crashing (HS-8706)', () => {
     // here. No server starts, no port binds, no global state outside isolated
     // HOME is touched.
     const out = execFileSync(process.execPath, [cliBundle, '--help'], {
+      killSignal: 'SIGKILL',
       cwd: repoRoot,
       env: { ...process.env, HOME: home },
       encoding: 'utf8',

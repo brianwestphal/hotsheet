@@ -221,7 +221,7 @@ describe('stale-handle healing vs deliberate close (HS-9461)', () => {
     // memory creeps back up, which is exactly how the original OOM went
     // undiagnosed. So every `pinClustersForDirs` call must have a matching
     // release, and it must be inside a `finally`.
-    const files = execFileSync('git', ['ls-files', 'src'], { encoding: 'utf8' })
+    const files = execFileSync('git', ['ls-files', 'src'], { timeout: 60_000, killSignal: 'SIGKILL', encoding: 'utf8' })
       .split('\n')
       .filter((f) => f.endsWith('.ts') && !f.includes('.test.'));
     const offenders: string[] = [];

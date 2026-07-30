@@ -76,7 +76,7 @@ describe('parseLogOutput', () => {
 
 describe('discoverTicketCommits — real git', () => {
   let repo: string;
-  const git = (args: string[]): string => execFileSync('git', args, { cwd: repo, encoding: 'utf-8' });
+  const git = (args: string[]): string => execFileSync('git', args, { timeout: 60_000, killSignal: 'SIGKILL', cwd: repo, encoding: 'utf-8' });
   const commit = (file: string, msg: string): void => {
     writeFileSync(join(repo, file), `${msg}\n${String(Math.random())}`);
     git(['add', file]);
@@ -134,7 +134,7 @@ describe('discoverTicketCommits — real git', () => {
     const calls: string[][] = [];
     const spyGit = vi.fn((root: string, args: string[]) => {
       calls.push(args);
-      return Promise.resolve(execFileSync('git', args, { cwd: root, encoding: 'utf-8' }));
+      return Promise.resolve(execFileSync('git', args, { timeout: 60_000, killSignal: 'SIGKILL', cwd: root, encoding: 'utf-8' }));
     });
     await discoverTicketCommits(repo, 'HS-10', { git: spyGit });
     const logCalls = (): number => calls.filter(a => a[0] === 'log').length;

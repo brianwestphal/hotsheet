@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { refreshWorktree, type ReinstallRunner } from './refreshWorktree.js';
 
 function git(repo: string, args: string[]): string {
-  return execFileSync('git', args, { cwd: repo, encoding: 'utf-8' });
+  return execFileSync('git', args, { timeout: 60_000, killSignal: 'SIGKILL', cwd: repo, encoding: 'utf-8' });
 }
 
 function commit(repo: string, file: string, content: string, message: string): void {
