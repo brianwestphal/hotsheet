@@ -1,11 +1,14 @@
 import { dirname, isAbsolute, resolve as resolvePath } from 'path';
 
-import { slugifyDataDir } from '../channel-config.js';
-import { codexDriveDiscoverEnabled, codexTerminalRemoteCommand } from '../codexAppServer.js';
+import { commandCapabilityOrDefault } from '../aiTools/serverCapabilities.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
 import { DEFAULT_TERMINAL_ID, findTerminalConfig, type TerminalConfig } from './config.js';
+// HS-9492 — moved to `channel-config.ts` (beside the slug it mirrors) so the Claude
+// command capability and `workers/launchWorker.ts` can both use it without a cycle.
+// Re-exported so existing importers of this module keep working.
+export { claudeWithChannelCommand } from '../channel-config.js';
 
 export interface ResolvedCommand {
   command: string;
@@ -19,17 +22,6 @@ const AI_TOKEN = '{{aiCommand}}';
 const PROJECT_DIR_TOKEN = '{{projectDir}}';
 const CLAUDE_BASE = 'claude';
 
-// HS-8009 (docs/113 §113.3) — the non-Claude CLI agents whose binary a terminal
-// launches when `ai_tool` selects them. For most the binary name == the tool id;
-// `AGENT_BINARIES` overrides that where they differ. The channel/play loop for
-// these is the drive work (HS-9310 spike proved Antigravity rides MCP like
-// Claude); until that lands the terminal just runs the tool's REPL.
-const CLI_AGENTS: ReadonlySet<string> = new Set(['codex', 'gemini', 'opencode', 'goose', 'antigravity']);
-
-// HS-9319 — tool id → executable name, for agents whose binary differs from the
-// `ai_tool` id. Antigravity's CLI is `agy`. Others fall through to id == binary.
-const AGENT_BINARIES: Readonly<Record<string, string>> = { antigravity: 'agy' };
-
 /** HS-9333 — true when a command template contains an AI-tool placeholder that
  *  `resolveTerminalCommand` will expand: either the legacy `{{claudeCommand}}` or the
  *  `ai_tool`-aware `{{aiCommand}}` alias. Callers that special-case "does this need
@@ -38,13 +30,6 @@ const AGENT_BINARIES: Readonly<Record<string, string>> = { antigravity: 'agy' };
  *  `{{aiCommand}}` was launched verbatim. */
 export function commandUsesAiToken(command: string): boolean {
   return command.includes(CLAUDE_TOKEN) || command.includes(AI_TOKEN);
-}
-
-/** HS-8349 — build the development-channel command for a given project.
- *  The MCP server name is now per-project (`hotsheet-channel-<slug>`), so
- *  this needs to mirror the slug from `slugifyDataDir(dataDir)`. */
-export function claudeWithChannelCommand(dataDir: string): string {
-  return `claude --dangerously-load-development-channels server:hotsheet-channel-${slugifyDataDir(dataDir)}`;
 }
 
 /**
@@ -136,43 +121,38 @@ function lookupConfig(options: ResolveOptions): TerminalConfig {
 
 /**
  * HS-8009 — resolve the terminal command for the project's `ai_tool` (docs/113).
- * `auto`/`claude`/unset (and the editor-only tools, which aren't terminal agents)
- * keep today's Claude behavior via `pickClaudeCommand`. An explicit non-Claude CLI
- * agent launches that tool's bare binary when present, else the default shell.
+ *
+ * HS-9492 (docs/132 phase 3) — the per-tool knowledge moved to the plugins'
+ * `command` capability. This is now the plumbing: read the setting, hand the
+ * capability the injected test seams, and let it answer. `auto`, unset, an unknown
+ * id and the Tier-B editor tools all resolve through the Claude capability by
+ * default (`commandCapabilityOrDefault`), which is what the old
+ * `!CLI_AGENTS.has(tool)` branch did — Claude as the DEFAULT rather than a carve-out.
+ *
+ * This is also what removes `codexAppServer` from this module: the model-B branch is
+ * one of the five generic-module imports docs/132 §132.1.1 is about, and terminal
+ * command resolution has no business knowing that Codex has a daemon.
  */
 function pickAiCommand(options: ResolveOptions): string {
   const tool = (options.aiToolOverride ?? readAiTool(options.dataDir)).trim().toLowerCase();
-  if (!CLI_AGENTS.has(tool)) return pickClaudeCommand(options); // auto / claude / editor tools
-  const bin = AGENT_BINARIES[tool] ?? tool; // e.g. antigravity → agy; else id == binary
-  const onPath = options.isAiToolOnPath ?? isExecutableOnPath;
-  if (!onPath(bin)) return (options.defaultShellOverride ?? defaultShell)();
-  if (tool === 'codex') {
-    // HS-9429 (docs/129 model-B, default ON) — launch the terminal DAEMON-HOSTED
-    // (`codex --remote … -C <projectDir>`) so it owns its own live thread and the
-    // drive discovers + drives it in place. Falls through to plain `codex` when the
-    // daemon isn't up, or when model-B is switched off (then the drive keeps its own
-    // headless thread — HS-9430 deleted the model-A attach that used to chase it).
-    const modelB = options.codexModelB ?? codexDriveDiscoverEnabled();
-    if (modelB) {
-      const remote = (options.codexRemoteOverride ?? codexTerminalRemoteCommand)(options.dataDir);
-      if (remote !== null) return remote;
-    }
-  }
-  return bin;
+  return commandCapabilityOrDefault(tool).resolve(options.dataDir, {
+    // `isAiToolOnPath` and `isClaudeOnPath` were two seams for the same question,
+    // split only because the old code had two branches. Either satisfies the one
+    // capability call now; both are kept so existing callers/tests are unaffected.
+    isOnPath: options.isAiToolOnPath ?? (options.isClaudeOnPath !== undefined
+      ? (bin: string) => (bin === CLAUDE_BASE ? options.isClaudeOnPath!() : isExecutableOnPath(bin))
+      : undefined),
+    defaultShell: options.defaultShellOverride,
+    channelEnabled: options.channelEnabledOverride ?? isChannelEnabled(options.dataDir),
+    codexRemote: options.codexRemoteOverride,
+    codexModelB: options.codexModelB,
+  });
 }
 
 /** Read the project's `ai_tool` setting (default `auto` when absent). */
 function readAiTool(dataDir: string): string {
   const value = readFileSettings(dataDir).ai_tool;
   return typeof value === 'string' && value.trim() !== '' ? value : 'auto';
-}
-
-function pickClaudeCommand(options: ResolveOptions): string {
-  const claudePresent = (options.isClaudeOnPath ?? defaultClaudeDetector)();
-  const channelEnabled = options.channelEnabledOverride ?? isChannelEnabled(options.dataDir);
-  if (claudePresent && channelEnabled) return claudeWithChannelCommand(options.dataDir);
-  if (claudePresent) return CLAUDE_BASE;
-  return (options.defaultShellOverride ?? defaultShell)();
 }
 
 function isChannelEnabled(dataDir: string): boolean {
@@ -182,17 +162,12 @@ function isChannelEnabled(dataDir: string): boolean {
   return perProject === true || perProject === 'true';
 }
 
-function defaultClaudeDetector(): boolean {
-  return isExecutableOnPath('claude');
-}
-
 // HS-8491 — `isExecutableOnPath` moved to `src/utils/isExecutableOnPath.ts`
 // so `src/skills.ts` and `src/projects.ts` can reuse it without pulling
 // in this module's terminal-launch surface. Re-exported here so callers
 // that imported the private helper indirectly through path-traversal
 // imports keep compiling.
 
-function defaultShell(): string {
-  if (process.platform === 'win32') return process.env.COMSPEC ?? 'cmd.exe';
-  return process.env.SHELL ?? '/bin/sh';
-}
+// HS-9492 — the default-shell fallback moved into `aiTools/serverCapabilities.ts`
+// alongside the command capabilities that use it. This module no longer decides what a
+// terminal launches; it only substitutes the token.

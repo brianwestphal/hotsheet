@@ -15,10 +15,11 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { claudeWithChannelCommand } from '../channel-config.js';
 import { initSkills, parseVersionHeader, setSkillCategories, SKILL_VERSION } from '../skills.js';
 import { DEFAULT_CATEGORIES } from '../types.js';
 import { getPlugin, listPlugins } from './registry.js';
-import { skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
+import { commandCapabilityFor, commandCapabilityIds, commandCapabilityOrDefault, skillsCapabilityFor, skillsCapabilityIds } from './serverCapabilities.js';
 
 const IDS = skillsCapabilityIds();
 
@@ -140,5 +141,88 @@ describe('skills capability table (HS-9503)', () => {
     } finally {
       rmSync(bare, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * HS-9492 (docs/132 phase 3) — the command slice.
+ *
+ * These replace `CLI_AGENTS` + `AGENT_BINARIES` + the `tool === 'codex'` branch that used
+ * to live in `terminals/resolveCommand.ts`. Everything is driven through injected seams,
+ * so none of it depends on which tools are installed on this machine — which is the point
+ * of the exercise: a capability testable only with the real binary would be no better
+ * than the branch it replaced.
+ */
+describe.each(commandCapabilityIds())('command capability — %s (HS-9492)', (id) => {
+  const capability = commandCapabilityFor(id)!;
+  const ON = { isOnPath: () => true };
+  const OFF = { isOnPath: () => false, defaultShell: () => '/bin/test-shell' };
+
+  it('is declared by a registered plugin, and that plugin is a CLI agent', () => {
+    const plugin = getPlugin(id);
+    expect(plugin, `${id} has a command capability but no plugin`).not.toBeNull();
+    // A Tier-B editor tool is not launched in a terminal (docs/113 §113.2) — if one ever
+    // declares a command, that is a category error rather than a new feature.
+    expect(plugin!.tier).toBe('cli-agent');
+  });
+
+  it('resolves to a non-empty line mentioning its binary when present', () => {
+    const line = capability.resolve('/tmp/proj/.hotsheet', ON);
+    expect(line).not.toBe('');
+    expect(line).toContain(capability.binary);
+  });
+
+  it('falls back to the shell when the binary is absent', () => {
+    // A terminal that opens a shell beats one that fails to launch.
+    expect(capability.resolve('/tmp/proj/.hotsheet', OFF)).toBe('/bin/test-shell');
+  });
+});
+
+describe('command capability table (HS-9492)', () => {
+  it('covers exactly the CLI agents — no editor tools', () => {
+    const withCommand = listPlugins().filter(p => commandCapabilityFor(p.id) !== null).map(p => p.id);
+    expect(withCommand).toEqual(['claude', 'codex', 'antigravity', 'gemini', 'opencode', 'goose']);
+  });
+
+  it('Antigravity is the one tool whose binary differs from its id (HS-9319)', () => {
+    const differing = commandCapabilityIds().filter(id => commandCapabilityFor(id)!.binary !== id);
+    expect(differing).toEqual(['antigravity']);
+  });
+
+  it('auto / unset / unknown / editor tools all default to the Claude capability', () => {
+    // The old `!CLI_AGENTS.has(tool)` branch, restated: Claude is the DEFAULT, not a
+    // special case. Losing this would silently change what a `{{aiCommand}}` terminal
+    // launches for every project that never picked a tool.
+    const claude = commandCapabilityFor('claude');
+    for (const t of ['auto', '', 'not-a-real-tool', 'cursor', 'copilot', 'windsurf']) {
+      expect(commandCapabilityOrDefault(t), `${t || '(empty)'} should default to Claude`).toBe(claude);
+    }
+  });
+
+  it('Claude carries the per-project channel flag only when the channel is on', () => {
+    const dataDir = '/tmp/proj/.hotsheet';
+    const on = commandCapabilityFor('claude')!.resolve(dataDir, { isOnPath: () => true, channelEnabled: true });
+    expect(on).toBe(claudeWithChannelCommand(dataDir));
+    expect(on).toContain('--dangerously-load-development-channels');
+
+    const off = commandCapabilityFor('claude')!.resolve(dataDir, { isOnPath: () => true, channelEnabled: false });
+    expect(off).toBe('claude');
+  });
+
+  it('Codex prefers the model-B daemon-hosted line, and falls back when it is unavailable', () => {
+    // docs/129 — the terminal owns a live daemon thread and the drive discovers it. The
+    // fallbacks matter as much as the happy path: model-B off, or the daemon not up.
+    const dataDir = '/tmp/proj/.hotsheet';
+    const codex = commandCapabilityFor('codex')!;
+    const remote = () => 'codex --remote unix:///tmp/sock -C /tmp/proj';
+
+    expect(codex.resolve(dataDir, { isOnPath: () => true, codexModelB: true, codexRemote: remote }))
+      .toBe(remote());
+    // model-B on but no daemon discovered → plain codex.
+    expect(codex.resolve(dataDir, { isOnPath: () => true, codexModelB: true, codexRemote: () => null }))
+      .toBe('codex');
+    // model-B off → plain codex, and the remote resolver is never consulted.
+    expect(codex.resolve(dataDir, { isOnPath: () => true, codexModelB: false, codexRemote: remote }))
+      .toBe('codex');
   });
 });

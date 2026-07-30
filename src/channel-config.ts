@@ -37,6 +37,19 @@ export function slugifyDataDir(dataDir: string): string {
   return slug !== '' ? slug : 'project';
 }
 
+/**
+ * HS-8349 — the development-channel launch line for a project. The MCP server name is
+ * per-project (`hotsheet-channel-<slug>`), so this mirrors `slugifyDataDir`.
+ *
+ * HS-9492 — lives HERE rather than in `terminals/resolveCommand.ts` because it has two
+ * unrelated consumers: the terminal's Claude command capability and the worker-pool
+ * launch line (`workers/launchWorker.ts`). Keeping it beside the slug it depends on lets
+ * both import it without a cycle, and stops the string being written twice.
+ */
+export function claudeWithChannelCommand(dataDir: string): string {
+  return `claude --dangerously-load-development-channels server:hotsheet-channel-${slugifyDataDir(dataDir)}`;
+}
+
 /** HS-8349 — the per-project MCP server key written into `.mcp.json`.
  *  Claude Code namespaces tools by the `.mcp.json` key, so each project's
  *  channel server now registers under `hotsheet-channel-<slug>` instead of

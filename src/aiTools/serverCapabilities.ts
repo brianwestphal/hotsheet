@@ -37,6 +37,8 @@
  * use (`updateFile`, the version header, `ensureAdapterSkillTree`) for no gain.
  */
 import { canonicalClaudeSourceExists } from '../aiInstructions.js';
+import { claudeWithChannelCommand } from '../channel-config.js';
+import { codexDriveDiscoverEnabled, codexTerminalRemoteCommand } from '../codexAppServer.js';
 import {
   ensureAgentsFamilySkills,
   ensureClaudeSkills,
@@ -46,6 +48,7 @@ import {
   ensureOpencodeSkills,
   ensureWindsurfRules,
 } from '../skills.js';
+import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
 
 export interface SkillsCapability {
   /**
@@ -137,4 +140,109 @@ export function skillsCapabilityFor(aiTool: string): SkillsCapability | null {
 /** Ids that declare a skills capability (for the conformance suite). */
 export function skillsCapabilityIds(): string[] {
   return Object.keys(CAPABILITIES);
+}
+
+// ── Command resolution (HS-9492, docs/132 phase 3) ──────────────────────────
+
+/**
+ * Test seams, all optional. `resolveCommand.ts` already carried these as injected
+ * overrides so the branches are testable without the real binary, a live daemon, or a
+ * particular `$SHELL`; they move here rather than being lost. A capability whose command
+ * resolution can only be exercised with the tool installed would defeat the point.
+ *
+ * `codexRemote` / `codexModelB` are tool-specific in a shared bag, which is a wart. The
+ * alternative — per-capability dep types threaded through one caller — costs more than
+ * the wart, and `ResolveOptions` already had exactly this shape.
+ */
+export interface CommandResolveDeps {
+  isOnPath?: (bin: string) => boolean;
+  defaultShell?: () => string;
+  /** Whether the Claude channel is on for this project (drives the `--dangerously-…` flag). */
+  channelEnabled?: boolean;
+  codexRemote?: (dataDir: string) => string | null;
+  codexModelB?: boolean;
+}
+
+export interface CommandCapability {
+  /** The executable to look for on PATH. Usually the tool id; `agy` for Antigravity. */
+  binary: string;
+  /** The launch line for a `{{aiCommand}}` terminal. Falls back to the user's shell when
+   *  the binary is absent — a terminal that opens a shell is better than one that fails. */
+  resolve(dataDir: string, deps: CommandResolveDeps): string;
+}
+
+function shellOf(deps: CommandResolveDeps): string {
+  return (deps.defaultShell ?? systemDefaultShell)();
+}
+
+function systemDefaultShell(): string {
+  if (process.platform === 'win32') return process.env.COMSPEC ?? 'cmd.exe';
+  return process.env.SHELL ?? '/bin/sh';
+}
+
+/** The plain "run the tool's REPL if it is installed" shape — every CLI agent except
+ *  Claude (its channel flag) and Codex (its model-B hosting). */
+function bareBinaryCommand(binary: string) {
+  return (_dataDir: string, deps: CommandResolveDeps): string =>
+    (deps.isOnPath ?? isExecutableOnPath)(binary) ? binary : shellOf(deps);
+}
+
+const COMMANDS: Readonly<Record<string, CommandCapability>> = {
+  claude: {
+    binary: 'claude',
+    // HS-8349 — the MCP server name is per-project, so the channel flag mirrors
+    // `slugifyDataDir`. Without the channel enabled it is the bare binary.
+    resolve: (dataDir, deps) => {
+      if (!(deps.isOnPath ?? isExecutableOnPath)('claude')) return shellOf(deps);
+      return deps.channelEnabled === true ? claudeWithChannelCommand(dataDir) : 'claude';
+    },
+  },
+  codex: {
+    binary: 'codex',
+    // HS-9429 (docs/129 model-B, default ON) — launch the terminal DAEMON-HOSTED
+    // (`codex --remote … -C <projectDir>`) so it owns its own live thread and the drive
+    // discovers and drives it in place. Falls through to plain `codex` when the daemon
+    // isn't up, or when model-B is off (the drive then keeps its own headless thread —
+    // HS-9430 deleted the model-A attach that used to chase it).
+    resolve: (dataDir, deps) => {
+      if (!(deps.isOnPath ?? isExecutableOnPath)('codex')) return shellOf(deps);
+      const modelB = deps.codexModelB ?? codexDriveDiscoverEnabled();
+      if (modelB) {
+        const remote = (deps.codexRemote ?? codexTerminalRemoteCommand)(dataDir);
+        if (remote !== null) return remote;
+      }
+      return 'codex';
+    },
+  },
+  // HS-9319 — Antigravity is the one tool whose binary differs from its id.
+  antigravity: { binary: 'agy', resolve: bareBinaryCommand('agy') },
+  gemini: { binary: 'gemini', resolve: bareBinaryCommand('gemini') },
+  opencode: { binary: 'opencode', resolve: bareBinaryCommand('opencode') },
+  goose: { binary: 'goose', resolve: bareBinaryCommand('goose') },
+  // cursor / copilot / windsurf: absent. Tier-B editor tools are not terminal agents
+  // (docs/113 §113.2), so a `{{aiCommand}}` terminal for them falls back to Claude —
+  // see `commandCapabilityOrDefault`.
+};
+
+/** The command capability for a tool id, or null when it is not a terminal agent. */
+export function commandCapabilityFor(aiTool: string): CommandCapability | null {
+  return COMMANDS[aiTool.trim().toLowerCase()] ?? null;
+}
+
+/**
+ * What a `{{aiCommand}}` terminal should launch for `aiTool`.
+ *
+ * The fallback to Claude covers `auto`, unset, an unrecognized id, and the Tier-B editor
+ * tools — all of which used to reach the same `pickClaudeCommand` through
+ * `!CLI_AGENTS.has(tool)`. Expressing it as "no command capability → the default one"
+ * makes Claude the DEFAULT rather than a special case, which is the same move docs/132
+ * §132.6 asks for elsewhere.
+ */
+export function commandCapabilityOrDefault(aiTool: string): CommandCapability {
+  return commandCapabilityFor(aiTool) ?? COMMANDS.claude;
+}
+
+/** Ids that declare a command capability (for the conformance suite). */
+export function commandCapabilityIds(): string[] {
+  return Object.keys(COMMANDS);
 }

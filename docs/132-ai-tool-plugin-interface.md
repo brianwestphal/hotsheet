@@ -303,7 +303,7 @@ each phase leaving the tree green and shippable.
 | **1** | HS-9490 ✅ | `src/aiTools/` + the interface + the registry + plugin stubs carrying only identity. Adopted in `agentDisplayName` and the dropdown. **SHIPPED** — see §132.12 for what building it changed about the design. |
 | **2a** | HS-9491 ✅ | Instructions: `TOOLS` + `ADAPTER_FAMILY` → the plugin's `instructions` capability. **SHIPPED.** |
 | **2b** | HS-9503 ✅ | Skills: `skillArtifactRelPath` + the `ensureSkillsForDir` if-chain → `aiTools/serverCapabilities.ts` (§132.11.1). **SHIPPED.** |
-| **3** | HS-9492 | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. |
+| **3** | HS-9492 ✅ | Command: `CLI_AGENTS` / `AGENT_BINARIES` / the codex model-B branch → `command.resolve`. **SHIPPED** — first of the five §132.1.1 leaks closed. |
 | **4** | HS-9493 | Drive + permissions + MCP: absorb `mcpHooksAgents.ts` and `resolveAcpAgentCommand`; **close the §132.1.1 leak** — the five generic modules stop importing `codexAppServer.js`. |
 | **5** | HS-9494 | Claude becomes a plugin. The acceptance test for the whole design. |
 | **6** | HS-9496 | Extract the §132.9.1 toolkit — starting with the merge-safe hooks-file helper, which is already written twice. |
@@ -483,6 +483,19 @@ That means §132.4's single interface is really "the declarative half plus a
 server-side companion". **HS-9503 settled the sibling: `src/aiTools/serverCapabilities.ts`,
 one file, one lookup per capability, capabilities added as they move.** Phases 3–5 land
 there — command resolution shells out, the drive spawns processes.
+
+**Phase 3 added a third (HS-9492): a capability's fallback should read as the DEFAULT,
+not a carve-out.** `resolveCommand` used to branch on `!CLI_AGENTS.has(tool)` to send
+`auto`, unset, unknown ids and the Tier-B editor tools down the Claude path. That is now
+`commandCapabilityOrDefault(tool)` — no command capability means the Claude one — which
+says the same thing without naming Claude as an exception. Same move §132.6 asks for when
+Claude finally becomes a plugin.
+
+Also worth copying: when a capability needs a string another module already builds, MOVE
+the builder somewhere both can import rather than duplicating it. `claudeWithChannelCommand`
+had a second consumer in `workers/launchWorker.ts`, so it moved to `channel-config.ts`
+beside the slug it mirrors — importing it back from `terminals/` would have been a cycle,
+and re-typing the flag would have been two spellings of one contract.
 
 **Two rules the sibling carries, both learned the hard way:**
 
