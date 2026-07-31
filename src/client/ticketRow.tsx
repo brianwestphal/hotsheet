@@ -1,6 +1,7 @@
 import type { SafeHtml } from 'kerfjs';
 
 import { deleteTicket, updateTicket,type UpdateTicketReq } from '../api/index.js';
+import { lastMeaningfulNoteIndex } from '../systemNotes.js';
 import { renderClaimedByChip } from './claimedByChip.js';
 import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
@@ -315,9 +316,15 @@ export function hasPendingFeedback(ticket: Ticket): boolean {
   // and the function returns false (no crash).
   const notes = parseJsonArrayOr(ticket.notes, []) as { text?: unknown }[];
   if (notes.length === 0) return false;
-  const lastText = notes[notes.length - 1].text;
-  if (typeof lastText !== 'string') return false;
-  return lastText.includes('FEEDBACK NEEDED');
+  // HS-9526 — the LAST MEANINGFUL note, not the last note. An auto-appended system
+  // note (a claim-lease reclaim) after a FEEDBACK NEEDED one would otherwise clear the
+  // purple dot and border, while `getTicketFeedbackState` — which already skipped
+  // system notes — still considered the ticket pending. The two disagreeing is the
+  // bug: the dialog says "waiting on you", the row says nothing is.
+  const texts = notes.map(n => (typeof n.text === 'string' ? n.text : ''));
+  const idx = lastMeaningfulNoteIndex(texts);
+  if (idx < 0) return false;
+  return texts[idx].includes('FEEDBACK NEEDED');
 }
 
 /** Returns the indicator dot type: 'feedback' (purple, highest priority), 'unread' (blue), or null. */

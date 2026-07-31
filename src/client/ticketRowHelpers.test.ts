@@ -235,3 +235,57 @@ describe('debouncedSave + cancelPendingSave', () => {
     expect(() => cancelPendingSave()).not.toThrow();
   });
 });
+
+// HS-9526 — the reported bug. `hasPendingFeedback` drives the purple dot AND the
+// row/card border, and it read the raw last note — so an auto-appended claim-lease
+// note after a FEEDBACK NEEDED one cleared both, while `getTicketFeedbackState`
+// (which already skipped system notes) still considered the ticket pending. Two
+// readers disagreeing is the bug: the dialog says "waiting on you", the row says
+// nothing is.
+describe('hasPendingFeedback — system notes must not mask feedback (HS-9526)', () => {
+  const claimNote = { text: 'Claim lease expired — reclaimed from `worker-1`.' };
+
+  it('stays TRUE when a claim-lease note follows the feedback note', async () => {
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const notes = JSON.stringify([{ text: 'FEEDBACK NEEDED: which option?' }, claimNote]);
+    expect(hasPendingFeedback(ticket({ notes }))).toBe(true);
+  });
+
+  it('stays TRUE through SEVERAL trailing system notes', async () => {
+    // A ticket reclaimed repeatedly accumulates them; one skip is not enough.
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const notes = JSON.stringify([
+      { text: 'FEEDBACK NEEDED: which option?' },
+      claimNote,
+      { text: 'Claim lease expired — reclaimed from an unnamed worker.' },
+    ]);
+    expect(hasPendingFeedback(ticket({ notes }))).toBe(true);
+  });
+
+  it('is FALSE when a real note answered the question after it', async () => {
+    // The skip must not go too far: a genuine reply resolves the feedback state.
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const notes = JSON.stringify([
+      { text: 'FEEDBACK NEEDED: which option?' },
+      { text: 'option b' },
+      claimNote,
+    ]);
+    expect(hasPendingFeedback(ticket({ notes }))).toBe(false);
+  });
+
+  it('is FALSE when every note is a system note', async () => {
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    expect(hasPendingFeedback(ticket({ notes: JSON.stringify([claimNote]) }))).toBe(false);
+  });
+
+  it('agrees with getTicketFeedbackState — the two readers must not diverge', async () => {
+    // The actual defect was disagreement between them, so it is asserted directly
+    // rather than left to two independent tests that could drift apart again.
+    const { hasPendingFeedback } = await import('./ticketRow.js');
+    const { getTicketFeedbackState } = await import('./feedbackDialog.js');
+    const noteList = [{ id: 'n1', text: 'FEEDBACK NEEDED: which option?', created_at: '2026-01-01' },
+                      { id: 'n2', text: claimNote.text, created_at: '2026-01-02' }];
+    expect(hasPendingFeedback(ticket({ notes: JSON.stringify(noteList) }))).toBe(true);
+    expect(getTicketFeedbackState(noteList)).not.toBeNull();
+  });
+});

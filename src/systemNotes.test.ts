@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildClaimReclaimNote, CLAIM_RECLAIM_NOTE_PREFIX, isSystemStatusNote, lastMeaningfulNoteIndex } from './systemNotes.js';
+import { buildClaimReclaimNote, CLAIM_RECLAIM_NOTE_PREFIX, isSystemStatusNote, lastMeaningfulNoteIndex, UNNAMED_CLAIMANT } from './systemNotes.js';
 
 describe('systemNotes (HS-9289)', () => {
   it('buildClaimReclaimNote is recognized by isSystemStatusNote', () => {
@@ -27,5 +27,30 @@ describe('systemNotes (HS-9289)', () => {
     expect(lastMeaningfulNoteIndex(['a', 'b'])).toBe(1);
     expect(lastMeaningfulNoteIndex([])).toBe(-1);
     expect(lastMeaningfulNoteIndex([claim])).toBe(-1); // all system → none meaningful
+  });
+});
+
+// HS-9525 — "reclaimed from `null`" told the reader nothing. The wording changed;
+// the PREFIX must not, because `isSystemStatusNote` recognises the note by it.
+describe('buildClaimReclaimNote — the unnamed-claimant case (HS-9525)', () => {
+  it('names an unnamed worker instead of interpolating null', () => {
+    for (const who of [null, undefined, '', '   ']) {
+      const note = buildClaimReclaimNote(who);
+      expect(note, String(who)).toContain(UNNAMED_CLAIMANT);
+      expect(note, String(who)).not.toContain('null');
+      expect(note, String(who)).not.toContain('undefined');
+    }
+  });
+
+  it('still quotes a real claimant', () => {
+    expect(buildClaimReclaimNote('worker-3')).toBe(`${CLAIM_RECLAIM_NOTE_PREFIX}\`worker-3\`.`);
+  });
+
+  it('KEEPS the system-note prefix in every case', () => {
+    // The load-bearing invariant: lose the prefix and `isSystemStatusNote` stops
+    // recognising the note, which silently resurrects the HS-9526 masking bug.
+    for (const who of [null, undefined, '', 'worker-3']) {
+      expect(isSystemStatusNote(buildClaimReclaimNote(who)), String(who)).toBe(true);
+    }
   });
 });

@@ -2,6 +2,7 @@ import type { SafeHtml } from 'kerfjs';
 import { raw } from 'kerfjs';
 
 import { duplicateTickets, getBackends, getWorkerPool, pushTicketToBackend, releaseTicket, updateTicket, uploadAttachment } from '../api/index.js';
+import { isSystemStatusNote } from '../systemNotes.js';
 import { claimForTicket } from './claimsStore.js';
 import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
@@ -136,7 +137,10 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   // description.
   if (state.selectedIds.size === 1) {
     const parsedNotes = parseNotesJson(ticket.notes);
-    const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '');
+    // HS-9526 — system/status notes (a claim-lease reclaim) are not content. Surfacing
+  // one as "the latest note" would read the user a line about lease bookkeeping
+  // instead of the note they actually wanted.
+  const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '' && !isSystemStatusNote(n.text));
     const latestNote = nonEmptyNotes.length > 0 ? nonEmptyNotes[nonEmptyNotes.length - 1] : null;
     // HS-8841 — when the ticket has no non-empty note, fall back to reading the
     // Details (description). The item is now only disabled when there is NEITHER

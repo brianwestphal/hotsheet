@@ -19,10 +19,27 @@
  *  (The em dash is intentional — it's the exact character the note carries.) */
 export const CLAIM_RECLAIM_NOTE_PREFIX = 'Claim lease expired — reclaimed from ';
 
-/** Build the claim-reclaim status note for `who` (the prior claimant, or the
- *  literal `null` when the lapsed claim had no recorded holder). */
-export function buildClaimReclaimNote(who: string): string {
-  return `${CLAIM_RECLAIM_NOTE_PREFIX}\`${who}\`.`;
+/** What the note says when the lapsed claim had no recorded holder. HS-9525 — this
+ *  used to interpolate a literal `null`, which told the reader nothing: "reclaimed
+ *  from `null`" reads like a bug rather than the ordinary case it is (a lease that
+ *  expired with no `claimed_by`/`worker_label` recorded on the row). */
+export const UNNAMED_CLAIMANT = 'an unnamed worker';
+
+/**
+ * Build the claim-reclaim status note for `who` — the prior claimant, or
+ * `UNNAMED_CLAIMANT` when the lapsed claim had no recorded holder.
+ *
+ * Accepts null/undefined/blank deliberately: `claimed_by` IS nullable, and the old
+ * `string`-typed parameter let a null through to be stringified by the template.
+ *
+ * **The prefix is invariant.** `isSystemStatusNote` recognises this note by
+ * `startsWith(CLAIM_RECLAIM_NOTE_PREFIX)`, so a wording change that moved or altered
+ * the prefix would stop it being treated as a system note — silently resurrecting the
+ * HS-9526 bug where a claim note masks a preceding FEEDBACK NEEDED one.
+ */
+export function buildClaimReclaimNote(who: string | null | undefined): string {
+  const label = typeof who === 'string' && who.trim() !== '' ? `\`${who}\`` : UNNAMED_CLAIMANT;
+  return `${CLAIM_RECLAIM_NOTE_PREFIX}${label}.`;
 }
 
 /**

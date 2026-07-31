@@ -1,3 +1,4 @@
+import { isSystemStatusNote } from '../systemNotes.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { buildCombinedReaderEntries, openReaderOverlay } from './readerOverlay.js';
 import type { Ticket } from './state.js';
@@ -15,7 +16,10 @@ import type { Ticket } from './state.js';
  */
 export function openLatestNoteReader(ticket: Ticket): 'note' | 'details' | null {
   const parsedNotes = parseNotesJson(ticket.notes);
-  const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '');
+  // HS-9526 — system/status notes (a claim-lease reclaim) are not content. Surfacing
+  // one as "the latest note" would read the user a line about lease bookkeeping
+  // instead of the note they actually wanted.
+  const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '' && !isSystemStatusNote(n.text));
   const latestNote = nonEmptyNotes.length > 0 ? nonEmptyNotes[nonEmptyNotes.length - 1] : null;
   const hasDescription = ticket.details.trim() !== '';
   const target: 'note' | 'details' | null =
