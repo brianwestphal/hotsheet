@@ -18,6 +18,7 @@ import {
   getRecentEventLoopLagMs,
   instrumentAsync,
   instrumentSync,
+  isSuspendGap,
   memorySnapshot,
   onServerWake,
   setFreezeLogClusterCounter,
@@ -47,12 +48,17 @@ async function readFreezeLog(): Promise<string[]> {
   }
 }
 
-describe('wake detection (HS-8726)', () => {
-  it('a suspend-sized gap fires onServerWake and resets the backpressure lag reading', () => {
+describe('wake detection (HS-8726, corrected by HS-9520)', () => {
+  // A suspend is simulated by WALL-clock running far ahead of the monotonic gap —
+  // which is what an OS freeze actually looks like, since the monotonic clock does
+  // not advance while the machine is asleep. Duration alone says nothing.
+  const suspend = (wallMs: number): void => _simulateHeartbeatGapForTesting(200, wallMs);
+
+  it('a real suspend (clocks diverge) fires onServerWake and resets the backpressure lag reading', () => {
     const seen: number[] = [];
     const unsub = onServerWake((gap) => { seen.push(gap); });
-    _simulateHeartbeatGapForTesting(WAKE_GAP_THRESHOLD_MS + 5_000);
-    expect(seen).toEqual([WAKE_GAP_THRESHOLD_MS + 5_000]);
+    suspend(3_600_000); // an hour of sleep; the loop itself only "missed" 200ms
+    expect(seen).toEqual([3_600_000]);
     expect(getRecentEventLoopLagMs()).toBe(0); // the sleep gap must NOT poison backpressure
     unsub();
   });
@@ -60,28 +66,69 @@ describe('wake detection (HS-8726)', () => {
   it('a normal block does NOT fire wake and DOES record the lag', () => {
     const seen: number[] = [];
     const unsub = onServerWake((gap) => { seen.push(gap); });
-    _simulateHeartbeatGapForTesting(500); // a real 500ms block — below the suspend threshold
+    _simulateHeartbeatGapForTesting(500); // clocks agree — a real 500ms block
     expect(seen).toEqual([]);
     expect(getRecentEventLoopLagMs()).toBe(500);
     unsub();
+  });
+
+  // HS-9520 — the regression that mattered. A 23s on-loop block used to be declared
+  // a suspend purely because it was long, which both hid the worst blocks from the
+  // log and ZEROED the lag the scheduler's backpressure reads — so it admitted more
+  // work into an already-pinned loop. Measured in the wild on 2026-07-31.
+  it('a LONG on-loop block is a block, not a suspend, and keeps the lag reading', () => {
+    const seen: number[] = [];
+    const unsub = onServerWake((gap) => { seen.push(gap); });
+    _simulateHeartbeatGapForTesting(23_000); // clocks agree ⇒ genuine block
+    expect(seen).toEqual([]);
+    expect(getRecentEventLoopLagMs()).toBe(23_000); // backpressure MUST stay engaged
+    unsub();
+  });
+
+  it('classifies by clock divergence, not by length, in both directions', () => {
+    // Short + divergent is still a suspend candidate only above the floor…
+    expect(isSuspendGap(50, 60)).toBe(false);
+    // …a long gap with agreeing clocks is a block…
+    expect(isSuspendGap(30_000, 30_010)).toBe(false);
+    // …and a long gap where wall ran far ahead is a suspend.
+    expect(isSuspendGap(200, 600_000)).toBe(true);
+  });
+
+  it('treats an ambiguous long gap as a BLOCK — the recoverable direction', () => {
+    // If a platform's monotonic clock DID include suspend time, divergence is ~0.
+    // Calling that a block only over-reports blocks and keeps backpressure on;
+    // calling it a suspend is what wedged the server.
+    expect(isSuspendGap(60_000, 60_000)).toBe(false);
   });
 
   it('unsubscribe stops further wake notifications', () => {
     const seen: number[] = [];
     const unsub = onServerWake((gap) => { seen.push(gap); });
     unsub();
-    _simulateHeartbeatGapForTesting(WAKE_GAP_THRESHOLD_MS + 1);
+    suspend(WAKE_GAP_THRESHOLD_MS + 1);
     expect(seen).toEqual([]);
   });
 
-  it('logs a `server-wake` entry (not a misleading event-loop-blocked) when a dataDir is attached', async () => {
+  it('logs a `server-wake` entry (not a misleading event-loop-blocked) for a real suspend', async () => {
     startServerEventLoopHeartbeat(tmpDir); // attaches heartbeatDataDir = tmpDir
-    _simulateHeartbeatGapForTesting(WAKE_GAP_THRESHOLD_MS + 60_000);
+    suspend(60_000);
     stopServerEventLoopHeartbeat();
     await new Promise(r => setTimeout(r, 20)); // let the async append flush
     const lines = await readFreezeLog();
     expect(lines.some(l => l.includes('"source":"server-wake"'))).toBe(true);
     expect(lines.some(l => l.includes('"source":"server-heartbeat"'))).toBe(false);
+  });
+
+  it('logs a LONG block as event-loop-blocked so it appears in the aggregates', async () => {
+    // The two worst blocks of 2026-07-31 were absent from every "blocked" total
+    // because they were filed as suspends. This is the assertion that stops that.
+    startServerEventLoopHeartbeat(tmpDir);
+    _simulateHeartbeatGapForTesting(23_000);
+    stopServerEventLoopHeartbeat();
+    await new Promise(r => setTimeout(r, 20));
+    const lines = await readFreezeLog();
+    expect(lines.some(l => l.includes('"source":"server-heartbeat"'))).toBe(true);
+    expect(lines.some(l => l.includes('"source":"server-wake"'))).toBe(false);
   });
 });
 

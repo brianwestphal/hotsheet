@@ -74,13 +74,55 @@ function truncateMarkerLine(ts: string, beforeBytes: number, afterBytes: number)
  *  trivial overhead under any realistic Node load. */
 const HEARTBEAT_INTERVAL_MS = 50;
 
-/** HS-8726 — a heartbeat gap at or above this is a system suspend/resume, not a
- *  real event-loop block. No genuine on-loop task runs for 10 s; a gap this
- *  large means the process was frozen by the OS (laptop sleep, `kill -STOP`,
- *  VM pause). We classify it as a wake event instead of logging a misleading
- *  multi-minute/hour "event-loop blocked" entry, and use it to re-stagger
- *  background work. */
+/**
+ * HS-8726 — the smallest gap worth *considering* a suspend. A suspend is always
+ * long, so anything shorter is unambiguously an ordinary block and skips the
+ * divergence check below.
+ *
+ * HS-9520 — this used to be the whole test: any gap ≥ 10 s was declared a
+ * suspend, justified by "no genuine on-loop task runs for 10 s". That premise
+ * was false — `freeze.log` records `plugin.scheduledSync:github-issues` running
+ * 9–16 s, 31 times — and because the heartbeat measures with a MONOTONIC clock,
+ * the rule was also inverted (see `isSuspendGap`). Length alone cannot classify;
+ * it only decides whether to bother asking.
+ */
 export const WAKE_GAP_THRESHOLD_MS = 10_000;
+
+/**
+ * HS-9520 — how far wall-clock must run ahead of the monotonic clock before a
+ * gap is a suspend rather than a block. Generous: the two track within ~1 ms
+ * during a real block (measured), and a suspend diverges by seconds at minimum.
+ */
+export const SUSPEND_CLOCK_DIVERGENCE_MS = 2_000;
+
+/**
+ * Was this gap an OS freeze (sleep / `kill -STOP` / VM pause) rather than the
+ * event loop being pinned by our own work?
+ *
+ * **Duration cannot answer that, and using it got the answer backwards.** The
+ * heartbeat measures with `process.hrtime.bigint()`, which is MONOTONIC — and a
+ * monotonic clock does not advance while the machine is asleep. So a real
+ * suspend produces a *small* monotonic gap, while a genuine 20 s block produces
+ * a large one. The old length test therefore labelled our worst blocks
+ * "suspend" and would have missed an actual suspend entirely.
+ *
+ * The clocks tell them apart directly:
+ *
+ *   real suspend  → wall-clock jumps, monotonic barely moves → large divergence
+ *   genuine block → both advance together                    → ~zero divergence
+ *
+ * Verified on 2026-07-31: two entries logged as "resumed from suspend" (13 s and
+ * 23 s) while `pmset -g log` showed the machine had not slept at all that day.
+ *
+ * Safe under either platform behavior: if some platform's monotonic clock *did*
+ * include suspend time, divergence would be ~0 and we would call it a block —
+ * which only over-reports blocks, and keeps backpressure engaged. Erring that
+ * way is recoverable; erring the other way is what wedged the server.
+ */
+export function isSuspendGap(monotonicGapMs: number, wallGapMs: number): boolean {
+  if (monotonicGapMs < WAKE_GAP_THRESHOLD_MS && wallGapMs < WAKE_GAP_THRESHOLD_MS) return false;
+  return wallGapMs - monotonicGapMs >= SUSPEND_CLOCK_DIVERGENCE_MS;
+}
 
 export interface FreezeEntry {
   /** ISO-8601 timestamp at the moment the block was OBSERVED (i.e. the
@@ -304,6 +346,9 @@ async function rotateIfNeeded(path: string, pendingBytes: number): Promise<void>
 }
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+/** HS-9520 — wall-clock cursor, sampled beside `lastHeartbeatNs` so a gap can be
+ *  classified as suspend-vs-block by clock divergence rather than by length. */
+let lastHeartbeatWallMs = 0;
 let lastHeartbeatNs = 0n;
 // HS-8724 — most-recent observed event-loop lag (ms), updated EVERY heartbeat
 // tick (not just when it crosses the freeze-log threshold). This is the
@@ -348,19 +393,19 @@ export function onServerWake(listener: (gapMs: number) => void): () => void {
  * "event-loop blocked"), do NOT let the sleep gap poison the backpressure lag
  * reading, and fire the wake listeners so the scheduler can re-stagger.
  */
-function handleHeartbeatGap(blockMs: number): void {
-  if (blockMs >= WAKE_GAP_THRESHOLD_MS) {
+function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void {
+  if (isSuspendGap(blockMs, wallGapMs)) {
     lastEventLoopLagMs = 0; // the suspend gap is not real event-loop lag
     if (heartbeatDataDir !== null) {
       void appendFreezeLog(heartbeatDataDir, {
         ts: new Date().toISOString(),
         source: 'server-wake',
-        durationMs: Math.round(blockMs),
-        context: `resumed from suspend after ~${Math.round(blockMs / 1000).toString()}s`,
+        durationMs: Math.round(wallGapMs),
+        context: `resumed from suspend after ~${Math.round(wallGapMs / 1000).toString()}s`,
       });
     }
     for (const listener of wakeListeners) {
-      try { listener(blockMs); } catch { /* a wake listener must never break the heartbeat */ }
+      try { listener(wallGapMs); } catch { /* a wake listener must never break the heartbeat */ }
     }
     return;
   }
@@ -381,9 +426,12 @@ function handleHeartbeatGap(blockMs: number): void {
 }
 
 /** Test-only — drive the gap handler directly (no real timer) to exercise the
- *  wake-vs-block classification + listener fan-out. */
-export function _simulateHeartbeatGapForTesting(blockMs: number): void {
-  handleHeartbeatGap(blockMs);
+ *  wake-vs-block classification + listener fan-out.
+ *
+ *  `wallGapMs` defaults to `blockMs`, i.e. the clocks agree — which is a genuine
+ *  on-loop block. Pass a larger wall gap to simulate an OS suspend (HS-9520). */
+export function _simulateHeartbeatGapForTesting(blockMs: number, wallGapMs: number = blockMs): void {
+  handleHeartbeatGap(blockMs, wallGapMs);
 }
 
 /** HS-9421 — the periodic memory-sample timer (separate from the 50 ms
@@ -440,11 +488,18 @@ export function startServerEventLoopHeartbeat(dataDir: string): void {
   startMemorySampler(dataDir);
   heartbeatDataDir = dataDir;
   lastHeartbeatNs = process.hrtime.bigint();
+  lastHeartbeatWallMs = Date.now();
   heartbeatTimer = setInterval(() => {
     const now = process.hrtime.bigint();
+    const nowWall = Date.now();
     const elapsedMs = Number(now - lastHeartbeatNs) / 1_000_000;
+    // HS-9520 — the WALL gap is sampled alongside the monotonic one purely to
+    // classify: only a real OS freeze makes the two diverge (`isSuspendGap`).
+    // The monotonic gap remains the reported lag, since it is the accurate one.
+    const elapsedWallMs = nowWall - lastHeartbeatWallMs;
     lastHeartbeatNs = now;
-    handleHeartbeatGap(elapsedMs - HEARTBEAT_INTERVAL_MS);
+    lastHeartbeatWallMs = nowWall;
+    handleHeartbeatGap(elapsedMs - HEARTBEAT_INTERVAL_MS, elapsedWallMs - HEARTBEAT_INTERVAL_MS);
   }, HEARTBEAT_INTERVAL_MS);
   // Don't keep the process alive for the heartbeat alone — if every
   // other handle is gone, the process should exit cleanly.
