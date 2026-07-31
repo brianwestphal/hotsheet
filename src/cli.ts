@@ -198,6 +198,13 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
   const { evictionStats } = await import('./db/clusterEviction.js');
   setFreezeLogEvictionStats(evictionStats);
   startServerEventLoopHeartbeat(dataDir);
+  // HS-9534 — GC is stop-the-world and had NO instrumentation, so a collection
+  // long enough to matter appeared only as an unattributed heartbeat block.
+  // Answering "was it GC?" during HS-9521 needed a standalone rig; this is the
+  // ~30 lines that replace it. Started beside the heartbeat, dynamically imported
+  // for the same reason everything else on this path is.
+  const { startGcObserver } = await import('./diagnostics/gcObserver.js');
+  startGcObserver(dataDir);
   // HS-8726 (load resilience, docs/75 §75.6 Phase 4) — on resume from a system
   // suspend, open the scheduler's post-wake stagger window so every project's
   // overdue periodic timers (backups / snapshots / GC) drain gently instead of

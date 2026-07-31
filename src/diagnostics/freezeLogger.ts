@@ -160,6 +160,7 @@ export interface FreezeEntry {
     | 'server-instrument-async' // wrapped async block
     | 'server-wake'            // HS-8726 — process resumed from suspend (gap ≫ a real block)
     | 'server-memory'          // HS-9421 — periodic memory sample (the trend INTO a wedge)
+    | 'server-gc'              // HS-9534 — a stop-the-world GC pause over the threshold
     | 'freeze.log-truncated';  // HS-8163 — marker for the head-dropped sentinel
   /** Block duration in ms. */
   durationMs: number;

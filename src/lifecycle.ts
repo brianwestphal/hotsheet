@@ -14,6 +14,7 @@ import type { Server as HttpServer } from 'http';
 
 import { closeAllDatabases } from './db/connection.js';
 import { stopServerEventLoopHeartbeat } from './diagnostics/freezeLogger.js';
+import { stopGcObserver } from './diagnostics/gcObserver.js';
 import { stopEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { removeInstanceFile } from './instance.js';
 import { releaseAllLocks } from './lock.js';
@@ -253,6 +254,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
 function stopFreezeHeartbeat(): void {
   try {
     stopServerEventLoopHeartbeat();
+    stopGcObserver();
   } catch { /* heartbeat never started — nothing to stop */ }
 }
 

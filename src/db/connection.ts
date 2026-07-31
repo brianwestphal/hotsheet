@@ -2,9 +2,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { type PGlite, type PGliteOptions } from '@electric-sql/pglite';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { z } from 'zod';
 
+import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { globalHotsheetDir } from '../global-dir.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import {
@@ -1077,17 +1078,32 @@ async function openAndCacheDb(dbPath: string, loadDataDir?: Blob): Promise<PGlit
   const opts: PGliteOptions = {};
   if (loadDataDir !== undefined) opts.loadDataDir = loadDataDir;
   if (isTelemetryClusterDbPath(dbPath)) opts.startParams = [...TELEMETRY_START_PARAMS];
-  const db = createPglite(dbPath, opts);
-  try {
-    await db.waitReady;
-    await initSchema(db);
-  } catch (err) {
-    // HS-8717 — close the just-failed instance so its file handles release
-    // before the caller's recovery tries to move the `db/` dir aside. Best
-    // effort (a half-initialized PGLite may throw from close()).
-    try { await db.close(); } catch { /* half-initialized — best effort */ }
-    throw err;
-  }
+  // HS-9534 — this was the single largest instrumented blind spot on the open
+  // path. `initSchema` deliberately runs on the RAW instance (before
+  // `instrumentDbQueries` wraps it) so one-time schema work doesn't spam the log
+  // as queries — but that also meant cluster construction produced no entry at
+  // all, so a slow open showed up only as an unattributed heartbeat block.
+  //
+  // Recorded as an async span (wall time) rather than forced to `blocking: true`:
+  // it IS effectively CPU-bound WASM work, and the honest way to show that is the
+  // HS-9528 `cpuMs` field, which will read ~= `durationMs` here. Asserting
+  // `blocking` by hand would be a claim the data can already make for itself.
+  const db = await instrumentAsync(dirname(dbPath), `pglite.openCluster: ${basename(dirname(dbPath))}`, async () => {
+    const instance = createPglite(dbPath, opts);
+    try {
+      await instance.waitReady;
+      await initSchema(instance);
+    } catch (err) {
+      // HS-8717 — close the just-failed instance so its file handles release
+      // before the caller's recovery tries to move the `db/` dir aside. Best
+      // effort (a half-initialized PGLite may throw from close()). Kept INSIDE
+      // the instrumented span so a failed open is still closed — hoisting it out
+      // would leave a half-initialized instance holding file handles.
+      try { await instance.close(); } catch { /* half-initialized — best effort */ }
+      throw err;
+    }
+    return instance;
+  });
   // HS-9239 — cache (and hand out) the instrumented wrapper so every `getDb`
   // caller's queries are timed into freeze.log when they block the loop.
   // `initSchema` ran on the raw `db` above, so one-time startup schema work
