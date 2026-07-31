@@ -998,6 +998,20 @@ HS-8662 (shipped 2026-06-05). A document-level `paste` listener (`src/client/pas
 
 ---
 
+## 133. AI-tool availability and enablement (`133-ai-tool-availability.md`)
+
+**Status: SHIPPED (HS-9517, 2026-07-31).** AI tools are **opt-in**, like docs/18's bundled GitHub plugin: known and built in, but not enabled until the user chooses. **Claude, and only Claude, is enabled by default.**
+
+**Two questions, deliberately separate — the whole design.** *Availability* ("is this shipped?") is `AiToolPlugin.maturity` (`stable`/`beta`/`unreleased`) — a property of the INTEGRATION, identical on every machine. *Enablement* ("did the user opt in here?") is per-project `ai_tool_enabled:<id>`, mirroring `plugin_enabled:{id}`, default OFF. docs/124's five `dev_tool_*` gates had fused them, using a per-project runtime flag to mean "we haven't finished this yet" — which is not a per-project fact, and produced the HS-9515 defect where a project could show Codex selected with no way to configure it.
+
+**Current shipping decision (asserted by `enablement.test.ts`, so it can't drift):** Claude `stable`, **Codex `beta`**, Antigravity/OpenCode/Gemini/Goose `unreleased` (Gemini has no drive; Goose is unimplemented — shipping either would put a play button in front of users that can't work), Cursor/Copilot/Windsurf `stable` (instructions only).
+
+**Invariants worth knowing.** **Claude is always enabled**, checkbox disabled — it is the fallback transport, so a project with nothing enabled must still work, which is what guarantees the picker can never be empty. **Availability is checked INDEPENDENTLY of enablement**, so a settings row copied between projects can't resurrect an unreleased tool. The picker always offers **the tool the project already uses** (the HS-9411 rule — never silently switch a working project), and non-selectable options are `hidden` AND `disabled` since a hidden option is still assignable by value. Enabled state is stored as a STRING (the settings table stores strings) and `'false'` is rejected rather than treated as truthy.
+
+**One gate remains:** `dev_unreleased_ai_tools` reveals the unshipped integrations so they can be enabled — it gates a FEATURE (seeing unreleased work), not a tool, which is why it belongs in docs/124 where the five per-tool flags did not. Revealed ≠ enabled.
+
+**UI:** `client/aiToolsSection.tsx` → `#ai-tools-list` (BETA/UNRELEASED/DEFAULT badges) + `applyAiToolAvailability` filtering the picker; enabling re-runs the filter immediately, or the checkbox reads as doing nothing.
+
 ## 132. AI-tool plugin interface (`132-ai-tool-plugin-interface.md`)
 
 **Status: Design only, DECIDED (HS-9482, 2026-07-29).** Maintainer decision: a **NEW plugin interface specific to AI-tool integration** — NOT docs/18's `TicketingBackend`, not an extension of it, and not loaded by its loader — which **reuses docs/18's supporting subsystems** where they fit (custom config UI first), and where **the host carries general built-in mechanisms** so a plugin stays thin.
