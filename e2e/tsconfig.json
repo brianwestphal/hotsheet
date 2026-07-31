@@ -1,0 +1,18 @@
+{
+  // HS-9523 — `e2e/` belonged to no TypeScript project, so ESLint's project
+  // service could not parse these files at all: every spec reported a parse
+  // error and none of them were linted. (The same gap meant `npx tsc --noEmit`
+  // never typechecked them either — see the ticket's follow-up note.)
+  //
+  // A local tsconfig is what the project service looks for, so this is what
+  // makes the specs lintable. It intentionally does NOT feed the build: nothing
+  // emits from here, and `tsup` selects its entries explicitly.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false,
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

@@ -43,6 +43,18 @@ export interface TicketingBackend {
     url: string,
     context?: { remoteId?: string },
   ): Promise<{ content: Buffer; filename: string; mimeType: string } | null>;
+  // HS-9523 — the members below exist in the canonical `src/plugins/types.ts` but
+  // had never been mirrored here. The GitHub plugin *implements* all of them, so
+  // every one of their parameters was an implicit `any`, and with the plugin
+  // outside the lint gate nothing said so. That is the bulk of the type-safety
+  // errors widening the gate exposed.
+  getRemoteUrl?(remoteId: string): string | null;
+  shouldAutoSync?(ticket: Ticket): boolean;
+  uploadAttachment?(filename: string, content: Buffer, mimeType: string): Promise<string | null>;
+  getComments?(remoteId: string): Promise<RemoteComment[]>;
+  createComment?(remoteId: string, text: string): Promise<string>;
+  updateComment?(remoteId: string, commentId: string, text: string): Promise<void>;
+  deleteComment?(remoteId: string, commentId: string): Promise<void>;
 }
 
 export interface BackendCapabilities {
@@ -51,6 +63,8 @@ export interface BackendCapabilities {
   delete: boolean;
   incrementalPull: boolean;
   syncableFields: (keyof RemoteTicketFields)[];
+  /** Supports comment sync (notes ↔ comments). */
+  comments?: boolean;
 }
 
 export interface FieldMappings {

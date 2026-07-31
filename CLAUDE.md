@@ -84,6 +84,8 @@ npm run test:rust     # Rust unit tests for the Tauri crate (cargo test, src-tau
 ## Code Quality Gates
 
 - **Always fix lint and type errors before finishing.** Run `npx tsc --noEmit` and `npm run lint` — both must pass with zero errors. Fix as you go, don't batch.
+- **`npm run lint` covers `src/`, `plugins/`, `eslint-rules/` and `eslint.config.mjs`** — not just `src/`. Until HS-9523 the script was `eslint src/`, so `plugins/` was never gated at all and had accumulated 10 `await res.json() as Y` violations of the §"Type assertions" rule in the one module that talks to a third-party API. `eslint-rules/lintScope.test.mjs` now fails if a directory holding lintable source is neither in the script nor listed as a deliberate exemption, so the scope can't silently narrow again. **`e2e/` is the one knowing exemption** (recorded there): specs get the full `CORE_RULES` set, which browser-driving tests violate ~389 times in ways those rules aren't aimed at, and deciding which guards apply to a `*.spec.ts` is an open policy call.
+- **Each plugin needs its own `tsconfig.json`** — the ESLint project service resolves types per-file from the nearest one, and a plugin without it isn't type-checked *or* type-aware-linted (it silently degrades to `any`, which is where most of the HS-9523 findings came from). Include `"lib": ["ES2022", "DOM"]` and `"types": ["node"]`: plugins run in the Hot Sheet Node process and call `fetch`.
 - **Plugin tests** (`plugins/*/src/*.test.ts`) run only when explicitly targeted (`npx vitest run plugins/*/src/*.test.ts`) or via `npm run test:all-including-plugins`. NOT in `npm test`.
 
 ## Git

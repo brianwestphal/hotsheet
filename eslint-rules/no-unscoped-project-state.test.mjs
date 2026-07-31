@@ -7,8 +7,8 @@
  * imports the project API, H3 = infrastructure shapes are skipped) are pinned
  * here, in both directions.
  */
-import { RuleTester } from 'eslint';
 import tsParser from '@typescript-eslint/parser';
+import { RuleTester } from 'eslint';
 import { describe, it } from 'vitest';
 
 import rule from './no-unscoped-project-state.mjs';

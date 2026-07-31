@@ -3,6 +3,7 @@ import importX from "eslint-plugin-import-x";
 import kerfjs from "eslint-plugin-kerfjs";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
 import tsdoc from "eslint-plugin-tsdoc";
+import globals from "globals";
 import tseslint from "typescript-eslint";
 
 // HS-9419 (docs/126 §126.6) — local rule for the SCALAR half of the
@@ -618,6 +619,32 @@ export default tseslint.config(
     files: ["src/backup.ts", "src/backupFs.ts", "src/attachmentBackup.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...CORE_RULES, BACKUP_FS_SYNC_RULE],
+    },
+  },
+  // HS-9523 — plain `.mjs` (this file, `eslint-rules/*.mjs`) belongs to no
+  // TypeScript project, so the type-aware parser cannot resolve it and every such
+  // file reported a parse error instead of being linted. Type-aware rules do not
+  // apply to untyped JS anyway; this turns them off for `.mjs` so the syntactic
+  // rules — which DO apply — can finally run on our own ESLint rule sources.
+  //
+  // Only type-aware rules are disabled. `no-restricted-syntax` and the rest of
+  // the syntactic set are untouched, so this cannot repeat the HS-9518 wipeout.
+  {
+    files: ["**/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      // Spread the disable-type-checked languageOptions FIRST. Writing this key at
+      // all replaces the one the spread above provides, and that is what turns the
+      // type-aware parser off — dropping it puts the parse errors straight back.
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      // Explicit rather than inherited: these files belong to no tsconfig, which is
+      // the whole reason the project service could not parse them.
+      parserOptions: { projectService: false, project: false },
+      // They run under Node as ESM. Without the globals, `no-undef` reports `URL`,
+      // `process` and friends as undefined identifiers.
+      globals: { ...globals.node },
+      ecmaVersion: "latest",
+      sourceType: "module",
     },
   },
 );

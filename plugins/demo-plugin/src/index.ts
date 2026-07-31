@@ -27,6 +27,17 @@ const BOLT_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14
 const INFO_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
 const BELL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
 
+/** HS-9523 — "unset or empty" for a `string | null` setting; `strict-boolean-expressions`
+ *  rejects a bare truthiness test on a nullable string. */
+function isBlank(value: string | null | undefined): boolean {
+  return value === null || value === undefined || value === '';
+}
+
+/** The narrowing half of `isBlank` — `!isBlank(x)` alone does not narrow `x` to `string`. */
+function isPresent(value: string | null | undefined): value is string {
+  return value !== null && value !== undefined && value !== '';
+}
+
 export async function activate(ctx: PluginContext): Promise<void> {
   context = ctx;
   const username = await ctx.getSetting('username');
@@ -42,17 +53,17 @@ export async function activate(ctx: PluginContext): Promise<void> {
       icon: BOLT_ICON,
       title: 'Demo Plugin Action',
       action: 'toolbar_click',
-    } as PluginUIElement,
+    },
 
     // Status bar
     {
       id: 'demo-status',
       type: 'button',
       location: 'status_bar',
-      label: username ? `Demo: ${username}` : 'Demo Plugin',
+      label: isBlank(username) ? 'Demo Plugin' : `Demo: ${username}`,
       title: 'Demo status bar button',
       action: 'status_click',
-    } as PluginUIElement,
+    },
 
     // Detail panel — top (above fields)
     {
@@ -63,7 +74,7 @@ export async function activate(ctx: PluginContext): Promise<void> {
       label: 'Ticket Info',
       title: 'Demo detail top button',
       action: 'detail_top_click',
-    } as PluginUIElement,
+    },
 
     // Detail panel — bottom (below notes), primary style
     {
@@ -75,7 +86,7 @@ export async function activate(ctx: PluginContext): Promise<void> {
       title: 'Demo detail bottom button (primary style)',
       style: 'primary',
       action: 'detail_bottom_click',
-    } as PluginUIElement,
+    },
 
     // Context menu
     {
@@ -86,7 +97,7 @@ export async function activate(ctx: PluginContext): Promise<void> {
       label: 'Demo Action',
       title: 'Demo context menu item',
       action: 'context_click',
-    } as PluginUIElement,
+    },
 
     // Batch menu (shown when multiple tickets selected → "..." menu)
     {
@@ -97,7 +108,7 @@ export async function activate(ctx: PluginContext): Promise<void> {
       label: 'Demo Batch Action',
       title: 'Demo batch menu item',
       action: 'batch_click',
-    } as PluginUIElement,
+    },
 
     // --- Sidebar ---
 
@@ -110,7 +121,7 @@ export async function activate(ctx: PluginContext): Promise<void> {
       label: 'Demo Sidebar',
       title: 'Demo sidebar top button',
       action: 'sidebar_top_click',
-    } as PluginUIElement,
+    },
 
     // Sidebar bottom (after views)
     {
@@ -121,7 +132,7 @@ export async function activate(ctx: PluginContext): Promise<void> {
       label: 'Demo Bottom',
       title: 'Demo sidebar bottom button',
       action: 'sidebar_bottom_click',
-    } as PluginUIElement,
+    },
 
     // --- Link ---
 
@@ -133,10 +144,10 @@ export async function activate(ctx: PluginContext): Promise<void> {
       label: 'GitHub',
       icon: INFO_ICON,
       title: 'Demo external link',
-    } as PluginUIElement,
+    },
   ]);
 
-  ctx.log('info', `Demo plugin activated${username ? ` for ${username}` : ''}`);
+  ctx.log('info', `Demo plugin activated${isBlank(username) ? '' : ` for ${username}`}`);
 }
 
 export async function onAction(actionId: string, _actionContext: { ticketIds?: number[]; value?: unknown }): Promise<unknown> {
@@ -144,7 +155,7 @@ export async function onAction(actionId: string, _actionContext: { ticketIds?: n
     const apiKey = await context.getSetting('api_key');
     const username = await context.getSetting('username');
 
-    if (!apiKey || !username) {
+    if (!isPresent(apiKey) || !isPresent(username)) {
       context.updateConfigLabel('connection-status', 'Missing required fields', 'warning');
       return { connected: false, error: 'Missing api_key or username' };
     }
@@ -208,6 +219,9 @@ export async function onAction(actionId: string, _actionContext: { ticketIds?: n
   return null;
 }
 
+// The plugin interface declares `validateField(): Promise<FieldValidation | null>`
+// (src/plugins/types.ts), so returning a promise is the contract, not an oversight.
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function validateField(key: string, value: string): Promise<{ status: string; message: string } | null> {
   if (key === 'api_key') {
     if (!value) return { status: 'error', message: 'Required' };

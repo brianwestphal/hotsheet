@@ -11,25 +11,79 @@
  *     "rate limit exceeded" error.
  *   - Under normal conditions (remaining well above 10), nothing is logged.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { PluginContext } from './types.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 // Import the plugin entry point after we've set up fetch stubs per test.
 // Because activate() captures global.fetch at call time (via ghFetch's
 // closure), we can swap fetch out before each test.
-import { activate } from './index.js';
+import { activate, onAction, validateField } from './index.js';
+import type { PluginContext, Ticket, TicketingBackend } from './types.js';
 
 interface MockFetchCall { url: string; init: RequestInit | undefined }
+
+/**
+ * HS-9523 — read a stubbed request's JSON body as a checked record.
+ *
+ * Every assertion below used to parse the body with a bare `JSON.parse` and two
+ * non-null assertions, which yields `any` and made each following `body.labels`
+ * an unsafe member access — ~100 of the errors that appeared when `plugins/`
+ * finally entered the lint gate. Returning `Record<string, unknown>` keeps the
+ * assertions readable while making the reads type-safe, and checks the call
+ * actually happened rather than asserting it away.
+ */
+function requestBody(call: MockFetchCall | undefined): Record<string, unknown> {
+  const raw = call?.init?.body;
+  if (typeof raw !== 'string') {
+    throw new Error(`expected a JSON string request body, got ${typeof raw}`);
+  }
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+/**
+ * HS-9523 — call an OPTIONAL backend method that this plugin is known to implement.
+ *
+ * These call sites all cast the backend to `any` before reaching the method, which
+ * defeated every type-safety rule at once (`no-explicit-any` plus the unsafe-call /
+ * -member-access / -assignment cascade — 75 of the errors in this file). The casts
+ * existed because `plugins/.../types.ts` was missing these members entirely; now
+ * that it mirrors the canonical `TicketingBackend`, the methods are declared
+ * optional and this narrows them without lying to the compiler.
+ */
+function backendMethod<K extends keyof TicketingBackend>(
+  backend: TicketingBackend,
+  key: K,
+): NonNullable<TicketingBackend[K]> {
+  const fn = backend[key];
+  if (fn === undefined) throw new Error(`backend.${key} is not implemented`);
+  return fn;
+}
+
+/**
+ * Assert non-null AND narrow. `expect(x).not.toBeNull()` does the first but not the
+ * second — the compiler still sees `T | null`, which is why these call sites had to
+ * be reached through casts before `plugins/` was type-checked.
+ */
+function assertPresent<T>(value: T | null | undefined, what: string): asserts value is T {
+  if (value === null || value === undefined) throw new Error(`expected ${what} to be present`);
+}
+
+/** Minimal `Ticket` for the backend calls that take one. */
+function makeTicket(over: Partial<Ticket> = {}): Ticket {
+  return {
+    id: 1, ticket_number: 'HS-1', title: 'T', details: '', category: 'issue',
+    priority: 'default', status: 'not_started', up_next: false, tags: '[]', ...over,
+  };
+}
+
 let fetchCalls: MockFetchCall[];
 const _realFetch = global.fetch;
 
 function installFetchStub(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
   global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input.toString();
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     fetchCalls.push({ url, init });
     return handler(url, init);
-  }) as typeof fetch;
+  });
 }
 
 function restoreFetch() {
@@ -51,7 +105,7 @@ function makeContext(settings: Record<string, string>): {
   const context: PluginContext = {
     config: {},
     log: (level, message) => logs.push({ level, message }),
-    getSetting: async (key) => settings[key] ?? null,
+    getSetting: (key) => Promise.resolve(settings[key] ?? null),
     setSetting: async () => { /* no-op */ },
     registerUI: () => { /* no-op */ },
     updateConfigLabel: () => { /* no-op */ },
@@ -98,7 +152,7 @@ describe('github-issues plugin — rate-limit handling (HS-5060)', () => {
     expect(backend).toBeTruthy();
 
     const start = Date.now();
-    const status = await backend!.checkConnection();
+    const status = await backend.checkConnection();
     const elapsed = Date.now() - start;
 
     expect(status.connected).toBe(true);
@@ -125,7 +179,7 @@ describe('github-issues plugin — rate-limit handling (HS-5060)', () => {
     });
 
     const backend = await activate(context);
-    const status = await backend!.checkConnection();
+    const status = await backend.checkConnection();
     // checkConnection catches the throw and reports connected: false with the message.
     expect(status.connected).toBe(false);
     expect(status.error ?? '').toContain('rate limit exceeded');
@@ -144,7 +198,7 @@ describe('github-issues plugin — rate-limit handling (HS-5060)', () => {
     });
 
     const backend = await activate(context);
-    await backend!.checkConnection();
+    await backend.checkConnection();
 
     expect(logs.some(l => l.message.includes('Rate limit low'))).toBe(false);
   });
@@ -174,7 +228,7 @@ async function activateWith(
   const { context, logs } = makeContext(settings);
   const backend = await activate(context);
   fetchCalls = []; // Reset calls from activate() itself
-  return { backend: backend!, logs, context };
+  return { backend, logs, context };
 }
 
 // ---- checkConnection ----
@@ -187,7 +241,7 @@ describe('github-issues plugin — checkConnection', () => {
     installFetchStub(() => makeResponse(200, {}, okHeaders));
     const { context } = makeContext({});
     const backend = await activate(context);
-    const status = await backend!.checkConnection();
+    const status = await backend.checkConnection();
     expect(status.connected).toBe(false);
     expect(status.error).toContain('Missing required configuration');
   });
@@ -196,7 +250,7 @@ describe('github-issues plugin — checkConnection', () => {
     installFetchStub(() => makeResponse(401, { message: 'Bad credentials' }, okHeaders));
     const { context } = makeContext(defaultSettings);
     const backend = await activate(context);
-    const status = await backend!.checkConnection();
+    const status = await backend.checkConnection();
     expect(status.connected).toBe(false);
     expect(status.error).toContain('401');
   });
@@ -225,9 +279,9 @@ describe('github-issues plugin — createRemote', () => {
     expect(remoteId).toBe('42');
 
     // Verify the POST body had the right labels
-    const postCall = fetchCalls.find(c => c.init?.method === 'POST');
+    const postCall = fetchCalls.find(c => (c.init?.method ?? '') === 'POST');
     expect(postCall).toBeTruthy();
-    const body = JSON.parse(postCall!.init!.body as string);
+    const body = requestBody(postCall);
     expect(body.title).toBe('Test Issue');
     expect(body.body).toBe('Some details');
     expect(body.labels).toContain('category:bug');
@@ -252,8 +306,8 @@ describe('github-issues plugin — createRemote', () => {
     };
 
     await backend.createRemote(ticket);
-    const postCall = fetchCalls.find(c => c.init?.method === 'POST');
-    const body = JSON.parse(postCall!.init!.body as string);
+    const postCall = fetchCalls.find(c => (c.init?.method ?? '') === 'POST');
+    const body = requestBody(postCall);
     expect(body.labels).not.toContain('priority:default');
     expect(body.labels).toContain('category:task');
     expect(body.labels).toContain('status:not-started');
@@ -291,8 +345,8 @@ describe('github-issues plugin — createRemote', () => {
     };
 
     await backend.createRemote(ticket);
-    const postCall = fetchCalls.find(c => c.init?.method === 'POST');
-    const body = JSON.parse(postCall!.init!.body as string);
+    const postCall = fetchCalls.find(c => (c.init?.method ?? '') === 'POST');
+    const body = requestBody(postCall);
     expect(body.milestone).toBe(7);
     // Milestone tags should not be sent as labels
     expect(body.labels).not.toContain('milestone:v1.0');
@@ -312,13 +366,13 @@ describe('github-issues plugin — updateRemote', () => {
     });
 
     await backend.updateRemote('10', { title: 'New Title', details: 'New body' });
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
     expect(patchCall).toBeTruthy();
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const body = requestBody(patchCall);
     expect(body.title).toBe('New Title');
     expect(body.body).toBe('New body');
     // Should not have fetched the issue (no GET before the PATCH)
-    expect(fetchCalls.filter(c => !c.init?.method || c.init?.method === 'GET').length).toBe(0);
+    expect(fetchCalls.filter(c => (c.init?.method ?? 'GET') === 'GET').length).toBe(0);
   });
 
   it('HS-8954/HS-8955 — returns the PATCH response updated_at so the engine can advance its watermark', async () => {
@@ -338,7 +392,7 @@ describe('github-issues plugin — updateRemote', () => {
       milestone: null, updated_at: new Date().toISOString(),
     };
     const { backend } = await activateWith((url, init) => {
-      if (url.includes('/issues/10') && (!init?.method || init?.method === 'GET')) {
+      if (url.includes('/issues/10') && ((init?.method ?? 'GET') === 'GET')) {
         return makeResponse(200, existingIssue, okHeaders);
       }
       if (init?.method === 'PATCH') return makeResponse(200, {}, okHeaders);
@@ -346,8 +400,8 @@ describe('github-issues plugin — updateRemote', () => {
     });
 
     await backend.updateRemote('10', { category: 'bug' });
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
+    const body = requestBody(patchCall);
     expect(body.labels).toContain('category:bug');
     expect(body.labels).not.toContain('category:issue');
     expect(body.labels).toContain('my-custom-label');
@@ -365,7 +419,7 @@ describe('github-issues plugin — updateRemote', () => {
       milestone: null, updated_at: new Date().toISOString(),
     };
     const { backend } = await activateWith((url, init) => {
-      if (url.includes('/issues/10') && (!init?.method || init?.method === 'GET')) {
+      if (url.includes('/issues/10') && ((init?.method ?? 'GET') === 'GET')) {
         return makeResponse(200, existingIssue, okHeaders);
       }
       if (init?.method === 'PATCH') return makeResponse(200, {}, okHeaders);
@@ -373,8 +427,8 @@ describe('github-issues plugin — updateRemote', () => {
     });
 
     await backend.updateRemote('10', { status: 'completed' });
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
+    const body = requestBody(patchCall);
     expect(body.state).toBe('open');
     expect(body.labels).toContain('status:completed');
   });
@@ -386,7 +440,7 @@ describe('github-issues plugin — updateRemote', () => {
       milestone: null, updated_at: new Date().toISOString(),
     };
     const { backend } = await activateWith((url, init) => {
-      if (url.includes('/issues/11') && (!init?.method || init?.method === 'GET')) {
+      if (url.includes('/issues/11') && ((init?.method ?? 'GET') === 'GET')) {
         return makeResponse(200, existingIssue, okHeaders);
       }
       if (init?.method === 'PATCH') return makeResponse(200, {}, okHeaders);
@@ -394,8 +448,8 @@ describe('github-issues plugin — updateRemote', () => {
     });
 
     await backend.updateRemote('11', { status: 'verified' });
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
+    const body = requestBody(patchCall);
     expect(body.state).toBe('closed');
     expect(body.labels).toContain('status:verified');
   });
@@ -407,7 +461,7 @@ describe('github-issues plugin — updateRemote', () => {
       milestone: { number: 7, title: 'v1.0' }, updated_at: new Date().toISOString(),
     };
     const { backend } = await activateWith((url, init) => {
-      if (url.includes('/issues/10') && (!init?.method || init?.method === 'GET')) {
+      if (url.includes('/issues/10') && ((init?.method ?? 'GET') === 'GET')) {
         return makeResponse(200, existingIssue, okHeaders);
       }
       if (init?.method === 'PATCH') return makeResponse(200, {}, okHeaders);
@@ -415,8 +469,8 @@ describe('github-issues plugin — updateRemote', () => {
     });
 
     await backend.updateRemote('10', { tags: ['some-tag'] });
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
+    const body = requestBody(patchCall);
     expect(body.milestone).toBeNull();
     expect(body.labels).toContain('some-tag');
   });
@@ -443,10 +497,10 @@ describe('github-issues plugin — deleteRemote', () => {
     });
 
     await backend.deleteRemote('15');
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
     expect(patchCall).toBeTruthy();
     expect(patchCall!.url).toContain('/issues/15');
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const body = requestBody(patchCall);
     expect(body.state).toBe('closed');
     expect(logs.some(l => l.message.includes('Closed issue #15'))).toBe(true);
   });
@@ -587,7 +641,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [{ name: 'category:feature' }], milestone: null,
     });
-    expect(fields?.category).toBe('feature');
+    expect(fields.category).toBe('feature');
   });
 
   it('maps priority labels to local values', async () => {
@@ -595,7 +649,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [{ name: 'priority:lowest' }], milestone: null,
     });
-    expect(fields?.priority).toBe('lowest');
+    expect(fields.priority).toBe('lowest');
   });
 
   it('defaults priority to "default" when no priority label exists', async () => {
@@ -603,7 +657,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [], milestone: null,
     });
-    expect(fields?.priority).toBe('default');
+    expect(fields.priority).toBe('default');
   });
 
   it('defaults category to "issue" when no category label exists', async () => {
@@ -611,7 +665,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [], milestone: null,
     });
-    expect(fields?.category).toBe('issue');
+    expect(fields.category).toBe('issue');
   });
 
   it('maps status labels to local values (lossless)', async () => {
@@ -619,7 +673,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [{ name: 'status:started' }], milestone: null,
     });
-    expect(fields?.status).toBe('started');
+    expect(fields.status).toBe('started');
   });
 
   it('falls back to closed → completed when no status label', async () => {
@@ -627,7 +681,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'closed', updated_at: '2024-01-01T00:00:00Z',
       labels: [], milestone: null,
     });
-    expect(closed?.status).toBe('completed');
+    expect(closed.status).toBe('completed');
   });
 
   it('falls back to in-progress label → started when no status label', async () => {
@@ -635,7 +689,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 2, title: 'y', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [{ name: 'in-progress' }], milestone: null,
     });
-    expect(inProgress?.status).toBe('started');
+    expect(inProgress.status).toBe('started');
   });
 
   it('falls back to open → not_started when no status label', async () => {
@@ -643,7 +697,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 3, title: 'z', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [], milestone: null,
     });
-    expect(open?.status).toBe('not_started');
+    expect(open.status).toBe('not_started');
   });
 
   it('maps up_next from the up-next label', async () => {
@@ -651,7 +705,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [{ name: 'up-next' }], milestone: null,
     });
-    expect(fields?.up_next).toBe(true);
+    expect(fields.up_next).toBe(true);
   });
 
   it('excludes known labels from tags', async () => {
@@ -660,7 +714,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       labels: [{ name: 'category:bug' }, { name: 'priority:high' }, { name: 'status:started' }, { name: 'up-next' }, { name: 'custom-label' }],
       milestone: null,
     });
-    expect(fields?.tags).toEqual(['custom-label']);
+    expect(fields.tags).toEqual(['custom-label']);
   });
 
   it('converts milestone to a milestone: tag', async () => {
@@ -668,7 +722,7 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: [], milestone: { number: 3, title: 'Sprint 5' },
     });
-    expect(fields?.tags).toContain('milestone:Sprint 5');
+    expect(fields.tags).toContain('milestone:Sprint 5');
   });
 
   it('handles string labels (not just objects)', async () => {
@@ -676,8 +730,8 @@ describe('github-issues plugin — field mapping (issueToFields)', () => {
       number: 1, title: 'x', body: '', state: 'open', updated_at: '2024-01-01T00:00:00Z',
       labels: ['category:bug', 'priority:low'], milestone: null,
     });
-    expect(fields?.category).toBe('bug');
-    expect(fields?.priority).toBe('low');
+    expect(fields.category).toBe('bug');
+    expect(fields.priority).toBe('low');
   });
 });
 
@@ -747,7 +801,7 @@ describe('github-issues plugin — comments', () => {
       return makeResponse(200, {}, okHeaders);
     });
 
-    const result = await (backend as any).getComments('5');
+    const result = await backendMethod(backend, 'getComments')('5');
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe('100');
     expect(result[0].text).toBe('First comment');
@@ -764,11 +818,11 @@ describe('github-issues plugin — comments', () => {
       return makeResponse(200, {}, okHeaders);
     });
 
-    const commentId = await (backend as any).createComment('5', 'New comment text');
+    const commentId = await backendMethod(backend, 'createComment')('5', 'New comment text');
     expect(commentId).toBe('200');
-    const postCall = fetchCalls.find(c => c.init?.method === 'POST');
+    const postCall = fetchCalls.find(c => (c.init?.method ?? '') === 'POST');
     expect(postCall!.url).toContain('/issues/5/comments');
-    const body = JSON.parse(postCall!.init!.body as string);
+    const body = requestBody(postCall);
     expect(body.body).toBe('New comment text');
   });
 
@@ -778,10 +832,10 @@ describe('github-issues plugin — comments', () => {
       return makeResponse(200, {}, okHeaders);
     });
 
-    await (backend as any).updateComment('5', '200', 'Updated text');
-    const patchCall = fetchCalls.find(c => c.init?.method === 'PATCH');
+    await backendMethod(backend, 'updateComment')('5', '200', 'Updated text');
+    const patchCall = fetchCalls.find(c => (c.init?.method ?? '') === 'PATCH');
     expect(patchCall!.url).toContain('/issues/comments/200');
-    const body = JSON.parse(patchCall!.init!.body as string);
+    const body = requestBody(patchCall);
     expect(body.body).toBe('Updated text');
   });
 
@@ -791,8 +845,8 @@ describe('github-issues plugin — comments', () => {
       return makeResponse(200, {}, okHeaders);
     });
 
-    await (backend as any).deleteComment('5', '200');
-    const deleteCall = fetchCalls.find(c => c.init?.method === 'DELETE');
+    await backendMethod(backend, 'deleteComment')('5', '200');
+    const deleteCall = fetchCalls.find(c => (c.init?.method ?? '') === 'DELETE');
     expect(deleteCall!.url).toContain('/issues/comments/200');
   });
 });
@@ -805,7 +859,7 @@ describe('github-issues plugin — shouldAutoSync and getRemoteUrl', () => {
 
   it('shouldAutoSync returns false by default', async () => {
     const { backend } = await activateWith(() => makeResponse(200, {}, okHeaders));
-    expect((backend as any).shouldAutoSync({})).toBe(false);
+    expect(backendMethod(backend, 'shouldAutoSync')(makeTicket())).toBe(false);
   });
 
   it('shouldAutoSync returns true when auto_sync_new is "true"', async () => {
@@ -813,12 +867,12 @@ describe('github-issues plugin — shouldAutoSync and getRemoteUrl', () => {
       () => makeResponse(200, {}, okHeaders),
       { ...defaultSettings, auto_sync_new: 'true' },
     );
-    expect((backend as any).shouldAutoSync({})).toBe(true);
+    expect(backendMethod(backend, 'shouldAutoSync')(makeTicket())).toBe(true);
   });
 
   it('getRemoteUrl returns the correct GitHub issue URL', async () => {
     const { backend } = await activateWith(() => makeResponse(200, {}, okHeaders));
-    expect((backend as any).getRemoteUrl('42')).toBe('https://github.com/octocat/hello-world/issues/42');
+    expect(backendMethod(backend, 'getRemoteUrl')('42')).toBe('https://github.com/octocat/hello-world/issues/42');
   });
 
   it('getRemoteUrl returns null when owner/repo are missing', async () => {
@@ -826,7 +880,7 @@ describe('github-issues plugin — shouldAutoSync and getRemoteUrl', () => {
       () => makeResponse(200, {}, okHeaders),
       { token: 'ghp_test' },
     );
-    expect((backend as any).getRemoteUrl('42')).toBeNull();
+    expect(backendMethod(backend, 'getRemoteUrl')('42')).toBeNull();
   });
 });
 
@@ -849,7 +903,7 @@ describe('github-issues plugin — uploadAttachment', () => {
       { ...defaultSettings, attachment_repo: 'octocat/attachments' },
     );
 
-    const url = await (backend as any).uploadAttachment('test.png', Buffer.from('data'), 'image/png');
+    const url = await backendMethod(backend, 'uploadAttachment')('test.png', Buffer.from('data'), 'image/png');
     expect(url).toContain('raw.githubusercontent.com');
     expect(url).toContain('hotsheet-attachments/abc-test.png');
   });
@@ -857,7 +911,7 @@ describe('github-issues plugin — uploadAttachment', () => {
   it('returns null when attachment_repo is not configured', async () => {
     const { backend, logs } = await activateWith(() => makeResponse(200, {}, okHeaders));
 
-    const url = await (backend as any).uploadAttachment('test.png', Buffer.from('data'), 'image/png');
+    const url = await backendMethod(backend, 'uploadAttachment')('test.png', Buffer.from('data'), 'image/png');
     expect(url).toBeNull();
     expect(logs.some(l => l.message.includes('attachment_repo not configured'))).toBe(true);
   });
@@ -873,7 +927,7 @@ describe('github-issues plugin — uploadAttachment', () => {
       { ...defaultSettings, attachment_repo: 'octocat/attachments' },
     );
 
-    const url = await (backend as any).uploadAttachment('test.png', Buffer.from('data'), 'image/png');
+    const url = await backendMethod(backend, 'uploadAttachment')('test.png', Buffer.from('data'), 'image/png');
     expect(url).toBeNull();
     expect(logs.some(l => l.level === 'error' && l.message.includes('Failed to upload'))).toBe(true);
   });
@@ -904,8 +958,8 @@ describe('github-issues plugin — downloadAttachment', () => {
       return makeResponse(200, {}, okHeaders);
     });
 
-    const result = await (backend as any).downloadAttachment(ASSET_URL, { remoteId: '42' });
-    expect(result).not.toBeNull();
+    const result = await backendMethod(backend, 'downloadAttachment')(ASSET_URL, { remoteId: '42' });
+    assertPresent(result, 'a downloaded attachment');
     expect(result.mimeType).toBe('image/png');
     expect(Buffer.from(result.content).equals(png)).toBe(true);
     // Filename derived from the signed URL's path (the raw user-attachments URL has no extension).
@@ -923,7 +977,7 @@ describe('github-issues plugin — downloadAttachment', () => {
 
   it('returns null for a user-attachments URL when no remote id is provided', async () => {
     const { backend, logs } = await activateWith(() => makeResponse(200, {}, okHeaders));
-    const result = await (backend as any).downloadAttachment(ASSET_URL);
+    const result = await backendMethod(backend, 'downloadAttachment')(ASSET_URL);
     expect(result).toBeNull();
     expect(logs.some(l => l.message.includes('without a remote id'))).toBe(true);
   });
@@ -933,7 +987,7 @@ describe('github-issues plugin — downloadAttachment', () => {
       if (url.includes('/issues/42')) return makeResponse(200, { body_html: '<p>no images here</p>' }, okHeaders);
       return makeResponse(200, {}, okHeaders);
     });
-    const result = await (backend as any).downloadAttachment(ASSET_URL, { remoteId: '42' });
+    const result = await backendMethod(backend, 'downloadAttachment')(ASSET_URL, { remoteId: '42' });
     expect(result).toBeNull();
   });
 
@@ -945,8 +999,8 @@ describe('github-issues plugin — downloadAttachment', () => {
       return makeResponse(200, {}, okHeaders);
     });
 
-    const result = await (backend as any).downloadAttachment('https://raw.githubusercontent.com/o/r/main/asset');
-    expect(result).not.toBeNull();
+    const result = await backendMethod(backend, 'downloadAttachment')('https://raw.githubusercontent.com/o/r/main/asset');
+    assertPresent(result, 'a downloaded attachment');
     expect(result.mimeType).toBe('image/png');
     // A direct fetch DOES carry the auth header.
     const call = fetchCalls.find(c => c.url.includes('/asset'));
@@ -960,7 +1014,8 @@ describe('github-issues plugin — downloadAttachment', () => {
       }
       return makeResponse(200, {}, okHeaders);
     });
-    const result = await (backend as any).downloadAttachment('https://x.test/asset');
+    const result = await backendMethod(backend, 'downloadAttachment')('https://x.test/asset');
+    assertPresent(result, 'a downloaded attachment');
     expect(result.filename).toBe('diagram.png');
   });
 
@@ -971,7 +1026,7 @@ describe('github-issues plugin — downloadAttachment', () => {
       }
       return makeResponse(200, {}, okHeaders);
     });
-    const result = await (backend as any).downloadAttachment('https://x.test/asset');
+    const result = await backendMethod(backend, 'downloadAttachment')('https://x.test/asset');
     expect(result).toBeNull();
     expect(logs.some(l => l.message.includes('Skipping non-image'))).toBe(true);
   });
@@ -981,7 +1036,7 @@ describe('github-issues plugin — downloadAttachment', () => {
       if (url.includes('/asset')) return makeResponse(404, { message: 'Not Found' }, okHeaders);
       return makeResponse(200, {}, okHeaders);
     });
-    expect(await (backend as any).downloadAttachment('https://x.test/asset')).toBeNull();
+    expect(await backendMethod(backend, 'downloadAttachment')('https://x.test/asset')).toBeNull();
   });
 });
 
@@ -1020,10 +1075,6 @@ describe('github-issues plugin — error handling', () => {
     await expect(backend.pullChanges(null)).rejects.toThrow('Validation Failed');
   });
 });
-
-// ---- validateField ----
-
-import { validateField, onAction } from './index.js';
 
 describe('github-issues plugin — validateField', () => {
   it('returns error when token is empty', async () => {
@@ -1144,8 +1195,8 @@ describe('github-issues plugin — custom label prefixes', () => {
     };
 
     await backend.createRemote(ticket);
-    const postCall = fetchCalls.find(c => c.init?.method === 'POST');
-    const body = JSON.parse(postCall!.init!.body as string);
+    const postCall = fetchCalls.find(c => (c.init?.method ?? '') === 'POST');
+    const body = requestBody(postCall);
     expect(body.labels).toContain('type:bug');
     expect(body.labels).toContain('p:high');
     expect(body.labels).toContain('st:started');

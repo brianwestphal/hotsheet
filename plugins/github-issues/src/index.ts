@@ -1,7 +1,20 @@
 // GitHub Issues plugin for Hot Sheet
 // Syncs tickets bidirectionally with GitHub Issues via the REST API.
 
-import type { FieldMap, PluginContext, PluginUIElement, RemoteChange, RemoteComment, RemoteTicketFields, Ticket, TicketingBackend } from './types.js';
+import {
+  GitHubCommentListSchema,
+  GitHubContentsWriteSchema,
+  GitHubCreatedCommentSchema,
+  type GitHubIssue,
+  GitHubIssueHtmlSchema,
+  GitHubIssueListSchema,
+  GitHubIssueSchema,
+  GitHubMilestoneListSchema,
+  GitHubUpdatedIssueSchema,
+  parseGitHub,
+  parseTags,
+} from './schemas.js';
+import type { PluginContext, RemoteChange, RemoteComment, RemoteTicketFields, Ticket, TicketingBackend } from './types.js';
 
 const API_BASE = 'https://api.github.com';
 
@@ -79,24 +92,23 @@ const GITHUB_STATE_FOR_STATUS: Record<string, 'open' | 'closed'> = {
   verified: 'closed',
 };
 
-interface GitHubLabel {
-  name: string;
+// HS-9523 — the GitHub wire shapes now live in `schemas.ts` as zod schemas, with
+// the TypeScript types INFERRED from them. Previously these were hand-written
+// interfaces asserted onto `res.json()`, so the declared type and the runtime
+// check could not disagree — because there was no runtime check. Inferring keeps
+// them provably in step.
+
+/** HS-9523 — "unset or empty" for a `string | null` setting. `strict-boolean-expressions`
+ *  rejects a bare truthiness test on a nullable string, and rightly: `''` and `null` are
+ *  different values that this code deliberately treats the same, so it should say so. */
+function isBlank(value: string | null | undefined): boolean {
+  return value === null || value === undefined || value === '';
 }
 
-interface GitHubMilestone {
-  number: number;
-  title: string;
-}
-
-interface GitHubIssue {
-  number: number;
-  title: string;
-  body: string | null;
-  state: 'open' | 'closed';
-  labels: (string | GitHubLabel)[];
-  milestone: GitHubMilestone | null;
-  updated_at: string;
-  pull_request?: unknown;
+/** The narrowing half of `isBlank`. A plain `!isBlank(x)` does not narrow `x` to
+ *  `string`, so the type predicate is what lets callers use the value afterwards. */
+function isPresent(value: string | null | undefined): value is string {
+  return !isBlank(value);
 }
 
 let _context: PluginContext | null = null;
@@ -108,23 +120,34 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
   const owner = await context.getSetting('owner');
   const repo = await context.getSetting('repo');
 
-  const catPrefix = (await context.getSetting('label_prefix_category')) || 'category:';
-  const priPrefix = (await context.getSetting('label_prefix_priority')) || 'priority:';
-  const statusPrefix = (await context.getSetting('label_prefix_status')) || 'status:';
-  const upNextLabel = (await context.getSetting('up_next_label')) || 'up-next';
-  const milestonePrefix = (await context.getSetting('milestone_tag_prefix')) || 'milestone:';
+  // HS-9523 — `getSetting` returns `string | null`, and every one of these used
+  // `|| fallback`. That is the intended behavior (an EMPTY prefix would silently
+  // break label parsing, so blank must fall back exactly like unset does), but
+  // `||` on a nullable string is what `strict-boolean-expressions` rejects.
+  // `?? fallback` would NOT be equivalent — it keeps `''`. The helper states the
+  // rule once, explicitly, instead of repeating a subtle conditional eight times.
+  const settingOr = async (key: string, fallback: string): Promise<string> => {
+    const value = await context.getSetting(key);
+    return value === null || value === '' ? fallback : value;
+  };
+
+  const catPrefix = await settingOr('label_prefix_category', 'category:');
+  const priPrefix = await settingOr('label_prefix_priority', 'priority:');
+  const statusPrefix = await settingOr('label_prefix_status', 'status:');
+  const upNextLabel = await settingOr('up_next_label', 'up-next');
+  const milestonePrefix = await settingOr('milestone_tag_prefix', 'milestone:');
   const attachmentRepo = await context.getSetting('attachment_repo');
-  const attachmentFolder = (await context.getSetting('attachment_folder')) || 'hotsheet-attachments';
-  const attachmentBranch = (await context.getSetting('attachment_branch')) || 'main';
+  const attachmentFolder = await settingOr('attachment_folder', 'hotsheet-attachments');
+  const attachmentBranch = await settingOr('attachment_branch', 'main');
 
   // Parse attachment repo into owner/repo
-  const attachmentRepoParts = attachmentRepo?.split('/');
-  const attOwner = attachmentRepoParts?.[0] || '';
-  const attRepo = attachmentRepoParts?.[1] || '';
+  const attachmentRepoParts = attachmentRepo === null ? [] : attachmentRepo.split('/');
+  const attOwner = attachmentRepoParts[0] ?? '';
+  const attRepo = attachmentRepoParts[1] ?? '';
   const canUploadAttachments = attOwner !== '' && attRepo !== '';
 
-  const syncDirection = (await context.getSetting('sync_direction')) || 'bidirectional';
-  const filterLabels = ((await context.getSetting('filter_labels')) || '')
+  const syncDirection = await settingOr('sync_direction', 'bidirectional');
+  const filterLabels = (await settingOr('filter_labels', ''))
     .split(',')
     .map(l => l.trim())
     .filter(Boolean);
@@ -146,7 +169,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       icon: SYNC_ICON,
       title: 'Sync with GitHub',
       action: 'sync',
-    } as PluginUIElement,
+    },
   ]);
 
   const autoSyncNew = (await context.getSetting('auto_sync_new')) === 'true';
@@ -163,15 +186,15 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github.v3+json',
       'User-Agent': 'HotSheet-GitHub-Plugin/0.1',
-      ...(options.headers as Record<string, string> ?? {}),
+      ...(options.headers as Record<string, string> | undefined),
     };
-    if (token) headers.Authorization = `Bearer ${token}`;
+    if (token !== null && token !== '') headers.Authorization = `Bearer ${token}`;
 
     const res = await fetch(url, { ...options, headers });
 
-    const remaining = parseInt(res.headers.get('x-ratelimit-remaining') || '999', 10);
+    const remaining = parseInt(res.headers.get('x-ratelimit-remaining') ?? '999', 10);
     if (remaining < 10) {
-      const resetTime = parseInt(res.headers.get('x-ratelimit-reset') || '0', 10) * 1000;
+      const resetTime = parseInt(res.headers.get('x-ratelimit-reset') ?? '0', 10) * 1000;
       const waitMs = Math.max(0, resetTime - Date.now()) + 1000;
       context.log('warn', `Rate limit low (${remaining} remaining), waiting ${Math.round(waitMs / 1000)}s`);
       await new Promise(resolve => setTimeout(resolve, waitMs));
@@ -188,7 +211,8 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
   }
 
   function issueToFields(issue: GitHubIssue): RemoteTicketFields {
-    const labels = (issue.labels || []).map(l => typeof l === 'string' ? l : l.name);
+    // `labels` is `.default([])` in the schema, so it is always an array here.
+    const labels = issue.labels.map(l => typeof l === 'string' ? l : l.name);
 
     let category = 'issue';
     for (const label of labels) {
@@ -227,7 +251,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       tags.push(`${milestonePrefix}${issue.milestone.title}`);
     }
 
-    return { title: issue.title, details: issue.body || '', category, priority, status, up_next: upNext, tags };
+    return { title: issue.title, details: issue.body ?? '', category, priority, status, up_next: upNext, tags };
   }
 
   function ticketToLabels(ticket: Ticket): string[] {
@@ -242,7 +266,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
     const statusLabel = statusLabelMap.toRemote[ticket.status];
     if (statusLabel) labels.push(statusLabel);
     if (ticket.up_next) labels.push(upNextLabel);
-    const tags: string[] = typeof ticket.tags === 'string' ? JSON.parse(ticket.tags || '[]') : (ticket.tags || []);
+    const tags: string[] = parseTags(ticket.tags);
     for (const tag of tags) {
       // Skip milestone tags (handled separately)
       if (!tag.startsWith(milestonePrefix)) labels.push(tag);
@@ -252,7 +276,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
 
   /** Extract milestone name from ticket tags, if present. */
   function getMilestoneFromTags(ticket: Ticket): string | null {
-    const tags: string[] = typeof ticket.tags === 'string' ? JSON.parse(ticket.tags || '[]') : (ticket.tags || []);
+    const tags: string[] = parseTags(ticket.tags);
     for (const tag of tags) {
       if (tag.startsWith(milestonePrefix)) return tag.slice(milestonePrefix.length);
     }
@@ -267,7 +291,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       milestoneCache = new Map();
       try {
         const res = await ghFetch(`/repos/${owner}/${repo}/milestones?state=all&per_page=100`);
-        const milestones = await res.json() as GitHubMilestone[];
+        const milestones = await parseGitHub(GitHubMilestoneListSchema, res, 'GET /milestones');
         for (const m of milestones) milestoneCache.set(m.title, m.number);
       } catch { /* ignore */ }
     }
@@ -284,13 +308,13 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       comments: true,
     },
     fieldMappings: {
-      category: categoryMap as FieldMap,
-      priority: priorityMap as FieldMap,
-      status: statusLabelMap as FieldMap,
+      category: categoryMap,
+      priority: priorityMap,
+      status: statusLabelMap,
     },
 
     async checkConnection() {
-      if (!token || !owner || !repo) {
+      if (isBlank(token) || isBlank(owner) || isBlank(repo)) {
         return { connected: false, error: 'Missing required configuration (token, owner, repo)' };
       }
       try {
@@ -307,16 +331,16 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       const issueBody: Record<string, unknown> = { title: ticket.title, body: ticket.details || undefined, labels };
       // Set milestone if present in tags
       const milestoneName = getMilestoneFromTags(ticket);
-      if (milestoneName) {
+      if (isPresent(milestoneName)) {
         const milestoneNum = await getMilestoneNumber(milestoneName);
-        if (milestoneNum) issueBody.milestone = milestoneNum;
+        if (milestoneNum !== null && milestoneNum > 0) issueBody.milestone = milestoneNum;
       }
       const res = await ghFetch(`/repos/${owner}/${repo}/issues`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(issueBody),
       });
-      const issue = await res.json() as GitHubIssue;
+      const issue = await parseGitHub(GitHubIssueSchema, res, 'POST /issues');
       context.log('info', `Created issue #${issue.number}`);
       return String(issue.number);
     },
@@ -329,7 +353,9 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       if (changes.status !== undefined) {
         // Set open/closed state based on status
         const ghState = GITHUB_STATE_FOR_STATUS[changes.status];
-        if (ghState) update.state = ghState;
+        // `GITHUB_STATE_FOR_STATUS` is a total map over the status values, so a
+        // lookup always yields a state; the old truthiness check was dead.
+        update.state = ghState;
       }
 
       // Milestone handling: tags carry milestone:<name>; updateRemote must propagate
@@ -337,7 +363,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       // edits on an existing synced ticket silently never reach the remote.
       if (changes.tags !== undefined) {
         const milestoneTag = changes.tags.find((t: string) => t.startsWith(milestonePrefix));
-        if (milestoneTag) {
+        if (isPresent(milestoneTag)) {
           const name = milestoneTag.slice(milestonePrefix.length);
           const milestoneNum = await getMilestoneNumber(name);
           if (milestoneNum != null) update.milestone = milestoneNum;
@@ -352,8 +378,8 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       if (changes.category !== undefined || changes.priority !== undefined ||
           changes.status !== undefined || changes.up_next !== undefined || changes.tags !== undefined) {
         const issueRes = await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}`);
-        const issue = await issueRes.json() as GitHubIssue;
-        const currentLabels = (issue.labels || []).map(l => typeof l === 'string' ? l : l.name);
+        const issue = await parseGitHub(GitHubIssueSchema, issueRes, 'GET /issues/:id');
+        const currentLabels = issue.labels.map(l => typeof l === 'string' ? l : l.name);
         const knownLabels = new Set([
           ...Object.values(categoryMap.toRemote), ...Object.values(priorityMap.toRemote),
           ...Object.values(statusLabelMap.toRemote),
@@ -400,8 +426,8 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
         // bumped remote updated_at as a remote change and re-applies remote fields
         // (clobbering local status moves like → backlog) while the out-of-sync
         // count never reaches 0.
-        const issue = await res.json() as GitHubIssue;
-        if (issue.updated_at) return { remoteUpdatedAt: new Date(issue.updated_at) };
+        const issue = await parseGitHub(GitHubUpdatedIssueSchema, res, 'PATCH /issues/:id');
+        if (isPresent(issue.updated_at)) return { remoteUpdatedAt: new Date(issue.updated_at) };
       }
     },
 
@@ -423,13 +449,16 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
       if (since) params.set('since', since.toISOString());
       if (filterLabels.length > 0) params.set('labels', filterLabels.join(','));
 
-      while (true) {
+      // `for (;;)` rather than `while (true)`: the latter reads as a condition that is
+      // always true, which `no-unnecessary-condition` flags. The loop exits via `break`.
+      for (;;) {
         params.set('page', String(page));
         const res = await ghFetch(`/repos/${owner}/${repo}/issues?${params}`);
-        const issues = await res.json() as GitHubIssue[];
-        if (!Array.isArray(issues) || issues.length === 0) break;
+        const issues = await parseGitHub(GitHubIssueListSchema, res, 'GET /issues');
+        // `issues` is schema-validated as an array, so only emptiness ends the page walk.
+        if (issues.length === 0) break;
         for (const issue of issues) {
-          if (issue.pull_request) continue;
+          if (issue.pull_request !== undefined) continue;
           allChanges.push({
             remoteId: String(issue.number),
             fields: issueToFields(issue),
@@ -437,7 +466,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
           });
         }
         const linkHeader = res.headers.get('link');
-        if (!linkHeader || !linkHeader.includes('rel="next"')) break;
+        if (linkHeader === null || !linkHeader.includes('rel="next"')) break;
         page++;
       }
 
@@ -450,15 +479,15 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
     },
 
     getRemoteUrl(remoteId) {
-      if (!owner || !repo) return null;
+      if (isBlank(owner) || isBlank(repo)) return null;
       return `https://github.com/${owner}/${repo}/issues/${remoteId}`;
     },
 
     async getRemoteTicket(remoteId) {
       try {
         const res = await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}`);
-        const issue = await res.json() as GitHubIssue;
-        if (issue.pull_request) return null;
+        const issue = await parseGitHub(GitHubIssueSchema, res, 'GET /issues/:id');
+        if (issue.pull_request !== undefined) return null;
         return issueToFields(issue);
       } catch {
         return null;
@@ -469,7 +498,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
 
     async getComments(remoteId): Promise<RemoteComment[]> {
       const res = await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}/comments?per_page=100`);
-      const comments = await res.json() as { id: number; body: string; created_at: string; updated_at: string }[];
+      const comments = await parseGitHub(GitHubCommentListSchema, res, 'GET /issues/:id/comments');
       return comments.map(c => ({
         id: String(c.id),
         text: c.body ?? '',
@@ -484,7 +513,7 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body: text }),
       });
-      const comment = await res.json() as { id: number };
+      const comment = await parseGitHub(GitHubCreatedCommentSchema, res, 'POST /issues/:id/comments');
       return String(comment.id);
     },
 
@@ -526,15 +555,16 @@ export async function activate(context: PluginContext): Promise<TicketingBackend
             branch: attachmentBranch,
           }),
         });
-        const data = await res.json() as { content?: { download_url?: string; html_url?: string; path?: string } };
+        const data = await parseGitHub(GitHubContentsWriteSchema, res, 'PUT /contents/:path');
         // Use the permanent raw URL, not download_url which contains a
         // short-lived ?token= that expires after minutes. The permanent URL
         // requires auth (Bearer token or browser session) but the image proxy
         // handles that, and GitHub.com renders it for logged-in users.
-        const url = data.content?.path
-          ? `https://raw.githubusercontent.com/${attOwner}/${attRepo}/${attachmentBranch}/${data.content.path}`
-          : data.content?.html_url;
-        if (url) {
+        const contentPath = data.content?.path;
+        const url = isBlank(contentPath)
+          ? data.content?.html_url
+          : `https://raw.githubusercontent.com/${attOwner}/${attRepo}/${attachmentBranch}/${contentPath}`;
+        if (isPresent(url)) {
           context.log('info', `Uploaded attachment: ${filename} → ${url}`);
           return url;
         }
@@ -624,7 +654,7 @@ function attachmentFilename(
   resolvedUrl?: string,
 ): string {
   const cd = contentDisposition?.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
-  if (cd?.[1]) {
+  if (isPresent(cd?.[1])) {
     try { return decodeURIComponent(cd[1].trim()); } catch { return cd[1].trim(); }
   }
   const lastSeg = url.split(/[?#]/)[0].split('/').pop() ?? '';
@@ -654,7 +684,7 @@ async function resolveUserAttachmentSignedUrl(
   const res = await ghFetch(`/repos/${owner}/${repo}/issues/${remoteId}`, {
     headers: { Accept: 'application/vnd.github.v3.html+json' },
   });
-  const issue = await res.json() as { body_html?: string | null };
+  const issue = await parseGitHub(GitHubIssueHtmlSchema, res, 'GET /issues/:id (html+json)');
   const bodyHtml = issue.body_html ?? '';
   if (bodyHtml === '') return null;
   const signed = [...bodyHtml.matchAll(
@@ -687,6 +717,10 @@ function buildPrefixMap(defaultMap: FieldMapPair, defaultPrefix: string, newPref
 }
 
 /** Validate config field values. */
+// The plugin interface declares `validateField(): Promise<FieldValidation | null>`
+// (src/plugins/types.ts), so returning a promise is the contract, not an oversight.
+// These particular checks happen to be synchronous; another plugin's would not be.
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function validateField(key: string, value: string): Promise<{ status: string; message: string } | null> {
   if (key === 'token') {
     if (!value) return { status: 'error', message: 'Required' };

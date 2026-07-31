@@ -1,7 +1,7 @@
 /**
  * Tests for the Demo Plugin — covers activate, onAction, and validateField.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { activate, onAction, validateField } from './index.js';
 
@@ -26,7 +26,7 @@ function makeContext(settings: Record<string, string> = {}): {
   const context: PluginContext = {
     config: {},
     log: (level, message) => logs.push({ level, message }),
-    getSetting: async (key) => settings[key] ?? null,
+    getSetting: (key) => Promise.resolve(settings[key] ?? null),
     setSetting: async () => { /* no-op */ },
     registerUI: (elements) => uiElements.push(...elements),
     updateConfigLabel: (id, text, color) => labels.push({ id, text, color }),
