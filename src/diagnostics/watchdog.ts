@@ -30,8 +30,13 @@
  * breaking startup. Disable entirely with `HOTSHEET_DISABLE_WATCHDOG=1`; tune
  * the timeout with `HOTSHEET_WATCHDOG_TIMEOUT_MS`.
  */
+import { tmpdir } from 'os';
+import { dirname } from 'path';
 import { getHeapStatistics } from 'v8';
 import { Worker } from 'worker_threads';
+
+import { getOperationSab } from './currentOperation.js';
+import { buildStackCaptureCommand, isStackCaptureEnabled } from './stackCapture.js';
 
 /** Main thread bumps the shared heartbeat this often. 1 s granularity is ample
  *  against a multi-second timeout and is trivial overhead. */
@@ -47,6 +52,12 @@ const DEFAULT_TIMEOUT_MS = 60_000;
  *  (sleep / STOP), not the main thread wedged. Matches
  *  `freezeLogger.WAKE_GAP_THRESHOLD_MS`. */
 const WAKE_GAP_MS = 10_000;
+
+/** HS-9519 — stack dumps land beside the watchdog log (`~/.hotsheet/`) so the FATAL
+ *  line and the capture it names are found together; tmp otherwise. */
+function stackDir(logPath: string | null): string {
+  return logPath !== null ? dirname(logPath) : tmpdir();
+}
 
 export type WatchdogVerdict = 'kill' | 'suspend-skip' | 'armed-ok' | 'not-armed';
 
@@ -79,7 +90,31 @@ const WORKER_SOURCE = `
 const { workerData } = require('worker_threads');
 const fs = require('fs');
 const view = new BigInt64Array(workerData.sab);
-const { pid, timeoutMs, checkMs, wakeGapMs, logPath } = workerData;
+const { pid, timeoutMs, checkMs, wakeGapMs, logPath, opSab, stackCmd } = workerData;
+// HS-9519 — the breadcrumb the main thread publishes on entering an instrumented
+// sync block. Read straight out of shared memory: the main thread is wedged and
+// cannot be asked anything.
+function currentOperation() {
+  try {
+    if (!opSab) return null;
+    var len = Atomics.load(new Int32Array(opSab, 0, 1), 0);
+    if (len <= 0) return null;
+    return new TextDecoder().decode(new Uint8Array(opSab, 4, len));
+  } catch (e) { return null; }
+}
+// HS-9519 — a native stack of the WEDGED main thread. Bounded per HS-9510 (timeout
+// AND SIGKILL) so the capture can never be the reason the kill is delayed.
+function captureStack() {
+  if (!stackCmd) return null;
+  try {
+    var out = require('child_process').execFileSync(stackCmd.command, stackCmd.args, {
+      timeout: stackCmd.timeoutMs, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    // macOS 'sample -file' writes the file itself; Linux 'eu-stack' prints to stdout.
+    if (out && out.length > 0) { try { fs.writeFileSync(stackCmd.outPath, out); } catch (e) {} }
+    return stackCmd.outPath;
+  } catch (e) { return null; }
+}
 let lastCheck = Date.now();
 function log(msg) {
   const line = new Date().toISOString() + ' ' + msg + '\\n';
@@ -120,6 +155,13 @@ const timer = setInterval(function () {
         (pct >= 75 ? '  <-- MEMORY PRESSURE: this looks like GC thrash, not a slow query. Each open ' +
                      'PGLite cluster pins ~180MB of external (WASM heap), and external does NOT ' +
                      'show up in rss, so a ps check will look fine (HS-9420).' : ''));
+    var op = currentOperation();
+    log('[watchdog] wedged inside: ' + (op !== null ? op :
+        '<unknown — no instrumented sync block was active; the blocking call is not instrumented>'));
+    // Capture BEFORE the kill: this is the only moment the wedged stack exists.
+    var stackPath = captureStack();
+    log('[watchdog] stack capture: ' + (stackPath !== null ? stackPath :
+        '<unavailable - sampler missing, unsupported platform, or HOTSHEET_WATCHDOG_STACK=0>'));
     try { process.kill(pid, 'SIGKILL'); } catch (e) { try { process.exit(137); } catch (e2) {} }
   }
 }, checkMs);
@@ -254,7 +296,21 @@ export function startEventLoopWatchdog(opts: WatchdogOptions = {}): void {
   try {
     worker = new Worker(WORKER_SOURCE, {
       eval: true,
-      workerData: { sab, pid: process.pid, timeoutMs, checkMs: CHECK_MS, wakeGapMs: WAKE_GAP_MS, logPath: opts.logPath ?? null },
+      workerData: {
+        sab,
+        pid: process.pid,
+        timeoutMs,
+        checkMs: CHECK_MS,
+        wakeGapMs: WAKE_GAP_MS,
+        logPath: opts.logPath ?? null,
+        // HS-9519 — the breadcrumb buffer and the stack-capture command. Both are
+        // computed here (testable) and merely EXECUTED in the worker, which runs
+        // from an eval string and cannot import.
+        opSab: getOperationSab(),
+        stackCmd: isStackCaptureEnabled(process.env)
+          ? buildStackCaptureCommand(process.platform, process.pid, stackDir(opts.logPath ?? null), Date.now())
+          : null,
+      },
     });
     // Don't keep the process alive for the watchdog alone, and never let a
     // watchdog-worker crash take down the process it's meant to protect.

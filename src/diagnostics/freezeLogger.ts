@@ -38,6 +38,8 @@ import { promises as fsp } from 'fs';
 import { join } from 'path';
 import { getHeapStatistics } from 'v8';
 
+import { enterOperation, exitOperation } from './currentOperation.js';
+
 export const FREEZE_LOG_FILENAME = 'freeze.log';
 export const LONG_TASK_THRESHOLD_MS = 100;
 
@@ -538,9 +540,14 @@ export function stopServerEventLoopHeartbeat(): void {
  */
 export function instrumentSync<T>(dataDir: string, label: string, fn: () => T): T {
   const startNs = process.hrtime.bigint();
+  // HS-9519 — publish the label into shared memory so a WEDGED main thread can still
+  // be named by the watchdog worker. Sync only: these are the calls that actually pin
+  // the loop, and an async label would just record whatever happened to start last.
+  enterOperation(label);
   try {
     return fn();
   } finally {
+    exitOperation();
     const durMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
     if (durMs >= LONG_TASK_THRESHOLD_MS) {
       void appendFreezeLog(dataDir, {
