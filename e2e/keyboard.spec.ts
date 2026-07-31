@@ -1,7 +1,9 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /** Helper: create a ticket via the draft input and wait for it to appear in the list. */
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
@@ -9,12 +11,12 @@ async function createTicket(page: import('@playwright/test').Page, title: string
 }
 
 /** Helper: click on empty space to ensure focus is not in any input. */
-async function blurInputs(page: import('@playwright/test').Page) {
+async function blurInputs(page: Page) {
   await page.locator('#ticket-list').click({ position: { x: 5, y: 5 } });
 }
 
 /** Helper: select a ticket by clicking its ticket number. */
-async function selectTicket(page: import('@playwright/test').Page, title: string) {
+async function selectTicket(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(row).toHaveClass(/selected/, { timeout: 3000 });

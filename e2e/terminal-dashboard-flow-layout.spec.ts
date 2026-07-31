@@ -26,7 +26,7 @@ test.describe('Terminal dashboard Flow layout (HS-7662)', () => {
     // Tauri stub — the dashboard is Tauri-only (§25.11).
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
   });

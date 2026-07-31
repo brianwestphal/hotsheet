@@ -67,23 +67,25 @@ test.describe('Quit-confirm dialog DOM growth (HS-8055)', () => {
       const listeners: Record<string, ((e: { payload: unknown }) => void)[]> = {};
       const w = window as unknown as Record<string, unknown>;
       w.__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
         event: {
-          listen: async (eventName: string, handler: (e: { payload: unknown }) => void) => {
-            if (listeners[eventName] === undefined) listeners[eventName] = [];
+          // Mirrors Tauri's `listen`: resolves to the unlisten function. Kept a
+          // real promise rather than an `async` with no `await` — the code under
+          // test awaits it, so the asynchrony is part of the contract.
+          listen: (eventName: string, handler: (e: { payload: unknown }) => void) => {
+            if (!(eventName in listeners)) listeners[eventName] = [];
             listeners[eventName].push(handler);
-            return () => {
+            const unlisten = () => {
               const arr = listeners[eventName];
-              if (arr === undefined) return;
               const idx = arr.indexOf(handler);
               if (idx >= 0) arr.splice(idx, 1);
             };
+            return Promise.resolve(unlisten);
           },
         },
       };
       w.__hotsheetFireTauriEvent = (eventName: string, payload: unknown) => {
         const arr = listeners[eventName];
-        if (arr === undefined) return;
         for (const h of arr) h({ payload });
       };
     });

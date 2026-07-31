@@ -7,10 +7,11 @@
  * `settings.local.json` and NOT the shared `settings.json` (the whole point of the
  * `dev_` prefix — these must never be committed for the team).
  */
+import type { Page } from '@playwright/test';
+
 import { DEV_FEATURES } from '../src/devFeatures.js';
 import { expect, test } from './coverage-fixture.js';
 
-type Page = import('@playwright/test').Page;
 
 const secretHeaders = (secret: string) => ({ 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret });
 

@@ -9,7 +9,7 @@
  * HS-5083 shipped because no test followed the basic "create → push → edit →
  * sync" workflow. These tests exist to prevent that class of bug.
  */
-import { expect, test } from './coverage-fixture.js';
+import { expect, parseJsonArray,test } from './coverage-fixture.js';
 
 const PLUGINS_ENABLED = process.env.PLUGINS_ENABLED === 'true';
 const GITHUB_TOKEN = process.env.GITHUB_PLUGIN_TOKEN ?? '';
@@ -83,7 +83,7 @@ test.describe('GitHub sync — user workflow tests', () => {
 
     // Step 4: Sync.
     const syncRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const syncResult = await syncRes.json();
+    const syncResult = await syncRes.json() as { ok: boolean };
     expect(syncResult.ok).toBe(true);
 
     // Assertions — all verified by reading GitHub directly:
@@ -100,7 +100,7 @@ test.describe('GitHub sync — user workflow tests', () => {
     // (c) The local note still exists.
     const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
     const local = await ticketRes.json() as { notes: string };
-    const notes = JSON.parse(local.notes) as { text: string }[];
+    const notes = parseJsonArray<{ text: string }>(local.notes, 'notes');
     expect(notes.some(n => n.text === noteText), 'local note should still exist').toBe(true);
   });
 
@@ -141,7 +141,7 @@ test.describe('GitHub sync — user workflow tests', () => {
     // (b) The pre-push note still exists locally.
     const ticketRes = await request.get(`/api/tickets/${ticket.id}`, { headers });
     const local = await ticketRes.json() as { notes: string };
-    const notes = JSON.parse(local.notes) as { text: string }[];
+    const notes = parseJsonArray<{ text: string }>(local.notes, 'notes');
     expect(notes.some(n => n.text === noteText), 'pre-push note must survive attachment sync').toBe(true);
 
     // (c) The note still exists on GitHub as a comment.

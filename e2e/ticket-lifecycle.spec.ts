@@ -2,16 +2,18 @@
  * HS-5628: Full ticket lifecycle — create through archive.
  * Tests the complete user workflow: create → edit → categorize → notes → complete → archive.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
   await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
 }
 
-async function selectTicket(page: import('@playwright/test').Page, title: string) {
+async function selectTicket(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) }).first();
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });

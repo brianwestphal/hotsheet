@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /** Helper: create a ticket via the draft input and wait for it to appear in the list.
@@ -6,7 +8,7 @@ import { expect, test } from './coverage-fixture.js';
  * so clear the auto-selection here. Two Escapes: the first blurs the draft
  * input (the shortcut handler treats Escape on an editable element as
  * "blur"), the second clears `state.selectedIds`. */
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');

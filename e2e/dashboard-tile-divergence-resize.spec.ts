@@ -44,7 +44,7 @@ test.describe('Dashboard tile resize divergence (HS-8051)', () => {
   test.beforeEach(async ({ page, request }) => {
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 

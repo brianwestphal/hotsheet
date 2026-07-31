@@ -24,7 +24,7 @@ test.describe('Cross-project bell indicator', () => {
     // tests keeps the setup predictable.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
   });

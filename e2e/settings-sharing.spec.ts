@@ -246,7 +246,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     await page.waitForTimeout(400);
     await expect(list.locator('.cmd-outline-row-hidden')).toHaveCount(0);
     await expect(list.locator('.cmd-outline-row:not(.cmd-outline-row-hidden)').filter({ hasText: 'Shared A' })).toHaveCount(1);
-    layered = await (await page.request.get('/api/file-settings/layered')).json();
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as typeof layered;
     expect(layered.local.custom_commands?.hidden ?? []).not.toContain('sh-a');
   });
 
@@ -287,7 +287,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     // (b) Move-to-shared on the GOODBYE row (local) → goodbye (not its neighbor) promotes.
     await list.locator('.cmd-outline-row').filter({ hasText: 'goodbye' }).locator('.cmd-outline-move-btn').click();
     await page.waitForTimeout(400);
-    layered = await (await page.request.get('/api/file-settings/layered')).json();
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as typeof layered;
     expect((layered.shared.custom_commands ?? []).map(c => c.id)).toContain('g'); // goodbye promoted
     expect((layered.local.custom_commands?.added ?? []).map(c => c.id)).not.toContain('g');
   });
@@ -321,7 +321,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     const sharedChildIds = (layered.shared.custom_commands?.[0].children ?? []).map(c => c.id);
     expect(sharedChildIds).toContain('c1');
     expect(sharedChildIds).not.toContain('c2');
-    const localChildIds = (layered.local.custom_commands?.childAdded?.grp?.children ?? []).map(c => c.id);
+    const localChildIds = (layered.local.custom_commands?.childAdded?.grp.children ?? []).map(c => c.id);
     expect(localChildIds).toContain('c2');
   });
 
@@ -556,7 +556,7 @@ test.describe('Settings scope control (Shared | Local)', () => {
     // (b) Promote the LOCAL "Local G" to shared via its ↑ move button.
     await list.locator('.settings-terminal-row').filter({ hasText: 'Local G' }).locator('.cmd-outline-move-btn').click();
     await page.waitForTimeout(500);
-    layered = await (await page.request.get('/api/file-settings/layered')).json();
+    layered = await (await page.request.get('/api/file-settings/layered')).json() as typeof layered;
     expect((layered.shared.terminals ?? []).map(t => t.id)).toContain('lo-g');      // G promoted
     expect((layered.local.terminals?.added ?? []).map(t => t.id)).not.toContain('lo-g');
   });

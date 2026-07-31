@@ -17,7 +17,7 @@
  */
 import type { APIRequestContext } from '@playwright/test';
 
-import { expect, test } from './coverage-fixture.js';
+import { expect, parseJsonArray,test } from './coverage-fixture.js';
 
 const PLUGINS_ENABLED = process.env.PLUGINS_ENABLED === 'true';
 const GITHUB_TOKEN = process.env.GITHUB_PLUGIN_TOKEN ?? '';
@@ -179,7 +179,7 @@ test.describe('GitHub plugin — note sync edit/delete/dedup (HS-5056)', () => {
     // Read local ticket back and assert a new note with that text exists.
     const ticketRes = await request.get(`/api/tickets/${localId}`, { headers });
     const ticket = await ticketRes.json() as { notes: string };
-    const notes = JSON.parse(ticket.notes) as { text: string }[];
+    const notes = parseJsonArray<{ text: string }>(ticket.notes, 'notes');
     expect(notes.some(n => n.text === newText)).toBe(true);
   });
 
@@ -206,7 +206,7 @@ test.describe('GitHub plugin — note sync edit/delete/dedup (HS-5056)', () => {
     // Read local ticket — the existing note (same id) should have the new text.
     const ticketRes = await request.get(`/api/tickets/${localId}`, { headers });
     const ticket = await ticketRes.json() as { notes: string };
-    const notes = JSON.parse(ticket.notes) as { id: string; text: string }[];
+    const notes = parseJsonArray<{ id: string; text: string }>(ticket.notes, 'notes');
     const local = notes.find(n => n.id === noteId);
     expect(local).toBeTruthy();
     expect(local!.text).toBe(edited);

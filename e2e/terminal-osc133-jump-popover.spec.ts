@@ -19,6 +19,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { APIRequestContext, Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +31,7 @@ let headers: Record<string, string> = {};
 const FIXTURE_IDS = ['osc133-multi'];
 
 async function destroyAllFixtureTerminals(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
 ): Promise<void> {
   for (const id of FIXTURE_IDS) {
     try {
@@ -39,7 +41,7 @@ async function destroyAllFixtureTerminals(
 }
 
 async function configureFixtureTerminal(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
   id: string,
   env: Record<string, string>,
 ): Promise<void> {
@@ -66,7 +68,7 @@ async function configureFixtureTerminal(
   });
 }
 
-async function ensureDrawerOpen(page: import('@playwright/test').Page): Promise<void> {
+async function ensureDrawerOpen(page: Page): Promise<void> {
   const panel = page.locator('#command-log-panel');
   if (!(await panel.isVisible())) {
     await page.locator('#command-log-btn').click();
@@ -85,14 +87,14 @@ test.describe('OSC 133 Phase 2 jumps + popover (HS-7328)', () => {
     // Tauri stub + clipboard stub. Stubbing navigator.clipboard.writeText lets
     // us assert the popover's "Copy command" path without clipboard permissions.
     await page.addInitScript(() => {
-      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
       const writes: string[] = [];
       (window as unknown as { __clipboardWrites: string[] }).__clipboardWrites = writes;
       Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
         value: {
-          writeText: async (text: string) => { writes.push(text); },
-          readText: async () => writes[writes.length - 1] ?? '',
+          writeText: (text: string) => { writes.push(text); return Promise.resolve(); },
+          readText: () => Promise.resolve(writes[writes.length - 1] ?? ''),
         },
       });
     });

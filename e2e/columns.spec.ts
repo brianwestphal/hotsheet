@@ -1,7 +1,9 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /** Ensure the app is in list view (not column view). */
-async function ensureListView(page: import('@playwright/test').Page) {
+async function ensureListView(page: Page) {
   const listBtn = page.locator('.layout-btn[data-layout="list"]');
   if (await listBtn.isVisible() && !(await listBtn.evaluate(el => el.classList.contains('active')))) {
     await listBtn.click();
@@ -10,7 +12,7 @@ async function ensureListView(page: import('@playwright/test').Page) {
 }
 
 /** Helper: create a ticket via the draft input in list view and wait for it to appear. */
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');

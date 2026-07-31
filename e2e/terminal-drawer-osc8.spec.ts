@@ -20,6 +20,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { Locator } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 import { expectXtermContainsText } from './xtermDiagnostics.js';
 
@@ -38,7 +40,7 @@ type BoundingBox = { x: number; y: number; width: number; height: number };
 // `.toBeVisible()` resolve and the box query. Poll until a real geometry
 // lands (visible elements always have one eventually).
 async function pollForBoundingBox(
-  locator: import('@playwright/test').Locator,
+  locator: Locator,
   timeoutMs = 5000,
 ): Promise<BoundingBox> {
   const deadline = Date.now() + timeoutMs;
@@ -67,9 +69,9 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
       (window as unknown as { __invokeCalls: InvokeCall[] }).__invokeCalls = calls;
       (window as unknown as { __TAURI__: unknown }).__TAURI__ = {
         core: {
-          invoke: async (cmd: string, args: Record<string, unknown>) => {
-            calls.push({ cmd, args: args ?? {} });
-            return undefined;
+          invoke: (cmd: string, args: Record<string, unknown>) => {
+            calls.push({ cmd, args: args });
+            return Promise.resolve(undefined);
           },
         },
       };
@@ -163,7 +165,7 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
 
     // Assert invoke('open_url', { url: OSC8_URL }) was called.
     await expect.poll(
-      async () => page.evaluate(() => (window as unknown as { __invokeCalls: InvokeCall[] }).__invokeCalls ?? []),
+      async () => page.evaluate(() => (window as unknown as { __invokeCalls: InvokeCall[] }).__invokeCalls),
       { timeout: 5000 },
     ).toEqual(expect.arrayContaining([
       expect.objectContaining({ cmd: 'open_url', args: expect.objectContaining({ url: OSC8_URL }) }),
@@ -179,7 +181,7 @@ test.describe('Terminal drawer OSC 8 + plain URL external open (HS-7274)', () =>
     await page.mouse.click(plainBox.x + plainBox.width / 2, plainBox.y + plainBox.height / 2);
 
     await expect.poll(
-      async () => page.evaluate(() => (window as unknown as { __invokeCalls: InvokeCall[] }).__invokeCalls ?? []),
+      async () => page.evaluate(() => (window as unknown as { __invokeCalls: InvokeCall[] }).__invokeCalls),
       { timeout: 5000 },
     ).toEqual(expect.arrayContaining([
       expect.objectContaining({ cmd: 'open_url', args: expect.objectContaining({ url: PLAIN_URL }) }),

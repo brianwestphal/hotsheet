@@ -1,7 +1,9 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /** Helper: create a ticket via the draft input and wait for it to appear in the list. */
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
@@ -9,7 +11,7 @@ async function createTicket(page: import('@playwright/test').Page, title: string
 }
 
 /** Helper: open the detail panel for a ticket by clicking its ticket number. */
-async function openDetail(page: import('@playwright/test').Page, title: string) {
+async function openDetail(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
@@ -325,7 +327,7 @@ test.describe('Detail panel interactions', () => {
   test('arrow keys navigate between attachments without switching tickets', async ({ page, request }) => {
     const projectsRes = await request.get('/api/projects');
     const projects = await projectsRes.json() as { secret: string }[];
-    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+    const _headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
 
     // Create two tickets so arrow keys could switch between them
     await createTicket(page, 'Attach nav ticket A');

@@ -18,7 +18,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     // "also works without Tauri" case below uses a stub-free context.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
   });
@@ -910,7 +910,7 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await page.waitForTimeout(400);
 
     const centered = await page.evaluate(() => {
-      const preview = document.querySelector('.terminal-dashboard-tile.centered .terminal-dashboard-tile-preview') as HTMLElement | null;
+      const preview: HTMLElement | null = document.querySelector('.terminal-dashboard-tile.centered .terminal-dashboard-tile-preview');
       if (preview === null) return null;
       const rect = preview.getBoundingClientRect();
       return {
@@ -962,8 +962,8 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await page.waitForTimeout(160);
 
     const centered = await page.evaluate(() => {
-      const previewEl = document.querySelector('.terminal-dashboard-tile.centered .terminal-dashboard-tile-preview') as HTMLElement | null;
-      const tileEl = document.querySelector('.terminal-dashboard-tile.centered') as HTMLElement | null;
+      const previewEl: HTMLElement | null = document.querySelector('.terminal-dashboard-tile.centered .terminal-dashboard-tile-preview');
+      const tileEl: HTMLElement | null = document.querySelector('.terminal-dashboard-tile.centered');
       if (previewEl === null || tileEl === null) return null;
       const previewRect = previewEl.getBoundingClientRect();
       return {

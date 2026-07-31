@@ -43,7 +43,7 @@ test.describe('Demo mode forces the DOM terminal renderer (HS-8612)', () => {
 
   test.beforeEach(async ({ page, request }) => {
     await page.addInitScript(() => {
-      (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
       // RE-ENABLE WebGL (later init script wins over the fixture's) so the
       // demo gate is the ONLY thing that can route to the DOM renderer.
       try { (window as unknown as Record<string, unknown>).__HOTSHEET_DISABLE_WEBGL__ = false; } catch { /* */ }

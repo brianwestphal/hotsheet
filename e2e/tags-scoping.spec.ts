@@ -14,16 +14,18 @@
  * project (the cross-project leak is the same cache, exercised by the
  * refresh-on-switch wiring + the inherently project-scoped server query).
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
   await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
 }
 
-async function openDetail(page: import('@playwright/test').Page, title: string) {
+async function openDetail(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });

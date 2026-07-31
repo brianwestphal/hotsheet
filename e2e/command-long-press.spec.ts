@@ -15,9 +15,10 @@
  * channel enabled AND a compatible Claude CLI), so the tests skip gracefully
  * instead of failing when the environment can't surface the button.
  */
+import type { Locator, Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-type Page = import('@playwright/test').Page;
 
 async function setCommandsAndReload(page: Page, items: unknown[]): Promise<void> {
   const origin = page.url().replace(/\/[^/]*$/, '');
@@ -30,7 +31,7 @@ async function setCommandsAndReload(page: Page, items: unknown[]): Promise<void>
 }
 
 /** Press and hold the locator past the 500ms long-press threshold, then release. */
-async function longPress(page: Page, locator: import('@playwright/test').Locator, holdMs = 700): Promise<void> {
+async function longPress(page: Page, locator: Locator, holdMs = 700): Promise<void> {
   // The command sidebar re-renders its buttons after a settings reload, so the
   // target can detach the instant we reach for it — a bare
   // `scrollIntoViewIfNeeded()` then throws "Element is not attached to the DOM"
@@ -51,7 +52,7 @@ async function longPress(page: Page, locator: import('@playwright/test').Locator
 async function stubTauri(page: Page): Promise<void> {
   await page.addInitScript(() => {
     (window as unknown as Record<string, unknown>).__TAURI__ = {
-      core: { invoke: async () => undefined },
+      core: { invoke: () => Promise.resolve(undefined) },
     };
   });
 }

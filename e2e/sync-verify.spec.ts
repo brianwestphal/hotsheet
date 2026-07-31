@@ -64,7 +64,7 @@ test.describe('Sync data integrity', () => {
     const tickets = await ticketsRes.json() as { id: number; title: string }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     // Get remote ID
@@ -79,7 +79,7 @@ test.describe('Sync data integrity', () => {
 
     // Sync to push
     const syncRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const result = await syncRes.json();
+    const result = await syncRes.json() as { ok: boolean; pushed?: number };
     expect(result.ok).toBe(true);
     expect(result.pushed).toBeGreaterThanOrEqual(1);
 
@@ -95,7 +95,7 @@ test.describe('Sync data integrity', () => {
     const tickets = await ticketsRes.json() as { id: number }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });
@@ -147,7 +147,7 @@ test.describe('Sync data integrity', () => {
     const tickets = await ticketsRes.json() as { id: number; category: string }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });
@@ -196,7 +196,7 @@ test.describe('Sync data integrity', () => {
 
     // Sync to pull the change
     const pullRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const pullResult = await pullRes.json();
+    const pullResult = await pullRes.json() as { conflicts?: number };
 
     // If there was a conflict, the pull won't apply. Check and log.
     if ((pullResult.conflicts ?? 0) > 0) {
@@ -220,14 +220,14 @@ test.describe('Sync data integrity', () => {
 
     // Second sync — nothing changed
     const sync2Res = await request.post('/api/plugins/github-issues/sync', { headers });
-    const sync2 = await sync2Res.json();
+    const sync2 = await sync2Res.json() as { ok: boolean; conflicts?: number; pushed?: number; records?: { ticket_id: number; remote_id: string }[] };
     expect(sync2.ok).toBe(true);
     expect(sync2.conflicts ?? 0).toBe(0);
     expect(sync2.pushed ?? 0).toBe(0);
 
     // Third sync — still nothing
     const sync3Res = await request.post('/api/plugins/github-issues/sync', { headers });
-    const sync3 = await sync3Res.json();
+    const sync3 = await sync3Res.json() as { ok: boolean; conflicts?: number; pushed?: number; records?: { ticket_id: number; remote_id: string }[] };
     expect(sync3.ok).toBe(true);
     expect(sync3.conflicts ?? 0).toBe(0);
     expect(sync3.pushed ?? 0).toBe(0);
@@ -283,7 +283,7 @@ test.describe('Sync data integrity', () => {
     const tickets = await ticketsRes.json() as { id: number }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });
@@ -310,7 +310,7 @@ test.describe('Sync data integrity', () => {
     const tickets = await ticketsRes.json() as { id: number }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     const recordsRes = await request.get('/api/plugins/github-issues/sync', { headers });

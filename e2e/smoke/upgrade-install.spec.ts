@@ -36,14 +36,14 @@ test.describe('Upgrade install smoke test', () => {
     // Verify all 3 seeded tickets exist
     const statsRes = await page.request.get('/api/stats');
     expect(statsRes.ok()).toBe(true);
-    const stats = await statsRes.json();
+    const stats = await statsRes.json() as { total: number };
     expect(stats.total).toBeGreaterThanOrEqual(3);
   });
 
   test('ticket statuses preserved after upgrade', async ({ page }) => {
     const res = await page.request.get('/api/tickets?sort_by=created&sort_dir=asc');
     expect(res.ok()).toBe(true);
-    const tickets = await res.json();
+    const tickets = await res.json() as { id: number; title: string; status: string; up_next: boolean; notes?: string }[];
 
     // Find our seeded tickets by title
     const t1 = tickets.find((t: { title: string }) => t.title === 'Upgrade ticket 1');
@@ -54,21 +54,21 @@ test.describe('Upgrade install smoke test', () => {
     expect(t2).toBeDefined();
     expect(t3).toBeDefined();
 
-    expect(t1.status).toBe('started');
-    expect(t2.status).toBe('completed');
-    expect(t3.status).toBe('not_started');
-    expect(t3.up_next).toBe(true);
+    expect(t1!.status).toBe('started');
+    expect(t2!.status).toBe('completed');
+    expect(t3!.status).toBe('not_started');
+    expect(t3!.up_next).toBe(true);
   });
 
   test('notes preserved after upgrade', async ({ page }) => {
     const res = await page.request.get('/api/tickets?sort_by=created&sort_dir=asc');
-    const tickets = await res.json();
+    const tickets = await res.json() as { id: number; title: string; status: string; up_next: boolean; notes?: string }[];
     const t3 = tickets.find((t: { title: string }) => t.title === 'Upgrade ticket 3');
     expect(t3).toBeDefined();
 
     // Ticket 3 should have a note
-    const detailRes = await page.request.get(`/api/tickets/${t3.id}`);
-    const detail = await detailRes.json();
+    const detailRes = await page.request.get(`/api/tickets/${t3!.id}`);
+    const detail = await detailRes.json() as { notes: unknown };
     expect(detail.notes).toContain('Pre-upgrade note');
   });
 

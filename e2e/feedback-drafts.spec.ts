@@ -9,22 +9,24 @@
  * - Click the saved draft → re-opens dialog with restored partitions
  * - Submit from the reopened draft dialog → DELETEs draft + adds note
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
   await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
 }
 
-async function openDetail(page: import('@playwright/test').Page, title: string) {
+async function openDetail(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
 }
 
-async function getProjectSecret(page: import('@playwright/test').Page): Promise<string> {
+async function getProjectSecret(page: Page): Promise<string> {
   const res = await page.request.get('/api/projects');
   const projects = await res.json() as { secret: string }[];
   return projects[0]?.secret ?? '';
@@ -38,7 +40,7 @@ async function getProjectSecret(page: import('@playwright/test').Page): Promise<
  * `*_nudge_dismissed` local-scope key, HS-9002) stops it from ever showing, so
  * clicks land on the real targets. Set BEFORE the first navigation.
  */
-async function suppressAiInstructionsNudge(page: import('@playwright/test').Page): Promise<void> {
+async function suppressAiInstructionsNudge(page: Page): Promise<void> {
   const secret = await getProjectSecret(page);
   await page.request.patch('/api/file-settings', {
     headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret },
@@ -49,7 +51,7 @@ async function suppressAiInstructionsNudge(page: import('@playwright/test').Page
 /** Add a FEEDBACK NEEDED note to the active ticket via the API so the
  *  detail panel auto-shows the feedback dialog when re-opened. */
 async function addFeedbackNote(
-  page: import('@playwright/test').Page,
+  page: Page,
   ticketTitle: string,
   prompt: string,
   // HS-8702 — when provided, the note uses this verbatim instead of the

@@ -301,7 +301,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const syncRes = await request.post('/api/plugins/github-issues/sync', {
       headers: { 'X-Hotsheet-Secret': secret },
     });
-    const syncResult = await syncRes.json();
+    const syncResult = await syncRes.json() as { ok: boolean; pulled: number };
 
     // Sync should succeed
     expect(syncResult.ok).toBe(true);
@@ -317,14 +317,14 @@ test.describe('GitHub Issues plugin — live integration', () => {
     }
   });
 
-  test('sync via API after connection test', async ({ page, request }) => {
+  test('sync via API after connection test', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
 
     // Trigger sync via API
     const syncRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const syncResult = await syncRes.json();
+    const syncResult = await syncRes.json() as { ok: boolean };
     expect(syncResult.ok).toBe(true);
 
     // Read back: verify sync actually produced records (not just ok=true)
@@ -336,17 +336,17 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(records.every(r => r.sync_status === 'synced' || r.sync_status === 'conflict')).toBe(true);
   });
 
-  test('plugin status endpoint returns connected', async ({ page, request }) => {
+  test('plugin status endpoint returns connected', async ({ request }) => {
     const secret = projectSecret;
 
     const statusRes = await request.get('/api/plugins/github-issues/status', {
       headers: { 'X-Hotsheet-Secret': secret },
     });
-    const status = await statusRes.json();
+    const status = await statusRes.json() as { connected: boolean };
     expect(status.connected).toBe(true);
   });
 
-  test('sync records are created after sync', async ({ page, request }) => {
+  test('sync records are created after sync', async ({ request }) => {
     const secret = projectSecret;
 
     // Sync first
@@ -358,19 +358,19 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const recordsRes = await request.get('/api/plugins/github-issues/sync', {
       headers: { 'X-Hotsheet-Secret': secret },
     });
-    const records = await recordsRes.json();
+    const records: unknown = await recordsRes.json();
     expect(Array.isArray(records)).toBe(true);
     // Records may be empty if repo has no issues, but the endpoint should work
   });
 
-  test('round-trip sync: local changes pushed to GitHub and verified', async ({ page, request }) => {
+  test('round-trip sync: local changes pushed to GitHub and verified', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
 
     // 1. Sync to pull issues from GitHub
     const pullRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const pullResult = await pullRes.json();
+    const pullResult = await pullRes.json() as { ok: boolean };
     expect(pullResult.ok).toBe(true);
 
     // 2. Find a synced ticket
@@ -378,7 +378,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const tickets = await ticketsRes.json() as { id: number; title: string; details: string; status: string }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     // 3. Modify details locally
@@ -389,16 +389,16 @@ test.describe('GitHub Issues plugin — live integration', () => {
 
     // 4. Sync to push the change
     const pushRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const pushResult = await pushRes.json();
+    const pushResult = await pushRes.json() as { ok: boolean; pushed?: number; remoteId?: string; remoteUrl?: string };
     expect(pushResult.ok).toBe(true);
     expect(pushResult.pushed).toBeGreaterThanOrEqual(1);
 
     // 5. Pull again — after push, local and remote should match
     const verifyRes = await request.post('/api/plugins/github-issues/sync', { headers });
-    const verifyResult = await verifyRes.json();
+    const verifyResult = await verifyRes.json() as { ok: boolean; conflicts: unknown[] };
     expect(verifyResult.ok).toBe(true);
     // Should be 0 conflicts since we just pushed
-    expect(verifyResult.conflicts ?? 0).toBe(0);
+    expect(verifyResult.conflicts).toBe(0);
 
     // 6. Read the ticket back and verify details match what we set
     const finalTicket = await request.get(`/api/tickets/${syncedTicket.id}`, { headers });
@@ -431,7 +431,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(iconHtml).toContain('svg');
   });
 
-  test('push local ticket to GitHub via context menu API', async ({ page, request }) => {
+  test('push local ticket to GitHub via context menu API', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -444,7 +444,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
 
     // Push to GitHub
     const pushRes = await request.post(`/api/plugins/github-issues/push-ticket/${ticket.id}`, { headers });
-    const pushResult = await pushRes.json();
+    const pushResult = await pushRes.json() as { ok: boolean; pushed?: number; remoteId?: string; remoteUrl?: string };
     expect(pushResult.ok).toBe(true);
     expect(pushResult.remoteId).toBeTruthy();
     expect(pushResult.remoteUrl).toContain('github.com');
@@ -534,7 +534,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     );
   });
 
-  test('synced ticket map includes plugin icon', async ({ page, request }) => {
+  test('synced ticket map includes plugin icon', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = {};
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -555,7 +555,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(entries[0].icon).toContain('<svg');
   });
 
-  test('plugin UI elements served for enabled plugin', async ({ page, request }) => {
+  test('plugin UI elements served for enabled plugin', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = {};
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -571,7 +571,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(syncBtn!._pluginId).toBe('github-issues');
   });
 
-  test('plugin action endpoint handles sync redirect', async ({ page, request }) => {
+  test('plugin action endpoint handles sync redirect', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -584,7 +584,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(result.result.redirect).toBe('sync');
   });
 
-  test('plugin action endpoint handles test_connection', async ({ page, request }) => {
+  test('plugin action endpoint handles test_connection', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -597,7 +597,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(result.result.connected).toBe(true);
   });
 
-  test('action endpoint reactivates so it sees fresh settings (HS-5017)', async ({ page, request }) => {
+  test('action endpoint reactivates so it sees fresh settings (HS-5017)', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -625,7 +625,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     }
   });
 
-  test('backends endpoint includes icon', async ({ page, request }) => {
+  test('backends endpoint includes icon', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = {};
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -638,7 +638,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(github!.icon).toContain('<svg');
   });
 
-  test('validate field endpoint returns feedback', async ({ page, request }) => {
+  test('validate field endpoint returns feedback', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -666,7 +666,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(spaces.message).toContain('spaces');
   });
 
-  test('disable plugin hides sync data for project', async ({ page, request }) => {
+  test('disable plugin hides sync data for project', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -693,7 +693,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     await request.post('/api/plugins/github-issues/reactivate', { headers });
   });
 
-  test('bundled plugins endpoint lists available plugins', async ({ page, request }) => {
+  test('bundled plugins endpoint lists available plugins', async ({ request }) => {
     const bundledRes = await request.get('/api/plugins/bundled');
     const bundled = await bundledRes.json() as { manifest: { id: string; name: string }; installed: boolean }[];
 
@@ -704,7 +704,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(github!.manifest.name).toBe('GitHub Issues');
   });
 
-  test('config labels endpoint returns dynamic labels with color', async ({ page, request }) => {
+  test('config labels endpoint returns dynamic labels with color', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -724,7 +724,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     expect(labels['connection-status'].color).toBe('success');
   });
 
-  test('pull overwrites local when only remote changed', async ({ page, request }) => {
+  test('pull overwrites local when only remote changed', async ({ request }) => {
     const secret = projectSecret;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (secret) headers['X-Hotsheet-Secret'] = secret;
@@ -737,7 +737,7 @@ test.describe('GitHub Issues plugin — live integration', () => {
     const tickets = await ticketsRes.json() as { id: number; details: string }[];
     const syncMapRes = await request.get('/api/sync/tickets', { headers });
     const syncMap = await syncMapRes.json() as Record<string, { pluginId: string }>;
-    const syncedTicket = tickets.find(t => syncMap[t.id]);
+    const syncedTicket = tickets.find(t => String(t.id) in syncMap);
     if (!syncedTicket) { test.skip(); return; }
 
     // 3. Get the sync record to find the remote ID
@@ -747,14 +747,14 @@ test.describe('GitHub Issues plugin — live integration', () => {
     if (!syncRecord) { test.skip(); return; }
 
     // 4. Modify the issue directly on GitHub (via the plugin's push)
-    const ghDetails = `GitHub direct edit ${Date.now()}`;
+    const _ghDetails = `GitHub direct edit ${Date.now()}`;
     const statusRes = await request.get('/api/plugins/github-issues/status', { headers });
-    const status = await statusRes.json();
+    const status = await statusRes.json() as { connected: boolean };
     expect(status.connected).toBe(true);
 
     // Sync twice — no local changes, so second sync should have 0 conflicts, 0 pushes.
     const sync2Res = await request.post('/api/plugins/github-issues/sync', { headers });
-    const sync2 = await sync2Res.json();
+    const sync2 = await sync2Res.json() as { ok: boolean; pulled?: number; pushed?: number; conflicts?: number };
     expect(sync2.ok).toBe(true);
     expect(sync2.conflicts ?? 0).toBe(0);
 

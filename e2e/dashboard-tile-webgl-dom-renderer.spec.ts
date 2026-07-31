@@ -51,7 +51,7 @@ test.describe('Dashboard tiles use the DOM renderer under WebGL (HS-8619)', () =
 
   test.beforeEach(async ({ page, request }) => {
     await page.addInitScript(() => {
-      (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
       // RE-ENABLE WebGL — the coverage fixture's earlier init script set this
       // to true; init scripts run in insertion order, so this later one wins.
       try { (window as unknown as Record<string, unknown>).__HOTSHEET_DISABLE_WEBGL__ = false; } catch { /* */ }

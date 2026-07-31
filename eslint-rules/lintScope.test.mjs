@@ -105,19 +105,12 @@ function lintScriptPaths() {
 }
 
 /** Directories the config governs but the gate deliberately does not run on. */
-const KNOWN_UNGATED = new Map([
-  [
-    'e2e',
-    // Specs are covered by `eslint.config.mjs` but get the full CORE_RULES set,
-    // which they violate ~389 times — `innerHTML` inside `page.evaluate`, spread
-    // arguments, and sync child processes in fixtures are all normal in a
-    // browser-driving test and are not the risks those rules exist for. Only
-    // `**/*.test.ts` is exempt today, and `e2e/` uses `*.spec.ts`. Deciding which
-    // guards should apply to a spec is a policy call, tracked separately; until
-    // then, adding `e2e/` to the gate would just turn the build red.
-    'CORE_RULES applicability to *.spec.ts is an open policy decision',
-  ],
-]);
+/** Directories the config governs but the gate deliberately does not run on.
+ *
+ *  Empty since HS-9533: `e2e/` was the last exemption and is now gated. Adding an
+ *  entry here is a reviewed decision, not an accident of argument order — which
+ *  is the whole reason this map exists rather than a silent omission. */
+const KNOWN_UNGATED = new Map();
 
 describe('npm run lint scope (HS-9523)', () => {
   it('covers every non-ignored directory that holds lintable source', async () => {

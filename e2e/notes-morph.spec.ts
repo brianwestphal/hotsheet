@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /**
@@ -15,7 +17,7 @@ import { expect, test } from './coverage-fixture.js';
  * committed-save rebuild).
  */
 
-async function createTicket(page: import('@playwright/test').Page, title: string): Promise<number> {
+async function createTicket(page: Page, title: string): Promise<number> {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
@@ -24,13 +26,13 @@ async function createTicket(page: import('@playwright/test').Page, title: string
   return Number(await row.getAttribute('data-id'));
 }
 
-async function openDetail(page: import('@playwright/test').Page, title: string): Promise<void> {
+async function openDetail(page: Page, title: string): Promise<void> {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
 }
 
-async function getSecret(page: import('@playwright/test').Page): Promise<string> {
+async function getSecret(page: Page): Promise<string> {
   const res = await page.request.get('/api/projects');
   const projects = await res.json() as { secret: string }[];
   return projects[0]?.secret ?? '';

@@ -269,7 +269,7 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     await expect(page.locator('#ticket-list')).toHaveClass(/ticket-list-columns/, { timeout: 5000 });
   }
 
-  async function cardByText(page: Page, text: string) {
+  function cardByText(page: Page, text: string) {
     return page.locator('.column-card[data-id]').filter({ hasText: text });
   }
 
@@ -277,7 +277,7 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     await createTicket(page, 'Column category ticket');
     await enterColumnView(page);
 
-    const card = await cardByText(page, 'Column category ticket');
+    const card = cardByText(page, 'Column category ticket');
     await expect(card).toBeVisible({ timeout: 5000 });
     const badge = card.locator('.ticket-category-badge');
 
@@ -311,7 +311,7 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     await createTicket(page, 'Column priority ticket');
     await enterColumnView(page);
 
-    const card = await cardByText(page, 'Column priority ticket');
+    const card = cardByText(page, 'Column priority ticket');
     await expect(card).toBeVisible({ timeout: 5000 });
     const indicator = card.locator('.ticket-priority-indicator');
     const initialColor = await indicator.evaluate(el => (el as HTMLElement).style.color);
@@ -341,7 +341,7 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     await createTicket(page, 'Column status ticket');
     await enterColumnView(page);
 
-    const card = await cardByText(page, 'Column status ticket');
+    const card = cardByText(page, 'Column status ticket');
     await expect(card).toBeVisible({ timeout: 5000 });
 
     // Pre-state: the card lives in the not_started column.
@@ -377,7 +377,7 @@ test.describe('HS-8357 — ticket-change reflection in the column view', () => {
     await createTicket(page, 'Column title ticket');
     await enterColumnView(page);
 
-    const card = await cardByText(page, 'Column title ticket');
+    const card = cardByText(page, 'Column title ticket');
     await expect(card).toBeVisible({ timeout: 5000 });
 
     await card.click();

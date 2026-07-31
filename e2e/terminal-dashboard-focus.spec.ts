@@ -17,12 +17,14 @@
  * these drive the real thing and assert on `document.activeElement`, which is
  * what actually decides where the user's keystrokes go.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 let headers: Record<string, string> = {};
 
 /** Where do keystrokes go right now? */
-async function activeElementInfo(page: import('@playwright/test').Page): Promise<{
+async function activeElementInfo(page: Page): Promise<{
   tag: string; className: string; inCentered: boolean; inDedicated: boolean;
 }> {
   return page.evaluate(() => {
@@ -47,7 +49,7 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
     // The dashboard is Tauri-gated.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
     await request.patch('/api/file-settings', {
@@ -64,7 +66,7 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
   });
 
   /** Open the dashboard and return the live tile locator. */
-  async function openDashboard(page: import('@playwright/test').Page) {
+  async function openDashboard(page: Page) {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#terminal-dashboard-toggle').click();

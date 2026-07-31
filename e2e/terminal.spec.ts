@@ -87,7 +87,7 @@ test.describe('Embedded terminal drawer', () => {
     await page.addInitScript(() => {
       // A no-op invoke is enough for UI visibility checks.
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 
@@ -226,7 +226,7 @@ test.describe('Embedded terminal drawer', () => {
     await dialog.locator('.term-edit-theme').selectOption('dracula');
     await dialog.locator('.cmd-editor-done-btn').click();
     await page.waitForTimeout(700);
-    let fs = await (await request.get('/api/file-settings', { headers })).json() as { terminals: { id: string; theme?: string }[] };
+    let fs = await (await request.get('/api/file-settings', { headers })).json() as { terminals: { id: string; theme?: string; fontFamily?: string; fontSize?: number }[] };
     expect(fs.terminals.find(t => t.id === 'second')?.theme).toBe('dracula');
 
     // Re-open → now "Custom" active + fields visible; switch back to Default + save.
@@ -778,7 +778,7 @@ test.describe('Embedded terminal drawer', () => {
 
     // Collapse any prior expanded state first so we always start small.
     const app = page.locator('.app');
-    if ((await app.getAttribute('class'))?.includes('drawer-expanded')) {
+    if ((await app.getAttribute('class'))?.includes('drawer-expanded') === true) {
       await page.locator('#drawer-expand-btn').click();
     }
     const getRows = async () => pane.locator('.xterm-rows > *').count();

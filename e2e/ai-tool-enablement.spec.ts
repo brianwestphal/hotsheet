@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /**
@@ -21,7 +23,7 @@ test.describe('AI tool enablement (HS-9517)', () => {
     });
   });
 
-  const openAiTools = async (page: import('@playwright/test').Page): Promise<void> => {
+  const openAiTools = async (page: Page): Promise<void> => {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#settings-btn').click();

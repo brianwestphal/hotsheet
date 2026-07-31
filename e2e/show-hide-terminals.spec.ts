@@ -63,7 +63,7 @@ async function purgeDynamic(request: APIRequestContext): Promise<void> {
 async function stubTauri(page: Page): Promise<void> {
   await page.addInitScript(() => {
     (window as unknown as Record<string, unknown>).__TAURI__ = {
-      core: { invoke: async () => undefined },
+      core: { invoke: () => Promise.resolve(undefined) },
     };
   });
 }

@@ -63,7 +63,7 @@ test.describe('AI tool dropdown is generated from the plugin registry (HS-9490)'
     const labels = await page.locator('#ai-tool-select option').evaluateAll(
       // `dataset.baseLabel` is the pristine label the gating filter stashes before it
       // may append "— in development"; fall back to the text for ungated options.
-      opts => opts.map(o => (o as HTMLOptionElement).dataset.baseLabel ?? o.textContent ?? ''),
+      opts => opts.map(o => (o as HTMLOptionElement).dataset.baseLabel ?? o.textContent),
     );
     expect(labels).toEqual(EXPECTED_LABELS);
   });

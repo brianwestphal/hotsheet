@@ -18,9 +18,10 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-type Page = import('@playwright/test').Page;
 
 const COMMANDS = JSON.stringify([{ name: 'Agent Cmd', prompt: 'do something' }]);
 

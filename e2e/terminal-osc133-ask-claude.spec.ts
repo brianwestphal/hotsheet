@@ -23,6 +23,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { APIRequestContext, Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 import { expectXtermContainsText } from './xtermDiagnostics.js';
 
@@ -34,7 +36,7 @@ let headers: Record<string, string> = {};
 const FIXTURE_IDS = ['osc133-fail-alive', 'osc133-fail-dead'];
 
 async function destroyAllFixtureTerminals(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
 ): Promise<void> {
   for (const id of FIXTURE_IDS) {
     try {
@@ -44,7 +46,7 @@ async function destroyAllFixtureTerminals(
 }
 
 async function configureFixtureTerminal(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
   id: string,
   env: Record<string, string>,
 ): Promise<void> {
@@ -64,7 +66,7 @@ async function configureFixtureTerminal(
   });
 }
 
-async function ensureDrawerOpen(page: import('@playwright/test').Page): Promise<void> {
+async function ensureDrawerOpen(page: Page): Promise<void> {
   const panel = page.locator('#command-log-panel');
   if (!(await panel.isVisible())) {
     await page.locator('#command-log-btn').click();
@@ -82,7 +84,7 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
   test.beforeEach(async ({ page, request }) => {
     // Tauri stub.
     await page.addInitScript(() => {
-      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
     });
 
     try {

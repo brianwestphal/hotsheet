@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { expect as pwExpect, type Page,test as base } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
+import { expect as pwExpect, test as base } from '@playwright/test';
 import { mkdirSync,writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 
@@ -151,7 +152,7 @@ const hasOptionalSecret = (v: unknown): v is { secret?: string } =>
   typeof v === 'object' && v !== null;
 
 const RESET_SETTINGS_HEADERS = { 'Content-Type': 'application/json' };
-async function resetCrossSpecSettings(request: import('@playwright/test').APIRequestContext): Promise<void> {
+async function resetCrossSpecSettings(request: APIRequestContext): Promise<void> {
   let projects: { secret?: string }[] = [];
   try {
     projects = await readJsonArray(await request.get('/api/projects'), hasOptionalSecret);
@@ -238,7 +239,7 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
         ? (listRaw as { dynamic?: unknown }).dynamic
         : undefined);
       const list = { dynamic: Array.isArray(dynamic) ? dynamic.filter(hasStringId) : [] };
-      for (const d of (list.dynamic ?? [])) {
+      for (const d of list.dynamic) {
         await request.post('/api/terminal/destroy', { headers: authHeaders, data: { terminalId: d.id } }).catch(() => {});
       }
     }
@@ -319,11 +320,15 @@ function matchesAllowlist(
 
 // Collect browser JS coverage and write V8-format JSON for c8 to process.
 // Rewrites the URL from HTTP to the local file path so c8 can find the source map.
+/* Playwright's own convention for a fixture that produces no value: `void` here
+   is the type the library documents, not a mistake. */
+/* eslint-disable @typescript-eslint/no-invalid-void-type */
 export const test = base.extend<{
   autoJSCoverage: void;
   suppressUpgradeNudge: void;
   resetSettings: void;
   errorCapture: ErrorCaptureFixture;
+  /* eslint-enable @typescript-eslint/no-invalid-void-type */
 }, {
   // HS-9352 — each Playwright worker gets its OWN isolated Hot Sheet server
   // (fresh data-dir + HOME, distinct port) so no single server is loaded by
@@ -339,6 +344,8 @@ export const test = base.extend<{
   // (config forces workers:1 in that mode). Otherwise spawn on 4190+parallelIndex
   // (parallelIndex is 0..workers-1, stable across worker restarts — unlike
   // workerIndex — so ports never collide).
+  // Playwright requires the fixture argument even when none are consumed.
+  // eslint-disable-next-line no-empty-pattern
   workerServer: [async ({}, use) => {
     // HS-9352 — spawn a per-worker isolated server ONLY for the no-terminal scope.
     // The coverage path (NO_WEB_SERVER) runs its own external server on 4190, and
@@ -380,8 +387,8 @@ export const test = base.extend<{
         if (m) port = Number(m[1]);
       }
     };
-    server.stdout?.on('data', onChunk);
-    server.stderr?.on('data', onChunk);
+    (server.stdout as NodeJS.ReadableStream | null)?.on('data', onChunk);
+    (server.stderr as NodeJS.ReadableStream | null)?.on('data', onChunk);
     // Wait for the banner (→ the server is listening) or an early exit.
     const deadline = Date.now() + 80_000;
     while (port === 0 && Date.now() < deadline) {
@@ -492,7 +499,7 @@ export const test = base.extend<{
   }, { auto: true }],
   autoJSCoverage: [async ({ page }, use) => {
     const coverageDir = process.env.BROWSER_V8_COVERAGE;
-    if (!coverageDir) {
+    if (coverageDir === undefined || coverageDir === '') {
       await use();
       return;
     }
@@ -517,3 +524,22 @@ export const test = base.extend<{
 });
 
 export { expect } from '@playwright/test';
+
+/**
+ * HS-9533 — parse a JSON array column returned by the server under test.
+ *
+ * The specs read `tickets.notes` / `tickets.tags`, which are JSON-encoded array
+ * columns. A bare `JSON.parse(x) as T[]` asserts the shape without checking it,
+ * so a server that starts returning something else surfaces as a puzzling
+ * failure several lines later. Checking here names the problem at the boundary.
+ *
+ * The single cast is deliberate and contained: `Array.isArray` has already
+ * proven the outer shape, and element validation is the individual spec's job.
+ */
+export function parseJsonArray<T>(raw: string, what: string): T[] {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`expected ${what} to be a JSON array, got ${typeof parsed}`);
+  }
+  return parsed as T[];
+}

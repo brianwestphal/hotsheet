@@ -26,6 +26,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { APIRequestContext } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,7 +43,7 @@ let headers: Record<string, string> = {};
 const FIXTURE_IDS = ['osc9-simple', 'osc9-dedupe', 'osc9-sequence', 'osc9-progress'];
 
 async function destroyAllFixtureTerminals(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
 ): Promise<void> {
   for (const id of FIXTURE_IDS) {
     try {
@@ -51,7 +53,7 @@ async function destroyAllFixtureTerminals(
 }
 
 async function configureFixtureTerminal(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
   id: string,
   env: Record<string, string>,
 ): Promise<void> {
@@ -96,14 +98,14 @@ test.describe('Terminal drawer OSC 9 desktop notifications (HS-7273)', () => {
     // every `.hs-toast` add-node is recorded with its text. DOM only hosts one
     // toast at a time; we can't count by querying the DOM later.
     await page.addInitScript(() => {
-      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
       const events: ToastEvent[] = [];
       (window as unknown as { __toastEvents: ToastEvent[] }).__toastEvents = events;
       const ob = new MutationObserver((mutations) => {
         for (const m of mutations) {
           for (const node of m.addedNodes) {
             if (node instanceof HTMLElement && node.classList.contains('hs-toast')) {
-              events.push({ text: node.textContent ?? '' });
+              events.push({ text: node.textContent });
             }
           }
         }
@@ -111,7 +113,7 @@ test.describe('Terminal drawer OSC 9 desktop notifications (HS-7273)', () => {
       // document.body may not exist yet at init-script time; attach once the
       // DOM is ready so we catch every toast from first frame onward.
       const start = () => ob.observe(document.body, { childList: true });
-      if (document.body) start();
+      if ((document.body as HTMLElement | null) !== null) start();
       else document.addEventListener('DOMContentLoaded', start);
     });
 

@@ -8,9 +8,11 @@
  * `File` — the document-level handler reads `e.clipboardData` and reaches the
  * same `uploadAttachment` path the file input / drop use.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string): Promise<void> {
+async function createTicket(page: Page, title: string): Promise<void> {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
@@ -21,7 +23,7 @@ async function createTicket(page: import('@playwright/test').Page, title: string
 
 /** Dispatch a synthetic `paste` carrying a single `File`. `clipboardData` is
  *  read-only on a constructed ClipboardEvent, so patch it on after building. */
-async function simulatePasteFile(page: import('@playwright/test').Page, fileName: string, content: string): Promise<void> {
+async function simulatePasteFile(page: Page, fileName: string, content: string): Promise<void> {
   await page.evaluate(
     ({ fileName, content }) => {
       const file = new File([content], fileName, { type: 'text/plain' });

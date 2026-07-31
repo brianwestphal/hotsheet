@@ -7,10 +7,12 @@
  * The pure decision matrix is unit-tested in `src/client/drawerActiveTab.test.ts`;
  * this spec proves the full DOM wiring — config → detection → active tab.
  */
+import type { APIRequestContext } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 test.describe('Drawer defaults to the Claude tab (HS-9246)', () => {
-  async function secretFor(request: import('@playwright/test').APIRequestContext): Promise<string> {
+  async function secretFor(request: APIRequestContext): Promise<string> {
     const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
     return projects[0]?.secret ?? '';
   }

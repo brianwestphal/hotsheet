@@ -20,12 +20,14 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 interface RegisteredProject { name: string; dataDir: string; secret: string }
 
 /** Create a ticket via the draft input and leave it selected (no Escape). */
-async function createTicket(page: import('@playwright/test').Page, title: string): Promise<void> {
+async function createTicket(page: Page, title: string): Promise<void> {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
@@ -34,7 +36,7 @@ async function createTicket(page: import('@playwright/test').Page, title: string
 
 /** Synthesize a ticket drag from the row carrying `title` onto the project tab
  *  with `tabSecret`. `move` sets the Alt modifier (copy is the default). */
-async function dragTicketOntoTab(page: import('@playwright/test').Page, title: string, tabSecret: string, move: boolean): Promise<void> {
+async function dragTicketOntoTab(page: Page, title: string, tabSecret: string, move: boolean): Promise<void> {
   await page.evaluate(
     ({ title, tabSecret, move }) => {
       const rows = Array.from(document.querySelectorAll<HTMLElement>('.ticket-row[data-id]'));

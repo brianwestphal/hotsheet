@@ -5,7 +5,7 @@
  * PluginUILocation, installs it via the bundled install flow, and then
  * verifies each button appears in the correct DOM container.
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { expect, test } from './coverage-fixture.js';

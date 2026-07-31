@@ -115,7 +115,7 @@ test.describe('Fresh install smoke test', () => {
   test('API health check', async ({ page }) => {
     const statsRes = await page.request.get('/api/stats');
     expect(statsRes.ok()).toBe(true);
-    const stats = await statsRes.json();
+    const stats: unknown = await statsRes.json();
     expect(stats).toHaveProperty('total');
     expect(stats).toHaveProperty('open');
     expect(stats).toHaveProperty('up_next');

@@ -18,9 +18,10 @@
  * timing that shifts with how many rows the shared server has accumulated), and a
  * test that is green for the wrong reason is worse than no test.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-type Page = import('@playwright/test').Page;
 
 /** Record every clipboard write into `window.__copied` before the app loads. */
 async function stubClipboard(page: Page): Promise<void> {

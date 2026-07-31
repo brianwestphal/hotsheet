@@ -13,9 +13,11 @@
  * the same `apiUpload` path that the real file input uses, and the
  * attachment shows up in the detail panel.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string): Promise<void> {
+async function createTicket(page: Page, title: string): Promise<void> {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
@@ -29,7 +31,7 @@ async function createTicket(page: import('@playwright/test').Page, title: string
   await page.keyboard.press('Escape');
 }
 
-async function openDetail(page: import('@playwright/test').Page, title: string): Promise<void> {
+async function openDetail(page: Page, title: string): Promise<void> {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
@@ -41,7 +43,7 @@ async function openDetail(page: import('@playwright/test').Page, title: string):
  * the given selector. Mirrors the shape of a real OS file drop.
  */
 async function simulateFileDrop(
-  page: import('@playwright/test').Page,
+  page: Page,
   selector: string,
   fileName: string,
   content: string,

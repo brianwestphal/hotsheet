@@ -12,7 +12,7 @@
  */
 import type { APIRequestContext } from '@playwright/test';
 
-import { expect, test } from './coverage-fixture.js';
+import { expect, parseJsonArray,test } from './coverage-fixture.js';
 
 const PLUGINS_ENABLED = process.env.PLUGINS_ENABLED === 'true';
 const GITHUB_TOKEN = process.env.GITHUB_PLUGIN_TOKEN ?? '';
@@ -339,7 +339,7 @@ test.describe('GitHub plugin — per-field roundtrip coverage (HS-5054)', () => 
     );
     await pullWithConflictResolve(request, localId);
     const local = await (await request.get(`/api/tickets/${localId}`, { headers })).json() as { tags: string };
-    const localTags = JSON.parse(local.tags) as string[];
+    const localTags = parseJsonArray<string>(local.tags, 'tags');
     expect(localTags).toContain(tagB);
     expect(localTags).toContain(tagC);
     expect(localTags).not.toContain(tagA);
@@ -429,7 +429,7 @@ test.describe('GitHub plugin — per-field roundtrip coverage (HS-5054)', () => 
 
     await pullWithConflictResolve(request, localId);
     const local = await (await request.get(`/api/tickets/${localId}`, { headers })).json() as { tags: string };
-    const localTags = JSON.parse(local.tags) as string[];
+    const localTags = parseJsonArray<string>(local.tags, 'tags');
     expect(localTags).toContain(`milestone:${msName}`);
   });
 });

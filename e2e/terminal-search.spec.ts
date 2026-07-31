@@ -24,6 +24,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { Page, TestInfo } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 import { expectXtermContainsText } from './xtermDiagnostics.js';
 
@@ -43,7 +45,7 @@ test.describe('Terminal search widget (HS-7363)', () => {
     // Tauri stub — both the drawer terminal and the dashboard are Tauri-gated.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 
@@ -98,8 +100,8 @@ test.describe('Terminal search widget (HS-7363)', () => {
    * the SearchAddon has content to match against.
    */
   async function openDrawerAndWaitForFruits(
-    page: import('@playwright/test').Page,
-    testInfo?: import('@playwright/test').TestInfo,
+    page: Page,
+    testInfo?: TestInfo,
   ): Promise<void> {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });

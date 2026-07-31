@@ -9,9 +9,10 @@
  * render when the channel is enabled AND a compatible Claude CLI is present, so
  * the tests skip gracefully when the environment can't surface the button.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-type Page = import('@playwright/test').Page;
 
 async function setCommandsAndReload(page: Page, items: unknown[]): Promise<void> {
   const origin = page.url().replace(/\/[^/]*$/, '');

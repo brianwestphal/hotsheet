@@ -17,7 +17,7 @@ test.describe('Terminal dashboard tile label always shows (HS-9000)', () => {
 
   test('tile name renders with non-zero width on narrow tiles (counts cluster present)', async ({ page, request }) => {
     await page.addInitScript(() => {
-      (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as Record<string, unknown>).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
     });
     // Narrow tiles (many columns) so the stats cluster could crowd the name.
     await request.patch('/api/global-config', { headers, data: { dashboard: { layoutMode: 'flow', columnsPerRow: 5 } } });
@@ -52,7 +52,7 @@ test.describe('Terminal dashboard tile label always shows (HS-9000)', () => {
       return labels.map(l => ({
         labelW: Math.round((l as HTMLElement).getBoundingClientRect().width),
         nameText: l.querySelector('.terminal-dashboard-tile-name')?.textContent ?? '',
-        nameW: Math.round((l.querySelector('.terminal-dashboard-tile-name') as HTMLElement | null)?.getBoundingClientRect().width ?? 0),
+        nameW: Math.round(l.querySelector<HTMLElement>('.terminal-dashboard-tile-name')?.getBoundingClientRect().width ?? 0),
       }));
     });
     expect(measured.length).toBeGreaterThan(0);

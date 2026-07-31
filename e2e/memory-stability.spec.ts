@@ -46,7 +46,7 @@
  *  - Transient DOM additions from `bindList`'s virtualization sentinel
  *    rows.
  */
-import type { CDPSession, Page } from '@playwright/test';
+import type { CDPSession } from '@playwright/test';
 
 import { expect, test } from './coverage-fixture.js';
 
@@ -176,7 +176,7 @@ test.describe('Memory / stability over time (HS-8570)', () => {
     const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
     const secret = projects[0]?.secret;
     expect(secret, 'need a project to test against').toBeDefined();
-    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret ?? '' };
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret };
 
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
@@ -218,7 +218,7 @@ test.describe('Memory / stability over time (HS-8570)', () => {
     const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
     const secret = projects[0]?.secret;
     expect(secret, 'need a project to test against').toBeDefined();
-    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret ?? '' };
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': secret };
     for (let i = 0; i < 25; i += 1) {
       await request.post('/api/tickets', {
         headers,

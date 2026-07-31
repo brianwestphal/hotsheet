@@ -25,7 +25,7 @@ test.describe('Drawer terminal grid view (HS-6311)', () => {
     // isn't rendered at all (§36.8 / §22.11).
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
     // Clear any lingering dynamic terminals so the toggle-enable count is

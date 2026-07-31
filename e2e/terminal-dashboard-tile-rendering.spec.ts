@@ -19,10 +19,12 @@
  *
  * The same assertion is run for the centered (zoom) view.
  */
-import { expect, test } from './coverage-fixture.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import type { Page } from '@playwright/test';
+
+import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRAW_SCRIPT = path.join(__dirname, 'fixtures', 'terminal-draw.py');
@@ -40,7 +42,7 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     // Tauri stub — the dashboard + drawer terminal are Tauri-only gated.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 
@@ -83,7 +85,7 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
    * the dashboard tile is guaranteed to receive a non-empty history frame
    * when it attaches.
    */
-  async function openDrawerAndWaitForDraw(page: import('@playwright/test').Page): Promise<void> {
+  async function openDrawerAndWaitForDraw(page: Page): Promise<void> {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
@@ -137,16 +139,16 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     // showed up as a gap of ~40-50 % of the tile height between the marker
     // and the preview's bottom edge.
     const result = await tile.evaluate((tileEl: Element) => {
-      const preview = tileEl.querySelector('.terminal-dashboard-tile-preview') as HTMLElement | null;
-      const xtermRoot = tileEl.querySelector('.terminal-dashboard-tile-xterm') as HTMLElement | null;
+      const preview: HTMLElement | null = tileEl.querySelector('.terminal-dashboard-tile-preview');
+      const xtermRoot: HTMLElement | null = tileEl.querySelector('.terminal-dashboard-tile-xterm');
       if (preview === null || xtermRoot === null) return { error: 'preview/xtermRoot missing' };
       const previewRect = preview.getBoundingClientRect();
       // xterm renders rows as <div> children of `.xterm-rows`. Find the
       // last row that contains visible (non-whitespace) content.
-      const rows = Array.from(xtermRoot.querySelectorAll('.xterm-rows > div')) as HTMLElement[];
+      const rows = Array.from(xtermRoot.querySelectorAll<HTMLElement>('.xterm-rows > div'));
       let lastNonEmpty: HTMLElement | null = null;
       for (const row of rows) {
-        const text = row.textContent ?? '';
+        const text = row.textContent;
         if (text.trim().length > 0) lastNonEmpty = row;
       }
       if (lastNonEmpty === null) return { error: 'no rendered rows with content' };
@@ -156,7 +158,7 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
         previewBottom: previewRect.bottom,
         previewHeight: previewRect.height,
         lastRowBottom: lastRect.bottom,
-        lastRowText: (lastNonEmpty.textContent ?? '').trim().slice(0, 80),
+        lastRowText: lastNonEmpty.textContent.trim().slice(0, 80),
         gapBelowLastRow: previewRect.bottom - lastRect.bottom,
         gapAsFraction: (previewRect.bottom - lastRect.bottom) / previewRect.height,
       };
@@ -191,20 +193,20 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     await testInfo.attach('centered-tile.png', { body: screenshot, contentType: 'image/png' });
 
     const result = await tile.evaluate((tileEl: Element) => {
-      const preview = tileEl.querySelector('.terminal-dashboard-tile-preview') as HTMLElement | null;
-      const xtermRoot = tileEl.querySelector('.terminal-dashboard-tile-xterm') as HTMLElement | null;
+      const preview: HTMLElement | null = tileEl.querySelector('.terminal-dashboard-tile-preview');
+      const xtermRoot: HTMLElement | null = tileEl.querySelector('.terminal-dashboard-tile-xterm');
       if (preview === null || xtermRoot === null) return { error: 'preview/xtermRoot missing' };
       const previewRect = preview.getBoundingClientRect();
-      const rows = Array.from(xtermRoot.querySelectorAll('.xterm-rows > div')) as HTMLElement[];
+      const rows = Array.from(xtermRoot.querySelectorAll<HTMLElement>('.xterm-rows > div'));
       let lastNonEmpty: HTMLElement | null = null;
       for (const row of rows) {
-        if ((row.textContent ?? '').trim().length > 0) lastNonEmpty = row;
+        if (row.textContent.trim().length > 0) lastNonEmpty = row;
       }
       if (lastNonEmpty === null) return { error: 'no rendered rows with content' };
       const lastRect = lastNonEmpty.getBoundingClientRect();
       return {
         previewHeight: previewRect.height,
-        lastRowText: (lastNonEmpty.textContent ?? '').trim().slice(0, 80),
+        lastRowText: lastNonEmpty.textContent.trim().slice(0, 80),
         gapAsFraction: (previewRect.bottom - lastRect.bottom) / previewRect.height,
       };
     });
@@ -274,20 +276,20 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     // refit the PTY (TUI still drawing for 60 rows, visible as empty rows
     // below the marker) or (b) it refit but the TUI never redrew.
     const result = await drawerPane.evaluate((el: Element) => {
-      const body = el.querySelector('.terminal-body') as HTMLElement | null;
+      const body: HTMLElement | null = el.querySelector('.terminal-body');
       if (body === null) return { error: 'terminal-body missing' };
       const bodyRect = body.getBoundingClientRect();
-      const rows = Array.from(el.querySelectorAll('.xterm-rows > div')) as HTMLElement[];
+      const rows = Array.from(el.querySelectorAll<HTMLElement>('.xterm-rows > div'));
       let lastNonEmpty: HTMLElement | null = null;
       for (const row of rows) {
-        if ((row.textContent ?? '').trim().length > 0) lastNonEmpty = row;
+        if (row.textContent.trim().length > 0) lastNonEmpty = row;
       }
       if (lastNonEmpty === null) return { error: 'no rendered rows with content' };
       const lastRect = lastNonEmpty.getBoundingClientRect();
       return {
         bodyHeight: bodyRect.height,
         renderedRows: rows.length,
-        lastRowText: (lastNonEmpty.textContent ?? '').trim().slice(0, 80),
+        lastRowText: lastNonEmpty.textContent.trim().slice(0, 80),
         gapAsFraction: (bodyRect.bottom - lastRect.bottom) / bodyRect.height,
       };
     });
@@ -317,20 +319,20 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     await testInfo.attach('dedicated-view.png', { body: screenshot, contentType: 'image/png' });
 
     const result = await dedicated.evaluate((paneEl: Element) => {
-      const pane = paneEl.querySelector('.terminal-dashboard-dedicated-pane') as HTMLElement | null;
-      const xtermScreen = paneEl.querySelector('.xterm-screen') as HTMLElement | null;
+      const pane: HTMLElement | null = paneEl.querySelector('.terminal-dashboard-dedicated-pane');
+      const xtermScreen: HTMLElement | null = paneEl.querySelector('.xterm-screen');
       if (pane === null || xtermScreen === null) return { error: 'pane/xterm-screen missing' };
       const paneRect = pane.getBoundingClientRect();
-      const rows = Array.from(paneEl.querySelectorAll('.xterm-rows > div')) as HTMLElement[];
+      const rows = Array.from(paneEl.querySelectorAll<HTMLElement>('.xterm-rows > div'));
       let lastNonEmpty: HTMLElement | null = null;
       for (const row of rows) {
-        if ((row.textContent ?? '').trim().length > 0) lastNonEmpty = row;
+        if (row.textContent.trim().length > 0) lastNonEmpty = row;
       }
       if (lastNonEmpty === null) return { error: 'no rendered rows' };
       const lastRect = lastNonEmpty.getBoundingClientRect();
       return {
         paneHeight: paneRect.height,
-        lastRowText: (lastNonEmpty.textContent ?? '').trim().slice(0, 80),
+        lastRowText: lastNonEmpty.textContent.trim().slice(0, 80),
         gapAsFraction: (paneRect.bottom - lastRect.bottom) / paneRect.height,
       };
     });
@@ -427,7 +429,7 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
         // length across rows as an approximation of `cols`.
         let maxLen = 0;
         for (const row of tile.querySelectorAll<HTMLElement>('.xterm-rows > div')) {
-          const text = (row.textContent ?? '').replace(/\s+$/, '');
+          const text = row.textContent.replace(/\s+$/, '');
           if (text.length > maxLen) maxLen = text.length;
         }
         const tileRect = tile.getBoundingClientRect();
@@ -637,7 +639,7 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
         .not.toBeNull();
       if (t.naturalAspect !== null) {
         const drift = Math.abs(t.naturalAspect - TARGET_ASPECT) / TARGET_ASPECT;
-        expect.soft(drift, `tile ${t.id} drift from 4:3 (got aspect ${t.naturalAspect?.toFixed(3)})`)
+        expect.soft(drift, `tile ${t.id} drift from 4:3 (got aspect ${t.naturalAspect.toFixed(3)})`)
           .toBeLessThan(TOLERANCE);
       }
     }

@@ -133,9 +133,8 @@ test.describe('GitHub plugin — conflict resolution end-to-end (HS-5055)', () =
     expect(conflict!.sync_status).toBe('conflict');
 
     // Conflict data includes both local and remote snapshots.
-    const data = JSON.parse(conflict!.conflict_data) as {
-      local: { title: string }; remote: { title: string };
-    };
+    const rawConflict: unknown = JSON.parse(conflict!.conflict_data);
+    const data = rawConflict as { local: { title: string }; remote: { title: string } };
     expect(data.local.title).toBe(localTitle);
     expect(data.remote.title).toBe(remoteTitle);
   });

@@ -12,11 +12,13 @@
  * handler, real popup. What it pins is the user-visible contract: a named,
  * actionable message instead of a crash, and no ticket left behind.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /** Dispatch a real `drop` on the ticket list carrying `files`. */
 async function simulateDrop(
-  page: import('@playwright/test').Page,
+  page: Page,
   files: { name: string; content: string }[],
 ): Promise<void> {
   await page.evaluate((specs) => {

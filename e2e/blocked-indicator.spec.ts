@@ -9,6 +9,8 @@
  * landing without a matching CSS rule is exactly the half-fix that would still
  * leave the user with nothing to see.
  */
+import type { Locator, Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 /** `--blocked: #4b5563` (styles.scss) — the dark-gray blocked accent. */
@@ -16,14 +18,14 @@ const BLOCKED_RGB = 'rgb(75, 85, 99)';
 /** `--star: #eab308` — the gold up-next accent, for the precedence check. */
 const STAR_RGB = 'rgb(234, 179, 8)';
 
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draft = page.locator('.draft-input');
   await draft.fill(title);
   await draft.press('Enter');
   await expect(page.locator(`.ticket-row[data-id] .ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
 }
 
-async function openDetail(page: import('@playwright/test').Page, title: string) {
+async function openDetail(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-number').click();
   await expect(page.locator('#detail-header')).toBeVisible({ timeout: 5000 });
@@ -34,7 +36,7 @@ async function openDetail(page: import('@playwright/test').Page, title: string) 
  * then poll the API until the debounced auto-save has round-tripped — a fixed
  * timeout races the save under load (the HS-9352 flake).
  */
-async function setBlockedReason(page: import('@playwright/test').Page, title: string, reason: string) {
+async function setBlockedReason(page: Page, title: string, reason: string) {
   await page.locator('#detail-blocked-reason').fill(reason);
   await expect.poll(async () => {
     const res = await page.request.get('/api/tickets?status=active');
@@ -43,7 +45,7 @@ async function setBlockedReason(page: import('@playwright/test').Page, title: st
   }, { timeout: 8000 }).toBe(reason);
 }
 
-function borderLeftColor(locator: import('@playwright/test').Locator) {
+function borderLeftColor(locator: Locator) {
   return locator.evaluate(el => getComputedStyle(el).borderLeftColor);
 }
 

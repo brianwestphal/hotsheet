@@ -22,7 +22,7 @@ import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRAW_SCRIPT = path.join(__dirname, 'fixtures', 'terminal-draw.sh');
-const MARKER_SCRIPT = path.join(__dirname, 'fixtures', 'hs8287-marker.sh');
+const _MARKER_SCRIPT = path.join(__dirname, 'fixtures', 'hs8287-marker.sh');
 
 let headers: Record<string, string> = {};
 
@@ -37,7 +37,7 @@ test.describe('Terminal checkout bugs', () => {
     // Tauri stub — drawer + dashboard are gated behind getTauriInvoke().
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 
@@ -289,7 +289,7 @@ test.describe('Terminal checkout bugs', () => {
     // attribute changes between renders don't tilt the count.
     const beforeRows = await drawerPane.evaluate((paneEl: Element) => {
       const rows = Array.from(paneEl.querySelectorAll('.xterm-rows > div'));
-      return rows.map(r => (r.textContent ?? '').trim()).filter(t => t.length > 0);
+      return rows.map(r => r.textContent.trim()).filter(t => t.length > 0);
     });
     const beforeBottomKeybarCount = beforeRows.filter(r => r.includes('BOTTOM-KEYBAR')).length;
     const beforeTopBarCount = beforeRows.filter(r => r.includes('TOP-STATUS-BAR')).length;
@@ -343,7 +343,7 @@ test.describe('Terminal checkout bugs', () => {
       // via the xterm instance hanging off the .xterm element.
        
       const rowsDom = Array.from(paneEl.querySelectorAll('.xterm-rows > div'))
-        .map(r => (r.textContent ?? '').trim());
+        .map(r => r.textContent.trim());
       const visibleBottom = rowsDom.filter(r => r.includes('BOTTOM-KEYBAR')).length;
       const visibleTop = rowsDom.filter(r => r.includes('TOP-STATUS-BAR')).length;
       return { visibleBottom, visibleTop };

@@ -103,7 +103,10 @@ test.describe('Permission popup — live polling lifecycle (HS-8207)', () => {
       let payload: { request_id?: string; behavior?: string } = {};
       try {
         const data = req.postData();
-        if (data !== null && data !== '') payload = JSON.parse(data) as typeof payload;
+        if (data !== null && data !== '') {
+          const parsed: unknown = JSON.parse(data);
+          if (typeof parsed === 'object' && parsed !== null) payload = parsed;
+        }
       } catch { /* ignore */ }
       await page.evaluate((p) => {
         (window as unknown as Window).__HS8207_respondCalls.push(p);

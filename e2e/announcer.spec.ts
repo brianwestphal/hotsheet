@@ -11,6 +11,8 @@
  * (`src/routes/announcer.test.ts`); this spec is the only thing exercising the
  * real client wiring (button gate → PIP → controls → cursor advance).
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 const ENTRIES = [
@@ -550,8 +552,8 @@ test('restores the playback session on launch (HS-8804)', async ({ page }) => {
 // The real-server pass lives in docs/manual-test-plan.md §15.
 const LOCAL_MODELS = ['llama3.1:8b', 'qwen2.5:7b'];
 
-function stubAnnouncerTts(page: import('@playwright/test').Page): Promise<void> {
-  return page.addInitScript(() => {
+async function stubAnnouncerTts(page: Page): Promise<void> {
+  await page.addInitScript(() => {
     Object.defineProperty(window, 'speechSynthesis', {
       configurable: true,
       value: { speak: () => { /* noop */ }, cancel: () => { /* noop */ }, pause: () => { /* noop */ }, resume: () => { /* noop */ } },
@@ -571,8 +573,8 @@ function stubAnnouncerTts(page: import('@playwright/test').Page): Promise<void> 
 // → the panel renders with defaults) and swallow PATCH so nothing persists. The
 // regex matches `/api/global-config` exactly (with or without `?project=…`) and
 // not the unrelated `/plugins/<id>/global-config` endpoints.
-function hermeticGlobalConfig(page: import('@playwright/test').Page): Promise<void> {
-  return page.route(/\/api\/global-config(\?|$)/, (route) => route.fulfill({
+async function hermeticGlobalConfig(page: Page): Promise<void> {
+  await page.route(/\/api\/global-config(\?|$)/, (route) => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({}),
   }));
 }

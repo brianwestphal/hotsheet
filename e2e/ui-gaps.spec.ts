@@ -3,9 +3,11 @@
  * strikethrough styling, batch tags, detail position toggle.
  * Skips drag-and-drop tests (unreliable in headless Playwright).
  */
+import type { Page } from '@playwright/test';
+
 import { awaitWsConnected, expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string, opts?: { category?: string; priority?: string; status?: string }) {
+async function createTicket(page: Page, title: string, opts?: { category?: string; priority?: string; status?: string }) {
   const draftInput = page.locator('.draft-input');
   await draftInput.fill(title);
   await draftInput.press('Enter');
@@ -14,7 +16,7 @@ async function createTicket(page: import('@playwright/test').Page, title: string
     // Select the ticket and patch via API
     const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
     const id = await row.getAttribute('data-id');
-    if (id && opts.status) {
+    if (id !== null && id !== '' && opts.status !== undefined && opts.status !== '') {
       await page.request.patch(`/api/tickets/${id}`, {
         headers: { 'Content-Type': 'application/json' },
         data: opts,
@@ -49,7 +51,7 @@ test.describe('UI gaps (HS-5183)', () => {
     await createTicket(page, `SelectAll A ${Date.now()}`);
     await createTicket(page, `SelectAll B ${Date.now()}`);
     // Blur any input so Cmd+A doesn't select text
-    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 
     await page.keyboard.press('Meta+a');
     // Batch toolbar should show count ≥ 2

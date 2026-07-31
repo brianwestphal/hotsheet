@@ -1,9 +1,11 @@
 /**
  * HS-5182: ticket copy/cut/paste via keyboard shortcuts.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
-async function createTicket(page: import('@playwright/test').Page, title: string) {
+async function createTicket(page: Page, title: string) {
   const draftInput = page.locator('.draft-input');
   await draftInput.fill(title);
   await draftInput.press('Enter');
@@ -17,12 +19,12 @@ async function createTicket(page: import('@playwright/test').Page, title: string
   await page.keyboard.press('Escape');
 }
 
-async function selectTicket(page: import('@playwright/test').Page, title: string) {
+async function selectTicket(page: Page, title: string) {
   const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) });
   await row.locator('.ticket-checkbox').click();
   // Blur active element so focus is not in an INPUT — the shortcut handler
   // skips Cmd+C/X/V when isInput is true (checkbox is still an INPUT tag).
-  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
 test.describe('Ticket copy/cut/paste (HS-5182)', () => {

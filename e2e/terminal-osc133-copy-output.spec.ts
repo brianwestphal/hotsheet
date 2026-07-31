@@ -22,6 +22,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import type { APIRequestContext, Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +36,7 @@ const FIXTURE_IDS = ['osc133-output', 'osc133-none'];
 /** Open the drawer if it isn't already. Clicking `#command-log-btn` is a
  *  toggle, so a stale "already open" state from a prior test would close the
  *  drawer instead of opening it. Asserting state both ways avoids that flake. */
-async function ensureDrawerOpen(page: import('@playwright/test').Page): Promise<void> {
+async function ensureDrawerOpen(page: Page): Promise<void> {
   const panel = page.locator('#command-log-panel');
   if (!(await panel.isVisible())) {
     await page.locator('#command-log-btn').click();
@@ -43,7 +45,7 @@ async function ensureDrawerOpen(page: import('@playwright/test').Page): Promise<
 }
 
 async function destroyAllFixtureTerminals(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
 ): Promise<void> {
   for (const id of FIXTURE_IDS) {
     try {
@@ -53,7 +55,7 @@ async function destroyAllFixtureTerminals(
 }
 
 async function configureFixtureTerminal(
-  request: import('@playwright/test').APIRequestContext,
+  request: APIRequestContext,
   id: string,
   env: Record<string, string>,
 ): Promise<void> {
@@ -102,14 +104,14 @@ test.describe('OSC 133 Phase 1b copy-last-output (HS-7327)', () => {
     // sidesteps Playwright's clipboard permissions and gives us a stable
     // assertion target that works headless and across CI environments.
     await page.addInitScript(() => {
-      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: async () => undefined } };
+      (window as unknown as { __TAURI__: unknown }).__TAURI__ = { core: { invoke: () => Promise.resolve(undefined) } };
       const writes: string[] = [];
       (window as unknown as { __clipboardWrites: string[] }).__clipboardWrites = writes;
       Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
         value: {
-          writeText: async (text: string) => { writes.push(text); },
-          readText: async () => writes[writes.length - 1] ?? '',
+          writeText: (text: string) => { writes.push(text); return Promise.resolve(); },
+          readText: () => Promise.resolve(writes[writes.length - 1] ?? ''),
         },
       });
     });

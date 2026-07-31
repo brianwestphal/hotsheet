@@ -47,7 +47,7 @@ test.describe('Dashboard tile sizing with a drawer-active terminal (HS-8619)', (
   test.beforeEach(async ({ page, request }) => {
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 

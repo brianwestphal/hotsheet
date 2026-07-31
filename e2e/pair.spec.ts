@@ -12,6 +12,8 @@
  * by `e2e/pair-camera.spec.ts` (HS-9097, fake-camera + ZXing); only the
  * per-platform cert install stays manual (docs/manual-test-plan.md §7).
  */
+import type { Page } from '@playwright/test';
+
 import { generateCa, signClientCert } from '../src/auth/ca.js';
 import { pairingPayload } from '../src/client/pairingPayload.js';
 import { expect, test } from './coverage-fixture.js';
@@ -24,7 +26,7 @@ import { expect, test } from './coverage-fixture.js';
 // click would therefore TOGGLE it shut when already open, hiding
 // `#pair-paste-input` so the subsequent `.fill()` times out. Open it idempotently
 // instead so the spec works whether or not the section auto-opened.
-async function openManualEntry(page: import('@playwright/test').Page): Promise<void> {
+async function openManualEntry(page: Page): Promise<void> {
   const details = page.locator('#pair-paste-details');
   const alreadyOpen = await details.evaluate((d) => (d as HTMLDetailsElement).open);
   if (!alreadyOpen) await page.locator('.pair-paste summary').click();

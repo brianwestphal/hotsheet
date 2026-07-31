@@ -29,7 +29,7 @@ test.describe('Drawer terminal — OSC title + bell indicators', () => {
     // runs Chromium, so we have to spoof `__TAURI__` before the bundle loads.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 

@@ -13,6 +13,8 @@
  * Runs against a lazy echo fixture so the PTY is cheap; the appearance
  * switch is xterm-only (no PTY touch), so we don't need a fancy fixture.
  */
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 let headers: Record<string, string> = {};
@@ -28,7 +30,7 @@ test.describe('Terminal appearance gear popover (HS-6307)', () => {
     // Tauri stub — the embedded terminal is Tauri-only gated.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 
@@ -65,7 +67,7 @@ test.describe('Terminal appearance gear popover (HS-6307)', () => {
     } catch { /* not yet spawned */ }
   });
 
-  async function openDrawerAndActivateTerminal(page: import('@playwright/test').Page): Promise<void> {
+  async function openDrawerAndActivateTerminal(page: Page): Promise<void> {
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await page.locator('#command-log-btn').click();
@@ -84,7 +86,7 @@ test.describe('Terminal appearance gear popover (HS-6307)', () => {
    *  round-tripping through the xterm-screen's computed style. The
    *  `.xterm` root element's `backgroundColor` CSS property reflects the
    *  active theme background on every render. */
-  async function readBackgroundColor(page: import('@playwright/test').Page): Promise<string> {
+  async function readBackgroundColor(page: Page): Promise<string> {
     // HS-8419 — appearance bg is applied to `.terminal-body` (the inst.body
     // ref in `terminalDrawerMount.tsx:202`), not the inner `.xterm` element.
     // xterm paints its canvas with the theme; the canvas isn't a CSS bg.

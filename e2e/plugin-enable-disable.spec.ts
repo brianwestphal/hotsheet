@@ -5,7 +5,6 @@
  * When I disable a plugin, its junk is cleaned up for that project but other
  * projects are unaffected."
  */
-import type { APIRequestContext } from '@playwright/test';
 import { mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';

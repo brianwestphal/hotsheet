@@ -1,3 +1,5 @@
+import type { Locator, Page } from '@playwright/test';
+
 import { expect, test } from './coverage-fixture.js';
 
 // Helper: open settings and switch to the Experimental tab.
@@ -14,7 +16,7 @@ import { expect, test } from './coverage-fixture.js';
 // sync wait here. `networkidle` would not work anyway: the app keeps a
 // persistent long-poll open for ticket updates, so the network is never
 // idle.
-async function openExperimentalSettings(page: import('@playwright/test').Page) {
+async function openExperimentalSettings(page: Page) {
   // Opening Settings kicks off the Backups tab's snapshot-status fetch
   // (`bindBackupsTab` → `refreshSnapshotProtectionStatus`). Tests that
   // `page.reload()` soon after must let that fetch settle first, else the reload
@@ -39,7 +41,7 @@ async function openExperimentalSettings(page: import('@playwright/test').Page) {
 }
 
 // Helper: set custom commands via API then reload to pick them up
-async function setCommandsAndReload(page: import('@playwright/test').Page, items: unknown[]) {
+async function setCommandsAndReload(page: Page, items: unknown[]) {
   const origin = page.url().replace(/\/[^/]*$/, '');
   await page.request.patch('/api/settings', {
     data: { custom_commands: JSON.stringify(items) },
@@ -168,7 +170,7 @@ test.describe('Custom commands', () => {
     await expect(autoShow).toBeVisible();
     await expect(launchTerminal).toBeVisible();
 
-    const colorOf = (loc: import('@playwright/test').Locator) =>
+    const colorOf = (loc: Locator) =>
       loc.evaluate((el) => getComputedStyle(el).color);
     const autoShowColor = await colorOf(autoShow);
     const launchColor = await colorOf(launchTerminal);
@@ -320,7 +322,7 @@ test.describe('Custom commands', () => {
     // Tauri stub so the terminal feature is enabled in the bundle.
     await page.addInitScript(() => {
       (window as unknown as Record<string, unknown>).__TAURI__ = {
-        core: { invoke: async () => undefined },
+        core: { invoke: () => Promise.resolve(undefined) },
       };
     });
 
