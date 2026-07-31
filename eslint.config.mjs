@@ -129,6 +129,28 @@ const BACKUP_FS_SYNC_RULE = {
     "Synchronous `fs` in a backup module (HS-9527). `backupDir` is commonly a cloud/network folder where a sync call can block the event loop indefinitely — this is what wedged the server four times on 2026-07-31. Use the guarded async layer in `src/backupFs.ts` (`backupFsFor(root)`), which adds a deadline, a threadpool concurrency cap, and a circuit breaker. For a genuinely LOCAL path (e.g. `<dataDir>/attachments`), use `fs.promises` and say why in a comment.",
 };
 
+// HS-9541 — an event listener with an EMPTY body. This is the residue of a deleted
+// call: HS-9515 removed `applyAiToolDevGating`, took the call out of the
+// DEV_FEATURES_CHANGED_EVENT handler in `settingsDialog.tsx`, and left
+// `document.addEventListener(EVENT, () => {})` behind. That undid HS-9474's fix, and
+// the symptom came back wider — ticking Settings → Experimental → "Unreleased AI
+// tools" refreshed neither the picker nor the enable list, so the tools it revealed
+// never appeared. Nothing caught it: an empty handler type-checks, lints, and reads
+// as deliberate.
+//
+// Deliberately narrow. The generic `no-empty-function` matches 93 sites here (mostly
+// no-op defaults and `catch {}`-style stubs) and would be pure noise; a registered
+// listener that does nothing is a different claim — it says "this event is handled"
+// while handling nothing. Zero occurrences at introduction. If you genuinely want a
+// no-op subscriber (holding a passive listener open, say), give it a body comment
+// explaining why and disable this line.
+const EMPTY_LISTENER_RULE = {
+  selector:
+    "CallExpression[callee.property.name='addEventListener'] > :matches(ArrowFunctionExpression, FunctionExpression)[body.type='BlockStatement'][body.body.length=0]",
+  message:
+    "Event listener with an empty body (HS-9541). A registered handler that does nothing claims the event is handled while handling nothing — this is what silently reverted HS-9474 when HS-9515 deleted the call inside it. Either restore the work the handler should do, or delete the `addEventListener` entirely.",
+};
+
 // HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
 // say exactly which subset they want, instead of re-declaring the array (the old
 // shape, where each block spelled out its own list, is why adding a rule risked
@@ -136,6 +158,7 @@ const BACKUP_FS_SYNC_RULE = {
 
 const CORE_RULES = [
   BIND_DISPOSER_RULE,
+  EMPTY_LISTENER_RULE,
   ...SPREAD_ARG_LIMIT_RULES,
   ...SYNC_CHILD_PROCESS_RULES,
   // HS-9495 — the tool-id rule COMPOSES here rather than living in a trailing

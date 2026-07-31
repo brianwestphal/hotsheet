@@ -104,6 +104,27 @@ and is the shape that mechanism is actually for: it gates a **feature** — seei
 have not shipped — rather than a tool. Revealed is not enabled; they still have to be
 opted into.
 
+### 133.6.1 The gate has to apply while Settings is open (HS-9541)
+
+Both surfaces read the gate during the dialog's **hydration**, which runs on open — not
+on a tab switch. But the gate lives on the Experimental tab and the list on General, so
+the user's path necessarily crosses tabs with the dialog still open. `settingsDialog.tsx`
+therefore re-renders both surfaces from the `DEV_FEATURES_CHANGED_EVENT` subscriber, and
+reads `isDevEnabled` at call time rather than capturing it.
+
+This has now broken twice. HS-9474 added the subscriber for the `ai_tool` picker; HS-9515
+deleted the function it called and left the handler body **empty**, which reverted the fix
+and widened the symptom to the HS-9517 enable list — ticking the gate revealed nothing at
+all. An empty handler type-checks, lints, and reads as intentional, so the guard is not a
+convention but two mechanisms: an e2e test that walks the reporter's path (open → cross to
+Experimental → tick → cross back → assert the list changed), and a `no-restricted-syntax`
+selector banning an `addEventListener` callback with an empty body.
+
+The general lesson is about what a test asserts: the pre-existing gate test set
+`dev_unreleased_ai_tools` over the API *before* opening the dialog, so it verified the
+**rendering** given a gate value and never the **reaction** to one changing. It passed
+throughout.
+
 ## 133.7 Tests
 
 - `aiTools/enablement.test.ts` — maturity declarations (that only Claude and Codex ship),
@@ -114,7 +135,8 @@ opted into.
   disabled and label stability across repeated applies.
 - `e2e/ai-tool-enablement.spec.ts` — fresh project → Codex listed BETA but off and absent
   from the picker → enable → selectable without reopening Settings → gate reveals the
-  unreleased ones.
+  unreleased ones. HS-9541 adds the cross-tab reaction case — ticking the gate in the UI,
+  which is the only one of these that fails when the event subscriber is inert.
 
 ## 133.8 Cross-references
 

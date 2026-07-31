@@ -75,4 +75,33 @@ test.describe('AI tool enablement (HS-9517)', () => {
     // Revealed is not enabled — it still has to be opted into.
     await expect(page.locator('#ai-tool-enabled-gemini')).not.toBeChecked();
   });
+
+  test('ticking the Experimental gate IN THE UI reveals the tools without reopening Settings (HS-9541)', async ({ page, request }) => {
+    // The test above seeds the gate over the API and only then opens the dialog, so it
+    // passes even when the dialog never reacts to the toggle. That is the gap HS-9541
+    // fell through: HS-9515 emptied the DEV_FEATURES_CHANGED_EVENT handler, undoing
+    // HS-9474, and neither tsc, lint, nor that test noticed. This walks the reporter's
+    // ACTUAL path — open Settings, tick the box, look at the list.
+    await request.patch('/api/file-settings/layer', {
+      headers, data: { layer: 'local', settings: { dev_unreleased_ai_tools: false } },
+    });
+    await openAiTools(page);
+    await expect(page.locator('[data-ai-tool="gemini"]')).toHaveCount(0);
+
+    // The gate lives on the Experimental tab, the list on General — so the reporter's
+    // path necessarily crosses tabs WITHOUT closing the dialog, which is the whole
+    // point: hydration runs on dialog open, not on a tab switch.
+    await page.locator('.settings-tab[data-tab="experimental"]').click();
+    await page.locator('.in-development-toggle[data-dev-key="dev_unreleased_ai_tools"]').check();
+    await page.locator('.settings-tab[data-tab="general"]').click();
+
+    // Both surfaces have to answer with the new gate value: the enable list gains the
+    // unreleased rows, and the picker stops hiding a tool once it is enabled.
+    await expect(page.locator('[data-ai-tool="gemini"]')).toHaveCount(1);
+    await expect(page.locator('[data-ai-tool="gemini"] .ai-tool-badge-unreleased')).toHaveText('UNRELEASED');
+    await page.locator('#ai-tool-enabled-gemini').check();
+    await expect(page.locator('#ai-tool-select option[value="gemini"]')).not.toHaveAttribute('hidden', /.*/);
+
+    await request.patch('/api/settings', { headers, data: { 'ai_tool_enabled:gemini': 'false' } });
+  });
 });

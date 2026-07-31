@@ -161,6 +161,16 @@ function bindDialogOpenClose() {
 function bindGeneralTab() {
   const settingsBtn = byId('settings-btn');
 
+  /**
+   * HS-9541 — re-render the two AI-tool surfaces (the enable list + the `ai_tool`
+   * picker) with the CURRENT gate value.
+   *
+   * Assigned during each dialog hydration and called by the dev-features listener,
+   * which is registered once and so cannot close over that hydration's scope. Null
+   * until the dialog has been opened at least once — nothing to refresh before then.
+   */
+  let refreshAiToolSurfaces: (() => void) | null = null;
+
   const trashInput = byId<HTMLInputElement>('settings-trash-days');
   const verifiedInput = byId<HTMLInputElement>('settings-verified-days');
   const autoOrderCheckbox = byId<HTMLInputElement>('settings-auto-order');
@@ -241,15 +251,23 @@ function bindGeneralTab() {
       // HS-9517 — the enable list and the picker filter share one settings snapshot, so
       // a tool ticked here becomes selectable below without reopening the dialog.
       const projectSettings = state.settings as unknown as Record<string, unknown>;
-      const showUnreleased = isDevEnabled('dev_unreleased_ai_tools');
+      // HS-9541 — read the gate at CALL time, not once at hydration: the user can flip
+      // "unreleased AI tools" while this dialog is open, and both surfaces below have to
+      // answer with the new value (see the DEV_FEATURES_CHANGED_EVENT listener).
       const refreshAiToolPicker = (): void => {
-        if (aiToolSelect !== null) applyAiToolAvailability(aiToolSelect, projectSettings, tool, showUnreleased);
+        if (aiToolSelect !== null) {
+          applyAiToolAvailability(aiToolSelect, projectSettings, tool, isDevEnabled('dev_unreleased_ai_tools'));
+        }
       };
-      syncAiToolsSection(projectSettings, showUnreleased, (toolId, enabled) => {
-        projectSettings[`ai_tool_enabled:${toolId}`] = String(enabled);
+      const refreshAiTools = (): void => {
+        syncAiToolsSection(projectSettings, isDevEnabled('dev_unreleased_ai_tools'), (toolId, enabled) => {
+          projectSettings[`ai_tool_enabled:${toolId}`] = String(enabled);
+          refreshAiToolPicker();
+        });
         refreshAiToolPicker();
-      });
-      refreshAiToolPicker();
+      };
+      refreshAiToolSurfaces = refreshAiTools;
+      refreshAiTools();
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       // HS-9497 — each declared preference carries its own default (agy off, codex ON
       // per docs/121 O4), so the polarity lives in the plugin rather than here.
@@ -354,7 +372,15 @@ function bindGeneralTab() {
   // is invisible until someone notices the symptom. The current `value` is passed
   // as `currentTool` so an already-selected gated tool stays selectable (docs/124
   // §124.5 — hiding the selected option would blank the `<select>`).
+  //
+  // HS-9541 — HS-9515 deleted `applyAiToolDevGating` (the per-tool gate it replaced)
+  // and left this handler's body EMPTY, so HS-9474's fix was silently undone and the
+  // symptom came back one gate wider: ticking "unreleased AI tools" refreshed neither
+  // the picker NOR the HS-9517 enable list, so the newly-revealed tools simply never
+  // appeared. An empty listener type-checks and lints clean, which is why a test now
+  // asserts the re-render rather than the subscription.
   document.addEventListener(DEV_FEATURES_CHANGED_EVENT, () => {
+    refreshAiToolSurfaces?.();
   });
 
   aiToolSelect?.addEventListener('change', () => {
