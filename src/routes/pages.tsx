@@ -722,8 +722,17 @@ pageRoutes.get('/', (c) => {
                   <span className="settings-hint" id="cli-install-hint">Installs the <code>hotsheet</code> command to /usr/local/bin.</span>
                 </div>
               </div>
-              {/* HS-8009 — the project's preferred AI tool (docs/113 §113.3). */}
+              {/* HS-9517 — AI tools are opt-in, like docs/18's bundled plugins: known
+                  and built in, but not enabled until the user says so. Claude is always
+                  on (it is the fallback transport). Unreleased integrations appear here
+                  only when Settings → Experimental → "Unreleased AI tools" is on. */}
               <div className="settings-divider"></div>
+              <div className="settings-field">
+                <label>AI tools</label>
+                <span className="settings-hint">Which AI tools this project can use. Enable one to make it selectable below.</span>
+                <div id="ai-tools-list"></div>
+              </div>
+              {/* HS-8009 — the project's preferred AI tool (docs/113 §113.3). */}
               <div className="settings-field">
                 <label htmlFor="ai-tool-select">AI tool</label>
                 {/* HS-9490 (docs/132 §132.5) — generated from the plugin registry, in

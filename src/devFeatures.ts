@@ -38,6 +38,16 @@ export interface DevFeature {
 
 export const DEV_FEATURES: readonly DevFeature[] = [
   {
+    // HS-9517 — the ONE gate that replaced the five per-tool ones. It gates a FEATURE
+    // (seeing integrations we have not shipped), not a tool, which is why it belongs
+    // here where the per-tool flags did not: maturity is a property of the integration,
+    // the same on every machine, while those were per-project flags standing in for
+    // "we haven't finished this yet".
+    key: 'dev_unreleased_ai_tools',
+    label: 'Unreleased AI tools',
+    hint: 'Adds the AI-tool integrations that are not shipped publicly (Antigravity, OpenCode, Gemini CLI, Goose) to Settings → AI Tools so they can be enabled. They are untested: Gemini has no drive at all, and Goose is unimplemented beyond command resolution — the play button will not work for either.',
+  },
+  {
     key: 'dev_parallel_workers',
     label: 'Parallel agent workers (git worktrees + worker pool)',
     hint: 'Worker-pool + in-flight panels, the auto-pool switch, dispatch-to-worker, and the "Run on…" command target picker. The pool manager is session-only in memory — its slot registry is lost on a server restart (docs/91 §91.9).',

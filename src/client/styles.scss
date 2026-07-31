@@ -2187,6 +2187,32 @@ body.cross-project-stats-active {
 // app-server handshake failed. Before this the surface just vanished, so the state
 // was indistinguishable from "no drive configured" and the only recovery was an
 // Experimental toggle nothing on screen pointed at.
+// HS-9517 — maturity badges in the Settings → AI tools opt-in list. BETA is shipped
+// but settling; UNRELEASED only appears behind the Experimental gate and must read as
+// "you are on your own here".
+.ai-tool-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  background: var(--bg-tertiary, #333);
+  color: var(--text-muted, #999);
+
+  &.ai-tool-badge-beta {
+    background: #3a4a6b;
+    color: #cfe0ff;
+  }
+
+  &.ai-tool-badge-unreleased {
+    background: #6b3a3a;
+    color: #ffd6d6;
+  }
+}
+
 .sidebar-codex-drive-failed {
   display: flex;
   align-items: center;

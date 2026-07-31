@@ -68,6 +68,7 @@ export const FileSettingsSchema = z.object({
   // settings API carries them; the authoritative list + labels live in
   // `src/devFeatures.ts`. All are `dev_`-prefixed ⇒ routed to the LOCAL layer by
   // `defaultScope` below, and all default to FALSE (absent = off).
+  dev_unreleased_ai_tools: z.boolean().optional(),
   dev_parallel_workers: z.boolean().optional(),
   dev_remote_access: z.boolean().optional(),
 }).loose();

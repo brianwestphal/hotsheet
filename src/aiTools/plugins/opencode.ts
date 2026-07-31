@@ -9,6 +9,7 @@ export const opencodePlugin: AiToolPlugin = {
   displayName: 'OpenCode',
   productName: 'OpenCode',
   tier: 'cli-agent',
+  maturity: 'unreleased',
   transport: 'acp',
   detection: { binaries: ['opencode'], paths: ['AGENTS.md'] },
   instructions: {

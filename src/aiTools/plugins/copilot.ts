@@ -8,6 +8,7 @@ export const copilotPlugin: AiToolPlugin = {
   displayName: 'Copilot',
   productName: 'GitHub Copilot',
   tier: 'editor',
+  maturity: 'stable',
   detection: { binaries: [], paths: ['.github/copilot-instructions.md', '.github/prompts'] },
   instructions: {
     relPath: '.github/copilot-instructions.md',

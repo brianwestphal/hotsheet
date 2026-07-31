@@ -7,10 +7,11 @@ import { defaultProjectName } from '../defaultProjectName.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
 import { agentBackendSelectValue, deriveDefaultTransport, TRANSPORT_LABEL } from './agentBackend.js';
 import { buildAiToolPreferenceRows } from './aiToolPreferences.js';
+import { applyAiToolAvailability, syncAiToolsSection } from './aiToolsSection.js';
 import { setAppTitle } from './appTitle.js';
 import { loadBackupList } from './backups.js';
 import { bindViewsTab } from './customViews.js';
-import { DEV_FEATURES_CHANGED_EVENT } from './devFeatures.js';
+import { DEV_FEATURES_CHANGED_EVENT, isDevEnabled } from './devFeatures.js';
 import { bindDevicesSettings } from './devicesSettings.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { bindExperimentalSettings, refreshCommandsAfterDialogClose } from './experimentalSettings.js';
@@ -237,6 +238,18 @@ function bindGeneralTab() {
       // is off. MUST run before assigning `.value`: a hidden-but-present option is
       // still assignable, and the already-selected tool is deliberately kept
       // visible so an existing working project is never silently switched.
+      // HS-9517 — the enable list and the picker filter share one settings snapshot, so
+      // a tool ticked here becomes selectable below without reopening the dialog.
+      const projectSettings = state.settings as unknown as Record<string, unknown>;
+      const showUnreleased = isDevEnabled('dev_unreleased_ai_tools');
+      const refreshAiToolPicker = (): void => {
+        if (aiToolSelect !== null) applyAiToolAvailability(aiToolSelect, projectSettings, tool, showUnreleased);
+      };
+      syncAiToolsSection(projectSettings, showUnreleased, (toolId, enabled) => {
+        projectSettings[`ai_tool_enabled:${toolId}`] = String(enabled);
+        refreshAiToolPicker();
+      });
+      refreshAiToolPicker();
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       // HS-9497 — each declared preference carries its own default (agy off, codex ON
       // per docs/121 O4), so the polarity lives in the plugin rather than here.

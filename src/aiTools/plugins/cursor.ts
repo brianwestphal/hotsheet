@@ -11,6 +11,7 @@ export const cursorPlugin: AiToolPlugin = {
   displayName: 'Cursor',
   productName: 'Cursor',
   tier: 'editor',
+  maturity: 'stable',
   detection: { binaries: ['cursor'], paths: ['.cursor'] },
   instructions: {
     relPath: '.cursor/rules/hotsheet-instructions.mdc',

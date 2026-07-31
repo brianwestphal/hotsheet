@@ -37,6 +37,21 @@ export interface DetectionSpec {
  *  supply rules/instructions to. Drives which surfaces are even applicable. */
 export type AiToolTier = 'cli-agent' | 'editor';
 
+/**
+ * HS-9517 — how far along this integration is, which decides whether users see it.
+ *
+ * - `stable`     — shipped and trusted. Selectable once enabled.
+ * - `beta`       — shipped, works, still settling. Selectable once enabled, badged BETA.
+ * - `unreleased` — NOT shipped publicly. Hidden from the AI Tools list entirely unless
+ *                  the Settings → Experimental gate is on.
+ *
+ * This replaces the five per-tool `dev_tool_*` gates HS-9515 removed, and is a better
+ * fit: maturity is a property of the INTEGRATION, the same on every machine, whereas
+ * those were per-project runtime flags each user carried. Enablement — a user's choice —
+ * is tracked separately, per project.
+ */
+export type AiToolMaturity = 'stable' | 'beta' | 'unreleased';
+
 export interface AiToolPlugin {
   /** The `ai_tool` setting value. Lowercase; the registry key. */
   readonly id: string;
@@ -53,6 +68,11 @@ export interface AiToolPlugin {
   /** FULL product name for pickers and settings copy. */
   readonly productName: string;
   readonly tier: AiToolTier;
+  /**
+   * HS-9517 — shipped-ness. `unreleased` keeps an untested integration away from users
+   * without a per-project flag; see `AiToolMaturity`.
+   */
+  readonly maturity: AiToolMaturity;
   /** Declarative detection (see `DetectionSpec`). */
   readonly detection: DetectionSpec;
   /**

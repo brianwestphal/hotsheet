@@ -10,6 +10,7 @@ export const windsurfPlugin: AiToolPlugin = {
   displayName: 'Windsurf',
   productName: 'Windsurf',
   tier: 'editor',
+  maturity: 'stable',
   detection: { binaries: ['windsurf'], paths: ['.windsurf'] },
   instructions: {
     relPath: '.windsurf/rules/hotsheet-instructions.md',

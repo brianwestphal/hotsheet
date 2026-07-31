@@ -10,6 +10,7 @@ export const claudePlugin: AiToolPlugin = {
   displayName: 'Claude',
   productName: 'Claude Code',
   tier: 'cli-agent',
+  maturity: 'stable',
   transport: 'claude-channel',
   detection: {
     binaries: ['claude'],

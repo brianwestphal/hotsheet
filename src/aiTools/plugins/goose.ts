@@ -13,5 +13,6 @@ export const goosePlugin: AiToolPlugin = {
   displayName: 'Goose',
   productName: 'Goose',
   tier: 'cli-agent',
+  maturity: 'unreleased',
   detection: { binaries: ['goose'], paths: [] },
 };

@@ -9,6 +9,7 @@ export const geminiPlugin: AiToolPlugin = {
   displayName: 'Gemini',
   productName: 'Gemini CLI',
   tier: 'cli-agent',
+  maturity: 'unreleased',
   detection: { binaries: ['gemini'], paths: ['GEMINI.md', '.gemini'] },
   // Verified against gemini-cli 0.49.0: hierarchical GEMINI.md, no AGENTS.md support
   // in its bundle, skills discovered at `.gemini/skills`.

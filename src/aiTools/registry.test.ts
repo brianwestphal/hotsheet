@@ -271,6 +271,7 @@ describe('a NEW plugin inherits the conformance suite by existing (HS-9495)', ()
     displayName: 'Probe',
     productName: 'Probe Tool',
     tier: 'cli-agent',
+    maturity: 'unreleased',
     detection: { binaries: ['probetool'], paths: ['.probetool'] },
     instructions: { relPath: 'PROBE.md', frontmatter: '', adapterSkillsRoot: null },
   };
