@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
+import { rememberPreviousDir } from './backupDirChange.js';
 import { readSecretFile, writeSecretFile } from './secret-file.js';
 import { type CommandItem, isCommandTreeDelta, resolveCommandTreeDelta } from './settingsCommandDelta.js';
 import { resolveDeltaArray } from './settingsDelta.js';
@@ -157,6 +158,9 @@ export type SettingsLayer = 'shared' | 'local';
 const LOCAL_SCOPE_KEYS = new Set([
   // Absolute path on this machine (often a cloud-drive path with the user's home + email).
   'backupDir',
+  // HS-9532 — same reasoning: absolute machine-specific paths, and one device's
+  // abandoned backup root is meaningless on another.
+  'previousBackupDirs',
   // Preferred server port — can collide across machines.
   'port',
   // Per-device auto-allow rules carrying machine-specific paths/commands.
@@ -240,6 +244,21 @@ export function defaultScope(key: string): SettingsLayer {
 export interface FileSettings {
   appName?: string;
   backupDir?: string;
+  /** HS-9532 — roots `backupDir` previously pointed at, newest first.
+   *
+   *  Changing `backupDir` abandons the old tree in place: `pruneBackups` and the
+   *  attachment GC only ever touch the CURRENT root, so nothing retains, collects
+   *  or even mentions the old one (measured: 3.31 GB stranded across 7 projects).
+   *  Unless the path is captured at the moment of the write, the information is
+   *  gone for good.
+   *
+   *  Raw strings, deliberately. Deduping properly means `realpath` — symlinks,
+   *  `..`, case-insensitive volumes — and this write path is synchronous on
+   *  purpose: a `realpath` against an unplugged drive or a dead cloud mount would
+   *  stall a settings save, which is the HS-9527 failure mode. Resolution and the
+   *  containment classification happen at REPORT time in `backupDirChange.ts`,
+   *  where async and "unknown" are both available. */
+  previousBackupDirs?: string[];
   ticketPrefix?: string;
   secret?: string;
   secretPathHash?: string;
@@ -448,10 +467,39 @@ export function writeSettingsLayer(dataDir: string, layer: SettingsLayer, update
  * working — `backupDir` writes now silently land in the local layer. Returns the
  * resolved (merged) settings.
  */
+/**
+ * HS-9532 — if this update changes `backupDir`, fold the outgoing value into
+ * `previousBackupDirs`.
+ *
+ * Returns the updates unchanged when `backupDir` isn't moving, so the common
+ * settings write is untouched. Dedup here is by RAW string (see the field's
+ * doc comment); two spellings of one directory are collapsed later, where
+ * `realpath` is affordable.
+ */
+function withPreviousBackupDir(dataDir: string, updates: Partial<FileSettings>): Partial<FileSettings> {
+  const next = updates.backupDir;
+  if (typeof next !== 'string') return updates;
+  const current = readFileSettings(dataDir);
+  const prev = current.backupDir;
+  if (typeof prev !== 'string' || prev.trim() === '' || prev === next) return updates;
+  return {
+    ...updates,
+    previousBackupDirs: rememberPreviousDir(current.previousBackupDirs ?? [], prev, next),
+  };
+}
+
 export function writeFileSettings(dataDir: string, updates: Partial<FileSettings>): FileSettings {
+  // HS-9532 — capture the outgoing `backupDir` BEFORE it is overwritten. Once the
+  // write lands, the old root is unreachable from any state the app keeps, and
+  // the tree it points at silently stops being retained, collected, or mentioned.
+  //
+  // Raw string, no filesystem access: this function is synchronous, and a
+  // `realpath` against a dead cloud mount here would stall the settings save
+  // (HS-9527). Resolution + containment classification are done at report time.
+  const effectiveUpdates = withPreviousBackupDir(dataDir, updates);
   const sharedUpdates: Partial<FileSettings> = {};
   const localUpdates: Partial<FileSettings> = {};
-  for (const [key, value] of Object.entries(updates)) {
+  for (const [key, value] of Object.entries(effectiveUpdates)) {
     if (defaultScope(key) === 'local') localUpdates[key] = value;
     else sharedUpdates[key] = value;
   }
