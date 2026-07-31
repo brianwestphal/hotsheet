@@ -50,7 +50,11 @@ let cachedProbe: GlassboxInstructions | undefined;
 /** One invocation attempt. Returns the trimmed output, or null on any failure. */
 function tryFetchInstructions(args: string[]): string | null {
   try {
-    const out = execFileSync('glassbox', args, { encoding: 'utf-8', timeout: 5000 });
+    // HS-9518 — `killSignal: 'SIGKILL'` is what makes the `timeout` real: a
+    // timeout is enforced by SENDING `killSignal`, which defaults to SIGTERM, and
+    // a child that ignores SIGTERM leaves this call blocked forever anyway
+    // (HS-9391). The signal must be one the child cannot decline.
+    const out = execFileSync('glassbox', args, { encoding: 'utf-8', timeout: 5000, killSignal: 'SIGKILL' });
     const trimmed = out.trim();
     return trimmed !== '' ? trimmed : null;
   } catch {

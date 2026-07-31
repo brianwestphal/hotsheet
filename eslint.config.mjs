@@ -121,6 +121,16 @@ const CORE_RULES = [
   BIND_DISPOSER_RULE,
   ...SPREAD_ARG_LIMIT_RULES,
   ...SYNC_CHILD_PROCESS_RULES,
+  // HS-9495 — the tool-id rule COMPOSES here rather than living in a trailing
+  // `files: ["src/**"]` block. That trailing shape is what caused HS-9518: flat
+  // config REPLACES a rule's options rather than merging them, so a last block
+  // saying `"no-restricted-syntax": ["error", TOOL_ID_LITERAL_RULE]` silently
+  // switched off every other selector in this file for all of `src/**` — the
+  // sync-child-process guard, the spread-arg guard, innerHTML, JSON.parse-as,
+  // bind-disposer. Composing it here means a new core rule reaches every block
+  // automatically, which is the same reasoning as the HS-9417 note above.
+  // Exemptions are a SUBTRACT block at the bottom (`TOOL_ID_EXEMPT_FILES`).
+  TOOL_ID_LITERAL_RULE,
   {
     selector: "AssignmentExpression[operator='='] > MemberExpression.left[property.name='innerHTML'][computed=false]",
     message: "Direct `innerHTML = ` assignments bypass the kerf-routed `toElement` parser path (HS-8241 / §62) and lose the SVG-namespace + entity-handling fixes. Use `el.replaceChildren(toElement(<jsx />))` instead, or `el.replaceChildren(toElement(<span>{raw(htmlString)}</span>))` for raw-HTML escape hatches. (HS-8243 / §62.6 Phase 3.)",
@@ -327,7 +337,11 @@ export default tseslint.config(
       // doesn't reach the override blocks" trap the HS-9417 note at the top warns
       // about, in the opposite direction.
       // HS-9511 — the sync child-process rules apply here for the same reason.
-      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES, ...SYNC_CHILD_PROCESS_RULES],
+      // HS-9518 — and the tool-id rule, for a third time the same reason: this
+      // allowlist is about `innerHTML`, so anything else it drops is dropped by
+      // accident. The three files this rule genuinely exempts are subtracted in
+      // the HS-9495 block at the bottom.
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES, ...SYNC_CHILD_PROCESS_RULES, TOOL_ID_LITERAL_RULE],
     },
   },
   // HS-8567 — test files are exempt from the wire-/file-boundary
@@ -506,11 +520,21 @@ export default tseslint.config(
       "kerfjs/ai-assistant-configs": "off",
     },
   },
-  // HS-9495 (docs/132) — the tool-id literal rule, plus the files exempt from it. Each
-  // exemption has a stated reason; a long allowlist here would mean the rule is wrong.
+  // HS-9495 (docs/132) — files EXEMPT from the tool-id literal rule. Each exemption
+  // has a stated reason; a long allowlist here would mean the rule is wrong.
+  //
+  // HS-9518 — this is a SUBTRACT block: the rule itself now composes in
+  // `CORE_RULES`, and these files re-declare the same set MINUS the tool-id
+  // selector. It used to be the inverse — a trailing `files: ["src/**"]` block
+  // whose rules array held ONLY the tool-id rule. Flat config replaces a rule's
+  // options rather than merging them, so being last made that block the final
+  // word for every file under `src/`, silently disabling the sync-child-process,
+  // spread-arg, innerHTML, JSON.parse-as and bind-disposer selectors across the
+  // whole tree. Nothing failed loudly; the guards just stopped existing. Adding a
+  // rule to a shared array must never turn other rules off — express exemptions
+  // by subtracting, never by re-declaring a shorter list.
   {
-    files: ["src/**/*.ts", "src/**/*.tsx"],
-    ignores: [
+    files: [
       // THE plugin layer — where per-tool knowledge is supposed to live.
       "src/aiTools/**",
       // A tool's OWN implementation module naming itself is not the leak this targets;
@@ -523,9 +547,10 @@ export default tseslint.config(
       // it by the conformance suite, so the two cannot drift:
       "src/api/aiInstructions.ts", // the wire enum: a literal `as const` tuple by design (§132.5)
       "src/devFeatures.ts",        // the docs/124 In-Development gate table
-      // Tests name tools constantly, by necessity.
-      "**/*.test.ts",
-      "**/*.test.tsx",
+      // NOTE: tests name tools constantly and are exempt too, but they get that from
+      // their OWN block above (which spells out a subset that never included the
+      // tool-id rule) — listing them here as well would hand them this block's array
+      // instead, re-enabling the wire-boundary rules tests are deliberately exempt from.
       // HS-9508 — the four CLIENT files that re-derive per-tool knowledge, because
       // docs/132 was scoped to the server and the client cannot reach
       // `aiTools/serverCapabilities.ts` (it imports process-spawning modules). Listed
@@ -534,10 +559,33 @@ export default tseslint.config(
       // the transport table is gone, replaced by the client-safe `transportFor`.
       "src/client/codexDriveGate.ts",
       "src/client/commandLogEntryRow.tsx",
-      "src/client/settingsDialog.tsx", // HS-9497 deletes this one's branch
+    ],
+    ignores: [
+      // Tests reach their exemption through their OWN block above; letting this
+      // one match them would hand them CORE_RULES and re-enable the wire-boundary
+      // selectors they are deliberately exempt from (12 hits when this block was
+      // first written without the guard — `src/acp/**`, `src/aiTools/**` and
+      // `src/codex*.ts` all have `.test.ts` files that match those globs).
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      // On the §62 innerHTML allowlist as well, so it needs THAT array minus the
+      // tool-id rule, not CORE_RULES minus it. Handled by the block below.
+      "src/client/settingsDialog.tsx",
     ],
     rules: {
-      "no-restricted-syntax": ["error", TOOL_ID_LITERAL_RULE],
+      "no-restricted-syntax": ["error", ...CORE_RULES.filter((r) => r !== TOOL_ID_LITERAL_RULE)],
+    },
+  },
+  // HS-9518 — the one file on BOTH the §62 innerHTML allowlist and the HS-9495
+  // tool-id exemption. It needs the innerHTML-allowlist array minus the tool-id
+  // rule; using CORE_RULES here would re-enable innerHTML for it. The comment on
+  // the innerHTML allowlist notes the two lists are kept DISJOINT for exactly this
+  // reason — this is the single overlap, so it gets its own block rather than
+  // silently picking up whichever array happened to come last.
+  {
+    files: ["src/client/settingsDialog.tsx"],
+    rules: {
+      "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES, ...SYNC_CHILD_PROCESS_RULES],
     },
   },
 );

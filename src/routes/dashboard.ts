@@ -187,9 +187,19 @@ async function resolveGlassboxBin(): Promise<string | null> {
   const { execFileSync } = await import('child_process');
   const which = (): string | null => {
     try {
+      // HS-9518 — `timeout` + `killSignal` are MANDATORY here (HS-9510/HS-9391).
+      // This is a synchronous spawn on an HTTP handler, re-run on every
+      // `/glassbox/status` call by design (HS-8786 removed the cache), and it
+      // searches `augmentedPath()` — a PATH that can include network / cloud-synced
+      // volumes. `execFileSync` blocks the thread in NATIVE code, so an unbounded
+      // one here does not make a request slow, it stops the event loop: no other
+      // request is served, and the docs/45 watchdog SIGKILLs the server after 60 s.
+      // 3 s is generous for a `which` and still an order of magnitude under that.
       return execFileSync('which', ['glassbox'], {
         env: { ...process.env, PATH: augmentedPath() },
         encoding: 'utf-8',
+        timeout: 3000,
+        killSignal: 'SIGKILL',
       }).trim();
     } catch {
       return null;

@@ -62,7 +62,12 @@ const loggedPermissionRequests = new Map<string, number>(); // request_id -> log
 
 channelRoutes.get('/channel/claude-check', (c) => {
   try {
-    const version = execFileSync('claude', ['--version'], { timeout: 5000, encoding: 'utf-8' }).trim();
+    // HS-9518 — `killSignal: 'SIGKILL'` (HS-9510/HS-9391): the `timeout` is
+    // enforced by SENDING `killSignal`, which defaults to SIGTERM, so a `claude`
+    // that ignores SIGTERM would leave this blocked forever despite the timeout.
+    // This runs synchronously on an HTTP handler, so "blocked" means the whole
+    // event loop, not just this request.
+    const version = execFileSync('claude', ['--version'], { timeout: 5000, killSignal: 'SIGKILL', encoding: 'utf-8' }).trim();
     // Version string like "Claude Code v2.1.85" or just "2.1.85"
     const match = version.match(/(\d+\.\d+\.\d+)/);
     const versionNum = match !== null ? match[1] : null;

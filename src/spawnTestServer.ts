@@ -35,7 +35,11 @@ export function probeCanSpawnTsxChild(): boolean {
   const probeFile = join(tmpdir(), `hotsheet-tsx-probe-${process.pid}.ts`);
   try {
     writeFileSync(probeFile, 'process.stdout.write("tsx-probe-ok");\n');
-    const out = execFileSync(process.execPath, ['--import', 'tsx', probeFile], { encoding: 'utf8', timeout: 8000, stdio: 'pipe' });
+    // HS-9518 — `killSignal: 'SIGKILL'` (HS-9510/HS-9391). A `timeout` alone is
+    // enforced with SIGTERM, which a wedged loader-registration child can ignore,
+    // leaving the probe blocked forever. That is the HS-9391 signature exactly:
+    // every test passes and then no reporter or summary ever runs.
+    const out = execFileSync(process.execPath, ['--import', 'tsx', probeFile], { encoding: 'utf8', timeout: 8000, killSignal: 'SIGKILL', stdio: 'pipe' });
     return out.includes('tsx-probe-ok');
   } catch {
     return false;
