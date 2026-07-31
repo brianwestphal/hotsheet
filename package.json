@@ -45,6 +45,7 @@
     "test:rust": "node scripts/ensure-sidecar-placeholder.mjs && cargo test --manifest-path src-tauri/Cargo.toml",
     "validate:mtls": "bash scripts/validate-mtls.sh",
     "lint": "eslint src/ plugins/ eslint-rules/ eslint.config.mjs",
+    "analyze:freeze": "npm run build >/dev/null && node scripts/analyze-freeze-log.mjs",
     "capture-demos": "tsx scripts/capture-demos.ts",
     "clean": "rm -rf dist node_modules/.cache",
     "release": "bash scripts/release.sh",

@@ -18,6 +18,10 @@
  * the diagnostics' coverage. A setup file runs before the test module graph loads,
  * which is the earliest hook available.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { enableWarnings } from 'kerfjs/dev';
 
 enableWarnings({
@@ -29,3 +33,29 @@ enableWarnings({
   delegateInEffect: true,
   narrowSet: true,
 });
+
+/**
+ * HS-9531 — keep the suite out of the maintainer's real `~/.hotsheet`.
+ *
+ * Diagnostics moved from per-project `<dataDir>/freeze.log` to ONE process-wide
+ * log under `globalHotsheetDir()`. That directory honors `HOTSHEET_HOME` (docs/87),
+ * and nothing was setting it for unit tests — so without this, every `vitest` run
+ * would append its heartbeat and instrumentation entries to the live file the
+ * maintainer actually reads when diagnosing a wedge, and `_resetForTesting` would
+ * not undo it.
+ *
+ * Set unconditionally rather than only-if-unset: a stray `HOTSHEET_HOME` in the
+ * developer's shell would otherwise silently redirect the suite at a real
+ * directory, which is the same hazard wearing a different hat.
+ *
+ * Consequence worth knowing: `globalHotsheetDir()` checks `HOTSHEET_HOME` BEFORE
+ * `homedir()`, so seven suites that isolate themselves by MOCKING `homedir` now
+ * `delete process.env.HOTSHEET_HOME` at their top (instance, global-config,
+ * project-list, secret-keys, startup-log, cli.migrateGlobalConfig,
+ * plugins/loader). They were implicitly relying on the variable being unset;
+ * that assumption is now written down where it is relied on.
+ *
+ * `global-dir.e2e.test.ts` is unaffected — it passes an explicit value to the
+ * child process it spawns.
+ */
+process.env.HOTSHEET_HOME = mkdtempSync(join(tmpdir(), 'hs-vitest-home-'));

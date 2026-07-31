@@ -39,6 +39,7 @@ import { join } from 'path';
 import { getHeapStatistics } from 'v8';
 
 import { enterOperation, exitOperation } from './currentOperation.js';
+import { diagnosticsDir, projectLabelForDataDir } from './diagnosticsDir.js';
 
 export const FREEZE_LOG_FILENAME = 'freeze.log';
 export const LONG_TASK_THRESHOLD_MS = 100;
@@ -50,12 +51,15 @@ export const LONG_TASK_THRESHOLD_MS = 100;
  *  append would push the file past this cap, the head of the file is
  *  dropped down to ~half so the next ~2000 entries fit before the next
  *  truncate (avoids truncating on every write near the boundary). */
-export const FREEZE_LOG_MAX_BYTES = 1_048_576; // 1 MiB
+// HS-9531 — raised from 1 MiB. Nine projects now share ONE log instead of writing
+// nine, so the same wall-clock coverage costs ~9x the bytes; at observed rates
+// 1 MiB held under four hours merged. 8 MiB is ~a day and a half of coverage.
+export const FREEZE_LOG_MAX_BYTES = 8_388_608; // 8 MiB
 /** Floor we truncate down to when the cap is hit. Keeping it well below
  *  the cap means a freeze burst doesn't re-trigger the truncate path on
  *  every write — there's headroom for ~half the cap before the next
  *  rotation. */
-export const FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE = 524_288; // 512 KiB
+export const FREEZE_LOG_TARGET_BYTES_AFTER_TRUNCATE = 4_194_304; // 4 MiB
 
 // Sentinel line inserted at the top of the file after a truncate so a
 // reader pasting the log knows the head was dropped (and roughly when).
@@ -157,6 +161,24 @@ export interface FreezeEntry {
   clientWallClock?: string;
   /** Optional: arbitrary additional fields the source wants to record. */
   extra?: Record<string, unknown>;
+  /** HS-9531 — which project produced this entry. Provenance used to be implicit
+   *  in WHICH per-project file the line landed in; now every entry goes to one
+   *  process-wide log, so it has to be carried explicitly. */
+  project?: string;
+  /**
+   * HS-9531 — is `durationMs` time the EVENT LOOP WAS BLOCKED, or merely wall time?
+   *
+   * `instrumentAsync` measures a promise end-to-end, so an `await` on network or
+   * threadpool I/O is counted while the loop is free. Reading those as blocking is
+   * how HS-9521 reported ~10 % of the loop blocked when the heartbeat's real figure
+   * was 2.88 %, and how it nominated `fsyncDbDir` — the LARGEST wall-time entry in
+   * the dataset at 773.6 s — as a top offender when it contributes 0.5 s of real
+   * blocking, HS-8351 having already moved it to the threadpool.
+   *
+   * The distinction has to live in the DATA. Fixing it only in whatever view
+   * aggregates the log leaves the next reader to rediscover it.
+   */
+  blocking?: boolean;
 }
 
 /**
@@ -273,9 +295,22 @@ const appendQueue = new Map<string, Promise<void>>();
  * cascades into the caller's hot path.
  */
 export function appendFreezeLog(dataDir: string, entry: FreezeEntry): Promise<void> {
-  const path = join(dataDir, FREEZE_LOG_FILENAME);
-  const line = JSON.stringify(entry) + '\n';
-  const prev = appendQueue.get(dataDir) ?? Promise.resolve();
+  // HS-9531 — `dataDir` is now PROVENANCE, not a destination. Every entry lands in
+  // one process-wide log with the originating project recorded on the line.
+  //
+  // The signature is deliberately unchanged: 27 `instrumentSync`/`instrumentAsync`
+  // call sites already thread a dataDir through and all still know which project
+  // they belong to, so changing where the bytes go without changing what callers
+  // pass keeps the diff to this module.
+  const path = join(diagnosticsDir(), FREEZE_LOG_FILENAME);
+  const stamped: FreezeEntry = entry.project === undefined
+    ? { ...entry, project: projectLabelForDataDir(dataDir) }
+    : entry;
+  const line = JSON.stringify(stamped) + '\n';
+  // Keyed by the FILE, not the dataDir. With one shared log, per-dataDir chains
+  // would let two projects interleave bytes mid-line — the exact thing this queue
+  // exists to prevent.
+  const prev = appendQueue.get(path) ?? Promise.resolve();
   const next = prev
     .catch(() => { /* drop chained errors so one bad write doesn't poison the queue */ })
     .then(async () => {
@@ -295,7 +330,7 @@ export function appendFreezeLog(dataDir: string, entry: FreezeEntry): Promise<vo
         console.warn('[hotsheet freeze.log] append failed:', err instanceof Error ? err.message : String(err));
       }
     });
-  appendQueue.set(dataDir, next);
+  appendQueue.set(path, next);
   return next;
 }
 
@@ -403,6 +438,7 @@ function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void 
         ts: new Date().toISOString(),
         source: 'server-wake',
         durationMs: Math.round(wallGapMs),
+        blocking: false, // a suspend is not the loop being pinned by our own work
         context: `resumed from suspend after ~${Math.round(wallGapMs / 1000).toString()}s`,
       });
     }
@@ -420,6 +456,7 @@ function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void 
       source: 'server-heartbeat',
       durationMs: Math.round(blockMs),
       context: 'event-loop blocked',
+      blocking: true, // an inter-tick gap IS blocked time — the ground truth
       // HS-9421 — every block carries the memory picture, so a GC-thrash wedge
       // is distinguishable from a slow query without an inspector attach.
       extra: memorySnapshot(),
@@ -555,6 +592,7 @@ export function instrumentSync<T>(dataDir: string, label: string, fn: () => T): 
         source: 'server-instrument-sync',
         durationMs: Math.round(durMs),
         context: label,
+        blocking: true, // a synchronous block holds the loop for its whole duration
       });
     }
   }
@@ -578,6 +616,9 @@ export async function instrumentAsync<T>(dataDir: string, label: string, fn: () 
         source: 'server-instrument-async',
         durationMs: Math.round(durMs),
         context: label,
+        // WALL time, not blocked time — the loop runs freely during any `await`
+        // inside `fn`. Summing these as blocking is the HS-9521 error.
+        blocking: false,
       });
     }
   }

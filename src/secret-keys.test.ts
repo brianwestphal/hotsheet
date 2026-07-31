@@ -8,6 +8,14 @@ import * as os from 'os';
 import { join } from 'path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// HS-9531 — this suite isolates the global Hot Sheet dir by mocking `homedir()`,
+// but `globalHotsheetDir()` checks `HOTSHEET_HOME` FIRST, and `vitest.setup.ts`
+// now sets that for every run (so diagnostics never land in the maintainer's real
+// `~/.hotsheet`). The override would win over the mock, so clear it here — the
+// isolation this file wants is the mocked home, not the suite-wide sandbox.
+delete process.env.HOTSHEET_HOME;
+
+
 const tempHome = join(os.tmpdir(), `hs-secret-keys-test-${process.pid}`);
 vi.mock('os', async (importOriginal) => {
   const actual = await importOriginal<typeof os>();

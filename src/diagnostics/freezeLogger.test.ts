@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { diagnosticsDir } from './diagnosticsDir.js';
 import {
   _resetForTesting,
   _simulateHeartbeatGapForTesting,
@@ -28,20 +29,33 @@ import {
   WAKE_GAP_THRESHOLD_MS,
 } from './freezeLogger.js';
 
+// HS-9531 — `tmpDir` is now the PROJECT a diagnostic came from, not where it is
+// written. Every entry lands in one process-wide log under `HOTSHEET_HOME`, which
+// each test relocates so the runs cannot see each other's lines (or the
+// maintainer's real log — see the note in `vitest.setup.ts`).
 let tmpDir: string;
+let hotsheetHome: string;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'hotsheet-freeze-test-'));
+  hotsheetHome = mkdtempSync(join(tmpdir(), 'hotsheet-freeze-home-'));
+  process.env.HOTSHEET_HOME = hotsheetHome;
 });
 
 afterEach(() => {
   _resetForTesting();
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* */ }
+  try { rmSync(hotsheetHome, { recursive: true, force: true }); } catch { /* */ }
 });
+
+/** The one process-wide log every writer now appends to. */
+function freezeLogPath(): string {
+  return join(diagnosticsDir(), FREEZE_LOG_FILENAME);
+}
 
 async function readFreezeLog(): Promise<string[]> {
   try {
-    const raw = await fsp.readFile(join(tmpDir, FREEZE_LOG_FILENAME), 'utf8');
+    const raw = await fsp.readFile(freezeLogPath(), 'utf8');
     return raw.split('\n').filter(line => line !== '');
   } catch {
     return [];
@@ -171,14 +185,14 @@ describe('appendFreezeLog (HS-8054 v3)', () => {
     // Pre-fill the file with content well under the cap. The append
     // should just add a line on top.
     const pre = 'a'.repeat(1000) + '\n';
-    await fsp.writeFile(join(tmpDir, FREEZE_LOG_FILENAME), pre, 'utf8');
+    await fsp.writeFile(freezeLogPath(), pre, 'utf8');
     await appendFreezeLog(tmpDir, {
       ts: '2026-05-15T08:00:00.000Z',
       source: 'server-heartbeat',
       durationMs: 200,
       context: 'block-A',
     });
-    const after = await fsp.readFile(join(tmpDir, FREEZE_LOG_FILENAME), 'utf8');
+    const after = await fsp.readFile(freezeLogPath(), 'utf8');
     // Pre-content preserved; new line appended at end. No truncation
     // marker inserted (file didn't exceed the cap).
     expect(after.startsWith(pre)).toBe(true);
@@ -195,7 +209,7 @@ describe('appendFreezeLog (HS-8054 v3)', () => {
     const line = 'x'.repeat(1023) + '\n'; // 1024 B per line
     const lines = Math.ceil(FREEZE_LOG_MAX_BYTES / 1024) + 100; // ~1.1 MB → safely over the cap
     const pre = line.repeat(lines);
-    await fsp.writeFile(join(tmpDir, FREEZE_LOG_FILENAME), pre, 'utf8');
+    await fsp.writeFile(freezeLogPath(), pre, 'utf8');
     const preBytes = Buffer.byteLength(pre, 'utf8');
     expect(preBytes).toBeGreaterThan(FREEZE_LOG_MAX_BYTES);
 
@@ -206,7 +220,7 @@ describe('appendFreezeLog (HS-8054 v3)', () => {
       context: 'after-rotate',
     });
 
-    const after = await fsp.readFile(join(tmpDir, FREEZE_LOG_FILENAME), 'utf8');
+    const after = await fsp.readFile(freezeLogPath(), 'utf8');
     const afterBytes = Buffer.byteLength(after, 'utf8');
     // Post-rotation the file is well under the cap (head dropped,
     // tail kept, marker prepended, new line appended).
@@ -219,8 +233,11 @@ describe('appendFreezeLog (HS-8054 v3)', () => {
     const marker = JSON.parse(markerLine) as { source: string; context: string };
     expect(marker.source).toBe('freeze.log-truncated');
     expect(marker.context).toMatch(/head dropped/);
-    // The new append landed at the bottom.
-    expect(after.endsWith('"context":"after-rotate"}\n')).toBe(true);
+    // The new append landed at the bottom. Matched on the parsed last line rather
+    // than a byte-suffix: HS-9531 appends a `project` field after `context`, and a
+    // suffix assertion silently breaks every time the entry shape grows.
+    const lastLine = after.trimEnd().split('\n').at(-1) ?? '';
+    expect((JSON.parse(lastLine) as { context: string }).context).toBe('after-rotate');
     // Tail bytes preserved approximately at the target (within one
     // line of slack — the "advance to next \n" rule means we keep
     // whatever's after the first newline at-or-past the target offset).
@@ -244,11 +261,18 @@ describe('appendFreezeLog (HS-8054 v3)', () => {
     expect(parsed.source).toBe('client-heartbeat');
   });
 
-  it('survives an unwritable dataDir without throwing', async () => {
+  it('survives an unwritable diagnostics directory without throwing', async () => {
+    // HS-9531 — the target moved. `dataDir` is now provenance only, so an
+    // unreachable dataDir is no longer a write failure at all; what has to stay
+    // non-fatal is an unwritable GLOBAL diagnostics dir. Pointing HOTSHEET_HOME at
+    // a path under a regular FILE makes every mkdir/append under it fail.
+    const blocker = join(tmpDir, 'not-a-directory');
+    await fsp.writeFile(blocker, 'x', 'utf8');
+    process.env.HOTSHEET_HOME = join(blocker, 'nested');
+
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* */ });
     try {
-      // Path that doesn't exist — appendFile throws ENOENT under it.
-      await appendFreezeLog(join(tmpDir, 'does-not-exist'), {
+      await appendFreezeLog(join(tmpDir, 'some-project', '.hotsheet'), {
         ts: '2026-05-04T08:00:00.000Z',
         source: 'client-heartbeat',
         durationMs: 200,

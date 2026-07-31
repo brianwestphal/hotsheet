@@ -6,6 +6,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { keychainGet, keychainSet } from '../keychain.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 
+// HS-9531 — this suite isolates the global Hot Sheet dir by mocking `homedir()`,
+// but `globalHotsheetDir()` checks `HOTSHEET_HOME` FIRST, and `vitest.setup.ts`
+// now sets that for every run (so diagnostics never land in the maintainer's real
+// `~/.hotsheet`). The override would win over the mock, so clear it here — the
+// isolation this file wants is the mocked home, not the suite-wide sandbox.
+delete process.env.HOTSHEET_HOME;
+
+
 const { tmpdir } = os;
 
 // Mock homedir to use a temp directory for plugin discovery tests
