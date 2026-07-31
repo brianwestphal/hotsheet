@@ -275,6 +275,20 @@ export default tseslint.config(
       "no-restricted-syntax": ["error", ...CORE_RULES, PROJECT_SCOPED_CACHE_RULE],
     },
   },
+  // HS-9538 — the HS-9417 allowlist: client modules whose module-level Map/Set is
+  // genuinely global, not per-project. Composed as CORE_RULES minus the
+  // project-scoped selector, never as a hand-written shorter list (HS-9518).
+  //
+  //   morphAudit.ts — measures RENDER behavior, not project data. Its `WeakMap` is
+  //   keyed by DOM nodes (a case the rule's own message names as legitimately
+  //   global), and its counters are deliberately NOT reset on a project switch:
+  //   redundant re-renders across a switch are exactly what you want to see.
+  {
+    files: ["src/client/morphAudit.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...CORE_RULES],
+    },
+  },
   // HS-8243 — file-path allowlist for the 35 production client files
   // that already use `xxx.innerHTML = ` (~93 callsites total) PLUS
   // every test file (where `document.body.innerHTML = '<...>'` is the

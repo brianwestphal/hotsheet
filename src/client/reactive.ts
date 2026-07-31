@@ -140,5 +140,30 @@
  * `package.json` version field — the beta was promoted unchanged, so everything
  * checked above carries over.
  */
+import { morph as kerfMorph, type SafeHtml } from 'kerfjs';
+
+import { recordMorph } from './morphAudit.js';
+
 export type { ReadonlySignal, Signal, Store } from 'kerfjs';
-export { batch, computed, defineStore, delegate, delegateCapture, effect, morph, resetAllStores, signal } from 'kerfjs';
+export { batch, computed, defineStore, delegate, delegateCapture, effect, resetAllStores, signal } from 'kerfjs';
+
+/**
+ * HS-9538 — `morph`, with an opt-in redundancy audit in front of it.
+ *
+ * kerf's own `valueOnlyRerender` diagnostic answers "did this render change
+ * anything?", but it is invoked from `mount.ts` only and `morph.ts` calls no dev
+ * hook at all — so for Hot Sheet, which renders exclusively through `morph`, it
+ * can never fire (HS-9537). This wrapper is the smallest way to get that signal
+ * for the rendering model we actually use.
+ *
+ * `recordMorph` is a no-op — a single boolean check — unless `enableMorphAudit()`
+ * has been called, which only a dev entry does. The serialization it performs to
+ * compare templates is exactly the cost `morph`'s byte-equal fast path exists to
+ * avoid, so it must never be on in production.
+ *
+ * Signature is kerf's, verbatim, so this stays a drop-in re-export.
+ */
+export function morph(liveRoot: Element, template: Element | SafeHtml | string, ownedItems?: ReadonlySet<Element>): void {
+  recordMorph(liveRoot, template);
+  kerfMorph(liveRoot, template, ownedItems);
+}
