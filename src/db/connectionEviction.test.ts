@@ -496,6 +496,26 @@ describe('eviction counters wired to real evictions (HS-9470)', () => {
  * memory climbed, the loop went into GC thrash, and the docs/45 watchdog SIGKILLed
  * it for being wedged. The periodic sweep now runs it too.
  */
+/**
+ * HS-9540 — wait for `external` to fall back under `limit`, forcing a collection
+ * each round.
+ *
+ * Returns as soon as it drops (so the common case costs one sample) and gives up
+ * after `timeoutMs`, returning the last reading so the caller's assertion reports
+ * the real number rather than a timeout.
+ */
+async function waitForExternalToDropBelow(before: number, limit: number, timeoutMs = 20_000): Promise<number> {
+  const { forceGcNow } = await import('./forceGc.js');
+  const deadline = Date.now() + timeoutMs;
+  let residue = process.memoryUsage().external - before;
+  while (residue >= limit && Date.now() < deadline) {
+    forceGcNow('hs-9540-poll');
+    await new Promise((r) => setTimeout(r, 250));
+    residue = process.memoryUsage().external - before;
+  }
+  return residue;
+}
+
 describe('pressure-driven eviction runs off the sweep, not just on open (HS-9477)', () => {
   let anchor: string;
   const saved: Record<string, string | undefined> = {};
@@ -625,12 +645,25 @@ describe('pressure-driven eviction runs off the sweep, not just on open (HS-9477
       const { getAllProjects } = await import('../projects.js');
       expect(getAllProjects().map((p) => p.secret)).toEqual(expect.arrayContaining(secrets));
 
-      const residue = process.memoryUsage().external - before;
+      // HS-9540 — POLL rather than sampling once. The property under test is "the
+      // memory comes back", not "it comes back within this tick". Reclaiming a
+      // WASM heap depends on V8 running finalizers (docs/128 §128.5.6 — which is
+      // also why `forceGcNow` collects TWICE), and under CPU contention that does
+      // not always finish before the next statement. Sampling once made this fail
+      // in a loaded full-suite run while passing in isolation, on BOTH the changed
+      // and unchanged tree — a flaky memory assertion, which reads as a real leak.
+      //
+      // Nudging GC inside the loop is deliberate and does not weaken the test: a
+      // RETAINED handle is not collectable, so no number of collections reclaims
+      // it and the assertion still fails loudly. All the polling removes is the
+      // timing dependence.
+      const LIMIT = 100 * 1024 * 1024;
+      const residue = await waitForExternalToDropBelow(before, LIMIT);
       // One cluster's heap is ~190 MB, so a retained handle per project shows up
       // here as hundreds of MB. Allow generous slack for unrelated allocations
       // while still failing loudly on even ONE pinned cluster.
       expect(residue, `evicting registered projects must reclaim their heaps (opened ${String(opened - before)} over baseline)`)
-        .toBeLessThan(100 * 1024 * 1024);
+        .toBeLessThan(LIMIT);
     } finally {
       for (const secret of secrets) unregisterProject(secret);
     }
