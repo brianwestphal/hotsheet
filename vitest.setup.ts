@@ -32,6 +32,17 @@ enableWarnings({
   invariants: 'throw',
   delegateInEffect: true,
   narrowSet: true,
+  // HS-9373 — added with the kerf 4.1 bump. Both are aimed squarely at how Hot
+  // Sheet renders (fine-grained bindings over a `morph()`ed subtree):
+  //   `staleBinding`      — a binding left reading a replaced node on the
+  //                         byte-equal fast path, which shows up as a value that
+  //                         silently stops updating.
+  //   `valueOnlyRerender` — a re-render whose only changes could have been
+  //                         fine-grained bindings, i.e. wasted reconciliation.
+  // Both are silent across the current suite; they are on so that a regression
+  // is reported at the render that caused it rather than found later by hand.
+  staleBinding: true,
+  valueOnlyRerender: true,
 });
 
 /**
