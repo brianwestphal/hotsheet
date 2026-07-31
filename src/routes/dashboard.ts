@@ -14,6 +14,7 @@ import { openInFileManager } from '../open-in-file-manager.js';
 import { ensureSkillsForAllProjects } from '../projects.js';
 import { consumeSkillsCreatedFlag } from '../skills.js';
 import type { AppEnv } from '../types.js';
+import { createCachedProbe, probeCli } from '../utils/cliProbe.js';
 import { extraSearchDirs } from '../utils/isExecutableOnPath.js';
 import { addPollWaiter, getChangeVersion, getDataVersion } from './notify.js';
 import { GlobalConfigSchema,parseBody, PrintSchema } from './validation.js';
@@ -166,12 +167,12 @@ function augmentedPath(): string {
 export interface GlassboxResolveDeps {
   /** Result of `which glassbox` under the augmented PATH, or null if it failed.
    *  A non-empty result is trusted (which only returns existing executables). */
-  which: () => string | null;
+  which: () => Promise<string | null>;
   fileExists: (p: string) => boolean;
   binDirs: string[];
 }
-export function resolveGlassboxBinWith(deps: GlassboxResolveDeps): string | null {
-  const fromWhich = deps.which();
+export async function resolveGlassboxBinWith(deps: GlassboxResolveDeps): Promise<string | null> {
+  const fromWhich = await deps.which();
   if (fromWhich !== null && fromWhich !== '') return fromWhich;
   const candidates = [
     ...deps.binDirs.map(d => join(d, 'glassbox')),
@@ -183,29 +184,33 @@ export function resolveGlassboxBinWith(deps: GlassboxResolveDeps): string | null
 
 /** Resolve the `glassbox` CLI to an absolute path, or null when not installed,
  *  wiring the real `which` (under the augmented PATH) + `existsSync`. */
-async function resolveGlassboxBin(): Promise<string | null> {
-  const { execFileSync } = await import('child_process');
-  const which = (): string | null => {
-    try {
-      // HS-9518 — `timeout` + `killSignal` are MANDATORY here (HS-9510/HS-9391).
-      // This is a synchronous spawn on an HTTP handler, re-run on every
-      // `/glassbox/status` call by design (HS-8786 removed the cache), and it
-      // searches `augmentedPath()` — a PATH that can include network / cloud-synced
-      // volumes. `execFileSync` blocks the thread in NATIVE code, so an unbounded
-      // one here does not make a request slow, it stops the event loop: no other
-      // request is served, and the docs/45 watchdog SIGKILLs the server after 60 s.
-      // 3 s is generous for a `which` and still an order of magnitude under that.
-      return execFileSync('which', ['glassbox'], {
-        env: { ...process.env, PATH: augmentedPath() },
-        encoding: 'utf-8',
-        timeout: 3000,
-        killSignal: 'SIGKILL',
-      }).trim();
-    } catch {
-      return null;
-    }
-  };
+const glassboxBinProbe = createCachedProbe<string | null>(async (deps) => {
+  // HS-9522 — ASYNC. This used to be `execFileSync` on an HTTP handler, re-run on
+  // every `/glassbox/status` call (HS-8786 removed the cache so a PATH/install fix
+  // takes effect without a restart), searching `augmentedPath()` — a PATH that can
+  // include network / cloud-synced volumes. A sync spawn against a stalled mount
+  // blocks the thread in NATIVE code, which does not make one request slow, it stops
+  // the event loop: nothing else is served, and the docs/45 watchdog SIGKILLs after
+  // 60 s. HS-9518 bounded it to 3 s; this removes the block entirely.
+  //
+  // The short TTL preserves HS-8786's intent — an install is still picked up within
+  // seconds — while a burst of polling now costs one spawn instead of one per request.
+  // The augmented PATH is load-bearing: a Dock/Finder launch gets a minimal PATH, so
+  // dropping it here would stop finding a glassbox that IS installed (docs on
+  // `enrich-path.ts` / HS-8946 for why that PATH exists at all).
+  const which = (): Promise<string | null> =>
+    probeCli(deps, 'which', ['glassbox'], 3000, { env: { ...process.env, PATH: augmentedPath() } });
   return resolveGlassboxBinWith({ which, fileExists: existsSync, binDirs: extraSearchDirs() });
+});
+
+/** Resolve the `glassbox` CLI to an absolute path, or null when not installed. */
+async function resolveGlassboxBin(): Promise<string | null> {
+  return glassboxBinProbe.get();
+}
+
+/** Test-only — drop the probe cache between cases. */
+export function _resetGlassboxProbeForTesting(): void {
+  glassboxBinProbe.reset();
 }
 
 dashboardRoutes.get('/glassbox/status', async (c) => {

@@ -45,6 +45,10 @@ export interface ExecOptions {
   env?: NodeJS.ProcessEnv;
   encoding?: BufferEncoding;
   windowsHide?: boolean;
+  /** HS-9522 — a `timeout` is enforced by SENDING this signal, and the default
+   *  SIGTERM can be ignored (HS-9391). Async spawns still need it: the loop stays
+   *  free, but an unkillable child would leak. */
+  killSignal?: NodeJS.Signals;
 }
 
 /**

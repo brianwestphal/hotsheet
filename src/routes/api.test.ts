@@ -1858,10 +1858,15 @@ describe('custom view query', () => {
 
 // ---------- channel route endpoint tests ----------
 
-vi.mock('child_process', async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...(actual as object), execFileSync: vi.fn() };
-});
+// HS-9522 — the `claude --version` probe moved from a SYNC spawn on the handler to an
+// async, TTL-cached, coalesced one, so the seam moved with it: mock `execFileAsync`
+// rather than `execFileSync`. The cache also has to be dropped between cases, or the
+// second test reads the first test's answer — a fresh hazard the TTL introduced.
+const execMock = vi.hoisted(() => ({ execFileAsync: vi.fn() }));
+vi.mock('../utils/execAsync.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  execFileAsync: execMock.execFileAsync,
+}));
 
 interface ClaudeCheckResponse {
   installed: boolean;
@@ -1879,10 +1884,14 @@ interface ChannelPermissionRespondResponse {
 }
 
 describe('GET /api/channel/claude-check', () => {
+  beforeEach(async () => {
+    const { _resetClaudeProbeForTesting } = await import('./channel.js');
+    _resetClaudeProbeForTesting();
+    execMock.execFileAsync.mockReset();
+  });
+
   it('returns installed=true with version when claude is found', async () => {
-    const { execFileSync } = await import('child_process');
-    const mockExec = vi.mocked(execFileSync);
-    mockExec.mockReturnValue('Claude Code v2.1.85\n');
+    execMock.execFileAsync.mockResolvedValue({ stdout: 'Claude Code v2.1.85\n', stderr: '' });
 
     const res = await app.request('/api/channel/claude-check');
     expect(res.status).toBe(200);
@@ -1893,9 +1902,7 @@ describe('GET /api/channel/claude-check', () => {
   });
 
   it('returns meetsMinimum=false for old versions', async () => {
-    const { execFileSync } = await import('child_process');
-    const mockExec = vi.mocked(execFileSync);
-    mockExec.mockReturnValue('Claude Code v2.0.5\n');
+    execMock.execFileAsync.mockResolvedValue({ stdout: 'Claude Code v2.0.5\n', stderr: '' });
 
     const res = await app.request('/api/channel/claude-check');
     expect(res.status).toBe(200);
@@ -1906,9 +1913,7 @@ describe('GET /api/channel/claude-check', () => {
   });
 
   it('returns installed=false when claude is not found', async () => {
-    const { execFileSync } = await import('child_process');
-    const mockExec = vi.mocked(execFileSync);
-    mockExec.mockImplementation(() => { throw new Error('command not found'); });
+    execMock.execFileAsync.mockRejectedValue(new Error('command not found'));
 
     const res = await app.request('/api/channel/claude-check');
     expect(res.status).toBe(200);
@@ -1919,9 +1924,7 @@ describe('GET /api/channel/claude-check', () => {
   });
 
   it('returns meetsMinimum=true for major version above 2', async () => {
-    const { execFileSync } = await import('child_process');
-    const mockExec = vi.mocked(execFileSync);
-    mockExec.mockReturnValue('3.0.0\n');
+    execMock.execFileAsync.mockResolvedValue({ stdout: '3.0.0\n', stderr: '' });
 
     const res = await app.request('/api/channel/claude-check');
     const data = await res.json() as ClaudeCheckResponse;

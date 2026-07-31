@@ -350,32 +350,32 @@ describe('POST /print', () => {
 describe('resolveGlassboxBinWith (HS-8786)', () => {
   const binDirs = ['/usr/local/bin', '/opt/homebrew/bin'];
 
-  it('trusts a non-empty `which` result (which only returns existing executables)', () => {
-    const bin = resolveGlassboxBinWith({
-      which: () => '/opt/homebrew/bin/glassbox',
+  it('trusts a non-empty `which` result (which only returns existing executables)', async () => {
+    const bin = await resolveGlassboxBinWith({
+      which: () => Promise.resolve('/opt/homebrew/bin/glassbox'),
       fileExists: () => false, // not consulted for the which result
       binDirs,
     });
     expect(bin).toBe('/opt/homebrew/bin/glassbox');
   });
 
-  it('falls back to a known install location when `which` fails (the GUI-PATH case)', () => {
-    const bin = resolveGlassboxBinWith({
-      which: () => null,                                  // not on the minimal GUI PATH
+  it('falls back to a known install location when `which` fails (the GUI-PATH case)', async () => {
+    const bin = await resolveGlassboxBinWith({
+      which: () => Promise.resolve(null),                 // not on the minimal GUI PATH
       fileExists: p => p === '/usr/local/bin/glassbox',   // but installed there
       binDirs,
     });
     expect(bin).toBe('/usr/local/bin/glassbox');
   });
 
-  it('finds the macOS app-bundle CLI when nothing else matches', () => {
+  it('finds the macOS app-bundle CLI when nothing else matches', async () => {
     const appBundle = '/Applications/Glassbox.app/Contents/Resources/resources/glassbox';
-    const bin = resolveGlassboxBinWith({ which: () => null, fileExists: p => p === appBundle, binDirs });
+    const bin = await resolveGlassboxBinWith({ which: () => Promise.resolve(null), fileExists: p => p === appBundle, binDirs });
     expect(bin).toBe(appBundle);
   });
 
-  it('returns null when the CLI is not installed anywhere', () => {
-    expect(resolveGlassboxBinWith({ which: () => null, fileExists: () => false, binDirs })).toBeNull();
+  it('returns null when the CLI is not installed anywhere', async () => {
+    expect(await resolveGlassboxBinWith({ which: () => Promise.resolve(null), fileExists: () => false, binDirs })).toBeNull();
   });
 });
 

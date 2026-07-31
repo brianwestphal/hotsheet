@@ -1,4 +1,3 @@
-import { execFileSync } from 'child_process';
 import { Hono } from 'hono';
 
 import { hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBridge.js';
@@ -20,6 +19,7 @@ import { ensureSkillsForAllProjects, getAllProjects } from '../projects.js';
 import { PendingPermissionSchema } from '../schemas.js';
 import { flushPendingSyncs } from '../sync/markdown.js';
 import type { AppEnv } from '../types.js';
+import { createCachedProbe, probeCli } from '../utils/cliProbe.js';
 import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js';
 import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexTranscriptEventSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
@@ -60,14 +60,22 @@ const channelDoneFlags = new Map<string, boolean>();
 // Track which permission request_ids we've already logged to avoid duplicates
 const loggedPermissionRequests = new Map<string, number>(); // request_id -> log entry id
 
-channelRoutes.get('/channel/claude-check', (c) => {
+/** HS-9522 — the `claude --version` probe, async + TTL-cached + coalesced. It was a
+ *  synchronous spawn on an HTTP handler, so a `claude` that hung stopped the whole
+ *  event loop rather than just this request. HS-9518 bounded it to 5 s; this removes
+ *  the block. The short TTL still notices an install/upgrade within seconds. */
+const claudeVersionProbe = createCachedProbe<string | null>(async (deps) =>
+  probeCli(deps, 'claude', ['--version'], 5000));
+
+/** Test-only — drop the probe cache between cases. */
+export function _resetClaudeProbeForTesting(): void {
+  claudeVersionProbe.reset();
+}
+
+channelRoutes.get('/channel/claude-check', async (c) => {
   try {
-    // HS-9518 — `killSignal: 'SIGKILL'` (HS-9510/HS-9391): the `timeout` is
-    // enforced by SENDING `killSignal`, which defaults to SIGTERM, so a `claude`
-    // that ignores SIGTERM would leave this blocked forever despite the timeout.
-    // This runs synchronously on an HTTP handler, so "blocked" means the whole
-    // event loop, not just this request.
-    const version = execFileSync('claude', ['--version'], { timeout: 5000, killSignal: 'SIGKILL', encoding: 'utf-8' }).trim();
+    const version = await claudeVersionProbe.get();
+    if (version === null) return c.json({ installed: false, version: null, meetsMinimum: false });
     // Version string like "Claude Code v2.1.85" or just "2.1.85"
     const match = version.match(/(\d+\.\d+\.\d+)/);
     const versionNum = match !== null ? match[1] : null;
