@@ -11,12 +11,14 @@ import {
   writeManifestAtomically,
 } from './attachmentBackup.js';
 import { backupFsFor, isBackupFsAvailable, tolerateOutage } from './backupFs.js';
+import { markerKey, readChangeMarker, shouldSkipBackup } from './db/changeMarker.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { fsyncDbDirAsync } from './db/fsyncWrap.js';
 import { createPglite } from './db/pglite.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
 import { getRecentEventLoopLagMs, instrumentAsync, onServerWake } from './diagnostics/freezeLogger.js';
 import { getBackupDir } from './file-settings.js';
+import { readGlobalConfig, writeGlobalConfig } from './global-config.js';
 import { _resetDefaultSchedulerForTests, getBackgroundScheduler, PRIORITY } from './scheduler/backgroundScheduler.js';
 import { maxOf } from './utils/largeArray.js';
 
@@ -175,7 +177,37 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     // at the write is the difference between a paused backup and a paused app.
     if (!isBackupFsAvailable(backupsDir(dataDir))) return null;
     const db = await runWithDataDir(dataDir, () => getDb());
+
+    // HS-9535 — skip the whole train when nothing has been written since this
+    // tier's last backup. Measured fleet-wide: 58 % of consecutive 5-minute
+    // backups are byte-identical, and an idle project is 100 % — each one paying
+    // a CHECKPOINT, a full-cluster fsync, a `dumpDataDir` + gzip, a manifest
+    // rebuild, a co-save and a tarball write to reproduce the previous file.
+    //
+    // Placed here for the same reason as the availability bail above: before the
+    // expensive part, after the cheap guards. Reading the marker is one query.
+    //
+    // `shouldSkipBackup` skips ONLY when both markers are present and equal, so
+    // a first run, a restart, or an unreadable marker all take the backup.
+    const currentMarker = await readChangeMarker(db);
+    const markerKeyForTier = markerKey(dataDir, tier);
+    const storedMarkers = readGlobalConfig().backupChangeMarkers ?? {};
     const dir = tierDir(dataDir, tier);
+    if (shouldSkipBackup(currentMarker, storedMarkers[markerKeyForTier])) {
+      // ...but only if a backup for this tier actually EXISTS. The marker records
+      // that we once captured this WAL position; it says nothing about whether the
+      // file survived. A deleted `backups/` directory, an unplugged drive, a cloud
+      // folder that vanished, or a retention pass that aged out the last file would
+      // otherwise leave the marker asserting "already backed up" forever, and the
+      // tier would never fire again until the data happened to change.
+      //
+      // Found by the HS-7894 catch-up test, which deletes the backup directory and
+      // expects every overdue tier to fire — exactly this scenario.
+      const bfsCheck = backupFsFor(backupsDir(dataDir));
+      const existing = (await bfsCheck.readdirOrEmpty(dir)).filter(f => f.endsWith('.tar.gz'));
+      if (existing.length > 0) return null;
+    }
+
     const bfs = backupFsFor(backupsDir(dataDir));
     await bfs.mkdir(dir);
 
@@ -270,6 +302,27 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       ticketCount,
       sizeBytes: buffer.length,
     };
+
+    // HS-9535 — record the WAL position this backup captured, so the next run of
+    // this tier can tell whether anything has been written since.
+    //
+    // Written only AFTER the tarball, co-save and manifest have all landed: a
+    // marker stored before a failed write would make the next pass believe a
+    // backup exists for state that was never persisted, and the failure would
+    // suppress backups instead of retrying them. A marker we fail to store just
+    // costs one unnecessary backup.
+    //
+    // Re-read rather than storing the marker taken at the start: this backup's own
+    // `CHECKPOINT` writes a WAL record, so the position always advances during the
+    // run. Storing the pre-checkpoint value would leave the next pass comparing
+    // against a position the cluster had already moved past, and it would never
+    // skip anything — which is exactly what the end-to-end test caught.
+    const finalMarker = await readChangeMarker(db);
+    if (finalMarker !== null) {
+      const markers = { ...(readGlobalConfig().backupChangeMarkers ?? {}) };
+      markers[markerKeyForTier] = finalMarker;
+      writeGlobalConfig({ backupChangeMarkers: markers });
+    }
 
     await pruneBackups(dataDir, tier);
     return info;

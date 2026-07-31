@@ -91,6 +91,11 @@ describe('createBackup round-trip (HS-7891)', () => {
    *  `dumpDataDir`. If a future refactor drops the call, this test fails. */
   it('issues CHECKPOINT before dumpDataDir on every backup', async () => {
     const db = await getDb();
+    // HS-9535 — write first. A backup is now skipped when nothing has changed
+    // since the last one, so a bare `createBackup` here would correctly return
+    // null and this guard would assert against a run that never happened. The
+    // ordering property under test is unaffected.
+    await createTicket('CHECKPOINT ordering guard');
     const execSpy = vi.spyOn(db, 'exec');
     const dumpSpy = vi.spyOn(db, 'dumpDataDir');
     try {
@@ -493,5 +498,64 @@ describe('backup preview holds its cluster for one operation only (HS-9485)', ()
 
     await expect(loadBackupForPreview(tempDir, 'daily', filename)).rejects.toThrow();
     expect(_activePreviewCountForTests(), 'a failed preview must still release its cluster').toBe(0);
+  });
+});
+
+/**
+ * HS-9535 — skip the backup train when nothing has been written.
+ *
+ * End-to-end against a REAL cluster, because the value of this feature is a
+ * claim about PostgreSQL's WAL position, not about my own helper functions.
+ * The unit tests in `db/changeMarker.test.ts` cover the decision; these cover
+ * whether the decision is fed the truth.
+ */
+describe('skip-when-unchanged (HS-9535)', () => {
+  it('takes the first backup, then SKIPS an immediately-repeated one', async () => {
+    await createTicket('HS-9535 first');
+    const first = await createBackup(tempDir, '5min');
+    expect(first).not.toBeNull();
+
+    // Nothing written in between — the WAL position is identical, so the whole
+    // train (CHECKPOINT, fsync, dumpDataDir + gzip, manifest, co-save, tarball)
+    // is skipped and no new file appears.
+    const second = await createBackup(tempDir, '5min');
+    expect(second).toBeNull();
+  });
+
+  it('takes a backup again once something IS written', async () => {
+    await createBackup(tempDir, '5min');            // establish a marker
+    expect(await createBackup(tempDir, '5min')).toBeNull(); // confirm it skips
+
+    await createTicket('HS-9535 a real write');
+    const after = await createBackup(tempDir, '5min');
+    expect(after).not.toBeNull();
+  });
+
+  it('backs up again when the backup FILE is gone, even though the marker says otherwise', async () => {
+    // The marker records that we once captured this WAL position; it says nothing
+    // about whether the file survived. A deleted backups/ directory, an unplugged
+    // drive, a vanished cloud folder or a retention pass that aged out the last
+    // file would otherwise leave the marker asserting "already backed up" forever
+    // — and with the data unchanged, the tier would never fire again.
+    await createTicket('HS-9535 marker vs reality');
+    expect(await createBackup(tempDir, '5min')).not.toBeNull();
+    expect(await createBackup(tempDir, '5min')).toBeNull(); // marker now set
+
+    rmSync(join(tempDir, 'backups', '5min'), { recursive: true, force: true });
+
+    // Nothing has been written, so the marker still matches — but there is no
+    // backup, and "we have one" is now false.
+    expect(await createBackup(tempDir, '5min')).not.toBeNull();
+  });
+
+  it('does not let one tier suppress another', async () => {
+    // The markers are keyed per (dataDir, tier). A single per-project marker
+    // would let a 5-minute skip silently suppress the hourly backup — which is
+    // the one that actually survives retention.
+    await createTicket('HS-9535 tier isolation');
+    expect(await createBackup(tempDir, '5min')).not.toBeNull();
+    // The hourly tier has its own marker and has never run, so it must still fire
+    // even though the 5-minute tier just captured this exact WAL position.
+    expect(await createBackup(tempDir, 'hourly')).not.toBeNull();
   });
 });

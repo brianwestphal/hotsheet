@@ -453,6 +453,11 @@ export const GlobalConfigSchema = z.object({
   // ISO timestamp. Throttles the heavy, exclusive-lock full reclaim to at most
   // once per `FULL_VACUUM_THROTTLE_DAYS`; routine plain VACUUMs aren't tracked.
   telemetryVacuumFullAt: z.record(z.string(), z.string()).optional(),
+  /** HS-9535 — per `<dataDir>::<tier>`, the WAL position at the last successful
+   *  backup. A backup is skipped only when the cluster's current position is
+   *  identical, which means nothing has been written since. Absent/unreadable is
+   *  always treated as "back it up" — never skip on doubt. */
+  backupChangeMarkers: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 // HS-8635 — these were duplicated verbatim in `src/global-config.ts`; that
