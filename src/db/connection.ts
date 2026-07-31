@@ -1128,7 +1128,7 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
   let sources: { path: string; label: string }[];
   try {
     const { listRestoreSources } = await import('./restore.js');
-    sources = listRestoreSources(dataDir);
+    sources = await listRestoreSources(dataDir);
   } catch (e) {
     console.error('[db] could not enumerate restore sources:', e);
     return null;

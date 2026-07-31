@@ -4,6 +4,7 @@ import { basename, extname, join, resolve, sep } from 'path';
 
 import { CopyAttachmentsReqSchema } from '../api/attachments.js';
 import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from '../attachmentBackup.js';
+import { backupFsFor, isBackupFsAvailable } from '../backupFs.js';
 import { promoteDraftAttachments } from '../db/attachments.js';
 import { runWithDataDir } from '../db/connection.js';
 import {
@@ -245,11 +246,15 @@ export async function tryServeTimeRestore(dataDir: string, fullPath: string): Pr
   }
   try {
     const backupRoot = getBackupDir(dataDir);
-    if (!existsSync(backupRoot)) return false;
+    // HS-9527 — this runs on the attachment-serving request path, so it must
+    // never block on a cloud `backupDir`. An unreachable store simply means no
+    // self-heal for this request; the 404 is the correct answer either way.
+    if (!isBackupFsAvailable(backupRoot)) return false;
+    if (!await backupFsFor(backupRoot).existsOrUnknown(backupRoot)) return false;
     // Gate the manifest walk on the path mapping to a real attachment row.
     const att = (await getAllAttachments()).find(a => resolve(a.stored_path) === fullPath);
     if (att === undefined) return false;
-    const xref = indexExistingManifestEntries(backupRoot).get(att.id);
+    const xref = (await indexExistingManifestEntries(backupRoot)).get(att.id);
     if (xref === undefined) return false;
     const ok = await restoreAttachmentBlob(attachmentBlobsDir(backupRoot), xref.sha, fullPath);
     if (!ok) recentServeHealFailures.set(fullPath, Date.now());

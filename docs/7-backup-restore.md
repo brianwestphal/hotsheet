@@ -54,6 +54,7 @@ The application runs a three-tier automatic backup system:
 
 - The backup storage location can be changed via the `backupDir` setting in the settings dialog.
 - When empty, defaults to `.hotsheet/backups/` inside the data directory.
+- **A cloud or network `backupDir` is a first-class supported configuration.** Pointing it at iCloud Drive, Google Drive, Dropbox, or a network share is the obvious thing to do with a backup folder, so the app must keep working when that folder is slow, wedged, or gone for hours — see §7.10.
 
 ## Non-Functional Requirements
 
@@ -110,3 +111,113 @@ The banner has two actions:
 A successful restore via the Settings flow also clears the marker server-side, so the banner won't reappear on the next launch.
 
 The marker file is intentionally persisted (rather than process-local) so the prompt survives subsequent restarts until the user explicitly responds — silently dropping the prompt across a restart was the failure mode the original 2026-04-27 incident exposed.
+
+### 7.10 Backup-Filesystem Resilience (HS-9527)
+
+**Requirement: an unreachable `backupDir` degrades backups and nothing else.** The
+app must stay fully responsive when the backup folder is slow, wedged, or absent
+for an arbitrary length of time, and must recover on its own when it returns.
+
+This is a requirement rather than a nicety because §7.6 invites the user to put
+`backupDir` on cloud storage. On macOS such a path is a **File Provider
+extension**: every operation is an XPC round-trip to a vendor daemon, and it can
+block for an unbounded time with **no kernel-level timeout**. Measured on a live
+Google Drive `backupDir`, machine otherwise idle: a 134 KB `readFileSync`
+averaged **686 ms** (2.6 s worst), and the 29-manifest startup scan blocked for
+**19.9 s straight**. On 2026-07-31 that pattern held the event loop past the §45
+watchdog's 60 s threshold and the server was SIGKILLed four times.
+
+#### 7.10.1 The two rules
+
+1. **No synchronous `fs` on the backup root, ever.** A sync call blocks the main
+   event loop inside `read(2)` with nothing able to interrupt it.
+2. **Async is not sufficient on its own.** `fs.promises` runs on libuv's
+   threadpool — **four threads by default**, shared with every other file, DNS,
+   and zlib user in the process. Four wedged backup reads starve *all* file I/O
+   app-wide. That is a slower death, not a cure.
+
+#### 7.10.2 The guard (`src/backupFs.ts`)
+
+Every backup-root operation goes through `backupFsFor(root)`, which adds three
+things on top of async `fs`:
+
+| Mechanism | What it bounds | Default |
+|---|---|---|
+| Concurrency gate | Share of libuv's threadpool backup work can occupy | 2 of 4 (`HOTSHEET_BACKUP_FS_MAX_INFLIGHT`) |
+| Per-operation deadline | How long any caller waits | 15 s metadata / 120 s content (`HOTSHEET_BACKUP_FS_META_TIMEOUT_MS`, `..._IO_TIMEOUT_MS`) |
+| Circuit breaker | Work attempted against a root that is not answering | opens after 3 consecutive deadline misses (`HOTSHEET_BACKUP_FS_FAILURE_THRESHOLD`) |
+
+Both the gate and the deadline are required, and they bound different things. A
+timeout releases the **caller**; the underlying libuv request keeps running and
+keeps its thread until the kernel returns. Bounding the wait keeps callers
+responsive; bounding the concurrency keeps the damage contained.
+
+While the breaker is open, calls fail fast with `BackupFsUnavailableError`
+**without touching the filesystem at all** — that is what makes an unreachable
+backup folder cost nothing. Backoff runs 30 s → 60 s → 5 min → 15 min, and each
+open period admits exactly one probe; a successful probe closes the breaker and
+logs that backups have resumed.
+
+Three properties worth stating explicitly, because each one is a way to get this
+wrong:
+
+- **Only deadline misses trip the breaker.** `ENOENT` is an *answer*, not a
+  failure — it comes back fast and means the filesystem is healthy. Counting it
+  would take backups offline for 15 minutes because a manifest was deleted.
+- **The breaker is per-root; the gate is process-global.** Reachability belongs
+  to a root (one project's dead cloud folder must not pause a project on local
+  disk), but the threadpool belongs to the process (four roots × two in-flight
+  would put eight requests into a four-thread pool).
+- **A timed-out operation's slot is released for admission, not held.** Holding
+  it looks more conservative and is a deadlock: two permanently wedged operations
+  would pin the gate at zero free slots forever, so the half-open probe could
+  never run and backups would stay dead until a restart even after the folder
+  came back. Leaked threads are instead bounded by the breaker — at most one per
+  backoff window — and surfaced as `leaked` in `getBackupFsHealth`.
+
+#### 7.10.3 Caller contract
+
+Unavailability is a **normal outcome, never an error to propagate**. Backups are
+best-effort by construction: the live database is `<dataDir>/db` and is never on
+the backup filesystem, so a missed tick costs a backup, not data. Callers skip
+the tick and try again later (`tolerateOutage`). Concretely:
+
+- `createBackup` checks `isBackupFsAvailable` **before** the CHECKPOINT + fsync +
+  `dumpDataDir` gzip, so a known-down destination costs nothing rather than
+  seconds of work and hundreds of MB of buffer discarded at the write.
+- `listBackups` yields `[]`, so Settings → Backups renders empty instead of
+  hanging the server.
+- `runAttachmentGc` **deletes nothing** when it cannot read the manifests —
+  "no manifests readable" must never be mistaken for "no blobs are live".
+- `cleanupOrphanedAttachments` prunes nothing, since it can neither restore a row
+  nor prove it unrecoverable.
+- `restoreBackup` reads the tarball **before** closing the DB and removing `db/`.
+  The old ordering deleted the database first and only then read from a
+  filesystem that might not answer.
+- `listRestoreSources` still offers the §73 local snapshot — an unreachable
+  `backupDir` must not block disaster recovery.
+
+#### 7.10.4 Doing less work
+
+Two scheduling changes, both about not paying for work nobody asked for:
+
+- **The cross-reference index is built lazily.** `reanalyzeMissingManifests` used
+  to build it unconditionally at the top. On a backup root where every tarball
+  already has a manifest — the steady state — that was one read per manifest for
+  an index then discarded without a single lookup. This was the direct cause of
+  the 2026-07-31 wedge, and it is pinned by a regression test asserting **zero**
+  manifest reads in that state.
+- **The one-shot startup passes are spread.** `reanalyze` (25 s) and the
+  attachment GC (30 s) previously used fixed delays, so a workstation restoring
+  nine projects fired nine copies of each within a ~2 s window onto one cloud
+  daemon. They now share a single per-project random offset over a 60 s window —
+  one offset, not two draws, so the 5 s ordering gap between them (rebuilt
+  manifests must be visible to the GC's reference set) survives the spreading.
+
+#### 7.10.5 Backstop
+
+An ESLint `no-restricted-syntax` selector bans synchronous `fs` calls in
+`src/backup.ts`, `src/backupFs.ts`, and `src/attachmentBackup.ts` — including
+their test files, since a sync call there is fast against a local temp dir and
+only wedges against the user's real cloud folder, which is exactly how one gets
+written and never noticed.

@@ -12,6 +12,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  promises as fsPromises,
   readdirSync,
   readFileSync,
   rmSync,
@@ -40,6 +41,7 @@ import {
   runAttachmentGc,
   writeManifestAtomically,
 } from './attachmentBackup.js';
+import { _resetBackupFsForTests, backupFsFor, isBackupFsAvailable } from './backupFs.js';
 
 let backupRoot: string;
 let liveAttachmentsDir: string;
@@ -148,23 +150,23 @@ describe('writeManifestAtomically + readManifest round-trip', () => {
       ],
     };
     await writeManifestAtomically(path, manifest);
-    expect(readManifest(path)).toEqual(manifest);
+    expect(await readManifest(path)).toEqual(manifest);
   });
 
-  it('readManifest returns null for missing files', () => {
-    expect(readManifest(join(backupRoot, 'nope.json'))).toBeNull();
+  it('readManifest returns null for missing files', async () => {
+    expect(await readManifest(join(backupRoot, 'nope.json'))).toBeNull();
   });
 
-  it('readManifest returns null for malformed JSON without throwing', () => {
+  it('readManifest returns null for malformed JSON without throwing', async () => {
     const path = join(backupRoot, 'bad.json');
     writeFileSync(path, 'not valid json {{');
-    expect(readManifest(path)).toBeNull();
+    expect(await readManifest(path)).toBeNull();
   });
 
-  it('readManifest returns null when required fields are missing', () => {
+  it('readManifest returns null when required fields are missing', async () => {
     const path = join(backupRoot, 'partial.json');
     writeFileSync(path, JSON.stringify({ schemaVersion: 1 }));
-    expect(readManifest(path)).toBeNull();
+    expect(await readManifest(path)).toBeNull();
   });
 });
 
@@ -410,19 +412,19 @@ describe('runAttachmentGc (HS-7929)', () => {
 });
 
 describe('deleteManifestSibling (HS-7929)', () => {
-  it('removes the .attachments.json sibling next to a tarball', () => {
+  it('removes the .attachments.json sibling next to a tarball', async () => {
     const tarballPath = join(backupRoot, '5min', 'backup-X.tar.gz');
     mkdirSync(join(backupRoot, '5min'), { recursive: true });
     writeFileSync(tarballPath, 'tarball');
     const manifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
     writeFileSync(manifestPath, '{}');
-    deleteManifestSibling(tarballPath);
+    await deleteManifestSibling(tarballPath);
     expect(existsSync(manifestPath)).toBe(false);
   });
 
-  it('is a no-op when the sibling does not exist', () => {
+  it('is a no-op when the sibling does not exist', async () => {
     const tarballPath = join(backupRoot, 'no-sibling.tar.gz');
-    expect(() => deleteManifestSibling(tarballPath)).not.toThrow();
+    await expect(deleteManifestSibling(tarballPath)).resolves.toBeUndefined();
   });
 });
 
@@ -544,7 +546,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
     expect(stats).toEqual({ rebuilt: 1, skipped: 0, failed: 0 });
 
     const manifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
-    const manifest = readManifest(manifestPath);
+    const manifest = await readManifest(manifestPath);
     expect(manifest).not.toBeNull();
     expect(manifest!.entries).toHaveLength(1);
     expect(manifest!.entries[0]?.attachmentId).toBe(1);
@@ -589,7 +591,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
     const stats = await reanalyzeMissingManifests(backupRoot);
     expect(stats.rebuilt).toBe(0);
     // Sentinel survived — the existing manifest was not touched.
-    expect(readManifest(manifestPath)?.createdAt).toBe('2020-01-01T00:00:00.000Z');
+    expect((await readManifest(manifestPath))?.createdAt).toBe('2020-01-01T00:00:00.000Z');
   });
 
   it('falls back to cross-referencing other manifests when a row\'s live file is missing', async () => {
@@ -622,7 +624,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
     const stats = await reanalyzeMissingManifests(backupRoot);
     expect(stats.rebuilt).toBe(1);
     const targetManifestPath = tarballPath.replace(/\.tar\.gz$/, '.attachments.json');
-    const m = readManifest(targetManifestPath);
+    const m = await readManifest(targetManifestPath);
     expect(m?.entries).toHaveLength(1);
     expect(m?.entries[0]?.sha).toBe(xrefSha);
   });
@@ -639,7 +641,7 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
 
     const stats = await reanalyzeMissingManifests(backupRoot);
     expect(stats.rebuilt).toBe(1);
-    const m = readManifest(tarballPath.replace(/\.tar\.gz$/, '.attachments.json'));
+    const m = await readManifest(tarballPath.replace(/\.tar\.gz$/, '.attachments.json'));
     expect(m?.entries).toHaveLength(1);
     expect(m?.entries[0]?.attachmentId).toBe(1);
   });
@@ -667,5 +669,149 @@ describe('reanalyzeMissingManifests (HS-7937)', () => {
 
     const stats = await reanalyzeMissingManifests(backupRoot, { minTarballAgeMs: 30 * 60 * 1000 });
     expect(stats.rebuilt).toBe(1);
+  });
+});
+
+/**
+ * HS-9527 — the regressions that come out of the 2026-07-31 server wedge.
+ *
+ * The failure was not "a read was slow". It was that a startup pass read every
+ * manifest on a cloud-backed `backupDir` in order to build an index it then
+ * discarded without a single lookup — ~20 s of main-thread blocking per project,
+ * per boot, for nothing. These pin the two properties that make that impossible:
+ * the reads do not happen unless something needs them, and when the backup
+ * filesystem stops answering the pipeline degrades instead of hanging.
+ */
+describe('backup-filesystem resilience (HS-9527)', () => {
+  /**
+   * Count manifest CONTENT reads. `fs.promises` is a plain object shared by
+   * every importer, so spying on it catches the read wherever it originates —
+   * which is the point: the assertion is about the syscall happening at all,
+   * not about which helper issued it.
+   */
+  function countManifestReads(): { count: () => number; restore: () => void } {
+    let n = 0;
+    const original = fsPromises.readFile;
+    // `readFile` is a large overload set; re-declaring it to satisfy
+    // `mockImplementation` would add noise and no safety. The cast is to the
+    // function's OWN type and the body only forwards, so nothing is asserted
+    // about shapes that could drift.
+    const passthrough = ((path: string, options?: unknown) => {
+      if (typeof path === 'string' && path.endsWith('.attachments.json')) n++;
+      return original(path, options as Parameters<typeof original>[1]);
+    }) as unknown as typeof original;
+    const spy = vi.spyOn(fsPromises, 'readFile').mockImplementation(passthrough);
+    return { count: () => n, restore: () => { spy.mockRestore(); } };
+  }
+
+  it('reanalyze does NOT read a single manifest when nothing is missing one', async () => {
+    // Steady state, and the exact state this machine was in: every tarball
+    // already has its manifest sibling.
+    const tierDir = join(backupRoot, '5min');
+    mkdirSync(tierDir, { recursive: true });
+    for (const name of ['backup-A', 'backup-B', 'backup-C']) {
+      const tarballPath = join(tierDir, `${name}.tar.gz`);
+      writeFileSync(tarballPath, 'tarball');
+      const past = (Date.now() - 48 * 60 * 60 * 1000) / 1000;
+      utimesSync(tarballPath, past, past);
+      await writeManifestAtomically(join(tierDir, `${name}.attachments.json`), {
+        schemaVersion: ATTACHMENT_MANIFEST_VERSION,
+        createdAt: new Date().toISOString(),
+        tarball: `${name}.tar.gz`,
+        entries: [],
+      });
+    }
+
+    const reads = countManifestReads();
+    try {
+      const stats = await reanalyzeMissingManifests(backupRoot);
+      expect(stats).toEqual({ rebuilt: 0, skipped: 0, failed: 0 });
+      // The whole bug in one assertion. Pre-fix this was 3.
+      expect(reads.count()).toBe(0);
+    } finally {
+      reads.restore();
+    }
+  });
+
+  it('still builds the cross-reference index when a rebuild actually needs it', async () => {
+    // One tarball WITHOUT a manifest, whose live file is gone — the only path
+    // that consumes the index. Laziness must not mean "never".
+    const tierDir = join(backupRoot, '5min');
+    mkdirSync(tierDir, { recursive: true });
+
+    const blobsDir = attachmentBlobsDir(backupRoot);
+    mkdirSync(blobsDir, { recursive: true });
+    const content = 'recovered-payload';
+    const sha = createHash('sha256').update(content).digest('hex');
+    writeFileSync(join(blobsDir, sha), content);
+
+    // A sibling manifest that carries the cross-reference for attachment 7.
+    await writeManifestAtomically(join(tierDir, 'backup-known.attachments.json'), {
+      schemaVersion: ATTACHMENT_MANIFEST_VERSION,
+      createdAt: new Date().toISOString(),
+      tarball: 'backup-known.tar.gz',
+      entries: [{ attachmentId: 7, ticketId: 1, originalName: 'a.bin', storedName: 'HS-1_a.bin', sha, size: content.length }],
+    });
+
+    const target = join(tierDir, 'backup-orphan.tar.gz');
+    writeFileSync(target, 'tarball');
+    const past = (Date.now() - 48 * 60 * 60 * 1000) / 1000;
+    utimesSync(target, past, past);
+    writeFileSync(
+      target.replace(/\.tar\.gz$/, '.json.gz'),
+      gzipSync(Buffer.from(JSON.stringify({
+        schemaVersion: 1,
+        tables: { attachments: [{ id: 7, ticket_id: 1, original_filename: 'a.bin', stored_path: join(liveAttachmentsDir, 'gone.bin') }] },
+      }), 'utf-8')),
+    );
+
+    const stats = await reanalyzeMissingManifests(backupRoot);
+    expect(stats.rebuilt).toBe(1);
+    const rebuilt = await readManifest(target.replace(/\.tar\.gz$/, '.attachments.json'));
+    expect(rebuilt?.entries).toEqual([
+      { attachmentId: 7, ticketId: 1, originalName: 'a.bin', storedName: 'HS-1_a.bin', sha, size: content.length },
+    ]);
+  });
+
+  it('an unreachable backup filesystem pauses the passes instead of throwing', async () => {
+    _resetBackupFsForTests();
+    process.env.HOTSHEET_BACKUP_FS_META_TIMEOUT_MS = '60';
+    process.env.HOTSHEET_BACKUP_FS_IO_TIMEOUT_MS = '60';
+    try {
+      const bfs = backupFsFor(backupRoot);
+      // Wedge the root: three stalls trip the breaker.
+      for (let i = 0; i < 3; i++) {
+        await expect(bfs.run(`stall-${String(i)}`, 'meta', () => new Promise(() => { /* never */ })))
+          .rejects.toThrow();
+      }
+      expect(isBackupFsAvailable(backupRoot)).toBe(false);
+
+      // Both startup passes must return quietly. A throw here would surface as
+      // an unhandled rejection in the `setTimeout` that schedules them.
+      await expect(reanalyzeMissingManifests(backupRoot)).resolves.toEqual({ rebuilt: 0, skipped: 0, failed: 0 });
+      await expect(runAttachmentGc(backupRoot)).resolves.toEqual({
+        deleted: 0, bytesReclaimed: 0, scannedManifests: 0, skippedDueToParseFailure: false,
+      });
+    } finally {
+      delete process.env.HOTSHEET_BACKUP_FS_META_TIMEOUT_MS;
+      delete process.env.HOTSHEET_BACKUP_FS_IO_TIMEOUT_MS;
+      _resetBackupFsForTests();
+    }
+  });
+
+  it('GC deletes NOTHING when it cannot read the manifests', async () => {
+    // The dangerous direction: "no manifests readable" must never be mistaken
+    // for "no blobs are live", or an outage would garbage-collect real backups.
+    const blobsDir = attachmentBlobsDir(backupRoot);
+    mkdirSync(blobsDir, { recursive: true });
+    writeFileSync(join(blobsDir, 'a'.repeat(64)), 'precious');
+    const tierDir = join(backupRoot, '5min');
+    mkdirSync(tierDir, { recursive: true });
+    writeFileSync(join(tierDir, 'backup-X.attachments.json'), 'not valid json {{');
+
+    const stats = await runAttachmentGc(backupRoot);
+    expect(stats.skippedDueToParseFailure).toBe(true);
+    expect(stats.deleted).toBe(0);
+    expect(existsSync(join(blobsDir, 'a'.repeat(64)))).toBe(true);
   });
 });

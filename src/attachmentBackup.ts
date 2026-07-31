@@ -15,21 +15,13 @@
  * All filesystem helpers are streaming to keep memory bounded — a 200 MB
  * attachment must never blow up the heap.
  */
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  promises as fsp,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from 'fs';
+import { promises as fsp } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { dirname, join } from 'path';
 import { gunzipSync } from 'zlib';
 import { z } from 'zod';
 
+import { type BackupFs, backupFsFor, isBackupFsUnavailable, tolerateOutage } from './backupFs.js';
 import { hashFileOffThread } from './hashWorker.js';
 
 /**
@@ -106,6 +98,34 @@ export function attachmentBlobsDir(backupRoot: string): string {
 }
 
 /**
+ * HS-9527 — every path this module touches under the backup root has the shape
+ * `<root>/<tier-or-attachments>/<file>`, so the root is two levels up. Recovering
+ * it here lets the path-only helpers (`readManifest`, `writeManifestAtomically`,
+ * `deleteManifestSibling`, the blob helpers) reach the right circuit breaker
+ * without every caller having to thread the root through.
+ */
+function fsForNestedPath(nestedPath: string): BackupFs {
+  return backupFsFor(dirname(dirname(nestedPath)));
+}
+
+/** The guarded filesystem for `<root>/attachments/...`. */
+function fsForBlobsDir(blobsDir: string): BackupFs {
+  return backupFsFor(dirname(blobsDir));
+}
+
+/**
+ * Async existence check for a LOCAL path (a live attachment under
+ * `<dataDir>/attachments`). Deliberately NOT guarded: local disk answers
+ * promptly, and putting it behind the backup breaker would let a dead cloud
+ * folder make live attachments look missing. Still async — this runs in a loop
+ * over every attachment, and `existsSync` in that loop is main-loop time.
+ */
+async function fileExists(path: string): Promise<boolean> {
+  try { await fsp.access(path); return true; }
+  catch { return false; }
+}
+
+/**
  * Ensure the blob at `<blobsDir>/<sha>` exists. If absent, hard-link from
  * `srcPath` first (zero-cost on same filesystem) and fall back to a
  * `copyFile` if linking isn't supported (cross-fs `backupDir`, e.g. Google
@@ -128,27 +148,26 @@ export async function ensureBlobInStore(
   srcPath: string,
   sha: string,
 ): Promise<boolean> {
-  await fsp.mkdir(blobsDir, { recursive: true });
+  // HS-9527 — routed through the guarded layer: async was never enough on its
+  // own, because a wedged cloud folder still holds a libuv thread per call.
+  const bfs = fsForBlobsDir(blobsDir);
+  await bfs.mkdir(blobsDir);
   const finalPath = join(blobsDir, sha);
-  // HS-8178 — `fsp.access` raises on missing-file, so use a try/catch
-  // probe instead of the sync `existsSync` to keep the whole function
+  // HS-8178 — a missing-file probe, not `existsSync`: the whole function stays
   // off the main thread. The race window is the same as the prior
   // `existsSync + linkSync` pattern.
-  try {
-    await fsp.access(finalPath);
-    return false; // already in store
-  } catch { /* not present — fall through to write */ }
+  if (await bfs.exists(finalPath)) return false; // already in store
 
   const tmpPath = `${finalPath}.tmp`;
-  try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
+  await bfs.rmBestEffort(tmpPath);
 
   try {
-    await fsp.link(srcPath, tmpPath);
+    await bfs.link(srcPath, tmpPath);
   } catch (linkErr) {
     // EXDEV (cross-device) or any other failure → fall back to copy.
-    try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
+    await bfs.rmBestEffort(tmpPath);
     try {
-      await fsp.copyFile(srcPath, tmpPath);
+      await bfs.copyFile(srcPath, tmpPath);
     } catch (copyErr) {
       // Surface the copy error (more actionable) but log the link error too.
       console.error('[attachmentBackup] link failed:', linkErr);
@@ -160,9 +179,9 @@ export async function ensureBlobInStore(
   // path. Cleanup of the tmp on rename failure mirrors the JSON co-save's
   // pattern in `dbJsonExport.ts`.
   try {
-    await fsp.rename(tmpPath, finalPath);
+    await bfs.rename(tmpPath, finalPath);
   } catch (renameErr) {
-    try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
+    await bfs.rmBestEffort(tmpPath);
     throw renameErr;
   }
   return true;
@@ -183,30 +202,44 @@ export async function writeManifestAtomically(path: string, manifest: Attachment
   const json = JSON.stringify(manifest, null, 2) + '\n';
   const buffer = Buffer.from(json, 'utf-8');
   const tmpPath = `${path}.tmp`;
-  try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
-  let handle: FileHandle | null = null;
-  try {
-    handle = await fsp.open(tmpPath, 'w');
-    await handle.write(buffer);
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await fsp.rename(tmpPath, path);
-  } catch (err) {
-    if (handle !== null) {
-      try { await handle.close(); } catch { /* ignore */ }
-    }
+  const bfs = fsForNestedPath(path);
+  // HS-9527 — one guarded unit rather than five: the open/write/fsync/rename
+  // sequence is a single logical write, and charging the gate per step would
+  // both over-count and let other backup work interleave inside it.
+  await bfs.run('writeManifestAtomically', 'io', async () => {
     try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
-    throw err;
-  }
+    let handle: FileHandle | null = null;
+    try {
+      handle = await fsp.open(tmpPath, 'w');
+      await handle.write(buffer);
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await fsp.rename(tmpPath, path);
+    } catch (err) {
+      if (handle !== null) {
+        try { await handle.close(); } catch { /* ignore */ }
+      }
+      try { await fsp.rm(tmpPath, { force: true }); } catch { /* ignore */ }
+      throw err;
+    }
+  });
 }
 
-/** Read + parse a manifest file. Returns null on missing file or
- *  malformed JSON — callers handle the rebuild path. */
-export function readManifest(path: string): AttachmentManifest | null {
-  if (!existsSync(path)) return null;
+/**
+ * Read + parse a manifest file. Returns null on missing file or malformed
+ * JSON — callers handle the rebuild path.
+ *
+ * HS-9527 — async, and guarded. This was the exact call that wedged the server
+ * four times on 2026-07-31: `readFileSync(path, 'utf-8')` against a Google Drive
+ * `backupDir`, averaging 686 ms per 134 KB manifest, called in a loop from the
+ * startup passes. An unreachable backup filesystem now returns null (a manifest
+ * we cannot read is indistinguishable, to every caller, from one that is not
+ * there) instead of blocking the event loop until the watchdog fires.
+ */
+export async function readManifest(path: string): Promise<AttachmentManifest | null> {
   try {
-    const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+    const raw: unknown = JSON.parse(await fsForNestedPath(path).readFileUtf8(path));
     if (!isManifest(raw)) return null;
     return raw;
   } catch {
@@ -297,8 +330,12 @@ export async function buildAttachmentManifest(
   // existing manifest's `attachmentId → {sha,…}` so the inline self-heal can
   // recover a file whose blob is still in the backup store.
   let crossRefIndex: Map<number, { sha: string; storedName: string; size: number }> | null = null;
+  const bfs = backupFsFor(backupRoot);
   for (const row of result.rows) {
-    if (!existsSync(row.stored_path)) {
+    // `stored_path` is the LIVE attachment under `<dataDir>/attachments` — local
+    // disk, not the backup root — so a plain async stat is right here; only the
+    // blob/manifest side goes through the guard.
+    if (!await fileExists(row.stored_path)) {
       // HS-8825 — attempt an inline self-heal from the backup store before
       // giving up. Pre-fix the only self-heal ran once at startup
       // (`cleanupOrphanedAttachments`); a file deleted out-of-band mid-session
@@ -307,11 +344,12 @@ export async function buildAttachmentManifest(
       // hash-addressed store we copy it back to `stored_path` and fall through
       // to capture it in THIS manifest; otherwise it's genuinely unrecoverable
       // (the next restart's cleanup prunes the row).
-      crossRefIndex ??= indexExistingManifestEntries(backupRoot);
+      crossRefIndex ??= await indexExistingManifestEntries(backupRoot);
       const xref = crossRefIndex.get(row.id);
       let healed = false;
-      if (xref !== undefined && existsSync(join(blobsDir, xref.sha))) {
-        healed = await restoreAttachmentBlob(blobsDir, xref.sha, row.stored_path) && existsSync(row.stored_path);
+      if (xref !== undefined && await bfs.existsOrUnknown(join(blobsDir, xref.sha))) {
+        healed = await restoreAttachmentBlob(blobsDir, xref.sha, row.stored_path)
+          && await fileExists(row.stored_path);
       }
       if (!healed) {
         // HS-8783 — aggregate instead of one warn per row.
@@ -372,8 +410,10 @@ function basename(path: string): string {
  * union their `entries[].sha`, then delete any blob in
  * `<backupRoot>/attachments/` whose name is NOT in that union.
  *
- * Aborts (no deletions) if any manifest fails to parse — operating on a
- * partial reference set could orphan live data.
+ * Aborts (no deletions) if any manifest fails to parse OR cannot be read —
+ * operating on a partial reference set could orphan live data. HS-9527 makes
+ * that second case reachable on purpose: when the backup filesystem is
+ * unavailable, "no manifests" must never be read as "no live blobs".
  *
  * HS-8093 — see `ensureBlobInStore` for the `async`-without-await
  * rationale; the same evolving-pipeline argument applies here.
@@ -384,64 +424,68 @@ export async function runAttachmentGc(backupRoot: string): Promise<{
   scannedManifests: number;
   skippedDueToParseFailure: boolean;
 }> {
+  const bfs = backupFsFor(backupRoot);
   const blobsDir = attachmentBlobsDir(backupRoot);
-  if (!existsSync(blobsDir)) {
-    return { deleted: 0, bytesReclaimed: 0, scannedManifests: 0, skippedDueToParseFailure: false };
-  }
+  const idle = { deleted: 0, bytesReclaimed: 0, scannedManifests: 0, skippedDueToParseFailure: false };
+  // HS-9527 — an unreachable backup root means we cannot enumerate the live-sha
+  // reference set, so there is nothing safe to do. Skip the whole pass.
+  return tolerateOutage(async () => {
+    if (!await bfs.exists(blobsDir)) return idle;
 
-  const manifestPaths = collectManifestPaths(backupRoot);
-  const liveShas = new Set<string>();
-  let parseFailure = false;
-  let scanned = 0;
-  for (const p of manifestPaths) {
-    const m = readManifest(p);
-    if (m === null) {
-      console.warn(`[attachmentBackup] GC: failed to parse ${p} — aborting GC to avoid orphaning live data`);
-      parseFailure = true;
-      break;
+    const manifestPaths = await collectManifestPaths(backupRoot);
+    const liveShas = new Set<string>();
+    let parseFailure = false;
+    let scanned = 0;
+    for (const p of manifestPaths) {
+      const m = await readManifest(p);
+      if (m === null) {
+        console.warn(`[attachmentBackup] GC: could not read ${p} — aborting GC to avoid orphaning live data`);
+        parseFailure = true;
+        break;
+      }
+      for (const e of m.entries) liveShas.add(e.sha);
+      // HS-8727 (load resilience, docs/75 §75.6 Phase 5) — yield between manifests
+      // so building the live-sha reference set can't starve the loop.
+      if (++scanned % 25 === 0) await yieldToEventLoop();
     }
-    for (const e of m.entries) liveShas.add(e.sha);
-    // HS-8727 (load resilience, docs/75 §75.6 Phase 5) — yield between manifests
-    // so building the live-sha reference set can't starve the loop.
-    if (++scanned % 25 === 0) await yieldToEventLoop();
-  }
-  if (parseFailure) {
-    return { deleted: 0, bytesReclaimed: 0, scannedManifests: manifestPaths.length, skippedDueToParseFailure: true };
-  }
+    if (parseFailure) {
+      return { deleted: 0, bytesReclaimed: 0, scannedManifests: manifestPaths.length, skippedDueToParseFailure: true };
+    }
 
-  let deleted = 0;
-  let bytesReclaimed = 0;
-  // HS-8727 — the manifest BUILD already yields between files (HS-8359); this
-  // closes the matching gap on the GC delete side. Async `readdir` + per-blob
-  // `stat`/`rm` run on libuv's threadpool, and a periodic `yieldToEventLoop()`
-  // flushes the heartbeat / WS frames / HTTP handlers, so sweeping a blob store
-  // with thousands of orphans can't block the event loop.
-  const blobNames = await fsp.readdir(blobsDir);
-  let iterated = 0;
-  for (const name of blobNames) {
-    if (++iterated % 500 === 0) await yieldToEventLoop();
-    if (name.endsWith('.tmp')) continue; // in-flight write; leave alone
-    if (liveShas.has(name)) continue;
-    const p = join(blobsDir, name);
-    let size = 0;
-    try { size = (await fsp.stat(p)).size; } catch { /* ignore */ }
-    try {
-      await fsp.rm(p, { force: true });
-      deleted++;
-      bytesReclaimed += size;
-    } catch (err) {
-      console.error(`[attachmentBackup] GC: failed to delete ${p}:`, err);
+    let deleted = 0;
+    let bytesReclaimed = 0;
+    // HS-8727 — the manifest BUILD already yields between files (HS-8359); this
+    // closes the matching gap on the GC delete side. Async `readdir` + per-blob
+    // `stat`/`rm` run on libuv's threadpool, and a periodic `yieldToEventLoop()`
+    // flushes the heartbeat / WS frames / HTTP handlers, so sweeping a blob store
+    // with thousands of orphans can't block the event loop.
+    const blobNames = await bfs.readdir(blobsDir);
+    let iterated = 0;
+    for (const name of blobNames) {
+      if (++iterated % 500 === 0) await yieldToEventLoop();
+      if (name.endsWith('.tmp')) continue; // in-flight write; leave alone
+      if (liveShas.has(name)) continue;
+      const p = join(blobsDir, name);
+      let size = 0;
+      try { size = (await bfs.stat(p)).size; } catch { /* ignore */ }
+      try {
+        await bfs.rm(p);
+        deleted++;
+        bytesReclaimed += size;
+      } catch (err) {
+        console.error(`[attachmentBackup] GC: failed to delete ${p}:`, err);
+      }
     }
-  }
-  return { deleted, bytesReclaimed, scannedManifests: manifestPaths.length, skippedDueToParseFailure: false };
+    return { deleted, bytesReclaimed, scannedManifests: manifestPaths.length, skippedDueToParseFailure: false };
+  }, idle);
 }
 
-function collectManifestPaths(backupRoot: string): string[] {
+async function collectManifestPaths(backupRoot: string): Promise<string[]> {
+  const bfs = backupFsFor(backupRoot);
   const out: string[] = [];
   for (const tier of ['5min', 'hourly', 'daily']) {
     const tierPath = join(backupRoot, tier);
-    if (!existsSync(tierPath)) continue;
-    for (const name of readdirSync(tierPath)) {
+    for (const name of await bfs.readdirOrEmpty(tierPath)) {
       if (name.endsWith('.attachments.json')) out.push(join(tierPath, name));
     }
   }
@@ -449,11 +493,12 @@ function collectManifestPaths(backupRoot: string): string[] {
 }
 
 /** Drop the manifest sibling next to a tarball — called from
- *  `pruneBackups` when a tarball ages out. */
-export function deleteManifestSibling(tarballPath: string): void {
+ *  `pruneBackups` when a tarball ages out. Best-effort: an undeletable sibling
+ *  (or an unreachable backup filesystem) leaves an orphan the next prune
+ *  retries, which is strictly better than failing the prune. */
+export async function deleteManifestSibling(tarballPath: string): Promise<void> {
   const base = tarballPath.replace(/\.tar\.gz$/, '');
-  const path = `${base}.attachments.json`;
-  try { rmSync(path, { force: true }); } catch { /* ignore */ }
+  await fsForNestedPath(tarballPath).rmBestEffort(`${base}.attachments.json`);
 }
 
 /**
@@ -471,18 +516,19 @@ export async function restoreAttachmentsFromManifest(
   blobsDir: string,
   liveAttachmentsDir: string,
 ): Promise<Array<{ attachmentId: number; originalStoredName: string; finalStoredName: string; sha: string }>> {
-  mkdirSync(liveAttachmentsDir, { recursive: true });
+  const bfs = fsForBlobsDir(blobsDir);
+  await fsp.mkdir(liveAttachmentsDir, { recursive: true });
   const out: Array<{ attachmentId: number; originalStoredName: string; finalStoredName: string; sha: string }> = [];
   const ts = formatRestoreTimestamp(new Date());
   for (const e of manifest.entries) {
     const blobPath = join(blobsDir, e.sha);
-    if (!existsSync(blobPath)) {
+    if (!await bfs.existsOrUnknown(blobPath)) {
       console.warn(`[attachmentBackup] restore: blob ${e.sha} for attachment ${e.attachmentId} missing — skipping`);
       continue;
     }
     let finalStoredName = e.storedName;
     const livePath = join(liveAttachmentsDir, e.storedName);
-    if (existsSync(livePath)) {
+    if (await fileExists(livePath)) {
       // Compare the live file's hash to the manifest entry's. If they
       // match, no work to do (the live file IS the backed-up content). If
       // they differ, the user has a different file with the same name —
@@ -502,7 +548,7 @@ export async function restoreAttachmentsFromManifest(
     }
     const finalPath = join(liveAttachmentsDir, finalStoredName);
     try {
-      copyFileSync(blobPath, finalPath);
+      await bfs.copyFile(blobPath, finalPath);
       out.push({ attachmentId: e.attachmentId, originalStoredName: e.storedName, finalStoredName, sha: e.sha });
     } catch (err) {
       console.error(`[attachmentBackup] restore: copy ${blobPath} → ${finalPath} failed:`, err);
@@ -524,15 +570,14 @@ export async function restoreAttachmentsFromManifest(
  * `stored_path` rewrite.
  */
 export async function restoreAttachmentBlob(blobsDir: string, sha: string, destPath: string): Promise<boolean> {
+  const bfs = fsForBlobsDir(blobsDir);
   const blobPath = join(blobsDir, sha);
-  try {
-    await fsp.access(blobPath);
-  } catch {
-    return false; // blob not in store
-  }
+  // An unreachable backup filesystem reads as "blob not in store" — the caller's
+  // response is identical either way (leave the row alone, retry next sweep).
+  if (!await bfs.existsOrUnknown(blobPath)) return false;
   try {
     await fsp.mkdir(dirname(destPath), { recursive: true });
-    await fsp.copyFile(blobPath, destPath);
+    await bfs.copyFile(blobPath, destPath);
     return true;
   } catch (err) {
     console.error(`[attachmentBackup] self-heal restore ${blobPath} → ${destPath} failed:`, err);
@@ -590,10 +635,13 @@ const JsonCosaveSchema = z.object({
  * malformed entries individually so a single bad row doesn't kill the
  * whole rebuild.
  */
-function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachmentRow[] | null {
-  if (!existsSync(jsonCosavePath)) return null;
+async function readJsonCosaveAttachmentRows(jsonCosavePath: string): Promise<JsonCosaveAttachmentRow[] | null> {
   try {
-    const buf = readFileSync(jsonCosavePath);
+    // HS-9527 — guarded + async. These co-saves are multi-megabyte gzip blobs
+    // (~3 MB each here) and one measured 1638 ms to read from a cloud folder;
+    // reading a boot's worth of them synchronously was ~200 MB of main-thread
+    // stall.
+    const buf = await fsForNestedPath(jsonCosavePath).readFile(jsonCosavePath);
     const json = gunzipSync(buf).toString('utf-8');
     const rawJson: unknown = JSON.parse(json);
     const cosaveResult = JsonCosaveSchema.safeParse(rawJson);
@@ -619,19 +667,22 @@ function readJsonCosaveAttachmentRows(jsonCosavePath: string): JsonCosaveAttachm
  * different shas, the most recently scanned wins (cheap deterministic
  * choice — the rebuild path is best-effort).
  */
-export function indexExistingManifestEntries(backupRoot: string): Map<number, { sha: string; storedName: string; size: number }> {
+export async function indexExistingManifestEntries(
+  backupRoot: string,
+): Promise<Map<number, { sha: string; storedName: string; size: number }>> {
   const out = new Map<number, { sha: string; storedName: string; size: number }>();
-  for (const tier of ['5min', 'hourly', 'daily']) {
-    const tierPath = join(backupRoot, tier);
-    if (!existsSync(tierPath)) continue;
-    for (const name of readdirSync(tierPath)) {
-      if (!name.endsWith('.attachments.json')) continue;
-      const m = readManifest(join(tierPath, name));
-      if (m === null) continue;
-      for (const e of m.entries) {
-        out.set(e.attachmentId, { sha: e.sha, storedName: e.storedName, size: e.size });
-      }
+  // HS-9527 — the single most expensive read pass in the backup pipeline, and
+  // the one that wedged the server: N manifest reads, each a full round-trip to
+  // the backup filesystem. Now async + guarded + yielding, and — critically —
+  // callers build it LAZILY, only on the path that actually consumes it.
+  let scanned = 0;
+  for (const p of await collectManifestPaths(backupRoot)) {
+    const m = await readManifest(p);
+    if (m === null) continue;
+    for (const e of m.entries) {
+      out.set(e.attachmentId, { sha: e.sha, storedName: e.storedName, size: e.size });
     }
+    if (++scanned % 25 === 0) await yieldToEventLoop();
   }
   return out;
 }
@@ -647,18 +698,22 @@ async function rebuildManifestFromJsonCosave(
   backupRoot: string,
   tarballFilename: string,
   jsonCosavePath: string,
-  crossRefIndex: Map<number, { sha: string; storedName: string; size: number }>,
+  /** HS-9527 — a THUNK, not a Map. Building the cross-reference index costs one
+   *  read per existing manifest; only the "live file is gone" branch below needs
+   *  it, so the caller must not have paid for it up front. */
+  getCrossRefIndex: () => Promise<Map<number, { sha: string; storedName: string; size: number }>>,
 ): Promise<AttachmentManifest | null> {
-  const rows = readJsonCosaveAttachmentRows(jsonCosavePath);
+  const rows = await readJsonCosaveAttachmentRows(jsonCosavePath);
   if (rows === null) return null;
 
+  const bfs = backupFsFor(backupRoot);
   const blobsDir = attachmentBlobsDir(backupRoot);
   const entries: AttachmentManifestEntry[] = [];
   for (const row of rows) {
     let sha: string | null = null;
     let size: number | null = null;
     let storedName: string;
-    if (existsSync(row.stored_path)) {
+    if (await fileExists(row.stored_path)) {
       try {
         const hashed = await hashFile(row.stored_path);
         sha = hashed.sha;
@@ -671,8 +726,8 @@ async function rebuildManifestFromJsonCosave(
     }
     if (sha === null) {
       // Live file gone — try the cross-reference index.
-      const xref = crossRefIndex.get(row.id);
-      if (xref !== undefined && existsSync(join(blobsDir, xref.sha))) {
+      const xref = (await getCrossRefIndex()).get(row.id);
+      if (xref !== undefined && await bfs.existsOrUnknown(join(blobsDir, xref.sha))) {
         sha = xref.sha;
         size = xref.size;
         storedName = xref.storedName;
@@ -716,6 +771,14 @@ async function rebuildManifestFromJsonCosave(
  *
  * Returns `{ rebuilt, skipped, failed }`. The function never throws; per-
  * tarball failures are logged and counted.
+ *
+ * HS-9527 — two changes, both about not paying for work nobody asked for.
+ * The whole pass is now async + guarded, and the cross-reference index is built
+ * LAZILY. Previously it was built unconditionally at the top: on a backup root
+ * where every tarball already has a manifest — the steady state, and the state
+ * this machine was in — that was one read per manifest, ~20 s against a cloud
+ * `backupDir`, on the main thread, every startup, for an index that was then
+ * discarded without a single lookup. That was the 2026-07-31 wedge.
  */
 export async function reanalyzeMissingManifests(
   backupRoot: string,
@@ -723,45 +786,69 @@ export async function reanalyzeMissingManifests(
 ): Promise<{ rebuilt: number; skipped: number; failed: number }> {
   const now = options.now ?? Date.now();
   const minAge = options.minTarballAgeMs ?? 24 * 60 * 60 * 1000;
+  const bfs = backupFsFor(backupRoot);
 
-  const crossRefIndex = indexExistingManifestEntries(backupRoot);
+  // Memoized so the (expensive) index is built at most once per pass, and only
+  // if a rebuild actually reaches the cross-reference branch. Rebuilt manifests
+  // are folded back in so later tarballs in the same pass can reference them.
+  const memo: { index: Map<number, { sha: string; storedName: string; size: number }> | null } = { index: null };
+  const getCrossRefIndex = async (): Promise<Map<number, { sha: string; storedName: string; size: number }>> => {
+    memo.index ??= await indexExistingManifestEntries(backupRoot);
+    return memo.index;
+  };
+
   let rebuilt = 0;
   let skipped = 0;
   let failed = 0;
 
-  for (const tier of ['5min', 'hourly', 'daily']) {
-    const tierPath = join(backupRoot, tier);
-    if (!existsSync(tierPath)) continue;
-    for (const name of readdirSync(tierPath)) {
-      if (!name.endsWith('.tar.gz')) continue;
-      const tarballPath = join(tierPath, name);
-      const manifestPath = join(tierPath, manifestSiblingFilename(name));
-      if (existsSync(manifestPath)) continue;
+  try {
+    for (const tier of ['5min', 'hourly', 'daily']) {
+      const tierPath = join(backupRoot, tier);
+      for (const name of await bfs.readdirOrEmpty(tierPath)) {
+        if (!name.endsWith('.tar.gz')) continue;
+        const tarballPath = join(tierPath, name);
+        const manifestPath = join(tierPath, manifestSiblingFilename(name));
+        if (await bfs.exists(manifestPath)) continue;
 
-      let mtimeMs: number;
-      try { mtimeMs = statSync(tarballPath).mtimeMs; } catch { failed++; continue; }
-      if (now - mtimeMs < minAge) { skipped++; continue; }
-
-      const jsonCosavePath = join(tierPath, jsonCosaveFilename(name));
-      try {
-        const manifest = await rebuildManifestFromJsonCosave(backupRoot, name, jsonCosavePath, crossRefIndex);
-        if (manifest === null) {
-          console.warn(`[attachmentBackup] reanalyze: cannot rebuild manifest for ${tarballPath} — JSON co-save missing or unreadable`);
+        let mtimeMs: number;
+        try { mtimeMs = (await bfs.stat(tarballPath)).mtimeMs; }
+        catch (err) {
+          if (isBackupFsUnavailable(err)) throw err;
           failed++;
           continue;
         }
-        await writeManifestAtomically(manifestPath, manifest);
-        // Surface it in the index so later iterations in this same pass
-        // can cross-reference it.
-        for (const e of manifest.entries) {
-          crossRefIndex.set(e.attachmentId, { sha: e.sha, storedName: e.storedName, size: e.size });
+        if (now - mtimeMs < minAge) { skipped++; continue; }
+
+        const jsonCosavePath = join(tierPath, jsonCosaveFilename(name));
+        try {
+          const manifest = await rebuildManifestFromJsonCosave(backupRoot, name, jsonCosavePath, getCrossRefIndex);
+          if (manifest === null) {
+            console.warn(`[attachmentBackup] reanalyze: cannot rebuild manifest for ${tarballPath} — JSON co-save missing or unreadable`);
+            failed++;
+            continue;
+          }
+          await writeManifestAtomically(manifestPath, manifest);
+          // Surface it in the index so later iterations in this same pass can
+          // cross-reference it — but only if the index has been materialized;
+          // seeding an unbuilt index would defeat the laziness above.
+          if (memo.index !== null) {
+            for (const e of manifest.entries) {
+              memo.index.set(e.attachmentId, { sha: e.sha, storedName: e.storedName, size: e.size });
+            }
+          }
+          rebuilt++;
+        } catch (err) {
+          if (isBackupFsUnavailable(err)) throw err;
+          console.error(`[attachmentBackup] reanalyze failed for ${tarballPath}:`, err);
+          failed++;
         }
-        rebuilt++;
-      } catch (err) {
-        console.error(`[attachmentBackup] reanalyze failed for ${tarballPath}:`, err);
-        failed++;
       }
     }
+  } catch (err) {
+    // An outage mid-pass is not a failure of this pass — it just ends early.
+    // Report what was actually done before it hit (a `tolerateOutage` fallback
+    // would have to be built up front, i.e. always zeros).
+    if (!isBackupFsUnavailable(err)) throw err;
   }
   return { rebuilt, skipped, failed };
 }

@@ -54,7 +54,7 @@ describe('createBackup round-trip (HS-7891)', () => {
     expect(info).not.toBeNull();
     expect(info!.ticketCount).toBeGreaterThanOrEqual(3);
 
-    const all = listBackups(tempDir);
+    const all = await listBackups(tempDir);
     const match = all.find(b => b.filename === info!.filename);
     expect(match).toBeDefined();
 
@@ -224,7 +224,7 @@ describe('Attachment manifest integration (HS-7929)', () => {
     const manifestPath = join(dir, manifestSiblingFilename(info!.filename));
     expect(existsSync(manifestPath)).toBe(true);
 
-    const manifest = readManifest(manifestPath);
+    const manifest = await readManifest(manifestPath);
     expect(manifest).not.toBeNull();
     expect(manifest!.schemaVersion).toBe(ATTACHMENT_MANIFEST_VERSION);
     expect(manifest!.tarball).toBe(info!.filename);
@@ -250,7 +250,7 @@ describe('triggerMissedBackups (HS-7894)', () => {
 
     await triggerMissedBackups(tempDir);
 
-    const all = listBackups(tempDir);
+    const all = await listBackups(tempDir);
     const tiers = new Set(all.map(b => b.tier));
     expect(tiers.has('5min')).toBe(true);
     expect(tiers.has('hourly')).toBe(true);

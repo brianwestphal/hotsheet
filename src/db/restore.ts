@@ -20,6 +20,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 
 import { listBackups } from '../backup.js';
+import { backupFsFor } from '../backupFs.js';
 import { getBackupDir } from '../file-settings.js';
 import { snapshotPath } from './snapshot.js';
 
@@ -36,16 +37,23 @@ export interface RestoreSource {
  * tiers follow, newest-first (`listBackups` already sorts descending by
  * `createdAt` across tiers).
  */
-export function listRestoreSources(dataDir: string): RestoreSource[] {
+export async function listRestoreSources(dataDir: string): Promise<RestoreSource[]> {
   const sources: RestoreSource[] = [];
 
+  // The snapshot is LOCAL by construction (`<dataDir>/snapshot.tar.gz`), so a
+  // sync probe here is fine and — more to the point — must not be gated behind
+  // the backup filesystem: an unreachable `backupDir` still leaves the snapshot
+  // as a perfectly good restore source, which is the whole reason §73 exists.
   const snap = snapshotPath(dataDir);
   if (existsSync(snap)) sources.push({ path: snap, label: 'snapshot' });
 
   const backupRoot = getBackupDir(dataDir);
-  for (const b of listBackups(dataDir)) {
+  const bfs = backupFsFor(backupRoot);
+  // HS-9527 — an unreachable backup filesystem contributes no sources rather
+  // than blocking recovery. `listBackups` already degrades to `[]`.
+  for (const b of await listBackups(dataDir)) {
     const p = join(backupRoot, b.tier, b.filename);
-    if (existsSync(p)) sources.push({ path: p, label: `backup:${b.tier}:${b.createdAt}` });
+    if (await bfs.existsOrUnknown(p)) sources.push({ path: p, label: `backup:${b.tier}:${b.createdAt}` });
   }
 
   return sources;

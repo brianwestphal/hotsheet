@@ -49,17 +49,17 @@ afterEach(async () => {
 });
 
 describe('listRestoreSources', () => {
-  it('lists nothing when neither a snapshot nor backups exist', () => {
-    expect(listRestoreSources(dataDir)).toEqual([]);
+  it('lists nothing when neither a snapshot nor backups exist', async () => {
+    expect(await listRestoreSources(dataDir)).toEqual([]);
   });
 
-  it('puts the canonical snapshot first, then existing backup tiers', () => {
+  it('puts the canonical snapshot first, then existing backup tiers', async () => {
     writeFileSync(snapshotPath(dataDir), 'x'); // existence-only; not loaded here
     const tierDir = join(dataDir, 'backups', '5min');
     mkdirSync(tierDir, { recursive: true });
     writeFileSync(join(tierDir, 'backup-2026-05-01T00-00-00Z.tar.gz'), 'x');
 
-    const sources = listRestoreSources(dataDir);
+    const sources = await listRestoreSources(dataDir);
     expect(sources[0].label).toBe('snapshot');
     expect(sources.some((s) => s.label.startsWith('backup:5min:'))).toBe(true);
   });

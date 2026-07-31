@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 
 import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from './attachmentBackup.js';
+import { backupFsFor, isBackupFsAvailable } from './backupFs.js';
 // HS-8555 — `rmSync`-and-swallow extracted into `deleteAttachmentFile`.
 import { deleteAttachmentFile, getAllAttachments } from './db/attachments.js';
 import { centralTelemetryDataDir, telemetryClusterDataDir } from './db/connection.js';
@@ -100,18 +101,26 @@ export async function cleanupAttachments(dataDir: string): Promise<void> {
 export async function cleanupOrphanedAttachments(dataDir: string): Promise<{ pruned: number; restored: number }> {
   try {
     const backupRoot = getBackupDir(dataDir);
-    if (!existsSync(backupRoot)) return { pruned: 0, restored: 0 };
+    // HS-9527 — `backupRoot` may be a cloud folder, so every probe of it goes
+    // through the guard. An unreachable store means we can neither restore nor
+    // prove non-recoverability, so we bail rather than risk a wrongful delete —
+    // the same conservative stance the missing-store case already took.
+    const bfs = backupFsFor(backupRoot);
+    if (!await bfs.existsOrUnknown(backupRoot)) return { pruned: 0, restored: 0 };
 
     const missing = (await getAllAttachments()).filter(a => !existsSync(a.stored_path));
     if (missing.length === 0) return { pruned: 0, restored: 0 };
 
-    const index = indexExistingManifestEntries(backupRoot);
+    const index = await indexExistingManifestEntries(backupRoot);
+    // A guarded read that came back empty because the store went away mid-pass
+    // would look exactly like "nothing is recoverable" and prune live rows.
+    if (index.size === 0 && !isBackupFsAvailable(backupRoot)) return { pruned: 0, restored: 0 };
     const blobsDir = attachmentBlobsDir(backupRoot);
     let pruned = 0;
     let restored = 0;
     for (const att of missing) {
       const xref = index.get(att.id);
-      if (xref !== undefined && existsSync(join(blobsDir, xref.sha))) {
+      if (xref !== undefined && await bfs.existsOrUnknown(join(blobsDir, xref.sha))) {
         // HS-8802 — content is still in the backup store: restore it instead of
         // leaving a broken row. The file is known-missing (filtered above), so
         // there's no live file to trample; restoring to the original

@@ -35,7 +35,7 @@ export interface WorkingBackup {
  *  tarball whose `loadDataDir` succeeds + has a readable `tickets`
  *  table. Returns null if no tarball loads. */
 export async function findWorkingBackup(dataDir: string): Promise<WorkingBackup | null> {
-  const backups = listBackups(dataDir);
+  const backups = await listBackups(dataDir);
   for (const backup of backups) {
     const filePath = join(dataDir, 'backups', backup.tier, backup.filename);
     if (!existsSync(filePath)) continue;

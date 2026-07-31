@@ -9,9 +9,9 @@ import { CreateBackupSchema, parseBody, RestoreBackupSchema } from './validation
 
 export const backupRoutes = new Hono<AppEnv>();
 
-backupRoutes.get('/', (c) => {
+backupRoutes.get('/', async (c) => {
   const dataDir = c.get('dataDir');
-  const backups = listBackups(dataDir);
+  const backups = await listBackups(dataDir);
   return c.json({ backups });
 });
 

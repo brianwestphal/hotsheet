@@ -151,6 +151,19 @@ This is HS-9391 — `enrich-path.ts` probed PATH with `execFileSync(shell, ['-il
 
 The `no-restricted-syntax` ESLint rule (HS-9510) flags a sync child-process call missing either property. **It applies to test files too** (HS-9511) — HS-9391's entire *symptom* was a wedged test suite, and a wedge is harder to diagnose from a test than from production code, because the natural first assumption is that the test is merely slow. Where a hang is plausible, also make the child fail fast rather than wait (`GIT_TERMINAL_PROMPT=0` / `GIT_OPTIONAL_LOCKS=0` for git), so the timeout is the backstop rather than the mechanism.
 
+### Filesystem access on a user-configured path (`backupDir`)
+
+Anything under **`backupDir`** goes through **`src/backupFs.ts`** (`backupFsFor(root)`) — never `existsSync`/`readFileSync`/… and never bare `fs.promises`. `backupDir` is user-configurable and users point it at iCloud Drive / Google Drive / a network share, which is the obvious thing to do with a backup folder. On macOS that is a **File Provider extension**: every operation is an XPC round-trip to a vendor daemon, it can block for an **unbounded** time, and there is **no kernel-level timeout**.
+
+Two rules, and the second is the one that is easy to get wrong:
+
+1. **Sync `fs` blocks the event loop** until the daemon answers, which may be never.
+2. **Async `fs` alone is not the fix.** `fs.promises` runs on libuv's threadpool — **four threads by default**, shared with every other file/DNS/zlib user in the process. Four wedged backup reads starve *all* file I/O app-wide. So `backupFs` also adds a concurrency gate (2 of the 4 threads), a per-operation deadline, and a per-root circuit breaker that fails fast **without touching the filesystem** while open.
+
+Callers must treat unavailability as a **normal outcome**, not an error to propagate: skip the tick, leave state alone, retry later (`tolerateOutage`). Backups are best-effort by construction — the live DB is `<dataDir>/db` and is never on the backup filesystem. Two directions to be careful about: an unreadable manifest set must never be read as "no blobs are live" (the GC would delete real backups), and a read must happen **before** anything is torn down (`restoreBackup` used to delete `db/` and only then read the tarball).
+
+This is HS-9527. `readManifest`'s `readFileSync(path, 'utf-8')` against a Google Drive `backupDir` measured **686 ms per 134 KB manifest** and **19.9 s for the 29-manifest startup scan** — on an idle machine. It blocked the loop past the §45 watchdog's 60 s threshold and the server was SIGKILLed four times on 2026-07-31. The trigger was work that did not need doing at all: `reanalyzeMissingManifests` built a cross-reference index eagerly, then discarded it unused because nothing needed rebuilding. Both the guard and that laziness are covered by an ESLint `no-restricted-syntax` selector banning sync `fs` in `src/backup.ts` / `src/backupFs.ts` / `src/attachmentBackup.ts` (**test files included** — a sync call there is fast against a temp dir and only wedges against the user's real cloud folder) and by a regression test asserting **zero** manifest reads in the steady state. Full design: `docs/7-backup-restore.md` §7.10.
+
 ### Type assertions (`as`) and runtime validation
 
 The `as` operator is an unchecked assertion — the compiler trusts it and forgets to check at runtime, so an upstream shape change ships a runtime crash while everything still compiles (HS-8567).

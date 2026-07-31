@@ -1,5 +1,5 @@
 import { type PGlite } from '@electric-sql/pglite';
-import { existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, rmSync, statSync } from 'fs';
+import { promises as fsp } from 'fs';
 import { join } from 'path';
 
 import {
@@ -10,6 +10,7 @@ import {
   runAttachmentGc,
   writeManifestAtomically,
 } from './attachmentBackup.js';
+import { backupFsFor, isBackupFsAvailable, tolerateOutage } from './backupFs.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
 import { fsyncDbDirAsync } from './db/fsyncWrap.js';
 import { createPglite } from './db/pglite.js';
@@ -168,9 +169,15 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
   // the global queue.
   return withGlobalBackupLock(async () => {
   try {
+    // HS-9527 — bail before the expensive part when the backup filesystem is
+    // known-unreachable. A CHECKPOINT + fsync + full `dumpDataDir` gzip is
+    // seconds of real work and hundreds of MB of buffer; doing it only to fail
+    // at the write is the difference between a paused backup and a paused app.
+    if (!isBackupFsAvailable(backupsDir(dataDir))) return null;
     const db = await runWithDataDir(dataDir, () => getDb());
     const dir = tierDir(dataDir, tier);
-    mkdirSync(dir, { recursive: true });
+    const bfs = backupFsFor(backupsDir(dataDir));
+    await bfs.mkdir(dir);
 
     // HS-7891: force a checkpoint before dumping. dumpDataDir() snapshots
     // PGLite's WASM-memfs at this exact moment, so without an explicit
@@ -264,7 +271,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       sizeBytes: buffer.length,
     };
 
-    pruneBackups(dataDir, tier);
+    await pruneBackups(dataDir, tier);
     return info;
   } catch (err) {
     console.error(`Backup failed (${tier}):`, err);
@@ -275,14 +282,14 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
   });
 }
 
-function pruneBackups(dataDir: string, tier: Tier): void {
+async function pruneBackups(dataDir: string, tier: Tier): Promise<void> {
   const dir = tierDir(dataDir, tier);
-  if (!existsSync(dir)) return;
+  const bfs = backupFsFor(backupsDir(dataDir));
 
   const config = TIERS[tier];
   const cutoff = Date.now() - config.maxAge;
 
-  const files = readdirSync(dir)
+  const files = (await bfs.readdirOrEmpty(dir))
     .filter(f => f.endsWith('.tar.gz'))
     .map(f => ({ filename: f, date: parseTimestamp(f) }))
     .filter((f): f is { filename: string; date: Date } => f.date !== null)
@@ -291,32 +298,40 @@ function pruneBackups(dataDir: string, tier: Tier): void {
   for (let i = 0; i < files.length; i++) {
     if (i >= config.maxCount || files[i].date.getTime() < cutoff) {
       const tarballPath = join(dir, files[i].filename);
-      try { rmSync(tarballPath, { force: true }); } catch { /* ignore */ }
+      await bfs.rmBestEffort(tarballPath);
       // HS-7893: keep tarball + JSON-sibling in lockstep — pruning one
       // without the other leaves orphans cluttering the backup dir.
-      try { rmSync(join(dir, jsonSiblingFilename(files[i].filename)), { force: true }); } catch { /* ignore */ }
+      await bfs.rmBestEffort(join(dir, jsonSiblingFilename(files[i].filename)));
       // HS-7929: drop the attachment-manifest sibling too. The orphan blobs
       // (referenced only by the deleted manifest) get reclaimed by the
       // daily GC, not here — keeps the prune step cheap.
-      deleteManifestSibling(tarballPath);
+      await deleteManifestSibling(tarballPath);
     }
   }
 }
 
-export function listBackups(dataDir: string): BackupInfo[] {
+/**
+ * HS-9527 — async + guarded. This is called from an HTTP handler (Settings →
+ * Backups) and from disaster recovery, and it enumerates a filesystem the user
+ * may have put on iCloud or Google Drive. As `listBackupsSync` it blocked the
+ * event loop for the duration of a cloud round-trip per tier on every render.
+ * An unreachable backup filesystem yields `[]` — the Backups panel shows
+ * nothing rather than hanging the server.
+ */
+export async function listBackups(dataDir: string): Promise<BackupInfo[]> {
   const backups: BackupInfo[] = [];
+  const bfs = backupFsFor(backupsDir(dataDir));
 
   for (const tier of Object.keys(TIERS) as Tier[]) {
     const dir = tierDir(dataDir, tier);
-    if (!existsSync(dir)) continue;
 
-    for (const filename of readdirSync(dir)) {
+    for (const filename of await tolerateOutage(() => bfs.readdirOrEmpty(dir), [])) {
       if (!filename.endsWith('.tar.gz')) continue;
       const date = parseTimestamp(filename);
       if (!date) continue;
 
       let sizeBytes = 0;
-      try { sizeBytes = statSync(join(dir, filename)).size; } catch { /* ignore */ }
+      try { sizeBytes = (await bfs.stat(join(dir, filename))).size; } catch { /* ignore */ }
 
       backups.push({
         tier,
@@ -341,14 +356,21 @@ function validateBackupParams(tier: string, filename: string): void {
 export async function loadBackupForPreview(dataDir: string, tier: string, filename: string): Promise<{ tickets: Array<Record<string, unknown>>; stats: { total: number; open: number; upNext: number } }> {
   validateBackupParams(tier, filename);
 
+  const bfs = backupFsFor(backupsDir(dataDir));
   const filePath = join(tierDir(dataDir, tier as Tier), filename);
-  if (!existsSync(filePath)) throw new Error('Backup file not found');
 
-  const buffer = readFileSync(filePath);
+  // HS-9527 — guarded read. A preview is user-initiated, so a stalled cloud
+  // folder must surface as a failed request, not a wedged server.
+  let buffer: Buffer<ArrayBuffer>;
+  try {
+    buffer = await bfs.readFile(filePath);
+  } catch {
+    throw new Error('Backup file not found');
+  }
   const blob = new Blob([buffer]);
 
   const previewDir = join(backupsDir(dataDir), '_preview');
-  mkdirSync(previewDir, { recursive: true });
+  await bfs.mkdir(previewDir);
 
   // Clean up any existing preview for this project
   await cleanupPreview(dataDir);
@@ -409,9 +431,7 @@ export async function cleanupPreview(dataDir?: string): Promise<void> {
       activePreviews.delete(dir);
     }
     const previewDir = join(backupsDir(dir), '_preview');
-    if (existsSync(previewDir)) {
-      rmSync(previewDir, { recursive: true, force: true });
-    }
+    await backupFsFor(backupsDir(dir)).rmBestEffort(previewDir, { recursive: true });
   }
 }
 
@@ -419,21 +439,29 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
   validateBackupParams(tier, filename);
   await cleanupPreview(dataDir);
 
+  const bfs = backupFsFor(backupsDir(dataDir));
   const filePath = join(tierDir(dataDir, tier as Tier), filename);
-  if (!existsSync(filePath)) throw new Error('Backup file not found');
+
+  // HS-9527 — read the tarball BEFORE tearing anything down. Ordering matters:
+  // the old code deleted `db/` and only then read from a filesystem that might
+  // not answer, which on a stalled cloud folder is how you lose a database.
+  let buffer: Buffer<ArrayBuffer>;
+  try {
+    buffer = await bfs.readFile(filePath);
+  } catch {
+    throw new Error('Backup file not found');
+  }
+  const blob = new Blob([buffer]);
 
   // Create a safety backup before restoring
   await createBackup(dataDir, '5min');
 
-  const buffer = readFileSync(filePath);
-  const blob = new Blob([buffer]);
-
   // Close current database
   await closeDb();
 
-  // Remove current database directory
+  // Remove current database directory — local, so plain async fs.
   const dbDir = join(dataDir, 'db');
-  rmSync(dbDir, { recursive: true, force: true });
+  await fsp.rm(dbDir, { recursive: true, force: true });
 
   // Re-initialize with backup data
   setDataDir(dataDir);
@@ -457,7 +485,7 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
   try {
     const { readManifest, restoreAttachmentsFromManifest, attachmentBlobsDir } = await import('./attachmentBackup.js');
     const manifestPath = join(tierDir(dataDir, tier as Tier), manifestSiblingFilename(filename));
-    const manifest = readManifest(manifestPath);
+    const manifest = await readManifest(manifestPath);
     if (manifest !== null) {
       const blobsDir = attachmentBlobsDir(backupsDir(dataDir));
       const liveAttachmentsDir = join(dataDir, 'attachments');
@@ -503,6 +531,23 @@ export async function restoreBackup(dataDir: string, tier: string, filename: str
  */
 export function jitteredFirstTickMs(intervalMs: number, rng: () => number = Math.random): number {
   return Math.round(intervalMs * (0.5 + rng()));
+}
+
+/** HS-9527 — width of the window the one-shot startup passes are spread across.
+ *  A workstation restoring nine projects arms nine copies of each pass within
+ *  ~2 s, and every one of them walks the same (possibly cloud-backed) backup
+ *  filesystem. */
+export const STARTUP_SPREAD_WINDOW_MS = 60_000;
+
+/**
+ * HS-9527 — a single random offset for ONE project, added to every one-shot
+ * startup delay in `initBackupScheduler`. Returned once and reused rather than
+ * drawn per timer, because the passes have a required order (reanalyze before
+ * GC, so rebuilt manifests are in the GC's reference set) and independent draws
+ * would reorder them.
+ */
+export function startupSpreadMs(rng: () => number = Math.random): number {
+  return Math.round(rng() * STARTUP_SPREAD_WINDOW_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -604,16 +649,17 @@ export function getBackupTimers(dataDir: string): { fiveMin: ReturnType<typeof s
 
 export function initBackupScheduler(dataDir: string): void {
   const state = getOrCreateState(dataDir);
+  // HS-9527 — one offset, shared by every one-shot startup pass below.
+  const spread = startupSpreadMs();
 
   // HS-9238 — open the post-wake cooldown for the 5-min gate on suspend/resume.
   // Idempotent (registered once per process); safe to call per project.
   ensureBackupWakeListener();
 
-  // Clean up any leftover preview directory from a crash
-  const previewDir = join(backupsDir(dataDir), '_preview');
-  if (existsSync(previewDir)) {
-    rmSync(previewDir, { recursive: true, force: true });
-  }
+  // Clean up any leftover preview directory from a crash. HS-9527 — fire and
+  // forget: startup must not wait on the backup filesystem answering.
+  void backupFsFor(backupsDir(dataDir))
+    .rmBestEffort(join(backupsDir(dataDir), '_preview'), { recursive: true });
 
   // HS-7894: catch up on overdue backups at startup, then enter the
   // normal 5-min cycle. Without the catch-up, daily/hourly backups go
@@ -661,7 +707,11 @@ export function initBackupScheduler(dataDir: string): void {
     }).catch((err: unknown) => {
       console.error('[attachmentBackup] reanalyze startup run failed:', err);
     });
-  }, 25_000);
+    // HS-9527 — spread. Every registered project arms this timer within ~2 s of
+    // the others during startup restore, so a FIXED 25 s delay fired nine
+    // reanalyze passes simultaneously onto one cloud-storage daemon. Same
+    // rationale as the 5-min tier's `jitteredFirstTickMs`.
+  }, 25_000 + spread);
 
   // HS-7929: daily attachment-blob GC, parallel cadence to the daily-tier
   // backup but independent of it. Runs once at startup (delayed to let the
@@ -679,7 +729,10 @@ export function initBackupScheduler(dataDir: string): void {
     }).catch((err: unknown) => {
       console.error('[attachmentBackup] GC startup run failed:', err);
     });
-  }, 30_000);
+    // HS-9527 — the SAME `spread` as the reanalyze pass above, so the 5 s gap
+    // between them survives the spreading and the ordering guarantee in that
+    // comment (rebuilt manifests visible to the GC) still holds.
+  }, 30_000 + spread);
   state.attachmentGcInterval = setInterval(() => {
     // HS-8353 — instrument daily orphan GC. Same shape as the startup
     // run but recurring every 24 h. HS-8724 — submitted through the central
@@ -721,7 +774,7 @@ export function findOverdueTiers(backups: BackupInfo[], now: number): Tier[] {
  *  three setIntervals against each other can drop two of the three;
  *  awaiting between tiers avoids that. */
 export async function triggerMissedBackups(dataDir: string): Promise<void> {
-  const overdue = findOverdueTiers(listBackups(dataDir), Date.now());
+  const overdue = findOverdueTiers(await listBackups(dataDir), Date.now());
   for (const tier of overdue) {
     // HS-9239 — the startup catch-up runs every overdue tier back-to-back; on a
     // fresh restart that's 5min + hourly + daily heavy backups (CHECKPOINT +
