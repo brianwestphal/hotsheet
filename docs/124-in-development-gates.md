@@ -32,7 +32,7 @@ about it*.
 **Worktrees and the worker pool share one gate** (maintainer decision, HS-9411): the pool is unusable
 without worktrees, and their incompleteness is the same incompleteness.
 
-**No AI tool is gated (HS-9515, 2026-07-31).** There were five per-tool gates — `dev_tool_codex`,
+**No AI tool is gated by a per-tool flag (HS-9515, 2026-07-31).** There were five — `dev_tool_codex`,
 `_antigravity`, `_opencode`, `_gemini`, `_goose` — and they are gone. Maintainer decision: now that
 each tool is an `AiToolPlugin` (docs/132), readiness is managed by **not shipping a plugin publicly
 until it is ready**, and by labeling early releases alpha/beta. A runtime flag that every user
@@ -49,6 +49,19 @@ Gone with them: `DevFeature.aiTool`, `devFeatureForAiTool`, `isAiToolSelectable`
 settings dialog, `AiToolPlugin.devGateKey`, and the five `dev_tool_*` fields on `FileSettings`.
 `devFeatures.test.ts` now asserts the registry holds **no** `dev_tool_*` key, so re-adding one is a
 red test rather than a quiet return of the asymmetry.
+
+**HS-9517 gave that job to the right mechanism.** Removing the gates left nothing holding
+untested tools back, so every integration became visible to everyone — including Gemini
+(no drive) and Goose (unimplemented). AI tools are now **opt-in like docs/18's bundled
+plugins**: `AiToolPlugin.maturity` (`stable` / `beta` / `unreleased`) decides what is
+listed at all, and a per-project `ai_tool_enabled:<id>` decides what the user has opted
+into. Claude is always enabled — it is the fallback transport, so the picker can never
+end up empty.
+
+One gate remains for this area, and it is the shape this mechanism is actually for:
+**`dev_unreleased_ai_tools`** reveals the integrations we have not shipped so they can be
+enabled. It gates a FEATURE (seeing unreleased work), not a tool — which is precisely why
+it belongs here and the five per-tool flags did not.
 
 **What remains gates FEATURES, not tools** — which is what this mechanism is for.
 

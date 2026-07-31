@@ -783,6 +783,38 @@ Experimental tab — not a per-project setting revealed by tool selection. Migra
 would have moved it away from its own surface for the sake of consistency with a
 mechanism it does not belong to. Recorded as HS-9513 rather than silently skipped.
 
+### 132.11.10 Shipped-ness is a plugin property, not a user setting (HS-9517)
+
+HS-9515 removed the five per-tool gates on the reasoning that "readiness is handled by not
+shipping a plugin". That reasoning was right and the removal was still incomplete, because
+**nothing implemented the not-shipping half** — registration is in-tree (§132.9.3), so every
+integration immediately became visible to every user, Gemini (no drive) and Goose
+(unimplemented) included.
+
+The correction separates two things the gates had fused:
+
+| | What it is | Where it lives |
+|---|---|---|
+| **Availability** | Is this integration shipped? | `AiToolPlugin.maturity` — a property of the INTEGRATION, identical on every machine |
+| **Enablement** | Did the user opt into it here? | per-project `ai_tool_enabled:<id>`, mirroring docs/18's `plugin_enabled:{id}` |
+
+A per-project runtime flag was always the wrong home for the first one: "we haven't finished
+this yet" is not a fact that varies by project. Splitting them is what lets Codex ship as
+**beta** while Gemini and Goose stay out of users' hands entirely.
+
+Two details that are easy to get wrong and are pinned by tests:
+
+- **Claude is always enabled**, with a disabled checkbox. It is the fallback transport, so a
+  project with nothing enabled must still work — that invariant is what guarantees the picker
+  can never be empty.
+- **Availability is checked independently of enablement.** Otherwise a settings row copied
+  between projects could resurrect an unreleased tool, letting a user's own state smuggle in
+  something never shipped.
+
+The HS-9411 rule survives unchanged: the picker always offers **the tool the project already
+uses**, even one neither enabled nor shipped. That rule was never about gating — it exists so
+an existing working project is never silently switched — which is why it outlived the gates.
+
 ## 132.12 Cross-references
 
 - [113](113-multi-ai-tool-support.md) — the epic this consolidates; §113.2's A/B tiering
@@ -797,8 +829,10 @@ mechanism it does not belong to. Recorded as HS-9513 rather than silently skippe
 - [121](121-codex-app-server-drive.md) / [129](129-codex-model-b-terminal-hosting.md) —
   the codex drive whose leaked imports §132.1.1 is about.
 - [124](124-in-development-gates.md) — the In-Development gates. The per-tool ones (and the
-  plugin's `devGateKey` field) were REMOVED in HS-9515: with each tool a plugin, readiness is
-  managed by not shipping a plugin publicly and by alpha/beta labeling, not by a runtime flag.
+  plugin's `devGateKey` field) were REMOVED in HS-9515; **HS-9517 replaced them properly** with
+  `AiToolPlugin.maturity` (`stable`/`beta`/`unreleased`) plus a per-project `ai_tool_enabled:<id>`,
+  so a tool is bundled-but-opt-in like a docs/18 plugin. One gate remains for the area —
+  `dev_unreleased_ai_tools` — and it gates a FEATURE, not a tool.
 - [18](18-plugins.md) — the existing plugin system. AI-tool plugins are a SEPARATE
   interface that reuses its config-UI subsystem (§132.9.2); they do not implement
   `TicketingBackend` and are not loaded by its loader.

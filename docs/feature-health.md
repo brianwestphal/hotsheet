@@ -6,11 +6,12 @@
 > behind Settings → Experimental → **In Development**. Their status here is unchanged; they are
 > simply no longer reachable by accident.
 >
-> **The per-tool gates were REMOVED in HS-9515 (2026-07-31).** Each non-Claude AI tool used to sit
-> behind its own `dev_tool_*` gate; now that every tool is an `AiToolPlugin` (docs/132), readiness is
-> managed by **not shipping a plugin publicly** and by labeling early releases alpha/beta. So the
-> AI-tool rows below are reachable by default again — **their health status is what tells you whether
-> to trust one**, which makes this doc more load-bearing for those features, not less.
+> **AI tools are opt-in since HS-9517 (2026-07-31).** The per-tool `dev_tool_*` gates were removed
+> (HS-9515) and replaced with a plugin-style model: `maturity` decides what ships (**Claude** stable,
+> **Codex** beta, the rest **unreleased** and hidden behind Settings → Experimental → "Unreleased AI
+> tools"), and a per-project enable decides what a user has opted into. **Claude alone is enabled by
+> default.** So the rows below are what a user sees only after choosing them — and the maturity
+> marking is meant to track this doc's assessment, not run ahead of it.
 
 This doc answers one question for every feature: **does it actually work?**
 
@@ -125,7 +126,7 @@ a feature with nothing wrong that we know of.
 | **Codex drive (app-server)** | Shaking out | Shipped 2026-07-23 with six follow-up commits already (daemon transport, MCP elicitation fix, reattach chip, daemon pre-start). Days old. |
 | **Antigravity drive** | Unknown | Shipped HS-9319→9328. 4 manual items, no automated end-to-end, no evidence of sustained real use. |
 | **OpenCode / ACP** | Unknown | Same shape — 5 manual items, live-validated once during development, not since. |
-| Gemini / Goose / Kiro | Incomplete | Gemini gets config generation only, no drive. Goose deferred (HS-9347). **All appear in the `ai_tool` dropdown — the picker advertises more than exists**, and since HS-9515 removed the per-tool gates they are listed unconditionally, for every user, with no In-Development label. The plan is that an unready tool simply isn't shipped, but registration is still in-tree (docs/132 §132.9.3), so nothing withholds them today. |
+| Gemini / Goose / Kiro | Incomplete | Gemini gets config generation only, no drive. Goose deferred (HS-9347). **Both are marked `unreleased` (HS-9517) and are not shipped** — absent from the AI Tools list unless the Experimental gate is on, so the picker no longer advertises more than exists. |
 | Tool-switch config prep (§119) + adapter retirement (§120) | Shaking out | Both shipped in the last few days. HS-9378 (conflict-merge flow) is a known unbuilt branch. |
 | Agent-backend transport picker | Underbaked | Capability table + `agent_backend` override shipped, but **§115.7's shared three-way picker is missing**, so transport selection is half-manual, half-inferred. |
 | Announcer (§78–§82, all providers) | Solid | 15 unit-test files + e2e; confirmed functional in real use. |
