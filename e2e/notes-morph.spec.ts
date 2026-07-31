@@ -99,4 +99,42 @@ test.describe('Notes morph reconciliation (HS-8651)', () => {
     const scrollAfter = await page.locator('#detail-body').evaluate((el) => el.scrollTop);
     expect(scrollAfter).toBeGreaterThan(0);
   });
+
+  test('an edited note re-renders with its NEW markdown, not a cached parse (HS-9539)', async ({ page }) => {
+    // HS-9539 memoizes `marked.parse` keyed by note text, because the panel re-rendered
+    // to byte-identical output ~89 % of the time and re-parsed every note first. The
+    // risk a content-keyed cache carries is the opposite failure: serving stale HTML
+    // after an edit. Keying by the text makes that structurally impossible — edited
+    // text is a different key — but "structurally impossible" is the kind of claim that
+    // should be checked through the running app rather than asserted.
+    const ticketId = await createTicket(page, 'Cached markdown ticket');
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': await getSecret(page) };
+
+    const notes = [
+      { id: 'c1', text: '**before** emphasis', created_at: new Date(Date.now()).toISOString() },
+      { id: 'c2', text: '# untouched heading', created_at: new Date(Date.now() + 1000).toISOString() },
+    ];
+    expect((await page.request.put(`/api/tickets/${String(ticketId)}/notes-bulk`, {
+      headers, data: { notes: JSON.stringify(notes) },
+    })).ok()).toBe(true);
+
+    await openDetail(page, 'Cached markdown ticket');
+    const c1 = page.locator('#detail-notes .note-entry[data-note-id="c1"]');
+    // Rendered markdown, not raw text — the cache must not bypass `marked`.
+    await expect(c1.locator('strong')).toHaveText('before', { timeout: 5000 });
+    await expect(page.locator('#detail-notes .note-entry[data-note-id="c2"] h1')).toHaveText('untouched heading');
+
+    // Edit c1's text and its markup — new key, so a fresh parse.
+    expect((await page.request.put(`/api/tickets/${String(ticketId)}/notes-bulk`, {
+      headers,
+      data: { notes: JSON.stringify([{ ...notes[0], text: '`after` in code' }, notes[1]]) },
+    })).ok()).toBe(true);
+
+    await expect(c1.locator('code')).toHaveText('after', { timeout: 10000 });
+    await expect(c1.locator('strong')).toHaveCount(0); // the old parse is gone, not layered under it
+
+    // The sibling that did NOT change still renders correctly — a cache hit serving the
+    // right entry, which is the case that silently breaks if the key were, say, an index.
+    await expect(page.locator('#detail-notes .note-entry[data-note-id="c2"] h1')).toHaveText('untouched heading');
+  });
 });

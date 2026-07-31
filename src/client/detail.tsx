@@ -2,7 +2,6 @@ import './markdownSetup.js';
 
 import type { SafeHtml } from 'kerfjs';
 import { raw } from 'kerfjs';
-import { marked } from 'marked';
 
 import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
 import { syncBlockedReasonSize } from './blockedReasonSize.js';
@@ -11,6 +10,7 @@ import { claimsByTicketId, nowTick } from './claimsStore.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { buildFeedbackNav, getTicketFeedbackState, pickDraftForFeedbackNote, shouldAutoShowFeedback, showFeedbackDialog, toDraftSeed } from './feedbackDialog.js';
 import { recordInteraction } from './longTaskObserver.js';
+import { parseMarkdownCached } from './markdownCache.js';
 import { parseNotesJson, renderNotes, setPendingFocusNoteId, setTicketDrafts } from './noteRenderer.js';
 import { renderPluginDetailElements } from './pluginUI.js';
 import { effect, morph, signal } from './reactive.js';
@@ -72,7 +72,7 @@ const SYNC_FALLBACK_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" wid
 export function renderDetailsMarkdown(text: string): void {
   const rendered = byIdOrNull('detail-details-rendered');
   if (rendered === null) return;
-  const html = marked.parse(text, { async: false });
+  const html = parseMarkdownCached(text); // HS-9539 — 80 % of these renders were redundant
   // HS-8036 — wrap ticket-number references in clickable anchors after
   // markdown renders. Self-references (the current ticket's own number
   // appearing in its own details) are skipped via the cached
@@ -377,7 +377,7 @@ function loadPreviewDetail(id: number) {
           {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
           <div className="note-text note-markdown">{
             // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from `marked.parse(...)`.
-            raw(marked.parse(note.text, { async: false }))
+            raw(parseMarkdownCached(note.text))
           }</div>
         </div>
       )}

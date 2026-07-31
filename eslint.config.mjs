@@ -306,8 +306,12 @@ export default tseslint.config(
   //   keyed by DOM nodes (a case the rule's own message names as legitimately
   //   global), and its counters are deliberately NOT reset on a project switch:
   //   redundant re-renders across a switch are exactly what you want to see.
+  //
+  //   markdownCache.ts (HS-9539) — keyed by the markdown TEXT, and holds no project
+  //   data: the same text renders to the same HTML in every project, so a hit across
+  //   a project switch is correct rather than stale. Bounded by MARKDOWN_CACHE_MAX.
   {
-    files: ["src/client/morphAudit.ts"],
+    files: ["src/client/morphAudit.ts", "src/client/markdownCache.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...CORE_RULES],
     },

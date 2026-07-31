@@ -197,6 +197,33 @@ describe('renderNotes — morph reconciliation (HS-8651)', () => {
     expect(noteEntry('b')).toBe(bEl);
   });
 
+  it('does NOT re-parse markdown on a same-data re-render (HS-9539)', async () => {
+    // The unit tests in `markdownCache.test.ts` prove the cache works; this proves the
+    // render path is WIRED to it. HS-9538's measurement was that the detail panel
+    // re-renders to byte-identical output ~89 % of the time, and each of those renders
+    // re-parsed every note BEFORE `morph` got a chance to skip anything.
+    const { marked } = await import('marked');
+    const { resetMarkdownCache } = await import('./markdownCache.js');
+    resetMarkdownCache();
+
+    state.tickets = [ticket(1)];
+    const notes = [
+      { id: 'a', text: '**one**', created_at: '' },
+      { id: 'b', text: '# two', created_at: '' },
+    ];
+    renderNotes(1, notes);
+
+    const spy = vi.spyOn(marked, 'parse');
+    for (let i = 0; i < 8; i++) renderNotes(1, notes);
+    expect(spy, 'eight identical re-renders must parse nothing').not.toHaveBeenCalled();
+
+    // ...and a note whose text genuinely changed still re-parses, so the cache cannot
+    // be leaving stale HTML on screen.
+    renderNotes(1, [notes[0], { id: 'b', text: '# two EDITED', created_at: '' }]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(noteEntry('b').innerHTML).toContain('two EDITED');
+  });
+
   it('preserves existing note nodes when a new note is added (keyed by data-key)', () => {
     state.tickets = [ticket(1)];
     renderNotes(1, [{ id: 'a', text: 'one', created_at: '' }, { id: 'b', text: 'two', created_at: '' }]);
