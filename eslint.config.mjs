@@ -112,6 +112,22 @@ const SYNC_CHILD_PROCESS_RULES = [
   },
 ];
 
+// HS-9527 — the backup modules touch `backupDir`, which the user is EXPECTED to
+// point at iCloud Drive / Google Drive / a network share. Those are macOS File
+// Provider extensions or network mounts: an operation on them can block for an
+// unbounded time with no kernel timeout. A synchronous `fs` call there blocks
+// the main event loop until the §45 watchdog SIGKILLs the server — measured at
+// 19.9 s for one 29-manifest scan, and the cause of four kills on 2026-07-31.
+//
+// Scoped to the modules whose whole job is reaching that directory. Everywhere
+// else `existsSync` on a local path is fine and this rule would be noise.
+const BACKUP_FS_SYNC_RULE = {
+  selector:
+    "CallExpression[callee.name=/^(existsSync|readFileSync|writeFileSync|readdirSync|statSync|lstatSync|rmSync|mkdirSync|renameSync|copyFileSync|linkSync|unlinkSync|rmdirSync|appendFileSync|accessSync|openSync|cpSync)$/]",
+  message:
+    "Synchronous `fs` in a backup module (HS-9527). `backupDir` is commonly a cloud/network folder where a sync call can block the event loop indefinitely — this is what wedged the server four times on 2026-07-31. Use the guarded async layer in `src/backupFs.ts` (`backupFsFor(root)`), which adds a deadline, a threadpool concurrency cap, and a circuit breaker. For a genuinely LOCAL path (e.g. `<dataDir>/attachments`), use `fs.promises` and say why in a comment.",
+};
+
 // HS-9417 — the rules every file gets. Hoisted so the allowlist blocks below can
 // say exactly which subset they want, instead of re-declaring the array (the old
 // shape, where each block spelled out its own list, is why adding a rule risked
@@ -586,6 +602,22 @@ export default tseslint.config(
     files: ["src/client/settingsDialog.tsx"],
     rules: {
       "no-restricted-syntax": ["error", BIND_DISPOSER_RULE, ...SPREAD_ARG_LIMIT_RULES, ...SYNC_CHILD_PROCESS_RULES],
+    },
+  },
+  // HS-9527 — the backup modules get CORE_RULES **plus** the sync-fs ban. Written
+  // as a compose (`...CORE_RULES, BACKUP_FS_SYNC_RULE`) rather than a trailing
+  // block that lists only the new rule: flat config REPLACES a rule's options,
+  // and a block naming just this selector would switch every other guard off for
+  // these files. That is precisely the HS-9518 regression.
+  //
+  // Test files are included. The whole point is that a sync call here is
+  // invisible in development — it is fast against a local temp dir and only
+  // wedges against the user's real cloud folder — so a test is exactly where an
+  // unguarded call would be written and never noticed.
+  {
+    files: ["src/backup.ts", "src/backupFs.ts", "src/attachmentBackup.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...CORE_RULES, BACKUP_FS_SYNC_RULE],
     },
   },
 );
