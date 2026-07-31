@@ -141,7 +141,7 @@ export function openWorktreesPanel(): void {
         </div>
         <div className="worktrees-body"></div>
         <form className="worktrees-create">
-          <input type="text" className="worktrees-branch-input" placeholder="Branch name" spellcheck={false} />
+          <input type="text" className="worktrees-branch-input" placeholder="Branch name" spellcheck="false" />
           <label className="worktrees-newbranch"><input type="checkbox" className="worktrees-newbranch-cb" /> New branch</label>
           <button type="submit" className="btn btn-sm worktrees-create-btn">Create</button>
         </form>

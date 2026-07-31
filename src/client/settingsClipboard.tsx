@@ -46,7 +46,7 @@ function promptPasteOverlay(title: string): Promise<string | null> {
           <div className="confirm-dialog-header">{title}</div>
           <div className="confirm-dialog-body">
             <div className="settings-hint" style="margin-bottom:6px">Paste the copied settings JSON below (⌘/Ctrl+V), then Import.</div>
-            <textarea className="settings-textarea settings-paste-textarea" rows={8} spellcheck={false} autocomplete="off"></textarea>
+            <textarea className="settings-textarea settings-paste-textarea" rows={8} spellcheck="false" autocomplete="off"></textarea>
           </div>
           <div className="confirm-dialog-footer">
             <button type="button" className="btn btn-sm settings-paste-cancel">Cancel</button>

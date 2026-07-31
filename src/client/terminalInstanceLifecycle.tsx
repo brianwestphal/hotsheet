@@ -30,7 +30,6 @@
 import type { SafeHtml } from 'kerfjs';
 
 import { destroyTerminal, killTerminal, openTerminalCwd, restartTerminal } from '../api/index.js';
-import { DRAGGABLE_TRUE } from './attrs.js';
 import { confirmDialog } from './confirm.js';
 import { toElement } from './dom.js';
 import { getActiveProject } from './state.js';
@@ -121,7 +120,7 @@ export function shortCommandName(command: string): string {
 // never mounts. A span avoids the parser-driven split entirely.
 function buildTabBtnEl(config: TerminalTabConfig, tabName: string): HTMLElement {
   return toElement(
-    <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id} {...DRAGGABLE_TRUE}>
+    <button className="drawer-tab drawer-terminal-tab" data-drawer-tab={`terminal:${config.id}`} data-terminal-id={config.id} draggable="true">
       <span className="drawer-tab-label">{tabName}</span>
       {config.dynamic === true
         ? <span className="drawer-tab-close" role="button" title="Close terminal">{CLOSE_ICON}</span>

@@ -2,7 +2,6 @@ import type { SafeHtml } from 'kerfjs';
 
 import { deleteProject, ensureSkills, getProjectsChannelStatus, getProjectsFeedbackState, getRemotes, listProjects, reorderProjects, revealProject } from '../api/index.js';
 import { maybeShowAiInstructionsNudge } from './aiInstructionsNudge.js';
-import { DRAGGABLE_TRUE } from './attrs.js';
 import { getProjectAttentionSecrets, getProjectBusySecrets, setChannelAlive } from './channelUI.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_CLOSE_LEFT, ICON_CLOSE_OTHERS, ICON_CLOSE_RIGHT, ICON_FOLDER, ICON_X } from './icons.js';
@@ -933,7 +932,7 @@ function tearDownMultiTabState(): void {
  *  closure doesn't go stale across reorder. */
 function renderTabRow(p: ProjectInfo): { el: Element; dispose: () => void } {
   const row = toElement(
-    <div className="project-tab" data-secret={p.secret} {...DRAGGABLE_TRUE}>
+    <div className="project-tab" data-secret={p.secret} draggable="true">
       <span className="project-tab-dot"></span>
       <span className="project-tab-name">{p.name}</span>
       <span className="project-tab-bell"></span>

@@ -1,6 +1,5 @@
 import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
 import { agentDisplayName } from './agentName.js';
-import { DRAGGABLE_TRUE } from './attrs.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { ICON_EYE, ICON_EYE_OFF, ICON_UNDO_2 } from './icons.js';
@@ -458,7 +457,7 @@ function renderRow(index: number): HTMLElement {
   const origin = termOrigin(entry);
   const isSharedHere = terminalsMode === 'local' && origin !== 'local';
   const row = toElement(
-    <div className="cmd-outline-row settings-terminal-row" {...DRAGGABLE_TRUE} data-index={String(index)}>
+    <div className="cmd-outline-row settings-terminal-row" draggable="true" data-index={String(index)}>
       <span className="command-drag-handle" title="Drag to reorder">{'☰'}</span>
       <span className="cmd-outline-name">{displayName}</span>
       <span className="settings-terminal-command">{entry.command}</span>

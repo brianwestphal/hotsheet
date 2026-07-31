@@ -43,7 +43,7 @@ export function openAddRemoteServerDialog(): void {
         <div className="worker-pool-body add-remote-body">
           <label className="add-remote-label" htmlFor="add-remote-url">Server URL</label>
           <div className="add-remote-url-row">
-            <input type="text" id="add-remote-url" className="add-remote-url" placeholder="https://host:4174" autocomplete="off" spellcheck={false} />
+            <input type="text" id="add-remote-url" className="add-remote-url" placeholder="https://host:4174" autocomplete="off" spellcheck="false" />
             {canScanQr() ? <button type="button" className="btn btn-sm add-remote-scan" title="Scan a pairing QR code">Scan QR</button> : ''}
           </div>
           <div className="add-remote-scan-area" style="display:none"></div>

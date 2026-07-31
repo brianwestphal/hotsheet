@@ -18,10 +18,12 @@
  * must NOT be rewritten, void tags, every child shape, and the escaping boundary
  * (`raw()` / `SafeHtml` pass through, strings do not).
  *
- * One thing this corpus deliberately does NOT cover, because it can't: `draggable`.
- * kerf types it as a boolean, and rendering it as one produces markup that means the
- * opposite (see `DRAGGABLE_TRUE` in `jsx-runtime.ts`). That is guarded by
- * `projectTabs.test.ts`, which asserts the rendered attribute value.
+ * `draggable` used to be uncoverable here: kerf typed it as a boolean, and rendering
+ * it as one produced markup meaning the opposite. **kerf 4.0 fixed that** (HS-9373) —
+ * `draggable`/`spellCheck`/`contentEditable` are now typed as the enumerated
+ * attributes they are, so the boolean form no longer compiles and the
+ * `DRAGGABLE_TRUE` workaround is gone. `projectTabs.test.ts` still asserts the
+ * rendered attribute value, which is the guard that matters.
  */
 import type { SafeHtml } from 'kerfjs';
 import { Fragment, jsx, jsxs, raw } from 'kerfjs/jsx-runtime';

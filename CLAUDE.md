@@ -37,7 +37,9 @@ Single-entry CLI (`src/cli.ts`) that: (1) creates `.hotsheet/`, (2) initializes 
 
 History worth knowing: this used to be a hand-rolled `src/jsx-runtime.ts` (~230 lines incl. a camelCase→kebab SVG alias table). **HS-9450** replaced its body with a re-export of kerf's, and **HS-9454** deleted the file and the `#jsx` alias entirely. The swap bought kerf's XSS hardening (attribute-name validation, `on*` rejection, `javascript:`/`data:` URL screening) and real typed JSX intrinsics — the old `IntrinsicElements` was `[elemName: string]: Record<string, unknown>`, so every tag and attribute typechecked vacuously. Equivalence is pinned by `src/jsxRuntimeCorpus.test.ts` (the §62 corpus: written against the old runtime, required to pass verbatim against kerf's).
 
-Two consequences to know about: custom elements / untyped attributes need declaration merging into `'kerfjs/jsx-runtime'` (`src/jsx-augment.d.ts`), and `draggable` must be written via the `DRAGGABLE_TRUE` spread from `src/client/attrs.ts` — kerf types it as a boolean but it's an enumerated attribute, and the boolean renders markup that *disables* dragging (KF-436).
+One consequence to know about: custom elements / untyped attributes need declaration merging into `'kerfjs/jsx-runtime'` (`src/jsx-augment.d.ts`).
+
+**Enumerated vs boolean attributes.** `draggable`, `spellCheck` and `contentEditable` are *enumerated* attributes — write the keyword string (`draggable="true"`, `spellcheck="false"`), never a boolean. kerf 4.0 types them that way, so the boolean form no longer compiles; before that it did, and it rendered markup meaning the opposite. The old `DRAGGABLE_TRUE` workaround (`src/client/attrs.ts`) is gone as of HS-9373. Real boolean attributes — `hidden`, `checked`, `disabled`, `autofocus` — are unchanged.
 
 TSX components return `SafeHtml` (= `JSX.Element`). Use `raw()` to inject pre-escaped HTML; all string children are auto-escaped. In client code, convert to DOM with `toElement()`, or to string for `innerHTML` with `.toString()`.
 
@@ -253,7 +255,7 @@ Reading order (high-level → specific) — full synthesized detail lives in `do
 56. `56-magnified-grid-nav.md` — Shift+Cmd/Ctrl+Arrow magnified-tile navigation
 57. `57-shell-command-button-spinner.md` — running shell-command button spinner + stop
 59. `59-reader-note-navigation.md` — reader-mode prev/next note navigation
-60. `60-reactivity-primitive.md` — fine-grained reactivity primitive (`kerfjs`, on `^3.0.0` since HS-9449; kerf 3.0 no longer infers dev mode, so its diagnostics are opt-in by importing `kerfjs/dev` — the client bundle deliberately doesn't, `vitest.setup.ts` does)
+60. `60-reactivity-primitive.md` — fine-grained reactivity primitive (`kerfjs`, on `^4.1.0` since HS-9373; kerf 3.0 no longer infers dev mode, so its diagnostics are opt-in by importing `kerfjs/dev` — the client bundle deliberately doesn't, `vitest.setup.ts` does. 4.0 made `draggable`/`spellCheck`/`contentEditable` enumerated-only and stopped dropping inert `javascript:void(0)` hrefs, retiring two Hot Sheet workarounds)
 61. `61-composable-stores.md` — composable testable stores (`defineStore`)
 62. `62-unified-jsx-render-targets.md` — shared AST: `astToHtml` (server) + `astToDom` (client)
 63. `63-mcp-tools.md` — MCP tool surface for AI agents (`tools/list` + `tools/call`)

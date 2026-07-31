@@ -741,7 +741,7 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
               Self-reference is INTENTIONAL here — the whole point of the
               affordance is "let me re-open the originating ticket for
               reference while I'm composing a response". */}
-          <span>{'Feedback Needed — '}<a className="ticket-ref" data-ticket-number={ticketNumber} href={raw('javascript:void(0)')}>{ticketNumber}</a></span>
+          <span>{'Feedback Needed — '}<a className="ticket-ref" data-ticket-number={ticketNumber} href="javascript:void(0)">{ticketNumber}</a></span>
           {/* HS-8836 — prev/next chevrons page a read-only view through the
               ticket's [Details + previous notes] while the response box stays
               pinned below. Rendered only when there's prior context to page to. */}

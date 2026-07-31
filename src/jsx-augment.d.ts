@@ -6,7 +6,7 @@
  * merges cleanly; WIDENING an existing attribute does not — TS requires merged
  * property declarations to have identical types, and `skipLibCheck` hides the
  * resulting conflict error, so an attempted widening silently does nothing. That is
- * why `draggable` is handled by the `DRAGGABLE_TRUE` spread in `jsx-runtime.ts`
+ * why `draggable` needed a workaround before kerf 4.0 (HS-9373 removed it)
  * rather than here.
  */
 import type { KerfBaseAttrs } from 'kerfjs/jsx-runtime';

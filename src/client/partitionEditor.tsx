@@ -36,7 +36,7 @@ function renderBody(edit: PartitionEdit) {
               : (
                 <ul className="partition-ticket-list" style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:4px">
                   {ids.map(id => (
-                    <li className="partition-ticket-row" data-ticket-id={String(id)} draggable={true} style="display:flex; gap:6px; align-items:center; justify-content:space-between; cursor:grab">
+                    <li className="partition-ticket-row" data-ticket-id={String(id)} draggable="true" style="display:flex; gap:6px; align-items:center; justify-content:space-between; cursor:grab">
                       <span className="partition-ticket-num">{edit.ticketNumber(id)}</span>
                       <select className="partition-move-select" data-ticket-id={String(id)} title="Move to worker">
                         {edit.workers.map(ww => (
