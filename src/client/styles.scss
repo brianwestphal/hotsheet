@@ -6389,6 +6389,47 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   border-color: var(--danger) !important;
 }
 
+/* HS-9536 — backups left behind by a previous `backupDir`. Styled as a warning
+   rather than an error: nothing is broken, but the folder still looks like a
+   live backup set and a recovery attempt could mistake it for one. */
+.stranded-backups {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warning-border, #b8860b);
+  border-radius: 6px;
+  background: var(--warning-bg, rgba(184, 134, 11, 0.08));
+}
+
+.stranded-backups-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.stranded-backups-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "path button" "hint button";
+  align-items: center;
+  gap: 2px 10px;
+
+  & + & { margin-top: 10px; }
+
+  .stranded-backups-path {
+    grid-area: path;
+    /* A backup path is long and the interesting part is the END of it. */
+    direction: rtl;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+  }
+
+  .settings-hint { grid-area: hint; }
+  .btn { grid-area: button; }
+}
+
 .backup-list {
   max-height: 300px;
   overflow-y: auto;

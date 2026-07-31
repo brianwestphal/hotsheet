@@ -1,7 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createTicket } from '../db/queries.js';
+import { writeFileSettings } from '../file-settings.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
 import { backupRoutes } from './backups.js';
@@ -213,5 +217,73 @@ describe('POST /api/backups/restore', () => {
     expect(res.status).toBe(500);
     const data = await res.json() as ErrorResponse;
     expect(data.error).toBeDefined();
+  });
+});
+
+/**
+ * HS-9536 — the stranded-roots endpoint.
+ *
+ * The dangerous output is a path presented as "abandoned". These assert it stays
+ * silent whenever that claim is not provable.
+ */
+describe('GET /api/backups/stranded', () => {
+  it('reports nothing when backupDir has never changed', async () => {
+    const res = await app.request('/api/backups/stranded');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { roots: unknown[] }).roots).toEqual([]);
+  });
+
+  it('reports a genuinely abandoned root, with its size', async () => {
+    const abandoned = mkdtempSync(join(tmpdir(), 'hs-abandoned-'));
+    const current = mkdtempSync(join(tmpdir(), 'hs-current-'));
+    try {
+      mkdirSync(join(abandoned, '5min'), { recursive: true });
+      writeFileSync(join(abandoned, '5min', 'backup-2026-06-29T00-00-00Z.tar.gz'), Buffer.alloc(2048));
+
+      // Two writes: the first establishes a root, the second abandons it.
+      writeFileSettings(tempDir, { backupDir: abandoned });
+      writeFileSettings(tempDir, { backupDir: current });
+
+      const roots = ((await (await app.request('/api/backups/stranded')).json()) as { roots: { path: string; sizeBytes: number }[] }).roots;
+      expect(roots).toHaveLength(1);
+      expect(roots[0].path).toBe(abandoned);
+      expect(roots[0].sizeBytes).toBe(2048);
+    } finally {
+      rmSync(abandoned, { recursive: true, force: true });
+      rmSync(current, { recursive: true, force: true });
+    }
+  });
+
+  it('stays SILENT when the new root is nested inside the old one', async () => {
+    // The maintainer's containment case, end to end. The "abandoned" tree
+    // contains the live backups; reporting it invites deleting them.
+    const outer = mkdtempSync(join(tmpdir(), 'hs-outer-'));
+    try {
+      mkdirSync(join(outer, '5min'), { recursive: true });
+      writeFileSync(join(outer, '5min', 'backup-2026-06-29T00-00-00Z.tar.gz'), Buffer.alloc(512));
+      const inner = join(outer, 'nested');
+      mkdirSync(inner, { recursive: true });
+
+      writeFileSettings(tempDir, { backupDir: outer });
+      writeFileSettings(tempDir, { backupDir: inner });
+
+      expect(((await (await app.request('/api/backups/stranded')).json()) as { roots: unknown[] }).roots).toEqual([]);
+    } finally {
+      rmSync(outer, { recursive: true, force: true });
+    }
+  });
+
+  it('stays silent for an abandoned root that no longer holds backups', async () => {
+    // After the user cleans up by hand, the notice must stop appearing.
+    const empty = mkdtempSync(join(tmpdir(), 'hs-empty-'));
+    const current = mkdtempSync(join(tmpdir(), 'hs-cur2-'));
+    try {
+      writeFileSettings(tempDir, { backupDir: empty });
+      writeFileSettings(tempDir, { backupDir: current });
+      expect(((await (await app.request('/api/backups/stranded')).json()) as { roots: unknown[] }).roots).toEqual([]);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+      rmSync(current, { recursive: true, force: true });
+    }
   });
 });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { getPlugin } from '../aiTools/registry.js';
-import { applyAiInstructions, ensureSkills, getFileSettings, getTags, updateSettings } from '../api/index.js';
+import { applyAiInstructions, ensureSkills, getFileSettings, getTags, listStrandedBackupRoots, revealStrandedBackupRoot, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { defaultProjectName } from '../defaultProjectName.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
@@ -522,6 +522,7 @@ function bindBackupsTab() {
 
   settingsBtn.addEventListener('click', () => {
     void loadBackupList();
+    void renderStrandedBackups();
     void getFileSettings().then((fs) => {
       backupDirInput.value = fs.backupDir ?? '';
     });
@@ -537,6 +538,74 @@ function bindBackupsTab() {
       });
     }, 800);
   });
+}
+
+/** HS-9536 — human-readable size, or a plain statement that we could not measure.
+ *
+ *  `null` is not rendered as "0 B": an abandoned root is often abandoned BECAUSE
+ *  it became unreachable, and claiming it is empty is the one thing that would
+ *  make a user stop looking for their backups. */
+export function formatStrandedSize(bytes: number | null): string {
+  if (bytes === null) return 'size unknown (folder not reachable)';
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(bytes / 1024 ** 2)).toString()} MB`;
+}
+
+/**
+ * HS-9536 — show any backup roots a `backupDir` change left behind.
+ *
+ * Deliberately informational: a "Reveal" button and nothing destructive. The
+ * maintainer's instruction was to inform, and the containment cases (docs on
+ * HS-9532) are exactly why a delete button here is a bad idea — a root that
+ * merely LOOKS abandoned can contain the live backups.
+ *
+ * Hidden entirely when there is nothing to report, so the section costs nothing
+ * in the normal case.
+ */
+export async function renderStrandedBackups(): Promise<void> {
+  const host = document.getElementById('stranded-backups');
+  if (host === null) return;
+  let roots: Awaited<ReturnType<typeof listStrandedBackupRoots>>;
+  try {
+    roots = await listStrandedBackupRoots();
+  } catch {
+    // Diagnostics for a housekeeping notice must never break the dialog.
+    host.hidden = true;
+    return;
+  }
+  if (roots.length === 0) {
+    host.hidden = true;
+    host.replaceChildren();
+    return;
+  }
+  host.hidden = false;
+  host.replaceChildren(toElement(
+    <div>
+      <div className="stranded-backups-title">Backups remain at a previous location</div>
+      {roots.map(root => (
+        <div className="stranded-backups-row">
+          <div className="stranded-backups-path" title={root.path}>{root.path}</div>
+          <div className="settings-hint">
+            {formatStrandedSize(root.sizeBytes)}
+            {root.newestBackupAt === null ? '' : ` · newest ${root.newestBackupAt.slice(0, 10)}`}
+            {' · no longer retained or cleaned up'}
+          </div>
+          <button className="btn btn-sm" data-stranded-reveal={root.path}>Reveal</button>
+        </div>
+      ))}
+    </div>,
+  ));
+  // Delegated: the rows are rebuilt on every open, and per-row listeners captured
+  // against a replaced node are the HS-8365 staleness trap.
+  host.onclick = (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest('[data-stranded-reveal]');
+    if (!(btn instanceof HTMLElement)) return;
+    const path = btn.dataset.strandedReveal;
+    if (path !== undefined) void revealStrandedBackupRoot(path);
+  };
 }
 
 // --- Embedded Terminal tab (HS-6268, docs/22-terminal.md §22.10) ---

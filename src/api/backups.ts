@@ -10,6 +10,7 @@
  *   - `GET  /backups/preview/:tier/:filename`  → BackupPreview              — 400 on bad file
  *   - `POST /backups/preview/cleanup`          → ok
  *   - `POST /backups/restore`                  → ok (body: tier, filename)  — 500 on failure
+ *   - `GET  /backups/stranded`                 → roots a `backupDir` change left behind (HS-9536)
  */
 import { z } from 'zod';
 
@@ -38,6 +39,21 @@ export const BackupPreviewSchema = z.object({
   stats: z.object({ total: z.number(), open: z.number(), upNext: z.number() }),
 });
 export type BackupPreview = z.infer<typeof BackupPreviewSchema>;
+
+/** HS-9536 — a backup root abandoned by a `backupDir` change.
+ *
+ *  `sizeBytes` is nullable on purpose: an abandoned root is often abandoned
+ *  BECAUSE it became unreachable (an unplugged drive, a dead cloud mount), and
+ *  the path is still worth showing when its size is not knowable. */
+export const StrandedBackupRootSchema = z.object({
+  path: z.string(),
+  sizeBytes: z.number().nullable(),
+  newestBackupAt: z.string().nullable(),
+  tierCount: z.number(),
+});
+export type StrandedBackupRoot = z.infer<typeof StrandedBackupRootSchema>;
+
+const StrandedRespSchema = z.object({ roots: z.array(StrandedBackupRootSchema) });
 
 export type CreateBackupReq = z.infer<typeof CreateBackupSchema>;
 export type RestoreBackupReq = z.infer<typeof RestoreBackupSchema>;
@@ -73,4 +89,21 @@ export async function cleanupBackupPreview(): Promise<OkResponse> {
 export async function restoreBackup(tier: string, filename: string): Promise<OkResponse> {
   const body: RestoreBackupReq = { tier, filename };
   return apiCall(OkResponseSchema, '/backups/restore', { method: 'POST', body });
+}
+
+/** GET `/backups/stranded` → backup roots left behind by a `backupDir` change.
+ *
+ *  Only roots PROVEN disjoint from the current one are returned; anything that
+ *  overlaps it (or cannot be resolved) is omitted entirely rather than returned
+ *  with a caveat. See `src/backupDirChange.ts` for why. */
+export async function listStrandedBackupRoots(): Promise<StrandedBackupRoot[]> {
+  const r = await apiCall(StrandedRespSchema, '/backups/stranded');
+  return r.roots;
+}
+
+/** POST `/backups/stranded/reveal` → open an abandoned root in the OS file
+ *  manager. The server re-derives the stranded set and rejects any path that is
+ *  not currently in it. */
+export async function revealStrandedBackupRoot(path: string): Promise<OkResponse> {
+  return apiCall(OkResponseSchema, '/backups/stranded/reveal', { method: 'POST', body: { path } });
 }

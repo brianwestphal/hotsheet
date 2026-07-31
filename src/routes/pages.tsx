@@ -817,6 +817,13 @@ pageRoutes.get('/', (c) => {
                 <input type="text" id="settings-backup-dir" placeholder="Default: .hotsheet/backups" />
                 <span className="settings-hint" id="settings-backup-dir-hint">Leave empty to use the default location inside the data directory.</span>
               </div>
+              {/* HS-9536 — backups left behind by a previous `backupDir`. Nothing
+                  retains or collects them, and the folder still LOOKS like a live
+                  backup set, so a future recovery attempt can mistake a month-old
+                  tree for the current one. Populated only with roots proven
+                  disjoint from the current location (docs: HS-9532); hidden
+                  entirely when there are none. */}
+              <div id="stranded-backups" className="stranded-backups" hidden></div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
               {/* HS-9004 — snapshot toggle (`db_snapshot_protection`) + repair are
                   complex/action surfaces, not yet per-layer aware: read-only in

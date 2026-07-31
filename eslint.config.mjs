@@ -636,7 +636,7 @@ export default tseslint.config(
   // wedges against the user's real cloud folder — so a test is exactly where an
   // unguarded call would be written and never noticed.
   {
-    files: ["src/backup.ts", "src/backupFs.ts", "src/attachmentBackup.ts"],
+    files: ["src/backup.ts", "src/backupFs.ts", "src/attachmentBackup.ts", "src/strandedBackups.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...CORE_RULES, BACKUP_FS_SYNC_RULE],
     },
