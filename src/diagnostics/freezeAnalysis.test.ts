@@ -15,8 +15,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   attributeBlocks,
+  cpuRatio,
   formatReport,
   isBlocking,
+  looksLikeSuspend,
   parseFreezeLog,
   rankByContext,
   summarizeBlocking,
@@ -203,5 +205,39 @@ describe('formatReport', () => {
     expect(out).toContain('fsyncDbDir:backup:5min');
     // The headline number is the heartbeat's, not the 17 s span's.
     expect(out).toContain('0.5s across 1 blocks');
+  });
+});
+
+describe('looksLikeSuspend (HS-9528)', () => {
+  it('flags a long span that consumed almost no CPU', () => {
+    // The 17-minute VACUUM. A standalone run of the same statement on the same
+    // 142 MB cluster takes 100 ms, and 9 of the 10 recorded VACUUMs are ≤1525 ms.
+    expect(looksLikeSuspend({
+      ts: '2026-07-12T01:11:19.398Z', source: 'server-instrument-async',
+      durationMs: 1_027_267, context: 'pglite.exec: VACUUM', cpuMs: 120,
+    })).toBe(true);
+  });
+
+  it('does NOT flag a long span that really did burn CPU', () => {
+    expect(looksLikeSuspend({
+      ts: '2026-07-12T01:11:19.398Z', source: 'server-instrument-sync',
+      durationMs: 20_000, context: 'real-work', cpuMs: 19_000,
+    })).toBe(false);
+  });
+
+  it('does not flag SHORT spans — brief I/O waits are legitimately CPU-free', () => {
+    expect(looksLikeSuspend({
+      ts: '2026-07-12T01:11:19.398Z', source: 'server-instrument-async',
+      durationMs: 900, context: 'a-fetch', cpuMs: 0,
+    })).toBe(false);
+  });
+
+  it('stays silent for entries with no cpuMs rather than guessing', () => {
+    // Pre-HS-9528 logs must not be retro-labelled as suspends on no evidence.
+    expect(looksLikeSuspend({
+      ts: '2026-07-12T01:11:19.398Z', source: 'server-instrument-async',
+      durationMs: 1_027_267, context: 'pglite.exec: VACUUM',
+    })).toBe(false);
+    expect(cpuRatio({ ts: 'x', source: 'server-heartbeat', durationMs: 100, context: 'c' })).toBeNull();
   });
 });

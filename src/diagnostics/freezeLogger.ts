@@ -120,6 +120,17 @@ export const SUSPEND_CLOCK_DIVERGENCE_MS = 2_000;
  * Verified on 2026-07-31: two entries logged as "resumed from suspend" (13 s and
  * 23 s) while `pmset -g log` showed the machine had not slept at all that day.
  *
+ * **HS-9528 update — on THIS platform the divergence never appears.** Measured
+ * 2026-07-31: over 171 h of uptime containing 743 sleep events, `hrtime.bigint()`
+ * and wall-clock uptime (`kern.boottime`) agreed to within 0.00 h. libuv's macOS
+ * monotonic clock therefore ADVANCES during sleep, so a real suspend produces ~0
+ * divergence and lands in the "block" branch below. The fallback clause this
+ * comment already described is not hypothetical here — it is the normal path.
+ *
+ * That is why `cpuMs` exists on `FreezeEntry`: CPU time is the signal that
+ * actually separates a wedge from a sleeping laptop, since a suspend accrues
+ * none. See `freezeAnalysis.looksLikeSuspend`.
+ *
  * Safe under either platform behavior: if some platform's monotonic clock *did*
  * include suspend time, divergence would be ~0 and we would call it a block —
  * which only over-reports blocks, and keeps backpressure engaged. Erring that
@@ -179,6 +190,28 @@ export interface FreezeEntry {
    * aggregates the log leaves the next reader to rediscover it.
    */
   blocking?: boolean;
+  /**
+   * HS-9528 — CPU milliseconds consumed while this entry was being measured.
+   *
+   * Exists because `durationMs` alone CANNOT tell a long block from a sleeping
+   * laptop on this platform, and a confident reading of it produced a wrong
+   * conclusion. Measured 2026-07-31: over 171 h of uptime containing 743 sleep
+   * events, `process.hrtime.bigint()` and wall-clock uptime agreed to within
+   * 0.00 h — so libuv's macOS monotonic clock ADVANCES during sleep. HS-9520's
+   * clock-divergence test therefore reports ~0 divergence for a real suspend and
+   * classifies it as a block (which that ticket anticipated and called safe —
+   * over-reporting blocks only keeps backpressure engaged).
+   *
+   * CPU time settles it, and portably: a genuinely CPU-bound block accrues CPU
+   * roughly in step with wall time; a suspend accrues none. This is how a
+   * 17-minute `VACUUM` entry can be recognised as a closed lid rather than
+   * seventeen minutes of a wedged server.
+   *
+   * Process-wide, so for an async span it includes whatever else ran. That is
+   * fine for the question being asked — near-zero CPU across a long span means
+   * nothing ran at all, which no amount of concurrent work can fake.
+   */
+  cpuMs?: number;
 }
 
 /**
@@ -575,8 +608,15 @@ export function stopServerEventLoopHeartbeat(): void {
  * caller's return value is preserved verbatim. Throws propagate
  * unchanged (after logging the duration).
  */
+/** HS-9528 — CPU ms elapsed since a `process.cpuUsage()` mark. */
+function cpuSince(start: NodeJS.CpuUsage): number {
+  const d = process.cpuUsage(start);
+  return Math.round((d.user + d.system) / 1000);
+}
+
 export function instrumentSync<T>(dataDir: string, label: string, fn: () => T): T {
   const startNs = process.hrtime.bigint();
+  const startCpu = process.cpuUsage();
   // HS-9519 — publish the label into shared memory so a WEDGED main thread can still
   // be named by the watchdog worker. Sync only: these are the calls that actually pin
   // the loop, and an async label would just record whatever happened to start last.
@@ -586,6 +626,7 @@ export function instrumentSync<T>(dataDir: string, label: string, fn: () => T): 
   } finally {
     exitOperation();
     const durMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
+    const cpuMs = cpuSince(startCpu);
     if (durMs >= LONG_TASK_THRESHOLD_MS) {
       void appendFreezeLog(dataDir, {
         ts: new Date().toISOString(),
@@ -593,6 +634,7 @@ export function instrumentSync<T>(dataDir: string, label: string, fn: () => T): 
         durationMs: Math.round(durMs),
         context: label,
         blocking: true, // a synchronous block holds the loop for its whole duration
+        cpuMs,
       });
     }
   }
@@ -606,10 +648,12 @@ export function instrumentSync<T>(dataDir: string, label: string, fn: () => T): 
  */
 export async function instrumentAsync<T>(dataDir: string, label: string, fn: () => Promise<T>): Promise<T> {
   const startNs = process.hrtime.bigint();
+  const startCpu = process.cpuUsage();
   try {
     return await fn();
   } finally {
     const durMs = Number(process.hrtime.bigint() - startNs) / 1_000_000;
+    const cpuMs = cpuSince(startCpu);
     if (durMs >= LONG_TASK_THRESHOLD_MS) {
       void appendFreezeLog(dataDir, {
         ts: new Date().toISOString(),
@@ -619,6 +663,7 @@ export async function instrumentAsync<T>(dataDir: string, label: string, fn: () 
         // WALL time, not blocked time — the loop runs freely during any `await`
         // inside `fn`. Summing these as blocking is the HS-9521 error.
         blocking: false,
+        cpuMs,
       });
     }
   }
