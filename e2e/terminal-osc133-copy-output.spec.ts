@@ -19,10 +19,10 @@
  *      doesn't require Playwright clipboard permissions.
  *   3. The button flashes its `.copied` success class on a successful write.
  */
-import { expect, test } from './coverage-fixture.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'terminal-osc133.sh');

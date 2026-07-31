@@ -23,10 +23,10 @@
  * (new toasts replace old), so you can't just grab `.hs-toast` a moment later
  * and count.
  */
-import { expect, test } from './coverage-fixture.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'terminal-osc9.sh');

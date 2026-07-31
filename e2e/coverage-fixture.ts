@@ -3,8 +3,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect as pwExpect, test as base, type Page } from '@playwright/test';
-import { writeFileSync, mkdirSync } from 'fs';
+
+import { expect as pwExpect, type Page,test as base } from '@playwright/test';
+import { mkdirSync,writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 /**
@@ -112,11 +113,48 @@ const SUPPRESS_AI_NUDGE_SCRIPT = `
 // subsequent spec that doesn't explicitly reset it. Reset both keys per-
 // test so specs that need a non-default value PATCH it inside their own
 // `beforeEach` / test body AFTER this fixture has run.
+/**
+ * HS-9533 — read a JSON body from a Playwright API response with a runtime check.
+ *
+ * The wire-boundary guard (HS-8567) is deliberately kept ON for e2e HELPERS while
+ * being relaxed for `*.spec.ts`: a wrong shape in a spec fails that one assertion
+ * loudly, but a wrong shape HERE silently propagates into every spec that uses the
+ * fixture. These four reads drive cross-spec cleanup — if the shape drifts, this
+ * quietly stops deleting tickets and the damage shows up as unrelated flakes in
+ * other specs, which is about the worst failure mode available in a test suite.
+ *
+ * Returns the fallback rather than throwing: this runs in best-effort cleanup
+ * paths that already swallow errors, and a cleanup failure must not fail the test
+ * that happens to run first.
+ */
+async function readJsonArray<T>(
+  res: { ok(): boolean; json(): Promise<unknown> },
+  isItem: (v: unknown) => v is T,
+): Promise<T[]> {
+  if (!res.ok()) return [];
+  let raw: unknown;
+  try {
+    raw = await res.json();
+  } catch {
+    return [];
+  }
+  return Array.isArray(raw) ? raw.filter(isItem) : [];
+}
+
+const hasNumericId = (v: unknown): v is { id: number } =>
+  typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'number';
+
+const hasStringId = (v: unknown): v is { id: string } =>
+  typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'string';
+
+const hasOptionalSecret = (v: unknown): v is { secret?: string } =>
+  typeof v === 'object' && v !== null;
+
 const RESET_SETTINGS_HEADERS = { 'Content-Type': 'application/json' };
 async function resetCrossSpecSettings(request: import('@playwright/test').APIRequestContext): Promise<void> {
   let projects: { secret?: string }[] = [];
   try {
-    projects = await (await request.get('/api/projects')).json() as { secret?: string }[];
+    projects = await readJsonArray(await request.get('/api/projects'), hasOptionalSecret);
   } catch { return; }
   const secret = projects[0]?.secret;
   if (secret === undefined || secret === '') return;
@@ -170,9 +208,9 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
   try {
     const allRes = await request.get('/api/tickets?status=active', { headers: authHeaders });
     if (allRes.ok()) {
-      const active = await allRes.json() as { id: number }[];
+      const active = await readJsonArray(allRes, hasNumericId);
       const trashRes = await request.get('/api/tickets?status=deleted', { headers: authHeaders });
-      const trashed = trashRes.ok() ? await trashRes.json() as { id: number }[] : [];
+      const trashed = await readJsonArray(trashRes, hasNumericId);
       const ids = [...active.map(t => t.id), ...trashed.map(t => t.id)];
       if (ids.length > 0) {
         // batch action 'delete' moves to trash; then empty-trash hard-deletes.
@@ -195,7 +233,11 @@ async function resetCrossSpecSettings(request: import('@playwright/test').APIReq
   try {
     const listRes = await request.get('/api/terminal/list', { headers: authHeaders });
     if (listRes.ok()) {
-      const list = await listRes.json() as { dynamic?: { id: string }[] };
+      const listRaw: unknown = await listRes.json();
+      const dynamic = (typeof listRaw === 'object' && listRaw !== null
+        ? (listRaw as { dynamic?: unknown }).dynamic
+        : undefined);
+      const list = { dynamic: Array.isArray(dynamic) ? dynamic.filter(hasStringId) : [] };
       for (const d of (list.dynamic ?? [])) {
         await request.post('/api/terminal/destroy', { headers: authHeaders, data: { terminalId: d.id } }).catch(() => {});
       }
@@ -430,7 +472,7 @@ export const test = base.extend<{
     if (process.env.STRICT_E2E_ERRORS === '0') {
       // HS-8436 opt-out (local debugging only) — log + attach without
       // failing. CI should never set this; use the strict default.
-      // eslint-disable-next-line no-console
+       
       console.warn(
         `[hs-8435 opt-out] ${testInfo.title}: ${unexpected.length} unexpected event(s) — ` +
         `STRICT_E2E_ERRORS=0 is masking these:\n  ` +

@@ -21,11 +21,11 @@
  * then `exec sleep 3600` keeps the PTY alive so xterm has a populated
  * scrollback to search across for the full test.
  */
-import { expect, test } from './coverage-fixture.js';
-import { expectXtermContainsText } from './xtermDiagnostics.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './coverage-fixture.js';
+import { expectXtermContainsText } from './xtermDiagnostics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRUIT_SCRIPT = path.join(__dirname, 'fixtures', 'terminal-search-fruits.sh');

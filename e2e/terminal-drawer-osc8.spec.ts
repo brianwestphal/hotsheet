@@ -17,11 +17,11 @@
  * was called with the wrapped URL; then clicks the plain URL and asserts a
  * second `invoke('open_url', ...)` call with the plain URL.
  */
-import { expect, test } from './coverage-fixture.js';
-import { expectXtermContainsText } from './xtermDiagnostics.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './coverage-fixture.js';
+import { expectXtermContainsText } from './xtermDiagnostics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'terminal-osc8.sh');

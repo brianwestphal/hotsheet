@@ -15,10 +15,10 @@
  * under Playwright (stubbed Tauri, single-project setup since the user's
  * "always Kerf" detail is about the active project, not multi-project).
  */
-import { expect, test } from './coverage-fixture.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './coverage-fixture.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DRAW_SCRIPT = path.join(__dirname, 'fixtures', 'terminal-draw.sh');
@@ -341,7 +341,7 @@ test.describe('Terminal checkout bugs', () => {
       // The active xterm-rows DOM only shows visible rows, but the bug
       // shows up as duplicate ROWS in the term buffer. Read the buffer
       // via the xterm instance hanging off the .xterm element.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const rowsDom = Array.from(paneEl.querySelectorAll('.xterm-rows > div'))
         .map(r => (r.textContent ?? '').trim());
       const visibleBottom = rowsDom.filter(r => r.includes('BOTTOM-KEYBAR')).length;

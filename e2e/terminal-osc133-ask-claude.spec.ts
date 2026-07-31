@@ -20,11 +20,11 @@
  * popover targets a non-zero-exit-code record (the typical Ask Claude
  * scenario).
  */
-import { expect, test } from './coverage-fixture.js';
-import { expectXtermContainsText } from './xtermDiagnostics.js';
-
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { expect, test } from './coverage-fixture.js';
+import { expectXtermContainsText } from './xtermDiagnostics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(__dirname, 'fixtures', 'terminal-osc133.sh');

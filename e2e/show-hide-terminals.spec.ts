@@ -23,7 +23,7 @@
  * + `e2e/drawer-terminal-grid.spec.ts` pattern — both surfaces are
  * Tauri-only per §25.11 / §36.8.
  */
-import type { Page, APIRequestContext } from '@playwright/test';
+import type { APIRequestContext,Page } from '@playwright/test';
 
 import { expect, test } from './coverage-fixture.js';
 

@@ -179,6 +179,26 @@ const CORE_RULES = [
   },
 ];
 
+/**
+ * HS-9533 — the `e2e/` subsets, derived from CORE_RULES by subtraction.
+ *
+ * Matching on selector text rather than object identity because these selectors
+ * are declared inline in the array above; the alternative is naming five more
+ * consts purely so this file can point at them.
+ */
+const isInnerHtmlRule = (r) => r.selector.includes("'innerHTML'");
+const isResJsonRule = (r) => r.selector.includes("callee.property.name='json'");
+
+/** e2e helpers: everything except the two that are about our renderer / tool layer. */
+const E2E_HELPER_RULES = CORE_RULES.filter(
+  (r) => r !== TOOL_ID_LITERAL_RULE && !isInnerHtmlRule(r),
+);
+
+/** e2e specs: the above, minus the wire-boundary pair. `JSON.parse(x) as Y` is
+ *  deliberately KEPT — parsing a file the test wrote is a real trust boundary,
+ *  unlike asserting on a response from the server under test. */
+const E2E_SPEC_RULES = E2E_HELPER_RULES.filter((r) => !isResJsonRule(r));
+
 export default tseslint.config(
   {
     ignores: ["dist/**", "node_modules/**", "scripts/**"],
@@ -629,6 +649,55 @@ export default tseslint.config(
   //
   // Only type-aware rules are disabled. `no-restricted-syntax` and the rest of
   // the syntactic set are untouched, so this cannot repeat the HS-9518 wipeout.
+  // HS-9533 — which CORE_RULES apply to a Playwright spec.
+  //
+  // `e2e/` used to belong to no tsconfig, so ESLint could not parse it and linted
+  // NONE of it. HS-9523 gave it one, which exposed 664 errors — and the shape of
+  // them turned out to be the opposite of what was assumed. It is not `innerHTML`
+  // (8 hits); it is the wire-boundary rule, at 352.
+  //
+  // Maintainer direction was to optimize for DEFENSIVE CODING, so the default here
+  // is to keep a guard unless it is inapplicable — not unless it is inconvenient.
+  // Three are subtracted, each for a reason about the code rather than the count:
+  //
+  //  * **innerHTML (§62)** — all 8 sites are inside `page.evaluate`, i.e. the
+  //    BROWSER context, building DOM fixtures. `toElement` does not exist there,
+  //    and the rule's whole rationale (kerf's parser path, SVG namespacing, entity
+  //    handling) is about our renderer, which is not involved.
+  //  * **Tool-id literal (HS-9495)** — a spec naming 'codex' is per-tool TEST DATA
+  //    (picking an option in a dropdown), not a tool-id BRANCH outside the plugin
+  //    layer. docs/132's rule already contemplates this: its allowlist exempts
+  //    files that legitimately own per-tool data.
+  //  * **Wire-boundary (HS-8567) — in `*.spec.ts` ONLY.** Kept everywhere else.
+  //    In production the rule guards against an upstream shape change shipping a
+  //    crash. In a spec the "upstream" is the server under test, and a cast that
+  //    goes stale makes the test FAIL — which is the outcome you want. Rewriting
+  //    356 inline shapes into schemas would add real risk (an over-strict schema
+  //    broke 9 plugin tests during HS-9523) for very little safety.
+  //
+  // The rule still applies to e2e HELPERS, where the reasoning inverts: a wrong
+  // shape in `coverage-fixture.ts` propagates into every spec that uses it instead
+  // of failing one assertion locally.
+  //
+  // Everything else stays ON, including the sync-child-process guard — HS-9511
+  // already extended that to unit tests, and a wedged E2E suite is the exact
+  // symptom HS-9391 presented with.
+  //
+  // Composed by SUBTRACTING from CORE_RULES, never by re-declaring a shorter list:
+  // flat config replaces a rule's options, so a hand-written subset would silently
+  // drop any guard added to CORE_RULES later. That is the HS-9518 regression.
+  {
+    files: ["e2e/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...E2E_HELPER_RULES],
+    },
+  },
+  {
+    files: ["e2e/**/*.spec.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...E2E_SPEC_RULES],
+    },
+  },
   {
     files: ["**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,

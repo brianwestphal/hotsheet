@@ -7,7 +7,7 @@
  * input in the open config dialog. These tests open the dialog, type, and
  * assert the feedback element renders with the right class and text.
  */
-import type { Page, APIRequestContext } from '@playwright/test';
+import type { APIRequestContext,Page } from '@playwright/test';
 
 import { expect, test } from './coverage-fixture.js';
 

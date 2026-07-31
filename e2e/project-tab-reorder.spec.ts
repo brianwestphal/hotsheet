@@ -406,11 +406,11 @@ test.describe('Project tab drag-to-reorder (HS-8431)', () => {
     // diagnose. Playwright's --reporter=line truncates these but the
     // JSON reporter captures them in test-results.
     if (pageErrors.length > 0) {
-      // eslint-disable-next-line no-console -- diagnostic output for test failure
+       
       console.log('page errors:', pageErrors);
     }
     if (consoleLogs.length > 0) {
-      // eslint-disable-next-line no-console -- diagnostic output for test failure
+       
       console.log('console logs:', consoleLogs.slice(-20));
     }
 
