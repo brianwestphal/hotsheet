@@ -6,6 +6,15 @@
  * loop. It generalizes the HS-8229 `withGlobalBackupLock` mutex (which only
  * serialized backups) into a real load-aware queue.
  *
+ * **HS-9521 — this is a QUEUE, not off-loop execution.** It decides WHEN a job
+ * runs; it never changes WHERE. Every job below still executes on the single
+ * shared event loop, so a job that blocks for 10 s blocks the server for 10 s —
+ * the scheduler only stops it piling up with other work. That matters most for
+ * PGLite, which is in-process WASM: no amount of scheduling can stop a query,
+ * `dumpDataDir` or VACUUM from blocking (docs/75 §75.1 records the same floor).
+ * Only `hashWorker.ts` and `diagnostics/watchdog.ts` use real worker threads.
+ * Callers describing submission here as "off-loop" are wrong; several did.
+ *
  * Five properties, all from §75.3 P2:
  *
  *  1. **Bounded concurrency** — at most `concurrency` jobs run at once (default

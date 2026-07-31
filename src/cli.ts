@@ -331,8 +331,11 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
       // long backlog), bypass the 7-day FULL throttle ONCE so the freed disk is
       // physically reclaimed on this launch (it stays bloated otherwise — DELETE
       // doesn't shrink PGLite files, and a recently-attempted FULL is throttled).
-      // Still off-loop + size-gated + deferred-under-lag via the scheduler, so it
-      // never wedges startup or a mid-session interaction.
+      // Size-gated + deferred-under-lag via the §75 scheduler, so it never wedges
+      // startup or a mid-session interaction. HS-9521 — NOT off-loop: the scheduler
+      // decides WHEN a job runs, never WHERE. This still executes on the event loop
+      // (PGLite is in-process WASM), so a long VACUUM blocks the server for its
+      // duration; the scheduler only keeps it from piling up with other work.
       const maintainOpts = lastStartupTelemetrySweepDeleted >= ONE_SHOT_RECLAIM_MIN_DELETED
         ? { throttleMs: 0 }
         : undefined;
@@ -344,8 +347,9 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     // HS-9280 — the HS-8888 per-raw-table breakdown log is gone with the raw
     // otel_* tables (the JSONL age-sweep + rollup tables are what remain now).
     // HS-8889 (§85.2.1) — periodic 24h retention sweep so a long-lived session
-    // doesn't accumulate telemetry rows unbounded between restarts. Off-loop via
-    // the §75 scheduler; the timer is `unref`'d and cleared on shutdown.
+    // doesn't accumulate telemetry rows unbounded between restarts. Queued through
+    // the §75 scheduler (HS-9521: queued, NOT off-loop — the sweep runs on the event
+    // loop); the timer is `unref`'d and cleared on shutdown.
     startupMark('post-startup: starting telemetry retention timer');
     try {
       const { startTelemetryRetentionTimer } = await import('./telemetryRetentionTimer.js');
@@ -356,8 +360,9 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     // HS-9420 (docs/128) — periodic idle-close sweep for the bounded PGLite
     // cluster cache. Reclaims telemetry (and other) clusters that went idle after
     // a burst, so `external` (WASM heap) can't creep to the OOM ceiling over a
-    // long session. Off-loop, `unref`'d, cleared on shutdown; complements the
-    // on-open LRU cap + headroom guard in `db/connection.ts`.
+    // long session. Queued via §75 (HS-9521: queued, NOT off-loop), `unref`'d,
+    // cleared on shutdown; complements the on-open LRU cap + headroom guard in
+    // `db/connection.ts`.
     startupMark('post-startup: starting cluster-eviction sweep');
     try {
       const { startClusterEvictionTimer } = await import('./db/connection.js');
@@ -375,7 +380,8 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     }
     // HS-9110 (docs/100 §100.2.1(a)) — periodic server-side worker-pool reconcile
     // so a headless target keeps self-healing/scaling with no UI. Gated on the
-    // server-readable headless-pool enable + a live channel; off-loop via §75;
+    // server-readable headless-pool enable + a live channel; queued via §75
+    // (HS-9521: queued, NOT off-loop);
     // unref'd + cleared on shutdown.
     try {
       const { startPoolReconcileTimer } = await import('./workers/poolReconcileTimer.js');
