@@ -50,6 +50,155 @@ const BOOK_OPEN_TEXT_SVG: SafeHtml = <svg {...LUCIDE_14}><path d="M12 7v14"/><pa
  *  the §49 "(empty)" placeholder. Returns `null` when no non-empty note
  *  exists. */
 
+/**
+ * HS-9552 — insert `node` at the menu's backlog-separator anchor.
+ *
+ * Both async sections below (push-to-backend, dispatch-to-worker) resolve AFTER the
+ * menu is built, so they cannot simply append — they have to land above the
+ * backlog/archive group. Anchored on the `.context-menu-separator-backlog` marker
+ * class rather than a positional index: HS-8414 added a separator higher up the menu
+ * and shifted `separators[1]`, which silently misplaced the Push items between Status
+ * and Up Next. Falls back to appending if the anchor is gone.
+ */
+function insertAtBacklogAnchor(menu: HTMLElement, node: HTMLElement): void {
+  const anchor = menu.querySelector<HTMLElement>('.context-menu-separator-backlog');
+  if (anchor) menu.insertBefore(node, anchor);
+  else menu.appendChild(node);
+}
+
+/**
+ * HS-8339 — Provide Feedback, for a ticket whose most recent note is a FEEDBACK
+ * NEEDED / IMMEDIATE FEEDBACK NEEDED prompt. Mirrors the inline link button in the
+ * detail panel's notes list, so the dialog can be opened from the list without first
+ * selecting the ticket and scrolling to the bottom of its notes.
+ *
+ * Single-selection only — the dialog targets one ticket. Deliberately adds NO
+ * trailing separator: the megaphone icon already anchors the item visually, and the
+ * separator count feeds the Push-to-backend insertion below.
+ */
+function addFeedbackItem(menu: HTMLElement, ticket: Ticket): void {
+  if (state.selectedIds.size !== 1 || !hasPendingFeedback(ticket)) return;
+  const notes = parseNotesJson(ticket.notes);
+  const feedback = getTicketFeedbackState(notes);
+  if (feedback === null) return;
+  addActionItem(menu, 'Provide Feedback', () => {
+    // HS-8603 — auto-load the saved draft for this note (if any) rather than opening
+    // a blank form. HS-8836 — same prev/next context nav as the reader.
+    const nav = feedback.noteId === '' ? undefined : buildFeedbackNav(
+      { ticketNumber: ticket.ticket_number, ticketTitle: ticket.title, detailsMarkdown: ticket.details, notes },
+      feedback.noteId,
+    );
+    void openFeedbackDialogForNote(ticket.id, ticket.ticket_number, feedback.prompt, feedback.noteId, nav);
+  }, { icon: MEGAPHONE_SVG });
+}
+
+/**
+ * HS-8401 — Read Latest Note, opening the §49 reader on the most recent note.
+ * Single-selection only; the overlay targets one note at a time.
+ *
+ * Two refinements are load-bearing and easy to undo by accident:
+ * - **HS-8841** — with no non-empty note it falls back to reading the Details and
+ *   relabels to "Read Description", so the label matches what actually opens. It is
+ *   disabled only when there is NEITHER a note nor a description.
+ * - **HS-9526** — system/status notes (a claim-lease reclaim) are filtered out. They
+ *   are bookkeeping, not content: surfacing one as "the latest note" would read the
+ *   user a line about lease state instead of the note they wanted.
+ *
+ * The open itself goes through `openLatestNoteReader` so this item and the spacebar
+ * shortcut cannot diverge (HS-8830), and the nav list is the combined
+ * [Details, ...notes] one so the chevrons reach the Details too (HS-8415 / HS-8598).
+ */
+function addReadNoteItem(menu: HTMLElement, ticket: Ticket): void {
+  if (state.selectedIds.size !== 1) return;
+  const parsedNotes = parseNotesJson(ticket.notes);
+  const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '' && !isSystemStatusNote(n.text));
+  const latestNote = nonEmptyNotes.length > 0 ? nonEmptyNotes[nonEmptyNotes.length - 1] : null;
+  const hasDescription = ticket.details.trim() !== '';
+  const readTarget: 'note' | 'details' | null =
+    latestNote !== null ? 'note' : (hasDescription ? 'details' : null);
+  const label = readTarget === 'details' ? 'Read Description' : 'Read Latest Note';
+  addActionItem(menu, label, () => {
+    openLatestNoteReader(ticket);
+  }, { icon: BOOK_OPEN_TEXT_SVG, disabled: readTarget === null });
+}
+
+/**
+ * A `Push to <backend>` row per configured backend, for an unsynced single-ticket selection.
+ *
+ * Async: the backends list is fetched after the menu is already on screen, so the
+ * rows land at the backlog anchor. Fire-and-forget on failure — `api()` already
+ * surfaces a network-error popup, and swallowing here stops a transient `/backends`
+ * miss on right-click from leaking as an unhandled rejection (which also trips
+ * vitest's unhandled-error guard in tests that open the menu with no server).
+ */
+function addPushToBackendItems(menu: HTMLElement, ticket: Ticket): void {
+  if (state.selectedIds.size !== 1 || ticket.id in syncedTicketMap) return;
+  void getBackends().then(backends => {
+    if (backends.length === 0) return;
+    insertAtBacklogAnchor(menu, toElement(<div className="context-menu-separator"></div>));
+    for (const b of backends) {
+      // A fixed external-link glyph rather than the plugin-provided manifest icon:
+      // the row used to `raw(b.icon)` a string from the manifest, and splicing
+      // arbitrary plugin HTML into the menu is an unnecessary injection surface for
+      // what is a uniform "open external" action.
+      const item = toElement(
+        <div className="context-menu-item">
+          <span className="dropdown-icon">{ICON_EXTERNAL_LINK}</span>
+          <span className="context-menu-label">Push to {b.name}</span>
+        </div>
+      );
+      item.addEventListener('click', async () => {
+        closeContextMenu();
+        try {
+          const result = await pushTicketToBackend(b.id, ticket.id);
+          // HS-8094 — `openExternalUrl`, not `window.open`, which silently no-ops
+          // under Tauri's WKWebView while still passing Playwright/Chromium tests.
+          if (result.remoteUrl != null && result.remoteUrl !== '') openExternalUrl(result.remoteUrl);
+          void loadTickets();
+        } catch (e) {
+          console.error('Failed to push ticket:', e);
+        }
+      });
+      insertAtBacklogAnchor(menu, item);
+    }
+  }).catch(() => { /* see the doc comment — deliberately swallowed */ });
+}
+
+/**
+ * HS-8974 — Recall claim (docs/92 §92.7): force-release selected tickets currently
+ * held by a worker, back into the self-claimable pool. Shown only when at least one
+ * selected ticket is claimed, per the ≤5 s claims poll.
+ */
+function addRecallClaimItem(menu: HTMLElement): void {
+  const claimed = Array.from(state.selectedIds).filter(id => claimForTicket(id) !== undefined);
+  if (claimed.length === 0) return;
+  const label = claimed.length === 1 ? 'Recall claim' : `Recall ${String(claimed.length)} claims`;
+  addActionItem(menu, label, () => {
+    void Promise.all(claimed.map(id => releaseTicket(id))).then(() => {
+      showToast(claimed.length === 1 ? 'Recalled — back in the pool' : `Recalled ${String(claimed.length)} tickets`);
+      void loadTickets();
+    });
+  }, { icon: ICON_X_CIRCLE });
+}
+
+/**
+ * HS-8964 — "Dispatch to worker…" (docs/92 §92.2), the Tauri-safe fallback for
+ * drag-to-tile. Only when a pool with live (idle/working) workers exists; dispatches
+ * via claim-by-id (HS-8862). Async like the push block, so it inserts at the anchor.
+ */
+function addDispatchToWorkerItem(menu: HTMLElement): void {
+  const dispatchIds = Array.from(state.selectedIds);
+  void getWorkerPool().then(pool => {
+    const live = pool.workers.filter(w => w.state === 'idle' || w.state === 'working');
+    if (live.length === 0 || dispatchIds.length === 0) return;
+    const subItems: SubItem[] = live.map(w => ({
+      label: w.currentTicket !== null ? `${w.label} (busy)` : w.label,
+      action: () => { void dispatchAndReport(w.worker, w.label, dispatchIds).then(() => { void loadTickets(); }); },
+    }));
+    insertAtBacklogAnchor(menu, buildSubmenuItem('Dispatch to worker', subItems, ICON_SEND));
+  }).catch(() => { /* fire-and-forget — no pool / transient miss → no submenu */ });
+}
+
 export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   e.preventDefault();
   closeContextMenu();
@@ -87,75 +236,8 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
 
   const menu = toElement(<div className="context-menu" style={`top:${e.clientY}px;left:${e.clientX}px`}></div>);
 
-  // HS-8339 — Provide Feedback shortcut for tickets whose most recent note
-  // is a FEEDBACK NEEDED / IMMEDIATE FEEDBACK NEEDED prompt. Mirrors the
-  // inline link button in the detail panel's notes list so the user can
-  // open the dialog from the ticket list without first selecting the
-  // ticket and scrolling to the bottom of its notes. Single-selection only —
-  // the dialog targets one ticket at a time. No trailing separator so the
-  // separator-count-based insertion logic in the Push-to-backend async block
-  // below stays balanced; the megaphone icon already visually anchors the
-  // item.
-  if (state.selectedIds.size === 1 && hasPendingFeedback(ticket)) {
-    const notes = parseNotesJson(ticket.notes);
-    const feedback = getTicketFeedbackState(notes);
-    if (feedback !== null) {
-      addActionItem(menu, 'Provide Feedback', () => {
-        // HS-8603 — auto-load the saved draft for this note (if any) instead
-        // of opening a blank form. `openFeedbackDialogForNote` fetches the
-        // ticket's drafts + picks the match before showing the dialog.
-        // HS-8836 — give the dialog the same prev/next context nav as the reader.
-        const nav = feedback.noteId === '' ? undefined : buildFeedbackNav(
-          { ticketNumber: ticket.ticket_number, ticketTitle: ticket.title, detailsMarkdown: ticket.details, notes },
-          feedback.noteId,
-        );
-        void openFeedbackDialogForNote(ticket.id, ticket.ticket_number, feedback.prompt, feedback.noteId, nav);
-      }, { icon: MEGAPHONE_SVG });
-    }
-  }
-
-  // HS-8401 — Read Latest Note. Single-selection only; the §49
-  // reader overlay targets one note at a time. Disabled when the
-  // ticket has no non-empty notes (placeholder notes with empty text
-  // count as "no notes" — opening one would surface the reader's
-  // "(empty)" placeholder which surprises the user). Opens the
-  // overlay anchored on the most recent non-empty note's text +
-  // created_at; the overlay's own dismiss / Esc / backdrop-click
-  // behavior is unchanged.
-  // HS-8415 / HS-8598 — pass a `navigation` slot built from the unified
-  // [Details, ...non-empty notes] list (via `buildCombinedReaderEntries`)
-  // so the reader's chevrons / ArrowUp+Down can step from the latest note
-  // back through earlier notes AND into the ticket Details — full parity
-  // with the per-note book-icon trigger in `noteRenderer.tsx`. Pre-fix
-  // (HS-8415) the nav list was built from notes ONLY and gated on `> 1`
-  // note, so a ticket with a single note opened with no chevrons and the
-  // Details were unreachable from "Read Latest Note" (HS-8598). Including
-  // Details means a single-note ticket that has Details now also gets
-  // chevrons (combined length is 2). HS-8841 — when there is no non-empty
-  // note, the item falls back to reading the Details (relabeled "Read
-  // Description") and is disabled ONLY when there is neither a note nor a
-  // description.
-  if (state.selectedIds.size === 1) {
-    const parsedNotes = parseNotesJson(ticket.notes);
-    // HS-9526 — system/status notes (a claim-lease reclaim) are not content. Surfacing
-  // one as "the latest note" would read the user a line about lease bookkeeping
-  // instead of the note they actually wanted.
-  const nonEmptyNotes = parsedNotes.filter((n) => n.text.trim() !== '' && !isSystemStatusNote(n.text));
-    const latestNote = nonEmptyNotes.length > 0 ? nonEmptyNotes[nonEmptyNotes.length - 1] : null;
-    // HS-8841 — when the ticket has no non-empty note, fall back to reading the
-    // Details (description). The item is now only disabled when there is NEITHER
-    // a note NOR a description. Relabel to "Read Description" in the fallback so
-    // the menu item name matches what it actually opens.
-    const hasDescription = ticket.details.trim() !== '';
-    const readTarget: 'note' | 'details' | null =
-      latestNote !== null ? 'note' : (hasDescription ? 'details' : null);
-    const label = readTarget === 'details' ? 'Read Description' : 'Read Latest Note';
-    // HS-8830 — the open logic is shared with the spacebar shortcut via
-    // `openLatestNoteReader` so the menu item and the key behave identically.
-    addActionItem(menu, label, () => {
-      openLatestNoteReader(ticket);
-    }, { icon: BOOK_OPEN_TEXT_SVG, disabled: readTarget === null });
-  }
+  addFeedbackItem(menu, ticket);
+  addReadNoteItem(menu, ticket);
 
   // HS-8414 — separator under the read / feedback inspection block when
   // either item was rendered. Visually groups the two top affordances
@@ -262,93 +344,10 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
     addActionItem(menu, 'Mark as Unread', () => { void toggleReadState(Array.from(state.selectedIds)); }, { icon: ICON_EYE_OFF });
   }
 
-  // Push to remote backend (only for unsynced single-ticket selection)
-  if (state.selectedIds.size === 1 && !(ticket.id in syncedTicketMap)) {
-    void getBackends().then(backends => {
-      if (backends.length === 0) return;
-      // Insert before the backlog separator. Anchored on the
-      // `.context-menu-separator-backlog` marker (HS-8414) rather than a
-      // positional index — adding a separator higher up the menu (e.g.
-      // the HS-8414 separator under Read Latest Note / Provide Feedback)
-      // used to shift `separators[1]` and silently misplace the Push
-      // items between Status and Up Next.
-      const insertBefore = menu.querySelector<HTMLElement>('.context-menu-separator-backlog');
-      const pushSep = toElement(<div className="context-menu-separator"></div>);
-      if (insertBefore) menu.insertBefore(pushSep, insertBefore);
-      else menu.appendChild(pushSep);
-      for (const b of backends) {
-        // Use a fixed external-link glyph for every "Push to {backend}"
-        // item rather than the plugin-provided manifest icon. Pre-fix
-        // the row used `raw(b.icon)` against a string from the plugin
-        // manifest — even though plugins are user-installed, splicing
-        // arbitrary plugin HTML into the menu DOM is an unnecessary
-        // injection surface for what's already a uniform "open external"
-        // action.
-        const item = toElement(
-          <div className="context-menu-item">
-            <span className="dropdown-icon">{ICON_EXTERNAL_LINK}</span>
-            <span className="context-menu-label">Push to {b.name}</span>
-          </div>
-        );
-        item.addEventListener('click', async () => {
-          closeContextMenu();
-          try {
-            const result = await pushTicketToBackend(b.id, ticket.id);
-            // HS-8094 — route through `openExternalUrl` so the link works
-            // under Tauri's WKWebView (where bare `window.open` silently
-            // no-ops while still passing Playwright/Chromium tests).
-            if (result.remoteUrl != null && result.remoteUrl !== '') openExternalUrl(result.remoteUrl);
-            void loadTickets();
-          } catch (e) {
-            console.error('Failed to push ticket:', e);
-          }
-        });
-        if (insertBefore) menu.insertBefore(item, insertBefore);
-        else menu.appendChild(item);
-      }
-    }).catch(() => {
-      // Fire-and-forget — the api() helper already surfaces a network-
-      // error popup for genuine failures. Swallow here so a transient
-      // /backends miss on right-click doesn't leak as an unhandled
-      // rejection (and so tests that exercise the contextmenu without a
-      // running server don't trip vitest's unhandled-error guard).
-    });
-  }
+  addPushToBackendItems(menu, ticket);
 
-  // HS-8974 — Recall claim (docs/92 §92.7): force-release any selected ticket
-  // currently held by a worker, sending it back to the self-claimable pool. Shown
-  // only when at least one selected ticket is claimed (per the ≤5 s claims poll).
-  const claimedSelected = Array.from(state.selectedIds).filter(id => claimForTicket(id) !== undefined);
-  if (claimedSelected.length > 0) {
-    const recallLabel = claimedSelected.length === 1 ? 'Recall claim' : `Recall ${String(claimedSelected.length)} claims`;
-    addActionItem(menu, recallLabel, () => {
-      void Promise.all(claimedSelected.map(id => releaseTicket(id))).then(() => {
-        showToast(claimedSelected.length === 1 ? 'Recalled — back in the pool' : `Recalled ${String(claimedSelected.length)} tickets`);
-        void loadTickets();
-      });
-    }, { icon: ICON_X_CIRCLE });
-  }
-
-  // HS-8964 — "Dispatch to worker…" submenu (docs/92 §92.2, the Tauri-safe
-  // fallback for drag-to-tile). Only appears when a worker pool with live
-  // (idle/working) workers exists; dispatches the selected tickets to the chosen
-  // worker via claim-by-id (HS-8862). Async like the Push block — inserted before
-  // the backlog separator once the pool fetch resolves.
-  {
-    const dispatchIds = Array.from(state.selectedIds);
-    void getWorkerPool().then(pool => {
-      const live = pool.workers.filter(w => w.state === 'idle' || w.state === 'working');
-      if (live.length === 0 || dispatchIds.length === 0) return;
-      const subItems: SubItem[] = live.map(w => ({
-        label: w.currentTicket !== null ? `${w.label} (busy)` : w.label,
-        action: () => { void dispatchAndReport(w.worker, w.label, dispatchIds).then(() => { void loadTickets(); }); },
-      }));
-      const item = buildSubmenuItem('Dispatch to worker', subItems, ICON_SEND);
-      const insertBefore = menu.querySelector<HTMLElement>('.context-menu-separator-backlog');
-      if (insertBefore) menu.insertBefore(item, insertBefore);
-      else menu.appendChild(item);
-    }).catch(() => { /* fire-and-forget — no pool / transient miss → no submenu */ });
-  }
+  addRecallClaimItem(menu);
+  addDispatchToWorkerItem(menu);
 
   // Anchor for the Push-to-backend insertion below. The marker class
   // lets the async backends-fetch find this separator by name instead
