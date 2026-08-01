@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { getPlugin } from '../aiTools/registry.js';
+import { AI_TOOL_AUTO, getPlugin } from '../aiTools/registry.js';
 import { applyAiInstructions, ensureSkills, getFileSettings, getTags, listStrandedBackupRoots, revealStrandedBackupRoot, updateSettings } from '../api/index.js';
 import { defaultAutoContextFor } from '../autoContextDefaults.js';
 import { defaultProjectName } from '../defaultProjectName.js';
@@ -158,18 +158,87 @@ function bindDialogOpenClose() {
 
 // --- General tab ---
 
+/**
+ * HS-9546 — re-render both AI-tool surfaces (the HS-9517 enable list and the
+ * `ai_tool` picker) for the CURRENT gate value.
+ *
+ * Module-level and parameterized, because its two callers have different lifetimes:
+ * the dialog's per-open hydration, and the bind-once `DEV_FEATURES_CHANGED_EVENT`
+ * listener. HS-9541 bridged that gap with a mutable `refreshAiToolSurfaces` closure
+ * assigned during hydration — a workaround for the two lifetimes living in one
+ * 380-line function, which is exactly the shape that let HS-9515 empty the listener
+ * unnoticed. Nothing here needs to be captured: `state.settings` and the dev gate are
+ * both read at call time.
+ *
+ * `currentTool` is passed rather than read from the select because ORDER MATTERS
+ * during hydration — availability must be applied BEFORE `.value` is assigned (a
+ * hidden-but-present option is still assignable), so at that moment the select does
+ * not yet hold the tool. The listener, firing later, passes the select's own value.
+ *
+ * Safe to call at any time, including before the dialog has ever been opened:
+ * `applyAiToolAvailability` keeps a pristine `data-baseLabel` so repeated applies do
+ * not compound.
+ */
+/** Debounce for the file-backed text settings. One constant so the four inputs below
+ *  cannot drift apart. */
+const SETTING_INPUT_DEBOUNCE_MS = 800;
+
+/**
+ * HS-9546 — bind one debounced, file-backed text setting.
+ *
+ * The four inputs this replaces (app name, ticket prefix, worklist preamble,
+ * integration gate) were ~18 near-identical lines each: same timeout variable, same
+ * 800 ms debounce, same `persistScopedSetting`, same hint write. Only the key, the
+ * trimming, the optional validation and the confirmation message differed — so those
+ * are the parameters, and everything else stops being repeated four times.
+ *
+ * `validate` returning a string means "reject and show this instead": the value is
+ * NOT persisted. Only the ticket prefix uses it today, but the ordering (validate
+ * before persist) is the part worth having in one place.
+ */
+function bindDebouncedSettingInput(opts: {
+  input: HTMLInputElement | HTMLTextAreaElement;
+  hint: HTMLElement;
+  key: string;
+  /** Trim before validating, persisting and messaging. The preamble keeps whitespace. */
+  trim?: boolean;
+  validate?: (value: string) => string | null;
+  message: (value: string) => string;
+  /** Extra work after a successful save (title + tab refresh, for the app name). */
+  onSaved?: (value: string) => void;
+}): void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  opts.input.addEventListener('input', () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      const val = opts.trim === true ? opts.input.value.trim() : opts.input.value;
+      const rejection = opts.validate?.(val) ?? null;
+      if (rejection !== null) { opts.hint.textContent = rejection; return; }
+      void persistScopedSetting(opts.key, val).then(() => {
+        opts.onSaved?.(val);
+        opts.hint.textContent = opts.message(val);
+      });
+    }, SETTING_INPUT_DEBOUNCE_MS);
+  });
+}
+
+function syncAiToolSurfaces(aiToolSelect: HTMLSelectElement | null, currentTool: string): void {
+  const projectSettings = state.settings as unknown as Record<string, unknown>;
+  const showUnreleased = isDevEnabled('dev_unreleased_ai_tools');
+  const refreshPicker = (): void => {
+    if (aiToolSelect !== null) {
+      applyAiToolAvailability(aiToolSelect, projectSettings, currentTool, showUnreleased);
+    }
+  };
+  syncAiToolsSection(projectSettings, showUnreleased, (toolId, enabled) => {
+    projectSettings[`ai_tool_enabled:${toolId}`] = String(enabled);
+    refreshPicker();
+  });
+  refreshPicker();
+}
+
 function bindGeneralTab() {
   const settingsBtn = byId('settings-btn');
-
-  /**
-   * HS-9541 — re-render the two AI-tool surfaces (the enable list + the `ai_tool`
-   * picker) with the CURRENT gate value.
-   *
-   * Assigned during each dialog hydration and called by the dev-features listener,
-   * which is registered once and so cannot close over that hydration's scope. Null
-   * until the dialog has been opened at least once — nothing to refresh before then.
-   */
-  let refreshAiToolSurfaces: (() => void) | null = null;
 
   const trashInput = byId<HTMLInputElement>('settings-trash-days');
   const verifiedInput = byId<HTMLInputElement>('settings-verified-days');
@@ -217,8 +286,17 @@ function bindGeneralTab() {
     agentBackendDerived.textContent = isAuto ? ` (currently: ${TRANSPORT_LABEL[deriveDefaultTransport(tool)]})` : '';
   };
 
-  // Populate values + load file-settings fields when dialog opens.
-  settingsBtn.addEventListener('click', () => {
+  /**
+   * Everything that runs on EVERY dialog open, named so the seam is visible.
+   *
+   * HS-9546 — this function and the listener registrations below it have different
+   * lifetimes: this re-runs per open, they are wired once at boot. Interleaved and
+   * unnamed, that difference is invisible — which is how HS-9515 came to empty a
+   * listener body that depended on a value produced in here, 110 lines away, without
+   * anyone noticing (HS-9541). Keep new per-open population in here, and new
+   * listener wiring below.
+   */
+  const hydrateGeneralTab = (): void => {
     trashInput.value = String(state.settings.trash_cleanup_days);
     verifiedInput.value = String(state.settings.verified_cleanup_days);
     autoOrderCheckbox.checked = state.settings.auto_order;
@@ -250,24 +328,7 @@ function bindGeneralTab() {
       // visible so an existing working project is never silently switched.
       // HS-9517 — the enable list and the picker filter share one settings snapshot, so
       // a tool ticked here becomes selectable below without reopening the dialog.
-      const projectSettings = state.settings as unknown as Record<string, unknown>;
-      // HS-9541 — read the gate at CALL time, not once at hydration: the user can flip
-      // "unreleased AI tools" while this dialog is open, and both surfaces below have to
-      // answer with the new value (see the DEV_FEATURES_CHANGED_EVENT listener).
-      const refreshAiToolPicker = (): void => {
-        if (aiToolSelect !== null) {
-          applyAiToolAvailability(aiToolSelect, projectSettings, tool, isDevEnabled('dev_unreleased_ai_tools'));
-        }
-      };
-      const refreshAiTools = (): void => {
-        syncAiToolsSection(projectSettings, isDevEnabled('dev_unreleased_ai_tools'), (toolId, enabled) => {
-          projectSettings[`ai_tool_enabled:${toolId}`] = String(enabled);
-          refreshAiToolPicker();
-        });
-        refreshAiToolPicker();
-      };
-      refreshAiToolSurfaces = refreshAiTools;
-      refreshAiTools();
+      syncAiToolSurfaces(aiToolSelect, tool);
       if (aiToolSelect !== null) aiToolSelect.value = tool;
       // HS-9497 — each declared preference carries its own default (agy off, codex ON
       // per docs/121 O4), so the polarity lives in the plugin rather than here.
@@ -277,7 +338,8 @@ function bindGeneralTab() {
       if (agentBackendSelect !== null) agentBackendSelect.value = agentBackendSelectValue(fs.agent_backend);
       updateAgentBackendDerived();
     });
-  });
+  };
+  settingsBtn.addEventListener('click', hydrateGeneralTab);
 
   // Trash cleanup days
   let trashTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -380,7 +442,7 @@ function bindGeneralTab() {
   // appeared. An empty listener type-checks and lints clean, which is why a test now
   // asserts the re-render rather than the subscription.
   document.addEventListener(DEV_FEATURES_CHANGED_EVENT, () => {
-    refreshAiToolSurfaces?.();
+    syncAiToolSurfaces(aiToolSelect, aiToolSelect?.value ?? AI_TOOL_AUTO);
   });
 
   aiToolSelect?.addEventListener('change', () => {
@@ -416,78 +478,46 @@ function bindGeneralTab() {
     void persistScopedSetting('notify_completed', notifyCompSelect.value);
   });
 
-  // App name (file-based setting)
-  const appNameHint = byId('settings-app-name-hint');
-  let appNameTimeout: ReturnType<typeof setTimeout> | null = null;
-  appNameInput.addEventListener('input', () => {
-    if (appNameTimeout) clearTimeout(appNameTimeout);
-    appNameTimeout = setTimeout(() => {
-      const val = appNameInput.value.trim();
-      void persistScopedSetting('appName', val).then(() => {
-        // HS-8451 — `setAppTitle` now also pushes the title through to
-        // the native Tauri window via `set_window_title`, so the
-        // "Restart the desktop app to update the title bar" hint that
-        // used to live here is obsolete for the title-bar case.
-        setAppTitle(val || 'Hot Sheet');
-        appNameHint.textContent = val ? 'Saved.' : 'Using default name.';
-        // HS-8823 — the project tab label is `ProjectInfo.name`, which the
-        // server derives from `appName` (falling back to the dir name). Re-fetch
-        // the project list so the renamed tab updates immediately instead of
-        // only after a reload. Dynamic import avoids a static settings↔tabs
-        // cycle (matches the other lazy imports in this file).
-        void import('./projectTabs.js').then(({ refreshProjectTabs }) => refreshProjectTabs()).catch(() => { /* tab refresh is best-effort */ });
-      });
-    }, 800);
+  // The four file-backed text settings. All debounced + persisted identically; only
+  // the key, trimming, validation and message differ (HS-9546).
+  bindDebouncedSettingInput({
+    input: appNameInput, hint: byId('settings-app-name-hint'), key: 'appName', trim: true,
+    message: (v) => v ? 'Saved.' : 'Using default name.',
+    onSaved: (v) => {
+      // HS-8451 — `setAppTitle` also pushes the title to the native Tauri window via
+      // `set_window_title`, so the old "restart the desktop app" hint is obsolete.
+      setAppTitle(v || 'Hot Sheet');
+      // HS-8823 — the tab label is `ProjectInfo.name`, derived server-side from
+      // `appName`, so re-fetch the project list to rename the tab now rather than on
+      // the next reload. Dynamic import avoids a static settings↔tabs cycle.
+      void import('./projectTabs.js').then(({ refreshProjectTabs }) => refreshProjectTabs()).catch(() => { /* best-effort */ });
+    },
   });
 
-  // Ticket prefix (file-based setting)
-  const prefixHint = byId('settings-ticket-prefix-hint');
-  let prefixTimeout: ReturnType<typeof setTimeout> | null = null;
-  prefixInput.addEventListener('input', () => {
-    if (prefixTimeout) clearTimeout(prefixTimeout);
-    prefixTimeout = setTimeout(() => {
-      const val = prefixInput.value.trim();
-      if (val !== '' && !/^[a-zA-Z0-9_-]{1,10}$/.test(val)) {
-        prefixHint.textContent = 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.';
-        return;
-      }
-      void persistScopedSetting('ticketPrefix', val).then(() => {
-        prefixHint.textContent = val ? `New tickets will use "${val}-" prefix.` : 'Using default prefix (HS).';
-      });
-    }, 800);
+  bindDebouncedSettingInput({
+    input: prefixInput, hint: byId('settings-ticket-prefix-hint'), key: 'ticketPrefix', trim: true,
+    validate: (v) => v !== '' && !/^[a-zA-Z0-9_-]{1,10}$/.test(v)
+      ? 'Invalid: use up to 10 alphanumeric, hyphen, or underscore characters.'
+      : null,
+    message: (v) => v ? `New tickets will use "${v}-" prefix.` : 'Using default prefix (HS).',
   });
 
-  // HS-8917 — worklist preamble (file-based setting). Saving triggers a worklist
-  // re-sync server-side; the hint confirms the save.
-  const worklistPreambleHint = byId('settings-worklist-preamble-hint');
-  let worklistPreambleTimeout: ReturnType<typeof setTimeout> | null = null;
-  worklistPreambleInput.addEventListener('input', () => {
-    if (worklistPreambleTimeout) clearTimeout(worklistPreambleTimeout);
-    worklistPreambleTimeout = setTimeout(() => {
-      const val = worklistPreambleInput.value;
-      void persistScopedSetting('worklist_preamble', val).then(() => {
-        worklistPreambleHint.textContent = val.trim()
-          ? 'Saved — added near the top of worklist.md.'
-          : 'Cleared — no preamble in worklist.md.';
-      });
-    }, 800);
+  // HS-8917 — saving triggers a worklist re-sync server-side. NOT trimmed: leading
+  // whitespace in a preamble is the author's business.
+  bindDebouncedSettingInput({
+    input: worklistPreambleInput, hint: byId('settings-worklist-preamble-hint'), key: 'worklist_preamble',
+    message: (v) => v.trim()
+      ? 'Saved — added near the top of worklist.md.'
+      : 'Cleared — no preamble in worklist.md.',
   });
 
-  // HS-9099 — the worker integration gate command (docs/106 §106.2). Debounced
-  // save through the scoped-setting path; an empty value clears it (back to the
-  // agent-runs-gates default).
-  const integrationGateHint = byId('settings-integration-gate-hint');
-  let integrationGateTimeout: ReturnType<typeof setTimeout> | null = null;
-  integrationGateInput.addEventListener('input', () => {
-    if (integrationGateTimeout) clearTimeout(integrationGateTimeout);
-    integrationGateTimeout = setTimeout(() => {
-      const val = integrationGateInput.value;
-      void persistScopedSetting('integrationGate', val).then(() => {
-        integrationGateHint.textContent = val.trim()
-          ? 'Saved — runs after each worker-branch merge (rolls back on failure).'
-          : 'Cleared — the integrating agent runs the gates itself.';
-      });
-    }, 800);
+  // HS-9099 — the worker integration gate command (docs/106 §106.2). Empty clears it,
+  // back to the agent-runs-gates default.
+  bindDebouncedSettingInput({
+    input: integrationGateInput, hint: byId('settings-integration-gate-hint'), key: 'integrationGate',
+    message: (v) => v.trim()
+      ? 'Saved — runs after each worker-branch merge (rolls back on failure).'
+      : 'Cleared — the integrating agent runs the gates itself.',
   });
 
   // Check for Updates button
