@@ -14,7 +14,7 @@
  *
  * The ticket proposed bumping a counter from `queryInstrumentation`'s proxy on
  * "any mutating statement". That requires classifying SQL by hand, and the
- * classifier is the whole correctness argument: one unrecognised statement shape
+ * classifier is the whole correctness argument: one unrecognized statement shape
  * and a backup is silently skipped after a real write. Data loss, from a string
  * comparison.
  *

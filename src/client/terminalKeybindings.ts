@@ -40,7 +40,7 @@ function detectIsMac(): boolean {
 /**
  * True iff the event carries the platform-correct primary modifier (Cmd on
  * macOS, Ctrl elsewhere) with no conflicting Alt/Shift and without the
- * other-platform modifier also held. Centralised so every cross-xterm shortcut
+ * other-platform modifier also held. Centralized so every cross-xterm shortcut
  * (clear, find, jump, future ones) follows the same matching rules.
  */
 function hasPlatformPrimaryModifier(e: KeyLikeEvent, isMac: boolean): boolean {

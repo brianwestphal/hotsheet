@@ -45,7 +45,7 @@ describe('device pairing crypto (HS-9033)', () => {
     const back = readP12(Buffer.from(p12Base64, 'base64'), 'pairpw');
     expect(verifyClientCert(ca.caCertPem, back.certPem)).toBe(true);
     expect(readIdentity(back.certPem)).toEqual({ clientId: 'cid-2', label: 'My Phone' });
-    // The CA travelled in the bundle so the import is self-contained.
+    // The CA traveled in the bundle so the import is self-contained.
     expect(back.caCertPems.length).toBeGreaterThanOrEqual(1);
     // The re-imported private key is the device's original (paired with the cert).
     expect(back.keyPem).toBe(device.privateKeyPem);

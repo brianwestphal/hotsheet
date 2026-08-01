@@ -6,7 +6,7 @@ Extend the per-prompt drilldown ([67-telemetry.md](67-telemetry.md) §67.10.3) s
 
 This is the user-visible payoff for `otel_spans` (the third PGLite table from §67.6) and the trace-payload branch of the OTLP receiver (`persistTracesPayload` in `src/db/otelWriters.ts`). Both already exist; this doc is the rendering layer that consumes them.
 
-Marked **beta** in the UI: Claude Code's upstream surface (`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`) is explicitly labelled beta and may shift attribute shapes between Claude Code releases without notice. The doc + the UI both call this out so the user knows why the trace view occasionally renders a span with `(unknown)` attributes after a Claude Code upgrade.
+Marked **beta** in the UI: Claude Code's upstream surface (`CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`) is explicitly labeled beta and may shift attribute shapes between Claude Code releases without notice. The doc + the UI both call this out so the user knows why the trace view occasionally renders a span with `(unknown)` attributes after a Claude Code upgrade.
 
 ## 68.2 Scope
 

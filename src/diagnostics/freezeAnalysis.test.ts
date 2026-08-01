@@ -45,7 +45,7 @@ describe('isBlocking', () => {
   });
 
   it('falls back to the source for entries written before the flag existed', () => {
-    // An existing log must still analyse correctly rather than silently reporting
+    // An existing log must still analyze correctly rather than silently reporting
     // zero blocking, which would read as "the problem went away".
     const legacyBeat = { ts: at('2026-07-31T00:00:00.000Z'), source: 'server-heartbeat', durationMs: 200, context: 'event-loop blocked' } as FreezeEntry;
     const legacyAsync = { ts: at('2026-07-31T00:00:00.000Z'), source: 'server-instrument-async', durationMs: 9000, context: 'fsyncDbDir:backup:5min' } as FreezeEntry;
@@ -233,7 +233,7 @@ describe('looksLikeSuspend (HS-9528)', () => {
   });
 
   it('stays silent for entries with no cpuMs rather than guessing', () => {
-    // Pre-HS-9528 logs must not be retro-labelled as suspends on no evidence.
+    // Pre-HS-9528 logs must not be retro-labeled as suspends on no evidence.
     expect(looksLikeSuspend({
       ts: '2026-07-12T01:11:19.398Z', source: 'server-instrument-async',
       durationMs: 1_027_267, context: 'pglite.exec: VACUUM',

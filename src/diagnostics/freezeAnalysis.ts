@@ -24,7 +24,7 @@ import type { FreezeEntry } from './freezeLogger.js';
 /** An entry whose `durationMs` is genuinely time the loop could not run. */
 export function isBlocking(entry: FreezeEntry): boolean {
   // Explicit flag wins. Fall back to the SOURCE for entries written before
-  // HS-9531 added the field, so an existing log still analyses correctly rather
+  // HS-9531 added the field, so an existing log still analyzes correctly rather
   // than silently reporting zero blocking.
   if (typeof entry.blocking === 'boolean') return entry.blocking;
   return entry.source === 'server-heartbeat'

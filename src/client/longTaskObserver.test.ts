@@ -149,7 +149,7 @@ describe('longTaskObserver (HS-8054)', () => {
         initLongTaskObserver();
         // HS-8164 — init line now lands on console.log, not console.error.
         // The startup line is a benign per-page-load tick; leaving it on
-        // console.error coloured every reload red in DevTools.
+        // console.error colored every reload red in DevTools.
         const initLines = logSpy.mock.calls
           .map(c => String(c[0]))
           .filter(s => /\[hotsheet longtask\] init —/.test(s));

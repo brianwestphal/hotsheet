@@ -3,7 +3,7 @@
  * §60 / HS-8235 — re-export sanity check. Confirms the four primitive
  * functions are wired through `kerfjs` and behave as documented.
  *
- * Behavioural coverage of `effect` / `computed` / `batch` lives upstream
+ * Behavioral coverage of `effect` / `computed` / `batch` lives upstream
  * in `kerfjs`'s own test suite; these tests pin only the surface contract
  * Hot Sheet relies on.
  */

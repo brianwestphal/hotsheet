@@ -32,7 +32,7 @@ export const UNNAMED_CLAIMANT = 'an unnamed worker';
  * Accepts null/undefined/blank deliberately: `claimed_by` IS nullable, and the old
  * `string`-typed parameter let a null through to be stringified by the template.
  *
- * **The prefix is invariant.** `isSystemStatusNote` recognises this note by
+ * **The prefix is invariant.** `isSystemStatusNote` recognizes this note by
  * `startsWith(CLAIM_RECLAIM_NOTE_PREFIX)`, so a wording change that moved or altered
  * the prefix would stop it being treated as a system note — silently resurrecting the
  * HS-9526 bug where a claim note masks a preceding FEEDBACK NEEDED one.

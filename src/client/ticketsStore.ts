@@ -334,7 +334,7 @@ export const ticketsSignal: ReadonlySignal<readonly Ticket[]> = computed(() =>
  * Consumers: the §61 Phase 2 column-view rewrite mounts one
  * `bindList` per visible column subscribed to a per-column derived
  * signal that pulls from this partitioner (with column-specific
- * fallback logic for the first column's unrecognised-statuses sink
+ * fallback logic for the first column's unrecognized-statuses sink
  * + the `hide_verified_column` setting that merges verified into
  * completed). See `columnView.tsx` for the consumer pattern.
  *
@@ -457,7 +457,7 @@ function applyViewFilter(
     const pri = view.split(':')[1];
     return activeScope.filter(t => t.priority === pri);
   }
-  // 'all' (or any unrecognised view): full active scope.
+  // 'all' (or any unrecognized view): full active scope.
   return activeScope;
 }
 

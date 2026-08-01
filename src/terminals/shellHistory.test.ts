@@ -48,7 +48,7 @@ describe('classifyShellCommand (HS-7965)', () => {
     expect(classifyShellCommand('Bash.EXE')).toBe('bash');
   });
 
-  it('returns null for unrecognised commands', () => {
+  it('returns null for unrecognized commands', () => {
     expect(classifyShellCommand('claude')).toBeNull();
     expect(classifyShellCommand('claude --dangerously-load-development-channels server:hotsheet-channel')).toBeNull();
     expect(classifyShellCommand('npm run dev')).toBeNull();

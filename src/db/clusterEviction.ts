@@ -377,7 +377,7 @@ export interface ClusterBudgetInput {
    * HS-9469 — the MACHINE's memory pressure, passed in (not read here) so the
    * planner stays pure. `warn` halves what the process-level term allows;
    * `critical` goes straight to the floors. Applied as a CEILING on the
-   * process-derived budget, never a licence to grow: if either signal says
+   * process-derived budget, never a license to grow: if either signal says
    * memory is tight, memory is tight.
    */
   systemPressure: 'normal' | 'warn' | 'critical';

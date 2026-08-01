@@ -148,7 +148,7 @@ describe('installStdioDisconnectHandler (HS-8447)', () => {
     // Re-attach a no-op error listener after dispose so the EPIPE-shaped
     // emit below doesn't surface as a Node "unhandled error" throw —
     // the assertion is about whether `onDisconnect` was called, not
-    // about EventEmitter's default behaviour with no listeners.
+    // about EventEmitter's default behavior with no listeners.
     stdout.on('error', () => { /* swallow */ });
     stdin.emit('end');
     stdin.emit('close');

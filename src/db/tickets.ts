@@ -465,7 +465,7 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   // by the route handler before reaching here; passing them on to placeholders
   // keeps the SQL parameterized. Both are appended only when set so callers
   // that pass no `limit` get full-result semantics (preserves pre-HS-8337
-  // behaviour for column view, custom views, cleanup queries, and the
+  // behavior for column view, custom views, cleanup queries, and the
   // backup/preview path).
   let limitClause = '';
   if (filters.limit !== undefined) {

@@ -33,7 +33,7 @@ export function readXtermTheme(): Record<string, string> {
 /** Append an 8-bit alpha to a hex color (#rgb or #rrggbb). Non-hex inputs
  *  (rgb(), hsl(), named colors) pass through unchanged — callers fall back
  *  to a hard-coded blue above in that case via the selectionBackground
- *  branch, since xterm ignores unrecognised color strings. */
+ *  branch, since xterm ignores unrecognized color strings. */
 export function withAlpha(color: string, alpha: number): string {
   const a = Math.max(0, Math.min(255, Math.round(alpha)));
   const hex = a.toString(16).padStart(2, '0');

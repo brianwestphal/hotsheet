@@ -610,7 +610,7 @@ HS-7957. Almost-full-viewport overlay (90 vw / 90 vh, max-width `min(960px, 90vw
 
 HS-7962. Throttled (≤ once / 30 days) overlay shown on app boot for npm-launched users that promotes the Tauri-installable build's embedded-terminal feature + auto-updates + native-OS integration. Suppressed entirely under Tauri (`getTauriInvoke() !== null`) — already on the upgrade target. Per-platform CTA (`Download for macOS` / `Linux` / `Windows`) deep-links to the GitHub Releases asset matching the user's OS via a lazy `https://api.github.com/repos/brianwestphal/hotsheet/releases/latest` fetch + `pickPlatformAsset(assets, platform)` matcher (macOS prefers Apple-Silicon dmg, Linux prefers AppImage, Windows prefers .exe installer). Falls back to `/releases/latest` on any failure (rate limit, no internet, asset shape changed) so the button never dead-ends.
 
-**Detection.** `detectPlatform(userAgent)` scans `Mac` / `Windows` / `Linux` (case-insensitive) and returns `null` for unrecognised UAs (suppresses the nudge rather than rendering a misleading button). `shouldShowNudge(lastShownMs, nowMs, intervalMs?)` is the pure throttle gate — true on never-shown OR `(now - lastShown) >= intervalMs`, false on the `Number.MAX_SAFE_INTEGER` "Don't show again" sentinel.
+**Detection.** `detectPlatform(userAgent)` scans `Mac` / `Windows` / `Linux` (case-insensitive) and returns `null` for unrecognized UAs (suppresses the nudge rather than rendering a misleading button). `shouldShowNudge(lastShownMs, nowMs, intervalMs?)` is the pure throttle gate — true on never-shown OR `(now - lastShown) >= intervalMs`, false on the `Number.MAX_SAFE_INTEGER` "Don't show again" sentinel.
 
 **Dismissal.** X / backdrop / CTA / View-All-Releases all write `Date.now()` (re-prompt in 30 days). Only the explicit "Don't show again" link writes the never-again sentinel.
 
@@ -638,7 +638,7 @@ HS-7964 (investigation) / HS-7965 (implementation). Each Hot Sheet terminal gets
 
 **Settings.** New per-project key `terminal_history_scope: 'per-terminal' | 'inherit'` (default `'per-terminal'`). `'inherit'` falls back to pre-fix behavior (no override). No UI in v1 — power users edit settings.json by hand.
 
-**Status:** Shipped. 25 unit tests in `shellHistory.test.ts` covering classification (path / args / .exe / case / unrecognised / empty), scope normalisation, shell-escape, fish-name sanitisation, all 4 init-file builders, and bash command rewrite (bare / with-args / already-has-rcfile / login-shell-skip / quote-escaping).
+**Status:** Shipped. 25 unit tests in `shellHistory.test.ts` covering classification (path / args / .exe / case / unrecognized / empty), scope normalisation, shell-escape, fish-name sanitisation, all 4 init-file builders, and bash command rewrite (bare / with-args / already-has-rcfile / login-shell-skip / quote-escaping).
 
 **Out of scope.** Windows PowerShell + cmd history scoping (separate ticket if asked); migration of the user's existing global history; cross-terminal recall (`atuin` does this externally); TUI-level history (Claude / vim / less own their own state); GC sweep of orphaned per-terminal init dirs (low priority — files are tiny).
 
@@ -1058,7 +1058,7 @@ HS-8662 (shipped 2026-06-05). A document-level `paste` listener (`src/client/pas
 
 **Sampled, never polled hot** (15 s TTL; `currentSystemPressure()` is synchronous and never awaits the probe — an eviction decision must not wait on a subprocess). **Asymmetric hysteresis:** increases adopted immediately, decreases must survive 3 consecutive calmer samples, because pressure is spiky and following every dip would reopen clusters about to be evicted again (churn — §128.5.2's `evictChurn` is the instrument). A failed/timed-out probe reports `normal`, adding no constraint: shrinking the cache because we failed to *measure* would be the worst failure mode.
 
-Folded in as a **ceiling on** the process-derived budget, never a licence to grow (`warn` halves the room above the floors so the floors keep their meaning; `critical` drops to them). Passed INTO `clusterBudget` as a value so the planner stays pure. 15 unit tests over the parsers + hysteresis (platform behavior testable on any host) + 3 budget-interaction cases. Known gaps in §131.6: Windows has no real signal, the macOS probe is a subprocess, and the thresholds are reasoned rather than tuned.
+Folded in as a **ceiling on** the process-derived budget, never a license to grow (`warn` halves the room above the floors so the floors keep their meaning; `critical` drops to them). Passed INTO `clusterBudget` as a value so the planner stays pure. 15 unit tests over the parsers + hysteresis (platform behavior testable on any host) + 3 budget-interaction cases. Known gaps in §131.6: Windows has no real signal, the macOS probe is a subprocess, and the thresholds are reasoned rather than tuned.
 
 ---
 

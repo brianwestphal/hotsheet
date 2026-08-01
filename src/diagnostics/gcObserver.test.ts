@@ -41,7 +41,7 @@ describe('gcKindName', () => {
     expect(gcKindName(constants.NODE_PERFORMANCE_GC_WEAKCB)).toBe('weak-callback');
   });
 
-  it('degrades to "unknown" for an absent or unrecognised kind', () => {
+  it('degrades to "unknown" for an absent or unrecognized kind', () => {
     // V8 can add kinds; an unnamed one must still produce a usable log line.
     expect(gcKindName(undefined)).toBe('unknown');
     expect(gcKindName(9999)).toBe('unknown');

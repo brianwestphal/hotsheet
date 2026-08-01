@@ -26,7 +26,7 @@ The npm-launched flow is the easiest way to try Hot Sheet (`npx hotsheet`) but l
 
 **Client mode** — `getTauriInvoke()` returns `null` outside Tauri's WKWebView. When non-null the nudge skips entirely.
 
-**OS platform** — pure helper `detectPlatform(userAgent)` scans `navigator.userAgent` for `Mac` / `Windows` / `Linux` (case-insensitive). Returns `null` for unrecognised user agents (rare-OS browsers, custom embeds), in which case the nudge skips rather than rendering a misleading "Download for {something}" button.
+**OS platform** — pure helper `detectPlatform(userAgent)` scans `navigator.userAgent` for `Mac` / `Windows` / `Linux` (case-insensitive). Returns `null` for unrecognized user agents (rare-OS browsers, custom embeds), in which case the nudge skips rather than rendering a misleading "Download for {something}" button.
 
 **Throttle gate** — pure helper `shouldShowNudge(lastShownMs, nowMs, intervalMs?)`. True when `lastShownMs === null` (never shown) OR `(nowMs - lastShownMs) >= intervalMs` (default 30 days). Special-cases the `Number.MAX_SAFE_INTEGER` sentinel (Don't-show-again) by always returning false.
 

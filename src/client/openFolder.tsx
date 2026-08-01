@@ -83,7 +83,7 @@ async function openSelectedFolder(path: string) {
     // HS-8085 — `api()` already throws on non-2xx with a parsed
     // `error` field surfaced through the network-error popup, so the
     // pre-fix manual `if (!res.ok) showErrorPopup(...)` branch
-    // collapses into the catch. Behaviour preserved.
+    // collapses into the catch. Behavior preserved.
     const project = await registerProject(hotsheetPath);
     byId('open-folder-overlay').style.display = 'none';
     await refreshProjectTabs();

@@ -36,7 +36,7 @@ describe('detectPlatform (HS-7962)', () => {
     expect(detectPlatform('Mozilla/5.0 (X11; Linux x86_64)')).toBe('Linux');
   });
 
-  it('returns null for unrecognised user agents', () => {
+  it('returns null for unrecognized user agents', () => {
     expect(detectPlatform('Mozilla/5.0 (Unknown OS)')).toBeNull();
     expect(detectPlatform('')).toBeNull();
   });

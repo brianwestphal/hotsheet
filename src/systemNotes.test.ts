@@ -31,7 +31,7 @@ describe('systemNotes (HS-9289)', () => {
 });
 
 // HS-9525 — "reclaimed from `null`" told the reader nothing. The wording changed;
-// the PREFIX must not, because `isSystemStatusNote` recognises the note by it.
+// the PREFIX must not, because `isSystemStatusNote` recognizes the note by it.
 describe('buildClaimReclaimNote — the unnamed-claimant case (HS-9525)', () => {
   it('names an unnamed worker instead of interpolating null', () => {
     for (const who of [null, undefined, '', '   ']) {

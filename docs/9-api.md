@@ -40,7 +40,7 @@ If BOTH are present, the header takes precedence. If NEITHER is present, the ser
 
 ### 9.0.3 Typed API Layer (`src/api/`) — single source of truth (HS-8522)
 
-The request / response **wire shapes** for each endpoint are defined once as zod schemas in per-resource modules under `src/api/<resource>.ts`, and shared by BOTH the client callers and the server handlers. This replaces two anti-patterns: inline `api<{ … }>(path)` type literals at the call site (the type travelled with the call, never reused) and hand-duplicated `interface` declarations kept in sync by hand across client and server files.
+The request / response **wire shapes** for each endpoint are defined once as zod schemas in per-resource modules under `src/api/<resource>.ts`, and shared by BOTH the client callers and the server handlers. This replaces two anti-patterns: inline `api<{ … }>(path)` type literals at the call site (the type traveled with the call, never reused) and hand-duplicated `interface` declarations kept in sync by hand across client and server files.
 
 Each `src/api/<resource>.ts` module exports:
 

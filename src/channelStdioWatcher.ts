@@ -82,7 +82,7 @@ export interface StdioDisconnectHandlerOptions {
    *  EPIPE is observed. Subsequent firings are suppressed. */
   onDisconnect: (reason: StdioDisconnectReason) => void;
   /** Optional logger for diagnostics. Defaults to a no-op so unit tests
-   *  can pin behaviour without writing to the test runner's stderr.
+   *  can pin behavior without writing to the test runner's stderr.
    *  Production caller in `channel.ts` passes a stderr-writing function
    *  so the disconnect reason lands in the channel-server log alongside
    *  the existing startup line. */

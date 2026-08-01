@@ -81,7 +81,7 @@ constrained  = applySystemPressure(allowedTotal, floorTotal, level)
 - `critical` — drop to the floors outright. At that point the machine is stalling and holding
   cache is actively harmful.
 
-It is a **ceiling on** the process-derived budget, never a licence to grow: if either signal
+It is a **ceiling on** the process-derived budget, never a license to grow: if either signal
 says memory is tight, memory is tight. A test pins that `normal` cannot loosen a budget the
 process term already tightened. The §128.3 invariants are untouched — never evict mid-query,
 never evict a pinned cluster, `defaultDbPath` always pinned, floors always honored.

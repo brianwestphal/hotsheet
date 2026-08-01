@@ -109,7 +109,7 @@ export const SUSPEND_CLOCK_DIVERGENCE_MS = 2_000;
  * heartbeat measures with `process.hrtime.bigint()`, which is MONOTONIC — and a
  * monotonic clock does not advance while the machine is asleep. So a real
  * suspend produces a *small* monotonic gap, while a genuine 20 s block produces
- * a large one. The old length test therefore labelled our worst blocks
+ * a large one. The old length test therefore labeled our worst blocks
  * "suspend" and would have missed an actual suspend entirely.
  *
  * The clocks tell them apart directly:
@@ -205,7 +205,7 @@ export interface FreezeEntry {
    *
    * CPU time settles it, and portably: a genuinely CPU-bound block accrues CPU
    * roughly in step with wall time; a suspend accrues none. This is how a
-   * 17-minute `VACUUM` entry can be recognised as a closed lid rather than
+   * 17-minute `VACUUM` entry can be recognized as a closed lid rather than
    * seventeen minutes of a wedged server.
    *
    * Process-wide, so for an async span it includes whatever else ran. That is

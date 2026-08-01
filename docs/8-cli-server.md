@@ -193,7 +193,7 @@ the "what is / isn't isolated" table live in
 
 On macOS, the Node server shells out to `taskpolicy -p $$ -c user-interactive` immediately after the HTTP server starts. `taskpolicy(8)` is bundled with macOS and does not require sudo; it bumps the process's Quality of Service class to `user-interactive` — the highest user-space tier and what Terminal.app implicitly runs with. Without the bump, a Node sidecar inherits the parent's QoS (typically `user-initiated` or lower) and keystroke handling competes with sibling processes for CPU under heavy load (e.g. `npm test` running inside the embedded terminal).
 
-Behaviour:
+Behavior:
 
 - **Best-effort**. `bumpProcessPriorityBestEffort()` in `src/processPriority.ts` runs `taskpolicy` via `spawnSync` with a 2 s timeout. Non-zero exits, missing binary, or spawn errors log a single `[priority] …` warning and the server continues.
 - **macOS only**. `shouldBumpProcessPriority(process.platform)` short-circuits on Linux + Windows. Linux equivalent (`nice -n -10`) requires `CAP_SYS_NICE` / root; Windows would need a native-module shim for `SetPriorityClass`. Both are out of scope.

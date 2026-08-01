@@ -12,7 +12,7 @@ import type { TileVirtualState } from './terminalTileVirtualization.js';
 
 /**
  * HS-8397 / HS-8411 — internal types shared across the
- * `terminalTileGrid*` cluster (Cycle 4b split). Each behaviour
+ * `terminalTileGrid*` cluster (Cycle 4b split). Each behavior
  * sub-module (`terminalTileGridBell` / `…Magnify` / `…Center` /
  * `…Lifecycle` / `…Render`) imports the type names from here so the
  * sibling modules can declare argument types without pulling in code

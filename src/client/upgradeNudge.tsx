@@ -51,7 +51,7 @@ export interface PlatformResolved {
 
 /**
  * Pure platform classifier — exported for unit testing. Falls back to `null`
- * when the user agent is unrecognised (e.g. an exotic browser, a future OS),
+ * when the user agent is unrecognized (e.g. an exotic browser, a future OS),
  * which signals the caller to skip the nudge entirely rather than surface a
  * generic button that might mislead.
  */
