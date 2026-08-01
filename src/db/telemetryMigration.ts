@@ -429,7 +429,7 @@ function naturalKeyString(table: TelemetryTable, row: TelemetryRow): string {
       if (k.kind === 'jsonbtext') return typeof v === 'string' ? v : JSON.stringify(v ?? null);
       return JSON.stringify(v ?? null);
     })
-    .join(' ');
+    .join('\0');
 }
 
 /** Normalize a column value for re-insert: JSONB objects → JSON string (the

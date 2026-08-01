@@ -396,7 +396,7 @@ export async function backfillActivityToolForDir(clusterDb: PGlite, mainDb: PGli
     const day = dayString(r.day);
     const tool = s(r.tool, '(unknown)');
     const bucket = latencyBucketIndex(n(r.dur));
-    const key = `${secret} ${day} ${tool} ${String(bucket)}`;
+    const key = `${secret}\0${day}\0${tool}\0${String(bucket)}`;
     const existing = bucketCounts.get(key);
     if (existing !== undefined) existing.count++;
     else bucketCounts.set(key, { secret, day, tool, bucket, count: 1 });
