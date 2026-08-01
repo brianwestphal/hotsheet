@@ -29,6 +29,11 @@
  * avoid, so this must never run in production. It is off unless
  * `enableMorphAudit()` is called, which only the dev entry does — the same shape
  * as kerf's own `kerfjs/dev` opt-in (docs/60), and for the same reason.
+ *
+ * That dev entry is `maybeEnableMorphAudit()` in `app.tsx`: load the app with
+ * `?morphAudit=1` (or set `localStorage.morphAudit = '1'`) and read the results from
+ * `window.__hotsheetMorphAudit`. HS-9538 described this entry before it existed, so
+ * the instrument shipped unreachable from a running page; HS-9542 built it.
  */
 
 /** Per-target counters. */
@@ -45,7 +50,7 @@ let enabled = false;
 
 /** Last-seen serialized template per target. `WeakMap` so a removed element's
  *  entry is collectable — a long session must not accumulate detached nodes. */
-const lastTemplate = new WeakMap<Element, string>();
+let lastTemplate = new WeakMap<Element, string>();
 /** Counters, keyed by the same label used in the report. Kept separately from the
  *  WeakMap because the report has to enumerate, and a WeakMap cannot. */
 const counters = new Map<string, MorphAuditEntry>();
@@ -109,8 +114,27 @@ export function morphAuditReport(): MorphAuditEntry[] {
   return [...counters.values()].sort((a, b) => b.redundant - a.redundant);
 }
 
-/** Drop all state. Exported for tests and for a "measure from here" reset. */
+/**
+ * Drop the counters — a "measure from here" reset.
+ *
+ * HS-9542: this used to also set `enabled = false`, so the documented measurement
+ * workflow (`enableMorphAudit()` → drive the app → `reset()` → drive it again →
+ * `report()`) silently switched the instrument OFF at the reset and reported zeros.
+ * That is precisely the HS-9537 failure this module was built to end — an instrument
+ * that looks live and reports nothing — reproduced inside the fix for it, and it is
+ * what the measurement harness's positive control caught. Turning it off is now a
+ * separate verb.
+ *
+ * The last-template map is dropped too: after a reset the first render of a target
+ * has nothing to be redundant against, which is what "from here" has to mean.
+ */
 export function resetMorphAudit(): void {
   counters.clear();
+  lastTemplate = new WeakMap<Element, string>();
+}
+
+/** Turn auditing off and drop everything. Mainly for tests. */
+export function disableMorphAudit(): void {
   enabled = false;
+  resetMorphAudit();
 }

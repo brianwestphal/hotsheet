@@ -34,6 +34,7 @@ import { hasGlassboxReviewableChanges } from './glassboxReview.js';
 import { loadGlobalDiagnostics } from './globalDiagnostics.js';
 import { installGlobalErrorHandler } from './globalErrorHandler.js';
 import { initLongTaskObserver } from './longTaskObserver.js';
+import { enableMorphAudit, morphAuditReport, resetMorphAudit } from './morphAudit.js';
 import { bindOpenFolder } from './openFolder.js';
 import { bindPasteAttachmentListener } from './pasteAttachments.js';
 import { startLongPoll } from './poll.js';
@@ -412,10 +413,46 @@ function initDrawerAndDashboard(): void {
   initShare();
 }
 
+/**
+ * HS-9542 — the morph audit's opt-in switch.
+ *
+ * HS-9538 shipped `morphAudit.ts` describing itself as "off unless
+ * `enableMorphAudit()` is called, which only the dev entry does" — but no such entry
+ * existed, so the instrument was unreachable from a running page and the follow-up it
+ * generated could not be re-measured. This is that entry: the smallest thing that
+ * makes it runnable, rather than a build variant.
+ *
+ * Opt in with `?morphAudit=1` (or `localStorage.morphAudit = '1'`, which survives the
+ * reloads a measurement run needs). Then, in the console:
+ *
+ *   __hotsheetMorphAudit.report()   // worst offenders first
+ *   __hotsheetMorphAudit.reset()    // measure from here
+ *
+ * Production pays one `URLSearchParams` read at boot and, if off, a boolean check per
+ * `morph` — the template serialization the audit needs is exactly the cost `morph`'s
+ * byte-equal fast path exists to avoid, which is why it must stay opt-in.
+ */
+function maybeEnableMorphAudit(): void {
+  let requested = false;
+  try {
+    requested = new URLSearchParams(window.location.search).get('morphAudit') === '1'
+      || window.localStorage.getItem('morphAudit') === '1';
+  } catch {
+    return; // a blocked/absent localStorage must never break boot for a dev-only switch
+  }
+  if (!requested) return;
+  enableMorphAudit();
+  Object.defineProperty(window, '__hotsheetMorphAudit', {
+    value: { report: morphAuditReport, reset: resetMorphAudit },
+    configurable: true,
+  });
+}
+
 async function init() {
   // HS-9455 — install FIRST, so a crash during the rest of init is reported rather
   // than leaving a half-built UI with only a console message.
   installGlobalErrorHandler();
+  maybeEnableMorphAudit();
   try {
     // HS-8522 — wire the typed API layer (`src/api/*`, `apis.*`) to the
     // client `api()` runtime before any typed caller can run. Routes through

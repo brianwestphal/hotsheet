@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  disableMorphAudit,
   enableMorphAudit,
   isMorphAuditEnabled,
   morphAuditReport,
@@ -20,7 +21,7 @@ import {
   targetLabel,
 } from './morphAudit.js';
 
-afterEach(() => { resetMorphAudit(); document.body.innerHTML = ''; });
+afterEach(() => { disableMorphAudit(); document.body.innerHTML = ''; });
 
 const el = (html: string): Element => {
   const host = document.createElement('div');
@@ -44,6 +45,36 @@ describe('opt-in', () => {
     const target = document.createElement('div');
     recordMorph(target, '<p>x</p>');
     expect(morphAuditReport()).toHaveLength(1);
+  });
+});
+
+describe('reset', () => {
+  it('does NOT switch the audit off — a "measure from here" reset must keep measuring', () => {
+    // HS-9542. `reset()` used to set `enabled = false`, so the documented workflow
+    // (enable → drive → reset → drive → report) reported zeros: the instrument was
+    // silently off for the half being measured. That is the exact HS-9537 failure
+    // this module exists to end, and it was found by a harness positive control
+    // rather than by any test here.
+    enableMorphAudit();
+    const target = document.createElement('div');
+    recordMorph(target, '<p>x</p>');
+    resetMorphAudit();
+
+    expect(isMorphAuditEnabled()).toBe(true);
+    recordMorph(target, '<p>y</p>');
+    expect(morphAuditReport()).toHaveLength(1);
+  });
+
+  it('clears the counters and the last-template memory', () => {
+    enableMorphAudit();
+    const target = document.createElement('div');
+    recordMorph(target, '<p>same</p>');
+    resetMorphAudit();
+
+    expect(morphAuditReport()).toEqual([]);
+    // Nothing to be redundant against yet — the identical template is the FIRST
+    // render of this measurement window, not a repeat.
+    expect(recordMorph(target, '<p>same</p>')).toBe(false);
   });
 });
 
