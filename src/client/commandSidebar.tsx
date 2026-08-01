@@ -246,6 +246,16 @@ export function maybeFireClaudeLongPressHintToast(): void {
 async function makeTaskFromClaudeCommand(cmd: CustomCommand): Promise<void> {
   try {
     await createTicket({ title: cmd.name, defaults: { category: 'task', details: cmd.prompt } });
+    // HS-9550 — this was the ONE dispatch path of five that never recorded a run, so
+    // long-pressing a Claude command left its hover tooltip showing the previous
+    // click's time (or "never"). The other four — inline shell run, shell in a new
+    // terminal, Claude click, and the §103 "Run on…" target picker — all record.
+    //
+    // Recorded on SUCCESS, unlike `runShellInNewTerminal` which records before it
+    // starts: creation is awaited here and its failure is surfaced as a warning
+    // toast, so stamping a fresh "last run" beside "Could not create a task" would
+    // be actively misleading. The shell path has no equivalent moment to wait for.
+    recordCommandRun(runningKey(getActiveProject()?.secret ?? '', cmd));
     showToast(`Created a task from "${cmd.name}".`, { variant: 'success' });
     const { loadTickets } = await import('./ticketList.js');
     void loadTickets();

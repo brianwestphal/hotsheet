@@ -143,6 +143,27 @@ test.describe('Command-button long-press gestures (HS-8539 / HS-8538)', () => {
         && t.category === 'task'
         && t.details === 'investigate the flaky test');
     }, { timeout: 6000 }).toBe(true);
+
+    // HS-9550 — and the run is RECORDED, so the hover tooltip shows when the button
+    // was last used. This was the one dispatch path of five that never recorded, so
+    // long-pressing left the tooltip showing the previous click's time, or "never".
+    //
+    // Asserted through the tooltip the user actually reads rather than through
+    // localStorage: the storage key is an implementation detail, and a stored value
+    // the tooltip never surfaces would not have fixed the report.
+    // The long press left the pointer ON the button, and `pointerdown` hid the
+    // tooltip. Hovering again from there fires no `mouseenter`, so the tooltip would
+    // never reappear — move the pointer away first, then back.
+    await page.mouse.move(0, 0);
+    await btn.hover();
+    const tooltip = page.locator('.command-tooltip');
+    await expect(tooltip).toBeVisible({ timeout: 5000 });
+    // The exact strings come from `commandTooltip.tsx::lastRunLine` +
+    // `timeFormat.ts`: "Not run yet" when unrecorded, "Last run: just now" inside
+    // the sub-minute window.
+    await expect(tooltip, 'a recorded run must not still read "Not run yet"')
+      .not.toContainText('Not run yet');
+    await expect(tooltip.locator('.command-tooltip-lastrun')).toContainText('Last run: just now');
   });
 
   test.afterEach(async ({ page }) => {
