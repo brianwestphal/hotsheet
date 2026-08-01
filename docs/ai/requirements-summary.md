@@ -882,6 +882,22 @@ HS-8606 (shipped 2026-05-25). A manual "Clear telemetry data…" button in Setti
 
 ---
 
+## 75. Background-work scheduler / load resilience (`75-background-work-scheduler.md`)
+
+Epic HS-8722 (incident bug HS-8721). **Partial — Phases 1, 2 and 4 shipped; 3 and 5 outstanding.** The diagnosis is the doc's central point and worth keeping: per-project *state* was never the problem, per-project *execution* was. Each registered project ran its own timers independently, so background work scaled with tab count and landed on one shared event loop.
+
+**The mechanism (§75.3)** — one central `src/scheduler/backgroundScheduler.ts` replacing per-project timers, built on four principles: bounded concurrency (default 2), per-`key` coalescing (latest wins), round-robin fairness across projects within a priority tier, and event-loop-lag backpressure that DEFERS rather than drops. Priority order `GIT_STATUS < MARKDOWN_SYNC < SNAPSHOT < BACKUP < GC`; `exclusiveGroup` gives backups their HS-8229 mutual exclusion independently of the cap. `submit()` is awaitable so durability callers (manual backup, shutdown snapshot flush) can wait on completion.
+
+**Phases (§75.6, all tagged `load-resilience`).** 1 (HS-8723) off-loop git status — the reported freeze, `spawnSync` → async + in-flight dedupe. 2 (HS-8724) the scheduler itself, **shipped**, with the user-chosen Option A migration: backups and snapshots run `deferUnderLag:false` (durability first), while git-refresh pre-warm, markdown sync and attachment GC are deferrable. 3 (HS-8725) scope the git pre-warm to the foreground project. 4 (HS-8726) **shipped** — `noteWake()` opens a post-wake stagger window (15 s, effective concurrency 1) wired from `freezeLogger.onServerWake`, so resume-from-suspend does not fire every project's overdue timers at once. 5 (HS-8727) the last loop-blocking paths at extreme data sizes.
+
+**§75.8 backstop — the event-loop watchdog (2026-06-19).** The principles keep heavy work off the loop, but a *bug* can still wedge it (HS-8874's row-by-row telemetry migration spun at 100 % CPU for minutes, a single pass backpressure cannot preempt). A wedged loop cannot run its SIGTERM handler, so the process survived holding the HTTP port and every project lock and the next launch FATAL-exited on the live lock — a permanent lockout. The watchdog SIGKILLs at a 60 s threshold. See also HS-9519/HS-9521/HS-9527 (naming what is blocking before the kill; moving probes and the backup pipeline off the loop).
+
+**§75.7 is explicit about what this does not do:** it does not make an overloaded machine fast, it keeps Hot Sheet responsive *while* slow. Phases 1 and 3 alone would have prevented the reported incident.
+
+**Status:** Partial (Phases 1, 2, 4 shipped; 3 and 5 open). Cross-refs: §45 (PGLite robustness / graceful shutdown), §128 (cluster cache bounding — the memory analogue of this doc's CPU story), §127 (telemetry WAL).
+
+---
+
 ## 76. Cross-project ticket drag — copy / move (`76-cross-project-ticket-drag.md`)
 
 HS-8663 (shipped 2026-06-05). Drag selected tickets from the list / column view onto **another project's tab** to copy them there, or hold **Option/Alt** to move them (recreate in target + soft-delete the originals). Dropping onto the always-tabbed strip's **"+" button** (§4.2 / HS-8664) opens the folder picker and transfers the tickets into the freshly-registered project; canceling the picker changes nothing. Mirrors keyboard copy/paste ≈ drag-copy and cut/paste ≈ Option-drag (§3), drag-driven.

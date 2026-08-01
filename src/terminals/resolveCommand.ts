@@ -82,9 +82,10 @@ export interface ResolveOptions {
   /** HS-9429 — override for the model-B daemon-HOSTED command (`codex --remote`).
    *  Injected in tests. Defaults to `codexTerminalRemoteCommand` (null → plain `codex`). */
   codexRemoteOverride?: (dataDir: string) => string | null;
-  /** HS-9429 — force the model-B branch on/off (default: `codexDriveDiscoverEnabled`,
-   *  i.e. the `codexModelBTerminals` setting + its env override). Injected in tests so
-   *  they don't touch process.env. */
+  /** HS-9429 — force the model-B branch on/off (default: `codexDriveDiscoverEnabled`).
+   *  HS-9513 removed the `codexModelBTerminals` setting this used to also read, so the
+   *  only remaining override is the `HOTSHEET_CODEX_DISCOVER_THREAD` env var. Injected
+   *  in tests so they don't touch process.env. */
   codexModelB?: boolean;
 }
 
