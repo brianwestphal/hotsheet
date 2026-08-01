@@ -15,7 +15,20 @@
 
 import { join } from 'path';
 
-/** A bounded external command that writes a stack dump for `pid` to a file. */
+/**
+ * HS-9554 — the token the WORKER replaces with the capture timestamp.
+ *
+ * This command is built once, at watchdog start, so it cannot know when a wedge
+ * will happen. It used to bake `Date.now()` into the filename anyway, which meant
+ * the name recorded when the *server booted*: the 2026-08-01 wedge produced
+ * `watchdog-stack-2026-07-31T04-29-43-055Z.txt`, 26 hours off, and — worse — every
+ * wedge in one process wrote to that same path, so only the last capture survived.
+ * The worker substitutes this at capture time instead.
+ */
+export const CAPTURED_AT_PLACEHOLDER = '__CAPTURED_AT__';
+
+/** A bounded external command that writes a stack dump for `pid` to a file.
+ *  `outPath` contains `CAPTURED_AT_PLACEHOLDER`; the worker resolves it. */
 export interface StackCaptureCommand {
   command: string;
   args: string[];
@@ -50,11 +63,9 @@ export function buildStackCaptureCommand(
   platform: NodeJS.Platform,
   pid: number,
   logDir: string,
-  now: number,
 ): StackCaptureCommand | null {
   if (!Number.isInteger(pid) || pid <= 1) return null; // never sample pid 0/1
-  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-');
-  const outPath = join(logDir, `watchdog-stack-${stamp}.txt`);
+  const outPath = join(logDir, `watchdog-stack-${CAPTURED_AT_PLACEHOLDER}.txt`);
   if (platform === 'darwin') {
     return { command: 'sample', args: [String(pid), String(SAMPLE_SECONDS), '-file', outPath], outPath, timeoutMs: CAPTURE_TIMEOUT_MS };
   }

@@ -344,7 +344,7 @@ describe('resolveEvictionConfig (HS-9420)', () => {
 describe('clusterBudget (HS-9468)', () => {
   const GB = 1024 * 1024 * 1024;
   const base = {
-    heapLimitBytes: 4 * GB,
+    ceilingBytes: 4 * GB,
     headroomFloorBytes: 768 * 1024 * 1024,
     pendingReclaimBytes: 0,
     openProject: 2,
@@ -386,7 +386,7 @@ describe('clusterBudget (HS-9468)', () => {
   });
 
   it('never exceeds the ceilings, however much room there is', () => {
-    const b = clusterBudget({ ...base, heapLimitBytes: 1024 * GB, externalBytes: 0 });
+    const b = clusterBudget({ ...base, ceilingBytes: 1024 * GB, externalBytes: 0 });
     expect(b).toEqual({ project: 10, telemetry: 6 });
   });
 

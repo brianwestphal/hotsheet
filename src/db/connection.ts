@@ -23,7 +23,6 @@ import {
   HEADROOM_BREAKER_TRIP_COUNT,
   type HeadroomBreakerState,
   headroomEvictionCount,
-  heapSizeLimitBytes,
   initialHeadroomBreakerState,
   isHeadroomSuppressed,
   isTelemetryClusterDbPath,
@@ -34,10 +33,12 @@ import {
   snapshotClusters,
 } from './clusterEviction.js';
 import { forceGcNow, type ForceGcResult } from './forceGc.js';
+import { describeExternalCeiling, externalCeilingBytes } from './memoryCeiling.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
-import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
+import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler, setWasmTrapHandler } from './queryInstrumentation.js';
 import { isClusterStorageFailure } from './storageFailure.js';
 import { currentSystemPressure } from './systemMemoryPressure.js';
+import { PoisonedClusterError } from './wasmTrap.js';
 
 export { isClusterStorageFailure } from './storageFailure.js';
 
@@ -555,6 +556,90 @@ export function resetStorageFailureReportingForTests(): void {
   storageFailureReported.clear();
 }
 
+// --- HS-9554: clusters whose WASM instance has trapped (docs/128) ---
+
+/**
+ * How long a trapped cluster stays out of action before a fresh instance may be
+ * opened.
+ *
+ * Long enough that a caller iterating rows fails its whole loop cheaply rather
+ * than reopening a ~180 MB heap per row; short enough that the project heals
+ * without a restart. The trap is usually a symptom of memory pressure, so the
+ * cooldown also gives the docs/128 machinery a chance to actually reclaim before
+ * we allocate another heap.
+ */
+const POISON_COOLDOWN_MS = 30_000;
+
+/** dbPath → when its WASM instance trapped. */
+const poisonedClusters = new Map<string, number>();
+
+/** Remaining cooldown for `dbPath`, or 0 if it is free to open. Expired entries
+ *  are dropped as they're observed, so the map stays bounded. */
+function poisonCooldownRemainingMs(dbPath: string, now: number = Date.now()): number {
+  const at = poisonedClusters.get(dbPath);
+  if (at === undefined) return 0;
+  const remaining = POISON_COOLDOWN_MS - (now - at);
+  if (remaining > 0) return remaining;
+  poisonedClusters.delete(dbPath);
+  return 0;
+}
+
+/**
+ * HS-9554 — a live query trapped this cluster's WASM instance. Take it out of
+ * action.
+ *
+ * A trapped WASM module is permanently faulted: every later call traps too, and
+ * each trap costs V8 a full deoptimizing stack capture. Hundreds of those in a
+ * caller's row loop is what blocked the event loop for 61.7 s on 2026-08-01 until
+ * the watchdog SIGKILLed the process.
+ *
+ * Deliberately NOT added to `evictedClusterPaths`: that set is the HS-9461 heal
+ * path, and letting a trapped cluster heal would reopen a ~180 MB heap **per
+ * failing statement** — the same runaway one level up. It has to stay closed for
+ * the cooldown.
+ *
+ * Deduped per cooldown window: the second through five-hundredth trap in the same
+ * loop must be cheap, and re-running this per row would log and re-close per row.
+ */
+function handleWasmTrap(dbPath: string, err: unknown): void {
+  if (poisonCooldownRemainingMs(dbPath) > 0) return;
+  poisonedClusters.set(dbPath, Date.now());
+
+  const db = databases.get(dbPath);
+  databases.delete(dbPath);
+  forgetCluster(dbPath);
+  // Never resurrect it via the stale-handle heal — see above.
+  evictedClusterPaths.delete(dbPath);
+  notePendingReclaim(); // its heap comes back on GC, like any other close
+
+  console.error(
+    `[db] PGLite cluster ${dbPath} TRAPPED its WASM instance (${getErrorMessage(err)}). `
+    + `Taking it out of action for ${String(Math.round(POISON_COOLDOWN_MS / 1000))}s — a trapped WASM module `
+    + 'never recovers, and re-entering it costs a stop-the-world stack capture per call (HS-9554, docs/128).',
+  );
+
+  // Best-effort: give the dead instance a chance to release its heap. `close()`
+  // on a faulted module can itself trap, so this must never be awaited by the
+  // caller and never throw — the handler runs on an error path already.
+  if (db !== undefined) {
+    void Promise.resolve()
+      .then(async () => { await db.close(); })
+      .catch(() => { /* a trapped instance often cannot close; its heap goes on GC */ });
+  }
+}
+
+setWasmTrapHandler(handleWasmTrap);
+
+/** Test seam — forget every poisoned cluster. */
+export function resetPoisonedClustersForTests(): void {
+  poisonedClusters.clear();
+}
+
+/** HS-9554 — is this cluster currently out of action? For diagnostics + tests. */
+export function isClusterPoisoned(dbPath: string): boolean {
+  return poisonCooldownRemainingMs(dbPath) > 0;
+}
+
 /**
  * HS-9468 — timestamps of recent eviction closes, so the budget below can credit
  * memory that is already promised back.
@@ -584,6 +669,12 @@ function pendingReclaimBytes(now: number = Date.now()): number {
   return recentEvictions.length * APPROX_CLUSTER_EXTERNAL_BYTES;
 }
 
+/** HS-9553 — the credit has been paid: a forced collection actually ran, so the
+ *  closed heaps are back and must stop counting as "owed". */
+function clearPendingReclaim(): void {
+  recentEvictions.length = 0;
+}
+
 /** Test seam — forget the pending-reclaim credit. */
 export function resetPendingReclaimForTests(): void {
   recentEvictions.length = 0;
@@ -599,7 +690,8 @@ function currentClusterBudget(cfg: EvictionConfig): ClusterBudget {
   }
   return clusterBudget({
     externalBytes: currentExternalBytes(),
-    heapLimitBytes: heapSizeLimitBytes(),
+    // HS-9555 — machine-derived, NOT V8's old-space limit. See `memoryCeiling.ts`.
+    ceilingBytes: externalCeilingBytes(),
     headroomFloorBytes: cfg.headroomFloorBytes,
     pendingReclaimBytes: pendingReclaimBytes(),
     openProject,
@@ -647,7 +739,19 @@ async function runEvictionDetailed(
   // (docs/128 §128.5.4). Rate-limited inside `forceGcNow` — a forced major GC is
   // stop-the-world, so it must not run once per closed cluster.
   if (victims.length === 0) return { evicted: 0, gc: 'skipped' };
-  const result = forceGcNow(dirname(victims[0]));
+  // HS-9553 — pass the accumulated unreclaimed debt so a BURST of closes can
+  // override the 30 s time throttle. Without this the throttle silently converted
+  // "evict to free memory" into "evict and free nothing" for 30 s at a stretch,
+  // which is how `external` reached 4892 MB with 3 clusters open.
+  const result = forceGcNow(dirname(victims[0]), Date.now(), pendingReclaimBytes());
+  if (result === 'collected') {
+    // The heaps really came back, so the credit has been paid — drop it. Leaving
+    // it would (a) keep `clusterBudget` subtracting bytes that are already free,
+    // inflating apparent headroom, and (b) leave `pendingReclaimBytes` above the
+    // urgent threshold so every later close bypassed the throttle, turning the
+    // burst valve into a collect-on-every-close.
+    clearPendingReclaim();
+  }
   if (result === 'unavailable') {
     // Worth saying once: without a collector, eviction cannot reclaim anything
     // and the process will climb until the watchdog kills it.
@@ -694,7 +798,7 @@ async function evictForHeadroom(): Promise<void> {
   const externalBefore = currentExternalBytes();
   const count = headroomEvictionCount(
     externalBefore,
-    heapSizeLimitBytes(),
+    externalCeilingBytes(), // HS-9555 — machine-derived; see `memoryCeiling.ts`.
     cfg.headroomFloorBytes,
   );
   if (count === 0) return;
@@ -754,6 +858,12 @@ let evictionTimer: ReturnType<typeof setInterval> | null = null;
  */
 export function startClusterEvictionTimer(): void {
   if (evictionTimer !== null) return;
+  // HS-9555 — record the ceiling ONCE, here, because every `usedPctOfLimit` in
+  // freeze.log and every `% of the ... limit` in a watchdog FATAL is a fraction
+  // of it, and until now the denominator appeared nowhere. Reading "117% of the
+  // limit" without knowing whether the limit was chosen or inherited is what let
+  // a V8 default masquerade as a deliberate budget for three incidents.
+  console.error(describeExternalCeiling());
   const cfg = resolveEvictionConfig();
   evictionTimer = setInterval(() => {
     // HS-9477 — pressure FIRST, then age. The headroom guard is the only layer
@@ -953,6 +1063,14 @@ export async function getDbForDir(dataDir: string): Promise<PGlite> {
 }
 
 async function getDbByPath(dbPath: string): Promise<PGlite> {
+  // HS-9554 — this cluster's WASM instance trapped recently. Fail the request
+  // immediately instead of allocating a fresh ~180 MB heap that the still-running
+  // caller loop would trap again on the next row. A failed request is the outcome
+  // docs/45 exists to prefer over a wedged loop; the cooldown expires on its own,
+  // so the project heals without a restart.
+  const cooldownMs = poisonCooldownRemainingMs(dbPath);
+  if (cooldownMs > 0) throw new PoisonedClusterError(dbPath);
+
   const existing = databases.get(dbPath);
   if (existing) {
     // HS-9420 — a cache hit is an access; keep the cluster warm so the LRU/idle

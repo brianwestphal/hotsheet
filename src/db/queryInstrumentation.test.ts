@@ -9,7 +9,7 @@ import { dirname, join } from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { clusterInFlight, resetEvictionTrackingForTests } from './clusterEviction.js';
-import { freezeLogTargetFor, instrumentDbQueries, isClosedInstanceError, isQueryInstrumentationEnabled, setClusterReopener, setStorageFailureHandler } from './queryInstrumentation.js';
+import { freezeLogTargetFor, instrumentDbQueries, isClosedInstanceError, isQueryInstrumentationEnabled, setClusterReopener, setStorageFailureHandler, setWasmTrapHandler } from './queryInstrumentation.js';
 
 describe('instrumentDbQueries (HS-9239)', () => {
   afterEach(() => { delete process.env.HOTSHEET_DISABLE_QUERY_INSTRUMENTATION; resetEvictionTrackingForTests(); });
@@ -287,6 +287,104 @@ describe('live storage-failure detection (HS-9460)', () => {
       await expect(wrapped.query('SELECT 1')).rejects.toThrow(/xlog/);
     }
     expect(reports).toBe(3);
+  });
+});
+
+/**
+ * HS-9554 — a WASM trap on a LIVE query.
+ *
+ * The 2026-08-01 watchdog SIGKILL: the loop spent 61.7 s in
+ * `Runtime_ThrowWasmError` -> `CaptureSimpleStackTrace` because a trap fell
+ * through every branch of the catch below and the dead instance stayed in the
+ * cache for the caller's next row to hit again.
+ */
+describe('WASM trap routing (HS-9554)', () => {
+  afterEach(() => {
+    setWasmTrapHandler(null);
+    setClusterReopener(null);
+    setStorageFailureHandler(null);
+    resetEvictionTrackingForTests();
+  });
+
+  /** V8's shape: identity in `.name`, message often bare. */
+  const trap = (): Error => {
+    const err = new Error('unreachable');
+    err.name = 'RuntimeError';
+    return err;
+  };
+
+  it('reports the trap and propagates it, releasing the in-flight count', async () => {
+    const dbPath = '/tmp/hs-instr-trap/db';
+    const seen: string[] = [];
+    setWasmTrapHandler((p) => { seen.push(p); });
+    const fake = { query: (): Promise<unknown> => Promise.reject(trap()) } as unknown as PGlite;
+
+    await expect(instrumentDbQueries(fake, dbPath).query('SELECT 1')).rejects.toThrow('unreachable');
+    expect(seen).toEqual([dbPath]);
+    // A leaked in-flight count would make the cluster permanently un-evictable —
+    // the unbounded-growth bug docs/128 exists to prevent.
+    expect(clusterInFlight(dbPath)).toBe(0);
+  });
+
+  it('does NOT reopen and retry a trapped instance', async () => {
+    // This is the whole fix. Healing a trap would allocate a fresh ~180 MB WASM
+    // heap per failing statement, turning one runaway into a worse one.
+    const dbPath = '/tmp/hs-instr-trap-noretry/db';
+    let reopens = 0;
+    setClusterReopener(async () => { reopens += 1; return await Promise.resolve(null); });
+    setWasmTrapHandler(() => { /* noticed */ });
+    let calls = 0;
+    const fake = {
+      query: (): Promise<unknown> => { calls += 1; return Promise.reject(trap()); },
+    } as unknown as PGlite;
+
+    await expect(instrumentDbQueries(fake, dbPath).query('SELECT 1')).rejects.toThrow('unreachable');
+    expect(calls).toBe(1);
+    expect(reopens).toBe(0);
+  });
+
+  it('is checked BEFORE the closed-instance heal, when an error looks like both', async () => {
+    // Ordering matters and is easy to get backwards: an error mentioning both a
+    // trap and a closed instance must be treated as a trap, or the heal path
+    // reopens a cluster that traps again on the very next statement.
+    const dbPath = '/tmp/hs-instr-trap-order/db';
+    let reopens = 0;
+    let traps = 0;
+    setClusterReopener(async () => { reopens += 1; return await Promise.resolve(null); });
+    setWasmTrapHandler(() => { traps += 1; });
+    const both = new Error('RuntimeError: unreachable (PGlite is closed)');
+    const fake = { query: (): Promise<unknown> => Promise.reject(both) } as unknown as PGlite;
+
+    await expect(instrumentDbQueries(fake, dbPath).query('SELECT 1')).rejects.toThrow(/RuntimeError/);
+    expect(traps).toBe(1);
+    expect(reopens).toBe(0);
+  });
+
+  it('leaves the closed-instance heal and ordinary errors alone', async () => {
+    const dbPath = '/tmp/hs-instr-trap-negative/db';
+    let traps = 0;
+    setWasmTrapHandler(() => { traps += 1; });
+
+    const fresh = { query: async (): Promise<unknown> => await Promise.resolve({ rows: [{ n: 1 }] }) } as unknown as PGlite;
+    setClusterReopener(async () => await Promise.resolve(fresh));
+    const closed = { query: (): Promise<unknown> => Promise.reject(new Error('PGlite is closed')) } as unknown as PGlite;
+    await expect(instrumentDbQueries(closed, dbPath).query('SELECT 1')).resolves.toBeDefined();
+    expect(traps).toBe(0);
+
+    const ordinary = { query: (): Promise<unknown> => Promise.reject(new Error('syntax error at or near "SELCT"')) } as unknown as PGlite;
+    await expect(instrumentDbQueries(ordinary, dbPath).query('SELCT 1')).rejects.toThrow(/syntax error/);
+    expect(traps).toBe(0);
+  });
+
+  it('survives a missing handler — the trap still propagates', async () => {
+    // The handler is injected by connection.ts; a unit context (or a teardown
+    // race) has none, and an unguarded call would replace the real error with a
+    // TypeError inside a catch block.
+    const dbPath = '/tmp/hs-instr-trap-nohandler/db';
+    setWasmTrapHandler(null);
+    const fake = { query: (): Promise<unknown> => Promise.reject(trap()) } as unknown as PGlite;
+    await expect(instrumentDbQueries(fake, dbPath).query('SELECT 1')).rejects.toThrow('unreachable');
+    expect(clusterInFlight(dbPath)).toBe(0);
   });
 });
 

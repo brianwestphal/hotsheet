@@ -107,12 +107,21 @@ function currentOperation() {
 function captureStack() {
   if (!stackCmd) return null;
   try {
-    var out = require('child_process').execFileSync(stackCmd.command, stackCmd.args, {
+    // HS-9554 — stamp the path at CAPTURE time, not at watchdog-start time. The
+    // command is built once at boot (it is testable there), so its outPath used
+    // to carry the BOOT timestamp: the 2026-08-01 wedge produced a file named
+    // ...2026-07-31T04-29-43... , 26 hours off, and every wedge in one process
+    // overwrote the same file so only the last survived.
+    var outPath = stackCmd.outPath.replace(
+      /__CAPTURED_AT__/g, new Date().toISOString().replace(/[:.]/g, '-'),
+    );
+    var args = stackCmd.args.map(function (a) { return a === stackCmd.outPath ? outPath : a; });
+    var out = require('child_process').execFileSync(stackCmd.command, args, {
       timeout: stackCmd.timeoutMs, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'ignore'],
     });
     // macOS 'sample -file' writes the file itself; Linux 'eu-stack' prints to stdout.
-    if (out && out.length > 0) { try { fs.writeFileSync(stackCmd.outPath, out); } catch (e) {} }
-    return stackCmd.outPath;
+    if (out && out.length > 0) { try { fs.writeFileSync(outPath, out); } catch (e) {} }
+    return outPath;
   } catch (e) { return null; }
 }
 let lastCheck = Date.now();
@@ -152,8 +161,11 @@ const timer = setInterval(function () {
         (external > 0 && arrayBuffers * 2 < external
           ? '  [external is mostly NOT ArrayBuffers -> WASM heaps: open clusters, or evicted ones awaiting GC]'
           : external > 0 ? '  [external is mostly ArrayBuffers -> a Buffer/file-read allocator, not clusters]' : '') +
-        (pct >= 75 ? '  <-- MEMORY PRESSURE: this looks like GC thrash, not a slow query. Each open ' +
-                     'PGLite cluster pins ~180MB of external (WASM heap), and external does NOT ' +
+        (pct >= 75 ? '  <-- MEMORY PRESSURE is present. Do NOT read that as the cause: on 2026-08-01 this ' +
+                     'line said "GC thrash" at 95% and the stack capture below showed 94% of samples in ' +
+                     'WebAssembly error construction, with zero in GC (HS-9554). Memory pressure, GC ' +
+                     'thrash and a WASM trap storm all look identical from here — the capture decides. ' +
+                     'Each open PGLite cluster pins ~180MB of external (WASM heap), and external does NOT ' +
                      'show up in rss, so a ps check will look fine (HS-9420).' : ''));
     var op = currentOperation();
     log('[watchdog] wedged inside: ' + (op !== null ? op :
@@ -308,7 +320,7 @@ export function startEventLoopWatchdog(opts: WatchdogOptions = {}): void {
         // from an eval string and cannot import.
         opSab: getOperationSab(),
         stackCmd: isStackCaptureEnabled(process.env)
-          ? buildStackCaptureCommand(process.platform, process.pid, stackDir(opts.logPath ?? null), Date.now())
+          ? buildStackCaptureCommand(process.platform, process.pid, stackDir(opts.logPath ?? null))
           : null,
       },
     });

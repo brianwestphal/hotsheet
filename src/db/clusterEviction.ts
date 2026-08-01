@@ -362,7 +362,15 @@ export const APPROX_CLUSTER_EXTERNAL_BYTES = 180 * 1024 * 1024;
  */
 export interface ClusterBudgetInput {
   externalBytes: number;
-  heapLimitBytes: number;
+  /**
+   * HS-9555 — the ceiling `external` is budgeted against, from
+   * `memoryCeiling.externalCeilingBytes()`. This was `heapLimitBytes` (V8's
+   * old-space limit) until 2026-08-01, which was simply the wrong quantity: a
+   * WASM heap is malloc'd native memory outside the V8 heap, so the old-space
+   * limit never bounded it. The rename is the point — the old name is what made
+   * a 4144 MB default look like a hard boundary on a 32 GB machine.
+   */
+  ceilingBytes: number;
   headroomFloorBytes: number;
   /** Clusters closed but not yet collected — see above. */
   pendingReclaimBytes: number;
@@ -390,7 +398,7 @@ export interface ClusterBudget {
 
 export function clusterBudget(input: ClusterBudgetInput): ClusterBudget {
   const effectiveExternal = Math.max(0, input.externalBytes - input.pendingReclaimBytes);
-  const headroom = input.heapLimitBytes - effectiveExternal;
+  const headroom = input.ceilingBytes - effectiveExternal;
   // How many more (or fewer, when negative) cluster-sized heaps fit above the floor.
   const spare = Math.floor((headroom - input.headroomFloorBytes) / APPROX_CLUSTER_EXTERNAL_BYTES);
   const open = input.openProject + input.openTelemetry;
@@ -492,7 +500,16 @@ export function currentExternalBytes(): number {
   return process.memoryUsage().external;
 }
 
-/** V8's hard heap ceiling in bytes (the OOM boundary). */
+/**
+ * V8's old-space limit in bytes.
+ *
+ * HS-9555 — this is NO LONGER the cluster budget's ceiling, and the comment it
+ * used to carry ("the OOM boundary") was wrong for the memory it was applied to:
+ * `external` is malloc'd WASM memory outside the V8 heap, so the old-space limit
+ * neither bounds nor aborts on it. Use `memoryCeiling.externalCeilingBytes()`
+ * for anything budget-related. Retained only for diagnostics that genuinely mean
+ * the JS heap.
+ */
 export function heapSizeLimitBytes(): number {
   return v8.getHeapStatistics().heap_size_limit;
 }
@@ -506,10 +523,10 @@ export function heapSizeLimitBytes(): number {
  */
 export function headroomEvictionCount(
   externalBytes: number,
-  heapLimitBytes: number,
+  ceilingBytes: number,
   headroomFloorBytes: number,
 ): number {
-  const headroom = heapLimitBytes - externalBytes;
+  const headroom = ceilingBytes - externalBytes;
   if (headroom >= headroomFloorBytes) return 0;
   const deficit = headroomFloorBytes - headroom;
   return Math.max(1, Math.ceil(deficit / APPROX_CLUSTER_EXTERNAL_BYTES));

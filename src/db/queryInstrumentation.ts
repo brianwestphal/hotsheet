@@ -36,6 +36,7 @@ import { dirname } from 'path';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { beginClusterQuery, endClusterQuery, isTelemetryClusterDbPath } from './clusterEviction.js';
 import { isClusterStorageFailure } from './storageFailure.js';
+import { isWasmTrapError } from './wasmTrap.js';
 
 /** Methods whose wall-clock we time (the ones that run WASM on the loop). */
 const TIMED_METHODS = new Set(['query', 'exec', 'dumpDataDir']);
@@ -136,6 +137,24 @@ export function setStorageFailureHandler(fn: StorageFailureHandler | null): void
 }
 
 /**
+ * HS-9554 — notified when a LIVE query TRAPS its WASM instance (`wasmTrap.ts`).
+ *
+ * Like the storage handler above and unlike the reopener, this is emphatically
+ * NOT a retry: a trapped WASM module is permanently faulted, so calling back in
+ * can only produce another trap — and each one costs a full deoptimizing stack
+ * capture, which is what wedged the loop for 61.7 s on 2026-08-01. The handler
+ * drops the dead handle so the *next* caller opens a fresh instance instead of
+ * re-entering this one. Injected by `connection.ts` (no cycle).
+ */
+type WasmTrapHandler = (dbPath: string, err: unknown) => void;
+let onWasmTrap: WasmTrapHandler | null = null;
+
+/** Register the WASM-trap handler. Called once by `connection.ts`. */
+export function setWasmTrapHandler(fn: WasmTrapHandler | null): void {
+  onWasmTrap = fn;
+}
+
+/**
  * Wrap `db` so its heavy methods (a) track in-flight query count for the
  * HS-9420 eviction safety invariant and (b) log to the PROJECT's `freeze.log` when
  * slow — `freezeLogTargetFor` picks the file, which is NOT simply the cluster's own
@@ -196,6 +215,15 @@ export function instrumentDbQueries(db: PGlite, dbPath: string): PGlite {
               // for the next start to restore from snapshot.
               if (onStorageFailure !== null && isClusterStorageFailure(err)) {
                 onStorageFailure(dbPath, err);
+                throw err;
+              }
+              // HS-9554 — a WASM trap. Checked BEFORE the closed-instance heal
+              // below, and it must stay in that order: a trap can surface with a
+              // message that also mentions the instance, and healing it would
+              // reopen a cluster only to trap again on the next statement — the
+              // reopen-per-row loop this ticket exists to stop.
+              if (isWasmTrapError(err)) {
+                onWasmTrap?.(dbPath, err);
                 throw err;
               }
               if (!isClosedInstanceError(err) || reopenCluster === null) throw err;

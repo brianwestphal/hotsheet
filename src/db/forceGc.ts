@@ -54,15 +54,62 @@ export function forcedGcMinIntervalMs(): number {
 }
 
 /**
+ * HS-9553 — unreclaimed bytes that override the time throttle.
+ *
+ * Three clusters' worth. Below this, waiting out the interval is the right trade
+ * (a stop-the-world pause costs more than ~0.5 GB of briefly-resident WASM heap);
+ * at or above it, the memory we are failing to return is itself what triggers the
+ * next round of eviction, and waiting makes the problem worse rather than
+ * cheaper. Env: `HOTSHEET_FORCED_GC_URGENT_BYTES`.
+ */
+export function forcedGcUrgentBytes(): number {
+  const raw = process.env.HOTSHEET_FORCED_GC_URGENT_BYTES;
+  const fallback = 3 * 180 * 1024 * 1024;
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/**
  * Should a collection run now? Pure, so the throttle is testable without waiting
  * on real time or actually collecting.
  *
  * `lastAt === null` means "never collected" and always passes — the first close
  * after startup should not have to wait out the interval.
+ *
+ * ## HS-9553: why the time throttle alone was not enough
+ *
+ * The 30 s floor assumes closes arrive at a human pace. In the 2026-08-01 death
+ * they did not. The machine resumed from a 16-minute sleep and the whole periodic
+ * world fired at once — the 5-minute backup train, the hourly backup, telemetry
+ * ingest, the github scheduled sync, the idle sweep and the headroom guard —
+ * churning clusters **~15 times in 2 seconds** (`evictChurn` 125 → 140 in
+ * `freeze.log`).
+ *
+ * The first sweep collected and worked exactly as designed: `external` 2680 →
+ * 1127 MB. Every close for the next 30 s was then `'throttled'` and returned
+ * nothing, while each reopen allocated a fresh ~180 MB heap. 1.5 seconds later
+ * there were **3 clusters open and 4892 MB of external** — ~4.3 GB belonging to
+ * clusters that were already closed. That is the docs/128 §128.5.4 runaway with
+ * the throttle standing in for the missing collection:
+ *
+ *     high external -> evict (throttled, frees nothing) -> reopen (+180 MB) -> higher external
+ *
+ * So the throttle now yields to accumulated debt. This cannot become a
+ * collect-on-every-close (the thing the floor exists to prevent): the bypass
+ * requires `urgentBytes` of *already-closed, uncollected* heap, which only a
+ * burst can produce, and collecting resets the debt to zero.
  */
-export function shouldForceGc(lastAt: number | null, now: number, minIntervalMs: number): boolean {
+export function shouldForceGc(
+  lastAt: number | null,
+  now: number,
+  minIntervalMs: number,
+  pendingReclaimBytes = 0,
+  urgentBytes: number = forcedGcUrgentBytes(),
+): boolean {
   if (lastAt === null) return true;
-  return now - lastAt >= minIntervalMs;
+  if (now - lastAt >= minIntervalMs) return true;
+  return pendingReclaimBytes >= urgentBytes;
 }
 
 let gcFn: (() => void) | null = null;
@@ -97,10 +144,16 @@ export type ForceGcResult = 'collected' | 'throttled' | 'unavailable';
  * — a silent no-op here would be indistinguishable from a collection that freed
  * nothing, which is exactly the ambiguity this whole area keeps producing.
  */
-export function forceGcNow(dataDir: string, now: number = Date.now()): ForceGcResult {
+export function forceGcNow(
+  dataDir: string,
+  now: number = Date.now(),
+  /** HS-9553 — bytes closed but not yet collected. Past `forcedGcUrgentBytes`
+   *  this overrides the time throttle; see `shouldForceGc`. */
+  pendingReclaimBytes = 0,
+): ForceGcResult {
   const gc = getForcedGc();
   if (gc === null) return 'unavailable';
-  if (!shouldForceGc(lastForcedAt, now, forcedGcMinIntervalMs())) return 'throttled';
+  if (!shouldForceGc(lastForcedAt, now, forcedGcMinIntervalMs(), pendingReclaimBytes)) return 'throttled';
   lastForcedAt = now;
   // Timed like every other blocking operation, so an expensive pause is visible
   // in freeze.log rather than being a mystery gap.

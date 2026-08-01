@@ -225,11 +225,59 @@ just got `PGlite is closed`. See §128.3.1 for what actually happens now.
 | `HOTSHEET_CLUSTER_IDLE_MS` | idle-close threshold, **project** clusters | 300000 (5 min) |
 | `HOTSHEET_TELEMETRY_CLUSTER_IDLE_MS` | idle-close threshold, **telemetry** clusters (HS-9467) | 60000 (1 min) |
 | `HOTSHEET_CLUSTER_MIN_IDLE_EVICT_MS` | recency guard for cap/idle eviction | 30000 (30 s) |
-| `HOTSHEET_EXTERNAL_HEADROOM_BYTES` | headroom floor below the heap ceiling | 805306368 (768 MB) |
+| `HOTSHEET_EXTERNAL_HEADROOM_BYTES` | headroom floor below the budget ceiling | 805306368 (768 MB) |
 | `HOTSHEET_CLUSTER_SWEEP_INTERVAL_MS` | idle-sweep timer period (floor 1 s) | 60000 |
+| `HOTSHEET_EXTERNAL_CEILING_BYTES` | the ceiling `external` is budgeted against (HS-9555) | 25% of machine RAM, floored at the V8 heap limit, capped at 12 GB |
+| `HOTSHEET_FORCED_GC_MIN_INTERVAL_MS` | minimum gap between forced collections (HS-9479) | 30000 (30 s) |
+| `HOTSHEET_FORCED_GC_URGENT_BYTES` | unreclaimed bytes that override that gap (HS-9553) | 566231040 (3 clusters) |
 
 `0` is a valid value for the guard thresholds (disables that guard); `maxOpen` is clamped to a
 floor of 2, the sweep interval to 1 s.
+
+### 128.5.0 The ceiling is machine-derived, NOT V8's heap limit (HS-9555)
+
+Until 2026-08-01 every guard in this document compared `external` against
+`v8.getHeapStatistics().heap_size_limit`, and `heapSizeLimitBytes` was commented "the OOM
+boundary". **For this memory that was simply the wrong quantity.** A PGLite WASM heap is
+malloc'd native memory outside the V8 old space: the old-space limit does not bound it, does
+not fail an allocation at it, and does not abort past it. The real boundary is the machine.
+
+So on a 32 GB machine the cluster cache was budgeted against **4144 MB** — V8's *default*
+old-space size, a number nobody here chose. During the 2026-08-01 death the kernel reported
+memory pressure `normal` throughout (§131 working correctly) while the server evicted itself
+into a churn spiral against that inherited default.
+
+**Why that number specifically caused the spiral.** The caps and the guard were mutually
+inconsistent. A full cache is `maxOpen` 10 + `maxTelemetryOpen` 6 = 16 clusters ≈ **2.9 GB**.
+The headroom guard fires above `ceiling − headroomFloorBytes` = 4144 − 768 = **3376 MB**. That
+left ~480 MB between "the cache is legitimately full" and "start pressure-evicting" — under
+three clusters, and less than the uncollected heaps that always exist between forced
+collections (§128.5.6). The guard therefore fired during *normal operation with a full cache*,
+evicted, saw no drop because the closes were not yet collected, and evicted again.
+
+`src/db/memoryCeiling.ts` resolves the ceiling instead: **25% of machine RAM, floored at the V8
+heap limit** (so no machine ever gets a smaller budget than it had — an 8 GB machine's 25% is
+below its own default old-space limit) **and capped at 12 GB**. The count caps remain the real
+bound on residency; this governs only when the *pressure* guards start fighting. Measured on
+the maintainer's machine: 4144 MB → **8192 MB**, logged once at startup by
+`describeExternalCeiling()` so `usedPctOfLimit` in a freeze log has a visible denominator.
+
+**Why not `--max-old-space-size`.** It is the obvious first idea and it does not work here.
+Measured:
+
+```
+node                                                 -> heap_size_limit 4144 MB
+v8.setFlagsFromString('--max-old-space-size=12288')  -> still 4144 MB
+node --max-old-space-size=12288                      -> 12336 MB
+```
+
+The flag is honored only at launcher level, and there are three launchers (the `dist/cli.js`
+npm bin, the Tauri sidecar, the dev `node --import tsx` spawn). A shebang cannot portably carry
+node flags, so the npm bin would need a re-exec — which would break the Tauri PID tracking that
+deliberately spawns the server so its PID is directly killable. And it would be treating the
+wrong thing regardless: at the wedge `heapUsed` was **184 MB of 4144 MB**. The JS heap was never
+under pressure; only the denominator was wrong. Raising the old-space limit stays available and
+orthogonal.
 
 ### 128.5.1 Why the idle window is split by type (HS-9467)
 
@@ -584,6 +632,97 @@ constant and drives **real** clusters through `evictForHeadroom` — it evicts f
 stops, logs the suspension exactly once, and leaves the idle sweep working. Verified to fail when
 the breaker is not consulted.
 
+### 128.5.9 A burst of closes overrides the GC throttle (HS-9553)
+
+§128.5.6 forces the collection that makes eviction mean anything, rate-limited to **one per
+30 s** because a forced major GC is stop-the-world. That floor assumes closes arrive at a human
+pace. On 2026-08-01 they did not.
+
+The machine resumed from a ~16-minute sleep and the whole periodic world fired at once — the
+5-minute backup train, the hourly backup, telemetry ingest, the github scheduled sync, the idle
+sweep and the headroom guard — churning clusters **~15 times in 2 seconds** (`evictChurn`
+125 → 140 in `freeze.log`). From the log:
+
+```
+06:31:57.041  clusters=10  external=2680MB   68%
+06:31:57.271  clusters= 1  external=1127MB   30%   <- the one collection that was allowed
+06:31:57.845  clusters= 6  external=2241MB   58%
+06:31:58.767  clusters= 3  external=4892MB  122%   <- 3 open, 4.3GB of ALREADY-CLOSED heaps
+06:31:58.962  clusters= 5  external=5012MB  125%
+```
+
+The first sweep collected and worked exactly as designed. Every close for the next 30 s then
+returned `'throttled'` and freed nothing, while each reopen allocated a fresh ~180 MB heap. That
+is §128.5.4's runaway with the throttle standing in for the missing collection:
+
+```
+high external -> evict (throttled, frees nothing) -> reopen (+180 MB) -> higher external
+```
+
+**The HS-9480 breaker could not catch it either.** `noteHeadroomPass` is only called when
+`gc === 'collected'` — deliberately, since a throttled pass legitimately frees nothing and
+counting it would trip the breaker on a healthy server. During the storm essentially every pass
+was throttled, so the breaker never counted an ineffective pass and never tripped. The safety
+net was blind in exactly the regime it exists for.
+
+So `shouldForceGc` now takes the accumulated **unreclaimed debt** and collects regardless of
+elapsed time once it reaches `HOTSHEET_FORCED_GC_URGENT_BYTES` (3 clusters). This cannot degrade
+into collect-on-every-close — the bypass requires that much *already-closed, uncollected* heap,
+which only a burst produces, and `connection.ts` clears the credit when a collection actually
+runs. Clearing it also fixes a second-order error: the credit is subtracted from `external` when
+sizing the budget (§128.2.1), so leaving it in place after a successful collection inflated
+apparent headroom for the rest of the lag window.
+
+Side effect worth naming: because storms now produce *measured* passes rather than throttled
+ones, the §128.5.8 breaker starts receiving real data in the one situation it was written for.
+
+### 128.5.10 A trapped WASM instance is dead — stop calling it (HS-9554)
+
+The 2026-08-01 process was SIGKILLed by the §45 watchdog after a **61.7 s** event-loop block.
+The watchdog's FATAL line called it GC thrash; it prints that whenever memory is above 75% of
+the limit. The `sample` it captured one line later says otherwise — 1373 of 1456 samples, one
+stack:
+
+```
+Runtime_ThrowWasmError -> Factory::NewWasmRuntimeError -> ErrorUtils::MakeGenericError
+  -> Isolate::CaptureAndSetErrorStack -> CaptureSimpleStackTrace (1079)
+     -> OptimizedFrame::Summarize (390) / UnoptimizedFrame::Summarize (337)
+```
+
+**Not one sample in GC.** The loop was pinned constructing `WebAssembly.RuntimeError`s inside a
+promise continuation off an inbound HTTP request. A WASM trap is cheap to raise; the *error
+object* is not — V8 captures a stack trace, and on a JIT-optimized async stack that means
+deoptimizing frame translation per frame per throw. Hundreds of those is a wedged event loop.
+
+The missing invariant: **a trapped WASM instance never recovers.** An emscripten `abort()` /
+`unreachable` / out-of-bounds trap leaves the module permanently faulted, so every later call
+traps identically. `isRecoverableOpenError` has encoded that for *open* failures since HS-8426,
+but a trap on a **live query** fell through every branch of the query proxy's catch and merely
+propagated — leaving the dead handle in the `databases` map for the caller's next row to hit.
+
+`wasmTrap.ts` adds the predicate (matching on `.name === 'RuntimeError'` as well as message —
+the bare `unreachable` variant carries no "RuntimeError" text, which is what HS-7889 missed and
+what recurred here) and `connection.ts` **poisons** the cluster: drop the handle, take it out of
+action for a 30 s cooldown, and raise a stack-less `PoisonedClusterError` from `getDbByPath`.
+
+Two things this deliberately does **not** do:
+
+- It does **not** stop the caller's loop — the caller decides how many rows it iterates. It makes
+  each iteration fail immediately and cheaply from a pre-built JS error instead of re-entering
+  WASM. That is the difference between a wedged loop and a failed request, which is the outcome
+  §45 exists to prefer.
+- A poisoned cluster is **not** added to `evictedClusterPaths`, so the §128.3.1 stale-handle heal
+  will not resurrect it. Healing a trap would allocate a fresh ~180 MB heap *per failing
+  statement* — the same runaway one level up. The trap check therefore runs **before** the
+  closed-instance check in the proxy's catch.
+
+Also fixed here: the watchdog's stack capture was named from `Date.now()` at watchdog *start*,
+so this wedge's file was stamped `2026-07-31T04-29-43` — 26 hours off — and every wedge in one
+process overwrote the same path. The worker now substitutes the timestamp at capture time. And
+the FATAL line no longer asserts "GC thrash"; memory pressure, GC thrash and a trap storm are
+indistinguishable from the watchdog's vantage point, and saying otherwise sent this
+investigation the wrong way.
+
 ## 128.6 Lifecycle
 
 - Started once at startup (`cli.ts` `postStartup`, after project restore →
@@ -604,6 +743,17 @@ the breaker is not consulted.
   evicted, and a close drops the bookkeeping.
 - `src/db/headroomBreakerWiring.test.ts` — the §128.5.8 circuit breaker wired into
   `evictForHeadroom` against real clusters (pressure eviction suspends; cap + idle keep running).
+- `src/db/memoryCeiling.test.ts` — §128.5.0: the 32 GB case, the heap-limit floor (no machine
+  regresses), the large-machine cap, override handling incl. junk that must not become `NaN`, and
+  the gap-between-full-cache-and-guard property that is the actual fix.
+- `src/db/forceGc.test.ts` — §128.5.9: the debt bypass, a replay of the 15-closes-in-2s burst,
+  and the negative case that it must not degrade into collect-on-every-close.
+- `src/db/wasmTrap.test.ts` — §128.5.10: trap recognition (including the bare `unreachable`
+  variant), the non-matches that must keep healing (`PGlite is closed`) or stay ordinary errors,
+  and that `PoisonedClusterError` captures no stack.
+- `src/db/queryInstrumentation.test.ts` — §128.5.10 routing: a trap reports and propagates
+  without a reopen, is checked *before* the closed-instance heal, releases the in-flight count,
+  and survives a missing handler.
 - `src/db/queryInstrumentation.test.ts` — the always-on proxy stays transparent when
   freeze-timing is disabled, and in-flight counts are tracked (and released on reject).
 
