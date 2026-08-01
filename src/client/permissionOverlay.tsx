@@ -129,6 +129,43 @@ function restoreEditorFocusIfIdle(): void {
   savedEditorFocus = null;
 }
 
+/**
+ * HS-9552 — the static (non-live) popup body: the color-coded diff, else the flat
+ * preview, else nothing.
+ *
+ * Shared because this cascade existed TWICE — once when first building the popup, and
+ * again in `fallbackToNonLivePreview` when a live-terminal checkout turns out to have
+ * no session. The copies were already identical; the risk was the next preview type,
+ * which would have been added to the build path and silently missing from the
+ * fallback, so a permission prompt that lost its terminal would render the old way.
+ *
+ * `emptyFallback` is what distinguishes the two callers: at build time "no preview" is
+ * legitimately no body at all, but the fallback is REPLACING a live-terminal element,
+ * so it must return something or the popup body would be empty.
+ */
+function buildStaticPreviewBody(
+  editDiff: ReturnType<typeof formatEditDiff>,
+  previewText: string,
+  opts: { emptyFallback: true },
+): HTMLElement;
+function buildStaticPreviewBody(
+  editDiff: ReturnType<typeof formatEditDiff>,
+  previewText: string,
+  opts?: { emptyFallback?: false },
+): HTMLElement | undefined;
+function buildStaticPreviewBody(
+  editDiff: ReturnType<typeof formatEditDiff>,
+  previewText: string,
+  opts?: { emptyFallback?: boolean },
+): HTMLElement | undefined {
+  if (editDiff !== null) return renderEditDiffPreview(editDiff);
+  if (previewText !== '') return toElement(<pre className="permission-popup-preview">{previewText}</pre>);
+  if (opts?.emptyFallback === true) {
+    return toElement(<pre className="permission-popup-preview">{'(no preview — terminal not live)'}</pre>);
+  }
+  return undefined;
+}
+
 function showPermissionPopupBody(secret: string, perm: PermissionData) {
   // HS-9162 — snapshot the focused editable field BEFORE the popup mounts (so the
   // capture sees the user's editor, not the popup). Only the first popup of a
@@ -173,7 +210,6 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   const previewText = editDiff === null && perm.input_preview !== undefined
     ? formatInputPreview(perm.tool_name, perm.input_preview)
     : '';
-  const hasStringPreview = previewText !== '';
 
   // HS-8171 v2 + HS-8217 — when the preview is non-trivial the popup
   // body becomes the LIVE project terminal via the §54 checkout
@@ -267,10 +303,8 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     if (useLiveCheckout) {
       liveTermContainer = toElement(<div className="permission-popup-live-terminal"></div>);
       bodyElement = liveTermContainer;
-    } else if (editDiff !== null) {
-      bodyElement = renderEditDiffPreview(editDiff);
-    } else if (hasStringPreview) {
-      bodyElement = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
+    } else {
+      bodyElement = buildStaticPreviewBody(editDiff, previewText);
     }
 
     // HS-9330 (docs/114 §114.5) — OPTION-DRIVEN actions: when the request carries an
@@ -343,18 +377,9 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   function fallbackToNonLivePreview(): void {
     if (liveTermContainer === null) return;
     releaseActiveCheckoutIfAny();
-    let fallback: HTMLElement;
-    if (editDiff !== null) {
-      fallback = renderEditDiffPreview(editDiff);
-    } else if (hasStringPreview) {
-      fallback = toElement(<pre className="permission-popup-preview">{previewText}</pre>);
-    } else {
-      // Neither preview was buildable — show a minimal explainer so the
-      // popup body isn't empty.
-      fallback = toElement(
-        <pre className="permission-popup-preview">{'(no preview — terminal not live)'}</pre>,
-      );
-    }
+    // `emptyFallback` — this REPLACES the live-terminal element, so unlike the build
+    // path it must return something rather than leaving the body empty.
+    const fallback = buildStaticPreviewBody(editDiff, previewText, { emptyFallback: true });
     liveTermContainer.replaceWith(fallback);
     liveTermContainer = null;
   }
