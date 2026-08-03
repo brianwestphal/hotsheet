@@ -1545,6 +1545,24 @@ Keep each section **4–6 sentences**. This doc exists to *replace* reading 20+ 
 
 ---
 
+---
+
+## 134. Server process supervision (`134-server-supervision.md`)
+
+**Status: DESIGN, with one half SHIPPED (HS-9558) and two open BUGS.** How the Tauri shell notices the server process has **died** and what it does about it. Written for HS-9563.
+
+**The organizing distinction.** The server stops serving two ways and they need different machinery: a **wedge** (loop pinned, process alive) is the docs/45 watchdog's job — it SIGKILLs so the port + locks are released; an **exit** (process gone) is the shell's, and is what this doc covers. A wedge *becomes* an exit because the watchdog kills it, so supervision sits downstream of the watchdog and must never out-argue it.
+
+**SHIPPED (§134.3, HS-9558, dev builds only).** `describe_child_exit` names the cause — the exit code, or for `None` a note that it died to a signal, which is the diagnostic case since the two signals that actually occur are the watchdog's SIGKILL and the OOM killer. The client shows a permanent, non-dismissible "Server Stopped" overlay that **replaces** the "Connection Error" popup rather than stacking behind it: the shell **reaped the child**, so "the server is gone" is a fact, not the guess a failed fetch makes.
+
+**§134.4 + §134.5 — production is WORSE OFF than dev, and these are bugs rather than decisions.** `server-exited` is emitted at exactly one call site in the crate, inside the dev block. In `spawn_sidecar_and_navigate` the "child exited, we already navigated, we are not quitting" case — i.e. the steady-state 2026-08-03 scenario — is handled by **literally nothing**; `CommandEvent::Terminated` is `eprintln!`-only. Sidecar **stderr** is `eprintln!`-only too, which on a GUI launch (how the shipped app is always started) goes nowhere — the same hole HS-9557 closed for dev, and the only place a V8/WASM OOM abort or native crash is ever recorded, since those never reach JS. Production has *more* information available than dev (`Terminated` carries both `code` and `signal`), so it can name the actual signal.
+
+**§134.6 — the decision.** **A** never restart (status quo) / **B** a "Restart Server" button on the overlay / **C** bounded auto-restart with backoff + cap. Recommendation **B**: it is a strict subset of C (same extraction, same lock-race question, same renavigate — C adds only a policy and a timer), a crash-on-startup bug cannot spin because the user stops clicking, and there is currently **one** observed death to design from. Any of B/C requires extracting the spawn out of `.setup()` — the launch path, i.e. HS-8704 territory — verifying the `--replace`-vs-lock race rather than assuming `acquireLockWaitingForShutdown` covers respawn-after-kill (it was written for relaunch-after-quit), and renavigating, since the page came from the dead process. Note a restart is **not** free of user-visible cost either way: the window reloads, so in-memory client state is lost regardless; B and C differ from A mainly in who initiates that.
+
+**Must not regress (§134.7):** the splash handshake pinned by `launchReadinessContract.test.ts` (which greps the Rust source, so it catches deletion but NOT a matcher moved somewhere it never runs), the `ShuttingDown` short-circuit (or quitting would respawn the server it just drained), the watchdog, and the logs that explain the original death.
+
+**Open decisions in §134.9.**
+
 ## 16. Related reading
 
 - **Code map:** `docs/ai/code-summary.md` (sibling file — read together).
