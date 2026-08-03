@@ -16,6 +16,7 @@ import { getCategories } from './db/queries.js';
 import { initSnapshotScheduler } from './db/snapshot.js';
 import { DEMO_SCENARIOS, seedDemoData } from './demo.js';
 import { setDemoMode } from './demo-mode.js';
+import { installFatalErrorHandlers } from './diagnostics/fatalErrors.js';
 import { setOpenClusterCounter as setWatchdogClusterCounter, startEventLoopWatchdog } from './diagnostics/watchdog.js';
 import { enrichProcessPath } from './enrich-path.js';
 import { PLUGINS_ENABLED } from './feature-flags.js';
@@ -827,6 +828,13 @@ async function main() {
   // genuinely-wedged process so it can't hold the port + locks forever. It logs
   // its FATAL line to the same durable startup log.
   startEventLoopWatchdog({ logPath: getStartupLogPath() });
+
+  // HS-9557 — the watchdog above only catches a WEDGE. An outright fatal exit
+  // (uncaught exception / unhandled rejection) reports itself on stderr, which
+  // a GUI launch discards, so on 2026-08-03 a death left no record at all. Route
+  // those to the same durable startup log. Installed right after the watchdog so
+  // the two diagnostics together cover both ways the process can stop serving.
+  installFatalErrorHandlers();
 
   // HS-8096: install signal handlers before any HTTP listener can respond,
   // so a SIGINT arriving between `tryServe`'s listen-callback firing and

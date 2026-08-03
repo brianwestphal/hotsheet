@@ -202,6 +202,47 @@ fn startup_log(msg: &str) {
 /// still leaves a trail to pair with the Node sidecar's `[lifecycle] step …`
 /// lines. Best-effort: any filesystem error is swallowed so logging never
 /// affects the quit path.
+/// HS-9557 — the server child's stderr, mirrored to `~/.hotsheet/server-stderr.log`.
+///
+/// A GUI launch has no controlling terminal, so the `eprintln!` below reaches
+/// nobody and everything node writes to stderr used to vanish. That is where a
+/// V8/WASM OOM abort or a native crash announces itself — the one failure class
+/// the JS-side handler in `src/diagnostics/fatalErrors.ts` structurally cannot
+/// see, because it never reaches JS. On 2026-08-03 that left a death with no
+/// recoverable cause at all (HS-9561).
+///
+/// Bounded by `truncate_if_large` at spawn time rather than per line: this
+/// carries every `console.error` the server makes, so it grows steadily during
+/// normal operation and must not become unbounded.
+fn server_stderr_log(msg: &str) {
+    eprintln!("{msg}");
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok());
+    if let Some(home) = home {
+        use std::io::Write;
+        let dir = std::path::PathBuf::from(home).join(".hotsheet");
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("server-stderr.log"))
+        {
+            let _ = writeln!(f, "{msg}");
+        }
+    }
+}
+
+/// Bound a log file's size by truncating it when it exceeds `max_bytes`.
+/// Mirrors `MAX_LOG_BYTES` handling in `src/startup-log.ts`.
+fn truncate_if_large(path: &std::path::Path, max_bytes: u64) {
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > max_bytes {
+            let _ = std::fs::write(path, b"");
+        }
+    }
+}
+
 fn shutdown_log(msg: &str) {
     eprintln!("[shutdown] {msg}");
     let home = std::env::var("HOME")
@@ -1279,12 +1320,39 @@ pub fn run() {
                     // paths) from here instead of the old `--tsconfig` CLI flag.
                     .env("TSX_TSCONFIG_PATH", "tsconfig.json")
                     .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::inherit())
+                    // HS-9557 — was `Stdio::inherit()`, which discarded every fatal
+                    // message on a GUI launch. Piped + drained by the thread below.
+                    .stderr(std::process::Stdio::piped())
                     .spawn()
                     .expect("Failed to start dev server (is node/tsx installed?)");
 
                 shutdown_log(&format!("[dev] server child pid = {}", child.id()));
                 *app.state::<SidecarPid>().0.lock().unwrap() = Some(child.id());
+
+                // HS-9557 — drain stderr on its own thread. This is NOT optional
+                // once the pipe is captured: an unread pipe fills at ~64 KB and
+                // then blocks the child on its next write, which would wedge the
+                // server exactly the way this ticket exists to diagnose.
+                if let Some(stderr) = child.stderr.take() {
+                    if let Some(home) = std::env::var("HOME")
+                        .ok()
+                        .or_else(|| std::env::var("USERPROFILE").ok())
+                    {
+                        truncate_if_large(
+                            &std::path::PathBuf::from(home)
+                                .join(".hotsheet")
+                                .join("server-stderr.log"),
+                            1_000_000,
+                        );
+                    }
+                    std::thread::spawn(move || {
+                        use std::io::{BufRead, BufReader};
+                        for line in BufReader::new(stderr).lines() {
+                            let Ok(line) = line else { break };
+                            server_stderr_log(&line);
+                        }
+                    });
+                }
 
                 let stdout = child.stdout.take().expect("Failed to capture stdout");
                 let app_handle = app.handle().clone();
@@ -1695,6 +1763,59 @@ mod teardown_action_tests {
     fn abandons_after_kill_grace() {
         assert_eq!(teardown_action(true, TERM + KILL, TERM, KILL, true), TeardownAction::Abandon);
         assert_eq!(teardown_action(true, Duration::from_secs(20), TERM, KILL, true), TeardownAction::Abandon);
+    }
+}
+
+#[cfg(test)]
+mod server_stderr_log_tests {
+    //! HS-9557 — the captured-stderr log has to stay bounded.
+    //!
+    //! `server-stderr.log` receives EVERY `console.error` the server makes, not
+    //! just fatals, so without bounding it grows for as long as the app runs.
+    //! An unbounded diagnostics file is its own incident, and a log that fills
+    //! the disk would take the server down — the opposite of the point.
+    use super::*;
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("hs-9557-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    #[test]
+    fn truncates_a_file_past_the_cap() {
+        let path = temp_path("over.log");
+        std::fs::write(&path, vec![b'x'; 500]).unwrap();
+        truncate_if_large(&path, 100);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn leaves_a_file_under_the_cap_alone() {
+        let path = temp_path("under.log");
+        std::fs::write(&path, b"keep me").unwrap();
+        truncate_if_large(&path, 100);
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep me");
+    }
+
+    #[test]
+    fn leaves_a_file_exactly_at_the_cap_alone() {
+        // Boundary: the check is `>`, not `>=` — a file sitting exactly at the
+        // cap has not exceeded it and must survive.
+        let path = temp_path("exact.log");
+        std::fs::write(&path, vec![b'y'; 100]).unwrap();
+        truncate_if_large(&path, 100);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn is_a_no_op_for_a_missing_file() {
+        // First launch on a clean machine: nothing to bound, and it must not
+        // create the file or panic.
+        let path = temp_path("absent.log");
+        let _ = std::fs::remove_file(&path);
+        truncate_if_large(&path, 100);
+        assert!(!path.exists());
     }
 }
 
