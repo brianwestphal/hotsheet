@@ -1561,7 +1561,7 @@ Keep each section **4–6 sentences**. This doc exists to *replace* reading 20+ 
 
 **Must not regress (§134.7):** the splash handshake pinned by `launchReadinessContract.test.ts` (which greps the Rust source, so it catches deletion but NOT a matcher moved somewhere it never runs), the `ShuttingDown` short-circuit (or quitting would respawn the server it just drained), the watchdog, and the logs that explain the original death.
 
-**Open decisions in §134.9.**
+**DECIDED 2026-08-04 (HS-9563): A — never restart.** The maintainer's reasoning reframes the area — *"we just need to get to a place where this never / almost never happens even when using for a long time on machines that periodically come under heavy memory / cpu pressure"* — so a restart is **failure absorption** (it makes a death cheaper, not rarer, and would hide the recurrence rate behind an automatic recovery). Effort moves to **prevention**, tracked as **HS-9566** (§134.10): validate the docs/128 ceiling over a long session (HS-9562, read `evictHeadroom` first), capture the next death now that HS-9557/9564/9565 make one diagnosable, and investigate whether the docs/45 watchdog can SIGKILL a **healthy but CPU-starved** server — its suspend guard keys off the *checker's* gap, so a regime where the checker still runs while the main thread is starved past 60 s would be indistinguishable from a wedge. B/C are kept in §134.6 as considered-and-declined, and §134.9 has no open decisions.
 
 ## 16. Related reading
 

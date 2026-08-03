@@ -153,10 +153,29 @@ side had to persist its own startup log. Worth correcting when this area is touc
 
 ---
 
-## 134.6 The decision: should the shell restart the server?
+## 134.6 The decision: should the shell restart the server? — **DECIDED: A, never restart**
 
 Everything above restores *visibility*. Restart is a separate question: once the user knows, should
 the app fix itself?
+
+**Maintainer decision, 2026-08-04 (HS-9563): A — never restart.** Recorded verbatim because the
+reasoning matters more than the choice:
+
+> A but really we just need to get to a place where this never / almost never happens even when
+> using for a long time on machines that periodically come under heavy memory / cpu pressure.
+
+That reframes the whole area. A restart is **failure absorption** — it makes a death cheaper without
+making it rarer, and its main effect would be to hide the recurrence rate behind an automatic
+recovery. The goal is that the server **survives**: long uptime on a machine that periodically comes
+under heavy memory and CPU pressure. Effort belongs on prevention (docs/128 memory bounding,
+docs/131 pressure response, docs/45 robustness) and on capturing the next death well enough to fix
+its cause — **not** here.
+
+So B and C below are **not planned**. They are kept as a record of what was considered and what it
+would have cost, so the question is not reopened from scratch; §134.6.3 in particular stays useful
+as the map of what any future supervision work would have to touch.
+
+The prevention goal is tracked separately — see §134.10.
 
 ### 134.6.1 Options
 
@@ -237,17 +256,46 @@ The pure pieces are already the testable ones and should stay that way:
 
 ---
 
-## 134.9 Open decisions
+## 134.9 Decisions
 
-1. **Restart at all, and which option?** A, B, or C (§134.6.1). Recommendation: **B**, promotable
-   to C once there is more than one data point. It removes the manual quit-and-relaunch without
-   introducing a policy, a timer, or a loop that could fight the watchdog — and it is a strict
-   subset of C, so choosing it forecloses nothing.
-2. **Does production parity (§134.4, §134.5) block the restart work?** Recommendation: **no, and it
-   should ship first** — they are bugs in the shipped app, they are small, and they are independent
-   of the extraction.
-3. **If C: what cap and what backoff?** Not proposed here, deliberately — the numbers should come
-   from an observed failure rate, and there is currently one observation.
-4. **Should the restart button (B) also appear for a wedge?** The client cannot currently tell a
-   wedge from a network blip, so this would need the shell to report the watchdog's SIGKILL
-   distinctly. Probably out of scope; noted so it is not rediscovered.
+All resolved; nothing here is open.
+
+1. **Restart at all, and which option?** → **A, never restart** (maintainer, 2026-08-04, HS-9563).
+   B and C are recorded in §134.6 as considered-and-declined, not as backlog.
+2. **Does production parity (§134.4, §134.5) block the restart work?** → No, and it shipped first
+   (HS-9564, HS-9565). Independent of the restart question by construction, and they were bugs in
+   the shipped app rather than decisions.
+3. **If C: what cap and what backoff?** → Moot under A.
+4. **Should a restart affordance distinguish a wedge from a network blip?** → Moot under A. The
+   underlying observation still holds and is worth keeping: the *client* cannot tell those apart,
+   which is exactly why the shell's reaped-the-child knowledge is the authoritative signal (§134.3).
+
+---
+
+## 134.10 The actual goal: the server should not die
+
+The decision above redirects the effort rather than ending it. "Never / almost never happens, even
+under long uptime on a machine periodically under heavy memory and CPU pressure" is a **survival**
+requirement, and this document is not where it is met — supervision only reacts.
+
+Tracked as **HS-9566**. Three things make that goal tractable now in a way it was not on
+2026-08-03:
+
+1. **The next death will be diagnosable.** HS-9557 (fatal handlers + dev stderr capture), HS-9564
+   (production death notice) and HS-9565 (production stderr capture) mean a recurrence leaves a
+   `[fatal]` report, a stderr tail, and a named exit cause. The 2026-08-03 death left none of that
+   and its cause is permanently unrecoverable — which is why prevention work then would have been
+   guesswork.
+2. **The memory machinery is instrumented but unvalidated.** docs/128 §128.5's ceiling work
+   (HS-9553/9554/9555) has never run through a long session; HS-9562 is the soak check, and
+   `evictHeadroom` is the field that decides whether the ceiling is right.
+3. **The pressure scenario the maintainer named is specifically docs/131's** — the machine, not the
+   process, being short of memory. That path exists and reports the kernel's own verdict, but like
+   the ceiling it has not been validated over a long session under real pressure.
+
+One thing worth investigating rather than assuming, because it inverts the usual reading: under
+sustained heavy CPU pressure **from other processes**, is the docs/45 watchdog capable of SIGKILLing
+a *healthy but starved* server? Its suspend guard keys off the checker's own gap, which protects
+against sleep and against total starvation — but a regime where the checker still runs while the
+main thread is starved past 60 s would look identical to a wedge. If that is reachable, the watchdog
+is a *cause* of deaths on a loaded machine, not just a responder to them. Noted in HS-9566.
