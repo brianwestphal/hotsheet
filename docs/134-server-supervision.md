@@ -293,9 +293,37 @@ Tracked as **HS-9566**. Three things make that goal tractable now in a way it wa
    process, being short of memory. That path exists and reports the kernel's own verdict, but like
    the ceiling it has not been validated over a long session under real pressure.
 
-One thing worth investigating rather than assuming, because it inverts the usual reading: under
-sustained heavy CPU pressure **from other processes**, is the docs/45 watchdog capable of SIGKILLing
-a *healthy but starved* server? Its suspend guard keys off the checker's own gap, which protects
-against sleep and against total starvation — but a regime where the checker still runs while the
-main thread is starved past 60 s would look identical to a wedge. If that is reachable, the watchdog
-is a *cause* of deaths on a loaded machine, not just a responder to them. Noted in HS-9566.
+### What the HS-9566 investigation actually found (2026-08-04)
+
+Two results, and the first one corrects a hypothesis recorded here earlier.
+
+**The watchdog is not misfiring, and the "healthy but CPU-starved server" worry is not supported.**
+An earlier draft of this section proposed investigating whether sustained external CPU pressure
+could make the watchdog SIGKILL a healthy server. The evidence says no. The measured event-loop
+block distribution across the whole freeze log is **p50 133 ms, p90 412 ms, p99 664 ms** — excluding
+suspends, nothing approaches the 60 s threshold, a margin of roughly 100×. And both surviving
+watchdog stack captures show the main thread **pinned in one identifiable frame**, not starved:
+`readFileSync` blocked in the kernel (the HS-9527 cloud-`backupDir` class) in one, and
+`RunMicrotasks` under an HTTP read callback (the HS-9554 WASM trap storm) in the other. In both, the
+watchdog was right. The hypothesis is dropped rather than carried as backlog.
+
+**`server-wake` has never fired, so the post-wake stagger has never run — HS-9567.** The freeze log
+contains **zero** `server-wake` entries alongside six multi-second "event-loop blocked" entries that
+match `pmset` sleeps almost exactly (e.g. a 387.3 s gap at `2026-08-02T23:14:34Z` against a sleep of
+389 s). `isSuspendGap` keys off wall-vs-monotonic clock divergence, and on macOS libuv's monotonic
+clock advances during sleep, so divergence is ~0 and every suspend is classified as a block.
+
+`freezeLogger`'s own comment records that measurement and argues the misclassification is safe
+because it "only over-reports blocks, and keeps backpressure engaged" — which is true of the logging
+and the backpressure, and misses the third thing the suspend branch does: it is the only place
+`wakeListeners` fire. So `backgroundScheduler.noteWake()` is never called and the **HS-8726
+post-wake stagger never engages**. HS-9553's root cause for the 2026-08-01 death was *"a post-sleep
+stampede … churned clusters ~15× in 2 s"*, and the stagger is that stampede's designed mitigation.
+
+The correct discriminator already exists in the codebase — `freezeAnalysis::looksLikeSuspend` uses
+CPU ratio, on the principle `freezeLogger` itself states: a suspend accrues no CPU. It is only wired
+into post-hoc analysis, not the live path.
+
+**The generalization (HS-9568):** every death so far has been one operation on the main thread able
+to run unbounded, each found only after it killed the server. The remaining prevention work is to
+find the next member of that class before it does, not to tune the watchdog.
