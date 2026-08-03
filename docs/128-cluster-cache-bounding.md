@@ -260,7 +260,29 @@ heap limit** (so no machine ever gets a smaller budget than it had — an 8 GB m
 below its own default old-space limit) **and capped at 12 GB**. The count caps remain the real
 bound on residency; this governs only when the *pressure* guards start fighting. Measured on
 the maintainer's machine: 4144 MB → **8192 MB**, logged once at startup by
-`describeExternalCeiling()` so `usedPctOfLimit` in a freeze log has a visible denominator.
+`describeExternalCeiling()` so `usedPctOfCeiling` in a freeze log has a visible denominator.
+
+**§128.5.0a — the diagnostics use the same ceiling (HS-9559).** HS-9555 moved the *eviction*
+guards onto `externalCeilingBytes()` but left both diagnostic surfaces dividing by V8's
+`heap_size_limit`, so the two halves of docs/128 disagreed by construction: a post-fix
+`freeze.log` reported `externalMb: 2199` as **56%** when against the real 8192 MB ceiling it is
+**28%**, and `memoryPressure` flagged pressure the eviction policy correctly ignored. Worse, the
+watchdog FATAL line — the artifact read *first* after a death — stated its percentage against
+the number this section calls "a number nobody chose", which is how the 2026-08-01 wedge got
+read as GC thrash when the capture showed a WASM trap storm.
+
+Both now read the ceiling:
+
+- `freezeLogger.ts::memorySnapshot()` reports `ceilingMb` + `usedPctOfCeiling`, and derives
+  `memoryPressure` from the latter. The field was **renamed** from `usedPctOfLimit` on purpose —
+  a log line's field name is now how you tell which denominator produced it, so pre- and
+  post-fix history stay distinguishable.
+- `watchdog.ts` publishes the ceiling through a new SAB slot (`SLOT_CEILING_MB` = 7) and the
+  FATAL line states **both**: the percentage against the ceiling, plus V8's heap limit labelled
+  as bounding `heapUsed` only.
+
+Keeping both is the point. V8's limit is still the right denominator for `heapUsed`; it is only
+never one for `external`. Reporting either as the other is the original defect.
 
 **Why not `--max-old-space-size`.** It is the obvious first idea and it does not work here.
 Measured:

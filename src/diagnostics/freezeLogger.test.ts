@@ -6,8 +6,10 @@
 import { mkdtempSync, promises as fsp, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { getHeapStatistics } from 'v8';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { externalCeilingBytes } from '../db/memoryCeiling.js';
 import { diagnosticsDir } from './diagnosticsDir.js';
 import {
   _resetForTesting,
@@ -418,7 +420,35 @@ describe('startServerEventLoopHeartbeat (HS-8054 v3)', () => {
     // A test process is nowhere near the limit, so this must be false — the flag
     // has to be quiet in the normal case or it's noise.
     expect(snap.memoryPressure).toBe(false);
-    expect(snap.usedPctOfLimit).toBeLessThan(75);
+    expect(snap.usedPctOfCeiling).toBeLessThan(75);
+  });
+
+  // HS-9559 — the denominator. HS-9555 moved the EVICTION guards onto the
+  // docs/128 ceiling but left these diagnostics dividing by V8's heap_size_limit,
+  // so the two halves of docs/128 disagreed: a post-fix freeze log reported
+  // `externalMb: 2199` as 56% when against the real ceiling it is 28%.
+  it('measures against the cluster budget ceiling, not V8’s heap limit', () => {
+    const snap = memorySnapshot();
+    expect(snap.ceilingMb).toBe(Math.round(externalCeilingBytes() / (1024 * 1024)));
+
+    const used = (snap.heapUsedMb as number) + (snap.externalMb as number);
+    const expected = Math.round((used / (snap.ceilingMb as number)) * 100);
+    // Within 1 point — the snapshot rounds to whole MB before we do.
+    expect(Math.abs((snap.usedPctOfCeiling as number) - expected)).toBeLessThanOrEqual(1);
+  });
+
+  it('still reports V8’s heap limit separately, since it bounds heapUsed', () => {
+    // Keeping BOTH is the point: the old field name meant a reader could not tell
+    // which denominator a line used. They must not be conflated again.
+    const snap = memorySnapshot();
+    expect(snap.heapLimitMb).toBe(Math.round(getHeapStatistics().heap_size_limit / (1024 * 1024)));
+    expect(snap.usedPctOfLimit).toBeUndefined(); // renamed, so old logs stay distinguishable
+  });
+
+  it('never divides by a zero ceiling', () => {
+    // A NaN percentage in a freeze log is worse than none — it reads as a bug in
+    // the reader, not in the process.
+    expect(Number.isFinite(memorySnapshot().usedPctOfCeiling)).toBe(true);
   });
 });
 

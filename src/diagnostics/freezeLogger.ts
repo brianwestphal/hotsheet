@@ -38,6 +38,12 @@ import { promises as fsp } from 'fs';
 import { join } from 'path';
 import { getHeapStatistics } from 'v8';
 
+// HS-9559 — `db/memoryCeiling.ts` is a dependency-free leaf (it imports only
+// `node:os` + `node:v8`), so this does NOT create the `db/` coupling the
+// injection seams below exist to avoid. Those exist because their
+// implementations live in `db/connection.ts`, which imports THIS module back —
+// a genuine cycle. The ceiling has no such problem.
+import { externalCeilingBytes } from '../db/memoryCeiling.js';
 import { enterOperation, exitOperation } from './currentOperation.js';
 import { diagnosticsDir, projectLabelForDataDir } from './diagnosticsDir.js';
 
@@ -229,9 +235,11 @@ export interface FreezeEntry {
  */
 export const MEMORY_SAMPLE_INTERVAL_MS = 60_000;
 
-/** HS-9421 — warn once `heapUsed + external` crosses this share of the V8 heap
- *  limit. This class of death is silent until it is fatal, so the sample is
- *  marked at a level a reader will notice while there is still headroom. */
+/** HS-9421 — warn once `heapUsed + external` crosses this share of the cluster
+ *  budget ceiling (docs/128 §128.5; HS-9559 moved this off V8's `heap_size_limit`,
+ *  which never bounded `external` at all). This class of death is silent until it
+ *  is fatal, so the sample is marked at a level a reader will notice while there
+ *  is still headroom. */
 export const MEMORY_PRESSURE_WARN_RATIO = 0.75;
 
 /** HS-9421 — supplies the count of open PGLite clusters. Injected so
@@ -276,18 +284,30 @@ const MB = 1024 * 1024;
  */
 export function memorySnapshot(): Record<string, number | boolean> {
   const mem = process.memoryUsage();
-  const limit = getHeapStatistics().heap_size_limit;
+  // HS-9559 — measure against the docs/128 §128.5 CEILING, not V8's
+  // `heap_size_limit`. HS-9555 moved the eviction guards onto the ceiling but
+  // left the diagnostics here on the old number, so a post-fix freeze log still
+  // reported `externalMb: 2199` as 56% when against the real 8192 MB ceiling it
+  // is 28% — i.e. the two halves of docs/128 disagreed by construction, and
+  // `memoryPressure` flagged pressure the eviction policy correctly ignored.
+  const ceiling = externalCeilingBytes();
+  const heapLimit = getHeapStatistics().heap_size_limit;
   const heapUsedMb = Math.round(mem.heapUsed / MB);
   const externalMb = Math.round(mem.external / MB);
-  const limitMb = Math.round(limit / MB);
-  const usedRatio = limit > 0 ? (mem.heapUsed + mem.external) / limit : 0;
+  const usedRatio = ceiling > 0 ? (mem.heapUsed + mem.external) / ceiling : 0;
   return {
     rssMb: Math.round(mem.rss / MB),
     heapUsedMb,
     externalMb,
     arrayBuffersMb: Math.round(mem.arrayBuffers / MB),
-    heapLimitMb: limitMb,
-    usedPctOfLimit: Math.round(usedRatio * 100),
+    ceilingMb: Math.round(ceiling / MB),
+    // Kept, and still V8's old-space limit — it remains the right denominator
+    // for `heapUsed`, just never for `external`. Reported SEPARATELY so the two
+    // can't be conflated again; that distinction is the whole point of HS-9555.
+    heapLimitMb: Math.round(heapLimit / MB),
+    // Renamed from `usedPctOfLimit` deliberately: the field name is how you tell
+    // a pre-HS-9559 log line (wrong denominator) from a post one.
+    usedPctOfCeiling: Math.round(usedRatio * 100),
     openPGLiteClusters: openClusterCounter === null ? -1 : openClusterCounter(),
     memoryPressure: usedRatio >= MEMORY_PRESSURE_WARN_RATIO,
     // HS-9470 — the eviction counters, so a freeze capture says not just how much
@@ -526,7 +546,7 @@ export function startMemorySampler(dataDir: string): void {
       source: 'server-memory',
       durationMs: 0,
       context: snap.memoryPressure === true
-        ? `MEMORY PRESSURE: ${String(snap.usedPctOfLimit)}% of the V8 limit with ${String(snap.openPGLiteClusters)} open PGLite clusters (each pins ~180MB of external; external is not visible in rss)`
+        ? `MEMORY PRESSURE: ${String(snap.usedPctOfCeiling)}% of the ${String(snap.ceilingMb)}MB cluster budget ceiling with ${String(snap.openPGLiteClusters)} open PGLite clusters (each pins ~180MB of external; external is not visible in rss)`
         : 'periodic memory sample',
       extra: snap,
     });

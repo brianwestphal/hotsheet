@@ -35,6 +35,9 @@ import { dirname } from 'path';
 import { getHeapStatistics } from 'v8';
 import { Worker } from 'worker_threads';
 
+// HS-9559 — a dependency-free leaf (imports only `node:os` + `node:v8`), so
+// this is not the `db/` coupling the injected cluster counter below avoids.
+import { externalCeilingBytes } from '../db/memoryCeiling.js';
 import { getOperationSab } from './currentOperation.js';
 import { buildStackCaptureCommand, isStackCaptureEnabled } from './stackCapture.js';
 
@@ -150,14 +153,21 @@ const timer = setInterval(function () {
     var heapLimit = Number(Atomics.load(view, 4));
     var clusters = Number(Atomics.load(view, 5));
     var arrayBuffers = Number(Atomics.load(view, 6));
-    var pct = heapLimit > 0 ? Math.round(((heapUsed + external) / heapLimit) * 100) : 0;
+    // HS-9559 — measure against the docs/128 ceiling, not V8's heap limit. The
+    // old line divided by heapLimit and called the result "% of the V8 limit",
+    // which for external is meaningless: a WASM heap is malloc'd memory outside
+    // the old space, so that limit neither bounds it nor aborts on it.
+    var ceiling = Number(Atomics.load(view, 7));
+    var pct = ceiling > 0 ? Math.round(((heapUsed + external) / ceiling) * 100) : 0;
     log('[watchdog] FATAL: event loop blocked for ' + Math.round(age) + 'ms (> ' + timeoutMs +
         'ms); the main thread is wedged and holding the port + project locks. Forcing SIGKILL so the ' +
         'next launch can recover. If the log above ends mid-startup, the last "[+Nms] <phase>" marker ' +
         'is where it stalled; if startup had already finished, this is a steady-state wedge.');
     log('[watchdog] memory at wedge: rss=' + rss + 'MB heapUsed=' + heapUsed + 'MB external=' +
         external + 'MB (heapUsed+external=' + (heapUsed + external) + 'MB = ' + pct + '% of the ' +
-        heapLimit + 'MB V8 limit); arrayBuffers=' + arrayBuffers + 'MB openPGLiteClusters=' + clusters +
+        ceiling + 'MB cluster budget ceiling; V8 heap limit is ' + heapLimit +
+        'MB, which bounds heapUsed ONLY — never external); arrayBuffers=' + arrayBuffers +
+        'MB openPGLiteClusters=' + clusters +
         (external > 0 && arrayBuffers * 2 < external
           ? '  [external is mostly NOT ArrayBuffers -> WASM heaps: open clusters, or evicted ones awaiting GC]'
           : external > 0 ? '  [external is mostly ArrayBuffers -> a Buffer/file-read allocator, not clusters]' : '') +
@@ -216,7 +226,13 @@ const SLOT_OPEN_CLUSTERS = 5;
 // counts Buffer/ArrayBuffer bytes but NOT WASM heaps. Near `external` ⇒ some
 // non-cluster allocator; far below it ⇒ WASM (clusters, or their heaps awaiting GC).
 const SLOT_ARRAY_BUFFERS_MB = 6;
-const SAB_SLOTS = 7;
+// HS-9559 — the docs/128 §128.5 cluster budget ceiling, the denominator the
+// eviction policy actually uses. Carried SEPARATELY from `SLOT_HEAP_LIMIT_MB`
+// so the FATAL line can state both: V8's limit still bounds `heapUsed`, and
+// only the ceiling means anything for `external`. Reporting one as the other is
+// how the 2026-08-01 wedge got read as GC thrash when it was a WASM trap storm.
+const SLOT_CEILING_MB = 7;
+const SAB_SLOTS = 8;
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let worker: Worker | null = null;
@@ -247,6 +263,7 @@ function publishMemorySample(v: BigInt64Array): void {
     Atomics.store(v, SLOT_EXTERNAL_MB, BigInt(Math.round(mem.external / BYTES_PER_MB)));
     Atomics.store(v, SLOT_HEAP_LIMIT_MB, BigInt(Math.round(getHeapStatistics().heap_size_limit / BYTES_PER_MB)));
     Atomics.store(v, SLOT_ARRAY_BUFFERS_MB, BigInt(Math.round(mem.arrayBuffers / BYTES_PER_MB)));
+    Atomics.store(v, SLOT_CEILING_MB, BigInt(Math.round(externalCeilingBytes() / BYTES_PER_MB)));
     if (openClusterCounter !== null) Atomics.store(v, SLOT_OPEN_CLUSTERS, BigInt(openClusterCounter()));
   } catch { /* diagnostics must never break the heartbeat */ }
 }
@@ -266,7 +283,7 @@ export function _resetOpenClusterCounterForTesting(): void {
  * a silent drift would make the FATAL line report zeros, i.e. lose exactly the
  * diagnostic this exists to provide.
  */
-export function _readMemorySlotsForTesting(): { rssMb: number; heapUsedMb: number; externalMb: number; heapLimitMb: number; openClusters: number; arrayBuffersMb: number } | null {
+export function _readMemorySlotsForTesting(): { rssMb: number; heapUsedMb: number; externalMb: number; heapLimitMb: number; openClusters: number; arrayBuffersMb: number; ceilingMb: number } | null {
   if (view === null) return null;
   return {
     rssMb: Number(Atomics.load(view, SLOT_RSS_MB)),
@@ -275,17 +292,18 @@ export function _readMemorySlotsForTesting(): { rssMb: number; heapUsedMb: numbe
     heapLimitMb: Number(Atomics.load(view, SLOT_HEAP_LIMIT_MB)),
     openClusters: Number(Atomics.load(view, SLOT_OPEN_CLUSTERS)),
     arrayBuffersMb: Number(Atomics.load(view, SLOT_ARRAY_BUFFERS_MB)),
+    ceilingMb: Number(Atomics.load(view, SLOT_CEILING_MB)),
   };
 }
 
 /** HS-9421 — TEST ONLY. The slot indices the WORKER hard-codes, so a test can
  *  pin them against the named constants the main thread writes. */
-export const _WORKER_SLOT_INDICES = { rss: 1, heapUsed: 2, external: 3, heapLimit: 4, openClusters: 5, arrayBuffers: 6 } as const;
+export const _WORKER_SLOT_INDICES = { rss: 1, heapUsed: 2, external: 3, heapLimit: 4, openClusters: 5, arrayBuffers: 6, ceiling: 7 } as const;
 
 /** HS-9421 — TEST ONLY. The named constants, for the same comparison. */
 export const _MAIN_SLOT_INDICES = {
   rss: SLOT_RSS_MB, heapUsed: SLOT_HEAP_USED_MB, external: SLOT_EXTERNAL_MB, arrayBuffers: SLOT_ARRAY_BUFFERS_MB,
-  heapLimit: SLOT_HEAP_LIMIT_MB, openClusters: SLOT_OPEN_CLUSTERS,
+  heapLimit: SLOT_HEAP_LIMIT_MB, openClusters: SLOT_OPEN_CLUSTERS, ceiling: SLOT_CEILING_MB,
 } as const;
 
 /**

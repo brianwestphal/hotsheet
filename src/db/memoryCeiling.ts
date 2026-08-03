@@ -136,8 +136,11 @@ export function resetExternalCeilingForTests(): void {
   cached = null;
 }
 
-/** One-line boot summary. `usedPctOfLimit` in a freeze log is uninterpretable
- *  without knowing the denominator, and before this it was never recorded. */
+/** One-line boot summary. `usedPctOfCeiling` in a freeze log is uninterpretable
+ *  without knowing the denominator, and before this it was never recorded.
+ *  (HS-9559 renamed that field from `usedPctOfLimit` when the diagnostics moved
+ *  onto this ceiling too, so a log line's field name now says which denominator
+ *  produced it.) */
 export function describeExternalCeiling(): string {
   const mb = (b: number): number => Math.round(b / (1024 * 1024));
   const ceiling = externalCeilingBytes();

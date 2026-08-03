@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { externalCeilingBytes } from '../db/memoryCeiling.js';
 import { _MAIN_SLOT_INDICES, _readMemorySlotsForTesting, _resetOpenClusterCounterForTesting, _WORKER_SLOT_INDICES, setOpenClusterCounter, startEventLoopWatchdog, stopEventLoopWatchdog, watchdogVerdict } from './watchdog.js';
 
 describe('watchdogVerdict', () => {
@@ -99,6 +100,22 @@ describe('memory publishing (HS-9421)', () => {
   it('reports zero clusters when no counter is registered', () => {
     startEventLoopWatchdog({});
     expect(_readMemorySlotsForTesting()!.openClusters).toBe(0);
+  });
+
+  // HS-9559 — the FATAL line's denominator. It used to divide by V8's
+  // heap_size_limit and call the result "% of the V8 limit", which for `external`
+  // is meaningless (a WASM heap is malloc'd outside the old space, so that limit
+  // neither bounds it nor aborts on it). The 2026-08-01 wedge was read as GC
+  // thrash off exactly that line; the capture showed a WASM trap storm.
+  it('publishes the cluster budget ceiling alongside — not instead of — the V8 limit', () => {
+    startEventLoopWatchdog({});
+    const slots = _readMemorySlotsForTesting()!;
+    expect(slots.ceilingMb).toBe(Math.round(externalCeilingBytes() / (1024 * 1024)));
+    // BOTH, because they answer different questions: the V8 limit bounds
+    // heapUsed, the ceiling bounds external. A slot that is never written reads 0
+    // forever, which would make the FATAL line divide by zero and report 0%.
+    expect(slots.ceilingMb).toBeGreaterThan(0);
+    expect(slots.heapLimitMb).toBeGreaterThan(0);
   });
 
   // The load-bearing one: the worker's source is a STRING, so it reads these

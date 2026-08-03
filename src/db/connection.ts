@@ -858,8 +858,8 @@ let evictionTimer: ReturnType<typeof setInterval> | null = null;
  */
 export function startClusterEvictionTimer(): void {
   if (evictionTimer !== null) return;
-  // HS-9555 — record the ceiling ONCE, here, because every `usedPctOfLimit` in
-  // freeze.log and every `% of the ... limit` in a watchdog FATAL is a fraction
+  // HS-9555 — record the ceiling ONCE, here, because every `usedPctOfCeiling` in
+  // freeze.log and every `% of the ... ceiling` in a watchdog FATAL is a fraction
   // of it, and until now the denominator appeared nowhere. Reading "117% of the
   // limit" without knowing whether the limit was chosen or inherited is what let
   // a V8 default masquerade as a deliberate budget for three incidents.
