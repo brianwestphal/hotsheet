@@ -233,6 +233,23 @@ fn server_stderr_log(msg: &str) {
     }
 }
 
+/// HS-9558 — describe how the server child died, for the log line and the
+/// user-facing notice.
+///
+/// Pure (the exit code is a parameter, not a probe) so every branch is asserted
+/// on any host. The `None` case is the interesting one: on Unix a child killed
+/// by a signal has no exit code, and the two signals that actually happen here
+/// are the docs/45 watchdog's own SIGKILL and the OS OOM killer — so "no code"
+/// is a genuine diagnostic clue, not a formatting edge case.
+fn describe_child_exit(code: Option<i32>) -> String {
+    match code {
+        Some(0) => "exit code 0 — the server stopped itself cleanly".to_string(),
+        Some(c) => format!("exit code {c}"),
+        None => "killed by a signal (no exit code) — e.g. the watchdog's SIGKILL or the OS OOM killer"
+            .to_string(),
+    }
+}
+
 /// Bound a log file's size by truncating it when it exceeds `max_bytes`.
 /// Mirrors `MAX_LOG_BYTES` handling in `src/startup-log.ts`.
 fn truncate_if_large(path: &std::path::Path, max_bytes: u64) {
@@ -1393,10 +1410,25 @@ pub fn run() {
                     }
                     // stdout EOF = the dev server exited. Wait, then (if the user quit)
                     // finish the app exit — the overlay showed progress the whole time.
-                    let _ = child.wait();
+                    let status = child.wait();
                     if app_handle.state::<ShuttingDown>().0.load(Ordering::SeqCst) {
                         shutdown_log("[dev] server exited during shutdown — app.exit(0)");
                         app_handle.exit(0);
+                    } else {
+                        // HS-9558 — the server died on its own. This branch used to be
+                        // absent entirely: no log, no event, no window change, and no
+                        // supervisor to respawn. On 2026-08-03 the window sat against a
+                        // dead localhost:4174 for 49 MINUTES and was reported as "Hot
+                        // Sheet hung" (HS-9561). Nothing here restarts it — that needs
+                        // backoff + a cap, tracked separately — but the user is told,
+                        // and the log finally records that it happened.
+                        let detail = describe_child_exit(status.ok().and_then(|s| s.code()));
+                        shutdown_log(&format!(
+                            "[dev] server exited UNEXPECTEDLY ({detail}) — the app is now pointing at a dead \
+                             server. See ~/.hotsheet/startup.log for a [fatal] report (HS-9557) and \
+                             ~/.hotsheet/server-stderr.log for anything below JS."
+                        ));
+                        let _ = window.emit("server-exited", detail);
                     }
                 });
             }
@@ -1806,6 +1838,27 @@ mod server_stderr_log_tests {
         std::fs::write(&path, vec![b'y'; 100]).unwrap();
         truncate_if_large(&path, 100);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn describes_a_nonzero_exit_code() {
+        assert_eq!(describe_child_exit(Some(1)), "exit code 1");
+    }
+
+    #[test]
+    fn calls_out_a_clean_exit_as_self_inflicted() {
+        // A 0 exit is NOT reassuring here — the server is a long-running process,
+        // so stopping cleanly still means the window is now pointing at nothing.
+        assert!(describe_child_exit(Some(0)).contains("stopped itself cleanly"));
+    }
+
+    #[test]
+    fn names_the_likely_signals_when_there_is_no_exit_code() {
+        // The signal case is the one worth reading: SIGKILL here is almost always
+        // the docs/45 watchdog or the OOM killer.
+        let d = describe_child_exit(None);
+        assert!(d.contains("signal"), "{d}");
+        assert!(d.contains("SIGKILL") || d.contains("OOM"), "{d}");
     }
 
     #[test]

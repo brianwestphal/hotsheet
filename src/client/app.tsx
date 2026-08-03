@@ -44,6 +44,7 @@ import { initProjectTabs, setProjectReloadCallback } from './projectTabs.js';
 import { initQuitConfirm } from './quitConfirm.js';
 import { effect } from './reactive.js';
 import { applyScrollbarPrefClass } from './scrollbarPref.js';
+import { initServerExitedNotice } from './serverExited.js';
 import { bindSettingsDialog } from './settingsDialog.js';
 import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestoreTicketListCallback } from './settingsLoader.js';
 import { initShare } from './share.js';
@@ -405,6 +406,9 @@ function initDrawerAndDashboard(): void {
   });
   // HS-7596 / §37 — quit-confirm. Tauri-only.
   initQuitConfirm();
+  // HS-9558 — say so when the server process dies, instead of leaving a fully
+  // rendered but completely dead window (which reads as a hang). Tauri-only.
+  initServerExitedNotice();
   // Cross-project bell long-poll (HS-6603 §24.4.1).
   startBellPolling();
   // HS-7272 — prime Tauri notification permission once.
