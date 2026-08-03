@@ -262,17 +262,55 @@ const SERVER_STDERR_LOG_MAX_BYTES: u64 = 1_000_000;
 /// HS-9558 — describe how the server child died, for the log line and the
 /// user-facing notice.
 ///
-/// Pure (the exit code is a parameter, not a probe) so every branch is asserted
-/// on any host. The `None` case is the interesting one: on Unix a child killed
-/// by a signal has no exit code, and the two signals that actually happen here
-/// are the docs/45 watchdog's own SIGKILL and the OS OOM killer — so "no code"
-/// is a genuine diagnostic clue, not a formatting edge case.
-fn describe_child_exit(code: Option<i32>) -> String {
-    match code {
-        Some(0) => "exit code 0 — the server stopped itself cleanly".to_string(),
-        Some(c) => format!("exit code {c}"),
-        None => "killed by a signal (no exit code) — e.g. the watchdog's SIGKILL or the OS OOM killer"
-            .to_string(),
+/// Pure (both are parameters, not probes) so every branch is asserted on any
+/// host. The no-exit-code case is the interesting one: on Unix a child killed by
+/// a signal has no exit code, and the signals that actually happen here are the
+/// docs/45 watchdog's own SIGKILL and the OS OOM killer — so "no code" is a
+/// genuine diagnostic clue, not a formatting edge case.
+///
+/// HS-9564 — `signal` is `Some` only on the production path, where the shell
+/// plugin's `Terminated` payload reports it. The dev path reaps the child itself
+/// and only has `ExitStatus::code()`, so it passes `None` and gets the generic
+/// wording. Naming the actual signal is worth the parameter: SIGKILL points at
+/// the watchdog or the OOM killer, while SIGSEGV/SIGABRT point at a native crash
+/// or a WASM abort — completely different investigations.
+fn describe_child_exit(code: Option<i32>, signal: Option<i32>) -> String {
+    match (code, signal) {
+        (Some(0), _) => "exit code 0 — the server stopped itself cleanly".to_string(),
+        (Some(c), _) => format!("exit code {c}"),
+        (None, Some(sig)) => match signal_name(sig) {
+            Some(name) => format!("killed by {name} ({sig}) — {}", signal_hint(sig)),
+            None => format!("killed by signal {sig}"),
+        },
+        (None, None) => {
+            "killed by a signal (no exit code) — e.g. the watchdog's SIGKILL or the OS OOM killer"
+                .to_string()
+        }
+    }
+}
+
+/// The handful of signals worth naming here. Deliberately not exhaustive — an
+/// unknown number is reported as a bare number rather than guessed at.
+fn signal_name(sig: i32) -> Option<&'static str> {
+    match sig {
+        2 => Some("SIGINT"),
+        6 => Some("SIGABRT"),
+        9 => Some("SIGKILL"),
+        11 => Some("SIGSEGV"),
+        15 => Some("SIGTERM"),
+        _ => None,
+    }
+}
+
+/// What each named signal usually means for THIS process, so the log line points
+/// the reader at the right investigation instead of just naming a number.
+fn signal_hint(sig: i32) -> &'static str {
+    match sig {
+        6 => "an abort, e.g. a V8/WASM out-of-memory; check ~/.hotsheet/server-stderr.log",
+        9 => "the docs/45 watchdog's SIGKILL, or the OS OOM killer",
+        11 => "a native crash; check ~/.hotsheet/server-stderr.log",
+        2 | 15 => "an ordinary termination request from outside the app",
+        _ => "cause unknown",
     }
 }
 
@@ -1005,6 +1043,10 @@ async fn spawn_sidecar_and_navigate(
     tauri::async_runtime::spawn(async move {
         let _child = child;
         let mut navigated = false;
+        // HS-9564 — the rendered cause from `Terminated`, kept so the
+        // channel-close handler below can report it. The event arrives BEFORE the
+        // channel closes, so by then this is populated.
+        let mut exit_detail: Option<String> = None;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
@@ -1059,7 +1101,15 @@ async fn spawn_sidecar_and_navigate(
                     server_stderr_log(String::from_utf8_lossy(&line).trim_end());
                 }
                 CommandEvent::Terminated(payload) => {
-                    eprintln!("[sidecar] terminated: code={:?} signal={:?}", payload.code, payload.signal);
+                    // HS-9564 — was `eprintln!` only. Keep the raw pair in the log
+                    // alongside the rendered description: the description is for a
+                    // human, the raw numbers survive a wording change.
+                    let detail = describe_child_exit(payload.code, payload.signal);
+                    startup_log(&format!(
+                        "[sidecar] terminated: {detail} (raw code={:?} signal={:?})",
+                        payload.code, payload.signal
+                    ));
+                    exit_detail = Some(detail);
                 }
                 _ => {}
             }
@@ -1074,22 +1124,40 @@ async fn spawn_sidecar_and_navigate(
             window.app_handle().exit(0);
             return;
         }
-        // Fallback: if sidecar exited without navigating, try reading port from settings.json.
-        // Skipped in demo mode — the sidecar picks a temp dataDir we don't know up front.
-        if !navigated && !data_dir_owned.is_empty() {
-            startup_log("[sidecar] process exited without navigating, trying settings.json fallback");
-            let settings_path = std::path::PathBuf::from(&data_dir_owned).join("settings.json");
-            if let Ok(contents) = std::fs::read_to_string(&settings_path) {
-                if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&contents) {
-                    if let Some(port) = settings.get("port").and_then(|p| p.as_u64()) {
-                        let url = format!("http://localhost:{}", port);
-                        startup_log(&format!("[sidecar] fallback: navigating to {}", url));
-                        if let Ok(parsed) = url.parse() {
-                            let _ = window.navigate(parsed);
+        if !navigated {
+            // A sidecar that dies before the handshake is a LAUNCH failure, not a
+            // steady-state death, and it has its own recovery: read the port from
+            // settings.json. Skipped in demo mode — the sidecar picks a temp
+            // dataDir we don't know up front.
+            if !data_dir_owned.is_empty() {
+                startup_log("[sidecar] process exited without navigating, trying settings.json fallback");
+                let settings_path = std::path::PathBuf::from(&data_dir_owned).join("settings.json");
+                if let Ok(contents) = std::fs::read_to_string(&settings_path) {
+                    if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&contents) {
+                        if let Some(port) = settings.get("port").and_then(|p| p.as_u64()) {
+                            let url = format!("http://localhost:{}", port);
+                            startup_log(&format!("[sidecar] fallback: navigating to {}", url));
+                            if let Ok(parsed) = url.parse() {
+                                let _ = window.navigate(parsed);
+                            }
                         }
                     }
                 }
             }
+        } else {
+            // HS-9564 (docs/134 §134.4) — the steady-state death: the app has been
+            // running normally and the server went away. This branch did not exist,
+            // so the shipped app left a fully rendered window pointing at a dead
+            // server with no log line and no notice — the 2026-08-03 failure
+            // (HS-9561), which HS-9558 fixed for dev builds ONLY.
+            let detail = exit_detail
+                .unwrap_or_else(|| "The server exited unexpectedly.".to_string());
+            startup_log(&format!(
+                "[sidecar] exited UNEXPECTEDLY ({detail}) — the app is now pointing at a dead \
+                 server. See ~/.hotsheet/startup.log for a [fatal] report (HS-9557) and \
+                 ~/.hotsheet/server-stderr.log for anything below JS."
+            ));
+            let _ = window.emit("server-exited", detail);
         }
     });
 
@@ -1448,7 +1516,10 @@ pub fn run() {
                         // Sheet hung" (HS-9561). Nothing here restarts it — that needs
                         // backoff + a cap, tracked separately — but the user is told,
                         // and the log finally records that it happened.
-                        let detail = describe_child_exit(status.ok().and_then(|s| s.code()));
+                        // `None` for the signal: reaping the child ourselves only
+                        // yields `ExitStatus::code()`. The production path gets the
+                        // signal from the shell plugin (HS-9564).
+                        let detail = describe_child_exit(status.ok().and_then(|s| s.code()), None);
                         shutdown_log(&format!(
                             "[dev] server exited UNEXPECTEDLY ({detail}) — the app is now pointing at a dead \
                              server. See ~/.hotsheet/startup.log for a [fatal] report (HS-9557) and \
@@ -1876,23 +1947,61 @@ mod server_stderr_log_tests {
 
     #[test]
     fn describes_a_nonzero_exit_code() {
-        assert_eq!(describe_child_exit(Some(1)), "exit code 1");
+        assert_eq!(describe_child_exit(Some(1), None), "exit code 1");
     }
 
     #[test]
     fn calls_out_a_clean_exit_as_self_inflicted() {
         // A 0 exit is NOT reassuring here — the server is a long-running process,
         // so stopping cleanly still means the window is now pointing at nothing.
-        assert!(describe_child_exit(Some(0)).contains("stopped itself cleanly"));
+        assert!(describe_child_exit(Some(0), None).contains("stopped itself cleanly"));
     }
 
     #[test]
     fn names_the_likely_signals_when_there_is_no_exit_code() {
-        // The signal case is the one worth reading: SIGKILL here is almost always
-        // the docs/45 watchdog or the OOM killer.
-        let d = describe_child_exit(None);
+        // The dev path can't see the signal, so it lists the likely culprits.
+        let d = describe_child_exit(None, None);
         assert!(d.contains("signal"), "{d}");
         assert!(d.contains("SIGKILL") || d.contains("OOM"), "{d}");
+    }
+
+    // HS-9564 — production DOES know the signal, and which one it was decides the
+    // investigation: SIGKILL is the watchdog or the OOM killer, SIGSEGV/SIGABRT is
+    // a native crash or WASM abort. Reporting them identically would waste that.
+    #[test]
+    fn names_sigkill_and_points_at_the_watchdog_or_oom_killer() {
+        let d = describe_child_exit(None, Some(9));
+        assert!(d.contains("SIGKILL"), "{d}");
+        assert!(d.contains("watchdog") || d.contains("OOM"), "{d}");
+    }
+
+    #[test]
+    fn distinguishes_an_abort_from_a_kill() {
+        let abort = describe_child_exit(None, Some(6));
+        assert!(abort.contains("SIGABRT"), "{abort}");
+        assert!(abort.contains("out-of-memory"), "{abort}");
+        assert!(!abort.contains("watchdog"), "{abort}");
+    }
+
+    #[test]
+    fn distinguishes_a_native_crash() {
+        let segv = describe_child_exit(None, Some(11));
+        assert!(segv.contains("SIGSEGV"), "{segv}");
+        assert!(segv.contains("server-stderr.log"), "{segv}");
+    }
+
+    #[test]
+    fn reports_an_unknown_signal_as_a_bare_number_rather_than_guessing() {
+        // Better a number the reader can look up than a confident wrong name.
+        assert_eq!(describe_child_exit(None, Some(37)), "killed by signal 37");
+    }
+
+    #[test]
+    fn an_exit_code_wins_over_a_signal() {
+        // Both present is contradictory; the code is the more specific fact and a
+        // clean exit must not be reported as a kill.
+        assert_eq!(describe_child_exit(Some(3), Some(9)), "exit code 3");
+        assert!(describe_child_exit(Some(0), Some(9)).contains("stopped itself cleanly"));
     }
 
     #[test]

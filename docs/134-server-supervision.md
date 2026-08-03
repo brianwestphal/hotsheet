@@ -8,9 +8,9 @@ Companion to [8-cli-server.md](8-cli-server.md) (what the server process is),
 [45-pglite-robustness.md](45-pglite-robustness.md) (the watchdog, which handles the *other* way the
 server stops serving — a wedge rather than an exit).
 
-**Status: design + one shipped half.** §134.3 shipped as HS-9558. §134.4 (HS-9564) and §134.5
-(HS-9565) are open bugs in the **shipped** app, independent of the decision below. §134.6 is the
-decision this document exists to frame (HS-9563) — nothing in it is built.
+**Status: detection + notice SHIPPED on both launch paths; restart is the open decision.**
+§134.3 shipped as HS-9558 (dev), §134.4 as HS-9564 and §134.5 as HS-9565 (production parity).
+§134.6 is the decision this document exists to frame (HS-9563) — nothing in it is built.
 
 ---
 
@@ -22,10 +22,10 @@ force-quit, and relaunched. It was reported as "Hot Sheet hung".
 
 Two separate failures produced that. The diagnosis is HS-9561:
 
-1. **Nothing recorded why it died.** Closed by HS-9557 — see [134.5](#1345-gap-production-sidecar-stderr-is-not-persisted) for the half that is still open.
+1. **Nothing recorded why it died.** Closed by HS-9557 (dev) and HS-9565 (production, [§134.5](#1345-production-sidecar-stderr-shipped-hs-9565)).
 2. **Nothing said that it died.** The window is served *by* the server, so when the server goes the
-   page stays on screen looking healthy. Closed for dev builds by HS-9558; still open for
-   production ([134.4](#1344-gap-production-has-no-death-notice)).
+   page stays on screen looking healthy. Closed by HS-9558 (dev) and HS-9564 (production,
+   [§134.4](#1344-production-death-notice-shipped-hs-9564)).
 
 Neither of those *restarts* anything, which is the question HS-9563 asks and
 [134.6](#1346-the-decision-should-the-shell-restart-the-server) frames.
@@ -67,34 +67,35 @@ plugin — so stdout/stderr/exit arrive as `CommandEvent`s on one channel rather
 On child exit (the event channel closing):
 
 - **quitting** → `app.exit(0)`.
-- **not quitting, never navigated** → a `settings.json` port fallback, then nothing.
-- **not quitting, already navigated** → **nothing at all.**
-
-That last row is the steady-state case — the app has been running for hours and the server dies —
-and it is precisely the 2026-08-03 scenario. `CommandEvent::Terminated` carries `code` and `signal`
-and is only `eprintln!`d.
+- **not quitting, never navigated** → a `settings.json` port fallback (a *launch* failure).
+- **not quitting, already navigated** → logs the cause and emits `server-exited` (HS-9564). **Before
+  that ticket this branch did not exist at all** — the steady-state case, i.e. precisely the
+  2026-08-03 scenario, fell through to nothing.
 
 ### 134.2.3 The asymmetry, stated plainly
 
-| | dev | production |
-|---|---|---|
-| death is logged durably | ✅ HS-9558 | ❌ `eprintln!` only |
-| user is told | ✅ HS-9558 overlay | ❌ nothing |
-| child stderr persisted | ✅ HS-9557 | ❌ `eprintln!` only |
-| restart | ❌ | ❌ |
+As originally found — dev was ahead of production on every row, which is backwards, since dev is
+one maintainer who can read a log and relaunch while production is every user of the shipped app:
 
-`server-exited` is emitted at exactly **one** call site in the whole crate, inside the dev block.
-The client half (`src/client/serverExited.tsx`) is launch-path-agnostic and already works for both —
-production simply never fires the event.
+| | dev | production (before) | production (now) |
+|---|---|---|---|
+| death is logged durably | ✅ HS-9558 | ❌ `eprintln!` only | ✅ HS-9564 |
+| user is told | ✅ HS-9558 overlay | ❌ nothing | ✅ HS-9564 |
+| child stderr persisted | ✅ HS-9557 | ❌ `eprintln!` only | ✅ HS-9565 |
+| restart | ❌ | ❌ | ❌ (§134.6) |
 
-**This is the wrong way round.** Dev is one maintainer who can read a log and relaunch; production
-is every user of the shipped app.
+The client half (`src/client/serverExited.tsx`) was launch-path-agnostic from the start and needed
+**no changes** — production simply never fired the `server-exited` event.
+
+A quiet corroboration of the gap: `cargo check --release` emitted
+`warning: function describe_child_exit is never used` from HS-9558 until HS-9564 landed. Production
+never called the function that describes a death, because it never reported one.
 
 ---
 
-## 134.3 Shipped: the dev death notice (HS-9558)
+## 134.3 The dev death notice (SHIPPED, HS-9558)
 
-`describe_child_exit(Option<i32>)` renders the cause: the exit code, or — for `None` — a note that
+`describe_child_exit` renders the cause: the exit code, or — for `None` — a note that
 it was killed by a signal. The `None` case is the diagnostic one: a Unix child killed by a signal
 has no exit code, and the two signals that actually occur here are **the docs/45 watchdog's own
 SIGKILL** and **the OS OOM killer**. Both are strong evidence about what happened.
@@ -105,16 +106,22 @@ child**, so "the server is gone" is a fact here, not the guess a failed fetch ma
 
 ---
 
-## 134.4 Gap: production has no death notice
+## 134.4 Production death notice (SHIPPED, HS-9564)
 
-**Bug, not a decision — HS-9564.** Production should reach dev parity: on the channel closing without a quit
+**Was a bug, not a decision.** Production now reaches dev parity: on the channel closing without a quit
 in progress, log the cause durably (`startup_log`, which is release-only and file-backed) and emit
 `server-exited` with a `describe_child_exit`-style string.
 
 Production has *more* information available than dev: `CommandEvent::Terminated` carries both
-`code` and `signal`, so the signal case can name the actual signal (`SIGKILL` vs `SIGSEGV` vs
-`SIGTERM`) instead of listing the two likely culprits. `describe_child_exit` should grow a signal
-parameter, keeping the current behavior when it is `None`.
+`code` and `signal`, so it names the actual signal instead of listing the likely culprits.
+`describe_child_exit(code, signal)` took a signal parameter; the dev path passes `None` (reaping the
+child yields only `ExitStatus::code()`) and keeps the generic wording.
+
+**Which signal it was decides the investigation**, which is why it is worth the parameter:
+**SIGKILL** is the docs/45 watchdog or the OS OOM killer; **SIGABRT** is an abort, typically a
+V8/WASM out-of-memory; **SIGSEGV** is a native crash. An unknown number is reported bare rather
+than guessed at. An exit code, when present, wins over a signal — both being set is contradictory,
+and a clean exit must never be reported as a kill.
 
 The `!navigated` branch stays as-is: a sidecar that dies before the handshake is a *launch* failure,
 already covered by the HS-8704 startup-log machinery, and the `settings.json` fallback exists to
@@ -122,17 +129,23 @@ rescue the "joined an existing instance" case.
 
 ---
 
-## 134.5 Gap: production sidecar stderr is not persisted
+## 134.5 Production sidecar stderr (SHIPPED, HS-9565)
 
-**Bug, not a decision — HS-9565.** `CommandEvent::Stderr` is `eprintln!`d. On a GUI launch — Dock, Spotlight,
+**Was a bug, not a decision.** `CommandEvent::Stderr` was `eprintln!`d. On a GUI launch — Dock, Spotlight,
 Finder, i.e. how the shipped app is always started — that goes nowhere.
 
 This is the exact hole HS-9557 closed for dev, and it matters for the same reason: a V8/WASM OOM
 abort or a native crash **never reaches JS**, so `src/diagnostics/fatalErrors.ts` cannot see it.
 Sidecar stderr is the only place it is ever written down.
 
-Fix: route `CommandEvent::Stderr` into the same `~/.hotsheet/server-stderr.log` that dev writes,
-reusing `server_stderr_log` + `truncate_if_large`.
+Routed into the same `~/.hotsheet/server-stderr.log` dev writes. `server_stderr_log_path()` resolves
+that one location and `truncate_server_stderr_log()` bounds it once per launch, so the two spawn
+paths cannot drift to different files. **No pipe-draining hazard here**, unlike dev: the shell
+plugin delivers stderr as channel events, so a slow reader cannot block the child.
+
+**Gotcha for anyone touching this code:** a plain `cargo check` (and `npm run test:rust`) runs the
+**dev** profile, so it does not compile `#[cfg(not(debug_assertions))]` at all — it passes happily
+while the production path is broken. Use `cargo check --release --manifest-path src-tauri/Cargo.toml`.
 
 Note the release-only `startup_log`'s doc comment claims "dev builds always run from a terminal".
 That is **false** for the maintainer, who launches the dev app from the GUI — which is why the Node
