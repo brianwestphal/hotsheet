@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { globalHotsheetDir } from '../global-dir.js';
+import { startupLog } from '../startup-log.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import {
   APPROX_CLUSTER_EXTERNAL_BYTES,
@@ -863,7 +864,13 @@ export function startClusterEvictionTimer(): void {
   // of it, and until now the denominator appeared nowhere. Reading "117% of the
   // limit" without knowing whether the limit was chosen or inherited is what let
   // a V8 default masquerade as a deliberate budget for three incidents.
-  console.error(describeExternalCeiling());
+  // HS-9560 — through the STARTUP LOG, not `console.error`. On a GUI launch the
+  // server child's stderr had no terminal (and until HS-9557 was not captured
+  // either), so the one line whose entire job is to make the denominator visible
+  // was the one line you could not see: `~/.hotsheet/startup.log` — which that
+  // path itself calls "the only record" for a GUI launch — never received it.
+  // `startupLog` still mirrors to stderr, so terminal launches are unchanged.
+  startupLog(describeExternalCeiling());
   const cfg = resolveEvictionConfig();
   evictionTimer = setInterval(() => {
     // HS-9477 — pressure FIRST, then age. The headroom guard is the only layer

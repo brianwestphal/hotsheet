@@ -261,6 +261,9 @@ below its own default old-space limit) **and capped at 12 GB**. The count caps r
 bound on residency; this governs only when the *pressure* guards start fighting. Measured on
 the maintainer's machine: 4144 MB → **8192 MB**, logged once at startup by
 `describeExternalCeiling()` so `usedPctOfCeiling` in a freeze log has a visible denominator.
+That line goes through the **startup log** (HS-9560), not `console.error`: on a GUI launch the
+server child's stderr has no terminal, so the one line whose job is to make the denominator
+visible was the one line you could not see.
 
 **§128.5.0a — the diagnostics use the same ceiling (HS-9559).** HS-9555 moved the *eviction*
 guards onto `externalCeilingBytes()` but left both diagnostic surfaces dividing by V8's
