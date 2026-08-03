@@ -172,8 +172,17 @@ fn collect_forwarded_server_args(app_args: &[String]) -> Vec<String> {
 /// shown"). The Node sidecar appends its own `[startup +Nms] …` phase markers
 /// to the SAME file (see `src/startup-log.ts`), so the two processes interleave
 /// by timestamp into one launch timeline. Best-effort: any filesystem error is
-/// swallowed so logging never affects the launch. Release-only — dev builds
-/// always run from a terminal.
+/// swallowed so logging never affects the launch.
+///
+/// Release-only. The original reason given was "dev builds always run from a
+/// terminal", which is **false** — the maintainer launches the dev app from the
+/// GUI, and the Node side records `tty: no (GUI launch — this file is the only
+/// record)` for those runs (HS-9565). The `#[cfg]` still stands, but for a
+/// different reason: in dev the NODE side of the same file
+/// (`src/startup-log.ts`) is already writing the timeline, and `shutdown_log`
+/// (compiled into all builds) covers the Rust-side milestones that matter for a
+/// dev launch. If a dev-only Rust startup milestone is ever needed, this is the
+/// `#[cfg]` to revisit — not evidence that stderr suffices.
 #[cfg(not(debug_assertions))]
 fn startup_log(msg: &str) {
     eprintln!("{msg}");
@@ -216,22 +225,39 @@ fn startup_log(msg: &str) {
 /// normal operation and must not become unbounded.
 fn server_stderr_log(msg: &str) {
     eprintln!("{msg}");
-    let home = std::env::var("HOME")
-        .ok()
-        .or_else(|| std::env::var("USERPROFILE").ok());
-    if let Some(home) = home {
+    if let Some(path) = server_stderr_log_path() {
         use std::io::Write;
-        let dir = std::path::PathBuf::from(home).join(".hotsheet");
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("server-stderr.log"))
-        {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
             let _ = writeln!(f, "{msg}");
         }
     }
 }
+
+/// Where `server_stderr_log` writes. `None` when neither `HOME` nor
+/// `USERPROFILE` is set, in which case stderr capture silently degrades to the
+/// `eprintln!` — diagnostics must never be able to break a launch.
+fn server_stderr_log_path() -> Option<std::path::PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .map(|home| std::path::PathBuf::from(home).join(".hotsheet").join("server-stderr.log"))
+}
+
+/// Bound `server-stderr.log` once per launch. Called from BOTH spawn paths (the
+/// dev child and the production sidecar) — the file carries every
+/// `console.error` the server makes, not just fatals, so it grows steadily
+/// during normal operation and must not become unbounded.
+fn truncate_server_stderr_log() {
+    if let Some(path) = server_stderr_log_path() {
+        truncate_if_large(&path, SERVER_STDERR_LOG_MAX_BYTES);
+    }
+}
+
+/// ~1 MB, matching `MAX_LOG_BYTES` in `src/startup-log.ts`.
+const SERVER_STDERR_LOG_MAX_BYTES: u64 = 1_000_000;
 
 /// HS-9558 — describe how the server child died, for the log line and the
 /// user-facing notice.
@@ -958,6 +984,10 @@ async fn spawn_sidecar_and_navigate(
         .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
     let sidecar_pid = child.pid();
+    // HS-9565 — bound the captured-stderr log once per launch, same as the dev
+    // path. Unlike dev there is no pipe to drain: the shell plugin delivers
+    // stderr as `CommandEvent`s, so a slow reader cannot block the child.
+    truncate_server_stderr_log();
     startup_log(&format!("[sidecar] spawned with PID {}", sidecar_pid));
     *app.state::<SidecarPid>().0.lock().unwrap() = Some(sidecar_pid);
 
@@ -1020,7 +1050,13 @@ async fn spawn_sidecar_and_navigate(
                     }
                 }
                 CommandEvent::Stderr(line) => {
-                    eprintln!("[sidecar stderr] {}", String::from_utf8_lossy(&line).trim());
+                    // HS-9565 (docs/134 §134.5) — was `eprintln!` only, which on a
+                    // GUI launch (Dock / Spotlight / Finder — how the shipped app
+                    // is ALWAYS started) goes nowhere. This is the only place a
+                    // V8/WASM OOM abort or a native crash is ever recorded: those
+                    // never reach JS, so `src/diagnostics/fatalErrors.ts` cannot
+                    // see them. HS-9557 closed the same hole for dev builds.
+                    server_stderr_log(String::from_utf8_lossy(&line).trim_end());
                 }
                 CommandEvent::Terminated(payload) => {
                     eprintln!("[sidecar] terminated: code={:?} signal={:?}", payload.code, payload.signal);
@@ -1351,17 +1387,7 @@ pub fn run() {
                 // then blocks the child on its next write, which would wedge the
                 // server exactly the way this ticket exists to diagnose.
                 if let Some(stderr) = child.stderr.take() {
-                    if let Some(home) = std::env::var("HOME")
-                        .ok()
-                        .or_else(|| std::env::var("USERPROFILE").ok())
-                    {
-                        truncate_if_large(
-                            &std::path::PathBuf::from(home)
-                                .join(".hotsheet")
-                                .join("server-stderr.log"),
-                            1_000_000,
-                        );
-                    }
+                    truncate_server_stderr_log();
                     std::thread::spawn(move || {
                         use std::io::{BufRead, BufReader};
                         for line in BufReader::new(stderr).lines() {
@@ -1838,6 +1864,14 @@ mod server_stderr_log_tests {
         std::fs::write(&path, vec![b'y'; 100]).unwrap();
         truncate_if_large(&path, 100);
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 100);
+    }
+
+    #[test]
+    fn resolves_the_log_path_under_the_hotsheet_dir() {
+        // HS-9565 — both spawn paths (dev child, production sidecar) must agree on
+        // ONE file, or a production crash would be written somewhere nobody looks.
+        let path = server_stderr_log_path().expect("HOME is set in tests");
+        assert!(path.ends_with(".hotsheet/server-stderr.log"), "{}", path.display());
     }
 
     #[test]
