@@ -147,6 +147,44 @@ export function isSuspendGap(monotonicGapMs: number, wallGapMs: number): boolean
   return wallGapMs - monotonicGapMs >= SUSPEND_CLOCK_DIVERGENCE_MS;
 }
 
+/** Below this share of CPU, a long span is elapsed time rather than work.
+ *  `freezeAnalysis` re-exports this and applies the same threshold post-hoc, so
+ *  the live and after-the-fact classifications cannot drift apart. */
+export const SUSPEND_CPU_RATIO = 0.05;
+
+/**
+ * HS-9567 — a long gap that consumed almost no CPU.
+ *
+ * ## Why this is separate from `isSuspendGap`, and weaker on purpose
+ *
+ * `isSuspendGap` is the CONFIDENT test: the clocks disagree, which only an OS
+ * freeze causes. It is also useless on macOS, where libuv's monotonic clock
+ * advances during sleep — measured, and documented above. Consequence: every
+ * suspend was classified as a block, and since the suspend branch is the only
+ * place the wake listeners fire, the HS-8726 post-wake stagger had **never once
+ * run**. The freeze log carried zero `server-wake` entries across three days
+ * containing sleeps that `pmset` confirms (387.3 s measured against a 389 s
+ * sleep).
+ *
+ * This predicate covers that case — but it must NOT be treated as proof of a
+ * suspend, because **a wedge blocked in a syscall also burns no CPU**. That is
+ * not hypothetical: the 2026-07-31 watchdog capture shows 1508 of 1509 samples
+ * in `readFileSync` → `uv__fs_work` → `read()`, stuck on a cloud-backed
+ * `backupDir` (the HS-9527 class). Logging that as a suspend would have hidden
+ * the single clearest signal of a real death.
+ *
+ * So the two are used for different things (see `handleHeartbeatGap`): the
+ * confident test decides how the gap is LOGGED, and this weaker one decides
+ * whether the wake listeners fire. Firing the stagger after a syscall wedge is
+ * harmless — it briefly slows background work, which is if anything the right
+ * response — while not firing it after a real sleep is the bug being fixed.
+ */
+export function looksLikeIdleGap(gapMs: number, cpuMs: number | null): boolean {
+  if (gapMs < WAKE_GAP_THRESHOLD_MS) return false;
+  if (cpuMs === null || gapMs <= 0) return false;
+  return cpuMs / gapMs < SUSPEND_CPU_RATIO;
+}
+
 export interface FreezeEntry {
   /** ISO-8601 timestamp at the moment the block was OBSERVED (i.e. the
    *  end of the long task — the recorded `ts` is always after the block
@@ -484,7 +522,7 @@ export function onServerWake(listener: (gapMs: number) => void): () => void {
  * "event-loop blocked"), do NOT let the sleep gap poison the backpressure lag
  * reading, and fire the wake listeners so the scheduler can re-stagger.
  */
-function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void {
+function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs, cpuMs: number | null = null): void {
   if (isSuspendGap(blockMs, wallGapMs)) {
     lastEventLoopLagMs = 0; // the suspend gap is not real event-loop lag
     if (heartbeatDataDir !== null) {
@@ -496,14 +534,20 @@ function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void 
         context: `resumed from suspend after ~${Math.round(wallGapMs / 1000).toString()}s`,
       });
     }
-    for (const listener of wakeListeners) {
-      try { listener(wallGapMs); } catch { /* a wake listener must never break the heartbeat */ }
-    }
+    notifyWakeListeners(wallGapMs);
     return;
   }
   // HS-8724 — record the lag on every tick for the scheduler's backpressure
   // read, clamped at 0 (a slightly-early timer fire yields a small negative).
   lastEventLoopLagMs = blockMs > 0 ? blockMs : 0;
+
+  // HS-9567 — fire the wake listeners for a long no-CPU gap even though we are
+  // deliberately NOT confident enough to log it as a suspend (see
+  // `looksLikeIdleGap`). On macOS this is the ONLY path that ever reaches them,
+  // so without it the post-wake stagger never engages — and HS-9553 named a
+  // post-sleep stampede as the trigger for the 2026-08-01 death.
+  if (looksLikeIdleGap(blockMs, cpuMs)) notifyWakeListeners(wallGapMs);
+
   if (blockMs >= LONG_TASK_THRESHOLD_MS && heartbeatDataDir !== null) {
     void appendFreezeLog(heartbeatDataDir, {
       ts: new Date().toISOString(),
@@ -511,10 +555,24 @@ function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void 
       durationMs: Math.round(blockMs),
       context: 'event-loop blocked',
       blocking: true, // an inter-tick gap IS blocked time — the ground truth
+      // HS-9567 — heartbeat entries carried NO cpuMs, which is why
+      // `freezeAnalysis.looksLikeSuspend` could never classify one: it needs the
+      // CPU ratio and always got null. With it attached, the analyzer's
+      // "LONG spans that consumed almost NO CPU" section finally works on the
+      // entries that matter, and a reader can tell a sleep from a wedge after
+      // the fact even when the live classifier could not.
+      ...(cpuMs === null ? {} : { cpuMs: Math.round(cpuMs) }),
       // HS-9421 — every block carries the memory picture, so a GC-thrash wedge
       // is distinguishable from a slow query without an inspector attach.
       extra: memorySnapshot(),
     });
+  }
+}
+
+/** A wake listener must never be able to break the heartbeat. */
+function notifyWakeListeners(gapMs: number): void {
+  for (const listener of wakeListeners) {
+    try { listener(gapMs); } catch { /* diagnostics must not break the loop */ }
   }
 }
 
@@ -523,8 +581,10 @@ function handleHeartbeatGap(blockMs: number, wallGapMs: number = blockMs): void 
  *
  *  `wallGapMs` defaults to `blockMs`, i.e. the clocks agree — which is a genuine
  *  on-loop block. Pass a larger wall gap to simulate an OS suspend (HS-9520). */
-export function _simulateHeartbeatGapForTesting(blockMs: number, wallGapMs: number = blockMs): void {
-  handleHeartbeatGap(blockMs, wallGapMs);
+export function _simulateHeartbeatGapForTesting(
+  blockMs: number, wallGapMs: number = blockMs, cpuMs: number | null = null,
+): void {
+  handleHeartbeatGap(blockMs, wallGapMs, cpuMs);
 }
 
 /** HS-9421 — the periodic memory-sample timer (separate from the 50 ms
@@ -582,17 +642,27 @@ export function startServerEventLoopHeartbeat(dataDir: string): void {
   heartbeatDataDir = dataDir;
   lastHeartbeatNs = process.hrtime.bigint();
   lastHeartbeatWallMs = Date.now();
+  // HS-9567 — CPU consumed between ticks. This is the signal the clocks cannot
+  // give on macOS: a sleeping machine accrues none.
+  let lastHeartbeatCpu = process.cpuUsage();
   heartbeatTimer = setInterval(() => {
     const now = process.hrtime.bigint();
     const nowWall = Date.now();
+    const nowCpu = process.cpuUsage();
     const elapsedMs = Number(now - lastHeartbeatNs) / 1_000_000;
     // HS-9520 — the WALL gap is sampled alongside the monotonic one purely to
     // classify: only a real OS freeze makes the two diverge (`isSuspendGap`).
     // The monotonic gap remains the reported lag, since it is the accurate one.
     const elapsedWallMs = nowWall - lastHeartbeatWallMs;
+    // Covers the WHOLE interval, including the nominal tick, while the gap it is
+    // compared against has that interval subtracted. So the ratio is slightly
+    // OVERSTATED, which biases the classification toward "block" — the safe
+    // direction, since calling a wedge a suspend is the costly mistake.
+    const cpuMs = ((nowCpu.user - lastHeartbeatCpu.user) + (nowCpu.system - lastHeartbeatCpu.system)) / 1000;
     lastHeartbeatNs = now;
     lastHeartbeatWallMs = nowWall;
-    handleHeartbeatGap(elapsedMs - HEARTBEAT_INTERVAL_MS, elapsedWallMs - HEARTBEAT_INTERVAL_MS);
+    lastHeartbeatCpu = nowCpu;
+    handleHeartbeatGap(elapsedMs - HEARTBEAT_INTERVAL_MS, elapsedWallMs - HEARTBEAT_INTERVAL_MS, cpuMs);
   }, HEARTBEAT_INTERVAL_MS);
   // Don't keep the process alive for the heartbeat alone — if every
   // other handle is gone, the process should exit cleanly.

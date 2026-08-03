@@ -19,7 +19,7 @@
  * caller's problem, which is what makes it testable without a filesystem.
  */
 
-import type { FreezeEntry } from './freezeLogger.js';
+import { type FreezeEntry, SUSPEND_CPU_RATIO } from './freezeLogger.js';
 
 /** An entry whose `durationMs` is genuinely time the loop could not run. */
 export function isBlocking(entry: FreezeEntry): boolean {
@@ -43,8 +43,13 @@ export function cpuRatio(entry: FreezeEntry): number | null {
   return entry.cpuMs / entry.durationMs;
 }
 
-/** Below this share of CPU, a long span is elapsed time rather than work. */
-export const SUSPECT_SUSPEND_CPU_RATIO = 0.05;
+/** Below this share of CPU, a long span is elapsed time rather than work.
+ *
+ *  HS-9567 — re-exported from `freezeLogger` rather than defined twice: the
+ *  heartbeat now applies the same threshold LIVE (to decide whether to fire the
+ *  wake listeners), and a post-hoc classification that disagreed with the live
+ *  one would be worse than either alone. */
+export const SUSPECT_SUSPEND_CPU_RATIO = SUSPEND_CPU_RATIO;
 
 /**
  * Did this entry spend a long time consuming almost no CPU?

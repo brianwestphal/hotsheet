@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { externalCeilingBytes } from '../db/memoryCeiling.js';
 import { diagnosticsDir } from './diagnosticsDir.js';
+import { SUSPECT_SUSPEND_CPU_RATIO } from './freezeAnalysis.js';
 import {
   _resetForTesting,
   _simulateHeartbeatGapForTesting,
@@ -22,12 +23,14 @@ import {
   instrumentAsync,
   instrumentSync,
   isSuspendGap,
+  looksLikeIdleGap,
   memorySnapshot,
   onServerWake,
   setFreezeLogClusterCounter,
   setFreezeLogEvictionStats,
   startServerEventLoopHeartbeat,
   stopServerEventLoopHeartbeat,
+  SUSPEND_CPU_RATIO,
   WAKE_GAP_THRESHOLD_MS,
 } from './freezeLogger.js';
 
@@ -145,6 +148,91 @@ describe('wake detection (HS-8726, corrected by HS-9520)', () => {
     const lines = await readFreezeLog();
     expect(lines.some(l => l.includes('"source":"server-heartbeat"'))).toBe(true);
     expect(lines.some(l => l.includes('"source":"server-wake"'))).toBe(false);
+  });
+});
+
+// HS-9567 — the case that was silently failing on macOS for the life of the
+// feature: libuv's monotonic clock advances during sleep, so a real suspend has
+// ZERO clock divergence, lands in the block branch, and never reaches the wake
+// listeners. Measured: zero `server-wake` entries across three days of logs
+// containing sleeps `pmset` confirms (a 387.3 s gap against a 389 s sleep).
+describe('idle-gap wake detection (HS-9567)', () => {
+  const NO_CPU = 40;          // ms of CPU across a multi-second gap ⇒ ~0 ratio
+  const BUSY_CPU = 20_000;    // CPU tracking wall time ⇒ the loop was working
+
+  it('fires the wake listeners for a long gap that consumed no CPU, with the clocks AGREEING', () => {
+    // The exact macOS shape. Before this, `seen` was empty here — which is why
+    // the HS-8726 post-wake stagger had never once engaged.
+    const seen: number[] = [];
+    const unsub = onServerWake((gap) => { seen.push(gap); });
+    _simulateHeartbeatGapForTesting(30_000, 30_000, NO_CPU);
+    expect(seen).toEqual([30_000]);
+    unsub();
+  });
+
+  it('does NOT fire them for a long gap that burned CPU — a real wedge', () => {
+    // The guard against muting a genuine pin: a wedge spinning on the loop
+    // consumes CPU proportional to the gap.
+    const seen: number[] = [];
+    const unsub = onServerWake((gap) => { seen.push(gap); });
+    _simulateHeartbeatGapForTesting(30_000, 30_000, BUSY_CPU);
+    expect(seen).toEqual([]);
+    unsub();
+  });
+
+  it('still LOGS a no-CPU gap as a block, because a syscall wedge also burns no CPU', async () => {
+    // THE load-bearing test. The 2026-07-31 capture shows 1508/1509 samples in
+    // readFileSync → uv__fs_work → read() against a cloud-backed backupDir — a
+    // real wedge that consumed no CPU. Classifying "no CPU" as a suspend for
+    // LOGGING purposes would have hidden the clearest evidence of that death.
+    // Firing the stagger for it is harmless; filing it as a sleep is not.
+    startServerEventLoopHeartbeat(tmpDir);
+    _simulateHeartbeatGapForTesting(30_000, 30_000, NO_CPU);
+    stopServerEventLoopHeartbeat();
+    await new Promise(r => setTimeout(r, 20));
+    const lines = await readFreezeLog();
+    expect(lines.some(l => l.includes('"source":"server-heartbeat"'))).toBe(true);
+    expect(lines.some(l => l.includes('"source":"server-wake"'))).toBe(false);
+  });
+
+  it('attaches cpuMs to heartbeat entries so the post-hoc analyzer can classify them', async () => {
+    // `freezeAnalysis.looksLikeSuspend` needs a CPU ratio and heartbeat entries
+    // carried none, so it could never fire on the entries that mattered.
+    startServerEventLoopHeartbeat(tmpDir);
+    _simulateHeartbeatGapForTesting(30_000, 30_000, NO_CPU);
+    stopServerEventLoopHeartbeat();
+    await new Promise(r => setTimeout(r, 20));
+    const entry = (await readFreezeLog())
+      .map(l => JSON.parse(l) as { source: string; cpuMs?: number })
+      .find(e => e.source === 'server-heartbeat');
+    expect(entry?.cpuMs).toBe(NO_CPU);
+  });
+
+  it('keeps backpressure engaged for an idle gap — it may still be a wedge', () => {
+    _simulateHeartbeatGapForTesting(30_000, 30_000, NO_CPU);
+    expect(getRecentEventLoopLagMs()).toBe(30_000);
+  });
+
+  describe('looksLikeIdleGap', () => {
+    it('ignores gaps below the wake threshold, however little CPU they used', () => {
+      // A short I/O-bound tick is normal and must not be read as a resume.
+      expect(looksLikeIdleGap(WAKE_GAP_THRESHOLD_MS - 1, 0)).toBe(false);
+    });
+
+    it('needs a CPU reading — absent one it declines rather than guesses', () => {
+      expect(looksLikeIdleGap(600_000, null)).toBe(false);
+    });
+
+    it('splits on the CPU ratio at the shared threshold', () => {
+      expect(looksLikeIdleGap(100_000, 100_000 * (SUSPEND_CPU_RATIO / 2))).toBe(true);
+      expect(looksLikeIdleGap(100_000, 100_000 * SUSPEND_CPU_RATIO)).toBe(false);
+    });
+
+    it('uses the same threshold the post-hoc analyzer does', () => {
+      // Live and after-the-fact classifications disagreeing would be worse than
+      // either alone, so the constant has exactly one definition.
+      expect(SUSPECT_SUSPEND_CPU_RATIO).toBe(SUSPEND_CPU_RATIO);
+    });
   });
 });
 
