@@ -120,13 +120,28 @@ const SYNC_CHILD_PROCESS_RULES = [
 // the main event loop until the §45 watchdog SIGKILLs the server — measured at
 // 19.9 s for one 29-manifest scan, and the cause of four kills on 2026-07-31.
 //
-// Scoped to the modules whose whole job is reaching that directory. Everywhere
-// else `existsSync` on a local path is fine and this rule would be noise.
+// Scoped to the modules whose whole job is reaching a user-configurable directory.
+// Everywhere else `existsSync` on a genuinely local path is fine and this rule
+// would be noise.
+//
+// HS-9570 — `src/routes/attachments.ts` joined the list, and the message below
+// lost its claim that `<dataDir>/attachments` is "a genuinely LOCAL path".
+// `dataDir` is user-chosen too: a project kept in iCloud / Dropbox / a network
+// share puts attachment reads and writes on exactly the same footing as the
+// backup dir, on a REQUEST path.
+//
+// HS-9568 sharpened WHICH calls actually hurt. Measured: `readdir` + a
+// per-entry `existsSync` against a Google Drive File Provider root took 0.6 ms,
+// because File Provider caches directory METADATA locally. HS-9527's 686 ms was
+// a 134 KB content read, which has to be materialized over the network. So the
+// hazard is a sync call that must FETCH OR FLUSH BYTES; the selector still
+// covers metadata calls because they are cheap to avoid and the distinction is
+// easy to get wrong at the call site.
 const BACKUP_FS_SYNC_RULE = {
   selector:
     "CallExpression[callee.name=/^(existsSync|readFileSync|writeFileSync|readdirSync|statSync|lstatSync|rmSync|mkdirSync|renameSync|copyFileSync|linkSync|unlinkSync|rmdirSync|appendFileSync|accessSync|openSync|cpSync)$/]",
   message:
-    "Synchronous `fs` in a backup module (HS-9527). `backupDir` is commonly a cloud/network folder where a sync call can block the event loop indefinitely — this is what wedged the server four times on 2026-07-31. Use the guarded async layer in `src/backupFs.ts` (`backupFsFor(root)`), which adds a deadline, a threadpool concurrency cap, and a circuit breaker. For a genuinely LOCAL path (e.g. `<dataDir>/attachments`), use `fs.promises` and say why in a comment.",
+    "Synchronous `fs` in a backup module (HS-9527). `backupDir` is commonly a cloud/network folder where a sync call can block the event loop indefinitely — this is what wedged the server four times on 2026-07-31. Use the guarded async layer in `src/backupFs.ts` (`backupFsFor(root)`), which adds a deadline, a threadpool concurrency cap, and a circuit breaker. The same applies to `dataDir` — it is user-chosen, so attachments can sit on a cloud mount too (HS-9570). Reads/writes of file CONTENTS are the dangerous ones (they must materialize bytes over the network); prefer streaming for whole files. For a path that genuinely cannot be remote, use `fs.promises` and say why in a comment.",
 };
 
 // HS-9541 — an event listener with an EMPTY body. This is the residue of a deleted
@@ -677,7 +692,7 @@ export default tseslint.config(
   // wedges against the user's real cloud folder — so a test is exactly where an
   // unguarded call would be written and never noticed.
   {
-    files: ["src/backup.ts", "src/backupFs.ts", "src/attachmentBackup.ts", "src/strandedBackups.ts"],
+    files: ["src/backup.ts", "src/backupFs.ts", "src/attachmentBackup.ts", "src/strandedBackups.ts", "src/routes/attachments.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...CORE_RULES, BACKUP_FS_SYNC_RULE],
     },

@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { createReadStream, promises as fsp } from 'fs';
 import { Hono } from 'hono';
 import { basename, extname, join, resolve, sep } from 'path';
+import { Readable } from 'stream';
 
 import { CopyAttachmentsReqSchema } from '../api/attachments.js';
 import { attachmentBlobsDir, indexExistingManifestEntries, restoreAttachmentBlob } from '../attachmentBackup.js';
@@ -27,6 +28,42 @@ import { emitSync } from './syncEmit.js';
 
 export const attachmentRoutes = new Hono<AppEnv>();
 
+/**
+ * HS-9570 — async replacement for `existsSync`. `dataDir` is user-chosen, so it
+ * can sit on iCloud / Dropbox / a network share, where a synchronous stat is an
+ * unbounded block on the event loop (docs/134 §134.10; the same shape as the
+ * HS-9527 death).
+ */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await fsp.access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Cap on the collision-suffix search below. */
+const MAX_NAME_COLLISIONS = 1000;
+
+/**
+ * First free `<base><suffix?><ext>` inside `dir`, or `null` if the cap is hit.
+ *
+ * The cap replaces an unbounded `while (existsSync(...))`. That loop assumed it
+ * would terminate quickly, which is true right up until it isn't — and each
+ * iteration was a synchronous stat, so a pathological case would have pinned the
+ * loop rather than merely being slow. Bounding it costs nothing and removes the
+ * question.
+ */
+async function uniqueAttachmentPath(dir: string, base: string, ext: string): Promise<string | null> {
+  for (let n = 0; n <= MAX_NAME_COLLISIONS; n++) {
+    const name = n === 0 ? `${base}${ext}` : `${base}_${String(n)}${ext}`;
+    const candidate = join(dir, name);
+    if (!await fileExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   const id = parseIntParam(c, 'id');
   if (id === null) return c.json({ error: 'Invalid attachment ticket ID' }, 400);
@@ -50,12 +87,13 @@ attachmentRoutes.post('/tickets/:id/attachments', async (c) => {
   const baseName = basename(originalName, ext);
   const storedName = `${ticket.ticket_number}_${baseName}${ext}`;
   const attachDir = join(dataDir, 'attachments');
-  mkdirSync(attachDir, { recursive: true });
+  await fsp.mkdir(attachDir, { recursive: true });
   const storedPath = join(attachDir, storedName);
 
-  // Write the file
+  // Write the file. HS-9570 — async: `dataDir` is user-chosen, and a project on
+  // a cloud/network mount makes a sync write an unbounded block on the loop.
   const buffer = Buffer.from(await file.arrayBuffer());
-  writeFileSync(storedPath, buffer);
+  await fsp.writeFile(storedPath, buffer);
 
   const attachment = await addAttachment(id, originalName, storedPath);
   notifyMutation(c.get('dataDir'));
@@ -101,11 +139,11 @@ attachmentRoutes.post('/tickets/:id/feedback-drafts/:draftId/attachments', async
   // so the serving route works without change.
   const storedName = `${ticket.ticket_number}_draft_${draftId}_${baseName}${ext}`;
   const attachDir = join(dataDir, 'attachments');
-  mkdirSync(attachDir, { recursive: true });
+  await fsp.mkdir(attachDir, { recursive: true });
   const storedPath = join(attachDir, storedName);
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  writeFileSync(storedPath, buffer);
+  await fsp.writeFile(storedPath, buffer);
 
   const attachment = await addDraftAttachment(id, draftId, originalName, storedPath);
   notifyMutation(dataDir);
@@ -167,25 +205,22 @@ attachmentRoutes.post('/tickets/:id/attachments/copy-from', async (c) => {
 
   const targetDataDir = c.get('dataDir');
   const attachDir = join(targetDataDir, 'attachments');
-  mkdirSync(attachDir, { recursive: true });
+  await fsp.mkdir(attachDir, { recursive: true });
 
   const copied = [];
   for (const att of sourceAttachments) {
     // Skip a row whose on-disk file vanished rather than failing the whole copy.
-    if (!existsSync(att.stored_path)) continue;
+    if (!await fileExists(att.stored_path)) continue;
     const ext = extname(att.original_filename);
     const base = basename(att.original_filename, ext);
-    let storedName = `${targetTicket.ticket_number}_${base}${ext}`;
-    let storedPath = join(attachDir, storedName);
     // Don't clobber an existing target file (duplicate names within the batch
     // or a pre-existing attachment on the target ticket) — suffix until unique.
-    let n = 1;
-    while (existsSync(storedPath)) {
-      storedName = `${targetTicket.ticket_number}_${base}_${String(n)}${ext}`;
-      storedPath = join(attachDir, storedName);
-      n++;
-    }
-    writeFileSync(storedPath, readFileSync(att.stored_path));
+    const storedPath = await uniqueAttachmentPath(attachDir, `${targetTicket.ticket_number}_${base}`, ext);
+    if (storedPath === null) continue; // pathologically many collisions — skip, don't hang
+    // HS-9570 — `copyFile` rather than writeFileSync(readFileSync(…)): async, so
+    // it cannot block the loop, and the bytes never pass through JS memory at
+    // all. The old form allocated the WHOLE file per attachment, in a loop.
+    await fsp.copyFile(att.stored_path, storedPath);
     copied.push(await addAttachment(targetId, att.original_filename, storedPath));
   }
 
@@ -201,7 +236,7 @@ attachmentRoutes.delete('/attachments/:id', async (c) => {
   if (!attachment) return c.json({ error: 'Not found' }, 404);
 
   // Remove the file
-  try { rmSync(attachment.stored_path, { force: true }); } catch { /* ignore */ }
+  try { await fsp.rm(attachment.stored_path, { force: true }); } catch { /* ignore */ }
 
   notifyMutation(c.get('dataDir'));
   emitSync(c, { type: 'attachment-deleted', ticketId: attachment.ticket_id, attachmentId: id });
@@ -214,7 +249,7 @@ attachmentRoutes.post('/attachments/:id/reveal', async (c) => {
   if (id === null) return c.json({ error: 'Invalid attachment ID' }, 400);
   const attachment = await getAttachment(id);
   if (!attachment) return c.json({ error: 'Not found' }, 404);
-  if (!existsSync(attachment.stored_path)) return c.json({ error: 'File not found on disk' }, 404);
+  if (!await fileExists(attachment.stored_path)) return c.json({ error: 'File not found on disk' }, 404);
 
   await revealInFileManager(attachment.stored_path);
   return c.json({ ok: true });
@@ -280,17 +315,44 @@ attachmentRoutes.get('/attachments/file/*', async (c) => {
     return c.json({ error: 'Invalid path' }, 403);
   }
 
-  if (!existsSync(fullPath)) {
+  let stat = await statOrNull(fullPath);
+  if (stat === null) {
     // HS-8808 — try a serve-time self-heal from the backup store before 404ing.
     const healed = await tryServeTimeRestore(dataDir, fullPath);
     if (!healed) return c.json({ error: 'File not found' }, 404);
+    stat = await statOrNull(fullPath);
+    if (stat === null) return c.json({ error: 'File not found' }, 404);
   }
 
-  const content = readFileSync(fullPath);
   const ext = extname(fullPath).toLowerCase();
   const contentType = getMimeType(ext);
 
-  return new Response(content, {
-    headers: { 'Content-Type': contentType },
+  // HS-9570 — STREAM rather than `readFileSync` into a Buffer. That fixes two
+  // things at once: the synchronous read (an unbounded block on the loop when
+  // `dataDir` is on a cloud/network mount), and the whole-file allocation — an
+  // 80 MB attachment cost 80 MB of `external`/`arrayBuffers` per concurrent
+  // serve, against the very budget docs/128 exists to bound.
+  // The `as` is a pure type bridge with no runtime component: `Readable.toWeb`
+  // is typed against `node:stream/web`'s ReadableStream, while `Response` wants
+  // the global (DOM) one. They are the same object at runtime — Node's global
+  // ReadableStream IS the stream/web class — so nothing is being asserted about
+  // a value's shape here, only about which declaration of it TypeScript sees.
+  const body = Readable.toWeb(createReadStream(fullPath)) as ReadableStream<Uint8Array>;
+  return new Response(body, {
+    headers: {
+      'Content-Type': contentType,
+      // Known from the stat we already did — lets the browser show progress and
+      // makes range-less video/image loads behave.
+      'Content-Length': String(stat.size),
+    },
   });
 });
+
+/** `stat`, or null when the file is missing. Async — see `fileExists`. */
+async function statOrNull(path: string): Promise<{ size: number } | null> {
+  try {
+    return await fsp.stat(path);
+  } catch {
+    return null;
+  }
+}

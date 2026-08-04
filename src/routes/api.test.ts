@@ -573,6 +573,42 @@ describe('attachments', () => {
     expect(text).toBe('hello world');
   });
 
+  // HS-9570 — the serve path STREAMS now (it used to `readFileSync` the whole
+  // file into a Buffer). A streaming regression corrupts or truncates downloads
+  // silently, and the small-file test above would not catch it: a short payload
+  // fits in one chunk either way. This one spans many chunks and checks the
+  // bytes, not just the status.
+  it('GET /api/attachments/file/* streams a multi-chunk file back byte-for-byte', async () => {
+    const attachDir = join(tempDir, 'attachments');
+    // 2 MB of a repeating, position-sensitive pattern — a reordered or dropped
+    // chunk changes the digest, a truncated one changes the length.
+    const payload = Buffer.alloc(2 * 1024 * 1024);
+    for (let i = 0; i < payload.length; i++) payload[i] = i % 251;
+    writeFileSync(join(attachDir, 'big-stream.bin'), payload);
+
+    const res = await app.request('/api/attachments/file/big-stream.bin');
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.length).toBe(payload.length);
+    expect(got.equals(payload)).toBe(true);
+  });
+
+  it('GET /api/attachments/file/* reports Content-Length', async () => {
+    // Known from the stat the handler already does. Without it a browser cannot
+    // show progress, and range-less media loads behave badly.
+    const attachDir = join(tempDir, 'attachments');
+    writeFileSync(join(attachDir, 'sized.txt'), 'hello world');
+    const res = await app.request('/api/attachments/file/sized.txt');
+    expect(res.headers.get('Content-Length')).toBe('11');
+  });
+
+  it('GET /api/attachments/file/* still 404s for a missing file', async () => {
+    // The existence check moved from `existsSync` to a stat; the 404 path (and
+    // its serve-time self-heal attempt) must survive that.
+    const res = await app.request('/api/attachments/file/definitely-absent.txt');
+    expect(res.status).toBe(404);
+  });
+
   it('GET /api/attachments/file/* returns 404 for missing file', async () => {
     const res = await app.request('/api/attachments/file/nonexistent.png');
     expect(res.status).toBe(404);
