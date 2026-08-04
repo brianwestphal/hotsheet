@@ -6,7 +6,7 @@
  * HS-7889 corruption tests use) → reopen → assert the cluster auto-restored
  * from the canonical snapshot (or a §7 backup tier, or fell back to empty).
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -197,6 +197,47 @@ describe.skipIf(process.platform === 'win32')('deferred recovery on next startup
 
     expect(readdirSync(dataDir).filter((n) => n.startsWith('db-corrupt-')).length).toBeGreaterThan(0);
     expect(existsSync(pendingMarkerPath())).toBe(false); // marker cleared after heal
+  });
+
+  // HS-9572 — the 2026-08-04 incident. The crash landed AFTER the rename and
+  // BEFORE the restore, so the next start found no `db/` at all. That used to
+  // read as "nothing to do": the marker was cleared, PGLite created a fresh
+  // empty cluster, and with no corruption left to detect nothing announced
+  // itself. The project came up with zero tickets and looked healthy.
+  it('resumes a recovery that was interrupted after preserving the corrupt db/', async () => {
+    setDataDir(dataDir);
+    await getDb();
+    await createTicket('Interrupted-recovery ticket');
+    await writeSnapshotNow(dataDir);
+    await closeAllDatabases();
+
+    // Exactly the on-disk state the dead process left behind: db/ moved aside,
+    // no db/, and a marker naming where it went.
+    const preserved = join(dataDir, `db-corrupt-${String(Date.now())}`);
+    renameSync(join(dataDir, 'db'), preserved);
+    writeFileSync(pendingMarkerPath(), JSON.stringify({
+      attempts: 1,
+      reason: 'recovery-interrupted',
+      corruptPath: preserved,
+      requestedAt: '2026-08-04T09:46:30.000Z',
+    }));
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setDataDir(dataDir);
+    await getDb();
+    errSpy.mockRestore();
+
+    // The whole point: the tickets come back instead of an empty cluster.
+    const tickets = await getTickets();
+    expect(tickets.some((t) => t.title === 'Interrupted-recovery ticket')).toBe(true);
+
+    const marker = readRecoveryMarker(dataDir);
+    expect(marker!.restoredFrom).toBe('snapshot');
+    // Resumed, not re-run: the preserved directory is reused rather than a
+    // second `db-corrupt-*` being minted for a `db/` that was never there.
+    expect(marker!.corruptPath).toBe(preserved);
+    expect(existsSync(preserved)).toBe(true);
+    expect(existsSync(pendingMarkerPath())).toBe(false);
   });
 
   it('gives up (and clears the marker) after too many attempts', async () => {

@@ -48,6 +48,105 @@ const BYTES_PER_MB = 1024 * 1024;
 /** The two fatal events this module owns. */
 export type FatalKind = 'uncaughtException' | 'unhandledRejection';
 
+/**
+ * HS-9572 — a data-critical section: a stretch of code where dying costs the
+ * user data that is not recoverable by restarting.
+ *
+ * On 2026-08-04 a corrupt-open recovery had renamed a project's `db/` aside and
+ * was about to restore it from the snapshot when a stray `ErrnoError` rejected
+ * with nothing attached to it. The process died in that gap. The next start
+ * found no `db/`, created a fresh empty cluster, and the project came up with
+ * zero tickets — no corruption left to detect, so nothing announced itself.
+ *
+ * A rejection nobody awaited is a bug worth fixing wherever it comes from, but
+ * it must not be able to kill the process *during the seconds when the user's
+ * data exists only as a directory we just renamed*. Inside a critical section an
+ * `unhandledRejection` is logged and absorbed instead of exiting.
+ *
+ * Deliberately scoped to `unhandledRejection` only. An `uncaughtException` is a
+ * synchronous throw that escaped every frame, so the process state is genuinely
+ * unknown and continuing is the more dangerous choice; a rejection from a
+ * half-closed WASM instance is not the same thing.
+ *
+ * Note the listener registration below is what suppresses **Node's own**
+ * default. Since v15 an unhandled rejection is fatal unless a listener exists —
+ * and in the 2026-08-04 process none did, because it predated this module.
+ */
+let criticalDepth = 0;
+let absorbedInSection: string[] = [];
+let absorbListener: ((reason: unknown) => void) | null = null;
+
+/** Process seam, so tests can drive the listener wiring without arming a real
+ *  handler on the vitest process. */
+interface CriticalSectionHooks {
+  on: (e: 'unhandledRejection', h: (r: unknown) => void) => void;
+  off: (e: 'unhandledRejection', h: (r: unknown) => void) => void;
+  log: (msg: string) => void;
+}
+
+let processHooks: CriticalSectionHooks = {
+  on: (e, h) => { process.on(e, h); },
+  off: (e, h) => { process.off(e, h); },
+  // Deliberately `startupLog` rather than the `installFatalErrorHandlers` hook:
+  // a section can be entered before — or entirely without — those handlers, and
+  // that is the case the 2026-08-04 process was actually in.
+  log: startupLog,
+};
+
+export function inDataCriticalSection(): boolean {
+  return criticalDepth > 0;
+}
+
+/**
+ * Enter a data-critical section. Returns the release function — call it in a
+ * `finally`, matching the `pinClustersForDirs` idiom.
+ *
+ * Nestable: only the outermost entry arms and disarms the listener, so an inner
+ * section can't disarm the protection its caller is relying on.
+ */
+export function beginDataCriticalSection(label: string): () => void {
+  criticalDepth += 1;
+  if (criticalDepth === 1) {
+    absorbedInSection = [];
+    absorbListener = (reason: unknown) => {
+      // The report itself is written by `report()` when the handlers are
+      // installed. This listener exists so Node's default doesn't fire when
+      // they are NOT — which is exactly the case the incident hit.
+      absorbedInSection.push(describeUnknown(reason));
+    };
+    processHooks.on('unhandledRejection', absorbListener);
+  }
+  let released = false;
+  return () => {
+    if (released) return; // double-release must not drop an outer section's hold
+    released = true;
+    criticalDepth -= 1;
+    if (criticalDepth > 0) return;
+    if (absorbListener !== null) {
+      processHooks.off('unhandledRejection', absorbListener);
+      absorbListener = null;
+    }
+    if (absorbedInSection.length > 0) {
+      processHooks.log(
+        `[fatal] absorbed ${String(absorbedInSection.length)} unhandled rejection(s) during the data-critical section "${label}" `
+        + `so it could finish (HS-9572). These are real bugs — the section completing is not a reason to stop chasing them: `
+        + absorbedInSection.join(' | ')
+      );
+      absorbedInSection = [];
+    }
+  };
+}
+
+/** Test seam for the listener wiring + depth, so a leaked section in one case
+ *  can't silently disarm the next. */
+export function _resetDataCriticalSectionForTests(hooks?: Partial<CriticalSectionHooks>): void {
+  if (absorbListener !== null) processHooks.off('unhandledRejection', absorbListener);
+  criticalDepth = 0;
+  absorbedInSection = [];
+  absorbListener = null;
+  if (hooks) processHooks = { ...processHooks, ...hooks };
+}
+
 /** Injected seams, so the report contents and the exit contract are testable
  *  without actually killing the test runner. */
 export interface FatalErrorHooks {
@@ -159,6 +258,15 @@ export function installFatalErrorHandlers(overrides: Partial<FatalErrorHooks> = 
       })) hooks.log(line);
     } catch {
       /* diagnostics must never outrank the exit */
+    }
+    // HS-9572 — inside a data-critical section a stray rejection is absorbed:
+    // dying here costs the user data that no restart can bring back. The report
+    // above is still written, so the bug stays visible.
+    if (kind === 'unhandledRejection' && inDataCriticalSection()) {
+      try {
+        hooks.log('[fatal] ...but a data-critical section is in progress, so the process is NOT exiting (HS-9572).');
+      } catch { /* as above */ }
+      return;
     }
     hooks.exit(1);
   };

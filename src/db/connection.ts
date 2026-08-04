@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { basename, dirname, join } from 'path';
 import { z } from 'zod';
 
+import { beginDataCriticalSection } from '../diagnostics/fatalErrors.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { globalHotsheetDir } from '../global-dir.js';
 import { startupLog } from '../startup-log.js';
@@ -211,17 +212,25 @@ function pendingRecoveryPath(dataDir: string): string {
 /** Read the pending-recovery marker (or null). A present-but-unparseable marker
  *  still counts as "pending" (attempts=1) — better to attempt recovery than to
  *  ignore a known-corrupt cluster. */
-function readPendingRecovery(dataDir: string): { attempts: number; reason: PendingRecoveryReason } | null {
+function readPendingRecovery(dataDir: string): { attempts: number; reason: PendingRecoveryReason; corruptPath?: string } | null {
   const path = pendingRecoveryPath(dataDir);
   if (!existsSync(path)) return null;
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    const result = z.object({ attempts: z.number(), reason: z.enum(['handle-lock', 'live-storage-failure']).optional() }).loose().safeParse(parsed);
+    const result = z.object({
+      attempts: z.number(),
+      reason: z.enum(['handle-lock', 'live-storage-failure', 'recovery-interrupted']).optional(),
+      // HS-9572 — set only for `recovery-interrupted`: where the dead process
+      // had already moved the corrupt cluster to, so the resume doesn't rename
+      // a second time.
+      corruptPath: z.string().optional(),
+    }).loose().safeParse(parsed);
     return {
       attempts: result.success ? result.data.attempts : 1,
       // Markers written before HS-9460 have no `reason`; they were all the
       // Windows handle-lock case, which is the safe default.
       reason: result.success ? result.data.reason ?? 'handle-lock' : 'handle-lock',
+      ...(result.success && result.data.corruptPath !== undefined ? { corruptPath: result.data.corruptPath } : {}),
     };
   } catch {
     return { attempts: 1, reason: 'handle-lock' };
@@ -232,16 +241,26 @@ function readPendingRecovery(dataDir: string): { attempts: number; reason: Pendi
  *  not move `db/` aside in-process (Windows handles). `live-storage-failure`: a
  *  running server's cluster went corrupt mid-session, so recovery never started.
  *  Only the user-facing wording differs — the recovery steps are identical. */
-type PendingRecoveryReason = 'handle-lock' | 'live-storage-failure';
+type PendingRecoveryReason = 'handle-lock' | 'live-storage-failure' | 'recovery-interrupted';
 
 const PENDING_RECOVERY_CAUSE: Record<PendingRecoveryReason, string> = {
   'handle-lock': 'Database was corrupt and could not be preserved in-process (Windows handle lock); recovered on the next restart.',
   'live-storage-failure': 'The database stopped accepting writes while Hot Sheet was running (storage/WAL corruption); it was restored on this restart.',
+  'recovery-interrupted': 'A previous recovery was interrupted after preserving the corrupt database but before restoring it; the restore was completed on this restart.',
 };
 
-function writePendingRecovery(dataDir: string, attempts: number, reason: PendingRecoveryReason = 'handle-lock'): void {
+function writePendingRecovery(
+  dataDir: string,
+  attempts: number,
+  reason: PendingRecoveryReason = 'handle-lock',
+  corruptPath?: string,
+): void {
   try {
-    writeFileSync(pendingRecoveryPath(dataDir), JSON.stringify({ attempts, reason, requestedAt: new Date().toISOString() }, null, 2));
+    writeFileSync(pendingRecoveryPath(dataDir), JSON.stringify(
+      { attempts, reason, requestedAt: new Date().toISOString(), ...(corruptPath !== undefined ? { corruptPath } : {}) },
+      null,
+      2,
+    ));
   } catch (writeErr: unknown) {
     console.error('Could not write pending-recovery marker:', getErrorMessage(writeErr));
   }
@@ -1346,18 +1365,58 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
     clearPendingRecovery(dataDir);
     return null;
   }
-  if (!existsSync(dbPath)) { clearPendingRecovery(dataDir); return null; }
+  // HS-9572 — `db/` missing used to mean "nothing to do", which was exactly
+  // wrong for the one case that costs data: a recovery that was INTERRUPTED
+  // after preserving the corrupt cluster aside. There the rename is already
+  // done and the marker names where it went, so the remaining work is the
+  // restore. Without this, the next open created a fresh empty cluster — with
+  // no corruption left to detect, nothing announced itself.
+  const preserved = pending.reason === 'recovery-interrupted' ? pending.corruptPath : undefined;
+  const alreadyPreserved = preserved !== undefined && existsSync(preserved);
+  if (!existsSync(dbPath) && !alreadyPreserved) { clearPendingRecovery(dataDir); return null; }
 
   console.error(pending.reason === 'live-storage-failure'
     ? '[db] completing deferred recovery — a previous run\'s database stopped accepting writes (storage/WAL corruption)…'
-    : '[db] completing deferred recovery — a prior launch could not move the corrupt database aside in-process (Windows handle lock)…');
-  const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
-  try {
-    await renameDirWithRetry(dbPath, corruptPath);
-  } catch (renameErr: unknown) {
-    writePendingRecovery(dataDir, pending.attempts + 1, pending.reason);
-    console.error(`[db] deferred recovery could not move db/ yet: ${getErrorMessage(renameErr)}`);
-    return null;
+    : pending.reason === 'recovery-interrupted'
+      ? '[db] completing deferred recovery — a previous recovery was interrupted after preserving the corrupt database but before restoring it…'
+      : '[db] completing deferred recovery — a prior launch could not move the corrupt database aside in-process (Windows handle lock)…');
+
+  let corruptPath: string;
+  if (alreadyPreserved) {
+    // Resume: the preserve already happened, so the directory the marker names
+    // is the one holding the user's data — and it stays the `corruptPath` we
+    // report, because that is what the repair flow (HS-9575) will be pointed at.
+    corruptPath = preserved;
+    // `db/` is usually back by now: every caller `mkdir`s it before we get here,
+    // and the interrupted process's successor may have initialized a whole empty
+    // cluster in it. Neither is worth keeping over the preserved data, but tell
+    // them apart — an initialized cluster gets preserved in its own right rather
+    // than deleted, since only `PG_VERSION` distinguishes "real" from "empty
+    // placeholder" and being wrong here destroys data.
+    if (existsSync(dbPath)) {
+      if (existsSync(join(dbPath, 'PG_VERSION'))) {
+        const alsoCorrupt = `${dbPath}-corrupt-${Date.now()}`;
+        try {
+          await renameDirWithRetry(dbPath, alsoCorrupt);
+          console.error(`[db] a second cluster had appeared at db/; preserved it as ${alsoCorrupt}.`);
+        } catch (renameErr: unknown) {
+          writePendingRecovery(dataDir, pending.attempts + 1, pending.reason, preserved);
+          console.error(`[db] deferred recovery could not move the newer db/ aside: ${getErrorMessage(renameErr)}`);
+          return null;
+        }
+      } else {
+        rmSync(dbPath, { recursive: true, force: true });
+      }
+    }
+  } else {
+    corruptPath = `${dbPath}-corrupt-${Date.now()}`;
+    try {
+      await renameDirWithRetry(dbPath, corruptPath);
+    } catch (renameErr: unknown) {
+      writePendingRecovery(dataDir, pending.attempts + 1, pending.reason, preserved);
+      console.error(`[db] deferred recovery could not move db/ yet: ${getErrorMessage(renameErr)}`);
+      return null;
+    }
   }
 
   const restored = await tryRestoreFromSources(dbPath, dataDir);
@@ -1419,6 +1478,15 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   const dataDir = dbPath.replace(/[\\/]db$/, '');
   const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
   console.error(`Database appears to be corrupt. Preserving as ${corruptPath} ...`);
+
+  // HS-9572 — everything from here to the recovery marker is the window where
+  // the user's data exists ONLY as the directory we are about to rename. On
+  // 2026-08-04 a stray `ErrnoError` rejection killed the process inside it: the
+  // rename had happened, the restore had not, and the next start saw no `db/`
+  // at all — so it created a fresh empty cluster and nothing looked wrong.
+  // Absorb unhandled rejections until the window closes.
+  const releaseCritical = beginDataCriticalSection('db corrupt-open recovery');
+  try {
   try {
     await renameDirWithRetry(dbPath, corruptPath);
   } catch (renameErr: unknown) {
@@ -1436,6 +1504,13 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
     throw err;
   }
 
+  // HS-9572 — the rename succeeded, so the ONLY copy of the user's data is now
+  // `corruptPath` and nothing on disk says so yet. Record the interrupted state
+  // BEFORE attempting the restore: if this process dies from here on, the next
+  // start reads this marker and finishes the job, instead of finding a missing
+  // `db/`, creating an empty cluster, and looking healthy while being empty.
+  writePendingRecovery(dataDir, 1, 'recovery-interrupted', corruptPath);
+
   // HS-8587 — Snapshot Protection (§73): before falling back to an empty
   // cluster, auto-restore from the canonical snapshot, then the §7 backup
   // tiers. First source that loads + passes the integrity probe wins.
@@ -1450,6 +1525,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
       restoredFrom: restored.label,
       restoredTicketCount: restored.ticketCount,
     });
+    clearPendingRecovery(dataDir);
     return restored.db;
   }
 
@@ -1463,7 +1539,11 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
     recoveredAt: new Date().toISOString(),
     errorMessage: message,
   });
+  clearPendingRecovery(dataDir);
   return await openAndCacheDb(dbPath);
+  } finally {
+    releaseCritical();
+  }
 }
 
 function tryRemoveStalePostmasterPid(dbPath: string): boolean {

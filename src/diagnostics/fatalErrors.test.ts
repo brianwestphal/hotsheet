@@ -9,7 +9,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _resetDataCriticalSectionForTests,
   _resetFatalErrorHandlersForTests,
+  beginDataCriticalSection,
   type FatalErrorHooks,
   type FatalKind,
   formatFatalReport,
@@ -147,5 +149,111 @@ describe('installFatalErrorHandlers', () => {
     install({ on });
     install({ on });
     expect(on).toHaveBeenCalledTimes(2); // two events, from the FIRST install only
+  });
+});
+
+// HS-9572 — the data-critical section. On 2026-08-04 a corrupt-open recovery had
+// already renamed a project's `db/` aside and was about to restore it when a
+// stray `ErrnoError` rejected with nothing attached. The process died in that
+// gap, the next start found no `db/`, created a fresh empty cluster, and the
+// project came up with zero tickets looking perfectly healthy.
+describe('data-critical sections (HS-9572)', () => {
+  let handlers: Map<FatalKind, (value: unknown) => void>;
+  let logged: string[];
+  let exits: number[];
+  let listeners: ((r: unknown) => void)[];
+
+  function install(): void {
+    installFatalErrorHandlers({
+      log: (m) => { logged.push(m); },
+      exit: (c) => { exits.push(c); },
+      on: (event, handler) => { handlers.set(event, handler); },
+      memory: () => MEM,
+      phase: () => 'serving',
+      elapsedMs: () => 1234,
+    });
+  }
+
+  beforeEach(() => {
+    _resetFatalErrorHandlersForTests();
+    handlers = new Map();
+    logged = [];
+    exits = [];
+    listeners = [];
+    _resetDataCriticalSectionForTests({
+      on: (_e, h) => { listeners.push(h); },
+      off: (_e, h) => { listeners = listeners.filter((l) => l !== h); },
+      log: (m) => { logged.push(m); },
+    });
+  });
+
+  it('absorbs an unhandled rejection instead of exiting', () => {
+    install();
+    const release = beginDataCriticalSection('db corrupt-open recovery');
+    handlers.get('unhandledRejection')?.(new Error('ErrnoError'));
+
+    expect(exits).toEqual([]);            // the whole point
+    expect(logged.join('\n')).toContain('ErrnoError'); // still reported, still a bug
+    release();
+  });
+
+  it('exits again once the section closes', () => {
+    install();
+    beginDataCriticalSection('recovery')();
+    handlers.get('unhandledRejection')?.(new Error('after'));
+    expect(exits).toEqual([1]);
+  });
+
+  it('never absorbs an uncaughtException — the process state is unknown there', () => {
+    install();
+    const release = beginDataCriticalSection('recovery');
+    handlers.get('uncaughtException')?.(new Error('sync throw'));
+    expect(exits).toEqual([1]);
+    release();
+  });
+
+  it('registers a process listener so Node’s own default is suppressed too', () => {
+    // The 2026-08-04 process predated this module entirely, so NO handler was
+    // installed and Node killed it directly. The section has to work without
+    // `installFatalErrorHandlers` ever having run.
+    expect(listeners).toHaveLength(0);
+    const release = beginDataCriticalSection('recovery');
+    expect(listeners).toHaveLength(1);
+    expect(() => { listeners[0](new Error('boom')); }).not.toThrow();
+    release();
+    expect(listeners).toHaveLength(0);
+  });
+
+  it('nests — an inner section cannot disarm its caller’s protection', () => {
+    install();
+    const outer = beginDataCriticalSection('outer');
+    const inner = beginDataCriticalSection('inner');
+    inner();
+    handlers.get('unhandledRejection')?.(new Error('still inside outer'));
+    expect(exits).toEqual([]);
+    outer();
+    handlers.get('unhandledRejection')?.(new Error('now outside'));
+    expect(exits).toEqual([1]);
+  });
+
+  it('tolerates a double release without dropping the hold', () => {
+    install();
+    const outer = beginDataCriticalSection('outer');
+    const inner = beginDataCriticalSection('inner');
+    inner();
+    inner(); // the bug this guards: a second call decrementing past the outer
+    handlers.get('unhandledRejection')?.(new Error('still inside outer'));
+    expect(exits).toEqual([]);
+    outer();
+  });
+
+  it('reports what it absorbed when the section ends', () => {
+    install();
+    const release = beginDataCriticalSection('db corrupt-open recovery');
+    listeners[0](new Error('ErrnoError'));
+    release();
+    // Absorbed is not forgiven — the summary keeps the bug findable.
+    expect(logged.join('\n')).toContain('absorbed 1 unhandled rejection');
+    expect(logged.join('\n')).toContain('db corrupt-open recovery');
   });
 });

@@ -272,6 +272,49 @@ first snapshot both are null and the line says so rather than rendering a bogus
   snapshot writer + atomic-write code is directly reusable, and its auto-restore flow
   becomes the recovery path there too. Shipping Option D first de-risks §72.
 
+## 73.7b Recovery must survive its own crash (HS-9572)
+
+The 2026-08-04 incident began here. `recoverFromOpenFailure` did its job — it caught the
+storage-corruption open failure and renamed `db/` aside to `db-corrupt-<ts>` — and then the
+process died on a stray `ErrnoError` **rejection nobody awaited**, in the gap between the
+rename and the restore.
+
+That gap is the worst place in the codebase to die. For those few seconds the user's data
+exists **only** as a directory that was just renamed, and nothing on disk says so. The next
+start found no `db/` at all, so PGLite created a fresh empty cluster — no corruption left to
+detect, no recovery path, no marker, no banner. The project came up with zero tickets and
+looked perfectly healthy.
+
+Two independent fixes, because either one alone leaves a hole:
+
+**1. The window is crash-resumable.** `recoverFromOpenFailure` now writes a
+`.db-pending-recovery.json` marker with `reason: 'recovery-interrupted'` and the
+`corruptPath` **immediately after the rename**, before attempting the restore, and clears it
+only once the recovery marker is written. `completeDeferredRecovery` — which already runs
+before any open — resumes from it.
+
+The load-bearing change there is a line that used to read as an optimization:
+`if (!existsSync(dbPath)) { clearPendingRecovery(); return null; }`. A missing `db/` meant
+"nothing to do", which is exactly wrong for the one case that costs data. On resume the
+preserve has already happened, so the code must **not** rename a second time; it restores
+into a fresh `db/` and reports the *preserved* directory as the `corruptPath`, since that is
+the one holding the data (and what §42's repair flow will be aimed at). A `db/` that
+reappeared meanwhile is only deleted when it has no `PG_VERSION` — an initialized cluster is
+preserved in its own right, because being wrong in that judgment destroys data.
+
+**2. The window absorbs unhandled rejections.** `beginDataCriticalSection()`
+(`src/diagnostics/fatalErrors.ts`) wraps rename → restore → marker. Inside it an
+`unhandledRejection` is reported and absorbed instead of exiting. It registers a process
+listener of its own, which is what suppresses **Node's** default — since v15 an unhandled
+rejection is fatal unless a listener exists, and the process that died predated
+`installFatalErrorHandlers` entirely.
+
+Scoped to `unhandledRejection` only, deliberately. An `uncaughtException` is a synchronous
+throw that escaped every frame, so the process state is genuinely unknown and continuing is
+the more dangerous choice. A rejection from a half-closed WASM instance is not that.
+Absorbing is not forgiving: every absorbed rejection is logged, and the section logs a
+summary of what it swallowed when it ends, so the underlying bug stays findable.
+
 ## 73.7a The empty-cluster guard (HS-9573)
 
 Snapshot Protection's one job is that the canonical snapshot is *better* than the live
