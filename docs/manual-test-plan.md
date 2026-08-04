@@ -974,6 +974,80 @@ The switch → confirm → files-written flow (decision logic + generators are u
 
 ---
 
+## 19. Server survival under pressure (HS-9569, docs/134 §134.10)
+
+**Why by hand.** The failure regime — long uptime, many projects, periodic memory/CPU pressure,
+sleep/wake — cannot be reproduced in CI: the levers are machine-global (they slow or suspend the
+whole Mac), and the signal only appears over hours. Three deaths (2026-07-31, 08-01, 08-03) were
+all found *after* the fact, by reading logs. This procedure provokes the regime instead.
+
+**Success is not "it survived."** It is a recorded eviction profile and block distribution per
+lever, so a future regression has a baseline to fail against rather than one anecdote.
+
+**Do this in a window where the machine can be disturbed** — two levers slow everything and one
+sleeps the Mac.
+
+### 19.1 Prerequisites
+
+- [ ] The server has been restarted **since HS-9567** (`grep 'Hot Sheet startup' ~/.hotsheet/startup.log | tail -1`). Before that commit the wake path never fired on macOS, so the sleep/wake lever tests a dead code path and tells you nothing.
+- [ ] Note the boot timestamp — every reading below is scoped to it.
+- [ ] Be aware this **resets the HS-9562 soak clock**, which wants 48 h of uninterrupted uptime. Decide which you want first.
+
+### 19.2 Baseline (before any lever)
+
+Run the analysis snippet recorded in HS-9562's notes from `~/.hotsheet/diagnostics`, with `START`
+set to the current boot timestamp. It reports the eviction counters, the `externalMb` range, and
+the block-duration percentiles.
+
+Post-HS-9567 the suspend filter uses `cpuMs`, which heartbeat entries now carry: drop any gap
+>= 10 s whose `cpuMs / durationMs` is under 0.05. On older logs (no `cpuMs`) fall back to
+correlating gaps >= 10 s against `pmset -g log | grep -E 'Sleep|Wake'`.
+
+**Reference baseline, 2026-08-04, pid 7476 at ~13 h uptime, 9 projects registered** (pre-HS-9567
+build, so suspends identified by `pmset` correlation):
+
+| | |
+|---|---|
+| `evictHeadroom` / `evictChurn` / `evictIdle` | 0 / 4 / 54 |
+| open clusters | 10 |
+| `externalMb` min / max / last | 139 / 2219 / 1723 |
+| blocks < 10 s: n / p50 / p90 / p99 / max | 1831 / 142 ms / 422 ms / 801 ms / 4982 ms |
+| suspends (>= 10 s, `pmset`-confirmed) | one, 80 377 ms |
+
+`evictHeadroom = 0` is the one to read first — see 19.6.
+
+### 19.3 Lever: cluster churn *(non-disruptive)*
+
+- [ ] Switch rapidly between every registered project, twice around, so opens exceed the cluster cap.
+- [ ] Re-run the baseline snippet. Expect `evictCap`/`evictIdle` to rise and `externalMb` to plateau.
+- [ ] **`evictChurn` should stay low.** Churn is reopen-after-evict — paying for evictions that should not have happened.
+
+### 19.4 Lever: memory pressure *(disruptive — slows the whole Mac)*
+
+- [ ] `sudo memory_pressure -l critical -s 60` (or run a large allocator).
+- [ ] Sample during and ~2 min after.
+- [ ] Expect the docs/131 path to report `critical` and the budget to drop to its floors; clusters should be evicted **down**, not churned.
+- [ ] Failure signal: `evictChurn` climbing steadily — the cache is fighting itself rather than shrinking.
+
+### 19.5 Lever: CPU pressure *(disruptive — slows the whole Mac)*
+
+- [ ] Saturate the cores with one `yes > /dev/null` per core, then kill them.
+- [ ] Watch the block distribution. Baseline p99 is ~800 ms against a 60 s watchdog threshold — roughly 75x margin.
+- [ ] **Failure signal: any block approaching 60 s with CPU proportional to the gap.** That would mean external load can push the server into a watchdog SIGKILL, which the HS-9566 investigation found *no* evidence for — this lever is what would falsify that.
+
+### 19.6 Lever: sleep / wake *(disruptive — sleeps the Mac)*
+
+- [ ] `pmset sleepnow`, wait >= 60 s, wake.
+- [ ] Confirm a **`server-wake`** entry, or a heartbeat entry whose `cpuMs` is ~0 for a multi-second gap. Before HS-9567 neither existed and the stagger never ran.
+- [ ] Confirm the post-wake stagger engaged (background work spaced out, not a burst).
+- [ ] **Failure signal: a burst of cluster opens/evictions in the first seconds after wake** — that is the HS-9553 post-sleep stampede, named as the 2026-08-01 trigger.
+
+### 19.7 Record
+
+- [ ] Append the per-lever numbers to this section, dated, with the build. A number without a build is not a baseline.
+
+---
+
 ## Automated Coverage Summary
 
 For reference, here's what IS covered by automated tests (no manual check needed):
