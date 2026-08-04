@@ -35,7 +35,7 @@
  *   3. Periodic safety floor — a dirty-gated interval (default 120 s)
  *      bounds loss on a hard crash even if the debounce never fired.
  */
-import { existsSync, promises as fsp } from 'fs';
+import { existsSync, promises as fsp, renameSync } from 'fs';
 import type { FileHandle } from 'fs/promises';
 import { join } from 'path';
 
@@ -43,6 +43,7 @@ import { instrumentAsync } from '../diagnostics/freezeLogger.js';
 import { readFileSettings } from '../file-settings.js';
 import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 import { getDbForDir, pinClustersForDirs } from './connection.js';
+import { checkArtifactGuard, logArtifactBlocked, writeContentMarker } from './emptyClusterGuard.js';
 
 /** Default debounce after the last mutation before a snapshot fires. */
 const DEFAULT_DEBOUNCE_MS = 2000;
@@ -115,6 +116,27 @@ function resolveDir(dataDir?: string): string | null {
  *  Phase 2 (HS-8587) restore flow + the Settings status line can find it. */
 export function snapshotPath(dataDir: string): string {
   return join(dataDir, 'snapshot.tar.gz');
+}
+
+/** HS-9573 — path of the one retained previous generation. */
+export function previousSnapshotPath(dataDir: string): string {
+  return join(dataDir, 'snapshot.prev.tar.gz');
+}
+
+/** Move the current snapshot aside before it is replaced, so one good
+ *  generation always survives a bad write. Best-effort and synchronous: it is a
+ *  single local rename (never `backupDir`), and doing it inline keeps it
+ *  atomic with respect to the write that follows. A missing snapshot — the
+ *  first write for a project — is the normal no-op. */
+function rotatePreviousSnapshot(dataDir: string): void {
+  const current = snapshotPath(dataDir);
+  if (!existsSync(current)) return;
+  try {
+    renameSync(current, previousSnapshotPath(dataDir));
+  } catch (err) {
+    // Never fail the snapshot over the backup-of-the-backup.
+    console.error(`[snapshot] could not rotate previous generation for ${dataDir}:`, err);
+  }
 }
 
 /** Per-project master switch, default ON (decision D3). Tolerates the value
@@ -232,13 +254,29 @@ export async function writeSnapshotNow(dataDir: string): Promise<SnapshotResult 
   const release = pinClustersForDirs([dataDir]);
   try {
     const db = await getDbForDir(dataDir);
+    // HS-9573 — the guard that was missing on 2026-08-04. The `existsSync(db/)`
+    // check above asks whether the directory is there; this asks whether what's
+    // in it is worth writing over the canonical snapshot. Bail BEFORE the
+    // CHECKPOINT so a blocked project costs nothing per tick.
+    const guard = await checkArtifactGuard(dataDir, db);
+    if (guard.blocked) {
+      logArtifactBlocked('snapshot', dataDir, guard);
+      state.dirty = true; // stay dirty: a restore should re-trigger a real write
+      return null;
+    }
     // CHECKPOINT first so the dump is internally consistent — without it
     // pg_control can point at a WAL position the snapshot captures as
     // garbage and restore PANICs (the HS-7891 guard).
     await instrumentAsync(dataDir, 'snapshot.checkpoint', () => db.exec('CHECKPOINT'));
     const blob = await db.dumpDataDir('gzip');
     const buffer = Buffer.from(await blob.arrayBuffer());
+    // HS-9573 — keep ONE generation. `writeFileAtomic` replaces the snapshot in
+    // place, so before this the canonical copy had no history at all and a single
+    // bad write was terminal. A rename is nearly free and would by itself have
+    // made the 2026-08-04 incident a non-event.
+    rotatePreviousSnapshot(dataDir);
     await instrumentAsync(dataDir, 'snapshot.write', () => writeFileAtomic(snapshotPath(dataDir), buffer));
+    writeContentMarker(dataDir, guard.liveTicketCount);
     state.lastSnapshotAt = Date.now();
     state.lastSnapshotStartedAt = startedAt; // committed only on success, paired with lastSnapshotAt
     state.lastSizeBytes = buffer.length;

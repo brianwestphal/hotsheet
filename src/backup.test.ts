@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gunzipSync } from 'zlib';
 
 import {
@@ -12,7 +12,8 @@ import {
 } from './attachmentBackup.js';
 import { _activePreviewCountForTests, _resetGlobalBackupLockForTesting, _setFiveMinBackupGateForTests, type BackupInfo, createBackup, findOverdueTiers, jitteredFirstTickMs, listBackups, loadBackupForPreview, shouldDeferFiveMinBackup, triggerMissedBackups, withGlobalBackupLock } from './backup.js';
 import { addAttachment } from './db/attachments.js';
-import { getDb, SCHEMA_VERSION } from './db/connection.js';
+import { getDb, getDbForDir, SCHEMA_VERSION } from './db/connection.js';
+import { _resetEmptyClusterGuardForTests, noteClusterCreatedEmpty, readContentMarker } from './db/emptyClusterGuard.js';
 import { createPglite } from './db/pglite.js';
 import { createTicket } from './db/queries.js';
 import { type JsonDbExport, jsonSiblingFilename } from './dbJsonExport.js';
@@ -557,5 +558,63 @@ describe('skip-when-unchanged (HS-9535)', () => {
     // The hourly tier has its own marker and has never run, so it must still fire
     // even though the 5-minute tier just captured this exact WAL position.
     expect(await createBackup(tempDir, 'hourly')).not.toBeNull();
+  });
+});
+
+// HS-9573 — its own data dir, deliberately. The rest of this file shares one
+// cluster across cases, and these tests need to empty a project's tickets, which
+// would strand every case that runs after them.
+describe('empty-cluster guard (HS-9573)', () => {
+  let guardDir: string;
+
+  async function seed(n: number): Promise<void> {
+    const db = await getDbForDir(guardDir);
+    for (let i = 0; i < n; i++) {
+      await db.query('INSERT INTO tickets (ticket_number, title) VALUES ($1, $2)', [`HS-G${i}`, `guard ${i}`]);
+    }
+  }
+
+  beforeEach(() => {
+    guardDir = join(tempDir, `guard-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`);
+    mkdirSync(guardDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    _resetEmptyClusterGuardForTests();
+    rmSync(guardDir, { recursive: true, force: true });
+  });
+
+  it('refuses to back up a cluster that was created empty over a project that had tickets', async () => {
+    await seed(2);
+    const good = await createBackup(guardDir, '5min');
+    expect(good).not.toBeNull();
+    expect(good!.ticketCount).toBe(2);
+
+    // The 2026-08-04 state: the recovery crash left a fresh, empty cluster and
+    // every 5-minute tick wrote an empty tarball over the tiers.
+    const db = await getDbForDir(guardDir);
+    await db.query('DELETE FROM tickets');
+    noteClusterCreatedEmpty(guardDir);
+
+    expect(await createBackup(guardDir, '5min')).toBeNull();
+
+    // Nothing new landed, so retention has nothing to rotate the good one out
+    // with — which is how skipping the write protects the tier.
+    const files = (await listBackups(guardDir)).filter(b => b.tier === '5min');
+    expect(files).toHaveLength(1);
+    expect(files[0].filename).toBe(good!.filename);
+  });
+
+  it('still backs up a brand-new project', async () => {
+    noteClusterCreatedEmpty(guardDir);
+    const info = await createBackup(guardDir, '5min');
+    expect(info).not.toBeNull();
+    expect(info!.ticketCount).toBe(0);
+  });
+
+  it('records what it captured, so a later empty cluster has something to be compared against', async () => {
+    await seed(3);
+    await createBackup(guardDir, '5min');
+    expect(readContentMarker(guardDir)?.lastTicketCount).toBe(3);
   });
 });

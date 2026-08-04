@@ -272,6 +272,50 @@ first snapshot both are null and the line says so rather than rendering a bogus
   snapshot writer + atomic-write code is directly reusable, and its auto-restore flow
   becomes the recovery path there too. Shipping Option D first de-risks §72.
 
+## 73.7a The empty-cluster guard (HS-9573)
+
+Snapshot Protection's one job is that the canonical snapshot is *better* than the live
+cluster. On **2026-08-04** it did the opposite: it replaced 432 tickets with nothing, on
+schedule, and reported success.
+
+**The sequence.** A corrupt-open recovery crashed mid-flight (HS-9572) *after* renaming
+`db/` aside and *before* restoring. The next start found no `db/`, so PGLite created a
+fresh empty cluster — no corruption, so no recovery path, no marker, no banner. Then the
+snapshot writer dumped that empty cluster over `snapshot.tar.gz`. (The backup tiers did the
+same thing on their own cadence; see [7-backup-restore.md](7-backup-restore.md) §7.11.)
+
+**Why the existing guard missed it.** `writeSnapshotNow` already refused to write when
+`db/` was **missing** — it anticipated "a reopen would mkdir an empty cluster and overwrite
+the snapshot with nothing" and guarded the case where the directory vanished. Here `db/`
+existed; it was seconds old. **Presence was never the right question — content is.**
+
+**The rule** (`src/db/emptyClusterGuard.ts`). Refuse the write on the conjunction of three
+facts, because each alone is routine:
+
+1. **The cluster was created fresh this process**, not opened from existing files. The one
+   place that can tell is the open path in `connection.ts`, which checks for `PG_VERSION`
+   *before* PGLite writes it.
+2. **It currently holds zero tickets.**
+3. **The project is known to have held tickets before** — `.hotsheet/.db-content-marker.json`,
+   a local high-water mark updated after every successful snapshot/backup.
+
+The conjunction is what makes the guard safe to leave on. A **brand-new project** satisfies
+(1) and (2) and fails (3), so its first snapshot is written normally. A user who
+**deletes every ticket by hand** satisfies (2) and (3) but not (1) — their empty state is
+real and gets captured. Only the incident satisfies all three.
+
+The marker lives in `dataDir`, never `backupDir`: it is read on the artifact-write path,
+and `backupDir` may be a cloud File Provider where a read blocks unboundedly
+([7-backup-restore.md](7-backup-restore.md) §7.10 / HS-9527). It also fails **open** — an
+absent or corrupt marker reads as "no prior data", so a marker problem can never stop a
+healthy project from being snapshotted.
+
+**One retained generation.** `writeFileAtomic` replaces the snapshot in place, so before
+HS-9573 the canonical copy had no history at all and a single bad write was terminal. The
+writer now rotates the current snapshot to `snapshot.prev.tar.gz` first. It is a local
+rename, it costs one file, and by itself it would have made the 2026-08-04 incident a
+non-event.
+
 ## 73.8 Honest limitations
 
 1. **Not corruption-proof.** The live `db/` is still the fragile multi-file format;

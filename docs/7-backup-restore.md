@@ -221,3 +221,40 @@ An ESLint `no-restricted-syntax` selector bans synchronous `fs` calls in
 their test files, since a sync call there is fast against a local temp dir and
 only wedges against the user's real cloud folder, which is exactly how one gets
 written and never noticed.
+
+### 7.11 Never back up an empty cluster (HS-9573)
+
+On **2026-08-04** the kerf project's backup tiers filled up with backups of nothing, and
+retention rotated the good ones out behind them. The backup system was working perfectly —
+it was simply being handed an empty database every five minutes.
+
+**How it got one.** A corrupt-open recovery crashed after renaming `db/` aside but before
+restoring (HS-9572); the next start created a fresh, empty cluster. Nothing was corrupt, so
+nothing announced itself. Within a day the **hourly tier had lost 12 of its 13 slots** and
+the daily tier was losing one good backup per day. Empty backups are easy to spot after the
+fact — a `.json.gz` co-save is ~258 bytes empty versus ~990 KB for 429 tickets, three
+orders of magnitude apart — but nothing was looking.
+
+Two changes, because the write side and the retention side fail differently:
+
+**1. Don't write one.** `createBackup` consults the shared empty-cluster guard
+(`src/db/emptyClusterGuard.ts`, designed in [73-snapshot-protection.md](73-snapshot-protection.md) §73.7a)
+before the expensive part and returns `null` when it trips. Skipping the write is what
+protects retention: a backup that never lands can never evict anything. The check is
+positioned with the other cheap bails, ahead of the CHECKPOINT, so a blocked project costs
+nothing per tick. On success the backup records its ticket count in the guard's content
+marker — the tiers are what establish "this project had data."
+
+**2. Don't prune the last good one.** The write-side guard stops *new* empty backups, but a
+project that already took some still has them queued ahead of the good ones — and age-based
+pruning takes the good ones *first*, precisely because they are older. `pruneBackups` now
+identifies the newest backup in each tier whose JSON co-save shows real content and never
+deletes it.
+
+That classification uses the co-save's **size**, not its contents, and the distinction
+matters here: this runs on `backupDir`, where fetching bytes can cost an unbounded network
+round-trip (§7.10) but file *metadata* is served from the local cache in sub-millisecond
+time. `stat` is safe on this path; a read would not be. It fails safe in both directions —
+a `stat` that throws counts the backup as substantive (protect rather than risk deleting
+the last good copy), and a tier where nothing can be classified simply gets no extra
+protection.

@@ -33,6 +33,7 @@ import {
   resolveEvictionConfig,
   snapshotClusters,
 } from './clusterEviction.js';
+import { noteClusterCreatedEmpty } from './emptyClusterGuard.js';
 import { forceGcNow, type ForceGcResult } from './forceGc.js';
 import { describeExternalCeiling, externalCeilingBytes } from './memoryCeiling.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
@@ -1093,12 +1094,22 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
   const recovered = await completeDeferredRecovery(dbPath);
   if (recovered !== null) return recovered;
 
+  // HS-9573 — the ONLY point that can tell "opened existing files" from "created
+  // a cluster from nothing": PGLite writes `PG_VERSION` during initdb, so its
+  // absence here means whatever we are about to open does not exist yet. That
+  // distinction is what stops the snapshot/backup writers from overwriting good
+  // artifacts with a cluster that is empty because it is NEW (see
+  // `emptyClusterGuard`). Read before the open, because after it the answer is
+  // always "present".
+  const createdFromNothing = !existsSync(join(dbPath, 'PG_VERSION'));
+
   let db: PGlite;
   try {
     db = await openAndCacheDb(dbPath);
   } catch (err: unknown) {
     return await recoverFromOpenFailure(dbPath, err, false);
   }
+  if (createdFromNothing) noteClusterCreatedEmpty(dirname(dbPath));
   // HS-8587 — integrity probe (§73.5). Catches SILENT corruption: the
   // cluster opened + `initSchema` applied, but the catalog / `tickets`
   // table is bad. A failure here forces the recovery path even though

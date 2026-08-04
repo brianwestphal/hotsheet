@@ -13,6 +13,7 @@ import {
 import { backupFsFor, isBackupFsAvailable, tolerateOutage } from './backupFs.js';
 import { markerKey, readChangeMarker, shouldSkipBackup } from './db/changeMarker.js';
 import { closeDb, getDb, runWithDataDir, setDataDir } from './db/connection.js';
+import { checkArtifactGuard, logArtifactBlocked, writeContentMarker } from './db/emptyClusterGuard.js';
 import { fsyncDbDirAsync } from './db/fsyncWrap.js';
 import { createPglite } from './db/pglite.js';
 import { buildJsonExport, jsonSiblingFilename, writeJsonExportAtomically } from './dbJsonExport.js';
@@ -178,6 +179,17 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     if (!isBackupFsAvailable(backupsDir(dataDir))) return null;
     const db = await runWithDataDir(dataDir, () => getDb());
 
+    // HS-9573 — never let an empty cluster into the tiers. On 2026-08-04 a
+    // freshly-created (therefore empty) cluster was backed up every 5 minutes
+    // and retention rotated the GOOD backups out behind it: the hourly tier lost
+    // 12 of its 13 slots before anyone noticed. Skipping the write is what
+    // protects retention — a backup that never lands can never evict anything.
+    const guard = await checkArtifactGuard(dataDir, db);
+    if (guard.blocked) {
+      logArtifactBlocked(`backup:${tier}`, dataDir, guard);
+      return null;
+    }
+
     // HS-9535 — skip the whole train when nothing has been written since this
     // tier's last backup. Measured fleet-wide: 58 % of consecutive 5-minute
     // backups are byte-identical, and an idle project is 100 % — each one paying
@@ -288,12 +300,13 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       console.error(`Attachment manifest failed (${tier}):`, attachErr);
     }
 
-    // Get ticket count for metadata
-    let ticketCount = 0;
-    try {
-      const result = await db.query<{ count: string }>(`SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted'`);
-      ticketCount = parseInt(result.rows[0]?.count || '0', 10);
-    } catch { /* schema might not exist yet */ }
+    // Ticket count for metadata — already taken by the HS-9573 guard above, in
+    // the same units (`status != 'deleted'`). Reusing it keeps the number the
+    // guard decided on and the number we record identical by construction.
+    const ticketCount = guard.liveTicketCount;
+    // HS-9573 — this tier now holds `ticketCount` tickets for this project. The
+    // marker is what a future freshly-created cluster is compared against.
+    writeContentMarker(dataDir, ticketCount);
 
     const info: BackupInfo = {
       tier,
@@ -335,6 +348,44 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
   });
 }
 
+/** HS-9573 — a JSON co-save at or below this size holds no tickets. Measured on
+ *  the 2026-08-04 kerf incident: an empty project's co-save is 258 bytes gzipped
+ *  while a 429-ticket one is ~990 KB, so the classes are three orders of
+ *  magnitude apart and the exact threshold is not delicate. */
+const EMPTY_JSON_COSAVE_MAX_BYTES = 2048;
+
+/**
+ * The newest backup in `dir` whose JSON co-save shows real content, or null when
+ * none can be identified.
+ *
+ * Uses the co-save's SIZE rather than its contents on purpose: this runs on the
+ * user-configurable `backupDir`, which may be a cloud File Provider where
+ * fetching bytes costs an unbounded network round-trip (docs/7 §7.10 / HS-9527)
+ * — but directory and file METADATA is served from the local cache in
+ * sub-millisecond time. `stat` is safe here; a read would not be.
+ *
+ * Fails SAFE in both directions: a `stat` that throws counts the backup as
+ * substantive (protect rather than risk deleting the last good copy), and a tier
+ * where nothing can be classified simply gets no extra protection.
+ */
+async function newestSubstantiveBackup(
+  bfs: ReturnType<typeof backupFsFor>,
+  dir: string,
+  filenamesNewestFirst: readonly string[],
+): Promise<string | null> {
+  for (const filename of filenamesNewestFirst) {
+    try {
+      const { size } = await bfs.stat(join(dir, jsonSiblingFilename(filename)));
+      if (size > EMPTY_JSON_COSAVE_MAX_BYTES) return filename;
+    } catch {
+      // No co-save, or an unreadable one — can't prove it's empty, so treat it
+      // as worth keeping.
+      return filename;
+    }
+  }
+  return null;
+}
+
 async function pruneBackups(dataDir: string, tier: Tier): Promise<void> {
   const dir = tierDir(dataDir, tier);
   const bfs = backupFsFor(backupsDir(dataDir));
@@ -348,7 +399,15 @@ async function pruneBackups(dataDir: string, tier: Tier): Promise<void> {
     .filter((f): f is { filename: string; date: Date } => f.date !== null)
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 
+  // HS-9573 — never let retention delete the last backup in this tier that
+  // actually holds data. The write-side guard stops NEW empty backups, but a
+  // project that already took some (as kerf did on 2026-08-04, losing 12 of 13
+  // hourly slots) still has them queued ahead of the good ones, and age-based
+  // pruning takes the good ones first precisely because they are older.
+  const keepAlways = await newestSubstantiveBackup(bfs, dir, files.map(f => f.filename));
+
   for (let i = 0; i < files.length; i++) {
+    if (files[i].filename === keepAlways) continue;
     if (i >= config.maxCount || files[i].date.getTime() < cutoff) {
       const tarballPath = join(dir, files[i].filename);
       await bfs.rmBestEffort(tarballPath);

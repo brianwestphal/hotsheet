@@ -11,11 +11,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeFileSettings } from '../file-settings.js';
 import { cleanupTestDb, isInsideHotSheetTerminal, setupTestDb } from '../test-helpers.js';
 import { getDbForDir } from './connection.js';
+import { _resetEmptyClusterGuardForTests, noteClusterCreatedEmpty } from './emptyClusterGuard.js';
 import { createPglite } from './pglite.js';
 import {
   _resetSnapshotStateForTests,
   getSnapshotStatus,
   isSnapshotProtectionEnabled,
+  previousSnapshotPath,
   scheduleSnapshot,
   snapshotAllForShutdown,
   snapshotPath,
@@ -51,6 +53,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   _resetSnapshotStateForTests();
+  _resetEmptyClusterGuardForTests();
   vi.restoreAllMocks();
   await cleanupTestDb(dataDir);
 });
@@ -155,6 +158,54 @@ describe('writeSnapshotNow', () => {
     // The canonical snapshot still loads + still holds the previous 2 rows —
     // the failed write never replaced it with a partial file.
     expect(await ticketCountInSnapshot()).toBe(2);
+  });
+
+  // HS-9573 — the 2026-08-04 incident. A corrupt-open recovery crashed after
+  // renaming `db/` aside, the next start created an empty cluster, and the
+  // snapshot writer dumped that over 432 tickets. The pre-existing guard only
+  // asked whether `db/` EXISTED — it did; it was seconds old.
+  it('refuses to overwrite a good snapshot from a cluster that was created empty', async () => {
+    await seedTickets(3);
+    await writeSnapshotNow(dataDir);
+    expect(await ticketCountInSnapshot()).toBe(3);
+
+    // The state after the crash: same dataDir, a cluster with no rows, and this
+    // process having created it rather than opened it.
+    const db = await getDbForDir(dataDir);
+    await db.query('DELETE FROM tickets');
+    noteClusterCreatedEmpty(dataDir);
+
+    const result = await writeSnapshotNow(dataDir);
+
+    expect(result).toBeNull();
+    // The 3 tickets are still there. This assertion is the whole ticket.
+    expect(await ticketCountInSnapshot()).toBe(3);
+  });
+
+  it('still writes for a genuinely new project, which is empty innocently', async () => {
+    // Same two facts as the case above (created empty, zero tickets) minus the
+    // history. Over-blocking here would mean a new project never gets a first
+    // snapshot — the guard has to tell these apart.
+    noteClusterCreatedEmpty(dataDir);
+    const result = await writeSnapshotNow(dataDir);
+    expect(result).not.toBeNull();
+    expect(await ticketCountInSnapshot()).toBe(0);
+  });
+
+  it('keeps one previous generation so a single bad write is not terminal', async () => {
+    await seedTickets(2);
+    await writeSnapshotNow(dataDir);
+    await seedTickets(3);
+    await writeSnapshotNow(dataDir);
+
+    const prev = readFileSync(previousSnapshotPath(dataDir));
+    const db = createPglite(undefined, { loadDataDir: new Blob([prev]) });
+    await db.waitReady;
+    const res = await db.query<{ c: number }>('SELECT count(*)::int AS c FROM tickets');
+    await db.close();
+
+    expect(await ticketCountInSnapshot()).toBe(5);  // current
+    expect(res.rows[0].c).toBe(2);                  // the generation behind it
   });
 });
 
