@@ -47,6 +47,38 @@ Secondary action button: **Run pg_resetwal…**. Two-step flow:
 
    The dialog tells the user to retry once `pg_resetwal` is on PATH.
 
+### 42.3a Choosing WHICH preserved database to repair (HS-9575)
+
+Repair used to operate on exactly one directory: the `corruptPath` inside
+`.db-recovery-marker.json`. That marker is written at the **end** of
+`recoverFromOpenFailure`, so a recovery that dies partway (§73.7b / HS-9572) leaves the
+**previous** incident's marker in place. On 2026-08-04 that marker named a **0-byte**
+directory while the one holding 432 tickets sat beside it — present on disk, unreferenced,
+and impossible to select from the UI. The project had five `db-corrupt-*` directories and
+the flow could only ever offer the wrong one.
+
+So repair now **enumerates instead of assuming**:
+
+- `GET /db/repair/corrupt-clusters` lists every `db-corrupt-*` in `dataDir`, newest first,
+  with mtime, size, and whether it looks like a cluster at all (`PG_VERSION` present — the
+  0-byte case is shown as "not a database (nothing to recover)" rather than silently
+  offered). Metadata only, so the picker renders immediately.
+- `POST /db/repair/probe-corrupt-cluster` answers the question that actually decides it:
+  **how many tickets would this one yield?** It runs the real recovery — copy →
+  `pg_resetwal -f` → open → `COUNT(*)` — against a temp copy and throws the result away.
+  The client probes candidates one at a time (each copies a whole cluster, so running them
+  concurrently multiplies disk and CPU for no earlier answer) and rewrites each row as its
+  number lands.
+- `POST /db/repair/run-pg-resetwal` now accepts `{ corruptPath }`. The picker defaults to
+  the candidate with the **most recoverable tickets** rather than whichever directory a
+  marker happens to name. Omitting the field keeps the old marker-derived behavior.
+
+**The path is not trusted.** A client-supplied `corruptPath` reaches `cpSync` and
+`pg_resetwal`, so `resolveCorruptCluster` resolves it and requires an **exact match against
+an enumerated candidate**. A `startsWith` check on the raw string would admit both a
+traversal and an unrelated directory that merely shares the name prefix; both are pinned as
+tests.
+
 ### 42.4 Auto-Mitigation Boundary
 
 Per the HS-7897 feedback (Q5 = `(ii)(a)`):

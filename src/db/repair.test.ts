@@ -1,6 +1,7 @@
-import { rmSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createBackup } from '../backup.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -9,6 +10,8 @@ import {
   candidatePgResetwalPaths,
   findWorkingBackup,
   installInstructions,
+  listCorruptClusters,
+  resolveCorruptCluster,
 } from './repair.js';
 
 let tempDir: string;
@@ -115,4 +118,96 @@ describe('findWorkingBackup (HS-7897)', () => {
       await cleanupTestDb(emptyDataDir);
     }
   }, 60_000);
+});
+
+// HS-9575 — before this, repair could only ever operate on the ONE directory
+// named by `.db-recovery-marker.json`. That marker is written at the END of
+// recovery, so a recovery that died partway (HS-9572) leaves the PREVIOUS
+// incident's marker behind — on 2026-08-04 it named a 0-byte directory while
+// the one holding 432 tickets sat beside it, unreferenced and unofferable.
+describe('corrupt-cluster enumeration (HS-9575)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = join(tmpdir(), `hs-corrupt-list-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeCandidate(name: string, opts: { cluster: boolean; bytes?: number } = { cluster: true }): string {
+    const p = join(dir, name);
+    mkdirSync(p, { recursive: true });
+    if (opts.cluster) writeFileSync(join(p, 'PG_VERSION'), '17\n');
+    if (opts.bytes !== undefined) writeFileSync(join(p, 'base'), 'x'.repeat(opts.bytes));
+    return p;
+  }
+
+  it('lists every preserved directory, not just the one a marker names', async () => {
+    makeCandidate('db-corrupt-1');
+    makeCandidate('db-corrupt-2');
+    makeCandidate('db-corrupt-3');
+    const found = await listCorruptClusters(dir);
+    expect(found.map((c) => c.name).sort()).toEqual(['db-corrupt-1', 'db-corrupt-2', 'db-corrupt-3']);
+  });
+
+  it('flags a directory that is not a cluster, instead of silently offering it', async () => {
+    // The 2026-08-04 trap: an empty `db-corrupt-*` the marker pointed at.
+    makeCandidate('db-corrupt-empty', { cluster: false });
+    const [c] = await listCorruptClusters(dir);
+    expect(c.looksLikeCluster).toBe(false);
+  });
+
+  it('reports size so a stub is distinguishable from a real cluster', async () => {
+    makeCandidate('db-corrupt-big', { cluster: true, bytes: 5000 });
+    const [c] = await listCorruptClusters(dir);
+    expect(c.sizeBytes).toBeGreaterThanOrEqual(5000);
+  });
+
+  it('ignores unrelated directories and files', async () => {
+    makeCandidate('db-corrupt-real');
+    mkdirSync(join(dir, 'db'), { recursive: true });
+    mkdirSync(join(dir, 'backups'), { recursive: true });
+    writeFileSync(join(dir, 'db-corrupt-not-a-dir'), 'x');
+    const found = await listCorruptClusters(dir);
+    expect(found.map((c) => c.name)).toEqual(['db-corrupt-real']);
+  });
+
+  it('returns [] for a dataDir that does not exist', async () => {
+    expect(await listCorruptClusters(join(dir, 'nope'))).toEqual([]);
+  });
+
+  describe('resolveCorruptCluster — the path guard', () => {
+    // The resolved path goes straight to `cpSync` and `pg_resetwal`, so a
+    // browser-supplied value has to be proven to be one of ours.
+    it('accepts an enumerated candidate', async () => {
+      const p = makeCandidate('db-corrupt-ok');
+      expect(await resolveCorruptCluster(dir, p)).toBe(p);
+    });
+
+    it('rejects a traversal out of the data dir', async () => {
+      makeCandidate('db-corrupt-ok');
+      expect(await resolveCorruptCluster(dir, join(dir, '..', 'etc'))).toBeNull();
+    });
+
+    it('rejects a directory that merely shares the name prefix elsewhere', async () => {
+      // A `startsWith` check on the raw string would pass this.
+      const outside = join(tmpdir(), `hs-outside-${Date.now()}`, 'db-corrupt-1');
+      mkdirSync(outside, { recursive: true });
+      try {
+        makeCandidate('db-corrupt-1');
+        expect(await resolveCorruptCluster(dir, outside)).toBeNull();
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects a sibling that is not a corrupt directory', async () => {
+      makeCandidate('db-corrupt-ok');
+      mkdirSync(join(dir, 'db'), { recursive: true });
+      expect(await resolveCorruptCluster(dir, join(dir, 'db'))).toBeNull();
+    });
+  });
 });

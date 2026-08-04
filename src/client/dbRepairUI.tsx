@@ -1,4 +1,4 @@
-import { findWorkingBackup, getRecoveryStatus, getResetwalAvailability, restoreBackup, runResetwal } from '../api/index.js';
+import { type CorruptCluster, findWorkingBackup, getRecoveryStatus, getResetwalAvailability, listCorruptClusters, probeCorruptCluster, restoreBackup, runResetwal } from '../api/index.js';
 import { loadBackupList } from './backups.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -176,9 +176,21 @@ async function onRunPgResetwal(): Promise<void> {
     return;
   }
 
+  // HS-9575 — choose WHICH preserved directory to repair. Before this the flow
+  // silently used the recovery marker's path, and a recovery that died partway
+  // leaves the previous incident's marker behind: on 2026-08-04 that named a
+  // 0-byte directory while the one holding 432 tickets sat beside it.
+  const chosen = await pickCorruptCluster(result);
+  if (chosen === null) {
+    result.replaceChildren();
+    return;
+  }
+
   const ok = await confirmDialog({
     title: 'Run pg_resetwal',
     message:
+      `Repairing ${chosen.name}` +
+      (chosen.recoverableTicketCount !== null ? ` (${String(chosen.recoverableTicketCount)} tickets recoverable).\n\n` : '.\n\n') +
       'This will:\n' +
       `  1. Copy the corrupt directory to a temp location.\n` +
       `  2. Run "${availability.path} -f" against the copy.\n` +
@@ -188,14 +200,13 @@ async function onRunPgResetwal(): Promise<void> {
     danger: true,
   });
   if (!ok) {
-    result.innerHTML = '';
+    result.replaceChildren();
     return;
   }
 
-  result.innerHTML = '';
-  result.appendChild(toElement(<span>Running pg_resetwal…</span>));
+  result.replaceChildren(toElement(<span>Running pg_resetwal…</span>));
   try {
-    const res = await runResetwal();
+    const res = await runResetwal(chosen.path);
     void loadBackupList();
     result.innerHTML = '';
     result.appendChild(toElement(
@@ -219,4 +230,107 @@ async function onRunPgResetwal(): Promise<void> {
       </span>
     ));
   }
+}
+
+/** Human-readable size for the candidate list. */
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+function describeCandidate(c: CorruptCluster): string {
+  const when = new Date(c.modifiedAt).toLocaleString();
+  if (!c.looksLikeCluster) return `${c.name} — ${when} — not a database (nothing to recover)`;
+  const count = c.recoverableTicketCount === null
+    ? 'checking…'
+    : `${String(c.recoverableTicketCount)} tickets recoverable`;
+  return `${c.name} — ${when} — ${formatSize(c.sizeBytes)} — ${count}`;
+}
+
+/**
+ * Let the user choose which preserved corrupt directory to repair, defaulting
+ * to the one that actually yields the most tickets.
+ *
+ * Every candidate is probed (copy → `pg_resetwal -f` → open → COUNT) because the
+ * count is the only fact that distinguishes them in a way the user can act on —
+ * a name is a timestamp and a size is mostly the Postgres template. Probes run
+ * one at a time, each rewriting its row as it lands, so the list stays readable
+ * while the slow part happens.
+ *
+ * Returns null when the user cancels or there is nothing to offer.
+ */
+async function pickCorruptCluster(result: HTMLElement): Promise<CorruptCluster | null> {
+  result.replaceChildren(toElement(<span>Looking for preserved databases…</span>));
+
+  let candidates: CorruptCluster[];
+  try {
+    candidates = await listCorruptClusters();
+  } catch (err) {
+    result.replaceChildren(toElement(
+      <span className="db-repair-result-err">
+        Could not list preserved databases: {err instanceof Error ? err.message : 'unknown error'}
+      </span>
+    ));
+    return null;
+  }
+
+  if (candidates.length === 0) {
+    result.replaceChildren(toElement(
+      <span className="db-repair-result-err">No preserved <code>db-corrupt-*</code> directory to repair.</span>
+    ));
+    return null;
+  }
+
+  const render = (): void => {
+    result.replaceChildren(toElement(
+      <div>
+        <div>Choose which preserved database to repair:</div>
+        <select id="db-repair-corrupt-select">
+          {candidates.map((c) => (
+            <option value={c.path} disabled={!c.looksLikeCluster}>{describeCandidate(c)}</option>
+          ))}
+        </select>
+        <div className="db-repair-result-actions">
+          <button className="btn btn-sm" id="db-repair-corrupt-cancel">Cancel</button>
+          <button className="btn btn-sm btn-danger" id="db-repair-corrupt-go">Repair This One</button>
+        </div>
+      </div>
+    ));
+  };
+  render();
+
+  // Probe sequentially — each one copies a whole cluster and runs pg_resetwal,
+  // so running them at once would multiply disk and CPU for no earlier answer.
+  for (const c of candidates) {
+    if (!c.looksLikeCluster) continue;
+    try {
+      c.recoverableTicketCount = await probeCorruptCluster(c.path);
+    } catch {
+      c.recoverableTicketCount = null;
+    }
+    const before = byIdOrNull('db-repair-corrupt-select');
+    const selectedBefore = before instanceof HTMLSelectElement ? before.value : null;
+    render();
+    const after = byIdOrNull('db-repair-corrupt-select');
+    if (after instanceof HTMLSelectElement && selectedBefore !== null) after.value = selectedBefore;
+  }
+
+  // Default to the candidate with the most recoverable tickets — the number the
+  // user actually cares about, rather than whichever directory a marker names.
+  const best = candidates.reduce<CorruptCluster | null>(
+    (acc, c) => ((c.recoverableTicketCount ?? -1) > (acc?.recoverableTicketCount ?? -1) ? c : acc),
+    null,
+  );
+  const select = byIdOrNull('db-repair-corrupt-select');
+  if (select instanceof HTMLSelectElement && best !== null) select.value = best.path;
+
+  return await new Promise<CorruptCluster | null>((resolvePick) => {
+    byIdOrNull('db-repair-corrupt-cancel')?.addEventListener('click', () => { resolvePick(null); });
+    byIdOrNull('db-repair-corrupt-go')?.addEventListener('click', () => {
+      const el = byIdOrNull('db-repair-corrupt-select');
+      const path = el instanceof HTMLSelectElement ? el.value : '';
+      resolvePick(candidates.find((c) => c.path === path) ?? null);
+    });
+  });
 }

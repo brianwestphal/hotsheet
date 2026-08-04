@@ -95,6 +95,36 @@ When all recent tarballs fail to load with `PANIC: could not locate a valid chec
 
 After recovery, take a manual backup immediately (Settings → Backups → Backup Now) to capture the known-good state with the new CHECKPOINT-before-dump guard.
 
+#### 7.8.1 Recovering from a preserved `db-corrupt-*` directory
+
+The runbook above starts from a backup tarball. When the tarballs are gone or stale, the
+preserved cluster itself is usually recoverable — this is the exact procedure that got 432
+tickets back on 2026-08-04, and it is what the in-app repair flow ([42-repair-database.md](42-repair-database.md) §42.3a) automates.
+
+Two facts that cost time to rediscover:
+
+**Native Postgres cannot open a PGLite cluster.** `postgres -D <copy>` fails with
+`database files are incompatible with server` / `The database cluster was initialized
+without USE_FLOAT8_BYVAL` — PGLite is a 32-bit WASM build and native arm64/x86-64 Postgres
+is not. `pg_controldata` will also warn that the control-file CRC does not match. Neither
+means the data is lost.
+
+**But the tools split cleanly:**
+
+1. Copy the directory aside (never work on the original) and remove any `postmaster.pid`.
+2. Run **native** `pg_resetwal -f -D <copy>` — the PG-17 build from Homebrew works; the
+   pg_control layout is compatible even though the server binary is not.
+3. Open the repaired copy with **PGLite**, pinned to `template1`.
+
+Step 3 is the one that looks like total loss if you get it wrong. Hot Sheet's tables live in
+**`template1`**, not `postgres` (see `src/db/pglite.ts` — PGLite 0.3.x defaulted to
+`template1` and 0.4.0 changed the default). Connecting without the pin shows an empty public
+schema on a cluster that is completely intact. Use `createPglite(dir)`, or
+`new PGlite(dir, { database: 'template1' })` directly.
+
+From there `dumpDataDir('gzip')` produces a tarball that drops straight into
+`backups/5min/` for a normal in-app Restore.
+
 ### 7.9 Launch-Time Recovery Banner
 
 When the open-failure recovery path falls all the way through to renaming the live `db/` directory aside as `db-corrupt-<TS>` and creating a fresh empty cluster (HS-7888 last-resort), the server writes `<dataDir>/.db-recovery-marker.json` recording `{ corruptPath, recoveredAt, errorMessage }`.

@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 
+import { CorruptPathReqSchema } from '../api/db.js';
 import { clearRecoveryMarker, readRecoveryMarker } from '../db/connection.js';
-import { findWorkingBackup, getResetwalAvailability, runResetwalAndDump } from '../db/repair.js';
+import { findWorkingBackup, getResetwalAvailability, listCorruptClusters, probeCorruptCluster, resolveCorruptCluster, runResetwalAndDump } from '../db/repair.js';
 import { getSnapshotStatus } from '../db/snapshot.js';
 import type { AppEnv } from '../types.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -71,15 +72,67 @@ dbRoutes.get('/repair/pg-resetwal-availability', async (c) => {
  *  corrupt directory is preserved. */
 dbRoutes.post('/repair/run-pg-resetwal', async (c) => {
   const dataDir = c.get('dataDir');
-  const marker = readRecoveryMarker(dataDir);
-  if (marker === null) {
-    return c.json({ error: 'No recovery marker — pg_resetwal repair is only available after an open-failure recovery.' }, 400);
+
+  // HS-9575 — the client may name WHICH preserved directory to repair. Before
+  // this the flow could only use the recovery marker's `corruptPath`, and a
+  // recovery that died partway leaves the previous incident's marker in place:
+  // on 2026-08-04 that named a 0-byte directory while the one holding 432
+  // tickets sat beside it, unofferable.
+  const requested = await readCorruptPath(c);
+  let corruptPath: string;
+  if (requested !== null) {
+    // Never trust a browser-supplied path: it goes straight to `cpSync` and
+    // `pg_resetwal`. Only an exact match against an enumerated candidate passes.
+    const resolved = await resolveCorruptCluster(dataDir, requested);
+    if (resolved === null) {
+      return c.json({ error: 'That path is not one of this project\'s preserved corrupt directories.' }, 400);
+    }
+    corruptPath = resolved;
+  } else {
+    const marker = readRecoveryMarker(dataDir);
+    if (marker === null) {
+      return c.json({ error: 'No recovery marker — pass a corruptPath, or use one of the preserved directories listed by /db/repair/corrupt-clusters.' }, 400);
+    }
+    corruptPath = marker.corruptPath;
   }
+
   try {
-    const result = await runResetwalAndDump(dataDir, marker.corruptPath);
+    const result = await runResetwalAndDump(dataDir, corruptPath);
     return c.json(result);
   } catch (err) {
     const msg = getErrorMessage(err);
     return c.json({ error: msg }, 500);
   }
 });
+
+/** Every preserved `db-corrupt-*` directory, newest first — metadata only, so
+ *  the picker can render before the (slow) per-candidate probes finish. */
+dbRoutes.get('/repair/corrupt-clusters', async (c) => {
+  const clusters = await listCorruptClusters(c.get('dataDir'));
+  return c.json({ clusters });
+});
+
+/** How many tickets a candidate would actually yield. Runs the real recovery
+ *  (copy → `pg_resetwal -f` → open → COUNT) against a temp copy, so the user can
+ *  see which directory is worth repairing before committing to one. */
+dbRoutes.post('/repair/probe-corrupt-cluster', async (c) => {
+  const dataDir = c.get('dataDir');
+  const requested = await readCorruptPath(c);
+  if (requested === null) return c.json({ error: 'corruptPath is required.' }, 400);
+  const resolved = await resolveCorruptCluster(dataDir, requested);
+  if (resolved === null) {
+    return c.json({ error: 'That path is not one of this project\'s preserved corrupt directories.' }, 400);
+  }
+  return c.json({ recoverableTicketCount: await probeCorruptCluster(resolved) });
+});
+
+/** Parse an optional `{ corruptPath }` body. Returns null for an absent or
+ *  malformed body so `run-pg-resetwal` keeps its no-argument behavior. */
+async function readCorruptPath(c: { req: { json: () => Promise<unknown> } }): Promise<string | null> {
+  try {
+    const parsed = CorruptPathReqSchema.safeParse(await c.req.json());
+    return parsed.success ? parsed.data.corruptPath : null;
+  } catch {
+    return null;
+  }
+}

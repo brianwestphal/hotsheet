@@ -75,6 +75,27 @@ export const RepairResultSchema = z.object({
 });
 export type RepairResult = z.infer<typeof RepairResultSchema>;
 
+/** HS-9575 — one preserved `db-corrupt-*` directory offered to the user. */
+export const CorruptClusterSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  modifiedAt: z.string(),
+  sizeBytes: z.number(),
+  looksLikeCluster: z.boolean(),
+  recoverableTicketCount: z.number().nullable(),
+});
+export type CorruptCluster = z.infer<typeof CorruptClusterSchema>;
+
+const CorruptClustersRespSchema = z.object({ clusters: z.array(CorruptClusterSchema) });
+
+/** Request for the two path-taking repair endpoints. The server validates the
+ *  path against the enumerated candidates — the browser does not get to name an
+ *  arbitrary directory for `cpSync` + `pg_resetwal` to operate on. */
+export const CorruptPathReqSchema = z.object({ corruptPath: z.string().min(1) });
+export type CorruptPathReq = z.infer<typeof CorruptPathReqSchema>;
+
+const ProbeCorruptRespSchema = z.object({ recoverableTicketCount: z.number().nullable() });
+
 /** GET `/db/recovery-status` → the recovery marker, or null when healthy. */
 export async function getRecoveryStatus(): Promise<RecoveryMarker | null> {
   const r = await apiCall(RecoveryStatusRespSchema, '/db/recovery-status');
@@ -102,7 +123,29 @@ export async function getResetwalAvailability(): Promise<ResetwalAvailability> {
   return apiCall(ResetwalAvailabilitySchema, '/db/repair/pg-resetwal-availability');
 }
 
-/** POST `/db/repair/run-pg-resetwal` → run the repair + dump a fresh tarball. */
-export async function runResetwal(): Promise<RepairResult> {
-  return apiCall(RepairResultSchema, '/db/repair/run-pg-resetwal', { method: 'POST' });
+/** GET `/db/repair/corrupt-clusters` → every preserved `db-corrupt-*`, newest
+ *  first. Metadata only; counts come from `probeCorruptCluster`. */
+export async function listCorruptClusters(): Promise<CorruptCluster[]> {
+  const r = await apiCall(CorruptClustersRespSchema, '/db/repair/corrupt-clusters');
+  return r.clusters;
+}
+
+/** POST `/db/repair/probe-corrupt-cluster` → how many tickets that candidate
+ *  would actually yield, or null when it can't be opened at all. */
+export async function probeCorruptCluster(corruptPath: string): Promise<number | null> {
+  const r = await apiCall(ProbeCorruptRespSchema, '/db/repair/probe-corrupt-cluster', {
+    method: 'POST',
+    body: JSON.stringify({ corruptPath } satisfies CorruptPathReq),
+  });
+  return r.recoverableTicketCount;
+}
+
+/** POST `/db/repair/run-pg-resetwal` → run the repair + dump a fresh tarball.
+ *  Pass `corruptPath` to choose a candidate; omitting it falls back to the
+ *  recovery marker (which can name a stale or empty directory — HS-9575). */
+export async function runResetwal(corruptPath?: string): Promise<RepairResult> {
+  return apiCall(RepairResultSchema, '/db/repair/run-pg-resetwal', {
+    method: 'POST',
+    ...(corruptPath !== undefined ? { body: JSON.stringify({ corruptPath } satisfies CorruptPathReq) } : {}),
+  });
 }

@@ -1,6 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, type Dirent, existsSync, mkdirSync, promises as fsp, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 
 import { listBackups } from '../backup.js';
 import { execFileAsync } from '../utils/execAsync.js';
@@ -212,6 +212,138 @@ export async function runResetwalAndDump(
     writeFileSync(tarballPath, buffer);
 
     return { tier, filename, ticketCount, sizeBytes: buffer.length };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+/** HS-9575 — one preserved `db-corrupt-*` directory, as offered to the user. */
+export interface CorruptCluster {
+  /** Absolute path. */
+  path: string;
+  /** Directory name, e.g. `db-corrupt-1785836790764`. */
+  name: string;
+  modifiedAt: string;
+  sizeBytes: number;
+  /** Whether it looks like an initialized cluster at all (`PG_VERSION` present).
+   *  A false here is the 0-byte-directory case that misled the 2026-08-04
+   *  recovery — worth showing as "nothing to recover" rather than offering it. */
+  looksLikeCluster: boolean;
+  /** Tickets recoverable from it, or null when not probed yet / not knowable. */
+  recoverableTicketCount: number | null;
+}
+
+/**
+ * Enumerate every preserved corrupt cluster in `dataDir`, newest first.
+ *
+ * Before this, the repair flow could only ever offer the ONE directory named by
+ * `.db-recovery-marker.json`. That marker is written at the END of recovery, so
+ * a recovery that died partway (HS-9572) leaves the PREVIOUS incident's marker
+ * in place — and on 2026-08-04 that pointed at a 0-byte directory while the one
+ * holding 432 tickets sat beside it, unreferenced and unofferable.
+ *
+ * Metadata only, so it stays fast: a `readdir` plus a `stat` per entry. The
+ * expensive part (actually recovering each candidate to count its tickets) is
+ * `probeCorruptCluster`, called per candidate so the list can render first.
+ */
+export async function listCorruptClusters(dataDir: string): Promise<CorruptCluster[]> {
+  let entries: string[];
+  try {
+    entries = (await fsp.readdir(dataDir)).filter((n) => n.startsWith('db-corrupt-'));
+  } catch {
+    return [];
+  }
+
+  const out: CorruptCluster[] = [];
+  for (const name of entries) {
+    const path = join(dataDir, name);
+    try {
+      const st = await fsp.stat(path);
+      if (!st.isDirectory()) continue;
+      out.push({
+        path,
+        name,
+        modifiedAt: st.mtime.toISOString(),
+        sizeBytes: await directorySize(path),
+        looksLikeCluster: existsSync(join(path, 'PG_VERSION')),
+        recoverableTicketCount: null,
+      });
+    } catch {
+      // Vanished or unreadable between readdir and stat — skip it rather than
+      // failing the whole enumeration.
+    }
+  }
+  out.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  return out;
+}
+
+/** Recursive size, bounded to one level of recursion depth per call. Used only
+ *  to show the user roughly how much is in each candidate. */
+async function directorySize(dir: string): Promise<number> {
+  let total = 0;
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const p = join(dir, e.name);
+    try {
+      if (e.isDirectory()) total += await directorySize(p);
+      else total += (await fsp.stat(p)).size;
+    } catch { /* skip unreadable entries */ }
+  }
+  return total;
+}
+
+/**
+ * Guard for a client-supplied corrupt-cluster path.
+ *
+ * The repair endpoints take a path from the browser and hand it to `cpSync` and
+ * `pg_resetwal`, so it must be proven to be one of OUR preserved directories —
+ * not a traversal, not a symlink out, not an arbitrary directory on the box.
+ * Resolving both sides and requiring an exact match against an enumerated
+ * candidate is the check; a `startsWith` on the raw string would not be.
+ */
+export async function resolveCorruptCluster(dataDir: string, requested: string): Promise<string | null> {
+  const wanted = resolve(requested);
+  const candidates = await listCorruptClusters(dataDir);
+  return candidates.some((c) => resolve(c.path) === wanted) ? wanted : null;
+}
+
+/**
+ * Recover a candidate far enough to count what it holds: copy it aside, run
+ * `pg_resetwal -f`, open it, `COUNT(*)`. This is the same work `runResetwalAndDump`
+ * does — it just throws away the result instead of dumping a tarball, so the user
+ * can see which directory is worth repairing BEFORE choosing one.
+ *
+ * Returns null when the candidate cannot be opened at all. That is a real answer
+ * ("nothing recoverable here"), not an error, and it is the one the 2026-08-04
+ * marker would have produced for the directory it named.
+ */
+export async function probeCorruptCluster(corruptPath: string): Promise<number | null> {
+  if (!existsSync(join(corruptPath, 'PG_VERSION'))) return null;
+  const availability = await getResetwalAvailability();
+  if (!availability.available || availability.path === null) return null;
+
+  const workDir = join(tmpdir(), `hs-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  cpSync(corruptPath, workDir, { recursive: true });
+  try { rmSync(join(workDir, 'postmaster.pid'), { force: true }); } catch { /* ignore */ }
+  try {
+    await execFileAsync(availability.path, ['-f', workDir], { timeout: 60_000 });
+    const db = createPglite(workDir);
+    try {
+      await db.waitReady;
+      const result = await db.query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM tickets WHERE status != 'deleted'`
+      );
+      return parseInt(result.rows[0]?.count ?? '0', 10);
+    } finally {
+      await db.close();
+    }
+  } catch {
+    return null;
   } finally {
     try { rmSync(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
