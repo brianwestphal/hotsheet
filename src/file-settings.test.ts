@@ -1,13 +1,16 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  _resetSettingsCacheForTests,
+  _settingsParseCountForTests,
   clearLocalOverrides,
   defaultScope,
   ensureSecret,
   getBackupDir,
+  invalidateSettingsCache,
   migrateLocalScopedKeys,
   readFileSettings,
   readLocalSettings,
@@ -29,6 +32,12 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true });
 });
+
+// HS-9600 — the settings files are cached for 5s. Every existing test in this
+// file writes and immediately re-reads, so they exercise the write-invalidation
+// path; the reset keeps one test's cache from leaking into the next (they share
+// `tempDir`, so paths collide).
+beforeEach(() => { _resetSettingsCacheForTests(); });
 
 describe('readFileSettings', () => {
   it('returns empty object if file missing', () => {
@@ -544,5 +553,139 @@ describe('resolveAuthoritativeDataDir (HS-8934 — git-worktree follower)', () =
     const mid = makeDir('mid-chain', { authoritativeDataDir: owner });
     const follower = makeDir('follower-chain', { authoritativeDataDir: mid });
     expect(() => resolveAuthoritativeDataDir(follower)).toThrow(/chains not allowed/);
+  });
+});
+
+/**
+ * HS-9600 — the settings cache. A cache is a state machine, so these walk
+ * SEQUENCES (§"Transition-matrix testing"): the single-read tests above would
+ * pass against a cache that never invalidated, which is the failure that
+ * matters — "I changed a setting and it didn't take".
+ */
+describe('settings cache (HS-9600)', () => {
+  let dir: string;
+  let clock: number;
+
+  beforeEach(() => {
+    dir = join(tempDir, `cache-${String(Date.now())}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    clock = 1_000_000;
+    _resetSettingsCacheForTests(() => clock);
+  });
+
+  it('does not re-read or re-parse while the file is unchanged', () => {
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ appName: 'first' }));
+    readFileSettings(dir);
+    const after1 = _settingsParseCountForTests();
+    for (let i = 0; i < 20; i++) expect(readFileSettings(dir).appName).toBe('first');
+    // The point of the whole change: 20 more reads, zero extra parses.
+    expect(_settingsParseCountForTests()).toBe(after1);
+  });
+
+  it('picks up an out-of-process edit IMMEDIATELY, not after the TTL', () => {
+    // The stamp check (mtime+size) is what buys this. A blind TTL would have
+    // made a hand-edited settings.json invisible for seconds — and ~20 test
+    // files, plus anything that edits the file outside this module, would have
+    // silently read stale values.
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ appName: 'first' }));
+    expect(readFileSettings(dir).appName).toBe('first');
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ appName: 'edited-by-hand' }));
+    expect(readFileSettings(dir).appName).toBe('edited-by-hand');
+  });
+
+  it('re-reads once the TTL expires even when the stamp is unchanged', () => {
+    // The TTL is a ceiling behind the stamp — insurance against a filesystem
+    // with coarse mtime granularity, where two writes could share a stamp.
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ appName: 'first' }));
+    readFileSettings(dir);
+    const before = _settingsParseCountForTests();
+    clock += 4_000;
+    readFileSettings(dir);
+    expect(_settingsParseCountForTests(), 'inside the TTL').toBe(before);
+    clock += 2_000;
+    readFileSettings(dir);
+    expect(_settingsParseCountForTests(), 'past the TTL').toBe(before + 1);
+  });
+
+  it('caches the absent-file answer too', () => {
+    // A brand-new project reads `{}` constantly; that should not re-probe.
+    readFileSettings(dir);
+    const before = _settingsParseCountForTests();
+    readFileSettings(dir);
+    readFileSettings(dir);
+    expect(_settingsParseCountForTests()).toBe(before);
+  });
+
+  it('an in-process write is visible IMMEDIATELY, not after the TTL', () => {
+    // The sequence that matters: a user changing a setting must never wait.
+    writeFileSettings(dir, { appName: 'before' });
+    expect(readFileSettings(dir).appName).toBe('before');
+    writeFileSettings(dir, { appName: 'after' });
+    expect(readFileSettings(dir).appName).toBe('after');
+  });
+
+  it('invalidates for the LAYER writers too, not just writeFileSettings', () => {
+    // `writeSettingsLayer` writes its file directly. A cache hooked only to
+    // `writeFileSettings` would go stale here — the docs/95 scope-layer moves.
+    writeSettingsLayer(dir, 'shared', { appName: 'shared-v1' });
+    expect(readFileSettings(dir).appName).toBe('shared-v1');
+    writeSettingsLayer(dir, 'local', { appName: 'local-v1' });
+    expect(readFileSettings(dir).appName, 'local wins and is fresh').toBe('local-v1');
+    writeSettingsLayer(dir, 'local', { appName: 'local-v2' });
+    expect(readFileSettings(dir).appName).toBe('local-v2');
+  });
+
+  it('invalidates when a local override is CLEARED', () => {
+    // `clearLocalOverrides` is one of the direct-write paths; a stale cache here
+    // would leave a "Reset to shared" click looking like it did nothing.
+    writeSettingsLayer(dir, 'shared', { appName: 'shared-value' });
+    writeSettingsLayer(dir, 'local', { appName: 'local-value' });
+    expect(readFileSettings(dir).appName).toBe('local-value');
+    clearLocalOverrides(dir, ['appName']);
+    expect(readFileSettings(dir).appName).toBe('shared-value');
+  });
+
+  it('keys by path, so two projects never share an entry', () => {
+    const other = join(tempDir, `cache-other-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(other, { recursive: true });
+    writeFileSettings(dir, { appName: 'project-a' });
+    writeFileSettings(other, { appName: 'project-b' });
+    expect(readFileSettings(dir).appName).toBe('project-a');
+    expect(readFileSettings(other).appName).toBe('project-b');
+    // …and the shared/local layers of ONE project don't collide either.
+    writeSettingsLayer(dir, 'local', { appName: 'project-a-local' });
+    expect(readSharedSettings(dir).appName).toBe('project-a');
+    expect(readLocalSettings(dir).appName).toBe('project-a-local');
+  });
+
+  it('hands out a COPY — a caller mutating a nested value cannot poison the cache', () => {
+    // The regression this guards is created BY caching. Before it, every call
+    // re-parsed from disk, so an in-place edit was harmless. `readFileSettings`
+    // merges the layers shallowly, so a shared reference would let one caller's
+    // mutation reach every other reader for the rest of the TTL.
+    writeFileSettings(dir, { terminals: [{ id: 'a', command: 'bash' }] });
+    const first = readFileSettings(dir);
+    (first.terminals as { id: string }[])[0].id = 'MUTATED';
+    (first.terminals as { id: string }[]).push({ id: 'injected' });
+
+    const second = readFileSettings(dir);
+    expect((second.terminals as { id: string }[])[0]?.id).toBe('a');
+    expect((second.terminals as unknown[]).length).toBe(1);
+  });
+
+  it('does not cache a miss as a value — a file appearing is picked up', () => {
+    // A brand-new project reads `{}` before its settings file exists; that must
+    // not pin an empty object for the TTL when the file lands moments later.
+    expect(readFileSettings(dir)).toEqual({});
+    writeFileSettings(dir, { appName: 'created-after-first-read' });
+    expect(readFileSettings(dir).appName).toBe('created-after-first-read');
+  });
+
+  it('invalidateSettingsCache() drops everything', () => {
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ appName: 'first' }));
+    expect(readFileSettings(dir).appName).toBe('first');
+    writeFileSync(join(dir, 'settings.json'), JSON.stringify({ appName: 'second' }));
+    invalidateSettingsCache();
+    expect(readFileSettings(dir).appName).toBe('second');
   });
 });

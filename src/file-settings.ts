@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
@@ -320,10 +320,139 @@ export function resolveAuthoritativeDataDir(dataDir: string): string {
   return target;
 }
 
-/** Read + validate one settings file (shared or local). Returns `{}` when
- *  absent/unreadable/malformed, stripping HS-8290 dead keys. `label` only
- *  shapes the diagnostic log line. */
+/**
+ * HS-9600 — short-TTL cache for the settings files, keyed by absolute PATH.
+ *
+ * `readFileSettings` is called from ~73 sites and on request paths, sometimes
+ * more than once per request, and every call used to do `existsSync` +
+ * `readFileSync` + `JSON.parse` + a zod `safeParse` — twice, once per layer.
+ *
+ * Keyed by path rather than `dataDir` on purpose: it covers both layers with one
+ * cache, and it is automatically correct for the docs/89 follower case, where
+ * `resolveAuthoritativeDataDir` has already redirected to another project's
+ * directory before a path is built. A dataDir key could serve one project's
+ * settings for another's.
+ *
+ * The TTL is what covers OUT-of-process edits — the user editing `settings.json`
+ * by hand, a `git pull`, a second Hot Sheet instance. In-process writes do not
+ * wait for it: every write in this module goes through `writeSettingsFileAtPath`,
+ * which invalidates synchronously. That funnel is the design — a cache that only
+ * hooked `writeFileSettings` would go stale on the docs/95 scope-layer moves,
+ * which write their files directly.
+ *
+ * Beyond the CPU, this is the CLAUDE.md §"filesystem access on a user-configured
+ * path" concern: `dataDir` is user-chosen, so on an iCloud/Drive-backed project
+ * these are content reads on a request path — the HS-9527 class, with small
+ * files but a far higher call rate.
+ */
+const SETTINGS_CACHE_TTL_MS = 5_000;
+
+interface SettingsCacheEntry {
+  value: FileSettings;
+  readAt: number;
+  /** The file stamp the cached value was parsed from. `null` = the file did not
+   *  exist, which is a cacheable fact too (a brand-new project reads `{}`). */
+  stamp: string | null;
+}
+
+const settingsCache = new Map<string, SettingsCacheEntry>();
+
+/** Clock seam. An injected `now` beats fake timers here — the read path is
+ *  synchronous and the rest of this codebase already prefers injected clocks. */
+let settingsCacheNow: () => number = Date.now;
+
+/**
+ * Identity of the file's current contents, cheaply. `mtimeMs` + `size` is the
+ * standard pairing: size alone misses same-length edits, mtime alone can collide
+ * within one filesystem tick.
+ *
+ * `statSync` is a METADATA call, and CLAUDE.md §"Filesystem access on a
+ * user-configured path" is explicit that the hazard is a sync call that must
+ * fetch or flush BYTES — metadata is cached locally even by a File Provider
+ * (measured: 0.6 ms for readdir + per-entry existsSync against Google Drive).
+ * This also REPLACES the `existsSync` the read path already did, so the syscall
+ * count per read does not go up; what goes away is the `readFileSync` +
+ * `JSON.parse` + zod `safeParse` on every call.
+ */
+function fileStamp(path: string): string | null {
+  try {
+    const st = statSync(path);
+    return `${String(st.mtimeMs)}:${String(st.size)}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop one path's entry. Called by every writer in this module. */
+function invalidateSettingsPath(path: string): void {
+  settingsCache.delete(path);
+}
+
+/**
+ * Drop everything. Exported for a caller that changes settings files out of band
+ * and cannot wait for the next stat (tests, mainly); ordinary writes do not need
+ * it, and neither do external edits — those are caught by the stamp.
+ */
+export function invalidateSettingsCache(): void {
+  settingsCache.clear();
+}
+
+/** How many times a settings file has actually been read+parsed. The cache's
+ *  whole job is to keep this flat while nothing changes, and there is no other
+ *  way to observe that from outside. */
+let settingsParseCount = 0;
+
+/** Test seam: clear the cache and optionally drive the clock. */
+export function _resetSettingsCacheForTests(now?: () => number): void {
+  settingsCache.clear();
+  settingsCacheNow = now ?? Date.now;
+  settingsParseCount = 0;
+}
+
+/** Test seam — see `settingsParseCount`. */
+export function _settingsParseCountForTests(): number {
+  return settingsParseCount;
+}
+
+/**
+ * Read + validate one settings file (shared or local). Returns `{}` when
+ * absent/unreadable/malformed, stripping HS-8290 dead keys. `label` only shapes
+ * the diagnostic log line.
+ *
+ * HS-9600 — cached, and validated two ways:
+ *
+ * 1. **The file stamp** (mtime+size) — so an out-of-process edit (the user
+ *    editing `settings.json` by hand, a `git pull`, a second instance) is picked
+ *    up on the very next read. A blind TTL would have made those invisible for
+ *    seconds, and 20 test files plus any future caller legitimately expect an
+ *    external write to be seen immediately. Correctness first; the saving is the
+ *    read+parse+validate, which is the expensive part regardless.
+ * 2. **A 5 s TTL** on top, as a ceiling — cheap insurance against a filesystem
+ *    with coarse mtime granularity or a clock that moves oddly.
+ *
+ * The result is **cloned on the way out**, on both hit and miss, so callers keep
+ * the mutation-safety they had when every call re-parsed from disk:
+ * `readFileSettings` merges these shallowly, so handing out the cached object
+ * would let an in-place edit of a nested value (`terminals`, `custom_commands`)
+ * corrupt every other reader.
+ */
 function readSettingsFile(path: string, label: string): FileSettings {
+  const stamp = fileStamp(path);
+  const cached = settingsCache.get(path);
+  const fresh = cached !== undefined
+    && cached.stamp === stamp
+    && settingsCacheNow() - cached.readAt < SETTINGS_CACHE_TTL_MS;
+  if (fresh) return structuredClone(cached.value);
+
+  // `null` stamp = no file. Skip the read entirely and cache the empty result,
+  // so a brand-new project doesn't re-probe on every call either.
+  const value = stamp === null ? {} : readSettingsFileUncached(path, label);
+  settingsCache.set(path, { value, readAt: settingsCacheNow(), stamp });
+  return structuredClone(value);
+}
+
+function readSettingsFileUncached(path: string, label: string): FileSettings {
+  settingsParseCount += 1;
   if (!existsSync(path)) return {};
   try {
     const raw: unknown = JSON.parse(readFileSync(path, 'utf-8'));
@@ -435,10 +564,21 @@ function asCommandTree(v: unknown): CommandItem[] {
   return [];
 }
 
+/**
+ * HS-9600 — the ONE place this module writes a settings file. Every writer goes
+ * through it so the cache cannot be left stale by a path that forgot to
+ * invalidate; that is the failure mode ("I changed a setting and it didn't
+ * take"), and making it structurally impossible beats remembering.
+ */
+function writeSettingsFileAtPath(path: string, data: unknown): void {
+  writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  invalidateSettingsPath(path);
+}
+
 /** Read-merge-write a single layer file. */
 function writeSettingsFile(path: string, current: FileSettings, updates: Partial<FileSettings>): FileSettings {
   const merged = { ...current, ...updates };
-  writeFileSync(path, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  writeSettingsFileAtPath(path, merged);
   return merged;
 }
 
@@ -524,7 +664,7 @@ export function clearLocalOverrides(dataDir: string, keys: string[]): FileSettin
       for (const [k, v] of Object.entries(current)) {
         if (!toRemove.includes(k)) remaining[k] = v;
       }
-      writeFileSync(path, JSON.stringify(remaining, null, 2) + '\n', 'utf-8');
+      writeSettingsFileAtPath(path, remaining);
     }
   }
   return readFileSettings(dataDir);
@@ -560,7 +700,7 @@ export function migrateLocalScopedKeys(dataDir: string): void {
     if (defaultScope(k) === 'local') continue;
     remaining[k] = v;
   }
-  writeFileSync(sharedPath, JSON.stringify(remaining, null, 2) + '\n', 'utf-8');
+  writeSettingsFileAtPath(sharedPath, remaining);
   console.log(`[settings] Relocated ${String(localScopedEntries.length)} machine-local setting(s) to settings.local.json in ${dataDir}`);
 }
 
@@ -629,7 +769,7 @@ function stripSecretFromSettings(dataDir: string): void {
   if (current.secret === undefined && current.secretPathHash === undefined) return;
   const { secret: _s, secretPathHash: _h, ...rest } = current;
   void _s; void _h;
-  writeFileSync(path, JSON.stringify(rest, null, 2) + '\n', 'utf-8');
+  writeSettingsFileAtPath(path, rest);
 }
 
 /**
