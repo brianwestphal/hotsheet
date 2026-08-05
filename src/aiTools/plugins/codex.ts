@@ -10,6 +10,10 @@ export const codexPlugin: AiToolPlugin = {
   // HS-9602 — measured against codex-cli 0.146.0: `codex.api_request`,
   // `codex.conversation.turn.count`, … over the standard OTLP exporter.
   telemetryMetricPrefix: 'codex.',
+  // HS-9605 — stated rather than left absent: codex reports tokens in detail and
+  // cost NEVER (verified against 0.146.0 — zero `*.cost*` metrics exist). Absence
+  // would read as "nobody checked".
+  telemetryReportsCost: false,
   tier: 'cli-agent',
   maturity: 'beta',
   transport: 'mcp-hooks',

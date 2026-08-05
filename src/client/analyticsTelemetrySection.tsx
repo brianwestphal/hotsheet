@@ -42,6 +42,9 @@
  * kicks off its own fetch + re-renders on window-selector change.
  */
 
+import type { SafeHtml } from 'kerfjs';
+
+import { type CostAvailability, costAvailabilityFor, costAvailabilityNote } from '../aiTools/costAvailability.js';
 import { getPlugin } from '../aiTools/registry.js';
 import { getProjectRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -146,7 +149,35 @@ function resolveTimezone(): string {
   }
 }
 
-function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
+/**
+ * HS-9605 — the cost line of a chip.
+ *
+ * `unavailable` shows an em dash, never `$0.00`: a zero reads as "this work was
+ * free", which is a stronger and more wrong claim than "we don't know". Codex
+ * reports no cost at all, so this is the codex case.
+ *
+ * `partial` still shows the figure — it is real — but marks it as an UNDER-count
+ * and says which tool is missing. That is the sharper case: an unqualified total
+ * over a mixed Claude+codex window looks perfectly normal while silently
+ * omitting every codex turn.
+ */
+function renderChipCost(totals: WindowTotals, cost: CostAvailability): SafeHtml {
+  const note = costAvailabilityNote(cost);
+  if (cost.status === 'unavailable') {
+    return <div className="telemetry-chip-cost telemetry-chip-cost-unavailable" title={note ?? ''}>—</div>;
+  }
+  const baseTitle = 'Cost is the amount the AI tool reports for this work. It includes cache tokens and any 1M-context rate premium, so it can exceed a naive estimate from the input/output tokens above.';
+  if (cost.status === 'partial') {
+    return (
+      <div className="telemetry-chip-cost telemetry-chip-cost-partial" title={`${note ?? ''} ${baseTitle}`}>
+        {formatCost(totals.cost)}<span className="telemetry-chip-cost-flag" aria-hidden="true">*</span>
+      </div>
+    );
+  }
+  return <div className="telemetry-chip-cost" title={baseTitle}>{formatCost(totals.cost)}</div>;
+}
+
+function renderWindowChip(label: string, totals: WindowTotals, cost: CostAvailability): HTMLElement {
   // HS-8628 — show the input / output split on a second meta line when token
   // data is present (input + output are priced very differently). The headline
   // line keeps the combined real-work total + prompt count.
@@ -161,7 +192,7 @@ function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
   return toElement(
     <div className="telemetry-chip">
       <div className="telemetry-chip-label">{label}</div>
-      <div className="telemetry-chip-cost" title="Cost is the amount Claude Code reports for this work. It includes cache tokens and any 1M-context rate premium, so it can exceed a naive estimate from the input/output tokens above.">{formatCost(totals.cost)}</div>
+      {renderChipCost(totals, cost)}
       <div className="telemetry-chip-meta">
         {formatTokens(totals.tokens)} tokens · {String(totals.promptCount)} prompts
       </div>
@@ -231,6 +262,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
   // below — see also `src/client/dashboard.tsx::buildDashboard`. The
   // slot fallback (insert into `body` when the slot is missing) keeps
   // standalone callers + unit tests rendering an end-to-end body.
+  const cost = costAvailabilityFor(payload.emitters ?? []);
   populateDashboardSlots(payload, body);
 
   // Cost over time (per-project — the chart's mode toggle is hidden
@@ -241,6 +273,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
         <h3>Cost Over Time</h3>
       </section>
     );
+    appendCostCaveat(section, cost);
     section.appendChild(renderCostOverTimeChart(payload.costOverTime, {
       formatCost,
       resolveProjectLabel: (secret) => secret === activeSecret ? 'This project' : secret.slice(0, 8),
@@ -257,6 +290,7 @@ function renderBody(payload: ProjectRollupPayload, activeSecret: string | null):
         <h3>Cost by Model</h3>
       </section>
     );
+    appendCostCaveat(section, cost);
     section.appendChild(renderCostByModelDonut(payload.costByModel, { formatCost }));
     body.appendChild(section);
   }
@@ -333,11 +367,14 @@ function populateDashboardSlots(payload: ProjectRollupPayload, bodyFallback: HTM
   const chipsSlot = byIdOrNull('dashboard-claude-chips-slot');
 
   const disclaimerEl = renderSubscriptionDisclaimer();
+  // HS-9605 — judged from WHO produced the window's telemetry (HS-9602), so a
+  // tool that reports no cost (codex) shows a dash rather than `$0.00`.
+  const cost = costAvailabilityFor(payload.emitters ?? []);
   const chipsEl = toElement(<div className="telemetry-window-chips analytics-telemetry-chips"></div>);
-  chipsEl.appendChild(renderWindowChip('Today', payload.windowTotals.today));
-  chipsEl.appendChild(renderWindowChip('This week', payload.windowTotals.week));
-  chipsEl.appendChild(renderWindowChip('This month', payload.windowTotals.month));
-  chipsEl.appendChild(renderWindowChip('All time', payload.windowTotals.allTime));
+  chipsEl.appendChild(renderWindowChip('Today', payload.windowTotals.today, cost));
+  chipsEl.appendChild(renderWindowChip('This week', payload.windowTotals.week, cost));
+  chipsEl.appendChild(renderWindowChip('This month', payload.windowTotals.month, cost));
+  chipsEl.appendChild(renderWindowChip('All time', payload.windowTotals.allTime, cost));
 
   if (disclaimerSlot !== null) {
     disclaimerSlot.replaceChildren(disclaimerEl);
@@ -475,6 +512,22 @@ function stopAnalyticsPolling(): void {
  * Caller (the analytics dashboard's `buildDashboard`) appends the
  * returned element below the existing chart grid.
  */
+/**
+ * The caveat line under a cost heading, when the window's cost cannot be shown
+ * in full (HS-9605).
+ *
+ * The chart and donut are already data-gated, so a codex-only window renders
+ * neither and needs nothing. The case this exists for is `partial`: real Claude
+ * cost plotted over a window that ALSO contains codex turns, where the shape
+ * looks complete and is quietly an under-count. A dash cannot express that — a
+ * sentence can.
+ */
+function appendCostCaveat(section: HTMLElement, cost: CostAvailability): void {
+  const note = costAvailabilityNote(cost);
+  if (note === null) return;
+  section.appendChild(toElement(<p className="telemetry-cost-caveat">{note}</p>));
+}
+
 export function renderAnalyticsTelemetrySection(days?: number): HTMLElement {
   // HS-8512 — telemetry window is now driven by the analytics
   // dashboard's top-level 7/30/90 day range bar, removing the
@@ -529,6 +582,9 @@ function mapDaysToWindow(days: number): TelemetryWindow | null {
 /** Test-only escape hatch. */
 export const _testing = {
   renderBody,
+  // HS-9605 — the chips live in dashboard SLOTS outside `renderBody`, so the
+  // cost-unavailable rendering needs its own handle to be testable.
+  renderWindowChip,
   renderEmptyPlaceholder,
   setWindow(w: TelemetryWindow): void { currentWindow = w; },
   getWindow(): TelemetryWindow { return currentWindow; },

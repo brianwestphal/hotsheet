@@ -1,5 +1,5 @@
 /**
- * HS-9603 (docs/67 §67.13) — turn Codex's OpenTelemetry export ON for a Hot Sheet
+ * HS-9603 (docs/67 §67.16) — turn Codex's OpenTelemetry export ON for a Hot Sheet
  * terminal.
  *
  * ## Why a CLI flag and not env, and not `config.toml`

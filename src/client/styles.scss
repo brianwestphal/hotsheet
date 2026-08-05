@@ -13869,6 +13869,33 @@ label.detail-details-label {
   color: var(--text);
 }
 
+// HS-9605 — a tool that reports no cost (codex) shows an em dash, not `$0.00`.
+// Muted so it reads as "nothing to show" rather than a figure; the `title`
+// carries the reason, since a bare dash otherwise reads as a bug.
+.telemetry-chip-cost-unavailable {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+// A mixed window: the figure is real but omits the tools that report no cost.
+// The asterisk is the only affordance that survives a glance — the tooltip says
+// which tool is missing and that the true total is higher.
+.telemetry-chip-cost-partial .telemetry-chip-cost-flag {
+  color: var(--text-secondary);
+  font-size: 13px;
+  vertical-align: super;
+  margin-left: 1px;
+}
+
+// The sentence under a "Cost Over Time" / "Cost by Model" heading when the
+// window also contains work from a tool that reports no cost. Sits between the
+// heading and the chart so it is read before the shape is interpreted.
+.telemetry-cost-caveat {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .telemetry-chip-meta {
   font-size: 11px;
   color: var(--text-secondary);

@@ -516,7 +516,7 @@ The full feature decomposed into 14 tickets:
 
 Foundations are the unblockers for everything else. Within Foundation, the order is: HS-8144 (schema) → HS-8143 (receiver) → HS-8145 (spawn-env) → HS-8146 (Settings UI). HS-8142 + HS-8144 + HS-8143 are shipping together as the first wave; the rest follow incrementally.
 
-## 67.12 Attributing telemetry to the tool that emitted it (HS-9602)
+## 67.15 Attributing telemetry to the tool that emitted it (HS-9602)
 
 Every `otel_*` row used to be anonymous. Everything downstream inferred Claude
 because the metric names happen to be `claude_code.*` — true today, and exactly
@@ -577,7 +577,7 @@ Sheet asks for it** — it sets `CLAUDE_CODE_ENABLE_TELEMETRY=1` when spawning a
 Claude terminal (`terminals/registry/otelEnv.ts`) and has no codex equivalent
 yet.
 
-## 67.13 Turning Codex's telemetry on (HS-9603, step 1)
+## 67.16 Turning Codex's telemetry on (HS-9603, step 1)
 
 Codex speaks the same OTLP that Claude Code does, and `buildOtelEnv` already
 injects the endpoint and the `hotsheet_project` routing attribute into **every**
@@ -639,3 +639,54 @@ rollup still matches only `claude_code.*`. That mapping — and the
 codex turn (network, auth, a live model call). The flag is parser-validated, so
 the worst case is that no data appears — which is today's state — rather than a
 broken terminal.
+
+## 67.17 Cost that cannot be shown (HS-9605)
+
+Every cost surface sums `claude_code.cost.usage`. **Codex reports no cost at
+all** — searched codex-cli 0.146.0 for any `*.cost*` metric: zero matches. It
+reports tokens in unusual detail and cost never, and no OTel semantic convention
+covers cost, which is presumably why.
+
+So once §67.16 switched codex's exporter on, every cost figure covering codex
+work reads **`$0.00`** — *"this work was free"* — a worse lie than the
+Claude-specific labelling §67.15 set out to fix. **A missing number must look
+missing.**
+
+### 67.17.1 Three states, and the middle one is why this exists
+
+`costAvailabilityFor(emitters)` (`src/aiTools/costAvailability.ts`) judges a
+window from §67.15's recorded emitters:
+
+| verdict | when | surface |
+|---|---|---|
+| `available` | every emitter reports cost — **or the window is empty** | the figure, unchanged |
+| `unavailable` | no emitter reports cost | an em dash, never a zero |
+| `partial` | some do, some don't | the figure + `*` + the direction of the error |
+
+`partial` is the case worth designing for. A window holding **both** Claude and
+codex work has a real, correctly computed cost that silently omits every codex
+turn — it under-reports while looking perfectly normal, which is more misleading
+than a blank. An empty window is `available` on purpose: there is no cost to
+misreport, and the existing empty state should not sprout a warning about tools
+that were never involved. An **unrecognized** emitter counts as
+not-reporting-cost — we cannot know that it reported cost, so the unknown case
+fails toward honesty.
+
+Which tools report cost is a per-plugin property (`telemetryReportsCost` on
+`AiToolPlugin`), not a table here — docs/132's one-place rule, which the repo's
+`no-restricted-syntax` guard enforces. Codex sets it to `false` **explicitly**
+rather than omitting it, so it reads as measured rather than unexamined.
+
+### 67.17.2 Where it is applied
+
+- **The four window chips** (today / week / month / all-time) — dash or flagged
+  figure, with the explanation in the tooltip.
+- **Cost Over Time** and **Cost by Model** — a caveat sentence under the heading.
+  Both sections are already data-gated, so a codex-only window renders neither
+  and needs nothing; the caveat exists for `partial`, where the shape looks
+  complete and quietly is not.
+
+Not yet covered, and tracked separately: the sidebar today's-cost widget
+(§67.10), the per-ticket rollup (`otel_rollup_ticket`), and the cross-project
+stats page (docs/70). Each reads a different payload and needs its own emitter
+plumbing.

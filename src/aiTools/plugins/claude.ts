@@ -11,6 +11,8 @@ export const claudePlugin: AiToolPlugin = {
   productName: 'Claude Code',
   // HS-9602 — Claude Code's OTLP namespace (`claude_code.cost.usage`, …).
   telemetryMetricPrefix: 'claude_code.',
+  // HS-9605 — `claude_code.cost.usage`; the whole cost UI was built on it.
+  telemetryReportsCost: true,
   tier: 'cli-agent',
   maturity: 'stable',
   transport: 'claude-channel',

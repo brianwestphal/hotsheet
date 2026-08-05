@@ -112,6 +112,18 @@ export interface AiToolPlugin {
    * questions not yet settled (e.g. whether codex reports cost at all).
    */
   readonly telemetryMetricPrefix?: string;
+  /**
+   * HS-9605 — whether this tool reports COST in its telemetry, not just tokens.
+   *
+   * Absent/false means the cost surfaces must show "unavailable" rather than a
+   * zero for its work. Codex is the reason this exists: it reports tokens in
+   * detail and cost never (verified against codex-cli 0.146.0 — zero `*.cost*`
+   * metrics), and no OTel semantic convention covers cost.
+   *
+   * Fails toward honesty: only an explicit `true` is treated as "reports cost",
+   * so a newly-added tool cannot accidentally claim its work was free.
+   */
+  readonly telemetryReportsCost?: boolean;
 }
 
 /**

@@ -7,6 +7,7 @@
 // escape hatch with fixture payloads.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { costAvailabilityFor } from '../aiTools/costAvailability.js';
 import { _testing, renderAnalyticsTelemetrySection, telemetrySectionTitle } from './analyticsTelemetrySection.js';
 
 interface WindowTotals {
@@ -31,6 +32,7 @@ interface FixtureOverrides {
   recentPrompts?: { promptId: string; ts: string; projectSecret: string; model: string | null }[];
   costOverTime?: { date: string; projectSecret: string; model: string; cost: number }[];
   windowTotalsAllTime?: WindowTotals;
+  emitters?: string[];
 }
 
 function makePayload(overrides: FixtureOverrides = {}): Parameters<typeof _testing.renderBody>[0] {
@@ -46,6 +48,7 @@ function makePayload(overrides: FixtureOverrides = {}): Parameters<typeof _testi
     toolLatencyHistogram: overrides.toolLatencyHistogram ?? [],
     recentPrompts: overrides.recentPrompts ?? [],
     costOverTime: overrides.costOverTime ?? [],
+    emitters: overrides.emitters,
   };
 }
 
@@ -98,6 +101,49 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
       'secretA',
     );
     expect(body.querySelector('.telemetry-subscription-disclaimer')).toBeNull();
+  });
+
+  it('warns under the cost CHART when the window mixes a tool that reports no cost (HS-9605)', () => {
+    // The dangerous shape: a real Claude cost curve over a window that also
+    // holds codex turns. Nothing about the chart looks wrong — it is simply
+    // lower than the truth — so the only honest fix is to say so in words.
+    const body = _testing.renderBody(
+      makePayload({
+        emitters: ['claude', 'codex'],
+        costOverTime: [{ date: '2026-05-19', projectSecret: 'secretA', model: 'sonnet', cost: 1.0 }],
+      }),
+      'secretA',
+    );
+    const caveat = body.querySelector('[data-section="cost-over-time"] .telemetry-cost-caveat');
+    expect(caveat?.textContent).toContain('Codex');
+    // The DIRECTION matters — a reader deciding whether to trust the curve
+    // needs to know which way it is wrong.
+    expect(caveat?.textContent).toContain('higher');
+  });
+
+  it('leaves the cost chart and donut unannotated for an all-Claude window', () => {
+    // The caveat has to be absent in the ordinary case, or it becomes noise
+    // everyone learns to skip past.
+    const body = _testing.renderBody(
+      makePayload({
+        emitters: ['claude'],
+        costOverTime: [{ date: '2026-05-19', projectSecret: 'secretA', model: 'sonnet', cost: 1.0 }],
+        costByModel: [{ model: 'sonnet', cost: 1, tokens: 10, inputTokens: 7, outputTokens: 3, promptCount: 1 }],
+      }),
+      'secretA',
+    );
+    expect(body.querySelector('.telemetry-cost-caveat')).toBeNull();
+  });
+
+  it('warns under the cost DONUT too — the same under-count, split by model', () => {
+    const body = _testing.renderBody(
+      makePayload({
+        emitters: ['claude', 'codex'],
+        costByModel: [{ model: 'sonnet', cost: 1, tokens: 10, inputTokens: 7, outputTokens: 3, promptCount: 1 }],
+      }),
+      'secretA',
+    );
+    expect(body.querySelector('[data-section="cost-by-model"] .telemetry-cost-caveat')).not.toBeNull();
   });
 
   it('renders the cost-over-time section when payload.costOverTime has data', () => {
@@ -254,5 +300,49 @@ describe('telemetrySectionTitle (HS-9602)', () => {
     // specific product.
     expect(telemetrySectionTitle(['unknown'])).toBe('AI Usage');
     expect(telemetrySectionTitle(['claude', 'unknown'])).toBe('AI Usage');
+  });
+});
+
+/**
+ * HS-9605 — a missing cost must not look like a zero.
+ *
+ * Codex reports no cost at all, so once its telemetry arrives (HS-9603 switched
+ * its exporter on) every cost chip would otherwise read `$0.00` — "this work was
+ * free", which is a stronger and more wrong claim than "we don't know".
+ */
+describe('cost chip availability (HS-9605)', () => {
+  const totals = { cost: 0, tokens: 1000, promptCount: 3, inputTokens: 600, outputTokens: 400 };
+
+  it('shows an em dash, not $0.00, when no tool reports cost', () => {
+    const chip = _testing.renderWindowChip('Today', totals, costAvailabilityFor(['codex']));
+    const cost = chip.querySelector('.telemetry-chip-cost');
+    expect(cost?.textContent).toBe('—');
+    expect(cost?.textContent).not.toContain('$');
+    // The reason has to be reachable — a bare dash otherwise reads as a bug.
+    expect(cost?.getAttribute('title')).toMatch(/does not report cost/);
+  });
+
+  it('still shows the figure for a MIXED window, flagged as an under-count', () => {
+    // The number is real; it just omits every codex turn. Hiding it would throw
+    // away true information, so it is shown and qualified instead.
+    const chip = _testing.renderWindowChip('Today', { ...totals, cost: 1.25 }, costAvailabilityFor(['claude', 'codex']));
+    const cost = chip.querySelector('.telemetry-chip-cost');
+    expect(cost?.textContent).toContain('$1.25');
+    expect(cost?.getAttribute('title')).toMatch(/higher/);
+    expect(chip.querySelector('.telemetry-chip-cost-flag')).not.toBeNull();
+  });
+
+  it('renders a Claude-only window exactly as before', () => {
+    // The common case must not regress: no dash, no flag, no warning.
+    const chip = _testing.renderWindowChip('Today', { ...totals, cost: 2.5 }, costAvailabilityFor(['claude']));
+    const cost = chip.querySelector('.telemetry-chip-cost');
+    expect(cost?.textContent).toContain('$2.50');
+    expect(chip.querySelector('.telemetry-chip-cost-flag')).toBeNull();
+    expect(cost?.className).not.toContain('unavailable');
+  });
+
+  it('renders an empty window as before rather than warning about nothing', () => {
+    const chip = _testing.renderWindowChip('Today', { ...totals, cost: 0 }, costAvailabilityFor([]));
+    expect(chip.querySelector('.telemetry-chip-cost')?.textContent).toContain('$0.00');
   });
 });
