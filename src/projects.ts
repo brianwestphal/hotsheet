@@ -188,7 +188,16 @@ export function seedClaudeTerminalIfNew(
     terminals: [
       // HS-9334 — seed with the `ai_tool`-aware `{{aiCommand}}` (resolves to claude for a
       // claude/auto project, or the selected CLI agent otherwise). Gate stays claude-on-PATH.
-      { id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true },
+      //
+      // HS-9584 — named "AI", not "Claude". The command is tool-aware but the
+      // label was not, so a project switched to codex/antigravity/opencode got a
+      // tab labelled "Claude" that ran something else. The tab shows the runtime
+      // OSC 0/2 title once a process pushes one, so the specific tool still
+      // surfaces — the STATIC label just should not assert one. The `id` stays
+      // `claude` deliberately: it is the key existing settings, visibility
+      // groupings and per-terminal overrides are stored under, and renaming it
+      // would orphan them.
+      { id: 'claude', name: 'AI', command: '{{aiCommand}}', lazy: true },
     ],
   });
 }

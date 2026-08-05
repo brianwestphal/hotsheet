@@ -27,6 +27,7 @@ import {
   type SnapPoint,
   tickLeftPx,
 } from './terminalDashboardSizing.js';
+import { deriveTerminalLabel } from './terminalLabelFromCommand.js';
 import { mountTileGrid, type TileEntry, type TileGridHandle } from './terminalTileGrid.js';
 import { getTransientTerminalName } from './terminalTransientNames.js';
 
@@ -382,11 +383,7 @@ export function tileLabel(entry: DrawerGridTileEntry, secret?: string): string {
     if (transient !== undefined) return transient;
   }
   if (typeof entry.name === 'string' && entry.name !== '') return entry.name;
-  const word = entry.command.trim().split(/\s+/)[0] ?? '';
-  const clean = word.replace(/^{{|}}$/g, '');
-  if (clean.toLowerCase().includes('claude')) return 'claude';
-  const base = clean.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
-  return base !== '' ? base : 'terminal';
+  return deriveTerminalLabel(entry.command);
 }
 
 // -----------------------------------------------------------------------------

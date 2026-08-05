@@ -10,7 +10,7 @@ import { seedClaudeTerminalIfNew } from './projects.js';
  * HS-8491 — pin the auto-seed behavior of `seedClaudeTerminalIfNew`.
  *
  * Contract:
- *   - Seeds a `{ id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true }`
+ *   - Seeds a `{ id: 'claude', name: 'AI', command: '{{aiCommand}}', lazy: true }`
  *     terminal in `.hotsheet/settings.json` when `terminals` is not
  *     yet set AND `claude` is on PATH.
  *   - Does NOT seed when `terminals` is already set (even to an
@@ -59,8 +59,27 @@ describe('seedClaudeTerminalIfNew (HS-8491)', () => {
     seedClaudeTerminalIfNew(dataDir, () => true);
     const settings = readFileSettings(dataDir);
     expect(settings.terminals).toEqual([
-      { id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true },
+      { id: 'claude', name: 'AI', command: '{{aiCommand}}', lazy: true },
     ]);
+  });
+
+  // HS-9584 — the seeded command is `ai_tool`-aware but the LABEL was not, so a
+  // project switched to codex/antigravity/opencode showed a tab called "Claude"
+  // running something else. Pinned separately from the shape assertion above so
+  // the intent survives a future edit to that object.
+  it('does not name the tab after a tool the project may not be using', () => {
+    const dataDir = makeProject('case-a2');
+    seedClaudeTerminalIfNew(dataDir, () => true);
+    expect(readFileSettings(dataDir).terminals).toMatchObject([{ name: 'AI' }]);
+  });
+
+  // The id is the key visibility groupings, per-terminal theme overrides and
+  // existing settings are stored under. Renaming it would orphan all of them,
+  // so the label change must not drag it along.
+  it('keeps the `claude` id, which existing settings are keyed by', () => {
+    const dataDir = makeProject('case-a3');
+    seedClaudeTerminalIfNew(dataDir, () => true);
+    expect(readFileSettings(dataDir).terminals).toMatchObject([{ id: 'claude' }]);
   });
 
   it('does NOT seed when claude is not on PATH (even if terminals is unset)', () => {
@@ -110,7 +129,7 @@ describe('seedClaudeTerminalIfNew (HS-8491)', () => {
     withClaudeOnPath();
     seedClaudeTerminalIfNew(dataDir);
     expect(readFileSettings(dataDir).terminals).toEqual([
-      { id: 'claude', name: 'Claude', command: '{{aiCommand}}', lazy: true },
+      { id: 'claude', name: 'AI', command: '{{aiCommand}}', lazy: true },
     ]);
   });
 });

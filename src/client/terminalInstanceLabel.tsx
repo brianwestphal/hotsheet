@@ -20,6 +20,7 @@ import type { SafeHtml } from 'kerfjs';
 
 import { toElement } from './dom.js';
 import type { TerminalInstance, TerminalTabConfig } from './terminal.js';
+import { deriveTerminalLabel } from './terminalLabelFromCommand.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 
 // Lucide `bell` glyph — inserted next to the tab label when `inst.hasBell`
@@ -29,12 +30,8 @@ const BELL_ICON: SafeHtml = <svg xmlns="http://www.w3.org/2000/svg" width="12" h
 
 export function tabDisplayName(config: TerminalTabConfig): string {
   if (typeof config.name === 'string' && config.name !== '') return config.name;
-  const word = config.command.trim().split(/\s+/)[0] ?? '';
-  const clean = word.replace(/^{{|}}$/g, '');
-  if (clean.toLowerCase().includes('claude')) return 'claude';
-  // Path-style commands like /bin/zsh → "zsh"; .exe stripped on Windows.
-  const base = clean.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
-  return base !== '' ? base : 'terminal';
+  // HS-9584 — shared with the two tile surfaces so they cannot drift apart.
+  return deriveTerminalLabel(config.command);
 }
 
 /** The label for the in-pane terminal toolbar. Prefers the runtime title

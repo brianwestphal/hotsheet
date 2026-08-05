@@ -15,6 +15,7 @@ import { toElement } from './dom.js';
 import { ICON_EYE_OFF, ICON_PENCIL, ICON_X } from './icons.js';
 import { openRenameDialog } from './terminal/renameDialog.js';
 import type { TerminalListEntry } from './terminalDashboardState.js';
+import { deriveTerminalLabel } from './terminalLabelFromCommand.js';
 import { formatCwdLabel, getCachedHomeDir } from './terminalOsc7.js';
 import { type TileEntry } from './terminalTileGrid.js';
 import { getTransientTerminalName, setTransientTerminalName } from './terminalTransientNames.js';
@@ -56,11 +57,7 @@ export function tileLabel(terminal: TerminalListEntry, secret?: string): string 
     if (transient !== undefined) return transient;
   }
   if (typeof terminal.name === 'string' && terminal.name !== '') return terminal.name;
-  const word = terminal.command.trim().split(/\s+/)[0] ?? '';
-  const clean = word.replace(/^{{|}}$/g, '');
-  if (clean.toLowerCase().includes('claude')) return 'claude';
-  const base = clean.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '');
-  return base !== '' ? base : 'terminal';
+  return deriveTerminalLabel(terminal.command);
 }
 
 /** HS-7661 — alias used by the hide-dialog opener so the call site reads
