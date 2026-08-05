@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { initStartupLog } from '../startup-log.js';
 import { isInsideHotSheetTerminal } from '../test-helpers.js';
 import { clearRecoveryMarker, closeAllDatabases, closeDb, getDb, getDbForDir, handleLiveStorageFailure, ignoreBenignMigrationError, isClusterStorageFailure, isRecoverableOpenError, readRecoveryMarker, resetStorageFailureReportingForTests, setDataDir } from './connection.js';
 import { createTicket, getTickets } from './queries.js';
@@ -15,14 +16,31 @@ import { createTicket, getTickets } from './queries.js';
 vi.setConfig({ testTimeout: 120_000, hookTimeout: 60_000 });
 
 let dataDir: string;
+let startupLogPath: string;
+let savedStartupLogEnv: string | undefined;
+
+/** HS-9590 — the durable log this suite asserts against. `HOTSHEET_STARTUP_LOG`
+ *  is the documented full-path override, so the test never touches the
+ *  developer's real `~/.hotsheet/startup.log`. */
+function readStartupLogForTest(): string {
+  return existsSync(startupLogPath) ? readFileSync(startupLogPath, 'utf-8') : '';
+}
 
 beforeEach(() => {
   dataDir = join(tmpdir(), `hs-conn-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(dataDir, { recursive: true });
+  startupLogPath = join(dataDir, 'startup.log');
+  savedStartupLogEnv = process.env.HOTSHEET_STARTUP_LOG;
+  process.env.HOTSHEET_STARTUP_LOG = startupLogPath;
+  // `startupLog` no-ops until a session is opened — the same ordering production
+  // has (`initStartupLog` runs at the top of `main()`, long before any DB open).
+  initStartupLog();
 });
 
 afterEach(async () => {
   await closeDb();
+  if (savedStartupLogEnv === undefined) delete process.env.HOTSHEET_STARTUP_LOG;
+  else process.env.HOTSHEET_STARTUP_LOG = savedStartupLogEnv;
   rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -56,8 +74,12 @@ describe('getDbByPath corruption recovery (HS-7888 + HS-7889)', () => {
   /** HS-7889: the underlying open-failure message must be logged so users
    *  / future-Claude can diagnose what actually went wrong. We force a
    *  truly unrecoverable open by writing junk over the data directory and
-   *  then assert that console.error received both the headline message
-   *  and the original error text. */
+   *  then assert the recovery narration names the cluster and the cause.
+   *
+   *  HS-9590 — asserts the DURABLE trail, not just stderr. Every line here now
+   *  goes through `startupLog` (which still mirrors to `console.error`), because
+   *  on a GUI launch the server child's stderr goes nowhere and
+   *  `~/.hotsheet/startup.log` held zero trace of the 2026-08-04 recovery. */
   it('logs the underlying error message when the DB cannot be opened', async () => {
     const dbDir = join(dataDir, 'db');
     mkdirSync(dbDir, { recursive: true });
@@ -72,7 +94,38 @@ describe('getDbByPath corruption recovery (HS-7888 + HS-7889)', () => {
       } catch { /* may throw; we only care about what was logged */ }
 
       const allLogged = errorSpy.mock.calls.map(args => args.map(String).join(' ')).join('\n');
-      expect(allLogged).toMatch(/Failed to open database/i);
+      // The cause (HS-7889) …
+      expect(allLogged).toMatch(/recovery: failed to open/i);
+      // … the cluster it happened to, so a multi-project log is readable …
+      expect(allLogged).toContain(dbDir);
+      // … and where the data was preserved, which is the only pointer a user
+      // has to the copy that still holds their tickets.
+      expect(allLogged).toMatch(/preserving as .*db-corrupt-/i);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  /** HS-9590 — the recovery narration must reach `~/.hotsheet/startup.log`.
+   *  `console.error` alone is invisible on a GUI launch (docs/134 §134.5), which
+   *  is why the 2026-08-04 incident left an absorbed-rejection line naming a
+   *  project nobody could identify. Asserting the file (not the spy) is the
+   *  point: a future refactor back to `console.error` would keep the test above
+   *  green and silently undo this one. */
+  it('writes the recovery narration to the durable startup log', async () => {
+    const dbDir = join(dataDir, 'db');
+    mkdirSync(dbDir, { recursive: true });
+    writeFileSync(join(dbDir, 'PG_VERSION'), 'not-a-real-version\n');
+    writeFileSync(join(dbDir, 'global'), 'corrupt');
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      setDataDir(dataDir);
+      try { await getDb(); } catch { /* the log is what matters */ }
+      const log = readStartupLogForTest();
+      expect(log).toMatch(/recovery: failed to open/i);
+      expect(log).toContain(dbDir);
+      expect(log).toMatch(/preserving as .*db-corrupt-/i);
     } finally {
       errorSpy.mockRestore();
     }

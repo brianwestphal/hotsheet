@@ -492,7 +492,9 @@ export function handleLiveStorageFailure(dbPath: string, err: unknown): void {
   if (storageFailureReported.has(dataDir)) return;
   storageFailureReported.add(dataDir);
   writePendingRecovery(dataDir, 1, 'live-storage-failure');
-  console.error(
+  // HS-9590 — durable for the same reason as the corrupt-open path: this is the
+  // only record that a live cluster stopped accepting writes.
+  startupLog(
     `[db] storage corruption on a LIVE cluster (${dbPath}): ${getErrorMessage(err)}\n` +
     '[db] this database cannot accept further writes. It has been marked for recovery — ' +
     'RESTART Hot Sheet and it will be preserved aside and restored from the newest snapshot/backup automatically.',
@@ -1067,7 +1069,7 @@ async function getDbByPath(dbPath: string): Promise<PGlite> {
     return db;
   } catch (probeErr: unknown) {
     const m = getErrorMessage(probeErr);
-    console.error('[db] integrity probe failed after open:', m);
+    startupLog(`[db] recovery: integrity probe failed after opening ${dbPath}: ${m}`);
     databases.delete(dbPath);
     forgetCluster(dbPath);
     try { await db.close(); } catch { /* already broken */ }
@@ -1230,7 +1232,7 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
     const { listRestoreSources } = await import('./restore.js');
     sources = await listRestoreSources(dataDir);
   } catch (e) {
-    console.error('[db] could not enumerate restore sources:', e);
+    startupLog(`[db] recovery: could not enumerate restore sources: ${getErrorMessage(e)}`);
     return null;
   }
   for (const src of sources) {
@@ -1238,11 +1240,11 @@ async function tryRestoreFromSources(dbPath: string, dataDir: string): Promise<{
       const buffer = readFileSync(src.path);
       const db = await openAndCacheDb(dbPath, new Blob([buffer]));
       const ticketCount = await probeIntegrity(db);
-      console.error(`[db] auto-restored from ${src.label} (${ticketCount} tickets)`);
+      startupLog(`[db] recovery: auto-restored ${dbPath} from ${src.label} (${String(ticketCount)} tickets)`);
       return { db, label: src.label, ticketCount };
     } catch (e) {
       const m = getErrorMessage(e);
-      console.error(`[db] restore source ${src.label} did not load: ${m}`);
+      startupLog(`[db] recovery: restore source ${src.label} did not load: ${m}`);
       // Un-cache + wipe the partial dir before trying the next source.
       const bad = databases.get(dbPath);
       if (bad) { databases.delete(dbPath); forgetCluster(dbPath); try { await bad.close(); } catch { /* ignore */ } }
@@ -1290,7 +1292,7 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
   if (pending === null) return null; // fast path — always on POSIX + the normal case
 
   if (pending.attempts > MAX_DEFERRED_RECOVERY_ATTEMPTS) {
-    console.error(`[db] deferred recovery gave up after ${String(pending.attempts)} attempts; leaving the corrupt cluster for manual rescue.`);
+    startupLog(`[db] recovery: deferred recovery for ${dataDir} gave up after ${String(pending.attempts)} attempts; leaving the corrupt cluster for manual rescue.`);
     clearPendingRecovery(dataDir);
     return null;
   }
@@ -1304,11 +1306,14 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
   const alreadyPreserved = preserved !== undefined && existsSync(preserved);
   if (!existsSync(dbPath) && !alreadyPreserved) { clearPendingRecovery(dataDir); return null; }
 
-  console.error(pending.reason === 'live-storage-failure'
-    ? '[db] completing deferred recovery — a previous run\'s database stopped accepting writes (storage/WAL corruption)…'
+  // HS-9590 — the ENTRY announcement is the most load-bearing line of the lot:
+  // it is the one that says a recovery is happening at all, and which of the
+  // three reasons brought us here.
+  startupLog(`[db] recovery: completing deferred recovery for ${dataDir} — ` + (pending.reason === 'live-storage-failure'
+    ? 'a previous run\'s database stopped accepting writes (storage/WAL corruption)'
     : pending.reason === 'recovery-interrupted'
-      ? '[db] completing deferred recovery — a previous recovery was interrupted after preserving the corrupt database but before restoring it…'
-      : '[db] completing deferred recovery — a prior launch could not move the corrupt database aside in-process (Windows handle lock)…');
+      ? 'a previous recovery was interrupted after preserving the corrupt database but before restoring it'
+      : 'a prior launch could not move the corrupt database aside in-process (Windows handle lock)'));
 
   let corruptPath: string;
   if (alreadyPreserved) {
@@ -1327,10 +1332,10 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
         const alsoCorrupt = `${dbPath}-corrupt-${Date.now()}`;
         try {
           await renameDirWithRetry(dbPath, alsoCorrupt);
-          console.error(`[db] a second cluster had appeared at db/; preserved it as ${alsoCorrupt}.`);
+          startupLog(`[db] recovery: a second cluster had appeared at db/; preserved it as ${alsoCorrupt}`);
         } catch (renameErr: unknown) {
           writePendingRecovery(dataDir, pending.attempts + 1, pending.reason, preserved);
-          console.error(`[db] deferred recovery could not move the newer db/ aside: ${getErrorMessage(renameErr)}`);
+          startupLog(`[db] recovery: deferred recovery could not move the newer db/ aside: ${getErrorMessage(renameErr)}`);
           return null;
         }
       } else {
@@ -1343,7 +1348,7 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
       await renameDirWithRetry(dbPath, corruptPath);
     } catch (renameErr: unknown) {
       writePendingRecovery(dataDir, pending.attempts + 1, pending.reason, preserved);
-      console.error(`[db] deferred recovery could not move db/ yet: ${getErrorMessage(renameErr)}`);
+      startupLog(`[db] recovery: deferred recovery could not move db/ yet: ${getErrorMessage(renameErr)}`);
       return null;
     }
   }
@@ -1358,10 +1363,10 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
   });
   clearPendingRecovery(dataDir);
   if (restored !== null) {
-    console.error(`[db] deferred recovery restored from ${restored.label} (${String(restored.ticketCount)} tickets).`);
+    startupLog(`[db] recovery: deferred recovery restored ${dataDir} from ${restored.label} (${String(restored.ticketCount)} tickets)`);
     return restored.db;
   }
-  console.error('[db] deferred recovery: no snapshot/backup could be loaded; starting with a fresh empty database.');
+  startupLog(`[db] recovery: deferred recovery found no loadable snapshot/backup for ${dataDir}; starting a fresh EMPTY database`);
   return null;
 }
 
@@ -1377,7 +1382,14 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   // log hid both `err.message` (e.g. "Aborted(). Build with -sASSERTIONS
   // for more info.") and PGLite's PANIC stderr line, so users saw "tickets
   // gone" with zero cause.
-  console.error('Failed to open database:', message);
+  // HS-9590 — through the STARTUP LOG, not `console.error`. Every line in this
+  // function narrates the window in which a user's data exists only as a
+  // directory being moved, and on a GUI launch the server child's stderr goes
+  // nowhere (docs/134 §134.5). `~/.hotsheet/startup.log` held ZERO trace of the
+  // 2026-08-04 recovery — so the HS-9572 absorbed-rejection line landed there
+  // naming a project nobody could identify. `startupLog` still mirrors to
+  // stderr, so terminal launches are unchanged.
+  startupLog(`[db] recovery: failed to open ${dbPath}: ${message}`);
   if (stack !== undefined) console.error(stack);
 
   // HS-7888 mitigation: a stale postmaster.pid from an unclean shutdown
@@ -1395,7 +1407,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
       return db;
     } catch (retryErr: unknown) {
       const retryMessage = getErrorMessage(retryErr);
-      console.error('Retry after stale postmaster.pid removal also failed:', retryMessage);
+      startupLog(`[db] recovery: retry after stale postmaster.pid removal also failed: ${retryMessage}`);
       const bad = databases.get(dbPath);
       if (bad) { databases.delete(dbPath); forgetCluster(dbPath); try { await bad.close(); } catch { /* ignore */ } }
     }
@@ -1407,7 +1419,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   // as proven by the 2026-04-27 incident which restored 639/639 tickets.
   const dataDir = dbPath.replace(/[\\/]db$/, '');
   const corruptPath = `${dbPath}-corrupt-${Date.now()}`;
-  console.error(`Database appears to be corrupt. Preserving as ${corruptPath} ...`);
+  startupLog(`[db] recovery: ${dbPath} appears corrupt; preserving as ${corruptPath}`);
 
   // HS-9572 — everything from here to the recovery marker is the window where
   // the user's data exists ONLY as the directory we are about to rename. On
@@ -1430,7 +1442,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
     // rename above succeeds, so this branch never runs.
     const prev = readPendingRecovery(dataDir);
     writePendingRecovery(dataDir, (prev?.attempts ?? 0) + 1);
-    console.error(`Could not preserve corrupt database directory in-process: ${renameMessage}. Wrote a pending-recovery marker — Hot Sheet will auto-recover from the latest snapshot on the next restart.`);
+    startupLog(`[db] recovery: could not preserve ${dbPath} in-process: ${renameMessage}. Wrote a pending-recovery marker — Hot Sheet will auto-recover from the latest snapshot on the next restart.`);
     throw err;
   }
 
@@ -1464,7 +1476,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   // cluster + the HS-7899 blocking restore banner (marker without
   // `restoredFrom`). dbPath is `<dataDir>/db`; the marker lives next to the
   // other .hotsheet/ state.
-  console.error('No snapshot or backup could be restored; creating a fresh empty database.');
+  startupLog(`[db] recovery: no snapshot or backup could be restored for ${dataDir}; starting a fresh EMPTY database (the preserved copy is at ${corruptPath})`);
   writeRecoveryMarker(dataDir, {
     corruptPath,
     kind: 'corrupt-open',

@@ -137,3 +137,39 @@ Each of these is intentionally small + independently shippable.
 - §41 — JSON co-save — orthogonal escape hatch.
 - §42 — Database Repair — manual recovery for cases where the live cluster ends up unrecoverable despite all the prevention work in this doc.
 - §44 — WASM `pg_resetwal` spike — automation of §42 if we ever ship our own resetwal.
+
+## 45.9 The recovery path narrates to the durable log (HS-9590)
+
+Every decision point in `recoverFromOpenFailure` / `completeDeferredRecovery` /
+`handleLiveStorageFailure` now goes through **`startupLog`** rather than
+`console.error`. `startupLog` still mirrors to stderr, so a terminal launch reads
+exactly as before; the change is that the line also reaches
+`~/.hotsheet/startup.log`.
+
+**Why it mattered.** On a production GUI launch the server child's stderr goes
+nowhere (docs/134 §134.5). `~/.hotsheet/startup.log` covering 2026-07-31 →
+2026-08-05 contained **zero** matches for `corrupt`, `Preserving as`, or
+`recovery` — including across the 2026-08-04 incident, which certainly ran that
+path. So the only durable record of that recovery was HS-9572's absorbed-rejection
+line:
+
+```
+[fatal] absorbed 1 unhandled rejection(s) during the data-critical section "db corrupt-open recovery" … #<ErrnoError>
+```
+
+naming a project nobody could identify, a cluster nobody could locate, and an
+outcome nobody could check. It also made HS-9577's premise ("check whether it
+recurs in `startup.log`") unable to distinguish *no recurrence* from *no recovery*.
+
+The persisted set is deliberately small — the points at which the outcome could
+differ: entering recovery (with the cluster path and the open error), the
+`corruptPath` it renamed to, which restore source won and its ticket count (or
+that none loaded), the three deferred-recovery reasons, the Windows
+in-process-rename deferral, the integrity-probe failure, and a live cluster that
+stopped accepting writes. Each line names the **cluster or dataDir**, so a
+multi-project log stays readable.
+
+Pinned by `connection.test.ts::writes the recovery narration to the durable
+startup log`, which asserts the **file** (via the `HOTSHEET_STARTUP_LOG`
+override) rather than a `console.error` spy — a refactor back to `console.error`
+would keep the sibling stderr test green and silently undo this.
