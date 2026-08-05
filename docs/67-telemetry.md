@@ -576,3 +576,66 @@ aggregation mapping, are HS-9603. Note also that **nothing arrives until Hot
 Sheet asks for it** — it sets `CLAUDE_CODE_ENABLE_TELEMETRY=1` when spawning a
 Claude terminal (`terminals/registry/otelEnv.ts`) and has no codex equivalent
 yet.
+
+## 67.13 Turning Codex's telemetry on (HS-9603, step 1)
+
+Codex speaks the same OTLP that Claude Code does, and `buildOtelEnv` already
+injects the endpoint and the `hotsheet_project` routing attribute into **every**
+spawned terminal — codex ones included. One thing was missing, and it is why no
+codex telemetry has ever reached Hot Sheet: **codex's exporter is off by
+default and has no env switch.**
+
+Measured against codex-cli 0.146.0:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT`, `..._HEADERS`, `OTEL_RESOURCE_ATTRIBUTES`,
+  `OTEL_SERVICE_NAME` — **present** in the binary.
+- `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` — **absent**. Choosing an
+  exporter is a config decision (`[otel] exporter`), not an env one.
+
+### `codex -c`, not `config.toml`
+
+Writing `~/.codex/config.toml` would work, but it mutates the user's **global**
+config for a per-project, per-terminal concern. `codex -c key=value` overrides
+the same setting per invocation, touches no file, and composes with the launch
+line Hot Sheet already builds (`aiTools/serverCapabilities.ts`). `-c` is a global
+option, so it is inserted directly after the binary — before any subcommand.
+
+### The shape is a tagged enum, and the obvious spelling is wrong
+
+```
+codex -c 'otel.exporter="otlp-http"'                                    ✗ rejected
+codex -c 'otel.exporter={otlp-http={endpoint="…",protocol="binary"}}'   ✓ accepted
+codex -c 'otel.exporter="none"'                                         ✓ accepted
+```
+
+Verified with **`codex doctor`**, which fails its `config` check on a malformed
+override — so this is codex's own parser validating the flag, not an inference
+from the binary's strings. That matters here specifically: a bad flag would break
+every codex terminal, which is exactly the HS-9594 failure mode. The generated
+flag is re-checked against `codex doctor` as part of developing this, and its
+exact shape is pinned in `codexTelemetry.test.ts`.
+
+`protocol="binary"` (protobuf) matches Claude's `http/protobuf`; the receiver
+decodes both (HS-8471).
+
+### Gating
+
+The same `telemetry_enabled` setting governs both tools — default-on, only an
+explicit `false` opts out (HS-8684) — so a user who turns telemetry off for a
+project gets neither. The flag is also omitted when both metrics and logs are
+off (nothing left to export) and when the port or project secret is missing (the
+receiver would drop the payload anyway, per §67.5.3).
+
+### What this does and does not deliver
+
+Codex telemetry now **flows**, and HS-9602's emitter attribution will label the
+dashboard "Codex Usage" the moment a row lands. What it does not yet do is
+aggregate: codex's counters are `codex.*` / `gen_ai.usage.*`, and the cost/token
+rollup still matches only `claude_code.*`. That mapping — and the
+**cost-unavailable UI** that codex needs, because it reports **no cost at all**
+— are the rest of HS-9603.
+
+**Not verified end-to-end.** Confirming that bytes actually arrive needs a real
+codex turn (network, auth, a live model call). The flag is parser-validated, so
+the worst case is that no data appears — which is today's state — rather than a
+broken terminal.

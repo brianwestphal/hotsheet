@@ -68,6 +68,7 @@ import {
 } from '../skills.js';
 import { noteUnhostedCodexLaunch } from '../terminals/codexHostedWarning.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
+import { withCodexOtel } from './codexTelemetry.js';
 import { ensureHooksFile } from './hooksFile.js';
 
 export interface SkillsCapability {
@@ -229,9 +230,12 @@ const COMMANDS: Readonly<Record<string, CommandCapability>> = {
       const modelB = deps.codexModelB ?? codexDriveDiscoverEnabled();
       if (modelB) {
         const remote = (deps.codexRemote ?? codexTerminalRemoteCommand)(dataDir);
-        if (remote !== null) return remote;
+        // HS-9603 — codex's OTLP exporter is off by default and has no env
+        // switch, so the `-c` override is the only thing that turns telemetry
+        // on. `buildOtelEnv` already supplied the endpoint + routing attribute.
+        if (remote !== null) return withCodexOtel(remote, dataDir);
       }
-      return 'codex';
+      return withCodexOtel('codex', dataDir);
     },
   },
   // HS-9319 — Antigravity is the one tool whose binary differs from its id.
