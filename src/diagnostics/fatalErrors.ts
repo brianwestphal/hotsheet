@@ -203,7 +203,27 @@ export function formatFatalReport(
   return lines;
 }
 
-/** Best-effort one-line description of an arbitrary thrown value. */
+/** HS-9591 — cap on the serialized form of a non-`Error` thrown value. A rejection
+ *  reason can be an arbitrarily large payload, and one of these lines lands in
+ *  `~/.hotsheet/startup.log`, which is size-bounded and shared with every other
+ *  diagnostic. Generous enough that a realistic error object survives intact. */
+const MAX_DESCRIBED_LENGTH = 500;
+
+/**
+ * Best-effort one-line description of an arbitrary thrown value.
+ *
+ * HS-9591 — the non-`Error` branch matters more than it looks. Rejections from
+ * inside WASM are not `Error` subclasses at all: PGLite's Emscripten FS error is
+ * literally `class { constructor(e) { this.name = 'ErrnoError'; this.errno = e } }`
+ * — no `message`, no `stack`, no `Error` prototype, and `String(value)` is
+ * `[object Object]`. Its `errno` is the only fact it carries, and it is the fact
+ * that matters (44 = `ENOENT` = a path that moved). So this must serialize the
+ * value's own properties rather than fall back to a type name.
+ *
+ * The constructor name is prefixed because it is NOT guaranteed to be an own
+ * enumerable property — `JSON.stringify` alone would drop it and leave
+ * `{"errno":44}` with nothing saying what threw.
+ */
 function describeUnknown(value: unknown): string {
   if (value instanceof Error) return `${value.name}: ${value.message}`;
   if (typeof value === 'string') return value;
@@ -213,12 +233,38 @@ function describeUnknown(value: unknown): string {
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
     return String(value);
   }
+  let serialized: string;
   try {
-    return JSON.stringify(value);
+    serialized = JSON.stringify(value);
+    // `JSON.stringify` also returns `undefined` — not a string — for a value
+    // whose `toJSON` returns undefined. The constructor-name prefix below is
+    // then the only thing identifying it, which is still better than nothing.
+    serialized = typeof serialized === 'string' ? serialized : Object.prototype.toString.call(value);
   } catch {
     // Circular, getter-throwing, or BigInt-bearing values must not turn the
     // fatal handler into a second fatal.
-    return Object.prototype.toString.call(value);
+    serialized = Object.prototype.toString.call(value);
+  }
+  const name = constructorNameOf(value);
+  const described = name === null ? serialized : `${name} ${serialized}`;
+  return described.length <= MAX_DESCRIBED_LENGTH
+    ? described
+    : `${described.slice(0, MAX_DESCRIBED_LENGTH)}… (${String(described.length)} chars)`;
+}
+
+/** The value's constructor name, when it adds anything. Null for plain objects
+ *  (`Object` is noise) and for anything whose prototype chain we can't read
+ *  without risking a throw. */
+function constructorNameOf(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  try {
+    const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
+    if (typeof name !== 'string' || name === '' || name === 'Object' || name === 'Array') return null;
+    return name;
+  } catch {
+    // A getter-throwing or null-prototype value: no name is better than a fault
+    // inside the fault handler.
+    return null;
   }
 }
 

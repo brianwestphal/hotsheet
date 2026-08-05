@@ -256,4 +256,64 @@ describe('data-critical sections (HS-9572)', () => {
     expect(logged.join('\n')).toContain('absorbed 1 unhandled rejection');
     expect(logged.join('\n')).toContain('db corrupt-open recovery');
   });
+
+  /**
+   * HS-9591 — the value that actually escapes during a corrupt-open recovery is
+   * NOT an `Error`. PGLite's Emscripten FS error is a bare class with no
+   * `message`, no `stack` and no `Error` prototype, so `String(reason)` is
+   * `[object Object]`. Its `errno` is the only fact it carries and the only one
+   * that matters (44 = ENOENT = a path that moved — HS-9577 reproduced this).
+   * If the summary drops it, the next occurrence costs another investigation.
+   */
+  it('keeps the errno of a stackless, non-Error rejection (HS-9591)', () => {
+    const errnoError = new (class ErrnoError {
+      errno = 44;
+      constructor() { Object.defineProperty(this, 'name', { value: 'ErrnoError', enumerable: true }); }
+    })();
+    install();
+    const release = beginDataCriticalSection('db corrupt-open recovery');
+    listeners[0](errnoError);
+    release();
+    const line = logged.join('\n');
+    expect(line).toContain('44');
+    expect(line).toContain('ErrnoError');
+    // The failure mode being guarded: a type-name-only fallback.
+    expect(line).not.toContain('[object Object]');
+  });
+
+  it('names the class even when it is not an own enumerable property', () => {
+    // `JSON.stringify` alone would emit `{"errno":44}` — an errno with nothing
+    // saying what threw.
+    class WasmFault { errno = 9; }
+    install();
+    const release = beginDataCriticalSection('s');
+    listeners[0](new WasmFault());
+    release();
+    expect(logged.join('\n')).toContain('WasmFault');
+    expect(logged.join('\n')).toContain('9');
+  });
+
+  it('bounds a huge rejection value so one line cannot flood the log', () => {
+    // `startup.log` is size-capped and shared with every other diagnostic.
+    install();
+    const release = beginDataCriticalSection('s');
+    listeners[0]({ blob: 'x'.repeat(50_000) });
+    release();
+    const line = logged.join('\n');
+    expect(line.length).toBeLessThan(2_000);
+    expect(line).toContain('chars)');
+  });
+
+  it('survives values that would make the reporter itself throw', () => {
+    // A fault handler that faults is worse than no fault handler.
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    install();
+    const release = beginDataCriticalSection('s');
+    listeners[0](circular);
+    listeners[0](Object.create(null));
+    listeners[0]({ get boom() { throw new Error('getter'); } });
+    expect(() => { release(); }).not.toThrow();
+    expect(logged.join('\n')).toContain('absorbed 3 unhandled rejection');
+  });
 });
