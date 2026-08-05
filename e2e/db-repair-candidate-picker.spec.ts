@@ -76,20 +76,24 @@ function seedFakeCluster(dataDir: string, name: string, mtimeSeconds: number): s
 }
 
 /**
- * Click a control inside the Settings → Backups panel.
+ * Click a control inside the Settings → Backups panel — with a REAL positional
+ * click, deliberately.
  *
- * `dispatchEvent` rather than `click()`: the panel is a scroll container and
- * Playwright's hit-test resolves the click point to the panel rather than the
- * control, so a positional click (forced or not) never reaches the handler.
- * Visible + enabled is asserted first, so what this skips is hit-testing, not
- * the user-facing state. The picker's cramped layout at the bottom of that
- * panel is tracked separately as HS-9588 (the picker layout at the bottom of the Backups panel).
+ * HS-9588: this used to `dispatchEvent('click')` to work around what looked like
+ * a Playwright hit-testing quirk. It was not. `document.elementFromPoint` at the
+ * buttons' centers returned `.settings-tab-panel`, and the reason was
+ * `pointer-events: none` inherited from `[data-scope-complex].scope-locked` —
+ * the docs/95 scope wrapper that Database Repair had been placed inside. Every
+ * repair control was inert for a real user in the DEFAULT view, and a
+ * `dispatchEvent` workaround would have hidden that forever.
+ *
+ * So these clicks must stay positional: they are the assertion.
  */
 async function clickInPanel(page: Page, selector: string): Promise<void> {
   const el = page.locator(selector);
   await expect(el).toBeVisible({ timeout: 10000 });
   await expect(el).toBeEnabled();
-  await el.dispatchEvent('click');
+  await el.click({ timeout: 10000 });
 }
 
 /** Open Settings and click "Run pg_resetwal…", which is what opens the picker. */
@@ -105,6 +109,77 @@ async function openPicker(page: Page): Promise<void> {
 function optionTexts(page: Page): Promise<string[]> {
   return page.locator('#db-repair-corrupt-select option').allTextContents();
 }
+
+/**
+ * HS-9588 — Database Repair must be REACHABLE, in the default view.
+ *
+ * It sat inside the docs/95 `[data-scope-complex]` wrapper, which sets
+ * `pointer-events: none` when locked — and the default (Resolved) scope is a
+ * locked one. So both repair buttons, and everything the flow renders into
+ * `#db-repair-result`, were inert for a real user: clicks landed on the panel
+ * behind them and nothing happened. Repair is an action, not a setting; there is
+ * no local-vs-shared version of "recover my database".
+ *
+ * Asserted via `elementFromPoint` rather than a click, because a click that
+ * silently does nothing is exactly the failure being guarded — the hit test is
+ * the fact, and it is the one a passing `dispatchEvent` workaround concealed.
+ */
+test.describe('Database Repair is reachable in the default scope view (HS-9588)', () => {
+  test('the repair controls receive pointer events', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 15000 });
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="backups"]').click();
+    await expect(page.locator('#db-repair-pg-resetwal-btn')).toBeVisible({ timeout: 10000 });
+
+    // The scope class is applied asynchronously once settings load. Wait for the
+    // lock to be ACTIVE before asserting repair is unaffected by it — otherwise
+    // this test can pass simply by measuring too early, which is how a re-nested
+    // Repair section slipped past the first version of it.
+    await expect(page.locator('.settings-tab-panel[data-panel="backups"] [data-scope-complex].scope-locked'))
+      .toHaveCount(1, { timeout: 10000 });
+
+    const hits = await page.evaluate(() => {
+      const out: Record<string, { pointerEvents: string; hitIsSelf: boolean }> = {};
+      for (const id of ['db-repair-find-working-btn', 'db-repair-pg-resetwal-btn']) {
+        const el = document.getElementById(id);
+        if (el === null) continue;
+        el.scrollIntoView({ block: 'center' });
+        const r = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        out[id] = {
+          pointerEvents: getComputedStyle(el).pointerEvents,
+          hitIsSelf: hit === el || el.contains(hit),
+        };
+      }
+      return out;
+    });
+
+    for (const id of ['db-repair-find-working-btn', 'db-repair-pg-resetwal-btn']) {
+      const hit = hits[id] as { pointerEvents: string; hitIsSelf: boolean } | undefined;
+      expect(hit, `${id} was not measured`).toBeDefined();
+      expect(hit?.pointerEvents, `${id} pointer-events`).toBe('auto');
+      expect(hit?.hitIsSelf, `${id} is the top element at its own center`).toBe(true);
+    }
+  });
+
+  test('the snapshot-protection toggle stays scope-locked — it IS a setting', async ({ page }) => {
+    // The other half of the fix: only Repair moved out of the wrapper. Getting
+    // this wrong in the other direction would let a Local-scope edit silently
+    // write a shared setting.
+    await page.goto('/');
+    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 15000 });
+    await page.locator('#settings-btn').click();
+    await page.locator('.settings-tab[data-tab="backups"]').click();
+    await expect(page.locator('#settings-snapshot-protection')).toBeAttached({ timeout: 10000 });
+    const insideWrapper = await page.evaluate(() =>
+      document.getElementById('settings-snapshot-protection')?.closest('[data-scope-complex]') !== null);
+    expect(insideWrapper).toBe(true);
+    const repairOutside = await page.evaluate(() =>
+      document.getElementById('db-repair-pg-resetwal-btn')?.closest('[data-scope-complex]') === null);
+    expect(repairOutside).toBe(true);
+  });
+});
 
 test.describe('Database Repair candidate picker (HS-9578)', () => {
   test('lists every preserved directory, marks the ones that are not databases, and defaults to the most recoverable', async ({ page, request }) => {

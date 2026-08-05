@@ -5893,6 +5893,15 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     display: none;
   }
 
+  // HS-9588 — the candidate picker's options are long lines, and a `<select>`
+  // sizes itself to its widest one. Unconstrained it ran past the right edge of
+  // the Settings dialog, clipping the tail of every option — which is where the
+  // recoverable-ticket count lives, i.e. the one number the choice is made on.
+  select {
+    max-width: 100%;
+    margin-top: 6px;
+  }
+
   .db-repair-result-ok {
     color: #166534;
   }

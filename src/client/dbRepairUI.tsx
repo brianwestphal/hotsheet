@@ -239,13 +239,22 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
+/**
+ * HS-9588 — the recoverable count leads.
+ *
+ * It used to trail `name — date — size —`, and a `<select>` clips its options
+ * from the RIGHT, so the single number the user is choosing on was the first
+ * thing to disappear when the list didn't fit. Everything after it is context
+ * for distinguishing two similar candidates, which is exactly the right thing to
+ * lose first.
+ */
 function describeCandidate(c: CorruptCluster): string {
   const when = new Date(c.modifiedAt).toLocaleString();
-  if (!c.looksLikeCluster) return `${c.name} — ${when} — not a database (nothing to recover)`;
+  if (!c.looksLikeCluster) return `${c.name} — not a database (nothing to recover) — ${when}`;
   const count = c.recoverableTicketCount === null
     ? 'checking…'
     : `${String(c.recoverableTicketCount)} tickets recoverable`;
-  return `${c.name} — ${when} — ${formatSize(c.sizeBytes)} — ${count}`;
+  return `${count} — ${c.name} — ${when} — ${formatSize(c.sizeBytes)}`;
 }
 
 /**

@@ -101,6 +101,38 @@ and 400'd), and the availability probe accepted a wrong-major binary. Both are
 fixed; the seam between a green server half and an untested client half is
 exactly where they lived.
 
+### 42.3b Repair is an ACTION, not a setting (HS-9588)
+
+The Database Repair section must stay **outside** the `[data-scope-complex]`
+wrapper that the docs/95 scope bar locks.
+
+It was inside it, together with the Snapshot Protection toggle, and
+`[data-scope-complex].scope-locked` sets `pointer-events: none`. **Local is the
+default scope**, and Local is a locked mode — so every repair control was inert
+for a real user: both buttons, and everything the flow renders into
+`#db-repair-result`, including the §42.3a candidate picker and its Restore
+buttons. Clicks landed on the panel behind them and nothing happened.
+`document.elementFromPoint` at a button's own center returned
+`.settings-tab-panel`.
+
+The distinction the original grouping missed: the snapshot toggle is a **setting**
+(`db_snapshot_protection`) with real per-layer semantics, so locking it in a view
+where it cannot be edited is correct. Repair is an **action** — there is no
+local-versus-shared version of "recover my database" — and it is the one surface
+a user reaches precisely when their data is already broken.
+
+Guarded by two tests in `e2e/db-repair-candidate-picker.spec.ts`: one waits for
+the lock to be **active** and then asserts the repair buttons still receive
+pointer events (measuring `elementFromPoint`, not clicking — a click that does
+nothing is the failure being guarded), and one asserts the snapshot toggle is
+still inside the wrapper, so the fix cannot over-correct and let a Local-scope
+edit write a shared setting. The rest of that spec clicks positionally for the
+same reason.
+
+The picker's `<select>` also gained `max-width: 100%`, and `describeCandidate`
+now leads with the recoverable count: a `<select>` clips options from the right,
+so the one number the choice is made on was the first thing to disappear.
+
 ### 42.4 Auto-Mitigation Boundary
 
 Per the HS-7897 feedback (Q5 = `(ii)(a)`):

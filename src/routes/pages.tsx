@@ -825,9 +825,18 @@ pageRoutes.get('/', (c) => {
                   entirely when there are none. */}
               <div id="stranded-backups" className="stranded-backups" hidden></div>
               <div id="backup-list" className="backup-list">Loading backups...</div>
-              {/* HS-9004 — snapshot toggle (`db_snapshot_protection`) + repair are
-                  complex/action surfaces, not yet per-layer aware: read-only in
-                  the Shared/Local scope views. */}
+              {/* HS-9004 — the snapshot toggle (`db_snapshot_protection`) is a real
+                  per-project SETTING that isn't per-layer aware yet, so it goes
+                  read-only in the Shared/Local scope views.
+                  HS-9588 — Database Repair used to be inside this wrapper too, and
+                  must NOT be: `[data-scope-complex].scope-locked` sets
+                  `pointer-events: none`, and the default (Resolved) view is a locked
+                  one — so every repair control, plus everything the flow renders into
+                  `#db-repair-result` (the §42.3a candidate picker and its Restore
+                  buttons), was inert for a real user. Repair is an ACTION, not a
+                  setting: there is no local-vs-shared version of "recover my
+                  database", and it is the one surface a user reaches precisely when
+                  their data is already broken. */}
               <div data-scope-complex>
               {/* HS-8594 — Snapshot Protection subsection (docs/73-snapshot-protection.md §73.6).
                   Toggle is bound to the `db_snapshot_protection` file-setting (default on);
@@ -840,6 +849,8 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-snapshot-protection" /> Protect this project's database with snapshots</label>
                 <span className="settings-hint" id="settings-snapshot-status">Checking snapshot status…</span>
               </div>
+              </div>
+              {/* HS-9588 — deliberately OUTSIDE the `data-scope-complex` wrapper above. */}
               <div className="settings-section-header" style="margin-top:24px">
                 <h3>Database Repair</h3>
               </div>
@@ -849,7 +860,6 @@ pageRoutes.get('/', (c) => {
                 <button className="btn btn-sm" id="db-repair-pg-resetwal-btn">Run pg_resetwal…</button>
               </div>
               <div id="db-repair-result" className="db-repair-result"></div>
-              </div>
             </div>
             <div className="settings-tab-panel" data-panel="context">
               <div className="settings-section-header">
