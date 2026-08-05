@@ -177,9 +177,7 @@ export function driveEventFromNotification(method: string, params: Record<string
 }
 
 /** Display fields + overlay options for an approval server-request; null when the
- *  request isn't an approval. Captured shape (`item/commandExecution/requestApproval`):
- *  params carry `command`, `cwd`, and `availableDecisions` (strings + structured
- *  variants — only the plain string decisions are offered as overlay options). */
+ *  request isn't an approval. */
 export interface ApprovalDisplay {
   tool_name: string;
   description: string;
@@ -187,39 +185,164 @@ export interface ApprovalDisplay {
   options: AcpPermissionOption[];
   /** The Bash-rule primary value for the auto-allow gate (the command), when present. */
   autoAllowCommand: string | null;
+  /** HS-9586 — which response contract this method answers with. Carried on the
+   *  display so the reply site cannot lose track of it between request and
+   *  answer; see `APPROVAL_FAMILIES`. */
+  family: ApprovalFamily;
 }
 
-const APPROVAL_METHODS = new Set([
-  'item/commandExecution/requestApproval',
-  'item/fileChange/requestApproval',
-  'item/permissions/requestApproval',
-  'applyPatchApproval',
-  'execCommandApproval',
-]);
+/**
+ * HS-9586 — codex's approval server-requests do NOT share one response shape.
+ * There are three, and answering with the wrong one is silently read as a
+ * refusal. Verified against `codex app-server generate-json-schema` on
+ * codex-cli 0.146.0 (identical in 0.145.0, so this was never a regression — it
+ * was wrong from the day the drive shipped):
+ *
+ * | method                                  | response type                            | `decision` values |
+ * |-----------------------------------------|------------------------------------------|-------------------|
+ * | `execCommandApproval` (v1)              | `ExecCommandApprovalResponse`            | `approved` / `approved_for_session` / `{denied:{rejection}}` / `abort` / `timed_out` |
+ * | `applyPatchApproval` (v1)               | `ApplyPatchApprovalResponse`             | same (`ReviewDecision`) |
+ * | `item/commandExecution/requestApproval` | `CommandExecutionRequestApprovalResponse`| `accept` / `acceptForSession` / `decline` / `cancel` |
+ * | `item/fileChange/requestApproval`       | `FileChangeRequestApprovalResponse`      | same |
+ * | `item/permissions/requestApproval`      | `PermissionsRequestApprovalResponse`     | **no `decision` at all** — requires `permissions` |
+ *
+ * The reported failure (`npm install motion` approved, codex ran nothing) is the
+ * first row: the drive sent `{decision:'accept'}`, which is not a member of
+ * `ReviewDecision`, so codex could not read it as an approval.
+ */
+export type ApprovalFamily = 'review-decision' | 'item-decision' | 'permissions';
 
-const DECISION_LABELS: Readonly<Record<string, { name: string; kind: AcpPermissionOption['kind'] }>> = {
-  accept: { name: 'Allow', kind: 'allow_once' },
-  acceptForSession: { name: 'Allow for session', kind: 'allow_always' },
-  decline: { name: 'Deny', kind: 'reject_once' },
-  cancel: { name: 'Cancel', kind: 'reject_once' },
+const APPROVAL_FAMILIES: Readonly<Partial<Record<string, ApprovalFamily>>> = {
+  execCommandApproval: 'review-decision',
+  applyPatchApproval: 'review-decision',
+  'item/commandExecution/requestApproval': 'item-decision',
+  'item/fileChange/requestApproval': 'item-decision',
+  'item/permissions/requestApproval': 'permissions',
 };
 
+/**
+ * The overlay's own option ids. Deliberately NOT codex's wire tokens: the popup
+ * is shared with every other agent, and the families spell the same intent
+ * differently. Translating once at the reply boundary (`approvalResponseFromReply`)
+ * means the UI cannot produce a value the wire rejects.
+ */
+export type ApprovalChoice = 'allow' | 'allow_session' | 'deny';
+
+const CHOICE_LABELS: Readonly<Record<ApprovalChoice, { name: string; kind: AcpPermissionOption['kind'] }>> = {
+  allow: { name: 'Allow', kind: 'allow_once' },
+  allow_session: { name: 'Allow for session', kind: 'allow_always' },
+  deny: { name: 'Deny', kind: 'reject_once' },
+};
+
+const CHOICE_ORDER: readonly ApprovalChoice[] = ['allow', 'allow_session', 'deny'];
+
+/**
+ * Choice → the wire tokens that express it, best first. The reply uses the first
+ * token this particular request will accept (see `availableDecisions`), so a
+ * request that offers no `decline` still gets a valid refusal via `cancel`
+ * rather than an invalid one.
+ *
+ * `denied` is absent here because it is a STRUCT variant, not a bare string —
+ * `{decision:'denied'}` would fail to deserialize exactly as `'accept'` did.
+ * It is built in `approvalResponseFromReply`.
+ */
+const WIRE_TOKENS: Readonly<Record<'review-decision' | 'item-decision', Record<ApprovalChoice, readonly string[]>>> = {
+  'review-decision': {
+    allow: ['approved'],
+    allow_session: ['approved_for_session', 'approved'],
+    deny: ['abort'], // the structured `denied` is preferred and handled separately
+  },
+  'item-decision': {
+    allow: ['accept'],
+    allow_session: ['acceptForSession', 'accept'],
+    deny: ['decline', 'cancel'],
+  },
+};
+
+/**
+ * The plain-string decisions this specific request says it accepts, or null when
+ * the request doesn't say.
+ *
+ * ⚠ `availableDecisions` is REAL on the wire but **absent from
+ * `codex app-server generate-json-schema`** — checked in both 0.145.0 and
+ * 0.146.0. `docs/captured/codex-app-server-0.145.0/server-request-item_commandExecution_requestApproval-1.json`
+ * has it. So the generated schema is authoritative for *response* shapes and
+ * incomplete for *request* shapes; don't conclude a request field is fake just
+ * because the schema omits it.
+ *
+ * The captured request offers `['accept', {acceptWithExecpolicyAmendment: …},
+ * 'cancel']` — note **no `decline`**, which is why refusal has to fall back
+ * rather than assume.
+ */
+function availableStringDecisions(params: Record<string, unknown>): Set<string> | null {
+  if (!Array.isArray(params.availableDecisions)) return null;
+  const strings = params.availableDecisions.filter((d): d is string => typeof d === 'string');
+  return strings.length > 0 ? new Set(strings) : null;
+}
+
+/** The first token for `choice` that this request accepts, or null if none does. */
+function pickWireToken(
+  family: 'review-decision' | 'item-decision',
+  choice: ApprovalChoice,
+  available: Set<string> | null,
+): string | null {
+  const candidates = WIRE_TOKENS[family][choice];
+  if (available === null) return candidates.length > 0 ? candidates[0] : null;
+  return candidates.find(t => available.has(t)) ?? null;
+}
+
+/**
+ * Whether to OFFER `choice` as a button — the request must accept its *primary*
+ * token, not merely a fallback. The fallbacks in `WIRE_TOKENS` exist so a reply
+ * is always valid, not so a button can be shown for something the request can't
+ * do: "Allow for session" that silently allows only once is a worse lie than not
+ * offering it.
+ */
+function supportsChoice(
+  family: 'review-decision' | 'item-decision',
+  choice: ApprovalChoice,
+  available: Set<string> | null,
+): boolean {
+  if (available === null) return true;
+  const candidates = WIRE_TOKENS[family][choice];
+  return candidates.length > 0 && available.has(candidates[0]);
+}
+
+/** v1 `execCommandApproval` sends `command` as argv (`string[]`); the v2
+ *  `item/*` methods send an already-joined string. Read both — before HS-9586
+ *  only the string form was handled, so a v1 approval rendered with no command
+ *  in the preview and no value for the auto-allow rule to match. */
+function readCommand(params: Record<string, unknown>): string | null {
+  if (typeof params.command === 'string') return params.command;
+  if (Array.isArray(params.command)) {
+    const parts = params.command.filter((p): p is string => typeof p === 'string');
+    return parts.length > 0 ? parts.join(' ') : null;
+  }
+  return null;
+}
+
 export function approvalDisplayFromRequest(method: string, params: Record<string, unknown>): ApprovalDisplay | null {
-  if (!APPROVAL_METHODS.has(method)) return null;
-  const command = typeof params.command === 'string' ? params.command : null;
+  const family = APPROVAL_FAMILIES[method];
+  if (family === undefined) return null;
+  const command = readCommand(params);
   const cwd = typeof params.cwd === 'string' ? params.cwd : null;
   const reason = typeof params.reason === 'string' ? params.reason : null;
   const kindLabel = method.includes('fileChange') ? 'File change'
     : method.includes('permissions') ? 'Permission'
     : 'Shell command';
-  const available = Array.isArray(params.availableDecisions) ? params.availableDecisions : [];
-  const decisionIds = available.filter((d): d is string => typeof d === 'string' && d in DECISION_LABELS);
-  // Always offer at least allow/deny even if availableDecisions was absent/structured-only.
-  const ids = decisionIds.length >= 2 ? decisionIds : ['accept', 'decline'];
-  const options: AcpPermissionOption[] = ids.map(id => ({
+  // Offer only what this request can actually answer with. "Allow for session"
+  // in particular is often unavailable, and offering a button whose token the
+  // request rejects is how the original bug felt to the user.
+  const available = availableStringDecisions(params);
+  // `deny` is always offered: a refusal must always be reachable, and it has a
+  // fallback token when the primary one is unavailable.
+  const offered = family === 'permissions'
+    ? CHOICE_ORDER
+    : CHOICE_ORDER.filter(c => c === 'deny' || supportsChoice(family, c, available));
+  const options: AcpPermissionOption[] = offered.map(id => ({
     optionId: id,
-    name: DECISION_LABELS[id].name,
-    kind: DECISION_LABELS[id].kind,
+    name: CHOICE_LABELS[id].name,
+    kind: CHOICE_LABELS[id].kind,
   }));
   return {
     tool_name: `Codex: ${kindLabel}`,
@@ -227,13 +350,66 @@ export function approvalDisplayFromRequest(method: string, params: Record<string
     input_preview: [command, cwd !== null ? `cwd: ${cwd}` : null].filter((s): s is string => s !== null).join('\n'),
     options,
     autoAllowCommand: command,
+    family,
   };
 }
 
-/** The decision payload for an overlay reply. A cancelled/dismissed popup declines. */
-export function decisionFromReply(reply: { optionId: string } | { cancelled: true }): { decision: string } {
-  if ('cancelled' in reply) return { decision: 'decline' };
-  return { decision: reply.optionId };
+/** What the user chose, normalized. A cancelled/dismissed popup denies, and any
+ *  unrecognized option id denies too — an approval must never be inferred from
+ *  a value we don't understand. */
+function choiceFromReply(reply: { optionId: string } | { cancelled: true }): ApprovalChoice {
+  if ('cancelled' in reply) return 'deny';
+  return reply.optionId === 'allow' || reply.optionId === 'allow_session' ? reply.optionId : 'deny';
+}
+
+/**
+ * HS-9586 — the response payload for an approval, in the shape the ANSWERED
+ * method actually accepts. This is the function the bug lived in: one payload
+ * was sent for all three families.
+ *
+ * `request` is the original params, needed only by the `permissions` family,
+ * whose grant echoes back what was asked for.
+ */
+export function approvalResponseFromReply(
+  family: ApprovalFamily,
+  reply: { optionId: string } | { cancelled: true },
+  request: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const choice = choiceFromReply(reply);
+  if (family === 'review-decision' || family === 'item-decision') {
+    const available = availableStringDecisions(request);
+    // `denied` is a STRUCT variant carrying the rejection text, not a bare
+    // string, so it is built rather than picked. It is the right refusal for the
+    // v1 family: `abort` stops the whole turn, while `denied` lets the agent try
+    // something else.
+    if (choice === 'deny' && family === 'review-decision') {
+      return { decision: { denied: { rejection: 'Denied in Hot Sheet' } } };
+    }
+    const token = pickWireToken(family, choice, available);
+    // A request that accepts none of our tokens for this choice still has to be
+    // answered with something valid; refuse rather than approve by accident.
+    if (token === null) {
+      return family === 'review-decision'
+        ? { decision: { denied: { rejection: 'Denied in Hot Sheet' } } }
+        : { decision: 'cancel' };
+    }
+    return { decision: token };
+  }
+  // `permissions`: there is no decision field. The response IS the grant, so
+  // allowing echoes the permissions codex asked for and denying grants an empty
+  // profile. `scope` follows the same allow-once / allow-for-session split.
+  const requested = typeof request.permissions === 'object' && request.permissions !== null
+    ? request.permissions as Record<string, unknown>
+    : {};
+  const granted = choice === 'allow' || choice === 'allow_session' ? requested : {};
+  return { permissions: granted, scope: choice === 'allow_session' ? 'session' : 'turn' };
+}
+
+/** The auto-approve payload used when interactive permissions are switched OFF
+ *  (docs/121 O4) — same translation, so the opt-out path cannot drift from the
+ *  interactive one. That drift is precisely what HS-9586 was. */
+export function approvalAutoAcceptResponse(family: ApprovalFamily, request: Record<string, unknown> = {}): Record<string, unknown> {
+  return approvalResponseFromReply(family, { optionId: 'allow' }, request);
 }
 
 /** HS-9395 — display fields for an MCP tool-call elicitation server-request

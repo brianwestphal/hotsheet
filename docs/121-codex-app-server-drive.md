@@ -346,3 +346,71 @@ honouring it would keep the drive disabled with no control left to re-enable it.
 in `codexAppServer.test.ts` and in `codexDriveGate.test.ts` (for a stale status payload
 from an older server), because a silently-disabled drive is exactly what a deletion like
 this invites.
+
+## 121.13 Approval responses are per-method, not one shape (HS-9586)
+
+**The bug:** a user approved `npm install motion` in the §47 overlay and codex ran
+nothing — it read the reply as a refusal. The drive answered every approval with
+`{decision: 'accept'}`, but `accept` is not a member of `ReviewDecision`, the type
+the v1 methods answer with. Wrong from the day the drive shipped, not a
+regression: the contract is identical in codex-cli 0.145.0 and 0.146.0.
+
+### The three response contracts
+
+Verified against `codex app-server generate-json-schema --out <dir>` (0.146.0):
+
+| server request | response type | `decision` values |
+|---|---|---|
+| `execCommandApproval` | `ExecCommandApprovalResponse` | `approved` · `approved_for_session` · `{denied:{rejection}}` · `abort` · `timed_out` |
+| `applyPatchApproval` | `ApplyPatchApprovalResponse` | same (`ReviewDecision`) |
+| `item/commandExecution/requestApproval` | `CommandExecutionRequestApprovalResponse` | `accept` · `acceptForSession` · `decline` · `cancel` |
+| `item/fileChange/requestApproval` | `FileChangeRequestApprovalResponse` | same |
+| `item/permissions/requestApproval` | `PermissionsRequestApprovalResponse` | **none** — the response is a *grant*: `{permissions, scope}` |
+
+Three things follow, and each was independently wrong before:
+
+1. **The v1 methods needed `approved`, not `accept`.** This is the reported bug.
+2. **`denied` is a struct variant** (`{denied:{rejection}}`), so `{decision:'denied'}`
+   would have failed to deserialize the same way `accept` did.
+3. **`item/permissions/requestApproval` has no `decision` field at all.** Allowing
+   echoes back the requested `permissions` (with `scope: 'turn'|'session'`);
+   denying grants an empty profile rather than omitting the required field.
+
+### Choice ids are ours; wire tokens are codex's
+
+The overlay speaks `allow` / `allow_session` / `deny` — Hot Sheet's own vocabulary,
+shared with every other agent — and `approvalResponseFromReply(family, reply, params)`
+translates once at the boundary. The UI therefore cannot emit a token the wire
+rejects, and the auto-approve paths (the O4 opt-out and the allow-rule match) go
+through the same translation instead of a hard-coded literal, which is how they
+came to carry the identical bug.
+
+### `availableDecisions` is real, and the schema omits it
+
+The v2 `item/*` requests carry an `availableDecisions` array naming what *that*
+request accepts — present in
+`docs/captured/codex-app-server-0.145.0/server-request-item_commandExecution_requestApproval-1.json`
+but **absent from the generated JSON Schema in both 0.145.0 and 0.146.0**. So the
+generated schema is authoritative for *responses* and incomplete for *requests*;
+don't conclude a request field is fake because the schema lacks it.
+
+It matters because the captured request offers `accept` + a structured amendment +
+`cancel` and **no `decline`**. So: a button is offered only when the request accepts
+its *primary* token (no "Allow for session" that silently allows once), while the
+reply falls back through alternatives (deny → `decline`, else `cancel`) so a refusal
+is always expressible. `deny` is always offered — a refusal must always be reachable.
+
+### The guard
+
+`src/codexApprovalSchemaContract.test.ts` generates the schema from the **installed**
+codex and validates every payload the drive can produce against the response schema
+for the method it answers — including the auto-accept and dismissed-popup paths. It
+skips when codex is absent (CI) and never starts a daemon or runs a turn.
+
+A unit test could not have caught this: both sides of `expect(reply).toEqual({decision:'accept'})`
+were ours. The contract test also pins the **pre-fix payload as rejected**, so a
+validator too lenient to catch the bug fails loudly rather than passing vacuously.
+
+Also fixed here: v1 `execCommandApproval` sends `command` as argv (`string[]`), and
+only the string form was read — so v1 approvals rendered with no command shown and
+gave the allow-rule gate nothing to match.

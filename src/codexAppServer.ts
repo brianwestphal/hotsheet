@@ -38,14 +38,15 @@ import { createLineSplitter } from './aiTools/lineFraming.js';
 import { getChannelServerPath } from './channel-config.js';
 import { CODEX_MCP_KEY } from './codex.js';
 import {
+  approvalAutoAcceptResponse,
   approvalDisplayFromRequest,
+  approvalResponseFromReply,
   type AppServerIncoming,
   buildNotificationLine,
   buildRequestLine,
   buildResponseLine,
   buildThreadMcpOverride,
   classifyAppServerLine,
-  decisionFromReply,
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
@@ -891,9 +892,10 @@ async function handleServerRequest(session: Session, id: number | string, method
     write(session, buildResponseLine(id, {}));
     return;
   }
-  // O4 — explicit opt-OUT auto-approves in the bridge (no popup).
+  // O4 — explicit opt-OUT auto-approves in the bridge (no popup). HS-9586 — via
+  // the same translation as the interactive path, so the two cannot drift.
   if (!codexInteractivePermissions(session.dataDir)) {
-    write(session, buildResponseLine(id, { decision: 'accept' }));
+    write(session, buildResponseLine(id, approvalAutoAcceptResponse(display.family, params)));
     return;
   }
   // HS-9346-equivalent auto-allow gate: a `permission_allow_rules` match resolves
@@ -904,7 +906,7 @@ async function handleServerRequest(session: Session, id: number | string, method
       // The captured approval params carry the raw command string — it IS the
       // Bash-rule primary value (no JSON input-preview to extract from).
       if (rules.length > 0 && findMatchingAllowRule('Bash', display.autoAllowCommand, rules) !== null) {
-        write(session, buildResponseLine(id, { decision: 'accept' }));
+        write(session, buildResponseLine(id, approvalAutoAcceptResponse(display.family, params)));
         return;
       }
     } catch { /* fall through to the overlay */ }
@@ -919,7 +921,7 @@ async function handleServerRequest(session: Session, id: number | string, method
   const entry = trackPendingPermission(session, id, request_id);
   try {
     const reply = await promise;
-    if (!entry.externallyResolved) write(session, buildResponseLine(id, decisionFromReply(reply)));
+    if (!entry.externallyResolved) write(session, buildResponseLine(id, approvalResponseFromReply(display.family, reply, params)));
   } finally {
     forgetPendingPermission(session, id, request_id);
   }

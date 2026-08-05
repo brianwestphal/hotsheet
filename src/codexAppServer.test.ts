@@ -271,7 +271,9 @@ describe('approvals → §47 overlay bridge', () => {
     expect(pending?.tool_name).toBe('Codex: Shell command');
     expect(pending?.input_preview).toContain('touch ~/.escape');
 
-    resolveAcpPermission(pending!.request_id, { optionId: 'accept' });
+    // HS-9586 — the overlay speaks Hot Sheet's own choice ids; the bridge
+    // translates to the token THIS request accepts.
+    resolveAcpPermission(pending!.request_id, { optionId: 'allow' });
     await flush();
     const reply = fake.sent.find(m => m.id === 'approval-1');
     expect(reply?.result).toEqual({ decision: 'accept' });
@@ -286,7 +288,10 @@ describe('approvals → §47 overlay bridge', () => {
     const pending = pendingAcpPermissionForSecret(getProjectSecret(dataDir));
     resolveAcpPermission(pending!.request_id, { cancelled: true });
     await flush();
-    expect(fake.sent.find(m => m.id === 'approval-1')?.result).toEqual({ decision: 'decline' });
+    // HS-9586 — this request's `availableDecisions` are accept + cancel, with no
+    // `decline`, so the refusal falls back to `cancel` rather than sending a
+    // token the request would reject.
+    expect(fake.sent.find(m => m.id === 'approval-1')?.result).toEqual({ decision: 'cancel' });
   });
 
   it('O4 opt-out (`codex_interactive_permissions: false`) auto-approves without a popup', async () => {

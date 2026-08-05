@@ -4,13 +4,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendTranscriptDetail,
+  approvalAutoAcceptResponse,
   approvalDisplayFromRequest,
+  approvalResponseFromReply,
   buildNotificationLine,
   buildRequestLine,
   buildResponseLine,
   buildThreadMcpOverride,
   classifyAppServerLine,
-  decisionFromReply,
   driveEventFromNotification,
   elicitationDisplayFromRequest,
   elicitationResponseFromReply,
@@ -98,6 +99,8 @@ describe('driveEventFromNotification', () => {
 describe('approvalDisplayFromRequest', () => {
   // The EXACT captured `item/commandExecution/requestApproval` params (HS-9382 probe,
   // docs/captured/codex-app-server-0.145.0/server-request-…json, $HOME sanitized).
+  // Note `availableDecisions` offers accept + a structured amendment + cancel —
+  // and NO `decline`, which is why refusal has to fall back rather than assume.
   const CAPTURED = {
     threadId: '019f8c9b-9b73-7163-84fb-4104fd0b188a',
     turnId: '019f8c9b-9ba6-7830-9a50-71e320e7b77f',
@@ -113,16 +116,47 @@ describe('approvalDisplayFromRequest', () => {
     expect(d?.tool_name).toBe('Codex: Shell command');
     expect(d?.input_preview).toContain('touch ~/.hs9382-escape-probe');
     expect(d?.input_preview).toContain('cwd: ~/.hs9382-probe-project');
-    // Only the plain string decisions become options (structured variants dropped).
-    expect(d?.options.map(o => o.optionId)).toEqual(['accept', 'cancel']);
     expect(d?.autoAllowCommand).toBe(CAPTURED.command);
+    expect(d?.family).toBe('item-decision');
   });
 
-  it('falls back to allow/deny when availableDecisions is absent', () => {
+  it('HS-9586 — hides "Allow for session" when the request does not offer it', () => {
+    // The captured request has no `acceptForSession`. Offering the button anyway
+    // is how the original bug felt to the user: a control whose token the
+    // request rejects.
+    const d = approvalDisplayFromRequest('item/commandExecution/requestApproval', CAPTURED);
+    expect(d?.options.map(o => o.optionId)).toEqual(['allow', 'deny']);
+  });
+
+  it('offers the full set when the request does not constrain decisions', () => {
     const d = approvalDisplayFromRequest('item/fileChange/requestApproval', {});
-    expect(d?.options.map(o => o.optionId)).toEqual(['accept', 'decline']);
+    expect(d?.options.map(o => o.optionId)).toEqual(['allow', 'allow_session', 'deny']);
     expect(d?.tool_name).toBe('Codex: File change');
     expect(d?.autoAllowCommand).toBeNull();
+  });
+
+  it('HS-9586 — classifies each method into its response family', () => {
+    // Getting this wrong is the whole bug: the v1 methods answer with a
+    // different vocabulary than the v2 `item/*` ones, and permissions answers
+    // with no `decision` field at all.
+    const familyOf = (m: string): string | undefined => approvalDisplayFromRequest(m, {})?.family;
+    expect(familyOf('execCommandApproval')).toBe('review-decision');
+    expect(familyOf('applyPatchApproval')).toBe('review-decision');
+    expect(familyOf('item/commandExecution/requestApproval')).toBe('item-decision');
+    expect(familyOf('item/fileChange/requestApproval')).toBe('item-decision');
+    expect(familyOf('item/permissions/requestApproval')).toBe('permissions');
+  });
+
+  it('HS-9586 — reads v1 argv commands, which arrive as string[]', () => {
+    // `ExecCommandApprovalParams.command` is `string[]`; only the v2 methods
+    // send a joined string. Before this, a v1 approval rendered with no command
+    // and gave the auto-allow rule nothing to match on.
+    const d = approvalDisplayFromRequest('execCommandApproval', {
+      command: ['npm', 'install', 'motion'],
+      cwd: '/tmp/proj',
+    });
+    expect(d?.input_preview).toContain('npm install motion');
+    expect(d?.autoAllowCommand).toBe('npm install motion');
   });
 
   it('returns null for non-approval server requests', () => {
@@ -131,11 +165,86 @@ describe('approvalDisplayFromRequest', () => {
   });
 });
 
-describe('decisionFromReply', () => {
-  it('maps an option choice to its decision and a cancel to decline', () => {
-    expect(decisionFromReply({ optionId: 'accept' })).toEqual({ decision: 'accept' });
-    expect(decisionFromReply({ optionId: 'acceptForSession' })).toEqual({ decision: 'acceptForSession' });
-    expect(decisionFromReply({ cancelled: true })).toEqual({ decision: 'decline' });
+/**
+ * HS-9586 — the reported bug: the user approved `npm install motion` and codex
+ * ran nothing. The drive answered EVERY approval with `{decision:'accept'}`, but
+ * `accept` is not a member of `ReviewDecision`, the type `execCommandApproval`
+ * and `applyPatchApproval` answer with. Codex could not read it as an approval.
+ *
+ * `codexApprovalSchemaContract.test.ts` checks these payloads against codex's
+ * OWN generated schema; these pin the intent.
+ */
+describe('approvalResponseFromReply (HS-9586)', () => {
+  it('approves a v1 exec approval with `approved`, not `accept`', () => {
+    expect(approvalResponseFromReply('review-decision', { optionId: 'allow' }))
+      .toEqual({ decision: 'approved' });
+  });
+
+  it('approves a v2 item approval with `accept`', () => {
+    expect(approvalResponseFromReply('item-decision', { optionId: 'allow' }))
+      .toEqual({ decision: 'accept' });
+  });
+
+  it('uses the STRUCTURED denied variant for v1, never the bare string', () => {
+    // `{decision:'denied'}` would fail to deserialize the same way `'accept'`
+    // did — `denied` carries a rejection message.
+    const r = approvalResponseFromReply('review-decision', { optionId: 'deny' });
+    const decision = (r as { decision: { denied?: { rejection?: unknown } } }).decision;
+    expect(typeof decision.denied?.rejection).toBe('string');
+  });
+
+  it('falls back to `cancel` when the request offers no `decline`', () => {
+    // The captured request's availableDecisions are accept + amendment + cancel.
+    const r = approvalResponseFromReply('item-decision', { optionId: 'deny' }, {
+      availableDecisions: ['accept', 'cancel'],
+    });
+    expect(r).toEqual({ decision: 'cancel' });
+  });
+
+  it('prefers `decline` over `cancel` when both are offered', () => {
+    const r = approvalResponseFromReply('item-decision', { optionId: 'deny' }, {
+      availableDecisions: ['accept', 'decline', 'cancel'],
+    });
+    expect(r).toEqual({ decision: 'decline' });
+  });
+
+  it('downgrades allow-for-session to a plain allow when unsupported', () => {
+    const r = approvalResponseFromReply('item-decision', { optionId: 'allow_session' }, {
+      availableDecisions: ['accept', 'cancel'],
+    });
+    expect(r).toEqual({ decision: 'accept' });
+  });
+
+  it('a dismissed popup denies, and never approves', () => {
+    const denied = approvalResponseFromReply('review-decision', { cancelled: true });
+    expect(Object.keys((denied as { decision: object }).decision)).toEqual(['denied']);
+    expect(approvalResponseFromReply('item-decision', { cancelled: true }))
+      .toEqual({ decision: 'decline' });
+  });
+
+  it('an unrecognized option id denies rather than approving by accident', () => {
+    expect(approvalResponseFromReply('item-decision', { optionId: 'yolo' }))
+      .toEqual({ decision: 'decline' });
+  });
+
+  it('answers a permissions request with a GRANT, which has no decision field', () => {
+    const requested = { fileSystem: { readRoots: ['/tmp'] } };
+    expect(approvalResponseFromReply('permissions', { optionId: 'allow' }, { permissions: requested }))
+      .toEqual({ permissions: requested, scope: 'turn' });
+    expect(approvalResponseFromReply('permissions', { optionId: 'allow_session' }, { permissions: requested }))
+      .toEqual({ permissions: requested, scope: 'session' });
+    // Denying grants nothing rather than omitting the required field.
+    expect(approvalResponseFromReply('permissions', { optionId: 'deny' }, { permissions: requested }))
+      .toEqual({ permissions: {}, scope: 'turn' });
+  });
+
+  it('the auto-accept path uses the same translation as the interactive one', () => {
+    // The opt-out path (docs/121 O4) and the allow-rule path both used to send a
+    // hard-coded `{decision:'accept'}`, so they carried the identical bug.
+    for (const family of ['review-decision', 'item-decision'] as const) {
+      expect(approvalAutoAcceptResponse(family))
+        .toEqual(approvalResponseFromReply(family, { optionId: 'allow' }));
+    }
   });
 });
 
