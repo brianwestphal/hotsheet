@@ -1,7 +1,7 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { resolveAutoContextWithDefaults } from '../autoContextDefaults.js';
+import { loadAutoContext, resolveTicketAutoContext } from '../autoContextResolve.js';
 import { analyzeBlockedReason, extractTicketRefs, formatUnblockHint } from '../blockedReasonEval.js';
 import { getDataDir, runWithDataDir } from '../db/connection.js';
 import { parseNotes } from '../db/notes.js';
@@ -9,16 +9,15 @@ import { getAttachments, getCategories, getSettings, getTickets } from '../db/qu
 import { scheduleSnapshot } from '../db/snapshot.js';
 import { getTicketStatusesByNumbers } from '../db/tickets.js';
 import { instrumentAsync } from '../diagnostics/freezeLogger.js';
-import { readFileSettings, readLocalSettings } from '../file-settings.js';
+import { readFileSettings } from '../file-settings.js';
 // HS-8558 — debounce intervals live in `src/limits.ts`. Aliased here
 // to keep the local call sites readable.
 import { OPEN_TICKETS_SYNC_DEBOUNCE_MS as OPEN_TICKETS_DEBOUNCE, WORKLIST_SYNC_DEBOUNCE_MS as WORKLIST_DEBOUNCE } from '../limits.js';
 import { buildReviewNotesSection, getGlassboxNoteInstructions } from '../reviewNotesInducement.js';
 import { getBackgroundScheduler, PRIORITY } from '../scheduler/backgroundScheduler.js';
 // HS-8671 — zod-validated DB-JSON parsing (drops the blind `as` casts).
-import { AutoContextArraySchema, type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
+import { type AutoContextEntry, parseJsonOrNull, TagsArraySchema } from '../schemas.js';
 import { getProjectSecret } from '../secret-file.js';
-import { isArrayDelta } from '../settingsDelta.js';
 import type { Ticket } from '../types.js';
 import { pushAll } from '../utils/largeArray.js';
 
@@ -154,16 +153,11 @@ async function formatTicket(
     lines.push(`- Tags: ${display.join(', ')}`);
   }
 
-  // Build auto-context: category first, then tags alphabetically. HS-9247 —
-  // skip empty text so an explicit empty-text override (which suppresses a
-  // built-in default) doesn't prepend blank lines.
-  const contextParts: string[] = [];
-  const catContext = autoContext.find(ac => ac.type === 'category' && ac.key === ticket.category);
-  if (catContext && catContext.text.trim()) contextParts.push(catContext.text);
-  const tagContexts = autoContext
-    .filter(ac => ac.type === 'tag' && ticketTags.some(t => t.toLowerCase() === ac.key.toLowerCase()))
-    .sort((a, b) => a.key.localeCompare(b.key));
-  for (const tc of tagContexts) if (tc.text.trim()) contextParts.push(tc.text);
+  // HS-9596 — the match rule now lives in `autoContextResolve.ts` so the API and
+  // MCP surfaces can carry the same blocks (HS-9593). Ordering and the
+  // empty-text-is-a-suppression rule (HS-9247) are unchanged; this is the same
+  // logic, just callable from more than one place.
+  const contextParts = resolveTicketAutoContext(ticket, autoContext).map(p => p.text);
 
   const fullDetails = contextParts.length > 0
     ? (contextParts.join('\n\n') + (ticket.details.trim() ? '\n\n' + ticket.details : ''))
@@ -207,35 +201,6 @@ async function formatTicket(
   }
 
   return lines.join('\n');
-}
-
-async function loadAutoContext(): Promise<AutoContextEntry[]> {
-  const settings = await getSettings();
-  const userEntries = parseJsonOrNull(AutoContextArraySchema, settings.auto_context) ?? [];
-  // HS-9247 — layer the user's saved entries over the built-in defaults so a
-  // fresh project gets useful per-category guidance; a user entry (incl. an
-  // explicit empty-text one) overrides the default for that category/tag.
-  // HS-9256 — but a category whose SHARED entry was locally hidden must NOT fall
-  // back to the default (that would defeat the local disable).
-  return resolveAutoContextWithDefaults(userEntries, localHiddenAutoContextIds());
-}
-
-/**
- * HS-9256 — the `type:key` ids the LOCAL settings layer hides for `auto_context`
- * (a shared entry deleted on this machine). `getSettings()` returns the RESOLVED
- * array with those already removed, so the built-in default would re-inject them
- * unless we suppress it here. Reads the raw local delta's `hidden` list. Best-
- * effort — any read/shape problem yields an empty set (defaults apply normally).
- */
-function localHiddenAutoContextIds(): ReadonlySet<string> {
-  try {
-    const localAc = readLocalSettings(getDataDir()).auto_context;
-    if (isArrayDelta(localAc) && Array.isArray(localAc.hidden)) {
-      // Any non-string junk in a malformed file simply never matches a default's id.
-      return new Set(localAc.hidden);
-    }
-  } catch { /* best-effort — fall through to no suppression */ }
-  return new Set();
 }
 
 async function formatCategoryDescriptions(usedCategories: Set<string>): Promise<string> {
@@ -456,7 +421,7 @@ async function syncWorklist(state: SyncState): Promise<void> {
     if (tickets.length === 0) {
       pushAll(sections, await buildAutoPrioritizeSection(port, secretHeader));
     } else {
-      const autoContext = await loadAutoContext();
+      const autoContext = await loadAutoContext(getDataDir());
       // HS-9337 — batch-resolve the statuses of every ticket referenced by an Up Next
       // ticket's `blocked_reason`, so `formatTicket` can flag "possibly unblocked" when
       // all referenced blockers are done. One query for the whole worklist.
@@ -501,7 +466,7 @@ async function syncOpenTickets(state: SyncState): Promise<void> {
     // Group by status
     const started = tickets.filter(t => t.status === 'started');
     const notStarted = tickets.filter(t => t.status === 'not_started');
-    const autoContext = await loadAutoContext();
+    const autoContext = await loadAutoContext(getDataDir());
 
     if (started.length > 0) {
       sections.push(`## Started (${started.length})`);
