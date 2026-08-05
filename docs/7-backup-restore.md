@@ -288,3 +288,47 @@ time. `stat` is safe on this path; a read would not be. It fails safe in both di
 a `stat` that throws counts the backup as substantive (protect rather than risk deleting
 the last good copy), and a tier where nothing can be classified simply gets no extra
 protection.
+
+## 7.12 "Back up now" waits instead of refusing (HS-9595)
+
+`POST /api/backups/now` used to return **409 "Backup already in progress"** when
+the server's own scheduled or startup backup was mid-flight. The user asked for a
+backup and got an error, for a request that was entirely satisfiable — just not
+that instant. Measured on a cold server, three attempts 1.5 s apart went
+**409 → 200 → 409**, so the collision is neither rare nor brief.
+
+**Maintainer decision (2026-08-05): option A — wait, then return the result.**
+
+`triggerManualBackup` now awaits any in-flight backup before running its own.
+Two things make that correct rather than merely nicer:
+
+1. **The wait is bounded** (`MANUAL_BACKUP_WAIT_MS`, 30 s). `backupDir` is
+   user-configurable and users point it at iCloud / Drive / a network share,
+   where a backup can stall for an unbounded time with no kernel-level timeout
+   (§7.10 / HS-9527). An unbounded wait would convert that stall into a hung
+   request. On timeout it reports the collision, as before. The timer is
+   `unref`'d so a pending wait can never hold the process open at shutdown.
+
+2. **"Already current" is reported as SUCCESS.** This is the subtle part, and
+   waiting alone would have made things *worse* without it: once the in-flight
+   backup finishes, the change marker matches, so a second `createBackup` hits
+   the HS-9535 "nothing changed" skip and produces nothing. The user would have
+   waited and *still* received an error. So an `unchanged` outcome resolves to
+   the newest existing file for the tier — their intent ("make sure my data is
+   backed up") is satisfied, and the tier genuinely is current.
+
+### `createBackup` now reports WHY
+
+The change forced a latent problem into the open: `createBackup` collapsed
+**five** distinct situations into `null`, so all five were reported with one
+message. `createBackupWithOutcome` returns a discriminated `BackupOutcome`
+(`created` · `in-progress` · `unchanged` · `fs-unavailable` ·
+`blocked-empty-cluster` · `failed`), and `createBackup` remains a thin wrapper
+returning `info | null` for the schedulers, which only care whether a file
+appeared.
+
+**`blocked-empty-cluster` must never be waited out or converted to a success** —
+it means the project's data is missing (docs/135). Only `unchanged` is ever
+converted, which makes that invariant structural rather than remembered. The
+route now has one message per outcome, so a cloud folder being offline no longer
+reads as "backup already in progress" either.

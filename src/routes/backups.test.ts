@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { _setBackupInFlightForTests, createBackup, triggerManualBackup } from '../backup.js';
 import { createTicket } from '../db/queries.js';
 import { writeFileSettings } from '../file-settings.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
@@ -284,6 +285,96 @@ describe('GET /api/backups/stranded', () => {
     } finally {
       rmSync(empty, { recursive: true, force: true });
       rmSync(current, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * HS-9595 (maintainer decision: option A) — a manual "Back up now" WAITS for an
+ * in-flight backup instead of answering with an error.
+ *
+ * A cache-like state machine, so these walk sequences rather than single calls:
+ * the failure mode is entirely about what happens when two things overlap in
+ * time, and every individual call was already correct before the change.
+ */
+describe('manual backup waits for an in-flight one (HS-9595)', () => {
+  it('returns the fresh backup rather than "already in progress"', async () => {
+    // Kick off a backup and, without awaiting it, ask for a manual one. Before
+    // this change the second call returned 409 immediately.
+    const scheduled = createBackup(tempDir, '5min');
+    const manual = triggerManualBackup(tempDir);
+    const [, outcome] = await Promise.all([scheduled, manual]);
+    expect(outcome.status).toBe('created');
+  });
+
+  it('reports "already current" as SUCCESS, not an error', async () => {
+    // The trap in option A: after waiting, the change marker matches, so
+    // `createBackup` hits the HS-9535 "nothing changed" skip. Without special
+    // handling the user waits and STILL gets an error — worse than before.
+    await createBackup(tempDir, '5min');
+    const outcome = await triggerManualBackup(tempDir);
+    expect(outcome.status).toBe('created');
+    if (outcome.status === 'created') expect(outcome.info.filename).toBeTruthy();
+  });
+
+  it('gives up after the bounded wait rather than hanging', async () => {
+    // `backupDir` can be a cloud folder where a backup stalls for an unbounded
+    // time with no kernel timeout (docs/7 §7.10). An unbounded wait would turn
+    // that stall into a hung request.
+    let releaseStuck = (): void => { /* replaced below */ };
+    const stuck = new Promise<void>(resolve => { releaseStuck = resolve; });
+    const clear = _setBackupInFlightForTests(tempDir, stuck);
+    try {
+      const started = Date.now();
+      const outcome = await triggerManualBackup(tempDir, 60);
+      expect(outcome.status).toBe('in-progress');
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      clear();
+      releaseStuck();
+    }
+  });
+
+  it('the route answers 200 with the backup', async () => {
+    const res = await app.request('/api/backups/now', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { filename?: string }).filename).toBeTruthy();
+  });
+});
+
+/**
+ * HS-9595 — the outcome type exists because `createBackup` collapsed five
+ * distinct situations into `null`, so all five were reported as "Backup already
+ * in progress" — including a project whose data is missing.
+ *
+ * The empty-cluster refusal is NOT re-tested here: this suite's DB has tickets,
+ * so the guard correctly does not fire, and forcing it would mean mutating
+ * shared state at the end of a file. It is covered where it can be exercised
+ * honestly — `src/db/emptyClusterSurfacing.e2e.test.ts` drives the REAL
+ * `POST /api/backups/now` across a three-process restart and asserts both the
+ * 409 and the "database is empty" message, which now runs through
+ * `triggerManualBackup`'s waiting path.
+ *
+ * The invariant that matters — waiting can never turn a refusal into a success —
+ * holds structurally: `triggerManualBackup` converts ONLY `unchanged`.
+ */
+describe('backup outcomes are distinguishable (HS-9595)', () => {
+  it('passes a non-created outcome through untouched', async () => {
+    // `in-progress` is the one non-created outcome reachable here, and it is the
+    // one the wait produces. It must not be dressed up as success.
+    let release = (): void => { /* replaced below */ };
+    const stuck = new Promise<void>(resolve => { release = resolve; });
+    const clear = _setBackupInFlightForTests(tempDir, stuck);
+    try {
+      const outcome = await triggerManualBackup(tempDir, 40);
+      expect(outcome.status).toBe('in-progress');
+      const res = await app.request('/api/backups/now', { method: 'POST' });
+      expect(res.status).toBe(409);
+      // …and the message is the specific one, not the old catch-all.
+      expect((await res.json() as { error: string }).error).toMatch(/already running/);
+    } finally {
+      clear();
+      release();
     }
   });
 });

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 
-import { cleanupPreview, createBackup, listBackups, loadBackupForPreview, restoreBackup, triggerManualBackup } from '../backup.js';
+import { type BackupOutcome,cleanupPreview, createBackup, listBackups, loadBackupForPreview, restoreBackup, triggerManualBackup } from '../backup.js';
 import { clearRecoveryMarker } from '../db/connection.js';
 import { readRecoveryMarker } from '../db/recoveryMarker.js';
 import { getBackupDir, readFileSettings } from '../file-settings.js';
@@ -63,10 +63,36 @@ backupRoutes.post('/create', async (c) => {
 
 backupRoutes.post('/now', async (c) => {
   const dataDir = c.get('dataDir');
-  const info = await triggerManualBackup(dataDir);
-  if (!info) return c.json({ error: noBackupReason(dataDir) }, 409);
-  return c.json(info);
+  // HS-9595 — waits for an in-flight backup rather than refusing (option A), and
+  // reports the specific reason when it still can't produce one.
+  const outcome = await triggerManualBackup(dataDir);
+  if (outcome.status === 'created') return c.json(outcome.info);
+  return c.json({ error: manualBackupError(outcome, dataDir) }, 409);
 });
+
+/**
+ * HS-9595 — one message per outcome. `createBackup` used to collapse five
+ * distinct situations into `null`, so all five were reported as "Backup already
+ * in progress" — including a project whose data was missing.
+ */
+function manualBackupError(outcome: BackupOutcome, dataDir: string): string {
+  switch (outcome.status) {
+    case 'blocked-empty-cluster':
+      return emptyClusterBackupError();
+    case 'fs-unavailable':
+      return 'The backup folder is not responding (a cloud-synced or network location may be offline). Backups are paused until it recovers.';
+    case 'in-progress':
+      return 'A backup is already running and did not finish in time. It should complete shortly — try again in a moment.';
+    case 'failed':
+      return `Backup failed: ${outcome.error}`;
+    case 'unchanged':
+    case 'created':
+      // `created` never reaches here, and `unchanged` is converted to success by
+      // `triggerManualBackup` whenever the tier has a file to point at — so this
+      // is "current, but the file is gone", which the generic reason covers.
+      return noBackupReason(dataDir);
+  }
+}
 
 /**
  * HS-9576 — `createBackup` returns null for two very different reasons, and
@@ -77,10 +103,12 @@ backupRoutes.post('/now', async (c) => {
  * signal, so read it back rather than plumbing a reason through the writer.
  */
 function noBackupReason(dataDir: string): string {
-  if (readRecoveryMarker(dataDir)?.kind === 'empty-cluster') {
-    return 'This project\'s database is empty but it previously held tickets, so backups are paused to protect the existing ones. Restore from a backup or a preserved db-corrupt-* folder first.';
-  }
+  if (readRecoveryMarker(dataDir)?.kind === 'empty-cluster') return emptyClusterBackupError();
   return 'Backup already in progress';
+}
+
+function emptyClusterBackupError(): string {
+  return 'This project\'s database is empty but it previously held tickets, so backups are paused to protect the existing ones. Restore from a backup or a preserved db-corrupt-* folder first.';
 }
 
 backupRoutes.get('/preview/:tier/:filename', async (c) => {

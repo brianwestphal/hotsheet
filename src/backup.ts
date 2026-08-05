@@ -21,6 +21,7 @@ import { getRecentEventLoopLagMs, instrumentAsync, onServerWake } from './diagno
 import { getBackupDir } from './file-settings.js';
 import { readGlobalConfig, writeGlobalConfig } from './global-config.js';
 import { _resetDefaultSchedulerForTests, getBackgroundScheduler, PRIORITY } from './scheduler/backgroundScheduler.js';
+import { getErrorMessage } from './utils/errorMessage.js';
 import { maxOf } from './utils/largeArray.js';
 
 export interface BackupInfo {
@@ -42,6 +43,11 @@ type Tier = keyof typeof TIERS;
 // Per-dataDir backup state
 interface BackupState {
   backupInProgress: boolean;
+  /** HS-9595 — resolves when the in-flight backup finishes (any outcome). Lets a
+   *  MANUAL request wait for it instead of being told "already in progress",
+   *  which reads as a failure for a request that is merely early. Null when
+   *  nothing is running. */
+  inFlight: Promise<void> | null;
   fiveMinTimer: ReturnType<typeof setTimeout> | null;
   hourlyInterval: ReturnType<typeof setInterval> | null;
   dailyInterval: ReturnType<typeof setInterval> | null;
@@ -63,6 +69,7 @@ function getOrCreateState(dataDir: string): BackupState {
   if (!state) {
     state = {
       backupInProgress: false,
+      inFlight: null,
       fiveMinTimer: null,
       hourlyInterval: null,
       dailyInterval: null,
@@ -160,10 +167,39 @@ function parseTimestamp(filename: string): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * HS-9595 — why a backup did not produce a file. `createBackup` collapsed five
+ * distinct outcomes into `null`, which is what let "Backup already in progress"
+ * be reported for a project whose data was missing (HS-9576) and, once the
+ * manual path started waiting, for a backup that was simply already current.
+ */
+export type BackupOutcome =
+  | { status: 'created'; info: BackupInfo }
+  /** Another backup for this project was already running. */
+  | { status: 'in-progress' }
+  /** Nothing has changed since this tier's last backup, and that backup exists. */
+  | { status: 'unchanged' }
+  /** The backup filesystem is known-unreachable (HS-9527 circuit breaker). */
+  | { status: 'fs-unavailable' }
+  /** The empty-cluster guard refused (HS-9573/9576). NEVER transient. */
+  | { status: 'blocked-empty-cluster' }
+  | { status: 'failed'; error: string };
+
+/** Back-compat wrapper: the info, or null for every non-created outcome. Most
+ *  callers (the schedulers) only care whether a file appeared. */
 export async function createBackup(dataDir: string, tier: Tier): Promise<BackupInfo | null> {
+  const outcome = await createBackupWithOutcome(dataDir, tier);
+  return outcome.status === 'created' ? outcome.info : null;
+}
+
+export async function createBackupWithOutcome(dataDir: string, tier: Tier): Promise<BackupOutcome> {
   const state = getOrCreateState(dataDir);
-  if (state.backupInProgress) return null;
+  if (state.backupInProgress) return { status: 'in-progress' };
   state.backupInProgress = true;
+  // HS-9595 — publish a completion signal BEFORE the first await, so a manual
+  // request that arrives mid-backup has something to wait on.
+  let settleInFlight = (): void => { /* replaced below */ };
+  state.inFlight = new Promise<void>(resolve => { settleInFlight = resolve; });
 
   // HS-8229 — wrap the body in the process-global mutex so cross-project
   // backups serialize. The per-dataDir `backupInProgress` gate above
@@ -176,7 +212,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     // known-unreachable. A CHECKPOINT + fsync + full `dumpDataDir` gzip is
     // seconds of real work and hundreds of MB of buffer; doing it only to fail
     // at the write is the difference between a paused backup and a paused app.
-    if (!isBackupFsAvailable(backupsDir(dataDir))) return null;
+    if (!isBackupFsAvailable(backupsDir(dataDir))) return { status: 'fs-unavailable' };
     const db = await runWithDataDir(dataDir, () => getDb());
 
     // HS-9573 — never let an empty cluster into the tiers. On 2026-08-04 a
@@ -187,7 +223,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     const guard = await checkArtifactGuard(dataDir, db);
     if (guard.blocked) {
       logArtifactBlocked(`backup:${tier}`, dataDir, guard);
-      return null;
+      return { status: 'blocked-empty-cluster' };
     }
 
     // HS-9535 — skip the whole train when nothing has been written since this
@@ -217,7 +253,7 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
       // expects every overdue tier to fire — exactly this scenario.
       const bfsCheck = backupFsFor(backupsDir(dataDir));
       const existing = (await bfsCheck.readdirOrEmpty(dir)).filter(f => f.endsWith('.tar.gz'));
-      if (existing.length > 0) return null;
+      if (existing.length > 0) return { status: 'unchanged' };
     }
 
     const bfs = backupFsFor(backupsDir(dataDir));
@@ -338,12 +374,14 @@ export async function createBackup(dataDir: string, tier: Tier): Promise<BackupI
     }
 
     await pruneBackups(dataDir, tier);
-    return info;
+    return { status: 'created', info };
   } catch (err) {
     console.error(`Backup failed (${tier}):`, err);
-    return null;
+    return { status: 'failed', error: getErrorMessage(err) };
   } finally {
     state.backupInProgress = false;
+    state.inFlight = null;
+    settleInFlight();
   }
   });
 }
@@ -745,11 +783,90 @@ function scheduleFiveMinBackup(dataDir: string, options: { jitter?: boolean; rng
   }, delayMs);
 }
 
-/** Trigger an immediate 5-min tier backup and reset the timer. Returns null if one is already in progress. */
-export async function triggerManualBackup(dataDir: string): Promise<BackupInfo | null> {
-  const result = await createBackup(dataDir, '5min');
-  if (result) scheduleFiveMinBackup(dataDir);
-  return result;
+/**
+ * HS-9595 — how long a manual "Back up now" waits for an in-flight backup before
+ * giving up and reporting the collision.
+ *
+ * Bounded on purpose. `backupDir` is user-configurable and users point it at
+ * iCloud / Drive / a network share, where a backup can stall for an unbounded
+ * time with no kernel-level timeout (docs/7 §7.10 / HS-9527). An unbounded wait
+ * would convert that stall into a hung request. 30 s comfortably covers a normal
+ * backup (seconds) while still failing fast enough to be an answer.
+ */
+const MANUAL_BACKUP_WAIT_MS = 30_000;
+
+/**
+ * Trigger an immediate 5-min tier backup, WAITING for any in-flight one first.
+ *
+ * HS-9595 (maintainer decision: option A). Previously this returned null the
+ * instant another backup was running, and the route reported "Backup already in
+ * progress" — an error, for a request that was merely early. Measured on a cold
+ * server, three attempts 1.5 s apart went 409 → 200 → 409, so the collision is
+ * neither rare nor brief.
+ *
+ * Waiting alone is not enough, and this is the subtle part: once the in-flight
+ * backup finishes, the change marker matches, so a second `createBackup` hits the
+ * HS-9535 "nothing changed" skip and returns nothing. The user would have waited
+ * and *still* got an error. So `unchanged` is reported as SUCCESS with the
+ * backup that already covers this exact state — their intent ("make sure my data
+ * is backed up") is satisfied, and the tier file is genuinely current.
+ *
+ * The other non-created outcomes stay failures, deliberately: `blocked-empty-cluster`
+ * in particular must never be waited out or turned into a success — it means the
+ * project's data is missing (HS-9576).
+ */
+export async function triggerManualBackup(
+  dataDir: string,
+  waitMs: number = MANUAL_BACKUP_WAIT_MS,
+): Promise<BackupOutcome> {
+  const inFlight = getOrCreateState(dataDir).inFlight;
+  if (inFlight !== null) {
+    const timedOut = await raceWithTimeout(inFlight, waitMs);
+    if (timedOut) return { status: 'in-progress' };
+  }
+  const outcome = await createBackupWithOutcome(dataDir, '5min');
+  if (outcome.status === 'created') {
+    scheduleFiveMinBackup(dataDir);
+    return outcome;
+  }
+  if (outcome.status === 'unchanged') {
+    const current = await newestBackupForTier(dataDir, '5min');
+    if (current !== null) return { status: 'created', info: current };
+  }
+  return outcome;
+}
+
+/** True when `ms` elapsed first. The timer is `unref`'d so a pending wait can
+ *  never hold the process open at shutdown. */
+async function raceWithTimeout(p: Promise<void>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<boolean>(resolve => {
+    timer = setTimeout(() => { resolve(true); }, ms);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([p.then(() => false), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** The newest existing backup in a tier — what "already current" resolves to. */
+async function newestBackupForTier(dataDir: string, tier: Tier): Promise<BackupInfo | null> {
+  const all = await listBackups(dataDir);
+  const inTier = all.filter(b => b.tier === tier);
+  if (inTier.length === 0) return null;
+  return inTier.reduce((newest, b) => (b.createdAt > newest.createdAt ? b : newest));
+}
+
+/** HS-9595 test seam — install a fake in-flight backup so the bounded-wait path
+ *  can be exercised without a real stalled cloud filesystem. Returns a release
+ *  fn that clears it. */
+export function _setBackupInFlightForTests(dataDir: string, inFlight: Promise<void>): () => void {
+  const state = getOrCreateState(dataDir);
+  state.backupInProgress = true;
+  state.inFlight = inFlight;
+  return () => { state.backupInProgress = false; state.inFlight = null; };
 }
 
 /** Get the backup timers for a given dataDir. Used by ProjectContext. */
