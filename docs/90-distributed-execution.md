@@ -495,3 +495,40 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
   a `MAX_CLAIM_ATTEMPTS` budget + sweep quarantine (drop from Up Next + tag + note),
   reusing `up_next`/tags rather than a new column (§90.5.1). Tune the threshold (5)
   under real runtimes.
+
+## 90.12 The worker pool is Claude-only, and says so (HS-9594)
+
+`workerLaunchCommand` built `claude --dangerously-load-development-channels … "/hotsheet-worker"`
+unconditionally, ignoring the project's `ai_tool`. On a project set to another
+agent (reported from Rockwell Club, `ai_tool=codex`) that produced a launch line
+for an agent the project does not use — a command-not-found on a machine without
+`claude`, or the wrong agent running a skill that isn't installed for it.
+
+Nothing threw, and that was the real defect. The PTY was created, the slot
+registered, and `isLive` (`!drain && !stopped && !stale`) counted it immediately —
+so `hotsheet_set_worker_target` reported workers **spawned and live**,
+`hotsheet_dispatch_tickets` accepted assignments against them, every terminal
+stayed empty, and each slot later went dead with `ahead=0` and no commit. **The
+pool reported success for workers that never started.**
+
+Three changes:
+
+1. **`assertWorkerLaunchSupported`** refuses any explicitly non-Claude `ai_tool`,
+   with a message naming the tool, what happened, and what to do. `auto` and
+   unset resolve to Claude, so no project that never picked a tool is affected.
+2. **It runs FIRST in `prepareWorker`**, before `createWorktree` — otherwise a
+   refused scale-up still littered a worktree and a branch on every reconcile pass.
+   (That ordering bug was found by the test, not by reading.)
+3. **`ReconcileResult.errors`** carries the reason back. A launch failure used to
+   `console.warn` and return a bare `spawned: 0`, which on a GUI launch goes
+   nowhere (docs/134 §134.5) — an agent asking for four workers learned nothing.
+
+`hotsheet_dispatch_tickets` additionally **warns** when the target worker is not
+a live pool slot. A warning rather than a refusal: a worker terminal opened by
+hand outside the pool registry is a legitimate dispatch target, so this must not
+gate a flow that works. An unreadable pool never blocks the dispatch.
+
+**Supporting a non-Claude worker is a feature, not a missing branch.** It needs
+that agent's own channel/launch line and its own copy of the worker-loop skill
+(Claude's lives in `.claude/skills`; the AGENTS-family tools read `.agents/skills`
+— docs/118). Tracked separately; this only stops the silent failure.

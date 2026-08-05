@@ -37,6 +37,15 @@ export interface ReconcileResult {
   targetN: number;
   /** Live (idle/working) workers after the pass. */
   live: number;
+  /**
+   * HS-9594 — why a scale-up did not happen, in the caller's words.
+   *
+   * A launch failure used to `console.warn` and return `spawned: 0`, which on a
+   * GUI launch goes nowhere (docs/134 §134.5) and told an agent asking for four
+   * workers exactly nothing. Carrying the reason back is what turns "I got no
+   * workers" into "this project's AI tool isn't supported by the pool".
+   */
+  errors: string[];
 }
 
 export interface ReconcileDeps {
@@ -77,6 +86,7 @@ export async function reconcilePool(
   let spawned = 0;
   let drained = 0;
   let reaped = 0;
+  const errors: string[] = [];
 
   // Capture the owner's intended target UP FRONT: reaping a slot can lower
   // `pool.targetN` (`removeWorker`'s contract — it never lets the target exceed
@@ -90,7 +100,11 @@ export async function reconcilePool(
   for (const w of getPoolState(dataDir).workers) {
     if (!w.stopped && !isSlotStale(w, now)) continue;
     try { await reap(secret, dataDir, repoRoot, w); reaped++; }
-    catch (e) { console.warn(`[workers] reconcile: reap failed for ${w.worker}: ${getErrorMessage(e)}`); }
+    catch (e) {
+      const reason = getErrorMessage(e);
+      console.warn(`[workers] reconcile: reap failed for ${w.worker}: ${reason}`);
+      errors.push(`reap ${w.worker}: ${reason}`);
+    }
   }
   if (reaped > 0) setTarget(dataDir, rawTarget); // restore the intended target
 
@@ -111,7 +125,9 @@ export async function reconcilePool(
       } catch (e) {
         // A failed launch lowers our effective ceiling for this pass — stop rather
         // than retry the same failing launch in a tight loop.
-        console.warn(`[workers] reconcile: scale-up failed: ${getErrorMessage(e)}`);
+        const reason = getErrorMessage(e);
+        console.warn(`[workers] reconcile: scale-up failed: ${reason}`);
+        errors.push(reason);
         break;
       }
     }
@@ -123,5 +139,5 @@ export async function reconcilePool(
   }
 
   const finalLive = getPoolState(dataDir).workers.filter(w => isLive(w, Date.now())).length;
-  return { spawned, drained, reaped, targetN: rawTarget, live: finalLive };
+  return { spawned, drained, reaped, targetN: rawTarget, live: finalLive, errors };
 }

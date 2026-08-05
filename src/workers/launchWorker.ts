@@ -10,6 +10,8 @@
 // N of these + the scale controls is HS-8962.
 import { basename } from 'path';
 
+import { AI_TOOL_AUTO, normalizeAiToolId } from '../aiTools/registry.js';
+import { readFileSettings } from '../file-settings.js';
 import { claudeWithChannelCommand } from '../terminals/resolveCommand.js';
 import type { GitRunner } from '../worktrees.js';
 import { canonicalizePath, createWorktree, defaultGit, listWorktrees } from '../worktrees.js';
@@ -58,7 +60,56 @@ function slugify(s: string): string {
  * fell back to the terminal and never popped up in Hot Sheet.
  */
 export function workerLaunchCommand(ownerDataDir: string): string {
+  assertWorkerLaunchSupported(ownerDataDir);
   return `${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker"`;
+}
+
+/**
+ * HS-9594 — the worker pool is **Claude-only**, and must say so instead of
+ * launching Claude at a project configured for another agent.
+ *
+ * The reported failure (Rockwell Club, `ai_tool=codex`): `hotsheet_set_worker_target`
+ * reported workers spawned and live, dispatch accepted assignments, every worker
+ * terminal stayed empty, and each slot later went dead with `ahead=0` and no
+ * commit. Nothing threw, because the launch line is built unconditionally — a
+ * codex project got `claude --dangerously-load-development-channels … "/hotsheet-worker"`,
+ * which on a machine without `claude` is a command-not-found in a fresh shell,
+ * and with `claude` installed is the wrong agent running a skill the project
+ * does not use. Either way the PTY exists, so the slot registers and counts as
+ * live: **the pool reported success for a worker that never started.**
+ *
+ * Throwing here is what makes that impossible. `reconcilePool` catches it,
+ * spawns nothing, and reports the reason (see `ReconcileResult.errors`), so an
+ * agent asking for four workers is told why it got none rather than being handed
+ * four hollow slots to dispatch into.
+ *
+ * Supporting a non-Claude worker is a real feature, not a missing branch — it
+ * needs that agent's own channel/launch line and its own copy of the worker
+ * loop skill (Claude's lives in `.claude/skills`; the AGENTS-family tools read
+ * `.agents/skills`, docs/118). Tracked separately; this only stops the silent
+ * failure.
+ */
+export function assertWorkerLaunchSupported(ownerDataDir: string): void {
+  const raw: unknown = readFileSettings(ownerDataDir).ai_tool;
+  const tool = normalizeAiToolId(typeof raw === 'string' ? raw : undefined);
+  // `auto` (unset — the overwhelmingly common case) resolves to Claude, matching
+  // every other `{{aiCommand}}` consumer. Only an EXPLICIT non-Claude tool is a
+  // refusal, so this cannot break a project that never picked one.
+  if (tool === AI_TOOL_AUTO || tool === 'claude') return;
+  throw new WorkerLaunchUnsupportedError(tool);
+}
+
+/** Thrown when the project's `ai_tool` has no worker-launch support. Typed so
+ *  callers can report it as a configuration answer rather than a crash. */
+export class WorkerLaunchUnsupportedError extends Error {
+  constructor(public readonly aiTool: string) {
+    super(
+      `The worker pool currently supports Claude only, and this project's AI tool is "${aiTool}". `
+      + 'No workers were started. Set the project\'s AI tool to Claude to use the worker pool, '
+      + 'or run the tickets on the main project instead.',
+    );
+    this.name = 'WorkerLaunchUnsupportedError';
+  }
 }
 
 /**
@@ -74,6 +125,11 @@ export async function prepareWorker(
   opts: PrepareWorkerOpts,
   git: GitRunner = defaultGit,
 ): Promise<WorkerLaunchSpec> {
+  // HS-9594 — refuse FIRST. `workerLaunchCommand` also asserts, but it runs at
+  // the very end, so an unsupported project would have created a worktree and a
+  // branch before being told no — littering the repo on every reconcile pass.
+  assertWorkerLaunchSupported(ownerDataDir);
+
   let cwd: string;
   let worktreeCreated = false;
   let derivedName: string;

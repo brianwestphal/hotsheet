@@ -607,6 +607,13 @@ async function dispatchDispatchTickets(args: unknown, settings: ChannelSettings,
   const { worker, label, ticket_ids } = parsed.data;
   const dispatched: number[] = [];
   const failed: { id: number; reason: string }[] = [];
+  // HS-9594 — claiming for a worker that is not a live pool slot succeeds at the
+  // DB level and looks like a successful dispatch, which is how the Rockwell Club
+  // report ended with tickets leased to workers that had never started. Say so.
+  // A warning rather than a refusal: a worker terminal opened by hand (outside
+  // the pool registry) is a legitimate dispatch target, so this must not become
+  // a gate on a flow that works.
+  const warning = await unknownWorkerWarning(worker, settings, fetchFn);
   for (const id of ticket_ids) {
     const result = await proxyRequest(
       settings, `/api/tickets/${String(id)}/claim`,
@@ -618,7 +625,38 @@ async function dispatchDispatchTickets(args: unknown, settings: ChannelSettings,
       dispatched.push(id);
     }
   }
-  return okResult(JSON.stringify({ worker, dispatched, failed }));
+  return okResult(JSON.stringify({ worker, dispatched, failed, ...(warning !== null ? { warning } : {}) }));
+}
+
+/**
+ * HS-9594 — null when `worker` is a live slot in the pool (or when the pool
+ * cannot be read, which must never block a dispatch), otherwise a sentence
+ * naming the mismatch.
+ */
+async function unknownWorkerWarning(
+  worker: string,
+  settings: ChannelSettings,
+  fetchFn: FetchLike,
+): Promise<string | null> {
+  const res = await proxyRequest(settings, '/api/workers/pool', { method: 'GET' }, fetchFn);
+  if (res.isError === true) return null;
+  try {
+    const body: unknown = JSON.parse(res.content[0]?.text ?? '{}');
+    const workers: unknown = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).workers : undefined;
+    if (!Array.isArray(workers)) return null;
+    const known = workers.some(w =>
+      typeof w === 'object' && w !== null && (w as Record<string, unknown>).worker === worker);
+    if (known) return null;
+    const names = workers
+      .map(w => (typeof w === 'object' && w !== null ? (w as Record<string, unknown>).worker : undefined))
+      .filter((n): n is string => typeof n === 'string');
+    return `"${worker}" is not a worker in this project's pool`
+      + (names.length > 0 ? ` (pool has: ${names.join(', ')})` : ' (the pool is empty)')
+      + '. The tickets were claimed for it anyway, but nothing will work them unless that worker actually exists —'
+      + ' check hotsheet_get_worker_pool, and hotsheet_set_worker_target\'s `errors` if you expected workers to have started.';
+  } catch {
+    return null;
+  }
 }
 
 /** HS-9112 — propose a partition for owner review instead of dispatching. Stores

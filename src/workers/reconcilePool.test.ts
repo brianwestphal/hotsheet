@@ -97,3 +97,59 @@ describe('reconcilePool (HS-9076)', () => {
     expect(getPoolState(DD).workers).toHaveLength(0);
   });
 });
+
+/**
+ * HS-9594 — a worker that never starts must not be reported as spawned or live.
+ *
+ * From the Rockwell Club project (`ai_tool=codex`): `hotsheet_set_worker_target`
+ * reported workers spawned and live, dispatch accepted assignments, every worker
+ * terminal stayed empty, and each slot later went dead with `ahead=0` and no
+ * commit. Nothing threw — the launch line is built unconditionally, so a codex
+ * project got a `claude …` command, the PTY was created, and the slot registered.
+ * The pool reported success for a worker that never existed.
+ */
+describe('a launch that cannot succeed is reported, not counted (HS-9594)', () => {
+  /** A `prepare` that refuses, the way `assertWorkerLaunchSupported` does for a
+   *  project whose `ai_tool` has no worker support. */
+  const refusingPrepare: ReconcileDeps['prepare'] = () =>
+    Promise.reject(new Error('The worker pool currently supports Claude only, and this project\'s AI tool is "codex".'));
+
+  it('spawns nothing and stays at zero live', async () => {
+    setTarget(DD, 3);
+    const spw = vi.fn(spawn);
+    const res = await reconcilePool(SECRET, DD, REPO, { prepare: refusingPrepare, spawn: spw, reap: vi.fn() });
+
+    expect(res.spawned).toBe(0);
+    expect(res.live, 'no slot may be registered for a worker that never started').toBe(0);
+    // The PTY must never be opened either — an empty terminal is what the user saw.
+    expect(spw).not.toHaveBeenCalled();
+    expect(getPoolState(DD).workers).toEqual([]);
+  });
+
+  it('reports WHY, so the agent is told instead of guessing', async () => {
+    // The silent-failure half: before this, the reason went to console.warn —
+    // which on a GUI launch goes nowhere — and the caller got a bare `spawned: 0`.
+    setTarget(DD, 2);
+    const res = await reconcilePool(SECRET, DD, REPO, { prepare: refusingPrepare, spawn: vi.fn(), reap: vi.fn() });
+    expect(res.errors.length).toBeGreaterThan(0);
+    expect(res.errors.join(' ')).toMatch(/supports Claude only/);
+    expect(res.errors.join(' ')).toMatch(/codex/);
+  });
+
+  it('stops after the first failure rather than hammering the same launch', async () => {
+    // A target of 5 must not produce 5 failed worktree/PTY attempts per pass.
+    setTarget(DD, 5);
+    const prep = vi.fn(refusingPrepare);
+    await reconcilePool(SECRET, DD, REPO, { prepare: prep, spawn: vi.fn(), reap: vi.fn() });
+    expect(prep).toHaveBeenCalledTimes(1);
+  });
+
+  it('a healthy project is unaffected', async () => {
+    // The guard must not cost the supported path anything.
+    setTarget(DD, 2);
+    const res = await reconcilePool(SECRET, DD, REPO, { prepare, spawn, reap: vi.fn() });
+    expect(res.spawned).toBe(2);
+    expect(res.live).toBe(2);
+    expect(res.errors).toEqual([]);
+  });
+});

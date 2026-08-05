@@ -142,6 +142,9 @@ export const ReconcileResultSchema = z.object({
   reaped: z.number(),
   targetN: z.number(),
   live: z.number(),
+  /** HS-9594 — why a scale-up produced fewer workers than asked for. Optional so
+   *  an older server's response still parses. */
+  errors: z.array(z.string()).optional().default([]),
 });
 export type ReconcilePoolResult = z.infer<typeof ReconcileResultSchema>;
 

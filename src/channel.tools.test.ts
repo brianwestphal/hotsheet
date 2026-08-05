@@ -878,6 +878,57 @@ describe('worker-pool management tools (HS-9031)', () => {
     expect(JSON.parse(result.content[0].text)).toMatchObject({ worker: 'worker-2', dispatched: [1, 3], failed: [{ id: 2 }] });
   });
 
+  /**
+   * HS-9594 — dispatching to a worker that is not in the pool succeeds at the DB
+   * level and reads as a successful dispatch. That is how the Rockwell Club
+   * report ended with tickets leased to workers that had never started: the pool
+   * said "spawned", dispatch said "dispatched", and nothing ever ran.
+   */
+  it('hotsheet_dispatch_tickets — warns when the worker is not in the pool', async () => {
+    const fetchFn = fakeFetch((url) =>
+      url.endsWith('/api/workers/pool')
+        ? { ok: true, status: 200, text: '{"workers":[{"worker":"worker-1"}]}' }
+        : { ok: true, status: 200, text: '{"ok":true}' });
+    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'ghost-worker', ticket_ids: [1] }, tmpDataDir, fetchFn);
+    const body = JSON.parse(result.content[0].text) as { dispatched: number[]; warning?: string };
+    // The claim still happens — this is a warning, not a gate: a hand-opened
+    // worker terminal outside the pool registry is a legitimate target.
+    expect(body.dispatched).toEqual([1]);
+    expect(body.warning).toContain('ghost-worker');
+    expect(body.warning).toContain('worker-1');
+  });
+
+  it('hotsheet_dispatch_tickets — says the pool is EMPTY when it is', async () => {
+    // The exact reported shape: set_worker_target claimed success, no worker
+    // actually exists, and dispatch quietly accepted the assignment anyway.
+    const fetchFn = fakeFetch((url) =>
+      url.endsWith('/api/workers/pool')
+        ? { ok: true, status: 200, text: '{"workers":[]}' }
+        : { ok: true, status: 200, text: '{"ok":true}' });
+    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'worker-1', ticket_ids: [7] }, tmpDataDir, fetchFn);
+    expect((JSON.parse(result.content[0].text) as { warning?: string }).warning).toContain('pool is empty');
+  });
+
+  it('hotsheet_dispatch_tickets — stays silent for a real pool worker', async () => {
+    const fetchFn = fakeFetch((url) =>
+      url.endsWith('/api/workers/pool')
+        ? { ok: true, status: 200, text: '{"workers":[{"worker":"worker-2"}]}' }
+        : { ok: true, status: 200, text: '{"ok":true}' });
+    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'worker-2', ticket_ids: [1] }, tmpDataDir, fetchFn);
+    expect((JSON.parse(result.content[0].text) as { warning?: string }).warning).toBeUndefined();
+  });
+
+  it('hotsheet_dispatch_tickets — an unreadable pool never blocks the dispatch', async () => {
+    // The warning is a diagnostic; it must not be able to break dispatching.
+    const fetchFn = fakeFetch((url) =>
+      url.endsWith('/api/workers/pool')
+        ? { ok: false, status: 500, text: 'boom' }
+        : { ok: true, status: 200, text: '{"ok":true}' });
+    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'w', ticket_ids: [1] }, tmpDataDir, fetchFn);
+    expect(result.isError).toBeUndefined();
+    expect((JSON.parse(result.content[0].text) as { dispatched: number[] }).dispatched).toEqual([1]);
+  });
+
   it('hotsheet_drain_workers — drains one, drains all with all:true, errors on neither', async () => {
     const fetchSpy = vi.fn();
     const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true}' }; });
