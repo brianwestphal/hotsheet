@@ -10,9 +10,9 @@
 // N of these + the scale controls is HS-8962.
 import { basename } from 'path';
 
-import { AI_TOOL_AUTO, normalizeAiToolId } from '../aiTools/registry.js';
+import { AI_TOOL_AUTO, getPlugin, normalizeAiToolId } from '../aiTools/registry.js';
+import type { AiToolPlugin } from '../aiTools/types.js';
 import { readFileSettings } from '../file-settings.js';
-import { claudeWithChannelCommand } from '../terminals/resolveCommand.js';
 import type { GitRunner } from '../worktrees.js';
 import { canonicalizePath, createWorktree, defaultGit, listWorktrees } from '../worktrees.js';
 
@@ -59,9 +59,35 @@ function slugify(s: string): string {
  * but Claude never sent `permission_request` to it, so EVERY worker permission
  * fell back to the terminal and never popped up in Hot Sheet.
  */
+/** HS-9601 — the executable the project's worker launch line starts, so the
+ *  pool can verify it exists before registering a slot. Throws the same typed
+ *  refusal as `workerLaunchCommand` for an unsupported tool. */
+export function workerBinary(ownerDataDir: string): string {
+  return workerCapabilityFor(ownerDataDir).binary;
+}
+
 export function workerLaunchCommand(ownerDataDir: string): string {
-  assertWorkerLaunchSupported(ownerDataDir);
-  return `${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker"`;
+  return workerCapabilityFor(ownerDataDir).launchCommand(ownerDataDir);
+}
+
+/**
+ * HS-9601 — the project's worker capability, or a typed refusal.
+ *
+ * §132's rule is that a tool is defined in ONE place, so this asks the registry
+ * "does your plugin declare `worker`?" rather than testing ids. Adding an agent
+ * is now one capability object in `src/aiTools/plugins/<id>.ts` — this file does
+ * not change.
+ */
+function workerCapabilityFor(ownerDataDir: string): NonNullable<AiToolPlugin['worker']> {
+  const raw: unknown = readFileSettings(ownerDataDir).ai_tool;
+  const tool = normalizeAiToolId(typeof raw === 'string' ? raw : undefined);
+  // `auto` (unset — the overwhelmingly common case) resolves to Claude, matching
+  // every other `{{aiCommand}}` consumer, so a project that never picked a tool
+  // is unaffected.
+  const id = tool === AI_TOOL_AUTO ? 'claude' : tool;
+  const capability = getPlugin(id)?.worker;
+  if (capability === undefined) throw new WorkerLaunchUnsupportedError(tool);
+  return capability;
 }
 
 /**
@@ -90,13 +116,7 @@ export function workerLaunchCommand(ownerDataDir: string): string {
  * failure.
  */
 export function assertWorkerLaunchSupported(ownerDataDir: string): void {
-  const raw: unknown = readFileSettings(ownerDataDir).ai_tool;
-  const tool = normalizeAiToolId(typeof raw === 'string' ? raw : undefined);
-  // `auto` (unset — the overwhelmingly common case) resolves to Claude, matching
-  // every other `{{aiCommand}}` consumer. Only an EXPLICIT non-Claude tool is a
-  // refusal, so this cannot break a project that never picked one.
-  if (tool === AI_TOOL_AUTO || tool === 'claude') return;
-  throw new WorkerLaunchUnsupportedError(tool);
+  workerCapabilityFor(ownerDataDir);
 }
 
 /** Thrown when the project's `ai_tool` has no worker-launch support. Typed so
@@ -104,9 +124,9 @@ export function assertWorkerLaunchSupported(ownerDataDir: string): void {
 export class WorkerLaunchUnsupportedError extends Error {
   constructor(public readonly aiTool: string) {
     super(
-      `The worker pool currently supports Claude only, and this project's AI tool is "${aiTool}". `
-      + 'No workers were started. Set the project\'s AI tool to Claude to use the worker pool, '
-      + 'or run the tickets on the main project instead.',
+      `The worker pool has no support for this project's AI tool ("${aiTool}"). `
+      + 'No workers were started. Switch the project to an AI tool that supports workers '
+      + '(Claude or Codex), or run the tickets on the main project instead.',
     );
     this.name = 'WorkerLaunchUnsupportedError';
   }

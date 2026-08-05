@@ -3,6 +3,7 @@
 // the canonical `CLAUDE.md` + `.claude/skills` source every adapter-family tool
 // references (docs/118). docs/132 §132.6 has it migrating LAST for exactly that reason.
 
+import { claudeWithChannelCommand } from '../../channel-config.js';
 import type { AiToolPlugin } from '../types.js';
 
 export const claudePlugin: AiToolPlugin = {
@@ -17,6 +18,18 @@ export const claudePlugin: AiToolPlugin = {
   // here anyway so the metric is recognized as a routed token counter, with the
   // per-datapoint column coming from `type`.
   telemetryTokenMetrics: { 'claude_code.token.usage': 'by-type-attribute' },
+  // HS-9601 — the worker launch line, moved here out of `workers/launchWorker.ts`
+  // per §132's rule that tool-specific code lives in the tool's own module.
+  //
+  // HS-9036 — the development-channel flag is the load-bearing part: it routes
+  // the worker's PERMISSION PROMPTS to its channel server so they surface in the
+  // Hot Sheet UI. Pre-fix the worker launched as a bare `claude "/hotsheet-worker"`
+  // — MCP tools worked, but Claude never sent `permission_request`, so every
+  // worker permission fell back to its terminal and the worker blocked forever.
+  worker: {
+    launchCommand: (ownerDataDir: string) => `${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker"`,
+    binary: 'claude',
+  },
   // HS-9605 — `claude_code.cost.usage`; the whole cost UI was built on it.
   telemetryReportsCost: true,
   tier: 'cli-agent',

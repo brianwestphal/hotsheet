@@ -496,7 +496,7 @@ layer on later. Detailed in [91-worker-pool-scaling.md](91-worker-pool-scaling.m
   reusing `up_next`/tags rather than a new column (§90.5.1). Tune the threshold (5)
   under real runtimes.
 
-## 90.12 The worker pool is Claude-only, and says so (HS-9594)
+## 90.12 The worker pool refuses tools it cannot launch (HS-9594)
 
 `workerLaunchCommand` built `claude --dangerously-load-development-channels … "/hotsheet-worker"`
 unconditionally, ignoring the project's `ai_tool`. On a project set to another
@@ -531,4 +531,62 @@ gate a flow that works. An unreadable pool never blocks the dispatch.
 **Supporting a non-Claude worker is a feature, not a missing branch.** It needs
 that agent's own channel/launch line and its own copy of the worker-loop skill
 (Claude's lives in `.claude/skills`; the AGENTS-family tools read `.agents/skills`
-— docs/118). Tracked separately; this only stops the silent failure.
+— docs/118). Delivered for codex in §90.13; the refusal above is now driven by
+the capability that section adds, so it covers every tool that has not declared
+one rather than naming Claude.
+
+## 90.13 A worker is a PTY, for every agent (HS-9601)
+
+**Maintainer decision, 2026-08-05.** The open question was whether a codex
+worker should be a PTY running the CLI (like Claude's) or a **headless
+app-server drive session** — native to how codex actually works since docs/121
+/129. The answer was the PTY: the existing pool machinery (tiles, drain,
+`pending_integration`, checkout) applies unchanged, and a worker stays one
+concept across agents.
+
+### 90.13.1 The capability, and how little of it is per-tool
+
+`AiToolPlugin.worker` — **absent means unsupported**, the §132.9 pattern.
+`assertWorkerLaunchSupported` now asks the registry that question instead of
+testing tool ids, so adding an agent touches only
+`src/aiTools/plugins/<id>.ts`.
+
+It holds just two fields, because the rest turned out to be free. The
+per-worktree **worker skill** and the **permission bridge** are already written
+by `ensureSkillsForDir`, which iterates the same registry — so a tool declaring
+`skills` + `permissions` needs no worker-specific wiring at all. What is
+genuinely per-tool is the launch line and the binary it starts.
+
+### 90.13.2 Codex's launch line differs from Claude's in two ways
+
+`codex [OPTIONS] [PROMPT]` takes a positional prompt, so the *shape* matches.
+Two things do not:
+
+- **Skill invocation.** Claude takes `"/hotsheet-worker"` and resolves it.
+  Codex discovers skills under `.agents/skills` (docs/118), but its
+  slash-command syntax *from a positional prompt* is unverified — so the prompt
+  **names the file** rather than guessing a syntax. If that is wrong it fails
+  visibly in the worker's own terminal, instead of silently doing nothing,
+  which is the §90.12 failure mode.
+- **No channel flag, and that is not an omission.** Claude's
+  `--dangerously-load-development-channels` is what routes worker permission
+  prompts into the Hot Sheet UI (HS-9036). Codex reaches the `hotsheet_*` tools
+  through its **global cwd-resolving MCP config** (docs/115), so a worktree is
+  served by cwd alone. Its permission equivalent is `.codex/hooks.json`, written
+  into the worktree by `ensureSkillsForDir`. **That bridge is opt-in**
+  (`codex_interactive_permissions`); with it off, a codex worker's approvals
+  prompt in its own terminal rather than the Hot Sheet UI.
+
+### 90.13.3 The binary is checked before a slot is registered
+
+§90.12's root cause was that **a PTY exists whether or not the command in it
+resolves** — the shell printed command-not-found into a terminal nobody was
+reading, and the slot registered and counted as live. So `reconcilePool` now
+probes `worker.binary` on PATH **before** `prepare` and `spawn`, and carries the
+reason back in `errors`.
+
+This is deliberately weaker than "the agent is confirmed started": it does not
+watch the process. It converts the one failure actually observed into a refusal,
+and doing better means inspecting PTY output or the process table — flaky and
+slow on a reconcile path. Worth revisiting only if a second failure shape
+appears.

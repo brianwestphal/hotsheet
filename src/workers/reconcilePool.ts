@@ -21,7 +21,8 @@
  * without real git / PTYs.
  */
 import { getErrorMessage } from '../utils/errorMessage.js';
-import { prepareWorker } from './launchWorker.js';
+import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
+import { prepareWorker, workerBinary } from './launchWorker.js';
 import { getPoolState, isSlotStale, registerWorker, requestDrain, setTarget, type WorkerSlot } from './poolManager.js';
 import { reapWorker, spawnWorkerTerminal } from './serverWorkerLifecycle.js';
 import { poolMax } from './suggestN.js';
@@ -52,6 +53,9 @@ export interface ReconcileDeps {
   prepare?: typeof prepareWorker;
   spawn?: typeof spawnWorkerTerminal;
   reap?: typeof reapWorker;
+  /** HS-9601 — PATH probe, injectable so tests don't depend on which agents are
+   *  installed on the machine running them. */
+  onPath?: (binary: string) => boolean;
 }
 
 /** A worker counts toward the live total unless it's draining, stopped, or
@@ -80,6 +84,7 @@ export async function reconcilePool(
   deps: ReconcileDeps = {},
 ): Promise<ReconcileResult> {
   const prepare = deps.prepare ?? prepareWorker;
+  const onPath = deps.onPath ?? isExecutableOnPath;
   const spawn = deps.spawn ?? spawnWorkerTerminal;
   const reap = deps.reap ?? reapWorker;
 
@@ -118,6 +123,20 @@ export async function reconcilePool(
       try {
         const name = nextWorkerName(getPoolState(dataDir).workers);
         const branch = `hotsheet/${name}`;
+        // HS-9601 — verify the agent's binary resolves BEFORE creating anything.
+        // A PTY exists whether or not the command in it runs, which is exactly
+        // how HS-9594 reported four live workers that had never started: the
+        // shell printed command-not-found into a terminal nobody was reading.
+        // This does not prove the agent started — see the note on
+        // `AiToolPlugin.worker.binary` — but it converts the one failure
+        // actually observed into a refusal carrying a reason.
+        const binary = workerBinary(dataDir);
+        if (!onPath(binary)) {
+          throw new Error(
+            `The worker pool needs "${binary}" on PATH for this project's AI tool, and it was not found. `
+            + 'No workers were started — a terminal would have opened and immediately failed.',
+          );
+        }
         const spec = await prepare(repoRoot, dataDir, { branch, label: name });
         const terminalId = spawn(secret, dataDir, spec);
         registerWorker(dataDir, { worker: spec.worker, label: spec.label, worktreePath: spec.cwd, branch, terminalId });

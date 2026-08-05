@@ -104,25 +104,51 @@ describe('worker launch is gated on the project AI tool (HS-9594)', () => {
     _resetSettingsCacheForTests();
   };
 
-  it('refuses an explicitly non-Claude project, naming the tool and the remedy', () => {
-    setTool('codex');
+  it('refuses a tool with no worker capability, naming it and the remedy', () => {
+    // HS-9601 — the refusal is now "this plugin declares no `worker`", not a
+    // tool-id test, so it survives every tool that gains support later.
+    setTool('opencode');
     expect(() => workerLaunchCommand(dataDir)).toThrow(WorkerLaunchUnsupportedError);
     try {
       workerLaunchCommand(dataDir);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      expect(msg).toContain('codex');            // which tool
-      expect(msg).toMatch(/Claude only/);        // why
+      expect(msg).toContain('opencode');              // which tool
       expect(msg).toMatch(/No workers were started/); // what happened
-      expect(msg).toMatch(/Set the project/);    // what to do about it
+      expect(msg).toMatch(/Switch the project/);      // what to do about it
     }
   });
 
-  it('refuses every other registered non-Claude tool too, not just codex', () => {
+  it('refuses every tool that has not declared the capability', () => {
     for (const tool of ['antigravity', 'opencode', 'gemini', 'goose']) {
       setTool(tool);
       expect(() => workerLaunchCommand(dataDir), tool).toThrow(WorkerLaunchUnsupportedError);
     }
+  });
+
+  it('launches a CODEX worker, pointing it at the skill file rather than a slash command (HS-9601)', () => {
+    // Maintainer decision (2026-08-05): option (a) — a PTY worker like Claude's.
+    // Codex takes a positional prompt, but its slash-command syntax from one is
+    // unverified, so the prompt names the skill FILE. Getting that wrong fails
+    // visibly in the worker's terminal rather than silently doing nothing, which
+    // is the HS-9594 failure mode this ticket exists to avoid.
+    setTool('codex');
+    const cmd = workerLaunchCommand(dataDir);
+    expect(cmd.startsWith('codex ')).toBe(true);
+    expect(cmd).toContain('.agents/skills/hotsheet-worker/SKILL.md');
+    // No `claude`, and no channel flag: codex reaches the MCP tools through its
+    // global cwd-resolving config, so there is nothing to put on the line.
+    expect(cmd).not.toContain('claude');
+  });
+
+  it('prepareWorker gets past the capability check for codex and builds a spec', async () => {
+    // The positive path HS-9601 asked for: a codex project must reach worktree
+    // creation instead of being refused at the door.
+    setTool('codex');
+    let sawGit = false;
+    const git: GitRunner = () => { sawGit = true; return Promise.resolve(''); };
+    await prepareWorker(repoRoot, dataDir, { branch: 'hotsheet/worker-1' }, git).catch(() => { /* worktree wiring is not under test here */ });
+    expect(sawGit).toBe(true);
   });
 
   it('allows an explicit claude project', () => {
@@ -143,7 +169,7 @@ describe('worker launch is gated on the project AI tool (HS-9594)', () => {
   it('prepareWorker refuses before creating a worktree', async () => {
     // The refusal has to happen BEFORE any side effect — otherwise a refused
     // scale-up still litters worktrees and branches.
-    setTool('codex');
+    setTool('opencode');
     const git: GitRunner = () => { throw new Error('git must not be invoked for an unsupported tool'); };
     await expect(prepareWorker(repoRoot, dataDir, { branch: 'hotsheet/worker-1' }, git))
       .rejects.toThrow(WorkerLaunchUnsupportedError);
