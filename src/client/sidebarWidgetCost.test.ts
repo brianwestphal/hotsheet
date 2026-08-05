@@ -236,3 +236,57 @@ describe('updateSidebarWidgetCost', () => {
     });
   });
 });
+
+describe('under-counted cost (HS-9606)', () => {
+  it('says so in the tooltip when a tool that reports no cost also ran today', () => {
+    const span = mountWidget();
+    _setProjectsForTesting([A, B], A.secret);
+    updateSidebarWidgetCost({ 'sec-a': 1.5 }, ['sec-a']);
+    // The number is real, so it stays visible — the caveat rides the existing
+    // `*`, which already means "this figure needs qualifying".
+    expect(costAmount(span)).toBe('$1.50');
+    const sup = span.querySelector('.sidebar-widget-cost-asterisk');
+    expect(sup?.getAttribute('title')).toContain('does not report cost');
+    expect(sup?.getAttribute('title')).toContain('higher');
+    // ...and the subscription note it shared the marker with is not lost.
+    expect(sup?.getAttribute('title')).toContain('subscription');
+  });
+
+  it('does NOT add a second asterisk — one marker, one meaning', () => {
+    const span = mountWidget();
+    _setProjectsForTesting([A, B], A.secret);
+    updateSidebarWidgetCost({ 'sec-a': 1.5 }, ['sec-a']);
+    expect(span.querySelectorAll('.sidebar-widget-cost-asterisk')).toHaveLength(1);
+    expect(costAmount(span)).toBe('$1.50');
+  });
+
+  it('leaves an unflagged project with only the subscription note', () => {
+    const span = mountWidget();
+    _setProjectsForTesting([A, B], A.secret);
+    updateSidebarWidgetCost({ 'sec-a': 1.5, 'sec-b': 2.0 }, ['sec-b']);
+    const title = span.querySelector('.sidebar-widget-cost-asterisk')?.getAttribute('title') ?? '';
+    expect(title).not.toContain('does not report cost');
+    expect(title).toContain('subscription');
+  });
+
+  it('keeps the flag across a poll that omits the field (older server)', () => {
+    // Same stickiness the cost cache has: a response without the field must
+    // not be read as "the under-count went away".
+    const span = mountWidget();
+    _setProjectsForTesting([A, B], A.secret);
+    updateSidebarWidgetCost({ 'sec-a': 1.5 }, ['sec-a']);
+    updateSidebarWidgetCost({ 'sec-a': 1.75 });
+    expect(costAmount(span)).toBe('$1.75');
+    expect(span.querySelector('.sidebar-widget-cost-asterisk')?.getAttribute('title'))
+      .toContain('does not report cost');
+  });
+
+  it('clears the flag when a later poll reports the project is no longer mixed', () => {
+    const span = mountWidget();
+    _setProjectsForTesting([A, B], A.secret);
+    updateSidebarWidgetCost({ 'sec-a': 1.5 }, ['sec-a']);
+    updateSidebarWidgetCost({ 'sec-a': 1.5 }, []);
+    expect(span.querySelector('.sidebar-widget-cost-asterisk')?.getAttribute('title'))
+      .not.toContain('does not report cost');
+  });
+});

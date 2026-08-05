@@ -68,6 +68,15 @@ export interface DashboardPayload {
    *  Stacked / Overlay cost-over-time chart. One point per
    *  (date, project, model) tuple in the window. */
   costOverTime: CostOverTimePoint[];
+  /**
+   * HS-9606 — the UNION of every contributing project's emitters, so the
+   * cross-project cost surfaces can qualify a figure the same way the
+   * per-project ones do (HS-9605 / §67.17). A union is the right operation
+   * here: one codex-heavy project is enough to make the aggregate an
+   * under-count, and this page's totals read as the most authoritative in the
+   * app precisely because they span everything.
+   */
+  emitters: string[];
   /** HS-8810 — local-calendar days in the window that had ≥1 ingested metric
    *  point. A cost-over-time day absent from this set + at $0 had no telemetry
    *  captured (receiver down / Claude outside Hot Sheet) vs. a genuine $0 day. */
@@ -425,7 +434,7 @@ export async function getDashboardPayload(
   // rollup ONCE in the ambient telemetry context with no project filter (the
   // pre-fan-out behavior). The route always passes the loaded-projects list.
   if (projects === null) {
-    const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject] = await Promise.all([
+    const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject, recordedEmitters] = await Promise.all([
       getWindowTotals(null, midnight, null),
       getWindowTotals(null, weekStart, null),
       getWindowTotals(null, monthStart, null),
@@ -436,6 +445,7 @@ export async function getDashboardPayload(
       getCostOverTime(windowSinceTs, null, timezone, now, null),
       getIngestedDates(windowSinceTs, null, timezone, null),
       getAnnouncerUsageByProject(null, windowSinceTs),
+      getWindowEmitters(null, windowSinceTs, null),
     ]);
     return {
       window,
@@ -445,6 +455,7 @@ export async function getDashboardPayload(
       hourlyActivity,
       costOverTime,
       ingestedDates,
+      emitters: resolveWindowEmitters(recordedEmitters, ingestedDates.length > 0),
       announcer: { total: sumAnnouncerUsage(announcerByProject), byProject: announcerByProject },
     };
   }
@@ -464,7 +475,7 @@ export async function getDashboardPayload(
   // Per-source results, each read in that source's DB context.
   const perSource = await Promise.all(sources.map(src =>
     runWithTelemetryDb(src.dataDir, async () => {
-      const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject] = await Promise.all([
+      const [today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject, recordedEmitters] = await Promise.all([
         getWindowTotals(src.secret, midnight),
         getWindowTotals(src.secret, weekStart),
         getWindowTotals(src.secret, monthStart),
@@ -475,8 +486,9 @@ export async function getDashboardPayload(
         getCostOverTime(windowSinceTs, src.secret, timezone, now),
         getIngestedDates(windowSinceTs, src.secret, timezone),
         getAnnouncerUsageByProject(src.secret === null ? null : [src.secret], windowSinceTs),
+        getWindowEmitters(src.secret, windowSinceTs),
       ]);
-      return { today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject };
+      return { today, week, month, allTime, costByProject, costByModel, hourlyActivity, costOverTime, ingestedDates, announcerByProject, recordedEmitters };
     }),
   ));
 
@@ -491,6 +503,12 @@ export async function getDashboardPayload(
   const costOverTime = perSource.flatMap(s => s.costOverTime);
   const ingestedDates = [...new Set(perSource.flatMap(s => s.ingestedDates))].sort();
   const announcerByProject = perSource.flatMap(s => s.announcerByProject);
+  // The union across sources — a tool that reports no cost anywhere in the
+  // window makes the aggregate an under-count, wherever it ran.
+  const emitters = resolveWindowEmitters(
+    perSource.flatMap(s => s.recordedEmitters),
+    ingestedDates.length > 0,
+  );
 
   return {
     window,
@@ -500,6 +518,7 @@ export async function getDashboardPayload(
     hourlyActivity,
     costOverTime,
     ingestedDates,
+    emitters,
     announcer: { total: sumAnnouncerUsage(announcerByProject), byProject: announcerByProject },
   };
 }

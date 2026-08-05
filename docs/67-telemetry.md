@@ -686,10 +686,38 @@ rather than omitting it, so it reads as measured rather than unexamined.
   and needs nothing; the caveat exists for `partial`, where the shape looks
   complete and quietly is not.
 
-Not yet covered, and tracked separately: the sidebar today's-cost widget
-(§67.10), the per-ticket rollup (`otel_rollup_ticket`), and the cross-project
-stats page (docs/70). Each reads a different payload and needs its own emitter
-plumbing.
+### 67.17.3 The other surfaces (HS-9606)
+
+Extended to the **sidebar today's-cost widget** and the **cross-project stats
+page**; the **per-ticket rollup** is not, for a structural reason worth
+recording.
+
+**Sidebar widget.** `getTodayCostByProject` now also returns `partialSecrets`.
+Only projects that already show a figure are checked — a project where nothing
+reports cost has a cost of `0`, is omitted, and the widget hides itself, which
+is already honest. The lie this catches is the **mixed** one. The widget's
+existing `*` (the §67.10 subscription caveat) carries the extra sentence rather
+than gaining a second marker: two asterisks read as a footnote reference, not a
+warning. `partialSecrets` is sticky exactly like the cost cache, so a poll that
+omits it — an older server — is not read as "the under-count went away".
+
+**Cross-project page.** `DashboardPayload.emitters` is the **union** across
+every contributing project, which is the right operation: one codex-heavy
+project makes the aggregate an under-count wherever it ran. Applied to the four
+chips and as a caveat **prepended** to cost-over-time, cost-by-project and
+cost-by-model — above the figures, since a caveat *below* a chart arrives after
+the reader has already drawn a conclusion from it. These totals span everything
+and so read as the most authoritative in the app, which is precisely why an
+unmarked under-count is worse here than anywhere else.
+
+**Per-ticket rollup — deliberately not done.** `otel_rollup_ticket` is keyed
+`(project_secret, ticket_number)` and has **no emitter dimension at all**. The
+only approximation available without a schema change is to take the emitters of
+the *days* a ticket's prompt spans touch — a **superset**, which would flag a
+ticket as partial because codex ran that day on unrelated work. Once someone
+uses both tools, essentially every ticket would carry the flag, and a warning
+that is always on teaches readers to ignore it. A real emitter column is the
+honest fix; tracked separately.
 
 ## 67.18 Token counters beyond Claude (HS-9604)
 

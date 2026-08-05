@@ -29,8 +29,8 @@ let unsubscribe: (() => void) | null = null;
 
 async function refreshCostChips(): Promise<void> {
   try {
-    const costs = await getTodayCostByProject();
-    updateSidebarWidgetCost(costs);
+    const { costs, partialSecrets } = await getTodayCostByProject();
+    updateSidebarWidgetCost(costs, partialSecrets);
   } catch {
     // Network hiccup / telemetry table absent → leave the value as-is.
     // The next tick will retry.

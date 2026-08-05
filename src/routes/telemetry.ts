@@ -77,8 +77,8 @@ telemetryRoutes.get('/telemetry/today-cost', async (c) => {
  * key in the response). Polled on the bell-state cadence.
  */
 telemetryRoutes.get('/telemetry/today-cost-by-project', async (c) => {
-  const costs = await getTodayCostByProject();
-  return c.json({ costs });
+  const { costs, partialSecrets } = await getTodayCostByProject();
+  return c.json({ costs, partialSecrets });
 });
 
 /**

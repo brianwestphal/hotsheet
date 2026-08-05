@@ -213,6 +213,10 @@ export async function refreshDashboardWidget() {
  *  per the user's stated preference: caching takes priority over
  *  zero-correctness on the day boundary; the first nonzero point of
  *  the new day will correct it on the next fetch. */
+/** HS-9606 — secrets whose today figure is an under-count (a tool that reports
+ *  no cost also ran). Sticky for the same reason the cost cache is. */
+const stickyCostPartial = new Set<string>();
+
 const stickyCostCache = new Map<string, number>();
 
 /** Update the active project's cost in the sidebar widget. `costs` is
@@ -221,11 +225,20 @@ const stickyCostCache = new Map<string, number>();
  *  dollar amount is an API-equivalent estimate, not what the user
  *  pays). HS-8531 — projects missing from `costs` keep their cached
  *  value rather than disappearing. */
-export function updateSidebarWidgetCost(costs: Record<string, number>): void {
+export function updateSidebarWidgetCost(
+  costs: Record<string, number>,
+  partialSecrets?: readonly string[],
+): void {
   // HS-8531 — merge into the sticky cache rather than replacing it.
   // Only entries the server actually returns update the cache.
   for (const [secret, cost] of Object.entries(costs)) {
     stickyCostCache.set(secret, cost);
+  }
+  // HS-9606 — same sticky treatment: a poll that omits the field (older
+  // server, or the read-only re-render below) must not clear what we know.
+  if (partialSecrets !== undefined) {
+    stickyCostPartial.clear();
+    for (const secret of partialSecrets) stickyCostPartial.add(secret);
   }
   const el = document.querySelector<HTMLElement>('.sidebar-widget-cost');
   if (el === null) return;
@@ -242,13 +255,17 @@ export function updateSidebarWidgetCost(costs: Record<string, number>): void {
     // HS-8566 — use the shared formatter so the dashboard widget
     // matches the cross-project page + per-ticket stats display.
     const label = formatCost(cost);
+    // HS-9606 — the `*` already means "this number needs a caveat", so a
+    // partial window extends its TOOLTIP rather than adding a second marker.
+    // Two asterisks would read as a footnote reference, not a warning.
+    const subscriptionNote = 'Estimate only for Claude Pro / Max / other-subscription users. See cost overview pages for details.';
+    const partialNote = stickyCostPartial.has(secret)
+      ? 'Excludes a tool that does not report cost, so the real total is higher. '
+      : '';
     el.replaceChildren(
       document.createTextNode(label),
       toElement(
-        <sup
-          className="sidebar-widget-cost-asterisk"
-          title="Estimate only for Claude Pro / Max / other-subscription users. See cost overview pages for details."
-        >
+        <sup className="sidebar-widget-cost-asterisk" title={`${partialNote}${subscriptionNote}`}>
           *
         </sup>,
       ),
@@ -289,7 +306,7 @@ export function clearSidebarWidgetCostForActiveProject(): void {
 /** Test-only escape hatch — exposed so unit tests can reset the
  *  module-private sticky cache between cases. HS-8531. */
 export const _testingSidebarCost = {
-  resetCache(): void { stickyCostCache.clear(); },
+  resetCache(): void { stickyCostCache.clear(); stickyCostPartial.clear(); },
   cacheSize(): number { return stickyCostCache.size; },
   getCached(secret: string): number | undefined { return stickyCostCache.get(secret); },
 };

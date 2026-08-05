@@ -42,6 +42,9 @@
  * alias along with the sidebar entry.
  */
 
+import type { SafeHtml } from 'kerfjs';
+
+import { type CostAvailability, costAvailabilityFor, costAvailabilityNote } from '../aiTools/costAvailability.js';
 import { getTelemetryDashboard } from '../api/index.js';
 import { unmountColumnView } from './columnView.js';
 import { enterDashboardMode } from './dashboardMode.js';
@@ -135,6 +138,9 @@ export interface DashboardPayload {
   costOverTime: CostOverTimePoint[];
   /** HS-8810 — days with ≥1 ingested metric point (shade no-telemetry days). */
   ingestedDates?: string[];
+  /** HS-9606 — the union of every contributing project's emitters, so the
+   *  totals can be qualified when a tool that reports no cost also ran. */
+  emitters?: string[];
   announcer?: { total: AnnouncerUsageTotals; byProject: AnnouncerUsageByProjectRow[] };
 }
 
@@ -153,7 +159,31 @@ export interface DashboardPayload {
 // previously returned raw `String(n)` (rendering fractional token counts),
 // the divergence this consolidation fixes.
 
-function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
+/**
+ * HS-9606 — the cost line of a window chip, qualified when the aggregate
+ * cannot be believed in full (§67.17).
+ *
+ * This page's totals span every project, which makes them read as the most
+ * authoritative figures in the app — so an unmarked under-count is worse here
+ * than anywhere else. One codex-heavy project is enough to cause it.
+ */
+function renderChipCost(totals: WindowTotals, cost: CostAvailability): SafeHtml {
+  const note = costAvailabilityNote(cost);
+  if (cost.status === 'unavailable') {
+    return <div className="telemetry-dashboard-chip-cost telemetry-chip-cost-unavailable" title={note ?? ''}>—</div>;
+  }
+  const baseTitle = 'Cost is the amount the AI tool reports for this work. It includes cache tokens and any 1M-context rate premium, so it can exceed a naive estimate from the input/output tokens above.';
+  if (cost.status === 'partial') {
+    return (
+      <div className="telemetry-dashboard-chip-cost telemetry-chip-cost-partial" title={`${note ?? ''} ${baseTitle}`}>
+        {formatCost(totals.cost)}<span className="telemetry-chip-cost-flag" aria-hidden="true">*</span>
+      </div>
+    );
+  }
+  return <div className="telemetry-dashboard-chip-cost" title={baseTitle}>{formatCost(totals.cost)}</div>;
+}
+
+function renderWindowChip(label: string, totals: WindowTotals, cost: CostAvailability): HTMLElement {
   // HS-8628 — input / output split on a second meta line (different pricing);
   // headline keeps the combined real-work total + prompt count.
   const hasSplit = totals.inputTokens > 0 || totals.outputTokens > 0;
@@ -166,7 +196,7 @@ function renderWindowChip(label: string, totals: WindowTotals): HTMLElement {
   return toElement(
     <div className="telemetry-dashboard-chip">
       <div className="telemetry-dashboard-chip-label">{label}</div>
-      <div className="telemetry-dashboard-chip-cost" title="Cost is the amount Claude Code reports for this work. It includes cache tokens and any 1M-context rate premium, so it can exceed a naive estimate from the input/output tokens above.">{formatCost(totals.cost)}</div>
+      {renderChipCost(totals, cost)}
       <div className="telemetry-dashboard-chip-meta">{`${formatTokens(totals.tokens)} tokens · ${String(totals.promptCount)} prompts`}</div>
       {hasSplit
         ? <div className="telemetry-dashboard-chip-submeta">{`${formatTokens(totals.inputTokens)} in / ${formatTokens(totals.outputTokens)} out`}</div>
@@ -569,17 +599,35 @@ function buildSubscriptionNotice(): HTMLElement {
 }
 
 /** HS-8681 — populate the four window-total chips. */
-function populateChips(root: HTMLElement, totals: DashboardPayload['windowTotals']): void {
+function populateChips(
+  root: HTMLElement,
+  totals: DashboardPayload['windowTotals'],
+  cost: CostAvailability,
+): void {
   const chips = root.querySelector<HTMLElement>('#telemetry-dashboard-chips');
   if (chips === null) return;
-  chips.appendChild(renderWindowChip('Today', totals.today));
-  chips.appendChild(renderWindowChip('This week', totals.week));
-  chips.appendChild(renderWindowChip('This month', totals.month));
-  chips.appendChild(renderWindowChip('All time', totals.allTime));
+  chips.appendChild(renderWindowChip('Today', totals.today, cost));
+  chips.appendChild(renderWindowChip('This week', totals.week, cost));
+  chips.appendChild(renderWindowChip('This month', totals.month, cost));
+  chips.appendChild(renderWindowChip('All time', totals.allTime, cost));
 }
 
 /** HS-8681 — populate the cost-over-time chart slot (HS-8506 / §70.4). */
-function populateCostOverTime(root: HTMLElement, points: readonly CostOverTimePoint[], ingestedDates: readonly string[] | undefined): void {
+/**
+ * HS-9606 — the caveat line above a cost chart or table whose figures omit a
+ * tool that reports no cost.
+ *
+ * Prepended rather than appended so it is read BEFORE the shape is
+ * interpreted; a caveat under a chart arrives after the reader has already
+ * drawn a conclusion from it.
+ */
+function prependCostCaveat(target: HTMLElement, cost: CostAvailability): void {
+  const note = costAvailabilityNote(cost);
+  if (note === null) return;
+  target.prepend(toElement(<p className="telemetry-cost-caveat">{note}</p>));
+}
+
+function populateCostOverTime(root: HTMLElement, points: readonly CostOverTimePoint[], ingestedDates: readonly string[] | undefined, cost: CostAvailability): void {
   if (points.length === 0) return;
   const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-over-time');
   if (target === null) return;
@@ -588,22 +636,25 @@ function populateCostOverTime(root: HTMLElement, points: readonly CostOverTimePo
     formatCost,
     ingestedDates, // HS-8810 — shade no-telemetry days
   }));
+  prependCostCaveat(target, cost);
 }
 
 /** HS-8681 — populate the cost-by-project sortable table (HS-8482). */
-function populateCostByProject(root: HTMLElement, rows: ProjectCostRow[]): void {
+function populateCostByProject(root: HTMLElement, rows: ProjectCostRow[], cost: CostAvailability): void {
   if (rows.length === 0) return;
   const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-project');
   if (target === null) return;
   target.replaceChildren(renderCostByProjectTable(rows));
+  prependCostCaveat(target, cost);
 }
 
 /** HS-8681 — populate the cost-by-model donut slot (HS-8482). */
-function populateCostByModel(root: HTMLElement, rows: ModelRollup[]): void {
+function populateCostByModel(root: HTMLElement, rows: ModelRollup[], cost: CostAvailability): void {
   if (rows.length === 0) return;
   const target = root.querySelector<HTMLElement>('#telemetry-dashboard-cost-by-model');
   if (target === null) return;
   target.replaceChildren(renderCostByModelDonut(rows, { formatCost }));
+  prependCostCaveat(target, cost);
 }
 
 /** HS-8681 — populate the hourly-activity heatmap (HS-8483). */
@@ -740,13 +791,14 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
     disclaimerSlot.appendChild(renderSubscriptionDisclaimer());
   }
 
-  populateChips(root, payload.windowTotals);
+  const costAvailability = costAvailabilityFor(payload.emitters ?? []);
+  populateChips(root, payload.windowTotals, costAvailability);
   // `costOverTime` has existed on the wire since HS-8505 Phase 1; the
   // `DashboardPayload` interface types it as a non-optional array, so no
   // runtime guard is needed here.
-  populateCostOverTime(root, payload.costOverTime, payload.ingestedDates);
-  populateCostByProject(root, payload.costByProject);
-  populateCostByModel(root, payload.costByModel);
+  populateCostOverTime(root, payload.costOverTime, payload.ingestedDates, costAvailability);
+  populateCostByProject(root, payload.costByProject, costAvailability);
+  populateCostByModel(root, payload.costByModel, costAvailability);
   populateHeatmap(root, payload.hourlyActivity);
   populateAnnouncer(root, payload.announcer);
   wireWindowSelector(root, container);

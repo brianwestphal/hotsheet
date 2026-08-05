@@ -1,8 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 
+import { costAvailabilityFor } from '../aiTools/costAvailability.js';
 import { getAllProjects } from '../projects.js';
 import { maxOf, minOf } from '../utils/largeArray.js';
 import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
+import { resolveWindowEmitters } from './otelEmitter.js';
 import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.js';
 import { clearOtelJsonl, listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
 import { serverLocalDay } from './otelRollupIngest.js';
@@ -911,7 +913,21 @@ export async function getToolLatencyHistogram(
  * entirely in that case per §67.10.1 — chip rendered only when
  * `cost > 0`).
  */
-export async function getTodayCostByProject(): Promise<Record<string, number>> {
+export interface TodayCostByProject {
+  /** secret → today's cost, non-zero only (the widget hides at $0 per §67.10.1). */
+  costs: Record<string, number>;
+  /**
+   * HS-9606 — secrets whose today-window ALSO contains a tool that reports no
+   * cost, so the figure is real but an under-count (§67.17's `partial`).
+   *
+   * Only projects that appear in `costs` are considered: a project where NO
+   * tool reports cost has a cost of 0, is already omitted, and the widget is
+   * simply hidden — which is honest. The lie this catches is the mixed one.
+   */
+  partialSecrets: string[];
+}
+
+export async function getTodayCostByProject(): Promise<TodayCostByProject> {
   // HS-8874 — telemetry is per-project now: each project's cost lives in its
   // OWN DB. Fan out, running `getTodayCost(secret)` in each project's DB
   // context (filtered by that project's secret so a non-destructively-migrated
@@ -919,11 +935,24 @@ export async function getTodayCostByProject(): Promise<Record<string, number>> {
   // non-zero costs are kept (the chip is hidden at $0 per §67.10.1). Polled on
   // the bell cadence, so each query is a single indexed SUM.
   const out: Record<string, number> = {};
+  const partialSecrets: string[] = [];
+  // Server-local midnight, matching `getTodayCost`'s `serverLocalDay` day match
+  // so the emitters cover exactly the window the cost figure sums.
+  const n = new Date();
+  const midnight = new Date(n.getFullYear(), n.getMonth(), n.getDate());
   for (const project of getAllProjects()) {
     const cost = await runWithTelemetryDb(project.dataDir, () => getTodayCost(project.secret));
-    if (cost > 0) out[project.secret] = cost;
+    if (cost <= 0) continue;
+    out[project.secret] = cost;
+    // Only for projects that actually show a figure — one extra indexed lookup
+    // on the bell cadence, and only where there is something to qualify.
+    const emitters = await runWithTelemetryDb(project.dataDir, () =>
+      getWindowEmitters(project.secret, midnight));
+    if (costAvailabilityFor(resolveWindowEmitters(emitters, true)).status !== 'available') {
+      partialSecrets.push(project.secret);
+    }
   }
-  return out;
+  return { costs: out, partialSecrets };
 }
 
 /**

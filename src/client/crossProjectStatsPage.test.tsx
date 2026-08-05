@@ -399,3 +399,56 @@ describe('showCrossProjectStatsPage restores dashboard-hidden controls when supp
   });
 });
 
+
+describe('cost availability across projects (HS-9606)', () => {
+  it('shows an em dash, not $0.00, when no project reports cost', () => {
+    // The cross-project totals read as the most authoritative figures in the
+    // app, so a confident zero here is the loudest version of the HS-9605 lie.
+    const container = document.createElement('div');
+    renderShell(makePayload({ emitters: ['codex'] }), container);
+    const chip = container.querySelector('.telemetry-dashboard-chip-cost');
+    expect(chip?.textContent).toBe('—');
+    expect(chip?.getAttribute('title')).toContain('Codex');
+  });
+
+  it('flags a MIXED set of projects — one codex-heavy project skews the aggregate', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload({ emitters: ['claude', 'codex'] }), container);
+    const chip = container.querySelector('.telemetry-dashboard-chip-cost');
+    // The figure is real, so it stays — with the direction of the error.
+    expect(chip?.textContent).toContain('$');
+    expect(chip?.querySelector('.telemetry-chip-cost-flag')).not.toBeNull();
+    expect(chip?.getAttribute('title')).toContain('higher');
+  });
+
+  it('leaves an all-Claude aggregate completely unmarked', () => {
+    // Otherwise the flag becomes background noise everyone stops reading.
+    const container = document.createElement('div');
+    renderShell(makePayload({
+      emitters: ['claude'],
+      costByProject: [{ projectSecret: 'a', cost: 1, tokens: 10, promptCount: 1, lastActivityTs: null }],
+    }), container);
+    expect(container.querySelector('.telemetry-chip-cost-flag')).toBeNull();
+    expect(container.querySelector('.telemetry-cost-caveat')).toBeNull();
+  });
+
+  it('warns above the cost-by-project table, before the numbers are read', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload({
+      emitters: ['claude', 'codex'],
+      costByProject: [{ projectSecret: 'a', cost: 1, tokens: 10, promptCount: 1, lastActivityTs: null }],
+    }), container);
+    const target = container.querySelector('#telemetry-dashboard-cost-by-project');
+    const caveat = target?.querySelector('.telemetry-cost-caveat');
+    expect(caveat).not.toBeNull();
+    // Prepended, not appended — a caveat under a table arrives after the
+    // reader has already drawn a conclusion from it.
+    expect(target?.firstElementChild).toBe(caveat);
+  });
+
+  it('treats a payload with no emitters field as unqualified (older server)', () => {
+    const container = document.createElement('div');
+    renderShell(makePayload(), container);
+    expect(container.querySelector('.telemetry-chip-cost-flag')).toBeNull();
+  });
+});

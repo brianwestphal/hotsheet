@@ -244,7 +244,12 @@ export type TelemetryDebugInfo = z.infer<typeof TelemetryDebugInfoSchema>;
 // --- Small wrapper responses ---
 
 const TodayCostRespSchema = z.object({ cost: z.number() });
-const TodayCostByProjectRespSchema = z.object({ costs: z.record(z.string(), z.number()) });
+const TodayCostByProjectRespSchema = z.object({
+  costs: z.record(z.string(), z.number()),
+  // HS-9606 — optional so a client polling an older server still parses.
+  partialSecrets: z.array(z.string()).optional(),
+});
+export type TodayCostByProjectResponse = z.infer<typeof TodayCostByProjectRespSchema>;
 const EnabledAnywhereRespSchema = z.object({ enabled: z.boolean() });
 const ClearResultSchema = z.object({ deleted: z.number() });
 export type ClearTelemetryResult = z.infer<typeof ClearResultSchema>;
@@ -275,10 +280,10 @@ export async function getTodayCost(): Promise<number> {
 }
 
 /** GET `/telemetry/today-cost-by-project` → `secret → cost` for every project
- *  with non-zero cost today. */
-export async function getTodayCostByProject(): Promise<Record<string, number>> {
-  const r = await apiCall(TodayCostByProjectRespSchema, '/telemetry/today-cost-by-project');
-  return r.costs;
+ *  with non-zero cost today, plus (HS-9606) the secrets whose figure is an
+ *  under-count because a tool that reports no cost also ran. */
+export async function getTodayCostByProject(): Promise<TodayCostByProjectResponse> {
+  return apiCall(TodayCostByProjectRespSchema, '/telemetry/today-cost-by-project');
 }
 
 /** GET `/telemetry/prompt/:id` → the per-prompt timeline drilldown. */
