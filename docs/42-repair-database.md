@@ -31,6 +31,10 @@ Secondary action button: **Run pg_resetwal…**. Two-step flow:
 
 1. **Availability probe.** `GET /api/db/repair/pg-resetwal-availability` returns `{ available, path, platform, installInstructions }`. The server probes a list of platform-specific candidate paths (PATH first, then known install locations) by spawning `pg_resetwal --version`.
 
+   **The major version has to match (HS-9578).** `pg_resetwal` refuses a cluster written by a different PostgreSQL major outright — `pg_resetwal: error: data directory is of wrong version` — so "the binary runs" was never the right question. `getResetwalAvailability` parses the major out of `--version` and **skips** a candidate that does not match, falling through to the version-pinned paths. Given a candidate directory it compares against *that cluster's* `PG_VERSION`, so a preserved directory written by an older PGLite still matches the right binary; otherwise it uses `PGLITE_PG_MAJOR` (17). An unparseable `--version` is accepted rather than rejected — an unfamiliar packaging format must not disable repair, and the repair itself will surface the real error.
+
+   Before this, the bare `pg_resetwal` candidate (tried first) won on any machine whose PATH Postgres was a different major — the common case, since Homebrew's `postgresql` formula is 18 — and the panel reported "available" while pointing at a binary that could never work. Because `probeCorruptCluster` reports an unopenable candidate as `null`, the user saw every candidate stuck on "checking…" with no error anywhere.
+
 2. **If available**, the user gets a confirmation dialog explaining what will happen:
    - Copy the corrupt directory (`marker.corruptPath`) to a temp location.
    - Run `pg_resetwal -f` on the copy.
@@ -78,6 +82,24 @@ So repair now **enumerates instead of assuming**:
 an enumerated candidate**. A `startsWith` check on the raw string would admit both a
 traversal and an unrelated directory that merely shares the name prefix; both are pinned as
 tests.
+
+**Coverage (HS-9578).** The server half is unit-tested in `src/db/repair.test.ts`;
+the client half is `e2e/db-repair-candidate-picker.spec.ts`. The listing, the
+not-a-database marking, the default selection, and Cancel run everywhere — they
+stub `/probe-corrupt-cluster` and the availability gate so the counts are
+deterministic. A fourth, separately gated test does the whole thing for real:
+two genuine clusters seeded at different ticket counts, real probes, a real
+repair, and an assertion that the resulting tarball carries the **selected**
+candidate's count. Its gate is the server's own probe against a seeded
+candidate rather than "is the binary present", so a machine that cannot actually
+recover a cluster skips honestly instead of failing.
+
+Writing that test found the picker had **never worked** — see HS-9587: the two
+path-taking callers in `src/api/db.ts` pre-encoded their request bodies (the
+transport stringifies `opts.body` itself, so the server received a JSON *string*
+and 400'd), and the availability probe accepted a wrong-major binary. Both are
+fixed; the seam between a green server half and an untested client half is
+exactly where they lived.
 
 ### 42.4 Auto-Mitigation Boundary
 

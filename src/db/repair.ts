@@ -142,12 +142,70 @@ export interface ResetwalAvailability {
   installInstructions: InstallInstructions;
 }
 
-/** Probe each candidate path with `--version` until one succeeds. */
-export async function getResetwalAvailability(): Promise<ResetwalAvailability> {
+/**
+ * The PostgreSQL major PGLite writes, and therefore the only `pg_resetwal`
+ * major that can operate on one of our clusters. Only a FALLBACK: when a real
+ * candidate directory is in hand, `getResetwalAvailability` reads that
+ * cluster's own `PG_VERSION` instead, so a preserved directory written by an
+ * older PGLite is still matched against the right binary. Bump alongside a
+ * PGLite upgrade that changes `PG_VERSION`.
+ */
+export const PGLITE_PG_MAJOR = 17;
+
+/** Major version out of `pg_resetwal --version` output, e.g.
+ *  `pg_resetwal (PostgreSQL) 18.3 (Homebrew)` → 18. Null when unparseable. */
+export function parsePgResetwalMajor(versionOutput: string): number | null {
+  const m = /\)\s*(\d+)/.exec(versionOutput) ?? /(\d+)\.\d+/.exec(versionOutput);
+  if (m === null) return null;
+  const major = Number(m[1]);
+  return Number.isFinite(major) ? major : null;
+}
+
+/** The version of the cluster we would be repairing. Falls back to the compiled
+ *  constant when the directory is absent or unreadable — the guard exists to
+ *  reject a KNOWN mismatch, not to refuse when it cannot tell. */
+function clusterMajorFor(dataDir: string | undefined): number {
+  if (dataDir === undefined) return PGLITE_PG_MAJOR;
+  try {
+    const raw = readFileSync(join(dataDir, 'PG_VERSION'), 'utf-8').trim();
+    const major = Number(raw.split('.')[0]);
+    return Number.isFinite(major) ? major : PGLITE_PG_MAJOR;
+  } catch {
+    return PGLITE_PG_MAJOR;
+  }
+}
+
+/**
+ * Probe each candidate path until one is BOTH runnable and the right major
+ * version.
+ *
+ * HS-9578 — "the binary exists" was the wrong question. `pg_resetwal` refuses a
+ * cluster written by a different major outright (`data directory is of wrong
+ * version`), and the bare `pg_resetwal` entry is tried FIRST, so any machine
+ * with a newer Postgres on PATH — the common case; Homebrew's `postgresql`
+ * formula is 18 now — reported "available", pointed at a binary that can never
+ * work, and then failed on every probe. The user saw candidates stuck on
+ * "checking…" with no explanation, because `probeCorruptCluster` reports an
+ * unopenable candidate as `null` rather than as an error.
+ *
+ * Falling through to the version-pinned paths fixes it on exactly the machines
+ * that were broken: they usually have the right major installed too, just not
+ * first on PATH.
+ *
+ * `corruptPath` is optional so callers that only want "is this possible at all"
+ * still work; when given, the check is against that cluster's real `PG_VERSION`
+ * rather than the constant.
+ */
+export async function getResetwalAvailability(corruptPath?: string): Promise<ResetwalAvailability> {
   const platform = process.platform;
+  const wantedMajor = clusterMajorFor(corruptPath);
   for (const candidate of candidatePgResetwalPaths(platform)) {
     try {
-      await execFileAsync(candidate, ['--version'], { timeout: 5000 });
+      const { stdout } = await execFileAsync(candidate, ['--version'], { timeout: 5000 });
+      const major = parsePgResetwalMajor(stdout);
+      // An unparseable version is accepted: a binary we cannot classify is
+      // better than none, and the repair itself will report the real error.
+      if (major !== null && major !== wantedMajor) continue;
       return { available: true, path: candidate, platform, installInstructions: installInstructions(platform) };
     } catch {
       // Try the next candidate.
@@ -175,9 +233,10 @@ export async function runResetwalAndDump(
   if (!existsSync(corruptPath)) {
     throw new Error(`Corrupt directory not found: ${corruptPath}`);
   }
-  const availability = await getResetwalAvailability();
+  // HS-9578 — resolve against THIS cluster's version, not the compiled default.
+  const availability = await getResetwalAvailability(corruptPath);
   if (!availability.available || availability.path === null) {
-    throw new Error(`pg_resetwal is not installed (platform: ${availability.platform})`);
+    throw new Error(`No pg_resetwal matching this database's PostgreSQL version is installed (platform: ${availability.platform})`);
   }
 
   const workDir = join(tmpdir(), `hs-repair-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -324,7 +383,7 @@ export async function resolveCorruptCluster(dataDir: string, requested: string):
  */
 export async function probeCorruptCluster(corruptPath: string): Promise<number | null> {
   if (!existsSync(join(corruptPath, 'PG_VERSION'))) return null;
-  const availability = await getResetwalAvailability();
+  const availability = await getResetwalAvailability(corruptPath);
   if (!availability.available || availability.path === null) return null;
 
   const workDir = join(tmpdir(), `hs-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`);

@@ -141,7 +141,12 @@ export async function listCorruptClusters(): Promise<CorruptCluster[]> {
 export async function probeCorruptCluster(corruptPath: string): Promise<number | null> {
   const r = await apiCall(ProbeCorruptRespSchema, '/db/repair/probe-corrupt-cluster', {
     method: 'POST',
-    body: JSON.stringify({ corruptPath } satisfies CorruptPathReq),
+    // HS-9578 — the OBJECT, not `JSON.stringify(...)` of it. The transport
+    // (`client/api.tsx::api`) stringifies `opts.body` itself, so a pre-encoded
+    // string was serialized twice and arrived as a JSON *string*; the server's
+    // `CorruptPathReqSchema.safeParse` then failed and every probe 400'd. Both
+    // path-taking callers here had it — the only two in `src/api/*` that did.
+    body: { corruptPath } satisfies CorruptPathReq,
   });
   return r.recoverableTicketCount;
 }
@@ -152,6 +157,7 @@ export async function probeCorruptCluster(corruptPath: string): Promise<number |
 export async function runResetwal(corruptPath?: string): Promise<RepairResult> {
   return apiCall(RepairResultSchema, '/db/repair/run-pg-resetwal', {
     method: 'POST',
-    ...(corruptPath !== undefined ? { body: JSON.stringify({ corruptPath } satisfies CorruptPathReq) } : {}),
+    // HS-9578 — see `probeCorruptCluster`: the transport does the stringifying.
+    ...(corruptPath !== undefined ? { body: { corruptPath } satisfies CorruptPathReq } : {}),
   });
 }

@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type ApiCallOpts, type ApiTransport, setApiTransport } from './_runner.js';
 import {
   dismissRecovery, findWorkingBackup, getRecoveryStatus, getResetwalAvailability,
-  getSnapshotStatus, RecoveryMarkerSchema, RepairResultSchema, ResetwalAvailabilitySchema,
-  runResetwal,
+  getSnapshotStatus, listCorruptClusters, probeCorruptCluster, RecoveryMarkerSchema,
+  RepairResultSchema, ResetwalAvailabilitySchema, runResetwal,
 } from './db.js';
 
 const marker = { corruptPath: '/x/db-corrupt-1', recoveredAt: 'x', errorMessage: 'boom' };
@@ -74,5 +74,52 @@ describe('db callers route to the right endpoint (HS-8636)', () => {
     stub(repair);
     expect(await runResetwal()).toEqual(repair);
     expect(lastCall).toEqual({ path: '/db/repair/run-pg-resetwal', opts: { method: 'POST' } });
+  });
+});
+
+/**
+ * HS-9578 — the two path-taking callers must hand the transport an OBJECT.
+ *
+ * `client/api.tsx::api` does `JSON.stringify(opts.body)` itself, so a caller
+ * that pre-encodes ships a doubly-encoded body: the server receives a JSON
+ * *string*, `CorruptPathReqSchema.safeParse` fails, and the request 400s. These
+ * two were the only callers in `src/api/*` that did it, which is why nothing
+ * else showed the symptom — and it silently disabled the whole HS-9575 picker
+ * (every probe read "checking…" forever, and Repair This One never ran).
+ *
+ * A shape assertion is the right guard here because the failure is invisible at
+ * the type level: `ApiCallOpts.body` is `unknown`, so a string satisfies it.
+ */
+describe('path-taking repair callers send an unencoded body (HS-9578)', () => {
+  it('probeCorruptCluster sends { corruptPath } as an object', async () => {
+    stub({ recoverableTicketCount: 12 });
+    expect(await probeCorruptCluster('/x/db-corrupt-1')).toBe(12);
+    expect(lastCall?.path).toBe('/db/repair/probe-corrupt-cluster');
+    expect(lastCall?.opts.body).toEqual({ corruptPath: '/x/db-corrupt-1' });
+    expect(typeof lastCall?.opts.body).not.toBe('string');
+  });
+
+  it('runResetwal sends { corruptPath } as an object when given one', async () => {
+    stub(repair);
+    await runResetwal('/x/db-corrupt-2');
+    expect(lastCall?.opts.body).toEqual({ corruptPath: '/x/db-corrupt-2' });
+    expect(typeof lastCall?.opts.body).not.toBe('string');
+  });
+
+  it('runResetwal still sends NO body when no path is chosen', async () => {
+    // The pre-HS-9575 fallback: the server then uses the recovery marker.
+    stub(repair);
+    await runResetwal();
+    expect(lastCall?.opts.body).toBeUndefined();
+  });
+
+  it('listCorruptClusters → GET /db/repair/corrupt-clusters, unwrapped', async () => {
+    const cluster = {
+      path: '/x/db-corrupt-1', name: 'db-corrupt-1', modifiedAt: 'x',
+      sizeBytes: 10, looksLikeCluster: true, recoverableTicketCount: null,
+    };
+    stub({ clusters: [cluster] });
+    expect(await listCorruptClusters()).toEqual([cluster]);
+    expect(lastCall?.path).toBe('/db/repair/corrupt-clusters');
   });
 });

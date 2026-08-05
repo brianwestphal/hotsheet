@@ -11,6 +11,8 @@ import {
   findWorkingBackup,
   installInstructions,
   listCorruptClusters,
+  parsePgResetwalMajor,
+  PGLITE_PG_MAJOR,
   resolveCorruptCluster,
 } from './repair.js';
 
@@ -209,5 +211,43 @@ describe('corrupt-cluster enumeration (HS-9575)', () => {
       mkdirSync(join(dir, 'db'), { recursive: true });
       expect(await resolveCorruptCluster(dir, join(dir, 'db'))).toBeNull();
     });
+  });
+});
+
+/**
+ * HS-9578 — `pg_resetwal` refuses a cluster written by a different major
+ * (`data directory is of wrong version`), so "the binary runs" was never the
+ * right availability question. The bare `pg_resetwal` candidate is tried FIRST,
+ * and on a machine whose PATH Postgres is 18 (Homebrew's `postgresql` formula
+ * today) the panel reported "available", handed the flow a binary that can
+ * never work, and every probe came back `null` — which the UI renders as
+ * "checking…" forever, with no error anywhere.
+ */
+describe('pg_resetwal version matching (HS-9578)', () => {
+  it('parses the major out of real --version output', () => {
+    expect(parsePgResetwalMajor('pg_resetwal (PostgreSQL) 17.9 (Homebrew)\n')).toBe(17);
+    expect(parsePgResetwalMajor('pg_resetwal (PostgreSQL) 18.3 (Homebrew)\n')).toBe(18);
+    // Debian/Ubuntu packaging appends its own revision.
+    expect(parsePgResetwalMajor('pg_resetwal (PostgreSQL) 17.4 (Ubuntu 17.4-1.pgdg22.04+1)')).toBe(17);
+  });
+
+  it('returns null for output it cannot classify', () => {
+    // Deliberately NOT an error: an unclassifiable binary is still tried, so a
+    // packaging format we have not seen cannot disable repair outright.
+    expect(parsePgResetwalMajor('')).toBeNull();
+    expect(parsePgResetwalMajor('pg_resetwal: command not found')).toBeNull();
+  });
+
+  it('the pinned candidate paths are all the major PGLite writes', () => {
+    // The fallbacks are what rescue a machine whose PATH binary is wrong, so
+    // they have to agree with `PGLITE_PG_MAJOR` — a bump that updates one and
+    // not the other would silently leave no usable candidate.
+    const pinned = [
+      ...candidatePgResetwalPaths('darwin'),
+      ...candidatePgResetwalPaths('linux'),
+      ...candidatePgResetwalPaths('win32'),
+    ].filter((p) => p !== 'pg_resetwal' && p !== 'pg_resetwal.exe');
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const path of pinned) expect(path).toContain(String(PGLITE_PG_MAJOR));
   });
 });
